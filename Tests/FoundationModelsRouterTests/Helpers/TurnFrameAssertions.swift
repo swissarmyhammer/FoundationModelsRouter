@@ -17,7 +17,7 @@ import Testing
 ///   frame was missing (the failure is already recorded by then).
 func eventsAfterTurnFrame(
     _ events: [SessionEvent],
-    promptId: SessionOutbox.ItemID? = nil
+    promptId: PromptID? = nil
 ) -> [SessionEvent] {
     guard case .turnStarted(let start) = events.first else {
         Issue.record("expected the turn to open with .turnStarted, got \(String(describing: events.first))")

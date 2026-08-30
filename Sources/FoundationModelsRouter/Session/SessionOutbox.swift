@@ -14,34 +14,36 @@ import FoundationModels
 /// - Turn-starting prompts (``PendingPrompt``): queued `Transcript.Prompt`s,
 ///   never coalesced, dispatched in FIFO order, one turn each.
 ///
-/// Every item gets a stable ``ItemID`` at enqueue. ``drainForDispatch()`` is
-/// the commit boundary. ``nextEvent()`` suspends while the outbox is empty.
+/// A queued prompt gets a stable ``PromptID`` and a staged event a stable
+/// ``EventID``, both at enqueue. ``drainForDispatch()`` is the commit boundary.
+/// ``nextEvent()`` suspends while the outbox is empty.
 ///
-/// The public surface is the vocabulary (``ItemID``,
-/// ``PromptQueueMutationResult``, ``QueueDepth``), because
-/// ``RoutedSession``'s own public methods carry those three types in their
-/// signatures, plus the two `post` witnesses, which must be public because
-/// the ``OperationEventSink`` protocol is public in FoundationModelsExtras.
-/// Every other method of this actor is internal. An app drives the queue
+/// The actor itself is internal. The vocabulary its prompt queue speaks —
+/// ``PromptID``, ``PromptQueueMutationResult`` and ``PromptQueueDepth`` — is
+/// public and stands on its own, because ``RoutedSession``'s public methods
+/// carry those three types in their signatures. An app drives the queue
 /// through ``RoutedSession``'s methods; a session never exposes its outbox.
-public actor SessionOutbox: OperationEventSink {
-    /// A stable identifier the outbox assigns to a pending item at enqueue.
+actor SessionOutbox: OperationEventSink {
+    /// A stable identifier the outbox assigns to a staged event at post time.
     ///
     /// The id stays the same across a coalesced event's in-place updates.
-    public struct ItemID: Hashable, Sendable, CustomStringConvertible {
+    struct EventID: Hashable, Sendable {
+        /// The generated value that carries this id's identity.
+        ///
+        /// Read by the synthesized `Hashable` conformance; periphery sees no caller.
+        // periphery:ignore
         private let value: ULID
 
+        /// Mints a fresh event id.
         fileprivate init() {
             self.value = ULID.generate()
         }
-
-        public var description: String { value.description }
     }
 
     /// One pending turn-riding event with its stable id.
     struct PendingEvent: Sendable {
-        /// This item's stable id.
-        let id: ItemID
+        /// This event's stable id.
+        let id: EventID
 
         /// The posted event, or the latest coalesced `.progress` event.
         let event: OperationEvent
@@ -49,8 +51,8 @@ public actor SessionOutbox: OperationEventSink {
 
     /// One pending queued prompt with its stable id.
     struct PendingPrompt: Sendable {
-        /// This item's stable id.
-        let id: ItemID
+        /// This prompt's stable id.
+        let id: PromptID
 
         /// The queued prompt.
         let prompt: Transcript.Prompt
@@ -107,7 +109,7 @@ public actor SessionOutbox: OperationEventSink {
     /// and recorded uncoalesced in the attached journal, in post order.
     ///
     /// - Parameter event: The event to post.
-    public func post(event: OperationEvent) async {
+    func post(event: OperationEvent) async {
         // Enqueued before the staging decision and before any suspension, so
         // the journal's order is exactly this outbox's post order.
         let journalWrite = enqueueJournalWrite(event: event)
@@ -176,7 +178,7 @@ public actor SessionOutbox: OperationEventSink {
     /// attached, the record is dropped.
     ///
     /// - Parameter record: The record to forward.
-    public func post(invocation record: ToolInvocationRecord) async {
+    func post(invocation record: ToolInvocationRecord) async {
         await invocationObserver?.deliver(invocation: record)
     }
 
@@ -189,11 +191,11 @@ public actor SessionOutbox: OperationEventSink {
         return journalChain.enqueue { await journal.record(event: event) }
     }
 
-    /// Appends `event` as a new pending item with a fresh ``ItemID``.
+    /// Appends `event` as a new pending item with a fresh ``EventID``.
     ///
     /// - Parameter event: The event to append.
     private func appendNewPendingEvent(event: OperationEvent) {
-        events.append(PendingEvent(id: ItemID(), event: event))
+        events.append(PendingEvent(id: EventID(), event: event))
     }
 
     /// Stages a queued user prompt for a future turn, in FIFO order.
@@ -201,21 +203,11 @@ public actor SessionOutbox: OperationEventSink {
     /// - Parameter prompt: The prompt to stage.
     /// - Returns: The stable id assigned to this queued prompt.
     @discardableResult
-    func enqueue(prompt: Transcript.Prompt) -> ItemID {
-        let id = ItemID()
+    func enqueue(prompt: Transcript.Prompt) -> PromptID {
+        let id = PromptID()
         prompts.append(PendingPrompt(id: id, prompt: prompt))
         wakeUp()
         return id
-    }
-
-    /// The outcome of ``cancel(id:)`` or ``replace(id:prompt:)``.
-    public enum PromptQueueMutationResult: Sendable, Equatable {
-        /// The prompt was still pending and the mutation applied.
-        case applied
-
-        /// No pending prompt has this id. It was already drained, or the id
-        /// never named a queued prompt. The mutation was not applied.
-        case alreadySent
     }
 
     /// Cancels a still-pending queued prompt by its stable id.
@@ -224,7 +216,7 @@ public actor SessionOutbox: OperationEventSink {
     /// - Returns: ``PromptQueueMutationResult/applied`` if the prompt was
     ///   removed; ``PromptQueueMutationResult/alreadySent`` otherwise.
     @discardableResult
-    func cancel(id: ItemID) -> PromptQueueMutationResult {
+    func cancel(id: PromptID) -> PromptQueueMutationResult {
         mutatingPendingPrompt(id: id) { index in
             prompts.remove(at: index)
         }
@@ -239,7 +231,7 @@ public actor SessionOutbox: OperationEventSink {
     /// - Returns: ``PromptQueueMutationResult/applied`` if the prompt was
     ///   updated; ``PromptQueueMutationResult/alreadySent`` otherwise.
     @discardableResult
-    func replace(id: ItemID, prompt: Transcript.Prompt) -> PromptQueueMutationResult {
+    func replace(id: PromptID, prompt: Transcript.Prompt) -> PromptQueueMutationResult {
         mutatingPendingPrompt(id: id) { index in
             prompts[index] = PendingPrompt(id: id, prompt: prompt)
         }
@@ -253,7 +245,7 @@ public actor SessionOutbox: OperationEventSink {
     /// - Returns: ``PromptQueueMutationResult/applied`` if `id` was pending;
     ///   ``PromptQueueMutationResult/alreadySent`` otherwise.
     private func mutatingPendingPrompt(
-        id: ItemID, _ mutate: (Int) -> Void
+        id: PromptID, _ mutate: (Int) -> Void
     ) -> PromptQueueMutationResult {
         guard let index = prompts.firstIndex(where: { $0.id == id }) else {
             return .alreadySent
@@ -300,32 +292,9 @@ public actor SessionOutbox: OperationEventSink {
         dispatched = nil
     }
 
-    /// How much queued prompt work a session carries, including the prompt
-    /// whose turn is running.
-    public struct QueueDepth: Sendable, Equatable {
-        /// How many prompts are still waiting in the queue.
-        public let queued: Int
-
-        /// The dispatched prompt whose turn has not finished, or `nil`.
-        public let dispatched: ItemID?
-
-        /// Every prompt this session still owes a turn.
-        public var total: Int { queued + (dispatched == nil ? 0 : 1) }
-
-        /// Creates a queue-depth snapshot.
-        ///
-        /// - Parameters:
-        ///   - queued: How many prompts are still waiting.
-        ///   - dispatched: The dispatched prompt's id, or `nil`.
-        init(queued: Int, dispatched: ItemID?) {
-            self.queued = queued
-            self.dispatched = dispatched
-        }
-    }
-
     /// A snapshot of this outbox's prompt-queue depth.
-    func queueDepth() -> QueueDepth {
-        QueueDepth(queued: prompts.count, dispatched: dispatched?.id)
+    func queueDepth() -> PromptQueueDepth {
+        PromptQueueDepth(queued: prompts.count, dispatched: dispatched?.id)
     }
 
     /// Suspends while the outbox is empty. Returns at once when an item is

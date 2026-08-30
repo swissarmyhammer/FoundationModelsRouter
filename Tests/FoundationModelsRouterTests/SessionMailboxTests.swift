@@ -4,7 +4,7 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises task 3g930c4: the ``SessionMailbox`` actor — tracked background
+/// Exercises task 3g930c4: the `SessionMailbox` actor — tracked background
 /// runs (track/backgroundRuns/wait/cancel), the pending-elicitation registry, and
 /// the ``RoutedSession/close()``-driven teardown sweep that journals exactly
 /// one terminal event per background run.
@@ -85,7 +85,7 @@ struct SessionMailboxTests {
     // MARK: - The run plane's deadline ceiling
 
     /// Nanoseconds in one second — the unit
-    /// ``SessionMailbox/boundedNanoseconds(clamping:)`` reports in.
+    /// `SessionMailbox.boundedNanoseconds(clamping:)` reports in.
     private static let nanosecondsPerSecond: Double = 1_000_000_000
 
     /// The run plane's ceiling, in the nanoseconds the clamp reports.

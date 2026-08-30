@@ -42,8 +42,26 @@ comments:
     - evidence: 2 files — Sources/FoundationModelsRouter/Hosting/ToolContext.swift (+75), Tests/FoundationModelsRouterTests/ToolContextMountTests.swift (new, 6 tests). `swift test`: 1122 tests in 121 suites and 83 tests in 10 suites, 0 failures, 2 pre-existing known issues (RealModelHarness, BoundedWait). `swift build --package-path IntegrationTests --build-tests`: Build complete. Public surface 619 to 620, one added symbol.
     - next: /review
   timestamp: 2026-08-30T13:40:09.665521+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m19eqv019ahh195bz6kr6k8y
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (799c308) — 0 findings, 0 confirmed, 0 refuted, 7 validators attempted, 0 failed. 2 files reviewed; 8 `.kanban/` files excluded by `.reviewignore`.
+    - next: none. Task moved to done.
+  timestamp: 2026-08-30T13:46:28.225946+00:00
+- actor: claude-code
+  id: 01m19erfwyy4zxxttnmhgg6vzn
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 2 files; Sources/FoundationModelsRouter/Hosting/ToolContext.swift and a new Tests/FoundationModelsRouterTests/ToolContextMountTests.swift with 6 tests
+    - test: green — `swift test`, 1122 tests in 121 suites + 83 tests in 10 suites, 0 failed, 0 skipped; `swift build --package-path IntegrationTests --build-tests` builds
+    - commit: 799c308 — feat(hosting): add a public mount entry point to ToolContext
+    - review: clean — 0 findings, 7 validators, task moved to done
+
+    The one-symbol limit is measured, not read. `swift-symbolgraph-extract -minimum-access-level public` gives 619 symbols before the change and 620 after it. The difference is one line: `ToolContext.mount(_:op:as:)`. `ToolMounting`, `SessionMailbox`, `OperationEventSink` and `Tracer` are in neither list. So ^hqxc1tp can demote `SessionMailbox` and `SessionOutbox` as written.
+  timestamp: 2026-08-30T13:46:49.630135+00:00
+position_column: done
+position_ordinal: ffffa380
 title: Add a public mount entry point to ToolContext
 ---
 ## What

@@ -4,7 +4,7 @@ import Foundation
 /// the `pending` discriminator, the run's `completionToken`, and a `next`
 /// field that tells the model what to do instead of answering.
 ///
-/// The `completionToken` is the run's key in the session's ``SessionMailbox``
+/// The `completionToken` is the run's key in the session's `SessionMailbox`
 /// and the `correlationID` on every event the run posts. The wrapped tool
 /// owns the `next` sentence through
 /// ``BackgroundTool/collectInstruction(forCompletionToken:)``;

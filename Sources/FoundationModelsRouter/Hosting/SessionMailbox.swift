@@ -8,11 +8,12 @@ import Foundation
 /// A background run is keyed by its completion token: a ULID string that is
 /// also the run's event `correlationID` (see ``makeCompletionToken()``).
 ///
-/// The public surface is the elicitation reply route a host drives:
-/// ``respond(elicitationId:_:)`` and ``complete(elicitationId:)``. The router
-/// makes each mailbox itself. The run-plane members are internal; a tool
-/// reaches them through ``ToolContext``.
-public actor SessionMailbox {
+/// The actor is internal, and so is every member. The router makes each mailbox
+/// itself. A host drives the elicitation reply route through
+/// ``RoutedSession/respond(elicitationId:response:)`` and
+/// ``RoutedSession/complete(elicitationId:)``, and a tool reaches the run plane
+/// through ``ToolContext``.
+actor SessionMailbox {
     // MARK: - Vocabulary
 
     /// What ``track(tool:op:kind:completionToken:settling:canceler:)`` resolved to.
@@ -22,27 +23,6 @@ public actor SessionMailbox {
 
         /// The token already names a running or settled run. The new run is not registered.
         case duplicateToken
-    }
-
-    /// What ``respond(elicitationId:_:)`` did with a delivered answer.
-    public enum ElicitationAnswerDelivery: Sendable, Equatable {
-        /// The answer resumed the awaiting run and closed the entry.
-        case delivered
-
-        /// A URL-mode accept was recorded. The run resumes when ``complete(elicitationId:)`` arrives.
-        case acceptedAwaitingCompletion
-
-        /// No pending elicitation matches the id. A safe no-op.
-        case noPendingElicitation
-    }
-
-    /// What ``complete(elicitationId:)`` did.
-    public enum ElicitationCompletionDelivery: Sendable, Equatable {
-        /// The completion resumed the accepted URL-mode entry and closed it.
-        case completed
-
-        /// No accepted pending elicitation matches the id. A safe no-op.
-        case noPendingElicitation
     }
 
     // MARK: - Constants
@@ -268,7 +248,7 @@ public actor SessionMailbox {
     ///
     /// - Returns: The ``ElicitationAnswerDelivery``.
     @discardableResult
-    public func respond(elicitationId: ULID, _ response: ElicitationResponse) -> ElicitationAnswerDelivery {
+    func respond(elicitationId: ULID, _ response: ElicitationResponse) -> ElicitationAnswerDelivery {
         guard let entry = pendingElicitations[elicitationId] else {
             return .noPendingElicitation
         }
@@ -291,7 +271,7 @@ public actor SessionMailbox {
     ///
     /// - Returns: The ``ElicitationCompletionDelivery``.
     @discardableResult
-    public func complete(elicitationId: ULID) -> ElicitationCompletionDelivery {
+    func complete(elicitationId: ULID) -> ElicitationCompletionDelivery {
         guard case .awaitingCompletion(let accepted, let continuation)? = pendingElicitations[elicitationId] else {
             return .noPendingElicitation
         }

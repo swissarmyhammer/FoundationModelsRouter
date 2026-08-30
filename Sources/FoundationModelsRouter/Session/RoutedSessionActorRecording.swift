@@ -94,7 +94,7 @@ extension RoutedSessionActor {
         return (diffIncludedResponse, usage)
     }
 
-    /// Re-posts `events` onto ``outbox`` through ``SessionOutbox/requeue(event:)``.
+    /// Re-posts `events` onto ``outbox`` through `SessionOutbox.requeue(event:)`.
     /// The events are not journaled a second time.
     ///
     /// - Parameter events: The events to re-queue, in outbox order.

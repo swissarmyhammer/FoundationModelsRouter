@@ -18,7 +18,7 @@ public typealias OperationEvent = FoundationModelsExtras.OperationEvent
 public typealias OperationOutcome = FoundationModelsExtras.OperationOutcome
 
 /// A destination `OperationEvent`s are posted to. The router implements this
-/// one time, in ``SessionOutbox``. Canonical definition:
+/// one time, in `SessionOutbox`. Canonical definition:
 /// `FoundationModelsExtras.OperationEventSink`.
 typealias OperationEventSink = FoundationModelsExtras.OperationEventSink
 

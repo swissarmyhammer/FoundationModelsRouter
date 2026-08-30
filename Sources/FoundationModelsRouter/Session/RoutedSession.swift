@@ -265,7 +265,7 @@ public protocol RoutedSession: Actor {
     ///   when the call comes from inside a tool call of this session's own turn.
     func fork(workingDirectory: URL?) async throws -> RoutedSession
 
-    /// Tears the session down: runs ``SessionMailbox/sweep()``, which cancels
+    /// Tears the session down: runs `SessionMailbox.sweep()`, which cancels
     /// every background run and rejects every pending elicitation, and journals
     /// the resulting terminal events before it returns. It also finishes every
     /// ``streamSessionEvents()`` subscription.
@@ -307,29 +307,29 @@ public protocol RoutedSession: Actor {
     /// - Returns: The stable id of this queued prompt, usable with
     ///   ``pendingPrompts()``, ``cancel(id:)``, and ``replace(id:prompt:)``.
     @discardableResult
-    func enqueue(prompt: Transcript.Prompt) async -> SessionOutbox.ItemID
+    func enqueue(prompt: Transcript.Prompt) async -> PromptID
 
     /// A snapshot of every prompt currently queued for a future turn, in FIFO
     /// dispatch order.
-    func pendingPrompts() async -> [(id: SessionOutbox.ItemID, prompt: Transcript.Prompt)]
+    func pendingPrompts() async -> [(id: PromptID, prompt: Transcript.Prompt)]
 
     /// Cancels a still-pending queued prompt. See ``cancelCurrentTurn()`` for a
     /// turn already in flight, and ``cancelPrompt(id:)`` for both in one call.
     ///
     /// - Parameter id: The id ``enqueue(prompt:)-(Transcript.Prompt)`` returned.
     @discardableResult
-    func cancel(id: SessionOutbox.ItemID) async -> SessionOutbox.PromptQueueMutationResult
+    func cancel(id: PromptID) async -> PromptQueueMutationResult
 
     /// Replaces a still-pending queued prompt's content in place. The prompt
     /// keeps its FIFO dispatch position.
     ///
     /// - Parameter id: The id ``enqueue(prompt:)-(Transcript.Prompt)`` returned.
     @discardableResult
-    func replace(id: SessionOutbox.ItemID, prompt: Transcript.Prompt) async -> SessionOutbox.PromptQueueMutationResult
+    func replace(id: PromptID, prompt: Transcript.Prompt) async -> PromptQueueMutationResult
 
     /// How much queued user-prompt work this session carries: the prompts
     /// still waiting and the one whose turn is running.
-    func promptQueueDepth() async -> SessionOutbox.QueueDepth
+    func promptQueueDepth() async -> PromptQueueDepth
 
     /// Delivers the user's answer to a pending elicitation raised by a run on
     /// this session.
@@ -341,13 +341,13 @@ public protocol RoutedSession: Actor {
     ///
     /// - Parameter elicitationId: The pending elicitation's id, the string form of ``ElicitationRequest/elicitationId``.
     @discardableResult
-    func respond(elicitationId: String, response: ElicitationResponse) async -> SessionMailbox.ElicitationAnswerDelivery
+    func respond(elicitationId: String, response: ElicitationResponse) async -> ElicitationAnswerDelivery
 
     /// Signals that an accepted URL-mode elicitation's out-of-band flow
     /// finished, and resumes the run. Unknown, malformed, not-yet-accepted, and
     /// already-completed ids are safe no-ops.
     @discardableResult
-    func complete(elicitationId: String) async -> SessionMailbox.ElicitationCompletionDelivery
+    func complete(elicitationId: String) async -> ElicitationCompletionDelivery
 }
 
 extension RoutedSession {
@@ -384,7 +384,7 @@ extension RoutedSession {
     /// Stages a plain-text queued user prompt for a future turn, as one `.text`
     /// segment.
     @discardableResult
-    public func enqueue(prompt: String) async -> SessionOutbox.ItemID {
+    public func enqueue(prompt: String) async -> PromptID {
         await enqueue(prompt: Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))]))
     }
 
@@ -398,7 +398,7 @@ extension RoutedSession {
     ///
     /// - Parameter id: The id ``enqueue(prompt:)-(Transcript.Prompt)`` returned.
     @discardableResult
-    public func cancelPrompt(id: SessionOutbox.ItemID) async -> PromptCancellationResult {
+    public func cancelPrompt(id: PromptID) async -> PromptCancellationResult {
         if await cancel(id: id) == .applied {
             return .withdrawn
         }

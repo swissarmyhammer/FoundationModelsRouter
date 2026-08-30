@@ -48,7 +48,7 @@ public struct TurnStart: Sendable, Equatable {
     /// (``RoutedSession/respond(to:maxTokens:)``,
     /// ``RoutedSession/streamResponse(to:maxTokens:)``,
     /// ``RoutedSession/streamEvents(to:maxTokens:)``).
-    let promptId: SessionOutbox.ItemID?
+    let promptId: PromptID?
 
     /// Creates a turn-start record.
     ///
@@ -56,7 +56,7 @@ public struct TurnStart: Sendable, Equatable {
     ///   - turnId: The turn that just began.
     ///   - promptId: The queued prompt this turn dispatched, or `nil` when the
     ///     turn's prompt came straight from its caller.
-    init(turnId: TurnID, promptId: SessionOutbox.ItemID?) {
+    init(turnId: TurnID, promptId: PromptID?) {
         self.turnId = turnId
         self.promptId = promptId
     }

@@ -7,7 +7,7 @@ import Testing
 /// Exercises task e6wb8ak: the ``RoutedSession``-level elicitation reply
 /// surface — ``RoutedSession/respond(elicitationId:response:)`` and
 /// ``RoutedSession/complete(elicitationId:)`` — routing an app host's answer
-/// through the session's own ``SessionMailbox`` to the suspended
+/// through the session's own `SessionMailbox` to the suspended
 /// ``ToolContext/elicit(_:)`` continuation.
 ///
 /// The route uses no task locals: session → that session's mailbox → the

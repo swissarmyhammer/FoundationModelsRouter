@@ -9,7 +9,7 @@ import Testing
 /// A journaled run with a non-terminal event (`.progress` or `.elicitation`)
 /// in the effective recorded stream and no `.completed` for the same
 /// `(tool, correlationID)` pair anywhere in that stream died with the
-/// crashed process — its memory-only ``SessionMailbox`` is gone, so no
+/// crashed process — its memory-only `SessionMailbox` is gone, so no
 /// teardown sweep ever journaled a terminal event for it.
 /// ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)`` closes that hole
 /// at restore time: it manufactures exactly one terminal `.completed` event
@@ -17,7 +17,7 @@ import Testing
 /// the restored node's own fresh outbox, so the next turn's drain journals
 /// it durably and the model learns the run died. (The orderly-shutdown case
 /// is ``RoutedSessionActor/close()``'s mailbox sweep — see
-/// ``SessionMailboxTests``; this suite covers only the crash edge.)
+/// `SessionMailboxTests`; this suite covers only the crash edge.)
 ///
 /// Also carries the no-setup regression: restoring a transcript that contains
 /// recorded ``OperationEventSegment``s must succeed with no caller setup at

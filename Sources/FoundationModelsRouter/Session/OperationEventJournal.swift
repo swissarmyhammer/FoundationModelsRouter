@@ -1,4 +1,4 @@
-/// A durable destination a session's ``SessionOutbox`` records every posted
+/// A durable destination a session's `SessionOutbox` records every posted
 /// ``OperationEvent`` into, at the moment it is posted.
 ///
 /// The outbox stages events for a *future* turn — that is what it is for — so
@@ -10,7 +10,7 @@
 /// still stages the event for the next prompt, and it also hands the event
 /// here, so the transcript records the run's own report when it happened.
 ///
-/// Class-bound because ``SessionOutbox`` holds its journal *weakly*: the only
+/// Class-bound because `SessionOutbox` holds its journal *weakly*: the only
 /// implementation is the ``RoutedSessionActor`` that owns the outbox for its
 /// whole life, so a strong reference back would be a cycle that keeps every
 /// session — and the fork-admission permit its `deinit` releases — alive
@@ -30,7 +30,7 @@ protocol OperationEventJournal: AnyObject, Sendable {
     func record(event: OperationEvent) async
 }
 
-/// A live destination a session's ``SessionOutbox`` forwards every posted
+/// A live destination a session's `SessionOutbox` forwards every posted
 /// ``ToolInvocationRecord`` to, at the moment it is posted.
 ///
 /// The delivery-only counterpart of ``OperationEventJournal``, and installed
@@ -40,7 +40,7 @@ protocol OperationEventJournal: AnyObject, Sendable {
 /// ``SessionEvent/toolInvocation(_:)`` — the record is never staged and never
 /// recorded, so the post-turn diff stays the one recording authority.
 ///
-/// Class-bound because ``SessionOutbox`` holds its observer *weakly*, for the
+/// Class-bound because `SessionOutbox` holds its observer *weakly*, for the
 /// same reference-cycle reason ``OperationEventJournal`` documents: the only
 /// implementation is the ``RoutedSessionActor`` that owns the outbox for its
 /// whole life.

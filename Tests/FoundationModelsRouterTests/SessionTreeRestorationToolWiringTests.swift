@@ -9,7 +9,7 @@ import Testing
 /// used to hardcode `tools: []` through ``LoadedLLMContainer/makeSession(transcript:)``,
 /// leaving a restored session tree with no live tool-calling at all.
 ///
-/// Mirrors ``SessionOutboxToolWiringTests``'s stub-based approach (no MLX, no
+/// Mirrors `SessionOutboxToolWiringTests`'s stub-based approach (no MLX, no
 /// network, no GPU): a container that records the exact tool list threaded to
 /// its `makeSession(transcript:tools:)` construction seam, so a test can
 /// assert both that the caller's `tools:` argument reaches the container/

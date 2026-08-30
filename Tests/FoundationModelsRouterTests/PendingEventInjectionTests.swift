@@ -4,7 +4,7 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises task 9drp1rz: draining a session's ``SessionOutbox`` at the
+/// Exercises task 9drp1rz: draining a session's `SessionOutbox` at the
 /// start of a turn, composing the drained events into the model-visible
 /// prompt as a plain-text preamble, and persisting the same events as typed
 /// ``OperationEventSegment``s on the recorded `.prompt` entry.

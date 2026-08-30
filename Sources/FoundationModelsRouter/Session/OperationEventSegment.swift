@@ -4,7 +4,7 @@ import FoundationModels
 /// A ``PersistableStructuredSegment`` durably recording one drained ``OperationEvent`` on the `.prompt` entry it rode into a turn.
 ///
 /// ``RoutedSessionActor``'s turn chokepoint drains
-/// ``SessionOutbox/drainForDispatch()`` at the start of every turn and
+/// `SessionOutbox.drainForDispatch()` at the start of every turn and
 /// renders each drained event as a plain-text preamble line the model reads
 /// (see ``renderedLine(for:)``) — but the model never sees anything beyond
 /// that flattened text, since the live `LanguageModelSession` only ever

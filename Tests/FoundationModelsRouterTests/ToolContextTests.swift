@@ -9,12 +9,12 @@ import Testing
 /// rule (work that inherits no task-locals sees `nil`), nil-safe no-op posting, the phase-1
 /// tool/op stamping rule for a plain wrapped `Tool`, correlation stamping on
 /// `post(_:)`/`progress(_:)`, and the `elicit(_:)` round trip through a real
-/// ``SessionMailbox`` — accept with content, decline, cancel, and two
+/// `SessionMailbox` — accept with content, decline, cancel, and two
 /// concurrent elicitations on one run resolving independently.
 ///
 /// The run-plane capabilities a tool host reads (task ^k0mecjp) are exercised
 /// here too: `backgroundRuns()`, `wait(completionToken:seconds:)` and
-/// `cancel(completionToken:)`, each driven against a real ``SessionMailbox``
+/// `cancel(completionToken:)`, each driven against a real `SessionMailbox`
 /// holding a fake background run — no live model anywhere.
 @Suite("ToolContext: ambient task-local capability surface")
 struct ToolContextTests {

@@ -60,8 +60,8 @@ extension RoutedSessionActor {
         // folded into *this* turn's prompt, here inside the turn lock so a
         // drain never interleaves with a concurrent turn. This caller supplies
         // its own prompt directly, so only events are drained — never the
-        // queued-prompt FIFO (see ``SessionOutbox/drainPendingEvents()``, as
-        // opposed to ``SessionOutbox/drainForDispatch()``, which only
+        // queued-prompt FIFO (see `SessionOutbox.drainPendingEvents()`, as
+        // opposed to `SessionOutbox.drainForDispatch()`, which only
         // ``dispatchNextPrompt()`` uses): a prompt waiting in the queue is left
         // exactly where it is rather than silently dequeued and discarded by
         // an unrelated ad hoc turn. An empty outbox drains to an empty
@@ -127,7 +127,7 @@ extension RoutedSessionActor {
         grammar: Grammar?,
         turnId: TurnID,
         entryPoint: RouterTracing.TurnEntryPoint,
-        promptId: SessionOutbox.ItemID?,
+        promptId: PromptID?,
         pendingEvents: [OperationEvent],
         ownPrompt: String,
         onEvent: ((SessionEvent) -> Void)? = nil,
@@ -181,7 +181,7 @@ extension RoutedSessionActor {
     private func runTurnWork(
         grammar: Grammar?,
         turnId: TurnID,
-        promptId: SessionOutbox.ItemID?,
+        promptId: PromptID?,
         pendingEvents: [OperationEvent],
         ownPrompt: String,
         onEvent: ((SessionEvent) -> Void)? = nil,
@@ -435,7 +435,7 @@ extension RoutedSessionActor {
         }
         // The host-side ambient binding (task ^k4nygqa): every backend respond()/stream
         // call runs under a ``ToolContext`` carrying this session's
-        // identity, its mailbox, and its own ``SessionOutbox`` as the
+        // identity, its mailbox, and its own `SessionOutbox` as the
         // upstream sink — so a tool Apple's runtime invokes from inside the
         // model call sees the same ambient capabilities the mounting
         // engine binds per call. Whether the runtime actually propagates
@@ -551,7 +551,7 @@ extension RoutedSessionActor {
     /// See ``RoutedSession/dispatchNextPrompt()`` for the full contract.
     ///
     /// Dequeues the front prompt and any pending events in one atomic
-    /// ``SessionOutbox/drainForDispatch()`` call, inside the same two gates
+    /// `SessionOutbox.drainForDispatch()` call, inside the same two gates
     /// ``generate(grammar:entryPoint:prompt:onEvent:_:)`` uses. Honors ``grammar``. The
     /// prompt's id is reported in ``SessionEvent/turnStarted(_:)``.
     ///
@@ -610,7 +610,7 @@ extension RoutedSessionActor {
     /// - Returns: The response text the turn produced.
     /// - Throws: Whatever the turn throws.
     private func runDispatchedTurn(
-        turnId: TurnID, promptId: SessionOutbox.ItemID?, pendingEvents: [OperationEvent], ownPrompt: String
+        turnId: TurnID, promptId: PromptID?, pendingEvents: [OperationEvent], ownPrompt: String
     ) async throws -> String {
         let outcome: Result<String, any Error>
         do {

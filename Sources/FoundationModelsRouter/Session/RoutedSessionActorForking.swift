@@ -267,16 +267,16 @@ extension RoutedSessionActor {
 
     /// See ``RoutedSession/close()``.
     ///
-    /// Runs ``mailbox``'s ``SessionMailbox/sweep()``, then journals each
+    /// Runs ``mailbox``'s `SessionMailbox.sweep()`, then journals each
     /// terminal event it produced through
-    /// ``SessionOutbox/journalWithoutStaging(event:)`` — reaching the same
+    /// `SessionOutbox.journalWithoutStaging(event:)` — reaching the same
     /// ``record(event:)``, and so the same ``makeRunEventPartial(for:)``, a
     /// run's own reports take when they are journaled live. The journal is
     /// complete before this method returns: exactly one terminal event per
     /// background run, no orphans, no holes.
     ///
     /// **Why through the outbox rather than straight to the recorder.**
-    /// Every other journal write is ordered by ``SessionOutbox``'s one FIFO
+    /// Every other journal write is ordered by `SessionOutbox`'s one FIFO
     /// chain, and position in the transcript is the record. Appending a swept
     /// terminal directly would put it outside that order, so it could land
     /// ahead of an earlier posted event still draining on the chain — the
@@ -291,7 +291,7 @@ extension RoutedSessionActor {
     /// that does not make one writer per run: `sweep()` suspends across each
     /// run's canceler, so a run can settle naturally in that window and
     /// journal its own terminal live before the sweep hands the same retained
-    /// event back; and cancelling a ``SessionMailbox/RunKind/swiftTask`` run
+    /// event back; and cancelling a ``RunKind/swiftTask`` run
     /// is cooperative, so a run swept here can still finish afterwards and
     /// post its own terminal with a *different* outcome. Both are refused by
     /// ``claimJournalWrite(for:)``, which lets the first write of a run's

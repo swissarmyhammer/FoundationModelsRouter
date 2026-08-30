@@ -394,7 +394,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // stream died with the crashed process — its memory-only mailbox
             // is gone, so no teardown sweep ever journaled a terminal event
             // for it (the orderly-shutdown case is
-            // ``RoutedSessionActor/close()``'s ``SessionMailbox/sweep()``).
+            // ``RoutedSessionActor/close()``'s `SessionMailbox.sweep()`).
             // Manufacture exactly one terminal `.completed` with outcome
             // ``OperationOutcome/lost`` per orphaned run and post it to this
             // node's fresh outbox: the next turn's drain journals it durably,
@@ -519,7 +519,7 @@ extension TranscriptTree {
     /// event for its `(tool, correlationID)` pair but no `.completed` event
     /// for that pair. One event is made per orphaned run, in order of first
     /// appearance. Its `detail` is the elicitation message, or the newest
-    /// event's `detail`, cut to ``SessionMailbox/terminalDetailTailLimit``.
+    /// event's `detail`, cut to ``ToolContext/terminalDetailTailLimit``.
     ///
     /// - Parameter events: A session's effective recorded events, in order.
     /// - Returns: The manufactured terminal events, or empty.

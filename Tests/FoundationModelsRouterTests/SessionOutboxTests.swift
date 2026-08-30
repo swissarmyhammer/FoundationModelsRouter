@@ -3,10 +3,10 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises task 8cwwvaj: the ``SessionOutbox`` actor's storage, kinds, ids,
+/// Exercises task 8cwwvaj: the `SessionOutbox` actor's storage, kinds, ids,
 /// coalescing policy, and drain primitive — in isolation from any
 /// ``RoutedSession``/``LanguageModelSession`` wiring (that wiring is exercised
-/// separately in ``SessionOutboxToolWiringTests``).
+/// separately in `SessionOutboxToolWiringTests`).
 @Suite("SessionOutbox: storage, coalescing, drain, wakeup")
 struct SessionOutboxTests {
     /// Builds a canned ``OperationEvent`` for a given tool/correlation/kind, so
@@ -272,12 +272,12 @@ struct SessionOutboxTests {
 
     // MARK: - nextEvent(): driver wakeup
 
-    /// One ``SessionOutbox/nextEvent()`` wait, started so a test observes
+    /// One `SessionOutbox.nextEvent()` wait, started so a test observes
     /// whether it woke instead of awaiting it.
     ///
     /// The indirection is the point: `nextEvent()` suspends on a
     /// `CheckedContinuation<Void, Never>` that only a later
-    /// ``SessionOutbox/post(event:)`` or ``SessionOutbox/enqueue(prompt:)`` resumes,
+    /// `SessionOutbox.post(event:)` or `SessionOutbox.enqueue(prompt:)` resumes,
     /// and nothing can break such a wait — cancelling it does not resume it. This
     /// target sets no `.timeLimit` trait, so a regression anywhere on the wakeup
     /// route would hang the whole `swift test` run rather than fail the test that
@@ -295,7 +295,7 @@ struct SessionOutboxTests {
         /// The suspended wait.
         private let task: Task<Void, Never>
 
-        /// Starts one ``SessionOutbox/nextEvent()`` wait on `outbox`.
+        /// Starts one `SessionOutbox.nextEvent()` wait on `outbox`.
         ///
         /// - Parameters:
         ///   - outbox: The outbox to wait on.

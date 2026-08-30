@@ -7,7 +7,7 @@ import Testing
 /// kind, what an unknown raw value does, and the cancellation authority a kind
 /// carries through a background run's own canceler.
 ///
-/// Everything runs against a bare ``SessionMailbox`` and the fake background runs
+/// Everything runs against a bare `SessionMailbox` and the fake background runs
 /// of `BackgroundRunFixtures`, so the suite needs no network and no GPU.
 @Suite("Run plane: the run kinds and the cancellation authority each one carries")
 struct RunPlaneTests {

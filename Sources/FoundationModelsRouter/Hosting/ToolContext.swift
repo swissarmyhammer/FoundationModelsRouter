@@ -160,8 +160,8 @@ public struct ToolContext: Sendable {
     /// The run suspends in the session's mailbox, keyed by the request's
     /// `elicitationId`, and the request rides upstream as an elicitation event.
     /// The suspension resumes only through
-    /// ``SessionMailbox/respond(elicitationId:_:)``,
-    /// ``SessionMailbox/complete(elicitationId:)``, or ``SessionMailbox/sweep()``.
+    /// `SessionMailbox.respond(elicitationId:_:)`,
+    /// `SessionMailbox.complete(elicitationId:)`, or `SessionMailbox.sweep()`.
     /// Task cancellation does not resume it. The current implementation never throws.
     ///
     /// - Returns: The user's answer.

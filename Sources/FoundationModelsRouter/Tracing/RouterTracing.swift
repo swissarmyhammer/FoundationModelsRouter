@@ -231,7 +231,7 @@ enum RouterTracing {
         /// The call was handed to the background by ``BackgroundToolRunner``,
         /// so the span covers only the accept-and-launch step the model saw. It
         /// ends when the pending envelope is returned; the run itself settles
-        /// later, in the session's ``SessionMailbox``.
+        /// later, in the session's `SessionMailbox`.
         case background
     }
 

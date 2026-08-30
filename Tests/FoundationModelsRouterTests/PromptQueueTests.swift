@@ -5,11 +5,11 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises task ndv3sc1: the ``RoutedSession`` prompt-queue surface over
-/// ``SessionOutbox``'s turn-starting prompt queue —
+/// `SessionOutbox`'s turn-starting prompt queue —
 /// ``RoutedSession/enqueue(prompt:)``/``RoutedSession/pendingPrompts()``/
 /// ``RoutedSession/cancel(id:)``/``RoutedSession/replace(id:prompt:)`` plus
 /// ``RoutedSession/dispatchNextPrompt()`` driver dispatch, race-safe against
-/// ``SessionOutbox/drainForDispatch()``'s commit boundary.
+/// `SessionOutbox.drainForDispatch()`'s commit boundary.
 ///
 /// Everything runs against stubs — no MLX, no network, no GPU.
 @Suite("Prompt queue: enqueue, inspect, edit, cancel, driver dispatch")

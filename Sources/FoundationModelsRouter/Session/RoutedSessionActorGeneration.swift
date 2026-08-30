@@ -23,7 +23,7 @@ extension RoutedSessionActor {
 
     /// Generates a complete text response to a prompt, recording the call.
     /// After its own turn, drains the run plane: awaits every background run
-    /// in ``SessionMailbox`` and runs a further turn with the settled results,
+    /// in `SessionMailbox` and runs a further turn with the settled results,
     /// up to ``backgroundRunDrainRoundLimit`` rounds. The drain ends early
     /// when a run outlasts ``ToolContext/deadlineSecondsCeiling`` or when a
     /// cancellation reaches this call; it then answers with the last turn's
