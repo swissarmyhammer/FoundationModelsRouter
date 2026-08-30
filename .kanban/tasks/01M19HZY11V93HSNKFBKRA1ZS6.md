@@ -79,6 +79,21 @@ comments:
     - public API: `ToolContext.makeCompletionToken()` returns `String`, so the signature holds no internal type. The documentation comment tells a caller inside a tool call to prefer `ToolContext.current?.completionToken`, and gives the reason: that value names the run the session already tracks.
     - next: none. Task moved to done.
   timestamp: 2026-08-30T15:07:22.244690+00:00
+- actor: claude-code
+  id: 01m19kdp7jhngq7kytew1ada8q
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 3 files; the public mint, a new Tests/FoundationModelsRouterTests/ToolContextTokenPublicSurfaceTests.swift, and Tests/FoundationModelsRouterTests/ToolContextTests.swift
+    - test: green — `swift test`, 1127 tests in 123 suites + 83 tests in 10 suites, 0 failed, 0 skipped; `swift build --package-path IntegrationTests --build-tests` builds
+    - commit: cba612f — feat(hosting): publish ToolContext.makeCompletionToken()
+    - review: clean — 0 findings, 7 validators, task moved to done
+
+    Pushed. `origin/main` moved from `b26ee0f` to `c5542a1`.
+
+    The public surface goes from 621 to 622 symbols. One added mangled name, none removed.
+
+    A warning about the measurement, from the implementer. The four extractor flags that ^cdrxcyc recorded are not sufficient in this tree. There is no `Modules` directory under the bin path; the module is in the bin directory itself. With only `-I <bin>/Modules`, the extract still gives a result, but it reads a stale module and reports 620 with `TranscriptEvent.merged(under:)` absent. Add `-I <bin>` also. A count of 620 is a bad extract, not a lost symbol.
+  timestamp: 2026-08-30T15:08:18.546344+00:00
 position_column: done
 position_ordinal: ffffa780
 title: Publish a way to mint a completion token

@@ -179,6 +179,39 @@ struct BackgroundRunTranscriptTests {
         #expect(promptEvents[1].entry?.segments?.count == 2)
     }
 
+    // MARK: - The public read an outside package makes
+
+    @Test("the public read finds one run's terminal on both writes of it, and reading only .toolOutput entries would find one")
+    @MainActor
+    func publicReadFindsTheTerminalOnBothWritesOfIt() async throws {
+        let recorder = InMemoryRecorder()
+        let (session, dir) = try await Self.makeSession(recorder: recorder)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        _ = try await session.respond(to: "start the long job")
+
+        let terminal = Self.event(kind: .completed, detail: "exit 0, 2481 lines")
+        await session.outbox.post(event: terminal)
+
+        // The next turn drains the event and rides it onto its own `.prompt`
+        // entry, so the recording now holds the same terminal twice.
+        _ = try await session.respond(to: "what happened?")
+
+        // The downstream consumer's own expression, over the public surface:
+        // every entry's operation events, filtered down to one run's endings.
+        let events = await recorder.events
+        let terminals = events
+            .flatMap(\.operationEvents)
+            .filter { $0.correlationID == terminal.correlationID && $0.kind == .completed }
+
+        #expect(terminals == [terminal, terminal])
+        // Which entries carried them is why the consumer reads every entry: the
+        // journal's own `.toolOutput` write is one of the two, and a reader that
+        // took only that kind would miss the other.
+        #expect(
+            events.filter { !$0.operationEvents.isEmpty }.map(\.kind) == [.toolOutput, .prompt])
+    }
+
     // MARK: - The pre-first-turn boundary
 
     @Test("an event posted before the session's first turn is journaled by the turn it rides, not at post time")

@@ -23,6 +23,9 @@ import FoundationModels
 /// schema name `FoundationModelsRouter.OperationEventSegment`, and it
 /// round-trips through ``TranscriptEntryMapper/entry(from:kind:)`` with zero
 /// caller setup, exactly as ``CompactionSegment`` does.
+///
+/// The type is internal. ``TranscriptEvent/operationEvents`` is the public entry
+/// point a package outside this one reads these segments back through.
 struct OperationEventSegment: PersistableStructuredSegment, Equatable, CustomStringConvertible, Sendable {
     /// A unique identifier for this segment — a fresh UUID for an event newly drained from the outbox, or the persisted id when rebuilding from disk.
     let id: String
@@ -79,5 +82,39 @@ struct OperationEventSegment: PersistableStructuredSegment, Equatable, CustomStr
             (state, body) = ("eliciting", event.elicitation?.message ?? event.detail)
         }
         return "[\(event.tool)] \(event.op) (\(event.correlationID)) \(state): \(body)"
+    }
+}
+
+extension TranscriptEvent {
+    /// Every ``OperationEvent`` this event's entry carries, in segment order.
+    ///
+    /// Read this off EVERY recorded event, and not off the `.toolOutput` ones
+    /// alone, because this package writes one event's segment two ways. The run
+    /// journal appends its own `.toolOutput` entry at the moment the event is
+    /// posted, and the turn chokepoint appends the same segment again onto the
+    /// turn's recorded `.prompt` entry, once per event that turn drained. A
+    /// reader that took a single entry kind would see one of the two writes.
+    ///
+    /// A run's identity travels inside the segment and never in the entry that
+    /// carries it: a `.toolOutput` entry's id is a fresh ULID by design, so an
+    /// event's `correlationID` is the only place the identity of the run
+    /// survives. Group and filter on that.
+    ///
+    /// The read is total. A segment of another case, a persisted segment under
+    /// another schema name, and a segment whose body does not decode are each
+    /// passed over, so one unreadable segment never costs the caller the rest of
+    /// the entry.
+    ///
+    /// The entry point sits on ``TranscriptEvent`` — the type a caller holds
+    /// already — because the segment these events are decoded from, the internal
+    /// `OperationEventSegment`, is no part of this package's public surface.
+    public var operationEvents: [OperationEvent] {
+        (entry?.segments ?? []).compactMap { segment in
+            guard let structure = segment.persistedStructure,
+                structure.schemaName == OperationEventSegment.schemaName
+            else { return nil }
+            return try? JSONDecoder().decode(
+                OperationEvent.self, from: Data(structure.contentJSON.utf8))
+        }
     }
 }

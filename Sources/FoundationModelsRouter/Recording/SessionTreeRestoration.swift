@@ -521,12 +521,17 @@ extension TranscriptTree {
     /// appearance. Its `detail` is the elicitation message, or the newest
     /// event's `detail`, cut to ``ToolContext/terminalDetailTailLimit``.
     ///
+    /// The journaled events are read through ``TranscriptEvent/operationEvents``,
+    /// which passes over a stripped or undecodable segment. Transcript
+    /// reconstruction runs first on the restore path and throws for a corrupt
+    /// segment, so that tolerant read hides no corruption here.
+    ///
     /// - Parameter events: A session's effective recorded events, in order.
     /// - Returns: The manufactured terminal events, or empty.
     static func lostRunTerminalEvents(in events: [TranscriptEvent]) -> [OperationEvent] {
         var scan = OrphanRunScan()
         for event in events {
-            for operationEvent in operationEvents(in: event) {
+            for operationEvent in event.operationEvents {
                 scan.observe(operationEvent)
             }
         }
@@ -543,19 +548,6 @@ extension TranscriptTree {
                 detail: String(detail.suffix(ToolContext.terminalDetailTailLimit)),
                 outcome: .lost
             )
-        }
-    }
-
-    /// Decodes every journaled ``OperationEvent`` that `event` carries as an
-    /// ``OperationEventSegment``. A stripped or undecodable segment yields
-    /// nothing. Transcript reconstruction runs first and throws for a corrupt
-    /// segment, so this `try?` hides no corruption on the restore path.
-    private static func operationEvents(in event: TranscriptEvent) -> [OperationEvent] {
-        (event.entry?.segments ?? []).compactMap { segment in
-            guard let structure = segment.persistedStructure,
-                structure.schemaName == OperationEventSegment.schemaName
-            else { return nil }
-            return try? JSONDecoder().decode(OperationEvent.self, from: Data(structure.contentJSON.utf8))
         }
     }
 }
