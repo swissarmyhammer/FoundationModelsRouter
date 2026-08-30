@@ -43,11 +43,29 @@ comments:
     - DocC links repaired for the two selectors that gained a `tracer:` parameter, in RoutedLLM.swift, RoutedSessionActorForking.swift and ScriptedMarkerTools.swift. No stale spelling of either selector is left in the tree.
     - next: /review
   timestamp: 2026-08-30T12:43:59.980090+00:00
+- actor: claude-code
+  id: 01m19cakqpq5a72n4z6pkjhbnv
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 0f3fc7b) — 0 findings, 0 confirmed, 0 refuted, 7 validators attempted, 0 failed. 12 files reviewed; 5 `.kanban/` files excluded by `.reviewignore`.
+    - next: task moved to done. No open findings.
+  timestamp: 2026-08-30T13:04:17.654730+00:00
+- actor: claude-code
+  id: 01m19cb40kw3kszw82cmzfcf75
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 12 files; new Sources/FoundationModelsRouter/Tracing/ToolCallSpan.swift and Tests/FoundationModelsRouterTests/ToolTracingTests.swift; the tracer threaded from the model handle to each mount
+    - test: green — `swift test`, 1116 tests in 120 suites + 83 tests in 10 suites, 0 failed, 0 skipped; `swift build --package-path IntegrationTests --build-tests`, 2292 steps, 0 warnings, 0 errors
+    - commit: 0f3fc7b — feat(tracing): open one child span per tool call
+    - review: clean — 0 findings, 7 validators, task moved to done
+
+    Note for later cards: the plain command in this card's Tests list, `swift build --package-path IntegrationTests`, builds nothing. That package declares only test targets, so `swift build` there is a no-op and reports a false green. The command that compiles the targets is `swift build --package-path IntegrationTests --build-tests`.
+  timestamp: 2026-08-30T13:04:34.323554+00:00
 depends_on:
 - 01M12MMJY0BHS8ABZGQKBNBP4A
 - 01M1332A3W2HWNRZ24R8SDFY7A
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffa280
 title: Open one child span for each tool call
 ---
 ## What

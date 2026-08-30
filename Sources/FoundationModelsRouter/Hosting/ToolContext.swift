@@ -207,4 +207,79 @@ public struct ToolContext: Sendable {
     public func cancel(completionToken: String) async -> CancelOutcome {
         await mailbox.cancel(completionToken: completionToken)
     }
+
+    // MARK: - Mounting capability
+
+    /// Mounts `tool` on this run's session plane and hands back the mounted
+    /// tool, ready to call.
+    ///
+    /// This is the entry point a binder that dispatches its own inner tool
+    /// calls — a scripting seam, a multitool façade — mounts each call through.
+    /// The mounted tool carries the same machinery a session-registered tool
+    /// carries: a per-call ``ToolContext`` of its own, a run tracked in this
+    /// session's mailbox, a per-call tracing span, and, for a background mount,
+    /// a completion-token handle returned at once.
+    ///
+    /// A `String`-output tool becomes a background or a run-to-completion
+    /// runner, per the mount it declares through ``BackgroundTool/mount`` or,
+    /// when it declares none, per `configuration`. Any other output becomes a
+    /// binding-only decorator, which returns the tool's own output unchanged.
+    /// Every one of them keeps `T`'s `Arguments` and `Output`, so the result
+    /// needs no cast.
+    ///
+    /// The mounted run's events route through ``post(_:)``, which re-stamps
+    /// each one with this run's ``tool``, ``op``, and ``completionToken``. So
+    /// the inner run reaches the session's outbox under the correlation of the
+    /// operation the session actually issued, while the inner run's own
+    /// completion token stays on the run plane, where
+    /// ``backgroundRuns()`` and the inner tool's own ``ToolContext/current``
+    /// read it.
+    ///
+    /// The span each call opens resolves late, through
+    /// `InstrumentationSystem.tracer` at call time, so an application that
+    /// bootstraps a tracing backend after it mounts still traces.
+    ///
+    /// - Parameters:
+    ///   - tool: The tool to mount.
+    ///   - op: The `"verb noun"` op the mounted run journals as its `op`, or
+    ///     `nil` to stamp the tool's own name.
+    ///   - configuration: The mount to use when `tool` declares none of its
+    ///     own. Defaults to ``ToolMount/synchronous``.
+    /// - Returns: The mounted tool, at `tool`'s own `Arguments` and `Output`.
+    public func mount<T: Tool>(
+        _ tool: T,
+        op: String? = nil,
+        as configuration: ToolMount = .synchronous
+    ) -> any Tool<T.Arguments, T.Output> {
+        let mounted = ToolMounting.makeWrapped(
+            tool: tool,
+            inheriting: self,
+            sink: MountedRunUpstreamSink(context: self),
+            op: op,
+            configuration: configuration,
+            tracer: nil
+        )
+        // Unreachable: every decorator preserves `Arguments`/`Output`, and
+        // `ToolMounting.makeWrapped`'s own unreachable fallback returns the
+        // tool itself, which matches too. `tool` is a graceful degradation
+        // rather than a trap — the call still happens, only unmounted.
+        return mounted as? any Tool<T.Arguments, T.Output> ?? tool
+    }
+}
+
+/// The upstream end of a mounted run's event route: the sink
+/// ``ToolContext/mount(_:op:as:)`` hands the mount layer, forwarding every
+/// event the run produces through the ``ToolContext`` that mounted it.
+///
+/// ``ToolContext/post(_:)`` is the only egress a context publishes, and it
+/// re-stamps what it forwards with its own identity. So a mounted run's events
+/// reach the session's outbox on the mounting run's correlation, while the
+/// mounted run's own completion token stays on the run plane.
+private struct MountedRunUpstreamSink: OperationEventSink {
+    /// The mounting context every event is forwarded through.
+    let context: ToolContext
+
+    func post(event: OperationEvent) async {
+        await context.post(event)
+    }
 }
