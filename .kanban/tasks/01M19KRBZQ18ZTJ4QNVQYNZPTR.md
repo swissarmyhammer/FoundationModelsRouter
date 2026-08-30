@@ -62,6 +62,166 @@ comments:
     - `swift build --package-path IntegrationTests --build-tests`: Build complete. The one warning is SwiftPM's pre-existing `missing creator for mutated node` on the mlx-swift bundle, which no change here touches.
     - next: /review
   timestamp: 2026-08-30T22:15:57.173827+00:00
+- actor: claude-code
+  id: 01m1ac20cw3mxqev8hntzd8cvr
+  text: |-
+    ### commit — changed
+    - evidence: b000a32 feat(transcript): publish the operation events an entry's segments carry
+    - next: push, then review
+  timestamp: 2026-08-30T22:18:50.140595+00:00
+- actor: claude-code
+  id: 01m1ad8g3jzq8st5ppy0x4ypa1
+  text: |-
+    ### review — findings
+    - evidence: 4 findings — scripts/symbolmap.py:32, scripts/symbolmap.py:59, scripts/symbolmap.py:74, scripts/symbolmap.py:145
+    - scope: review sha HEAD~1..HEAD (b000a32)
+    - next: correct the four findings in scripts/symbolmap.py, then review again
+  timestamp: 2026-08-30T22:39:51.410873+00:00
+- actor: claude-code
+  id: 01m1ad94b6q6xwb3nk8yhbezwf
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 4 files; a new public `TranscriptEvent.operationEvents`, and a private helper moved out of SessionTreeRestoration.swift to become it
+    - test: green — `swift test`, 1130 tests in 124 suites + 83 tests in 10 suites, 0 failed, 0 skipped; `swift build --package-path IntegrationTests --build-tests` builds
+    - commit: b000a32 — feat(transcript): publish the operation events an entry's segments carry
+    - review: findings — scripts/symbolmap.py:32, :59, :74, :145
+
+    The API work drew no finding. The public property, the moved helper and both test
+    files are clean. All four findings are in `scripts/symbolmap.py`, which this commit
+    swept in from earlier work rather than wrote for this card.
+  timestamp: 2026-08-30T22:40:12.134594+00:00
+- actor: claude-code
+  id: 01m1adpj625aacsrv9tk3gt0qf
+  text: |-
+    All four findings corrected in `scripts/symbolmap.py`. The script stays what its own
+    header says it is: reference material, not a gate. Nothing was deleted to make a
+    finding go away.
+
+    The cause behind the two dead-code findings, and the whole cause.
+
+    `SOURCES` was set at the module level and set again from the fourth positional
+    argument, and nothing ever read it. `router_types()` held the subpath as the literal
+    `"Sources/FoundationModelsRouter"` instead. So the documented `[SOURCES_SUBPATH]`
+    argument was parsed and thrown away: the script accepted it and did not answer to it.
+
+    The correct fix is to honour the argument, not to drop it. Dropping it would change
+    the command line, and the header forbids that: the argument order is matched to the
+    copy in FoundationModelsRanker and the two tracked copies must not diverge. I read
+    that copy. Its `provider_types()` already passes `SOURCES` to `git ls-tree` at
+    `scripts/symbolmap.py` line 74 of that repository. So the Router copy was the one
+    that had drifted, and wiring `SOURCES` in moves the two copies back together rather
+    than apart. The command line is untouched.
+
+    `Sources` and `Sources/FoundationModelsRouter` name the same 110 tracked files in
+    this repository — `Sources/` holds one directory — so the default keeps the old
+    answer byte for byte. Measured, with the report's first line:
+
+        HEAD Sources                                  -> router type declarations at HEAD: 235
+        HEAD Sources/FoundationModelsRouter           -> router type declarations at HEAD: 235
+        HEAD Sources/FoundationModelsRouter/Session   -> router type declarations at HEAD: 49
+        HEAD Tests                                    -> router type declarations at HEAD: 304
+
+    The last two lines are the proof that the argument is live and not merely named.
+
+    The cause behind the two missing-docstring findings, and the whole cause.
+
+    `run` and `main` were the only two functions in the file with no docstring; the
+    module, `read_arguments`, `router_types`, `consumer_hits` and `self_declared` each
+    had one. Both now carry one, so no function in the file is left undocumented. The
+    `run` docstring states why the call passes `check=False`: a `git grep` that matches
+    nothing exits 1 with empty output, and an empty answer is the answer. The `main`
+    docstring states why the process ends at status 0 whatever the report holds, which
+    is the header's "NOT A GATE" sentence said where a reader of the function will meet
+    it.
+
+    I also gave the module docstring one sentence for `REV` and one for
+    `SOURCES_SUBPATH`. The header printed `[SOURCES_SUBPATH]` in the usage line and said
+    nothing about it, which is how the argument came to be parsed and ignored. This is
+    the usage text, so it is what `--help` prints; the text grew, the streams and the
+    statuses did not move.
+
+    Findings measured with the tools the validators name, on the HEAD copy first and on
+    the corrected file second. ruff 0.14.5, vulture 2.14.
+
+        BEFORE, ruff --isolated --no-cache --select D100,D101,D102,D103,D104,D106,D107
+            D103 at :74:5  def run(args, cwd)
+            D103 at :145:5 def main()
+            Found 2 errors.
+        BEFORE, vulture --min-confidence 60
+            :32: unused variable 'SOURCES' (60% confidence)
+            :59: unused variable 'SOURCES' (60% confidence)
+
+        AFTER, ruff:    All checks passed!
+        AFTER, vulture: no output, exit 0
+
+    The before run reproduces all four findings at the four cited rows, so the check is
+    known to be able to see them, and the after run is the same check on the same tools.
+  timestamp: 2026-08-30T22:47:32.290543+00:00
+- actor: claude-code
+  id: 01m1adq51txf2hew7w1s8htrm4
+  text: |-
+    The behaviour checks, re-run after the edit and measured, never asserted from
+    reading. Each case reports the exit status, the byte count on stdout AND the byte
+    count on stderr, because a status alone cannot show a stream mix-up. The harness runs
+    from `/`, so the one-argument form has to find the provider by itself. Consumer:
+    FoundationModelsMultitool.
+
+    | case | exit | stdout | stderr | first line |
+    |---|---|---|---|---|
+    | no args | 2 | 0 bytes | 1115 bytes | stderr: `Map every FoundationModelsRouter symbol that a consumer package names.` |
+    | `--help` | 0 | 1115 bytes | 0 bytes | stdout: the same line |
+    | `-h` | 0 | 1115 bytes | 0 bytes | stdout: the same line |
+    | bad PROVIDER_REPO | 2 | 0 bytes | 1173 bytes | stderr: `PROVIDER_REPO is not a git repository: /no/such/provider` |
+    | bad CONSUMER_REPO | 2 | 0 bytes | 1173 bytes | stderr: `CONSUMER_REPO is not a git repository: /no/such/consumer` |
+    | one-argument form | 0 | 17987 bytes | 0 bytes | the report |
+    | four-argument form | 0 | 17987 bytes | 0 bytes | the report |
+
+    The usage text on stdout under `--help` and the usage text on stderr under no args
+    are the same bytes, compared with `cmp`: one text, two streams, chosen by whether the
+    caller asked for it.
+
+    The one-argument and four-argument reports are byte-identical, compared with `cmp`:
+    17987 bytes, 179 lines, sha256
+    `4434843a8312c9319581d807a9f435e231994132d89dd9af3e2f426964cdc99e` on both.
+
+    The one-argument form defaults the provider to the repository holding the script.
+    Run from `/`, with only the consumer named, it reports 235 declarations and names
+    `Sources/FoundationModelsRouter` paths on 6 rows, and its bytes equal those of the
+    four-argument form that names the provider path outright.
+
+    The report did not move. The same sha256 `4434843a...` was measured on the
+    pre-change file before any edit, so the correction changed no reported symbol, no
+    row and no ordering.
+
+    The only measurement that moved is the usage text: 946 bytes before, 1115 bytes
+    after. That is the three added lines documenting `REV` and `SOURCES_SUBPATH`. The
+    stream of each case, and the status of each case, are unchanged.
+
+    Build and test.
+
+    - `swift build`: Build complete. The one warning is SwiftPM's pre-existing
+      `missing creator for mutated node` on the mlx-swift bundle.
+    - `swift test`: exit 0. 1130 tests in 124 suites passed, plus 83 tests in 10 suites
+      in the evals target. Zero `✘` marks. The 2 known issues are the pre-existing
+      `RealModelHarness.swift:72` and `BoundedWait.swift:114` ones, the same two the
+      earlier implement step recorded. Run four times to be sure: one earlier run printed
+      SwiftPM's `Note: Some test targets reported failures` beside an exit status of 0,
+      and it did not reappear in any of the four full-log runs, each of which holds zero
+      `✘`.
+    - `swift build --package-path IntegrationTests --build-tests`: exit 0, Build
+      complete, 0 `error:` lines, and the same pre-existing mlx-swift bundle warning.
+
+    No Swift file was touched by this step, so no callgraph or blast radius moved.
+  timestamp: 2026-08-30T22:47:51.610447+00:00
+- actor: claude-code
+  id: 01m1adqffmhtqr4hmj1nyszewr
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — /Users/wballard/github/swissarmyhammer/FoundationModelsRouter/scripts/symbolmap.py. All 4 review findings of 2026-08-30 17:19 corrected and checked. `:32`/`:59` dead `SOURCES` — the parsed `[SOURCES_SUBPATH]` argument now reaches the `git ls-tree` of `router_types()`, which held a literal path; `:74`/`:145` D103 — `run` and `main` each carry a docstring, and they were the only two functions in the file without one. Measured: vulture 2.14 at confidence 60 and ruff 0.14.5 `--isolated --no-cache --select D100,D101,D102,D103,D104,D106,D107` each report the four findings on the HEAD copy and report nothing on the corrected file.
+    - behaviour, re-run and measured on stream and bytes: no args -> exit 2, stdout 0 bytes, stderr 1115 bytes; `--help` -> exit 0, stdout 1115 bytes, stderr 0 bytes; bad provider -> exit 2, stderr 1173 bytes, first line `PROVIDER_REPO is not a git repository: /no/such/provider`; bad consumer -> exit 2, stderr 1173 bytes, first line `CONSUMER_REPO is not a git repository: /no/such/consumer`; one-argument form run from `/` finds the provider itself; one-argument and four-argument reports byte-identical, 17987 bytes, sha256 `4434843a8312c9319581d807a9f435e231994132d89dd9af3e2f426964cdc99e`, the same sha256 the pre-change file gave.
+    - `swift build`: complete. `swift test`: exit 0, 1130 tests in 124 suites + 83 tests in 10 suites, 0 failures, the 2 pre-existing known issues. `swift build --package-path IntegrationTests --build-tests`: complete, 0 errors.
+    - next: /review
+  timestamp: 2026-08-30T22:48:02.292349+00:00
 position_column: doing
 position_ordinal: '80'
 title: Publish the operation events an entry's segments carry
@@ -161,3 +321,15 @@ on ^kra1zs6.
 
 ## Workflow
 - [x] Use `/tdd` — write failing tests first, then implement to make them pass. #router #api #recording
+
+## Review Findings (2026-08-30 17:19)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 5 file(s) reviewed, 10 not reviewed.
+
+> 10 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 10 file(s)
+
+- [x] `scripts/symbolmap.py:32` `code-hygiene/dead-code-python` — unused variable 'SOURCES'.
+- [x] `scripts/symbolmap.py:59` `code-hygiene/dead-code-python` — unused variable 'SOURCES'.
+- [x] `scripts/symbolmap.py:74` `code-hygiene/missing-docs-python` — D103 Missing docstring in public function.
+- [x] `scripts/symbolmap.py:145` `code-hygiene/missing-docs-python` — D103 Missing docstring in public function.

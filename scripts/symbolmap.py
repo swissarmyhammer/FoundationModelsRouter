@@ -6,6 +6,10 @@ access level, then searches the consumer tree for each name.
     symbolmap.py [PROVIDER_REPO] CONSUMER_REPO [REV] [SOURCES_SUBPATH]
     symbolmap.py CONSUMER_REPO
 
+REV is the provider revision to read, and it defaults to HEAD. SOURCES_SUBPATH
+is the provider subdirectory the declarations are read from, and it defaults to
+Sources.
+
 This argument order matches the copy in FoundationModelsRanker, so the two
 tracked copies take the same command line. Do not let them diverge.
 
@@ -72,6 +76,12 @@ DECL = re.compile(
 
 
 def run(args, cwd):
+    """The standard output of `args` run in `cwd`, as text.
+
+    A command that fails gives "", because a git grep that matches nothing
+    exits 1 with an empty standard output. An empty answer is the answer here,
+    so the call never raises.
+    """
     return subprocess.run(
         args, cwd=cwd, capture_output=True, text=True, check=False
     ).stdout
@@ -80,7 +90,7 @@ def run(args, cwd):
 def router_types():
     """Every type the router declares at REV, as name -> (access, kind, file)."""
     files = run(
-        ["git", "ls-tree", "-r", "--name-only", REV, "--", "Sources/FoundationModelsRouter"],
+        ["git", "ls-tree", "-r", "--name-only", REV, "--", SOURCES],
         ROUTER,
     ).split()
     found = {}
@@ -143,6 +153,12 @@ def self_declared(name):
 
 
 def main():
+    """Prints the three-section report on stdout: breaks, ambiguous, safe.
+
+    Returns None, so the process ends with status 0 whatever the report holds.
+    The script is reference material and not a gate, thus a break waiting is a
+    line to read and never a failing status.
+    """
     types = router_types()
     hits = consumer_hits(sorted(types))
     rows = []
