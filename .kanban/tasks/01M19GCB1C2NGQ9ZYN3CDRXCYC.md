@@ -51,8 +51,33 @@ comments:
     - `swift build --package-path IntegrationTests --build-tests`: Build complete. The one warning is SwiftPM's pre-existing `missing creator for mutated node` on the mlx-swift bundle, which no change here touches.
     - next: /review
   timestamp: 2026-08-30T14:41:55.756170+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m19j9z1mhw82wws0c8d18qem
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 1680422) — 0 findings, 0 confirmed, 0 refuted, 7 validators attempted, 0 failed. 3 source files reviewed; 10 `.kanban/` files excluded by `.reviewignore`.
+    - next: task moved to done.
+  timestamp: 2026-08-30T14:48:47.924283+00:00
+- actor: claude-code
+  id: 01m19jajjtjj51km3dkdphh15g
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 3 files; Sources/FoundationModelsRouter/Recording/MergedTranscript.swift, a new Tests/FoundationModelsRouterTests/MergedTranscriptPublicSurfaceTests.swift, Tests/FoundationModelsRouterTests/MergedAndRedactionTests.swift
+    - test: green — `swift test`, 1124 tests in 122 suites + 83 tests in 10 suites, 0 failed, 0 skipped; `swift build --package-path IntegrationTests --build-tests` builds
+    - commit: 1680422 — feat(recording): publish TranscriptEvent.merged(under:) as a read API
+    - review: clean — 0 findings, 7 validators, task moved to done
+
+    The public surface goes from 620 to 621 symbols, measured with
+    `swift-symbolgraph-extract -minimum-access-level public`. The diff holds one added
+    mangled name and none removed. The 620 baseline agrees with the count that ^zgzyhsj
+    recorded, so both cards used the same counter.
+
+    The new test imports the module with no `@testable`, so the compiler itself proves an
+    outside caller can make the call. It writes each session file in the reverse of the
+    merged order, so a plain concatenation cannot pass it.
+  timestamp: 2026-08-30T14:49:07.930622+00:00
+position_column: done
+position_ordinal: ffffa680
 title: Publish a read API for a merged transcript
 ---
 ## What

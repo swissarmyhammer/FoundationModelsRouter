@@ -134,6 +134,23 @@ struct ToolContextTests {
         )
     }
 
+    // MARK: - Token minting
+
+    @Test("the published mint gives a token of the shape the mailbox's own mint gives")
+    func publishedMintMatchesTheMailboxTokenShape() {
+        let published = ToolContext.makeCompletionToken()
+        let mailboxMinted = SessionMailbox.makeCompletionToken()
+
+        // The shape is the canonical ULID string, and it is load-bearing: the
+        // run plane keys a tracked run by this token and stamps it as the
+        // event `correlationID`, so a token of any other shape could never
+        // name a run either side of that boundary recognizes.
+        #expect(ULID(published) != nil)
+        #expect(ULID(mailboxMinted) != nil)
+        #expect(published.count == ULID.stringLength)
+        #expect(mailboxMinted.count == published.count)
+    }
+
     // MARK: - Binding visibility
 
     @Test("a body inside withValue sees the bound context; outside it sees nil")

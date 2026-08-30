@@ -37,6 +37,9 @@ actor SessionMailbox {
     // MARK: - Token minting
 
     /// Mints a fresh completion token: a ULID string that is also the run's event `correlationID`.
+    ///
+    /// ``ToolContext/makeCompletionToken()`` is the public entry point a package
+    /// outside this one mints the same token through.
     static func makeCompletionToken() -> String {
         ULID.generate().description
     }
@@ -406,5 +409,40 @@ actor SessionMailbox {
             outcome: event.outcome,
             elicitation: event.elicitation
         )
+    }
+}
+
+extension ToolContext {
+    /// Mints a fresh completion token. This is the supported way to do it.
+    ///
+    /// A completion token names one run: the run plane keys a background run by
+    /// it, and every event that run posts carries it as its `correlationID`. So
+    /// the token is the identity that ties a run's progress, its outcome, and
+    /// its journal entries to each other.
+    ///
+    /// **Inside a tool call, prefer ``ToolContext/current`` and its
+    /// ``ToolContext/completionToken``.**
+    /// That value names the run the session already tracks, so the events a tool
+    /// stamps with it reach that run. A token minted here names no tracked run,
+    /// and stamping one over an ambient run would split that run's own record in
+    /// two.
+    ///
+    /// This entry point serves the caller that has no ambient context — a tool
+    /// driven on a bare `LanguageModelSession` rather than mounted on a session
+    /// of this package — and still needs one identity to stamp its own work
+    /// with. Such a caller reads both halves of the decision from this type:
+    ///
+    /// ```swift
+    /// let commandID = ToolContext.current?.completionToken ?? ToolContext.makeCompletionToken()
+    /// ```
+    ///
+    /// The entry point sits on ``ToolContext`` — the type that caller already
+    /// holds — because the mint itself, the internal `SessionMailbox`, is not
+    /// part of this package's public surface.
+    ///
+    /// - Returns: A fresh token: a canonical 26-character ULID string, the same
+    ///   shape every token the run plane tracks a run under carries.
+    public static func makeCompletionToken() -> String {
+        SessionMailbox.makeCompletionToken()
     }
 }
