@@ -63,8 +63,24 @@ comments:
     - evidence: `swift test` at root — 1127 tests in 123 suites passed (2 known issues: RealModelHarness, BoundedWait — pre-existing tripwires) + 83 tests in 10 suites passed = 1210 passed, 0 failed, 0 skipped. 1 warning, pre-existing (vendored mlx-swift Cmlx.bundle resource, not new). `swift build --package-path IntegrationTests --build-tests` — Build complete, same 1 pre-existing mlx-swift warning, 0 errors.
     - next: ready for review.
   timestamp: 2026-08-30T15:03:36.147231+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m19k7258q3wt34jbm5k6p1rt
+  text: |-
+    ### commit — changed
+    - evidence: cba612f feat(hosting): publish ToolContext.makeCompletionToken()
+    - next: ready for review.
+  timestamp: 2026-08-30T15:04:41.384333+00:00
+- actor: claude-code
+  id: 01m19kbz846pwdr78wdpxww8pj
+  text: |
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (cba612f) — 0 findings, 0 confirmed, 0 refuted, 7 attempted, 0 failed. 3 files reviewed; 4 `.kanban/` files excluded by `.reviewignore`.
+    - scope: the diffs of cba612f only — the added and modified lines.
+    - public API: `ToolContext.makeCompletionToken()` returns `String`, so the signature holds no internal type. The documentation comment tells a caller inside a tool call to prefer `ToolContext.current?.completionToken`, and gives the reason: that value names the run the session already tracks.
+    - next: none. Task moved to done.
+  timestamp: 2026-08-30T15:07:22.244690+00:00
+position_column: done
+position_ordinal: ffffa780
 title: Publish a way to mint a completion token
 ---
 ## What
