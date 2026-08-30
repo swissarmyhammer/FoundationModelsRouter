@@ -250,8 +250,155 @@ comments:
     thread has already shown that the reader of the other copy is the one who finds the
     defects.
   timestamp: 2026-08-30T21:35:47.816775+00:00
-position_column: todo
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01m1agezk41rmw44ybk6q2wxe5
+  text: |-
+    ### The differ is built here, and it catches all five
+
+    The ownership question the third comment left open never got an answer from the
+    ranker's user, and the card says "If their user declines, build it here. Do not
+    wait indefinitely." Built here.
+
+    `scripts/symboldiff.py`, with `scripts/test_symboldiff.py` beside it and
+    `Tests/FoundationModelsRouterTests/SymbolDiffScriptTests.swift` running those from
+    the one unit target CI already runs. The guidance is `scripts/README.md`.
+
+    ### The corpus, run rather than reasoned about
+
+    Two pairs answer all five, and each exits 1:
+
+    ```
+    symboldiff.py FoundationModelsRouter . 6f0b2a8~1 6f0b2a8   exit 1, removed 10
+    symboldiff.py FoundationModelsRouter . 267994d~1 267994d   exit 1, removed 20
+    ```
+
+    | break | pair | reported as |
+    |---|---|---|
+    | `ToolMounting` | 1 | `ToolMounting (swift.enum)` REMOVED |
+    | `OperationEventSink` | 1 | `OperationEventSink (swift.protocol)` REMOVED, with its two requirements |
+    | `SessionMailbox.makeCompletionToken()` | 1 | `SessionMailbox.makeCompletionToken() (swift.type.method)` REMOVED |
+    | `MergedTranscript` | 2 | the enum AND `MergedTranscript.merged(under:)` REMOVED |
+    | `OperationEventSegment` | 2 | the struct AND all seven of its members REMOVED |
+
+    The acceptance criterion the card asked to prove is proved at the same ref: at
+    `6f0b2a8` the one-revision form still lists `SessionMailbox (swift.class) actor
+    SessionMailbox` on the public surface, while `makeCompletionToken()` is gone from
+    it. The actor is public and the member is not, and the report says so.
+
+    ### Two corrections to the card's own table, both measured
+
+    `git grep` at each ref, rather than the table:
+
+    - `SessionMailbox.makeCompletionToken()` was demoted at **6f0b2a8**, not 267994d.
+      At `6f0b2a8~1` the line reads `public static func makeCompletionToken()`; at
+      `6f0b2a8` it reads `static func`.
+    - `OperationEventSegment` was demoted at **267994d**, not "before 267994d".
+      `git log -S 'public struct OperationEventSegment'` names 267994d.
+
+    The four revisions are consecutive: `4561f2a` -> `6f0b2a8` -> `1af7145` ->
+    `267994d`.
+
+    ### All three states seen on real data
+
+    `267994d..HEAD` reports removed 240, changed 13, added 59, exit 1. The 13 changed
+    rows are commit `377c1ee` "make default protocol implementations public": the slot
+    went from one declaration to two. That is what the multiset of declarations for
+    each `(path, kind)` slot buys — a protocol requirement and its extension default
+    share a path and a kind, so a set would have collapsed them and reported nothing.
+
+    ### What the card's ORIGINAL description asked for, and was not built
+
+    The description's acceptance criteria name a consumer tree and a two-way split of
+    consumer-named symbols. The comments overrule that in two places — "It must run
+    against two revisions of ONE package, with no consumer checked out" and "Build it
+    to take paths, not to name a consumer" — so the differ takes MODULE, PACKAGE_REPO
+    and one or two revisions, and names no consumer. The consumer question stays with
+    `symbolmap.py`, which still prints its three-section report and is now documented
+    as reference material rather than a gate. This is a deliberate, comment-directed
+    deviation, recorded here rather than left silent.
+  timestamp: 2026-08-30T23:35:49.604716+00:00
+- actor: claude-code
+  id: 01m1agfq4q6798adfjjtrb66d7
+  text: |-
+    ### Measured, not assumed: the details a later reader needs
+
+    **Every argument path was RUN, and both streams counted.** The card's own thread
+    records three defects that came from checking an exit code alone, so each path was
+    measured on stdout AND stderr:
+
+    ```
+    symboldiff.py  no args   stdout 0,    stderr 4600, exit 2
+                   --help    stdout 4600, stderr 0,    exit 0
+                   -h        stdout 4600, stderr 0,    exit 0
+                   2 args    stdout 0,    stderr 4600, exit 2
+                   5 args    stdout 0,    stderr 4600, exit 2
+                   bad repo  stdout 0,    stderr 4645, exit 2, first line
+                             "PACKAGE_REPO is not a git repository: /nope"
+
+    symbolmap.py   no args   stdout 0,    stderr 1180, exit 2   (re-measured after
+                   --help    stdout 1180, stderr 0,    exit 0    its header changed)
+                   bad path  stdout 0,    stderr 1226, exit 2
+    ```
+
+    **The extraction, and what it costs.** `swift build --package-path <worktree>
+    --scratch-path <dir> --target <module> -Xswiftc -emit-symbol-graph -Xswiftc
+    -emit-symbol-graph-dir -Xswiftc <out>`, run over a detached `git worktree` of the
+    commit. Measured on this package: 56 s for a revision it has not seen, under 0.2 s
+    for one it has. The 1.9 s the earlier comment records was another, much smaller
+    package; do not expect it here.
+
+    **The MORE-THAN-ONE-FILE trap has a second half.** The card records
+    `M.symbols.json` beside `M@ULID.symbols.json`. Measured here, a plain prefix match
+    is worse than reading one file: this build writes
+    `FoundationModelsRouterTestSupport.symbols.json` and
+    `FoundationModelsRouterTestSupport@Swift.symbols.json` into the same directory, and
+    a glob of `FoundationModelsRouter*` swallows three neighbouring modules. The read is
+    `<M>.symbols.json` plus `<M>@*.symbols.json`, and a unit test holds it.
+
+    **`pathComponents` carries the argument labels.** The second comment says an
+    initializer that lost an argument shows as "a changed `declarationFragments` entry,
+    on a symbol path that does not move". Measured against a real graph, that is only
+    half right: `init(name:text:)` is the path, so dropping a LABEL moves it and reports
+    as a removal beside an addition. A changed parameter TYPE keeps the path and reports
+    as a changed fragment. Both shapes have a test, and the docstring states the split.
+
+    **Cache size.** The build emits a graph for every module it compiled, MLX included:
+    60 MB for one revision. Only the module asked about is kept, so the cache is about
+    1.5 MB for each revision. Pruning the five already-extracted revisions took
+    `.build/symboldiff` from 300 MB to 8.9 MB, and both corpus reports came back
+    byte-identical afterwards.
+
+    **A revision builds against TODAY's dependencies.** `Package.resolved` is not
+    tracked, so an old revision resolves the branch tips as they stand now. All four
+    corpus revisions build today; one that has drifted may not. This is in the "what
+    this does not cover" list.
+
+    ### Verification
+
+    ```
+    python3 -m unittest discover -s scripts -p 'test_*.py'   21 tests, 0.04 s, OK
+    ruff check --isolated --no-cache --select D1,PLR0915 scripts/   All checks passed
+    ruff check --isolated --no-cache --select E,F,W scripts/        All checks passed
+    vulture scripts/ --min-confidence 60                            no output
+    swift build                                                     Build complete
+    swift test   1132 tests in 125 suites passed, plus 83 in 10 suites,
+                 2 known issues, both pre-existing (BoundedWaitTests,
+                 RealModelHarnessTests). The one build warning, "missing creator
+                 for mutated node ... mlx-swift_Cmlx.bundle", is the mlx-swift
+                 dependency's and predates this change by 160 runs of shell history.
+    ```
+
+    Not committed, not pushed.
+  timestamp: 2026-08-30T23:36:13.719069+00:00
+- actor: claude-code
+  id: 01m1agfzsbbgq418cf6wqt9vg9
+  text: |-
+    ### implement — changed
+    - evidence: 6 files. New: `scripts/symboldiff.py`, `scripts/test_symboldiff.py`, `scripts/README.md`, `Tests/FoundationModelsRouterTests/SymbolDiffScriptTests.swift`. Changed: `README.md` (a "Public API" section pointing at the guidance), `scripts/symbolmap.py` (its header now names `symboldiff.py` as the gate; the command line is untouched, so the ranker's copy stays in step). Corpus: all five breaks report as REMOVED at exit 1 — `ToolMounting`, `OperationEventSink` and `SessionMailbox.makeCompletionToken()` over `6f0b2a8~1..6f0b2a8`; `MergedTranscript` and `OperationEventSegment` over `267994d~1..267994d`. `swift test` 1132 + 83 tests passed; `python3 -m unittest` 21 tests OK; ruff and vulture clean.
+    - next: `/review`. One item for the reviewer to weigh: the differ names no consumer, which the card's comments direct and the card's original description does not.
+  timestamp: 2026-08-30T23:36:22.571022+00:00
+position_column: doing
+position_ordinal: '80'
 title: Check consumers before a symbol goes internal
 ---
 ## What
@@ -264,9 +411,14 @@ after the fact, not by this package before the change:
 |---|---|---|
 | `ToolMounting` | 6f0b2a8 | the consumer's CI |
 | `OperationEventSink` | 6f0b2a8 | the consumer's CI |
-| `SessionMailbox.makeCompletionToken()` | 267994d | a probe here, before the push |
+| `SessionMailbox.makeCompletionToken()` | 6f0b2a8 | a probe here, before the push |
 | `MergedTranscript` | 267994d | the consumer |
-| `OperationEventSegment` | before 267994d | the consumer |
+| `OperationEventSegment` | 267994d | the consumer |
+
+Two rows of that table were corrected on 2026-08-30 by reading each ref with
+`git grep`, rather than from memory: `makeCompletionToken()` went at 6f0b2a8 and
+not 267994d, and `OperationEventSegment` went at 267994d and not "before
+267994d". The four revisions are consecutive.
 
 Four are repaired: ^zgzyhsj, ^cdrxcyc, ^kra1zs6, and ^qynzptr covers the fifth.
 
@@ -275,52 +427,49 @@ Nothing measures it, thus each demotion is a guess.
 
 ## What to do
 
-`scripts/symbolmap.py` is in this repository already. The consumer session wrote it
-and gave it to us. It reads every type-level declaration of the router at a given
-ref, then searches a consumer tree for each name. `ROUTER`, `CONSUMER` and `REV` at
-the top are the only values to set.
+Build a symbol-graph differ, `scripts/symboldiff.py`, and make it the step a
+demotion card runs before it changes an access level. The comments on this card
+carry the specification; they overrule the paragraphs the card was opened with.
 
-Make it a step that a demotion card runs before it changes an access level.
-
-## Two limits, which the card must keep in view
-
-1. **It matches type names only.** A member of a public type that goes internal is
-   invisible to it. That is exactly the shape of the
-   `SessionMailbox.makeCompletionToken()` break: the actor was public, so the script
-   would have reported the type as safe while the member was already broken.
-2. **It excludes `private` and `fileprivate` declarations.** That is correct, because
-   no consumer can reach them, but it says nothing about members either way.
-
-So the script as it stands would have caught 4 of the 5 breaks above, and missed the
-one that hid the longest.
-
-## The better version
-
-Read both sides with `swift-symbolgraph-extract -minimum-access-level public`, which
-is the tool the recent cards already use to count the public surface. That reads
-members, not only type names, so it closes limit 1. A regular expression cannot do
-this; it needs real Swift parsing or the symbol graph.
-
-Give the extractor `-I <bin>` as well as `-I <bin>/Modules`, because the module is in
-the bin directory itself. A count that is one lower than the baseline is a stale
-extract, not a lost symbol.
+`scripts/symbolmap.py` stays as reference material and is NOT the gate. It matches
+type names only, so four of the five breaks above are invisible to it.
 
 ## Acceptance Criteria
-- [ ] A documented command reports every symbol of this package that a named consumer
-      package uses, with the access level of each.
-- [ ] The report covers members, not only type names. Prove it: the command reports
-      `SessionMailbox.makeCompletionToken()` when it is read at a ref where the actor
-      is public and the member is internal.
-- [ ] The command names the consumer tree as an argument. Do not fix the path in the
-      file.
-- [ ] The output separates a symbol the consumer names and this package publishes
-      from a symbol the consumer names and this package does not.
-- [ ] Write in the documentation what the check does not cover.
+- [x] A documented command reports every symbol of this package that a named consumer
+      package uses, with the access level of each. — `symbolmap.py`, documented in
+      `scripts/README.md`. The differ names no consumer, which the comments direct.
+- [x] The report covers members, not only type names. Proved: read at `6f0b2a8`,
+      `symboldiff.py` reports `SessionMailbox.makeCompletionToken()` as REMOVED
+      while the one-revision form still lists `actor SessionMailbox` as public.
+- [x] The command names the consumer tree as an argument. Do not fix the path in the
+      file. — `symbolmap.py` takes `CONSUMER_REPO` as a required argument with no
+      default; `symboldiff.py` takes MODULE, PACKAGE_REPO and one or two revisions,
+      and hardcodes none of them.
+- [x] The output separates a symbol the consumer names and this package publishes
+      from a symbol the consumer names and this package does not. — `symbolmap.py`'s
+      three sections: BREAKS WAITING, AMBIGUOUS, SAFE.
+- [x] Write in the documentation what the check does not cover. — the "WHAT THIS
+      DOES NOT COVER" block of `symboldiff.py --help`, and `scripts/README.md`.
+
+## Beyond the original criteria, from the comments
+- [x] Extraction is the SwiftPM route, not a hand-built `-I` list.
+- [x] The surface is the SUM of `<M>.symbols.json` and every `<M>@*.symbols.json`,
+      and a neighbouring module whose name shares the prefix is never read.
+- [x] It diffs two revisions of ONE package with no consumer checked out.
+- [x] Three exit states, told apart: 1 removed, 3 changed fragment, 0 added and
+      reported. Beside them: 2 a bad call, 4 could not measure.
+- [x] The documentation LEADS with "what IS public", and states the reason — a
+      requirement inside a `public protocol` carries no `public` keyword.
 
 ## Tests
-- [ ] Run the command against a ref before a known demotion. It reports the symbol.
-- [ ] Run it against the ref after. It reports the break.
-- [ ] Add the command to the guidance a demotion card follows.
+- [x] Run the command against a ref before a known demotion. It reports the symbol.
+- [x] Run it against the ref after. It reports the break. All five breaks report
+      as REMOVED, at exit 1, over the two pairs `6f0b2a8~1..6f0b2a8` and
+      `267994d~1..267994d`.
+- [x] Add the command to the guidance a demotion card follows. — `scripts/README.md`,
+      linked from `README.md`, and named in the header of `symbolmap.py`.
+- [x] `scripts/test_symboldiff.py` holds the pure logic hermetically, and
+      `SymbolDiffScriptTests.swift` runs it from the unit target CI runs.
 
 ## Note
 

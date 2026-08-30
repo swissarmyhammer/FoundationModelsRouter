@@ -15,8 +15,9 @@ tracked copies take the same command line. Do not let them diverge.
 
 REFERENCE MATERIAL, NOT A GATE. This matches TYPE NAMES ONLY, so a member of a
 public type that goes internal is invisible to it. Four of the five real breaks
-this package has caused were members, thus this script reads clean on them. See
-task ^1y4g20q: the check to trust reads the symbol graph, which carries members.
+this package has caused were members, thus this script reads clean on them. The
+gate is `symboldiff.py` beside this file: it reads the symbol graph, which
+carries members, and it was measured against all five (task ^1y4g20q).
 
 CONSUMER_REPO has no default on purpose. A guessed consumer gives a clean report
 about a package nobody asked about, and that is not different from a true

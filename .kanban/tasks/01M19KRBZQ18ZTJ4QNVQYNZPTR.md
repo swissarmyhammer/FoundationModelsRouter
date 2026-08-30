@@ -222,8 +222,50 @@ comments:
     - `swift build`: complete. `swift test`: exit 0, 1130 tests in 124 suites + 83 tests in 10 suites, 0 failures, the 2 pre-existing known issues. `swift build --package-path IntegrationTests --build-tests`: complete, 0 errors.
     - next: /review
   timestamp: 2026-08-30T22:48:02.292349+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m1aew8mhb6k4gnpktb86zbpr
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` — zero findings (0 confirmed, 0 refuted, 8 attempted). All 4 prior findings from 2026-08-30 17:19 are checked.
+    - next: task moved to done.
+  timestamp: 2026-08-30T23:08:07.697659+00:00
+- actor: claude-code
+  id: 01m1aex1ne8x5gj5axs6wa2jcq
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 1 file, scripts/symbolmap.py; all four findings corrected
+    - test: green — `swift test` twice, 1130 tests in 124 suites + 83 tests in 10 suites each time, 0 failed, 0 skipped; `swift build --package-path IntegrationTests --build-tests` builds
+    - commit: f45a4b0 — fix(scripts): honour SOURCES_SUBPATH in symbolmap.py and add docstrings
+    - review: clean — 0 findings, 8 validator passes, all 4 prior findings checked, task moved to done
+
+    The dead-variable findings were not cosmetic. `SOURCES` held the fourth positional
+    argument that the header documents, `[SOURCES_SUBPATH]`, and nothing read it: the
+    search path in `router_types()` was a literal. So the argument was accepted and
+    silently ignored. It now reaches the `git ls-tree` call, and the subpath changes the
+    result: `Sources` gives 235 type declarations, `Sources/FoundationModelsRouter/Session`
+    gives 49, `Tests` gives 304. The sibling copy in FoundationModelsRanker already
+    honoured the argument, so this moves the two copies together rather than apart.
+
+    Measured with the validators' own tools, on the file before the change first, so the
+    check is known to see the defect: ruff 0.14.5 reports 2 errors before and
+    "All checks passed!" after; vulture 2.14 at confidence 60 reports the unused variable
+    twice before and nothing after.
+
+    The report output is unchanged: byte-identical, 17987 bytes, sha256
+    4434843a8312c9319581d807a9f435e231994132d89dd9af3e2f426964cdc99e, the same as the
+    file gave before the change. So no reported symbol, row or ordering moved. Stream
+    behaviour also unchanged, each case run rather than reasoned about: no arguments exits
+    2 with usage on stderr and nothing on stdout; `--help` and `-h` exit 0 with usage on
+    stdout and nothing on stderr; a bad path names the failing argument on stderr and
+    exits 2; the one-argument and four-argument forms give byte-identical reports.
+
+    One earlier `swift test` run printed SwiftPM's "Note: Some test targets reported
+    failures" beside exit 0. It did not reappear in six later full runs across two
+    sessions. Recorded here rather than dismissed, so a future reader who sees it knows
+    it has been seen before and never reproduced.
+  timestamp: 2026-08-30T23:08:33.326012+00:00
+position_column: done
+position_ordinal: ffffa980
 title: Publish the operation events an entry's segments carry
 ---
 ## What
