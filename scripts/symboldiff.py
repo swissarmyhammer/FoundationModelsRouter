@@ -86,9 +86,15 @@ kept — about 1.5 MB for each revision rather than about 60 MB.
 MODULE, PACKAGE_REPO and each revision are required and have no default. A
 guessed module gives a clean report about a module nobody asked about, and that
 reads the same as a true all-clear.
+
+MODULE is a Swift module name: a letter or an underscore, then letters, digits
+and underscores. The name is joined into the cache path, into a glob pattern and
+onto the build command line, so anything outside that shape — a separator, a
+`..`, a glob character — is refused rather than followed.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -106,6 +112,11 @@ EXIT_BROKEN = 4
 # and one revision, or the same three plus a second revision.
 ARGUMENTS_FOR_ONE_REVISION = 3
 ARGUMENTS_FOR_TWO_REVISIONS = 4
+
+# A Swift module name, which is an identifier and nothing else. The name is
+# joined into a path, into a glob pattern and onto a command line, so a
+# separator, a `..` and a glob character all stand outside what is accepted.
+MODULE_NAME = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 # Where the cached symbol graph of each commit stands, under the package.
 CACHE_SUBPATH = os.path.join(".build", "symboldiff")
@@ -141,6 +152,35 @@ class BuildFailed(SymbolDiffError):
     """The SwiftPM build that emits the symbol graph did not succeed."""
 
 
+class NotAModuleName(SymbolDiffError):
+    """The name given is no Swift module name, so no path is built from it."""
+
+
+def check_module_name(module):
+    """Raises `NotAModuleName` unless `module` is a Swift module name.
+
+    Every site that joins the name into a path, into a glob pattern or onto
+    the build command line calls this first. A name holding a separator or a
+    `..` reaches a file the extraction never wrote, and one holding a glob
+    character widens the pattern past the module asked about — so the check
+    stands at each of those sites and not at the front door alone.
+    """
+    if not MODULE_NAME.match(module):
+        raise NotAModuleName(f"MODULE is not a Swift module name: {module}")
+
+
+def reject_call(problem=""):
+    """Writes `problem`, then the usage, on stderr, and exits 2.
+
+    A bad call measured nothing, so both go to stderr: a caller that pipes the
+    report must not receive the usage text mixed into the report.
+    """
+    if problem:
+        print(f"{problem}\n", file=sys.stderr)
+    print(__doc__, end="", file=sys.stderr)
+    raise SystemExit(EXIT_USAGE)
+
+
 def read_arguments(argv):
     """Reads `argv` into a `Request`. Exits 2 on a bad call, 0 on `--help`.
 
@@ -149,21 +189,23 @@ def read_arguments(argv):
     usage text on the stream it reads the report from.
     """
     arguments = argv[1:]
-    if not arguments or arguments[0] in ("-h", "--help"):
-        asked = bool(arguments)
-        print(__doc__, end="", file=sys.stdout if asked else sys.stderr)
-        raise SystemExit(EXIT_CLEAN if asked else EXIT_USAGE)
+    if not arguments:
+        reject_call()
+    if arguments[0] in ("-h", "--help"):
+        print(__doc__, end="")
+        raise SystemExit(EXIT_CLEAN)
 
     if not ARGUMENTS_FOR_ONE_REVISION <= len(arguments) <= ARGUMENTS_FOR_TWO_REVISIONS:
-        print(__doc__, end="", file=sys.stderr)
-        raise SystemExit(EXIT_USAGE)
+        reject_call()
 
     module, repo, before = arguments[0], arguments[1], arguments[2]
     after = arguments[3] if len(arguments) == ARGUMENTS_FOR_TWO_REVISIONS else None
+    try:
+        check_module_name(module)
+    except NotAModuleName as failure:
+        reject_call(str(failure))
     if not Path(repo, ".git").exists():
-        print(f"PACKAGE_REPO is not a git repository: {repo}\n", file=sys.stderr)
-        print(__doc__, end="", file=sys.stderr)
-        raise SystemExit(EXIT_USAGE)
+        reject_call(f"PACKAGE_REPO is not a git repository: {repo}")
     return Request(module=module, repo=repo, before=before, after=after)
 
 
@@ -173,7 +215,12 @@ def graph_paths(directory, module):
     That is `<module>.symbols.json` and one `<module>@<extended>.symbols.json`
     for each module `module` extends. A file whose module name merely starts
     with `module` belongs to a different module and is left out.
+
+    The name is checked before either the path or the glob pattern is built.
+    `keep_only` and `read_surface` reach both through this function, so the
+    one check here covers all three.
     """
+    check_module_name(module)
     own = os.path.join(directory, module + ".symbols.json")
     found = glob(os.path.join(directory, module + "@*.symbols.json"))
     if os.path.exists(own):
@@ -253,7 +300,12 @@ def exit_status(difference):
 
 
 def build_command(module, source, scratch, graphs):
-    """The SwiftPM command that builds `module` and emits its symbol graph."""
+    """The SwiftPM command that builds `module` and emits its symbol graph.
+
+    The name is checked before it is placed on the command line, which is the
+    third and last place this script builds from it.
+    """
+    check_module_name(module)
     return [
         "swift", "build",
         "--package-path", source,

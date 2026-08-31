@@ -397,6 +397,124 @@ comments:
     - evidence: 6 files. New: `scripts/symboldiff.py`, `scripts/test_symboldiff.py`, `scripts/README.md`, `Tests/FoundationModelsRouterTests/SymbolDiffScriptTests.swift`. Changed: `README.md` (a "Public API" section pointing at the guidance), `scripts/symbolmap.py` (its header now names `symboldiff.py` as the gate; the command line is untouched, so the ranker's copy stays in step). Corpus: all five breaks report as REMOVED at exit 1 — `ToolMounting`, `OperationEventSink` and `SessionMailbox.makeCompletionToken()` over `6f0b2a8~1..6f0b2a8`; `MergedTranscript` and `OperationEventSegment` over `267994d~1..267994d`. `swift test` 1132 + 83 tests passed; `python3 -m unittest` 21 tests OK; ruff and vulture clean.
     - next: `/review`. One item for the reviewer to weigh: the differ names no consumer, which the card's comments direct and the card's original description does not.
   timestamp: 2026-08-30T23:36:22.571022+00:00
+- actor: claude-code
+  id: 01m1ahxjfaxbrdpbjjreqztx70
+  text: |-
+    ### review — findings
+    - evidence: 1 finding — scripts/symboldiff.py:178 (`review sha HEAD~1..HEAD`, commit f98daad; counts: 1 finding, 1 confirmed, 1 refuted, 9 attempted)
+    - next: validate MODULE against `^[a-zA-Z_][a-zA-Z0-9_]*$` in `read_arguments()`, then run the review again
+  timestamp: 2026-08-31T00:01:16.266582+00:00
+- actor: claude-code
+  id: 01m1ajbmzfnj0w3zkmj5md0nwj
+  text: |-
+    ### The finding, and the cause behind the one line it names
+
+    The finding, word for word:
+
+    > `scripts/symboldiff.py:178` `code-security/injection` — Path traversal
+    > vulnerability: the `module` parameter is concatenated into a glob pattern
+    > without validation, allowing attackers to access files outside the intended
+    > directory. Validate that module is a valid Swift module identifier (matching
+    > `^[a-zA-Z_][a-zA-Z0-9_]*$`) in the `read_arguments()` function before using it
+    > in file paths.
+
+    The cited line is one of THREE places the file builds something out of MODULE.
+    The whole list, read off the file rather than guessed:
+
+    | site | what MODULE becomes | who reaches it |
+    |---|---|---|
+    | `graph_paths` | `os.path.join(directory, module + ".symbols.json")` | `keep_only`, `read_surface`, `extract` |
+    | `graph_paths` | the glob `module + "@*.symbols.json"` — the cited line | the same three |
+    | `build_command` | the `--target` word of the `swift build` command line | `build_symbol_graph`, `extract` |
+
+    So the check stands at each of the three, not at the cited line alone:
+
+    - `MODULE_NAME = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")`, the pattern the
+      finding names, as one module constant.
+    - `check_module_name(module)` raises `NotAModuleName`, a `SymbolDiffError`, so a
+      caller that reaches past the front door gets `EXIT_BROKEN` — a refusal never
+      reads as an all-clear.
+    - `graph_paths` and `build_command` each call it first. `keep_only`,
+      `read_surface` and `extract` reach both through those two, thus one check in
+      each leaf covers every path.
+    - `read_arguments` validates as the finding directs, and a rejected name exits 2
+      with `MODULE is not a Swift module name: <name>` on stderr — the same shape as
+      the `PACKAGE_REPO is not a git repository:` message already there.
+
+    The three usage exits in `read_arguments` now share `reject_call(problem="")`,
+    which writes the problem and then the usage on stderr and exits 2. A fourth
+    hand-written copy of that block was the alternative, and the thread above records
+    what happens when two copies of one error path drift apart.
+
+    ### Measured, both streams and both byte counts, for every path
+
+    ```
+    no args      stdout 0     stderr 5078  exit 2
+    --help       stdout 5078  stderr 0     exit 0
+    -h           stdout 5078  stderr 0     exit 0
+    2 args       stdout 0     stderr 5078  exit 2
+    5 args       stdout 0     stderr 5078  exit 2
+    bad repo     stdout 0     stderr 5123  exit 2  "PACKAGE_REPO is not a git repository: /nope"
+    ../../etc/passwd  stdout 0  stderr 5131  exit 2  "MODULE is not a Swift module name: ../../etc/passwd"
+    Foundation*       stdout 0  stderr 5126  exit 2  "MODULE is not a Swift module name: Foundation*"
+    one revision stdout 84080 stderr 0     exit 0
+    ```
+
+    The glob case is the one the finding could not have caught by path shape alone:
+    `Foundation*` holds no separator, and it still widens the glob past the module
+    asked about. The identifier grammar refuses both.
+
+    ### The corpus still catches all five, re-run rather than assumed
+
+    ```
+    symboldiff.py FoundationModelsRouter . 6f0b2a8~1 6f0b2a8
+        exit 1, removed 10, changed 0, added 0, stdout 2336, stderr 0
+        ToolMounting (swift.enum), OperationEventSink (swift.protocol),
+        SessionMailbox.makeCompletionToken() (swift.type.method)
+
+    symboldiff.py FoundationModelsRouter . 267994d~1 267994d
+        exit 1, removed 20, changed 0, added 0, stdout 2786, stderr 0
+        MergedTranscript (swift.enum), MergedTranscript.merged(under:) (swift.type.method),
+        OperationEventSegment (swift.struct)
+    ```
+
+    The acceptance proof holds at the same ref: at `6f0b2a8` the one-revision form
+    still lists `SessionMailbox (swift.class)` with `actor SessionMailbox`, and the
+    grep for `SessionMailbox.makeCompletionToken()` on that surface answers 0.
+
+    ### Verification
+
+    ```
+    python3 -m unittest discover -s scripts -p 'test_*.py'   25 tests, 0.06 s, OK
+    ruff check --isolated --no-cache --select D1,PLR0915 scripts/   All checks passed
+    ruff check --isolated --no-cache --select SIM,B,C4 scripts/      3, all pre-existing
+                                                                     (symbolmap.py B007)
+    vulture scripts/ --min-confidence 60                             no output
+    swift build                                                      Build complete
+    swift test    1132 tests in 125 suites passed with 2 known issues, plus 83 in
+                  10 suites. Both known issues pre-date this change (BoundedWait,
+                  RealModelHarness). "the symboldiff unit tests pass" and "the
+                  symboldiff unit tests are not silently empty" both passed.
+    swift build --package-path IntegrationTests --build-tests        Build complete
+    ```
+
+    `ruff --select E,F,W` reports 7 E501 lines, every one of them a line this change
+    did not touch (`symbolmap.py:125`, `test_symboldiff.py:142,143,184,189,191,291`).
+    An earlier comment records that selection as clean, so the ruff version has moved
+    under it. Left alone: no unrelated line was rewritten.
+
+    The one build warning, `missing creator for mutated node ... mlx-swift_Cmlx.bundle`,
+    is the mlx-swift dependency's and pre-dates this change.
+
+    Not committed, not pushed.
+  timestamp: 2026-08-31T00:08:57.583465+00:00
+- actor: claude-code
+  id: 01m1ajby3a3dhydah2s1a5p1w8
+  text: |-
+    ### implement — changed
+    - evidence: 2 files — `scripts/symboldiff.py` (added `MODULE_NAME`, `NotAModuleName`, `check_module_name`, `reject_call`; the check now stands in `read_arguments`, `graph_paths` and `build_command`, which are the three sites MODULE reaches a path, a glob or a command word), `scripts/test_symboldiff.py` (a `ModuleNameTests` class: a rejected name over five shapes, an accepted name, a per-site guard test over the four entry points, and the class of the refusal). Written test-first: the new tests failed 5 and errored 5 before the change and pass after. Re-verified by running each and counting both streams — no args stdout 0 / stderr 5078 / exit 2; `--help` stdout 5078 / stderr 0 / exit 0; bad repo names PACKAGE_REPO, exit 2; a bad module name names MODULE, exit 2; the corpus reports removed 10 at exit 1 over `6f0b2a8~1..6f0b2a8` and removed 20 at exit 1 over `267994d~1..267994d`, all five breaks REMOVED. `python3 -m unittest discover -s scripts` 25 tests OK; `swift build` complete; `swift test` 1132 + 83 passed, 2 pre-existing known issues; `swift build --package-path IntegrationTests --build-tests` complete.
+    - next: `/review`
+  timestamp: 2026-08-31T00:09:06.922487+00:00
 position_column: doing
 position_ordinal: '80'
 title: Check consumers before a symbol goes internal
@@ -478,3 +596,16 @@ one-sided: it told us `SessionMailbox` was safe from memory, and it was not. The
 lesson both sides drew is that neither side must state a usage claim without running
 something. A check that lives here, and that this package runs for itself, is what
 that means in practice. #router #api #tooling
+
+## Review Findings (2026-08-30 18:40)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 4 file(s) reviewed, 6 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+> 2 file(s) not reviewed — no validator matched:
+> - `README.md` — no validator matches this file
+> - `scripts/README.md` — no validator matches this file
+
+- [x] `scripts/symboldiff.py:178` `code-security/injection` — Path traversal vulnerability: the `module` parameter is concatenated into a glob pattern without validation, allowing attackers to access files outside the intended directory. Validate that module is a valid Swift module identifier (matching `^[a-zA-Z_][a-zA-Z0-9_]*$`) in the `read_arguments()` function before using it in file paths.

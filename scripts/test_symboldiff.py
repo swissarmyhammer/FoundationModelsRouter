@@ -314,6 +314,68 @@ class ArgumentTests(unittest.TestCase):
         self.assertEqual(err, symboldiff.__doc__)
 
 
+class ModuleNameTests(unittest.TestCase):
+    """The MODULE argument, which becomes a path, a glob and a command word."""
+
+    def test_a_name_that_is_no_identifier_is_a_bad_call(self):
+        """MODULE is joined into the cache path, into a glob pattern and onto
+        the build command line. A name carrying a separator, a `..` or a glob
+        character reaches a file the extraction never wrote, so it is refused
+        before any of the three is built.
+        """
+        with tempfile.TemporaryDirectory() as repo:
+            Path(repo, ".git").mkdir()
+            for bad in ("../../etc/passwd", "/etc/passwd", "Router*", "", "1Router"):
+                with self.subTest(module=bad):
+                    out, err, status = call_with([bad, repo, "HEAD"])
+                    self.assertEqual(status, symboldiff.EXIT_USAGE)
+                    self.assertEqual(out, "")
+                    self.assertIn("MODULE", err)
+
+    def test_a_swift_module_name_is_accepted(self):
+        """The name of a real module of this package passes, so the check
+        refuses a bad call rather than every call.
+        """
+        with tempfile.TemporaryDirectory() as repo:
+            Path(repo, ".git").mkdir()
+            request = symboldiff.read_arguments(
+                ["symboldiff.py", "FoundationModelsRouter", repo, "HEAD"]
+            )
+        self.assertEqual(request.module, "FoundationModelsRouter")
+
+    def test_each_site_that_builds_from_the_name_checks_it_first(self):
+        """`read_arguments` is the front door and it is not the only way in:
+        this file is imported, and each of these is called directly. Every
+        site that puts MODULE into a path, a glob pattern or a command word
+        checks the name itself, so validating the argument alone is not what
+        the check rests on.
+        """
+        escaping = "../../etc/passwd"
+        with tempfile.TemporaryDirectory() as out:
+            sites = {
+                "graph_paths": lambda: symboldiff.graph_paths(out, escaping),
+                "keep_only": lambda: symboldiff.keep_only(out, escaping),
+                "read_surface": lambda: symboldiff.read_surface(out, escaping),
+                "build_command": lambda: symboldiff.build_command(
+                    escaping, "/s", "/b", "/g"
+                ),
+            }
+            for name, site in sites.items():
+                with self.subTest(site=name), self.assertRaises(
+                    symboldiff.NotAModuleName
+                ):
+                    site()
+
+    def test_a_refused_name_is_a_failure_to_measure_rather_than_a_clean_run(self):
+        """A caller that reaches past `read_arguments` still must not read a
+        refusal as an all-clear, so the leaf guard raises the error class
+        `run` turns into `EXIT_BROKEN`.
+        """
+        self.assertTrue(
+            issubclass(symboldiff.NotAModuleName, symboldiff.SymbolDiffError)
+        )
+
+
 class FailureStatusTests(unittest.TestCase):
     """A run that measured nothing must not read as a clean run."""
 
