@@ -41,8 +41,76 @@ comments:
 
     NOT verified locally, and this is the point of the card: the integration test itself never ran. That job needs real model downloads and a GPU, which this machine cannot do. CI is the measurement.
   timestamp: 2026-08-31T00:41:59.152347+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m1amdfrtshmcj0r3n9m68naw
+  text: |-
+    Validator rules checked against the diff before reporting. All four questions that could touch a comment-and-assertion edit resolve clean:
+
+    - `function-length-swift` — threshold is 250, and the rule states the count is "excluding comments and whitespace". The 9 added comment lines move the count by zero. `endToEnd()` is 213 lines in total, well under, and it carries no `swiftlint:disable` directive that a new comment could separate from its `func` line.
+    - `missing-docs-swift` — reads access level and doc-comment presence only, so it cannot apply to a change that adds no declaration. Checked the residual it does catch: the file has no `public` or `open` declaration (every helper is `private`), and there is no `.swiftlint.yml` in the repository.
+    - Comments — there is NO rule about stale comments, comments restating code, or naming ticket/card ids in comments. The only comment rule is `no-commented-code`, which governs disabled code: "A block that reads as English is prose however much punctuation it carries." Both new blocks are 6 lines, over the 5-line exemption, and both read as English sentences, so neither is commented-out code.
+    - `test-integrity` — no rule forbids a negative assertion. The polarity flip keeps the same exact predicate, so it is not the "weakened assertion" the rule describes (an exact value turned into "is not empty"). It is not trivial either: it names one enum case over one real collection and can fail.
+
+    One load-bearing point worth recording for the next reader: `#expect(!merged.isEmpty)` is not decoration beside the new absence check, it is what makes the absence check mean anything. An absence assertion over a possibly-empty collection proves nothing; that kept line rules out the empty case. The card required keeping it, and this is why. Do not remove it.
+  timestamp: 2026-08-31T00:44:54.938887+00:00
+- actor: claude-code
+  id: 01m1amdj283fxe9tvzja5a1bfj
+  text: |-
+    ### commit — changed
+    - evidence: 4162da1 test(integration): expect no embedding transcript event; pushed to origin/main (bc95716..4162da1)
+    - next: CI must confirm the integration job is green on this push.
+  timestamp: 2026-08-31T00:44:57.288677+00:00
+- actor: claude-code
+  id: 01m1amds0pa0wdm12d42rd5d3s
+  text: |-
+    ### implement — changed
+    - evidence: 1 file, +15/-6 — `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/IntegrationTests.swift`. Assertion inverted to `#expect(!merged.contains { $0.kind == .embedding })`; three comments rewritten to the current contract, each naming card ^p3x0bbb (step 3, step 6, and the suite doc comment the card did not list). Kept `#expect(!merged.isEmpty)`, `#expect(dimension > 0)`, `#expect(vectors.count == 2)`, `#expect(vectors.allSatisfy { $0.count == dimension })`. No file under `Sources/` changed; `a66e1e5` not reverted.
+    - verified locally: `swift build --package-path IntegrationTests --build-tests` → "Build complete!", exit 0. `swift test` at the root → 1132 tests in 125 suites passed plus 83 tests in 10 suites passed, 0 failures, unchanged from the pre-edit baseline (same 2 pre-existing known issues).
+    - NOT verified locally: the integration test itself never ran. That job needs real model downloads and a GPU this machine does not have. CI is the measurement.
+    - next: `/review`.
+  timestamp: 2026-08-31T00:45:04.406772+00:00
+- actor: claude-code
+  id: 01m1ap2dsj1dpw4d4cbf38r6f9
+  text: |
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 4162da1) — 0 findings, 0 confirmed, 0 refuted; 7 validators attempted, 0 failed, 0 skipped. 1 file reviewed: IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/IntegrationTests.swift (+15/-6). The 2 .kanban files are excluded by .reviewignore.
+    - next: none. Task moved to done. No section of `## Review Findings` was open before this pass, and this pass added none.
+  timestamp: 2026-08-31T01:13:49.618504+00:00
+- actor: claude-code
+  id: 01m1ap377r9x0pstp9eb5aw544
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 1 file, IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/IntegrationTests.swift, +15/-6; nothing under Sources/
+    - test: green — `swift test` 1132 tests in 125 suites + 83 tests in 10 suites, exit 0; `swift build --package-path IntegrationTests --build-tests` builds
+    - commit: 4162da1 — test(integration): expect no embedding transcript event
+    - review: clean — 0 findings, 7 validators, task moved to done
+
+    **CI is green.** Run 33345485703 for `4162da1`, both jobs:
+
+    ```
+    ci / Build & test                             completed/success
+    ci / Integration (opt-in, real dependencies)  completed/success
+    ```
+
+    That run is the authoritative verification. The integration suite needs real model
+    downloads and a GPU, so it cannot run on a development machine; the local checks
+    above prove the file builds and the unit suite is unharmed, and nothing more.
+
+    CI had been red for four commits before this: `c380151`, `760ae89`, `b26ee0f` and
+    `c5542a1`, each on this same one test, with the unit job passing every time.
+
+    The implementer corrected a fourth statement of the old contract that this card did
+    not list — the suite doc comment said embedding came "with its transcript event".
+    Leaving it would have made the file promise the event in prose while asserting its
+    absence in the body.
+
+    One note carried from the implementer, worth keeping: `#expect(!merged.isEmpty)` is
+    load-bearing beside the new assertion, not decoration. An absence assertion over a
+    collection that might be empty proves nothing, and that line is what rules the empty
+    case out. Do not drop it in a later tidy-up.
+  timestamp: 2026-08-31T01:14:15.672223+00:00
+position_column: done
+position_ordinal: ffffab80
 title: Update the integration test that still expects an embedding transcript event
 ---
 ## What
