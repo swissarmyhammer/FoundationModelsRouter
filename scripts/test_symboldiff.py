@@ -333,15 +333,18 @@ class ModuleNameTests(unittest.TestCase):
                     self.assertIn("MODULE", err)
 
     def test_a_swift_module_name_is_accepted(self):
-        """The name of a real module of this package passes, so the check
-        refuses a bad call rather than every call.
+        """The check must refuse a bad call rather than every call. A Swift
+        module name is case-sensitive and may open with a lower-case letter or
+        an underscore — `_Concurrency` is a real one — so each spelling the
+        grammar admits is fed through, not the capitalised one alone.
         """
-        with tempfile.TemporaryDirectory() as repo:
-            Path(repo, ".git").mkdir()
-            request = symboldiff.read_arguments(
-                ["symboldiff.py", "FoundationModelsRouter", repo, "HEAD"]
-            )
-        self.assertEqual(request.module, "FoundationModelsRouter")
+        for good in ("FoundationModelsRouter", "myModule", "_Concurrency"):
+            with self.subTest(module=good), tempfile.TemporaryDirectory() as repo:
+                Path(repo, ".git").mkdir()
+                request = symboldiff.read_arguments(
+                    ["symboldiff.py", good, repo, "HEAD"]
+                )
+                self.assertEqual(request.module, good)
 
     def test_each_site_that_builds_from_the_name_checks_it_first(self):
         """`read_arguments` is the front door and it is not the only way in:
@@ -365,6 +368,22 @@ class ModuleNameTests(unittest.TestCase):
                     symboldiff.NotAModuleName
                 ):
                     site()
+
+    def test_a_refused_name_deletes_nothing_from_the_cache(self):
+        """`keep_only` DELETES. Given a name that matches no file, the set it
+        keeps is empty and every symbol graph in the directory goes — so an
+        unchecked name does not merely read a wrong file, it destroys the
+        cache the extraction paid a build for. The guard stands before that.
+        """
+        with tempfile.TemporaryDirectory() as out:
+            for name in ("Router.symbols.json", "Router@ULID.symbols.json"):
+                write_graph(out, name, [])
+            with self.assertRaises(symboldiff.NotAModuleName):
+                symboldiff.keep_only(out, "../../etc/passwd")
+            self.assertEqual(
+                sorted(os.listdir(out)),
+                ["Router.symbols.json", "Router@ULID.symbols.json"],
+            )
 
     def test_a_refused_name_is_a_failure_to_measure_rather_than_a_clean_run(self):
         """A caller that reaches past `read_arguments` still must not read a
