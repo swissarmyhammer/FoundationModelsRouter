@@ -71,14 +71,6 @@ resolution, sessions, streaming, guided (grammar-constrained) generation,
 embeddings, forking, and residency. A runnable, real-model demo lives in
 [`Examples/MultiModelGeneration`](Examples/MultiModelGeneration).
 
-## Public API
-
-`python3 scripts/symboldiff.py FoundationModelsRouter . HEAD` lists every symbol
-this package publishes, members included, read off the compiler's own symbol
-graph. Give it two revisions instead of one and it states what the change did to
-that surface, and exits non-zero on a removal. A card that narrows an access
-level runs it first — [`scripts/README.md`](scripts/README.md) says how.
-
 ## Tests
 
 The tests are split by what they need, and the split is a package boundary

@@ -645,6 +645,50 @@ comments:
     - evidence: `review sha HEAD~1..HEAD` (903ae71) — 0 findings, 0 confirmed, 0 refuted, 8 attempted, 0 failed. Every prior finding is checked, including `scripts/symboldiff.py:178` `code-security/injection`.
     - next: task moved to done.
   timestamp: 2026-08-31T00:32:12.163977+00:00
+- actor: claude-code
+  id: 01m1cwyhsrhw2rj4s15w7dm4na
+  text: |-
+    ### Reverted. The differ is deleted, and this card should not be rebuilt.
+
+    `scripts/symboldiff.py`, `scripts/test_symboldiff.py`, `scripts/symbolmap.py`,
+    `scripts/README.md` and `Tests/FoundationModelsRouterTests/SymbolDiffScriptTests.swift`
+    are removed — 1349 lines. The README section that documented it is removed too.
+
+    The user asked whether it should exist at all, and the answer on the evidence is no.
+
+    **This card was not asked for.** It was written here after the five consumer breaks,
+    and it got built because the instruction was to finish the ready board. Nobody
+    requested a compatibility gate. That should have been said when the card was written.
+
+    **It would have missed the expensive regression.** The five original breaks were symbol
+    REMOVALS, which the differ catches. But the costly problem of the same day was
+    ^zgzyhsj: `ToolContext.mount` hardcoded its sink and removed a consumer's ability to
+    choose one. That commit ADDED a symbol and removed none, so the differ reports
+    `added 1, removed 0, changed 0`, exit 0, clean. A capability regression with no symbol
+    change is invisible to it, by construction.
+
+    So the tool guards the cheap failure and not the expensive one.
+
+    **It never prevented a break.** It was validated retroactively against breaks already
+    known. Everything actually found that day — the five removals, the facade narrowing,
+    the sweep terminal, the intermittent compaction defect — was found by a consumer
+    reporting it and someone then measuring. None of it by tooling.
+
+    **It added a cost to the main suite.** `SymbolDiffScriptTests.swift` spawned `python3`
+    out of `swift test`, so a PATH dependency entered the unit suite that CI runs, on
+    behalf of a tool that had caught nothing live.
+
+    If the check is ever wanted, it is
+    `swift build -Xswiftc -emit-symbol-graph -Xswiftc -emit-symbol-graph-dir -Xswiftc <dir>`
+    plus `diff`, run on demand. It does not need a tested program, a README and a
+    test-suite hook.
+
+    The five breaks were real and the analysis on this card is worth keeping as a record
+    of them. The tool was the wrong response.
+
+    `swift test` after removal: 1134 tests in 125 suites plus 83 in 10 suites, exit 0.
+    The two tests lost are the removed shim's own.
+  timestamp: 2026-08-31T21:52:31.544423+00:00
 position_column: done
 position_ordinal: ffffaa80
 title: Check consumers before a symbol goes internal

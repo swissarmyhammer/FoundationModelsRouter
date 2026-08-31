@@ -1,8 +1,24 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '80'
+comments:
+- actor: claude-code
+  id: 01m1cwyn9fsb9qn11pj488qsya
+  text: |-
+    ### Moot. The script is deleted.
+
+    This card recorded that `symboldiff.py` measured nothing and exited 4 when
+    `PACKAGE_REPO` was a relative path — the exact invocation its own README documented.
+
+    `scripts/symboldiff.py` and everything around it are removed. See the closing comment
+    on ^1y4g20q for why: the tool was never asked for, it would not have caught the
+    expensive regression of that day, it never prevented a break, and it put a `python3`
+    PATH dependency into the unit suite CI runs.
+
+    There is no bug left to fix. Closing.
+  timestamp: 2026-08-31T21:52:35.119567+00:00
+position_column: done
+position_ordinal: ffffad80
 title: symboldiff.py measures nothing when PACKAGE_REPO is a relative path
 ---
 ## What
