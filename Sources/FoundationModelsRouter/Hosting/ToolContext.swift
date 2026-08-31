@@ -235,7 +235,22 @@ public struct ToolContext: Sendable {
     /// the operation the outbox names is then the operation the session was
     /// asked for. The mounted run's own completion token stays on the run
     /// plane, where ``backgroundRuns()`` and the mounted tool's own
-    /// ``ToolContext/current`` read it, and it never reaches the outbox.
+    /// ``ToolContext/current`` read it.
+    ///
+    /// The correlation the JOURNAL keeps under this overload: THIS run's
+    /// ``completionToken``, for every event the mounted run posts. The
+    /// re-stamp happens before the outbox sees the event, so a posted event
+    /// never teaches the journal the mounted run's own token.
+    ///
+    /// A swept terminal is the one exception, and it reads the same under both
+    /// overloads. ``RoutedSession/close()`` sweeps the session's mailbox. A
+    /// background run still tracked at that moment gets a terminal event the
+    /// MAILBOX builds, and `close()` writes that event straight to the
+    /// journal. The mailbox stamps it from what the mount registered, so it
+    /// carries the MOUNTED run's own completion token. One mounted background
+    /// run can therefore stand in the journal under two correlations: this
+    /// run's token for what the run posted, and the mounted run's own token
+    /// for the terminal the sweep wrote.
     ///
     /// A caller that must read the mounted run's OWN correlation — to tell two
     /// concurrent runs of one tool apart, or to assert a run's own identity —
@@ -278,11 +293,37 @@ public struct ToolContext: Sendable {
     /// tool apart, and to assert a run's own identity. A host that only wants
     /// to know what happened wants ``mount(_:op:as:)``.
     ///
-    /// `sink` is held for the life of each RUN rather than of each call. A
-    /// background mount hands its ``PendingRunEnvelope`` back at once and the
-    /// body goes on behind it, so `sink` keeps taking that run's progress
-    /// events and then its terminal, however long after
-    /// `call(arguments:)` returned they arrive.
+    /// What `sink` carries: the events the RUN posts. Those are ``post(_:)``,
+    /// ``progress(_:)``, the request ``elicit(_:)`` sends, and the terminal
+    /// event the run's body produces when it ends. `sink` is held for the life
+    /// of each RUN rather than of each call. A background mount hands its
+    /// ``PendingRunEnvelope`` back at once and the body goes on behind it, so
+    /// `sink` keeps taking that run's events however long after
+    /// `call(arguments:)` returned they arrive. Two mounts post nothing at
+    /// all: a binding-only mount synthesizes no events, and a
+    /// run-to-completion run that posted nothing of its own and then succeeded
+    /// posts no terminal either.
+    ///
+    /// What `sink` does NOT carry: a swept terminal.
+    /// ``RoutedSession/close()`` sweeps the session's MAILBOX, not the run. A
+    /// background run still tracked at that moment gets a terminal event the
+    /// mailbox builds — from the stamps the mount registered and the run's
+    /// latest progress detail — and `close()` writes that event straight to
+    /// the journal. The run never posts it, so `sink` never sees it. Read that
+    /// terminal from the journal.
+    ///
+    /// The correlation the JOURNAL keeps under this overload: the mounted
+    /// run's OWN ``completionToken``, on that swept terminal, because the
+    /// mailbox stamps it from what the mount registered. The events the run
+    /// posts reach `sink` alone. They reach the journal only when `sink`
+    /// itself forwards them there. Under ``mount(_:op:as:)`` the journal keeps
+    /// the MOUNTING run's token for those posted events, and the same own
+    /// token for a swept terminal.
+    ///
+    /// Cancelling a ``RunKind/swiftTask`` run is cooperative, so a run the
+    /// sweep cancelled can still finish afterwards. It then posts a terminal
+    /// of its own to `sink`, and that terminal can carry a different outcome
+    /// from the one the journal already kept.
     ///
     /// - Parameters:
     ///   - tool: The tool to mount.
@@ -316,12 +357,16 @@ public struct ToolContext: Sendable {
 
 /// The upstream end of a mounted run's event route: the sink
 /// ``ToolContext/mount(_:op:as:)`` hands the mount layer, forwarding every
-/// event the run produces through the ``ToolContext`` that mounted it.
+/// event the run POSTS through the ``ToolContext`` that mounted it.
 ///
 /// ``ToolContext/post(_:)`` is the only egress a context publishes, and it
-/// re-stamps what it forwards with its own identity. So a mounted run's events
-/// reach the session's outbox on the mounting run's correlation, while the
-/// mounted run's own completion token stays on the run plane.
+/// re-stamps what it forwards with its own identity. So a mounted run's posted
+/// events reach the session's outbox on the mounting run's correlation, while
+/// the mounted run's own completion token stays on the run plane.
+///
+/// A terminal that ``RoutedSession/close()``'s mailbox sweep builds takes no
+/// route through here at all. The sweep writes that event to the journal
+/// itself, under the mounted run's own completion token.
 private struct MountedRunUpstreamSink: OperationEventSink {
     /// The mounting context every event is forwarded through.
     let context: ToolContext
