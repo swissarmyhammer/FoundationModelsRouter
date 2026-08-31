@@ -180,9 +180,9 @@ struct MountedRunSweptTerminalTests {
         // The journal is where a reader finds that terminal. It carries the
         // MOUNTED run's own token, and the outcome the canceler reported. The
         // count assertion cannot catch a doubled sweep, because the journal
-        // admits one terminal for each correlation and drops the rest. It does
-        // catch a terminal on any other correlation. This sink forwards
-        // nowhere, so the sweep is the journal's only source here.
+        // admits one terminal for each correlation. It does catch a terminal
+        // on any other correlation. This sink forwards nowhere, so the sweep
+        // is the journal's only source here.
         let journaled = await recorder.events.flatMap(\.operationEvents)
         let terminals = journaled.filter { $0.kind == .completed }
         #expect(terminals.count == 1)
