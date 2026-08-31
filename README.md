@@ -10,9 +10,18 @@ sessionable, transcript-recording profile — one active profile at a time, so
 it never over-commits memory.
 
 ```swift
+import Foundation
 import FoundationModelsRouter
+import HuggingFace
 import MLXHuggingFace
+import MLXLMCommon
+import Tokenizers
 
+// The router records every transcript under this directory.
+let recordingsDir = URL.documentsDirectory.appending(path: "RouterTranscripts")
+
+// The two `MLXHuggingFace` macros expand to code that calls `HuggingFace`,
+// `MLXLMCommon` and `Tokenizers`, so all three are imported above.
 let router = Router(
     recordingsDir: recordingsDir,
     loader: LiveModelLoader(
@@ -38,7 +47,7 @@ let progressTask = Task { @MainActor in
     }
 }
 
-let profile = try await router.resolve(coding, reporting: progress)
+let profile = try await router.resolve(profile: coding, reporting: progress)
 await progressTask.value
 
 let session = profile.standard.makeSession(instructions: "You are a terse Swift expert.")
