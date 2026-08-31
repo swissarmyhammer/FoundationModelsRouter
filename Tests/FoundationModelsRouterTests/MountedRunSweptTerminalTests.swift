@@ -9,9 +9,9 @@ import Testing
 ///
 /// ``RoutedSession/close()`` sweeps a background run that is still tracked.
 /// The sweep is a MAILBOX operation. `SessionMailbox.sweep()` builds that run's
-/// terminal event itself, and `close()` writes it straight to the journal. The
-/// run does not post that event, so the caller's sink never receives it. This
-/// suite tests that exception, so the doc comment is not its only record.
+/// terminal event itself. `close()` then sends it to the journal. The run does
+/// not post that event, so the caller's sink never receives it. This suite
+/// tests that exception, so the doc comment is not its only record.
 ///
 /// The sweep does not always build the terminal. It first runs the run's
 /// canceler, and that call suspends the mailbox. A run that settles in that
@@ -178,7 +178,11 @@ struct MountedRunSweptTerminalTests {
         #expect(!atClose.contains { $0.kind == .completed })
 
         // The journal is where a reader finds that terminal. It carries the
-        // MOUNTED run's own token, and the outcome the canceler reported.
+        // MOUNTED run's own token, and the outcome the canceler reported. The
+        // count assertion cannot catch a doubled sweep, because the journal
+        // admits one terminal for each correlation and drops the rest. It does
+        // catch a terminal on any other correlation. This sink forwards
+        // nowhere, so the sweep is the journal's only source here.
         let journaled = await recorder.events.flatMap(\.operationEvents)
         let terminals = journaled.filter { $0.kind == .completed }
         #expect(terminals.count == 1)
@@ -228,14 +232,18 @@ struct MountedRunSweptTerminalTests {
         await session.close()
 
         // The run posted that terminal itself, so the caller's sink holds it.
-        // This is the case the "never reaches the sink" claim excludes.
+        // This is the case the "never reaches the sink" claim excludes. These
+        // three lines hold whatever the sweep does. A run posts its terminal
+        // upstream before it settles, and the first test covers that already.
         let posted = try #require(await sink.events.first { $0.kind == .completed })
         #expect(posted.correlationID == token)
         #expect(posted.outcome == .succeeded)
 
-        // `close()` journals the very same event. The outcome is the run's own,
-        // not the `.cancelled` the canceler reported. That difference tells a
-        // natural terminal apart from one the mailbox built.
+        // `close()` journals the very same event. The outcome assertion below
+        // is the one line this test adds. A sweep that built a terminal instead
+        // would journal `.cancelled`, the outcome the canceler reported. Keep
+        // that line. The count assertion cannot catch a doubled sweep, because
+        // the journal admits one terminal for each correlation.
         let journaled = await recorder.events.flatMap(\.operationEvents)
         let terminals = journaled.filter { $0.kind == .completed }
         #expect(terminals.count == 1)
