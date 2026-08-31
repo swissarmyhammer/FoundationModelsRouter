@@ -227,13 +227,19 @@ public struct ToolContext: Sendable {
     /// Every one of them keeps `T`'s `Arguments` and `Output`, so the result
     /// needs no cast.
     ///
-    /// The mounted run's events route through ``post(_:)``, which re-stamps
-    /// each one with this run's ``tool``, ``op``, and ``completionToken``. So
-    /// the inner run reaches the session's outbox under the correlation of the
-    /// operation the session actually issued, while the inner run's own
-    /// completion token stays on the run plane, where
-    /// ``backgroundRuns()`` and the inner tool's own ``ToolContext/current``
-    /// read it.
+    /// The correlation this overload gives the caller: the mounted run's
+    /// events route through ``post(_:)``, which re-stamps each one with this
+    /// run's ``tool``, ``op``, and ``completionToken``. So the mounted run
+    /// reaches the session's outbox under the correlation of the operation the
+    /// session actually issued — which is what an application wants, because
+    /// the operation the outbox names is then the operation the session was
+    /// asked for. The mounted run's own completion token stays on the run
+    /// plane, where ``backgroundRuns()`` and the mounted tool's own
+    /// ``ToolContext/current`` read it, and it never reaches the outbox.
+    ///
+    /// A caller that must read the mounted run's OWN correlation — to tell two
+    /// concurrent runs of one tool apart, or to assert a run's own identity —
+    /// mounts through ``mount(_:op:as:postingTo:)`` instead.
     ///
     /// The span each call opens resolves late, through
     /// `InstrumentationSystem.tracer` at call time, so an application that
@@ -251,10 +257,51 @@ public struct ToolContext: Sendable {
         op: String? = nil,
         as configuration: ToolMount = .synchronous
     ) -> any Tool<T.Arguments, T.Output> {
+        mount(tool, op: op, as: configuration, postingTo: MountedRunUpstreamSink(context: self))
+    }
+
+    /// Mounts `tool` on this run's session plane and posts each mounted run's
+    /// events to `sink` as that run stamped them.
+    ///
+    /// Everything the mount does matches ``mount(_:op:as:)``: the same mount
+    /// arbitration, the same decorator, the same per-call ``ToolContext``, the
+    /// same run tracked in this session's mailbox, the same span. The one
+    /// difference is the correlation the caller observes, and that difference
+    /// is invisible at the call site.
+    ///
+    /// The correlation this overload gives the caller: `sink` reads each
+    /// mounted run's own ``completionToken`` as the `correlationID` of every
+    /// event that run posts, unstamped. `sink` is the run's own upstream, so
+    /// nothing re-stamps what reaches it — where the default overload posts
+    /// through this context and lands every event on THIS run's correlation
+    /// instead. Reach for this overload to tell two concurrent runs of one
+    /// tool apart, and to assert a run's own identity. A host that only wants
+    /// to know what happened wants ``mount(_:op:as:)``.
+    ///
+    /// `sink` is held for the life of each RUN rather than of each call. A
+    /// background mount hands its ``PendingRunEnvelope`` back at once and the
+    /// body goes on behind it, so `sink` keeps taking that run's progress
+    /// events and then its terminal, however long after
+    /// `call(arguments:)` returned they arrive.
+    ///
+    /// - Parameters:
+    ///   - tool: The tool to mount.
+    ///   - op: The `"verb noun"` op the mounted run journals as its `op`, or
+    ///     `nil` to stamp the tool's own name.
+    ///   - configuration: The mount to use when `tool` declares none of its
+    ///     own. Defaults to ``ToolMount/synchronous``.
+    ///   - sink: The destination every mounted run posts its own events to.
+    /// - Returns: The mounted tool, at `tool`'s own `Arguments` and `Output`.
+    public func mount<T: Tool>(
+        _ tool: T,
+        op: String? = nil,
+        as configuration: ToolMount = .synchronous,
+        postingTo sink: any OperationEventSink
+    ) -> any Tool<T.Arguments, T.Output> {
         let mounted = ToolMounting.makeWrapped(
             tool: tool,
             inheriting: self,
-            sink: MountedRunUpstreamSink(context: self),
+            sink: sink,
             op: op,
             configuration: configuration,
             tracer: nil

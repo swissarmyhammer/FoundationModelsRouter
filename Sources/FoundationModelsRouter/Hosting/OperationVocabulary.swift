@@ -18,9 +18,10 @@ public typealias OperationEvent = FoundationModelsExtras.OperationEvent
 public typealias OperationOutcome = FoundationModelsExtras.OperationOutcome
 
 /// A destination `OperationEvent`s are posted to. The router implements this
-/// one time, in `SessionOutbox`. Canonical definition:
+/// one time, in `SessionOutbox`, and ``ToolContext/mount(_:op:as:postingTo:)``
+/// takes one from a caller. Canonical definition:
 /// `FoundationModelsExtras.OperationEventSink`.
-typealias OperationEventSink = FoundationModelsExtras.OperationEventSink
+public typealias OperationEventSink = FoundationModelsExtras.OperationEventSink
 
 /// One tool call's live lifecycle record. Canonical definition:
 /// `FoundationModelsExtras.ToolInvocationRecord`.
