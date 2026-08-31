@@ -207,8 +207,8 @@ private struct DownloadObservingLoader: ModelLoader {
 /// real ``LiveModelLoader`` (a Hub `#hubDownloader()` + `#huggingFaceTokenizerLoader()`)
 /// and the real ``HuggingFaceMetadataSource``, then asserts every live capability
 /// in that one resolved profile: progress advancement, generation, embedding
-/// (with its transcript event), guided generation, fork lineage, and the merged
-/// transcript's total order.
+/// (which writes no transcript event, since card ^p3x0bbb), guided generation,
+/// fork lineage, and the merged transcript's total order.
 ///
 /// In a target of its own so it never runs on a network/GPU-less box: the whole
 /// package's deployment floor is macOS 27 (so the macOS-27 availability the
@@ -429,8 +429,12 @@ struct IntegrationTests {
         plainTurnDuration = ContinuousClock.now - plainTurnStarted
         #expect(!reply.isEmpty)
 
-        // 3. Embedding returns dimension-length vectors AND records an embedding
-        //    transcript event.
+        // 3. Embedding returns dimension-length vectors, and writes no
+        //    transcript event at all. Card ^p3x0bbb took that recording away:
+        //    an embed call is no part of any session's conversation, so it has
+        //    nothing to append to one. A span is the replacement signal, and
+        //    `EmbedTracingTests` holds its whole contract. Step 6 asserts the
+        //    absence against the recordings tree.
         let dimension = profile.embedding.dimension
         #expect(dimension > 0)
         let embedStarted = ContinuousClock.now
@@ -502,8 +506,13 @@ struct IntegrationTests {
 
         let merged = try MergedTranscript.merged(under: recordingsDir)
         #expect(!merged.isEmpty)
-        // The embedding event landed in the recordings tree.
-        #expect(merged.contains { $0.kind == .embedding })
+        // The generation events landed in the tree, and no embedding event did.
+        // The absence is the contract, not a defect: card ^p3x0bbb took the
+        // recording out of `RoutedModel.embed(texts:)`, and
+        // `TranscriptEvent.Kind.embedding` survives only so that recordings
+        // written before that change still decode. `MergedAndRedactionTests`
+        // asserts the same absence over the unit path.
+        #expect(!merged.contains { $0.kind == .embedding })
         // Totally ordered by (ts, seq): the recorder's monotonic seq is the tie
         // breaker, so the merged stream is already sorted and its seqs unique.
         let ordered = merged.sorted { ($0.ts, $0.seq) < ($1.ts, $1.seq) }
