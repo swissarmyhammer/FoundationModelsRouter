@@ -207,8 +207,103 @@ comments:
     - next: `/review`. Nothing is committed and nothing is pushed — this goes to a branch
       for the consumer to validate the four call sites against before it nears `main`.
   timestamp: 2026-08-31T13:51:40.762971+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m1c1rrvbyr48eexbh5vj0y1b
+  text: |-
+    ### review — clean
+
+    - evidence: `review sha HEAD~1..HEAD` on `d576a72`, branch `mount-posting-to`. findings 0,
+      confirmed 0, refuted 0. 7 validators attempted, 0 failed, 0 skipped. 3 source files
+      reviewed; 6 `.kanban/` files excluded by `.reviewignore`.
+    - files reviewed: `Sources/FoundationModelsRouter/Hosting/ToolContext.swift`,
+      `Sources/FoundationModelsRouter/Hosting/OperationVocabulary.swift`,
+      `Tests/FoundationModelsRouterTests/ToolContextMountSinkPublicSurfaceTests.swift`.
+    - the validators that matched the Swift diff: `swift` (11 rules — casing, naming
+      clarity, doc parameter naming, fluent usage, access control, optionals, concurrency),
+      `code-hygiene` (30 rules — includes `missing-docs-swift` and `function-length-swift`),
+      `completeness` (4 rules, with the `public-surface` and `clone-siblings` probes),
+      `duplication`, `reuse`, `test-integrity`, `code-security`. Each one gave zero findings.
+    - the new public surface: the `swift` and `code-hygiene` validators cover the naming and
+      the documentation of a public API. Neither reported a defect on the two new symbols.
+    - the delegation of the three-argument overload: the `completeness` validator, with its
+      `public-surface` and `clone-siblings` probes, and the `duplication` validator cover a
+      refactor of this shape. Neither reported a defect.
+    - the `file_length` question, measured rather than judged: no validator in the fleet
+      carries a file-length rule. `grep -ril 'file_length' /Users/wballard/.validators/`
+      returns nothing; `code-hygiene` carries `function-length-swift.md` and no file-length
+      equivalent. The repository also holds no `.swiftlint.yml`, `.swiftformat`,
+      `.swift-format` or `.swift-version`, so the 400-line limit is swiftlint's own default
+      and not a project setting. swiftlint gives no review finding here, so there is no
+      finding to stand.
+    - no prior `## Review Findings` section is on this card. This is the first review pass,
+      and it is clean, so no dated section was appended.
+    - next: the card is in `done`. The commit is on the branch `mount-posting-to` and is not
+      on `main`. The consumer validation of the four call sites, which comment
+      `01m1bzx9w3nemxr5njvqyz1xkt` asks for, is still open before this goes to `main`.
+  timestamp: 2026-08-31T13:57:30.603395+00:00
+- actor: claude-code
+  id: 01m1c1takjd0g2ctyjv7yay8wk
+  text: |-
+    ### finish iteration 1 — clean, but held on a branch
+
+    - implement: changed — 3 files; the new overload, the public typealias, and a new test file with 4 tests
+    - test: green — `swift test` 1136 tests in 126 suites + 83 tests in 10 suites, 0 failed; `swift build --package-path IntegrationTests --build-tests` builds
+    - commit: d576a72 — feat(hosting): let a caller supply the sink when mounting on a ToolContext
+    - review: clean — 0 findings, 7 validators
+
+    **NOT ON `main`, and that is deliberate.** The commit is on branch
+    `mount-posting-to` at `d576a72`. `main` is still `475befb`.
+
+    The consumer is validating all four of its blocked assertions against that
+    revision before it lands. The whole point of this card is those four call sites, and
+    this package cannot run them — three of them background a run and one gets its
+    terminal only when `close()` sweeps. One round trip against the real call sites is
+    worth more than push-fail-fix-push, and I told the consumer nothing would go near
+    `main` until it reported.
+
+    The card is code-complete. It is not finished.
+
+    ### What was measured rather than assumed
+
+    The double re-stamp, which is the card's whole justification. One tool, mounted twice
+    on one context, one call apart:
+
+    ```
+    mounting run token        = 01M1C18EVGG2V2C8097E4MC4EF
+    default-mounted own token = 01M1C18EVGR134C1ZQP9MJ9RQH
+    default-mounted event id  = 01M1C18EVGG2V2C8097E4MC4EF   <- the mounting run
+    sink-mounted own token    = 01M1C18EVG907VSAMK7J2MN6G6
+    sink-mounted event id     = 01M1C18EVG907VSAMK7J2MN6G6   <- its own
+    ```
+
+    So the consumer's reading was right and my earlier summary was wrong: a detached
+    context would have fixed NONE of the four, because the second stamp lands on it
+    whatever its level. `postingTo:` is the only shape that works, not the smaller of two.
+
+    Surface measured 650 to 652 — removed 0, changed 0, added 2. The card's 623/625 was a
+    stale baseline; `main` moved to 475befb after the card was written.
+
+    The tests were mutation-tested. A compile failure is a weak red for a behavioural
+    claim, so the production path was mutated to wrap the caller's sink again, and all
+    four went red against the correct signature before the mutation was reverted.
+
+    ### The gap in my own evidence
+
+    The lifetime test proves the sink receives after `call(arguments:)` returns, using a
+    barrier this package controls. It does NOT reproduce the consumer's sweep case, where
+    the terminal arrives only at `close()`. That path could not be built here. If
+    `ShellSessionSweepTests:263` fails on the branch, that is a real gap in this change
+    and not a fixture defect.
+
+    ### Remaining to finish this card
+
+    1. The consumer reports on the four.
+    2. Fix anything that failed, on the branch.
+    3. Merge to `main`.
+    4. CI green.
+  timestamp: 2026-08-31T13:58:21.554473+00:00
+position_column: done
+position_ordinal: ffffac80
 title: Let a caller supply the sink when mounting on a ToolContext
 ---
 ## What
