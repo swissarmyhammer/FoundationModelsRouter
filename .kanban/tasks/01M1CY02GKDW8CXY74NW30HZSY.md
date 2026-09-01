@@ -631,8 +631,67 @@ comments:
     - `swift build`: exit 0.
     - next: `/review`.
   timestamp: 2026-09-01T02:43:47.716086+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m1de26zaxybay3rmbvp53314
+  text: |-
+    ### review — clean
+
+    - evidence: `review sha HEAD~1..HEAD` on commit 35e679d. The engine found 0
+      findings. It ran 7 validators and failed none. `git diff HEAD~1..HEAD --
+      Sources` is empty, so this commit changes tests only.
+    - red demonstration: the reviewer broke each guarded line and ran the tests.
+      `TranscriptDiffer.swift:186` with `toolDefinitions: []` failed "an
+      instructions override keeps the recorded tool definitions". The recorded-side
+      assertion still passed, so the recording carries a real tool definition. The
+      test cannot pass on two empty lists. The same line without `id: recorded.id`
+      failed "an instructions override keeps the recorded entry id".
+      `SessionTreeRestoration.swift:450` with `persistedEntryCount:
+      transcript.count` failed both turn tests. The reviewer put every line back.
+      `git status --porcelain` shows no change under `Sources`.
+    - shared helper: `takeOneTurnAfterRestoring(cacheDir:recordingsDir:answersAPrompt:)`
+      weakens neither test. Each test broke in its own case. The empty recording
+      test caught the new instructions event. The non-empty test caught the
+      re-recorded tail.
+    - prior findings: all 6 stay fixed. The 4 doc findings of round 1 read true at
+      `SessionRestoration.swift:48`, `:98` and `:106`, and at
+      `SessionTreeRestoration.swift:185`. The 2 findings of round 2 are the tests
+      this pass proved red.
+    - fixture: `SeedCapturingContainer` now takes `recordedToolDefinitions`. The
+      refactor changes no other test, because `StubSessionBackend(instructions:
+      nil)` gives the same empty entry list as `StubSessionBackend()`.
+    - commands: `swift test` gave 1158 tests in 127 suites and 83 tests in 10
+      suites. All passed. The baseline was 1154, so this commit adds 4. `swift
+      build --package-path IntegrationTests --build-tests`: exit 0.
+    - next: none. The task moves to `done`.
+  timestamp: 2026-09-01T02:51:37.322334+00:00
+- actor: claude-code
+  id: 01m1de33vp5jzqn3yns4e63s9q
+  text: |-
+    ### finish iteration 3 — clean
+    - implement: changed — 1 test file. No source file changed.
+    - test: green — swift test, 1158 tests in 127 suites + 83 tests in 10 suites, exit 0
+    - commit: 35e679d
+    - review: clean — 0 findings, 7 validators, 0 failed. Task moved to done.
+
+    The reviewer reproduced every red demonstration itself. It broke each guarded
+    line, ran the tests, and restored the line. It also proved the tool-definitions
+    test cannot pass on two empty lists: under the broken line the recorded-side
+    assertion still passed, so the recording carries one real definition.
+
+    Card summary: 3 rounds, 6 findings, all fixed.
+
+    Round 1 published the surface and the parameter. Round 2 found the parameter did
+    not reach the model, so the feature was cosmetic. Round 3 guarded the two lines
+    that hold the fix in place.
+
+    The lesson worth keeping is the shape of the round-1 defect. The override set
+    `RoutedSessionActor.instructions`, and the test read that same property. The
+    test agreed with the code and both were wrong about the thing that matters. The
+    correct seam is the transcript the backend is constructed with, and every test
+    of this behaviour now reads it there.
+  timestamp: 2026-09-01T02:52:06.902140+00:00
+position_column: done
+position_ordinal: ffffb180
 title: 'Publish session restore for ACPAgent: one session by id, with an instructions override'
 ---
 ## The decision
