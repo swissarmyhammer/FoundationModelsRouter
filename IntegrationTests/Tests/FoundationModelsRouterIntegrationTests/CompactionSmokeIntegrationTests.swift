@@ -49,28 +49,15 @@ private let compactionSmokeSamplingMode: GenerationOptions.SamplingMode = .greed
 ///
 /// Greedy decoding above pins the SAMPLING. It does not pin the PROMPT, and the
 /// Llama 3.2 chat template writes `Today Date: <today>` into the system header
-/// of every summarizer call. It takes that date from `strftime_now`, which the
-/// Jinja engine answers from `Date()` and the local time zone. So this suite's
-/// fold arithmetic was a new sample on every calendar day, and task ^erv2vxz
-/// measured exactly that: `answerTokens=[703, 789]` on 01 Sep 2026, then
-/// `[703, 836]` on 02 Sep 2026, from one binary with only `TZ` changed. A test
-/// that passes today and fails tomorrow with no change is not a test.
+/// of every summarizer call. So this suite's fold arithmetic was a new sample on
+/// every calendar day, and task ^erv2vxz measured exactly that:
+/// `answerTokens=[703, 789]` on 01 Sep 2026, then `[703, 836]` on 02 Sep 2026,
+/// from one binary with only `TZ` changed.
 ///
-/// The value is the template's OWN fallback — the date it assigns when
-/// `strftime_now` is undefined:
-///
-/// ```
-/// {%- if not date_string is defined %}
-///     {%- if strftime_now is defined %}
-///         {%- set date_string = strftime_now("%d %b %Y") %}
-///     {%- else %}
-///         {%- set date_string = "26 Jul 2024" %}
-/// ```
-///
-/// So the constant is the template's, not a date chosen because it made a run
-/// green. The template reads `date_string` FIRST, so stating it stops
-/// `strftime_now` running at all.
-private let compactionSmokeChatTemplateDate = "26 Jul 2024"
+/// The value comes from ``RealModelContainer/chatTemplateFallbackDate``, which
+/// is the template's own fallback and which states why. Task ^xfj1am4 moved it
+/// there, because three gated suites pin the same date for the same reason.
+private let compactionSmokeChatTemplateDate = RealModelContainer.chatTemplateFallbackDate
 
 // MARK: - Suite
 

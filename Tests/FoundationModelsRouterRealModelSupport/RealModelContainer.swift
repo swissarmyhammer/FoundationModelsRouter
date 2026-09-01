@@ -36,6 +36,43 @@ import Tokenizers
 /// does not describe — ``IntegrationTests`` builds its own instrumented loader
 /// stack for precisely that reason and is not a caller here.
 public enum RealModelContainer {
+    /// The date every gated suite pins into its prompt, written the way a
+    /// Llama chat template writes it.
+    ///
+    /// Greedy decoding pins the SAMPLING. It does not pin the PROMPT. The
+    /// Llama 3.2 chat template writes `Today Date: <today>` into the system
+    /// header of every call. It takes that date from `strftime_now`, which the
+    /// Jinja engine answers from `Date()` and the local time zone. So the same
+    /// code and the same weights answered differently on two calendar days
+    /// (task ^f0k3aah). A test that passes today and fails tomorrow with no
+    /// change is not a test.
+    ///
+    /// The value is the template's OWN fallback. It is the date the template
+    /// assigns when `strftime_now` is undefined:
+    ///
+    /// ```
+    /// {%- if not date_string is defined %}
+    ///     {%- if strftime_now is defined %}
+    ///         {%- set date_string = strftime_now("%d %b %Y") %}
+    ///     {%- else %}
+    ///         {%- set date_string = "26 Jul 2024" %}
+    /// ```
+    ///
+    /// So the constant is the template's own. It is not a date chosen because
+    /// it made a run green. The template reads `date_string` FIRST, so stating
+    /// the value stops `strftime_now` running at all.
+    ///
+    /// One constant rather than one per suite. Three gated suites pin the
+    /// date, and each of them would otherwise repeat this value and this
+    /// reason. Each suite still records its OWN measured numbers in its own
+    /// doc comment.
+    ///
+    /// It pins the Llama family only. `Muse-Glimmer-30B-4bit` reads
+    /// `current_date` rather than `date_string`, and it reads it only when the
+    /// conversation carries no system message. No gated suite that reaches
+    /// that branch asserts on generated text today.
+    public static let chatTemplateFallbackDate = "26 Jul 2024"
+
     /// Loads `ref` and returns the concrete container behind it.
     ///
     /// - Parameters:

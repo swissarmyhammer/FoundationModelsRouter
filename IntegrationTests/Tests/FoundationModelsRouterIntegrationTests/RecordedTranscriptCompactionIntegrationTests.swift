@@ -40,6 +40,27 @@ private let recordedTranscriptCompactionContext = 4096
 /// attributed to the change under test.
 private let recordedTranscriptCompactionSamplingMode: GenerationOptions.SamplingMode = .greedy
 
+/// The calendar date this suite pins into
+/// ``recordedTranscriptCompactionModel``'s prompt.
+///
+/// The decoding above pins the SAMPLING. It does not pin the PROMPT. The
+/// Llama 3.2 chat template writes `Today Date: <today>` into the system header
+/// of every summarizer call, and it reads that date off the clock. So this
+/// suite's fold arithmetic was a new sample on every calendar day. Task
+/// ^xfj1am4 measured that here, from one binary with only `TZ` changed:
+///
+/// | the date the clock stamped | summarizer calls | answerTokens |
+/// |---|---|---|
+/// | 01 Sep 2026 | 6 | `[864, 806, 650, 708, 863, 756]` |
+/// | 02 Sep 2026 | 5 | `[830, 715, 650, 626, 722]` |
+///
+/// One calendar day bought a whole extra generation over the same recording.
+///
+/// The value comes from ``RealModelContainer/chatTemplateFallbackDate``, which
+/// is the template's own fallback and which states why.
+private let recordedTranscriptCompactionChatTemplateDate =
+    RealModelContainer.chatTemplateFallbackDate
+
 // MARK: - Suite
 
 /// The fast answer to one question: does the compaction fold work against a
@@ -147,6 +168,35 @@ private let recordedTranscriptCompactionSamplingMode: GenerationOptions.Sampling
 /// the three summarizer calls are the whole difference. That is the cost of
 /// folding real traffic rather than a span sized to one chunk, and it is still
 /// seconds.
+///
+/// ### The numbers this suite reports now (task ^xfj1am4)
+///
+/// Every number above was measured with the calendar date the run's own clock
+/// stamped, so each row is one day's sample. That is what
+/// ``recordedTranscriptCompactionChatTemplateDate`` closes. The rows above
+/// also predate task ^xx02yn6's recovery ladder, which is why the call count
+/// moved.
+///
+/// Measured on 2026-09-01, with the pin in place:
+///
+/// | what the run measured | value |
+/// |---|---|
+/// | the whole transcript, in estimated tokens | 4297 |
+/// | the folded span | 2366 |
+/// | summarizer calls | 4, each at a ceiling of 628 |
+/// | what the model answered, per call | 793, 679, 708 and 661 estimated tokens |
+/// | the stored summary | 661 |
+/// | stages the fold applied | elision, truncation, summarization |
+/// | the fold's transcript, before and after | 4297 -> 2592 |
+/// | the fold's wall clock | 19.1 s, of which 1.8 s the model load |
+///
+/// The suite reported exactly that row under `TZ=Pacific/Midway`
+/// (01 Sep 2026) and under `TZ=Pacific/Kiritimati` (02 Sep 2026), from one
+/// binary with nothing else changed. The clock no longer reaches this fold.
+///
+/// These numbers WILL move again, because the prompt moves whenever the
+/// compaction prompt or the recovery ladder changes. That is expected, and it
+/// is not a regression.
 ///
 /// The three runs of 2026-08-20 measured the fold at 12.1, then 11.7, then
 /// 12.2 seconds, and the entry-kind check at 0.012, then 0.011, then 0.0
@@ -277,7 +327,8 @@ struct RecordedTranscriptCompactionIntegrationTests {
         let container = try await RealModelContainer.load(
             ref: recordedTranscriptCompactionModel,
             context: recordedTranscriptCompactionContext,
-            samplingMode: recordedTranscriptCompactionSamplingMode
+            samplingMode: recordedTranscriptCompactionSamplingMode,
+            chatTemplateDate: recordedTranscriptCompactionChatTemplateDate
         )
         modelLoadSeconds = Date().timeIntervalSince(loadStartedAt)
 

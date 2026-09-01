@@ -42,6 +42,28 @@ private let autoCompactionTriggerContext = 4096
 /// here be attributed to the change under test.
 private let autoCompactionTriggerSamplingMode: GenerationOptions.SamplingMode = .greedy
 
+/// The calendar date this suite pins into ``autoCompactionTriggerModel``'s
+/// prompt.
+///
+/// The decoding above pins the SAMPLING. It does not pin the PROMPT. The
+/// Llama 3.2 chat template writes `Today Date: <today>` into the system header
+/// of every call, and it reads that date off the clock. So every scripted
+/// reply, and the fold that reads them, was a new sample on every calendar
+/// day. Task ^xfj1am4 measured that here, from one binary with only `TZ`
+/// changed: the turn's reply ran to 143 characters on 01 Sep 2026 and to 136
+/// on 02 Sep 2026.
+///
+/// A reply is part of its turn, and the turn is part of the transcript the
+/// fold reads. So a reply that moves with the clock moves the fourth fact this
+/// suite asserts, which is that the fill FELL across the turn. The run of
+/// 2026-08-20 recorded under ``foldSummaryTokenRatio`` shows that fact going
+/// red when a fold saved too little.
+///
+/// The value comes from ``RealModelContainer/chatTemplateFallbackDate``, which
+/// is the template's own fallback and which states why.
+private let autoCompactionTriggerChatTemplateDate =
+    RealModelContainer.chatTemplateFallbackDate
+
 // MARK: - Suite
 
 /// The fast answer to one question: does a session fold its own transcript,
@@ -131,6 +153,34 @@ private let autoCompactionTriggerSamplingMode: GenerationOptions.SamplingMode = 
 /// | folds inside the turn | 1 | 1 |
 /// | stages the fold applied | elision, truncation, summarization | the same |
 /// | the fold's transcript, before and after | 733 -> 369 | 733 -> 463 |
+///
+/// ### The numbers this suite reports now (task ^xfj1am4)
+///
+/// Both columns above were measured with the calendar date the run's own clock
+/// stamped, so each column is one day's sample. That is what
+/// ``autoCompactionTriggerChatTemplateDate`` closes.
+///
+/// Measured on 2026-09-01, with the pin in place:
+///
+/// | what the run measured | value |
+/// |---|---|
+/// | the synthetic trigger, in tokens | 82 |
+/// | the fold target, in tokens | 4 |
+/// | context fill before the turn | 0.167236328125 |
+/// | context fill after the turn | 0.1142578125 |
+/// | folds inside the turn | 1 |
+/// | stages the fold applied | elision, truncation, summarization |
+/// | the fold's transcript, before and after | 733 -> 426 |
+/// | the turn's own reply | 147 characters |
+/// | the test's wall clock | 7.2 s, of which 1.8 s the model load |
+///
+/// The suite reported exactly that row under `TZ=Pacific/Midway`
+/// (01 Sep 2026) and under `TZ=Pacific/Kiritimati` (02 Sep 2026), from one
+/// binary with nothing else changed. The clock no longer reaches this fold.
+///
+/// These numbers WILL move again, because the prompt moves whenever the
+/// compaction prompt or the fixture changes. That is expected, and it is not a
+/// regression.
 ///
 /// Earlier runs of 2026-08-20 measured this test at 23.7 and at 54.6 seconds,
 /// on a box that loaded the model in 6.1 to 7.5 seconds: task ^xx02yn6's stage
@@ -427,7 +477,8 @@ struct AutoCompactionTriggerIntegrationTests {
         let container = try await RealModelContainer.load(
             ref: autoCompactionTriggerModel,
             context: autoCompactionTriggerContext,
-            samplingMode: autoCompactionTriggerSamplingMode
+            samplingMode: autoCompactionTriggerSamplingMode,
+            chatTemplateDate: autoCompactionTriggerChatTemplateDate
         )
         modelLoadSeconds = Date().timeIntervalSince(loadStartedAt)
 
