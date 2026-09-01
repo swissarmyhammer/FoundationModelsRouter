@@ -152,6 +152,41 @@ enum TranscriptDiffer {
         )
     }
 
+    /// `transcript` with its leading `.instructions` entry carrying
+    /// `instructions` in place of the recorded text.
+    ///
+    /// A backend seeded from a transcript reads its instructions from that one
+    /// entry: ``LoadedLLMContainer/makeSession(transcript:tools:)`` takes no
+    /// instructions argument. So this substitution is how a restore gives the
+    /// model a caller's fresh instructions.
+    ///
+    /// A leading `.instructions` entry keeps its recorded id and its recorded
+    /// tool definitions, so the entry's identity survives and a later diff
+    /// still matches it. A transcript that opens with another entry, or that
+    /// is empty, gets a new leading `.instructions` entry instead.
+    ///
+    /// The result is a new value. `transcript` itself is unchanged, and so is
+    /// every recorded event it was reconstructed from.
+    ///
+    /// - Parameters:
+    ///   - transcript: The transcript to substitute into.
+    ///   - instructions: The instructions the model must read.
+    /// - Returns: The substituted transcript.
+    static func replacingLeadingInstructions(
+        of transcript: Transcript, with instructions: String
+    ) -> Transcript {
+        let segments: [Transcript.Segment] = [.text(Transcript.TextSegment(content: instructions))]
+        var entries = Array(transcript)
+        guard let first = entries.first, case .instructions(let recorded) = first else {
+            let inserted = Transcript.Instructions(segments: segments, toolDefinitions: [])
+            return Transcript(entries: [.instructions(inserted)] + entries)
+        }
+        entries[0] = .instructions(
+            Transcript.Instructions(
+                id: recorded.id, segments: segments, toolDefinitions: recorded.toolDefinitions))
+        return Transcript(entries: entries)
+    }
+
     /// The joined text of `transcript`'s first entry when it is an
     /// `.instructions` entry, or `nil`.
     static func leadingInstructionsText(of transcript: Transcript) -> String? {

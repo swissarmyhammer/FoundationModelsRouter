@@ -14,6 +14,13 @@ import Testing
 /// event. It also proves the catchable error a missing session raises, and
 /// the read-only accessor for a recorded working directory.
 ///
+/// The suite also proves that a supplied string reaches the model. A restore
+/// seeds its backend from a reconstructed transcript, and the backend reads
+/// its instructions from that transcript's leading `.instructions` entry.
+/// ``SeedCapturingContainer`` captures that transcript at the construction
+/// seam, so a test reads what the model itself receives. A test that reads
+/// ``RoutedSessionActor/instructions`` alone proves nothing about the model.
+///
 /// Everything runs against stubs — a stub ``ModelLoader``, a plain stub
 /// ``LoadedLLMContainer`` over ``StubSessionBackend``, and a ``JSONLRecorder``
 /// writing into a temp directory — so the suite needs no network and no GPU.
@@ -27,6 +34,51 @@ struct SessionRestorationTests {
     private struct BasicLLMContainer: PlainTranscriptStubContainer {
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
             StubSessionBackend(responseText: "stub response")
+        }
+    }
+
+    /// Records every transcript a restore seeds a model-facing backend from.
+    ///
+    /// A restore builds its backend through `makeSession(transcript:tools:)`,
+    /// which takes no instructions argument. The backend reads its
+    /// instructions from that transcript's leading `.instructions` entry. So
+    /// this capture is what proves an override reaches the model.
+    /// ``RoutedSessionActor/instructions`` alone proves nothing.
+    ///
+    /// `@unchecked Sendable` is safe here without synchronization:
+    /// ``seedTranscripts`` is appended to only synchronously inside
+    /// `makeSession(transcript:tools:)` — called from the `restoreSession`
+    /// call a `@MainActor` test awaits — and read only after that call returns
+    /// to the same test method, so no two tasks ever touch it concurrently.
+    private final class SeedCapturingContainer: LoadedLLMContainer, @unchecked Sendable {
+        /// Whether a vended session's backend opens with an `.instructions`
+        /// entry, the way a live `LanguageModelSession` does. `false` stands
+        /// for a recording whose transcript holds no such entry at all.
+        let recordsInstructionsEntry: Bool
+
+        /// Every transcript `makeSession(transcript:tools:)` was given, in
+        /// call order.
+        private(set) var seedTranscripts: [Transcript] = []
+
+        /// Creates a capturing container.
+        ///
+        /// - Parameter recordsInstructionsEntry: Whether a vended session's
+        ///   backend opens with an `.instructions` entry.
+        init(recordsInstructionsEntry: Bool) {
+            self.recordsInstructionsEntry = recordsInstructionsEntry
+        }
+
+        func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
+            StubSessionBackend(instructions: recordsInstructionsEntry ? instructions : nil)
+        }
+
+        func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
+            StubSessionBackend(entries: Array(transcript))
+        }
+
+        func makeSession(transcript: Transcript, tools: [any Tool]) -> any LanguageModelSessionBackend {
+            seedTranscripts.append(transcript)
+            return StubSessionBackend(entries: Array(transcript))
         }
     }
 
@@ -82,16 +134,20 @@ struct SessionRestorationTests {
     ///   - instructions: The instructions the root session is vended with.
     ///   - workingDirectory: A working-directory override, or `nil` for the
     ///     session's own recording directory.
+    ///   - container: The container both routers load, or the plain stub. Pass
+    ///     a ``SeedCapturingContainer`` to read the transcript the restore
+    ///     seeds its backend from.
     /// - Returns: The recorded session and the profile to restore it with.
     private static func recordRoot(
         cacheDir: URL,
         recordingsDir: URL,
         instructions: String?,
-        workingDirectory: URL? = nil
+        workingDirectory: URL? = nil,
+        container: any LoadedLLMContainer = BasicLLMContainer()
     ) async throws -> Recording {
         let recorder = JSONLRecorder(directory: recordingsDir)
         let loader = StubModelLoader(
-            container: BasicLLMContainer(), dimension: RouterTestFixtures.stubDimension)
+            container: container, dimension: RouterTestFixtures.stubDimension)
 
         let recordingRouter = RouterTestFixtures.makeRouter(
             cacheDir: cacheDir, recordingsDir: recordingsDir, recorder: recorder, loader: loader)
@@ -122,17 +178,18 @@ struct SessionRestorationTests {
         )
     }
 
-    /// Every divergence event one session recorded.
+    /// Every event of one kind that one session recorded.
     ///
     /// - Parameters:
     ///   - id: The session's span id.
     ///   - routerDirectory: The recording root to read.
-    /// - Returns: The session's divergence events, in `seq` order.
-    private static func divergenceEvents(
-        session id: ULID, under routerDirectory: URL
+    ///   - kind: The event kind to keep.
+    /// - Returns: The session's events of that kind, in `seq` order.
+    private static func recordedEvents(
+        session id: ULID, under routerDirectory: URL, ofKind kind: TranscriptEvent.Kind
     ) throws -> [TranscriptEvent] {
         let tree = try TranscriptTree.load(under: routerDirectory)
-        return try tree.events(forSession: id).filter { $0.kind == .divergence }
+        return try tree.events(forSession: id).filter { $0.kind == kind }
     }
 
     // MARK: - instructions: nil keeps the recorded string
@@ -174,8 +231,8 @@ struct SessionRestorationTests {
 
         _ = try await recording.resumingProfile.standard.restoreSession(id: recording.sessionId)
 
-        let markers = try Self.divergenceEvents(
-            session: recording.sessionId, under: recording.routerDirectory)
+        let markers = try Self.recordedEvents(
+            session: recording.sessionId, under: recording.routerDirectory, ofKind: .divergence)
         #expect(markers.isEmpty)
     }
 
@@ -198,8 +255,8 @@ struct SessionRestorationTests {
         _ = try await recording.resumingProfile.standard.restoreSession(
             id: recording.sessionId, instructions: Self.recordedInstructions)
 
-        let markers = try Self.divergenceEvents(
-            session: recording.sessionId, under: recording.routerDirectory)
+        let markers = try Self.recordedEvents(
+            session: recording.sessionId, under: recording.routerDirectory, ofKind: .divergence)
         #expect(markers.isEmpty)
     }
 
@@ -243,8 +300,8 @@ struct SessionRestorationTests {
         _ = try await recording.resumingProfile.standard.restoreSession(
             id: recording.sessionId, instructions: Self.freshInstructions)
 
-        let markers = try Self.divergenceEvents(
-            session: recording.sessionId, under: recording.routerDirectory)
+        let markers = try Self.recordedEvents(
+            session: recording.sessionId, under: recording.routerDirectory, ofKind: .divergence)
         #expect(markers.count == 1)
     }
 
@@ -265,14 +322,105 @@ struct SessionRestorationTests {
         _ = try await recording.resumingProfile.standard.restoreSession(
             id: recording.sessionId, instructions: Self.freshInstructions)
 
-        let markers = try Self.divergenceEvents(
-            session: recording.sessionId, under: recording.routerDirectory)
+        let markers = try Self.recordedEvents(
+            session: recording.sessionId, under: recording.routerDirectory, ofKind: .divergence)
         let text = try #require(markers.first?.text)
         #expect(text.contains(RestoredSession.instructionsDivergencePhrase))
         #expect(text.contains("recorded \(Self.recordedInstructions.count) characters"))
         #expect(text.contains("supplied \(Self.freshInstructions.count) characters"))
         #expect(!text.contains(Self.recordedInstructions))
         #expect(!text.contains(Self.freshInstructions))
+    }
+
+    // MARK: - The override reaches the model
+
+    @Test("instructions that differ reach the transcript the restored backend is seeded from")
+    @MainActor
+    func differingInstructionsReachTheSeedTranscript() async throws {
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionRestorationTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionRestorationTests")
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let container = SeedCapturingContainer(recordsInstructionsEntry: true)
+        let recording = try await Self.recordRoot(
+            cacheDir: cacheDir, recordingsDir: recordingsDir,
+            instructions: Self.recordedInstructions, container: container)
+
+        _ = try await recording.resumingProfile.standard.restoreSession(
+            id: recording.sessionId, instructions: Self.freshInstructions)
+
+        let seed = try #require(container.seedTranscripts.last)
+        #expect(TranscriptDiffer.leadingInstructionsText(of: seed) == Self.freshInstructions)
+    }
+
+    @Test("instructions reach the seed transcript of a recording that holds no instructions entry")
+    @MainActor
+    func instructionsReachTheSeedTranscriptWithNoRecordedEntry() async throws {
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionRestorationTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionRestorationTests")
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let container = SeedCapturingContainer(recordsInstructionsEntry: false)
+        let recording = try await Self.recordRoot(
+            cacheDir: cacheDir, recordingsDir: recordingsDir,
+            instructions: nil, container: container)
+
+        _ = try await recording.resumingProfile.standard.restoreSession(
+            id: recording.sessionId, instructions: Self.freshInstructions)
+
+        let seed = try #require(container.seedTranscripts.last)
+        #expect(TranscriptDiffer.leadingInstructionsText(of: seed) == Self.freshInstructions)
+    }
+
+    @Test("no instructions leave the recorded string in the seed transcript")
+    @MainActor
+    func nilInstructionsLeaveTheSeedTranscriptAlone() async throws {
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionRestorationTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionRestorationTests")
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let container = SeedCapturingContainer(recordsInstructionsEntry: true)
+        let recording = try await Self.recordRoot(
+            cacheDir: cacheDir, recordingsDir: recordingsDir,
+            instructions: Self.recordedInstructions, container: container)
+
+        _ = try await recording.resumingProfile.standard.restoreSession(id: recording.sessionId)
+
+        let seed = try #require(container.seedTranscripts.last)
+        #expect(TranscriptDiffer.leadingInstructionsText(of: seed) == Self.recordedInstructions)
+    }
+
+    @Test("an instructions override leaves the recorded instructions entry on disk unchanged")
+    @MainActor
+    func theOverrideDoesNotRewriteTheRecordedEntry() async throws {
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionRestorationTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionRestorationTests")
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let container = SeedCapturingContainer(recordsInstructionsEntry: true)
+        let recording = try await Self.recordRoot(
+            cacheDir: cacheDir, recordingsDir: recordingsDir,
+            instructions: Self.recordedInstructions, container: container)
+
+        _ = try await recording.resumingProfile.standard.restoreSession(
+            id: recording.sessionId, instructions: Self.freshInstructions)
+
+        let recorded = try Self.recordedEvents(
+            session: recording.sessionId, under: recording.routerDirectory, ofKind: .instructions)
+        #expect(recorded.count == 1)
+        #expect(recorded.first?.text == Self.recordedInstructions)
     }
 
     // MARK: - A missing session is a catchable error

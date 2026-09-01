@@ -44,6 +44,11 @@ extension RestoredSession {
     /// A person greps a repository of committed transcripts for this exact
     /// text to find every session that ran on instructions the record does
     /// not hold.
+    ///
+    /// The phrase names the whole restored session, and every word of it is
+    /// true. The supplied string reaches the session actor, the sidecar of
+    /// any later fork, and the transcript the model itself reads. See
+    /// ``TranscriptDiffer/replacingLeadingInstructions(of:with:)``.
     static let instructionsDivergencePhrase =
         "restored session instructions differ from the recorded instructions"
 
@@ -91,11 +96,16 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     nested `<recordingsRoot>/<routerId>/` layout. Pass the same root
     ///     the session was vended with.
     ///   - instructions: Instructions that replace the recorded ones, or `nil`
-    ///     (the default) to keep the recorded string. A supplied string equal
-    ///     to the recorded one writes nothing. A supplied string that differs
-    ///     appends one ``TranscriptEvent/Kind/divergence`` event to the
-    ///     session's transcript, so a later reader of that file learns the
-    ///     recorded instructions were not the ones in force.
+    ///     (the default) to keep the recorded string. A supplied string
+    ///     replaces the recorded one on the restored session. It also replaces
+    ///     the leading `.instructions` entry of the transcript the restored
+    ///     model reads. So the model obeys the supplied string from its next
+    ///     turn. A supplied string equal to the recorded one changes nothing
+    ///     and writes nothing. A supplied string that differs appends one
+    ///     ``TranscriptEvent/Kind/divergence`` event to the session's
+    ///     transcript. A later reader of that file then learns the session
+    ///     ran on instructions the file does not hold. The recorded
+    ///     `.instructions` entry on disk is never rewritten.
     ///   - tools: The tools the restored session's model can call. Every
     ///     recorded tool name with no supplied instance is reported in
     ///     ``RestoredSession/configurationReport``.

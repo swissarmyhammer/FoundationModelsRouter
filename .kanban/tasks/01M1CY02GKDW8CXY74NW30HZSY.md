@@ -169,6 +169,202 @@ comments:
     - `swift build`: exit 0, no warning from any changed file.
     - next: `/review`.
   timestamp: 2026-09-01T01:45:50.218444+00:00
+- actor: claude-code
+  id: 01m1datq79fqhrq2g22e9tm5xf
+  text: |
+    ### review — findings
+
+    - evidence: `review sha HEAD~1..HEAD`. The validator fleet reported 0 findings, 0 confirmed, 0 refuted, over 6 files. Two `.kanban` files were excluded by `.reviewignore`. The directed API verification of this pass added 4 findings: `Sources/FoundationModelsRouter/Recording/SessionRestoration.swift:93`, `:97`, `:48`, and `Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift:198`.
+    - the gap is real: the supplied `instructions:` override does not change what the restored model reads. `SessionTreeRestoration.swift:352` calls `makeSession(transcript:tools:)`, which has no instructions argument. `LiveModelLoader.swift:51` builds the session from the transcript alone. `TranscriptEntryMapper.swift:139` replays the recorded `.instructions` entry into that transcript. The override changes `RoutedSessionActor.instructions` only, which feeds the sidecar and the forks.
+    - the doc is not honest about the gap. The public parameter doc says the supplied string replaces the recorded one, and that the recorded instructions "were not the ones in force". Both claims are wrong for the model.
+    - verified as correct: the internal tree walk, the `nil` path, the three tests, the `sessionNotFound` error, the working-directory accessor, and the removal of the `periphery:ignore` marks.
+    - my own test run: `swift test` gave 1150 tests in 127 suites plus 83 in 10, exit 0, 2 known issues. `swift build --package-path IntegrationTests --build-tests` gave exit 0.
+    - next: correct the four doc and record-text items, then run `/review` again. The task stays in `review`.
+  timestamp: 2026-09-01T01:55:06.089619+00:00
+- actor: claude-code
+  id: 01m1davwc6bt47rz8vgsw3qyp3
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 6 files. The public surface matches the card exactly.
+    - test: green — swift test, 1150 tests in 127 suites + 83 tests in 10 suites, exit 0
+    - commit: d7ea4a9
+    - review: findings — 4 open. Recording/SessionRestoration.swift:93, :97, :48; Recording/SessionTreeRestoration.swift:198.
+
+    ### The orchestrator's own error, for the record
+
+    The card says instructions are not in the transcript, so an override is only a
+    constructor argument. I wrote that, and I gave it to the ACPAgent session as a
+    measured fact. It is wrong.
+
+    I read the path for a NEW session: `RoutedLLM.swift:154` calls
+    `container.makeSession(instructions:tools:)`. The RESTORE path is different. It
+    calls `container.makeSession(transcript:tools:)`, which has no `instructions`
+    argument at all. `LiveModelLoader.swift:51` then builds the backend session from
+    the transcript alone, and `TranscriptEntryMapper.swift:139` replays the recorded
+    `.instructions` entry into it.
+
+    So the override reaches `RoutedSessionActor.instructions` and stops. Three sites
+    read that property, and no generation file is one of them. A caller's fresh
+    instructions feed the sidecar and any later fork. They never reach the model.
+
+    The feature as built is cosmetic for the use it was designed for.
+
+    ### What to do
+
+    Make it real. Do not document the limitation. A consumer asked for fresh
+    instructions to take effect, the user approved that, and a doc comment that
+    explains why the feature does not work is not the deliverable.
+
+    The fix belongs in the reconstructed transcript: replace the `.instructions`
+    entry with the override before the backend reads it.
+
+    The three doc claims are findings only because the behaviour is wrong. Correct
+    the behaviour, then the claims become true and need no hedging.
+  timestamp: 2026-09-01T01:55:44.134002+00:00
+- actor: claude-code
+  id: 01m1db6d8v2vwatcrqgbrw7akc
+  text: |
+    ### Research for the second pass: where the transcript reaches the model
+
+    I traced the restore path myself before writing code. The review's finding is
+    correct, and the fix belongs in the reconstructed transcript.
+
+    - `SessionTreeRestoration.rebuild(_:on:)` reads
+      `tree.effectiveTranscript(forSession: node.id)` and hands that value to
+      `routedLLM.container.makeSession(transcript:tools:)`.
+    - `LoadedLLMContainer.makeSession(transcript:tools:)` has no `instructions`
+      argument. `LiveModelLoader` builds
+      `LanguageModelSession(model:tools:transcript:)` from the transcript alone.
+    - The SDK reads the instructions from the leading `.instructions` entry.
+      `TranscriptDiffer.leadingInstructionsText(of:)` names that same entry, and
+      `RecordingLanguageModel.writeSidecarIfNeeded(transcript:)` writes the sidecar
+      from it. So the sidecar string and the transcript entry are one fact.
+    - `TranscriptEntryMapper.entry(from:kind:)` rebuilds that entry on the restore
+      path, so the reconstructed transcript carries the recorded string.
+
+    Thus the cleanest substitution point is the transcript itself, before
+    `makeSession(transcript:tools:)` reads it. No new `makeSession` overload is
+    needed, and the protocol stays as it is.
+
+    ### The API the substitution uses
+
+    `Transcript.Instructions(id:segments:toolDefinitions:)` is public, and its `id`
+    defaults to a fresh UUID. So a helper can replace the leading entry in place,
+    keeping its recorded id and its recorded tool definitions, or prepend a new
+    entry when the recording holds none.
+
+    ### Two invariants the substitution must keep
+
+    - The recorded `transcript.jsonl` is not touched. The substitution builds a new
+      in-memory `Transcript` value.
+    - `persistedEntryCount` must count the transcript the backend really got. A
+      prepended entry makes the seed one entry longer, and the count must include
+      it, or the next turn's diff records that entry as new.
+  timestamp: 2026-09-01T02:01:29.115516+00:00
+- actor: claude-code
+  id: 01m1dbr0nkkk632emk9bjvakqb
+  text: |
+    ### The fix, and how it was proved
+
+    **The mechanism.** `TranscriptDiffer.replacingLeadingInstructions(of:with:)`
+    returns a new `Transcript` whose leading `.instructions` entry carries the
+    supplied text. It keeps that entry's recorded id and its recorded tool
+    definitions, so entry identity survives and a later diff still matches it. A
+    transcript that opens with another entry, or that is empty, gets a new leading
+    `.instructions` entry.
+
+    `restoreSessionTree` now calls a new nested function,
+    `applyInstructionsOverride(to:transcript:on:)`. That function owns the whole
+    override: it decides the node, it writes the divergence marker, and it returns
+    both the instructions the actor holds and the transcript to seed the backend
+    with. `rebuild(_:on:)` got shorter, not longer.
+
+    **Two invariants the change keeps.**
+
+    - `persistedEntryCount` now counts `seedTranscript`, not `transcript`. A
+      prepended entry makes the seed one entry longer, and the next turn's diff
+      must treat every entry of it as persisted. Without this the diff would
+      record the substituted entry as new.
+    - `historyOrdinal` still counts the raw effective entry events. The
+      substitution does not touch recorded history.
+
+    ### The failing-before result
+
+    I wrote the two proving tests first and watched them fail on the committed
+    code. `swift test --filter SessionRestorationTests`, 12 tests, 2 failures:
+
+        ✘ "instructions that differ reach the transcript the restored backend is seeded from"
+          SessionRestorationTests.swift:349: Expectation failed:
+          TranscriptDiffer.leadingInstructionsText(of: seed) == Self.freshInstructions
+            TranscriptDiffer.leadingInstructionsText(of: seed) → "be terse and cite the file"
+            Self.freshInstructions → "be verbose, cite the file, and name the module"
+
+        ✘ "instructions reach the seed transcript of a recording that holds no instructions entry"
+          SessionRestorationTests.swift:371: Expectation failed:
+          TranscriptDiffer.leadingInstructionsText(of: seed) == Self.freshInstructions
+            TranscriptDiffer.leadingInstructionsText(of: seed) → nil
+            Self.freshInstructions → "be verbose, cite the file, and name the module"
+
+    The first failure shows the recorded string reaching the backend. The second
+    shows nothing reaching it. After the fix all 12 pass.
+
+    **What makes the test honest.** `SeedCapturingContainer` records every
+    transcript handed to `makeSession(transcript:tools:)`. That is the exact seam
+    the backend is built at, so the test reads what the model itself receives. A
+    test that reads `RoutedSessionActor.instructions` is the test that let the
+    first round through, and this suite now says so in its own header.
+
+    Four tests were added, not two:
+
+    1. an override reaches the seed transcript when the recording holds an
+       `.instructions` entry;
+    2. an override reaches the seed transcript when the recording holds none;
+    3. `nil` leaves the recorded string in the seed transcript;
+    4. an override leaves the recorded `.instructions` event on disk unchanged —
+       one event, still carrying the recorded text.
+
+    ### The fork decision: root only, and why
+
+    The override reaches the node named by `rootId` and no other. Three reasons.
+
+    1. A caller resumes by an id it holds, and it holds no id for a recorded fork.
+       The card records this from ACPAgent.
+    2. `restoreSession(id:)` rebuilds the recorded forks and then releases them.
+       Nothing in the returned value names one, so their instructions are not
+       observable through the public surface.
+    3. A **live** fork taken later from the restored root does get the override,
+       with no extra code. `RoutedSessionActorForking` passes `instructions`
+       straight to the child, and `backend.makeFork(tools:)` seeds the child from
+       the parent's live transcript, which now carries the substituted entry. So
+       the two halves agree for every fork a caller can actually reach.
+
+    A recorded fork keeps its own recorded string. That is what its own history
+    says, and rewriting it would need its own decision.
+
+    ### One discovery worth keeping
+
+    The router writes a root session's sidecar from `RoutedSessionActor.instructions`
+    directly, not from the transcript. So a stub container that ignores
+    `instructions:` produces a recording whose sidecar names the instructions while
+    the transcript holds no `.instructions` entry at all. Every earlier test in this
+    suite used such a container. That is why `SeedCapturingContainer` takes
+    `recordsInstructionsEntry`: `true` mirrors a live `LanguageModelSession`, and
+    `false` is the genuine no-entry recording the card asked to keep working.
+  timestamp: 2026-09-01T02:11:06.035707+00:00
+- actor: claude-code
+  id: 01m1dbre5r36fw5wmamsck0dbf
+  text: |
+    ### implement — changed
+    - evidence: 4 files — `Sources/FoundationModelsRouter/Recording/TranscriptDiffer.swift`, `Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift`, `Sources/FoundationModelsRouter/Recording/SessionRestoration.swift`, `Tests/FoundationModelsRouterTests/SessionRestorationTests.swift`.
+    - the override now reaches the model: `TranscriptDiffer.replacingLeadingInstructions(of:with:)` substitutes the leading `.instructions` entry, and `applyInstructionsOverride(to:transcript:on:)` hands that transcript to `container.makeSession(transcript:tools:)`.
+    - failing before the fix: `swift test --filter SessionRestorationTests` gave 12 tests with 2 failures. The seed transcript carried `"be terse and cite the file"` in one case and `nil` in the other, against the supplied `"be verbose, cite the file, and name the module"`. After the fix all 12 pass.
+    - fork decision: root only. A recorded fork keeps its own recorded string, and `restoreSession(id:)` releases those forks. A live fork of the restored root inherits the override through both the backend transcript and `instructions`, with no extra code.
+    - all four review findings are addressed and checked off. No public signature changed.
+    - `swift test`: 1154 tests in 127 suites, plus 83 tests in 10 suites, exit 0, 2 known issues. The baseline was 1150 in 127 plus 83 in 10, so the run adds this pass's 4 tests and moves nothing else.
+    - `swift build --package-path IntegrationTests --build-tests`: Build complete, exit 0.
+    - `swift build`: exit 0, no warning from any changed file.
+    - next: `/review`.
+  timestamp: 2026-09-01T02:11:19.864758+00:00
 position_column: doing
 position_ordinal: '80'
 title: 'Publish session restore for ACPAgent: one session by id, with an instructions override'
@@ -233,15 +429,6 @@ gives those instructions to nothing. The session then runs on the
 recorded string. There is no error and no report. A person finds this
 later as a model that obeys stale instructions.
 
-An override is cheap, because instructions are not in the transcript:
-
-- `TranscriptReconstruction.swift` writes no instructions entry.
-- Instructions go to the backend as a constructor argument:
-  `RoutedLLM.swift:154`,
-  `container.makeSession(instructions:tools:)`.
-
-Thus the recorded value is only the default argument.
-
 ## The design
 
     restoreSession(
@@ -260,6 +447,25 @@ Thus the recorded value is only the default argument.
 - Supplied and equal to the recorded string: write nothing. No
   divergence occurred.
 - Supplied and different: append one `divergence` event at restore.
+
+### How the override reaches the model
+
+The first round put the override on `RoutedSessionActor.instructions`
+alone. That property feeds the sidecar and any later fork. It reaches no
+generation path, so the model kept the recorded string.
+
+The restore path builds its backend with
+`container.makeSession(transcript:tools:)`, which takes no instructions
+argument. `LiveModelLoader` then builds
+`LanguageModelSession(model:tools:transcript:)`, and the SDK reads the
+instructions from the transcript's leading `.instructions` entry.
+
+So the override enters that entry.
+`TranscriptDiffer.replacingLeadingInstructions(of:with:)` builds a new
+in-memory transcript with the supplied text in that entry. It keeps the
+entry's recorded id and its recorded tool definitions. A recording that
+holds no `.instructions` entry gets a new leading one. The recorded
+`transcript.jsonl` on disk is never rewritten.
 
 ### Why the journal and not the return value
 
@@ -285,17 +491,10 @@ loud `.divergence` marker".
 
 ### Restore already writes
 
-A journal write at restore is not a new class of operation:
-
-    SessionTreeRestoration.swift:404
-        for lostEvent in TranscriptTree.lostRunTerminalEvents(in: effectiveEvents) {
-            await outbox.post(event: lostEvent)
-        }
-
-The doc header at `:194` promises this. Restore makes one terminal
-`.completed` event with outcome `.lost` for each orphaned run. Thus the
-divergence event uses a write path that exists. It does not make a read
-into a write.
+A journal write at restore is not a new class of operation. Restore makes
+one terminal `.completed` event with outcome `.lost` for each orphaned
+run. Thus the divergence event uses a write path that exists. It does not
+make a read into a write.
 
 ### Event text
 
@@ -318,7 +517,11 @@ hash: a reader cannot resolve a hash back to a string.
 - [x] Supplied instructions that are different write exactly one
       `divergence` event. The text is stable and holds no instructions
       body.
+- [x] Supplied instructions that are different reach the model, through
+      the leading `.instructions` entry of the reconstructed transcript.
 - [x] A test proves each of the three instructions cases.
+- [x] A test proves the transcript the backend receives carries the
+      override.
 - [x] `swift build` and `swift test` are green.
 - [x] `swift build --package-path IntegrationTests --build-tests` is
       green. Note: without `--build-tests` this command builds nothing.
@@ -342,3 +545,52 @@ hash: a reader cannot resolve a hash back to a string.
 
 Cross-session messages with `foundationmodelsacpagent-87` on 2026-08-31.
 The reasoning about the transcript reader is ACPAgent's, not a paraphrase. #api #router #recording
+
+## Review Findings (2026-08-31 20:58)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 6 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+The validator fleet found nothing. The items below come from the directed
+API verification of this pass. Each item is on a line this commit added.
+
+- [x] `Sources/FoundationModelsRouter/Recording/SessionRestoration.swift:93` `api/doc-honesty` — The public doc says the supplied instructions "replace the recorded ones". The restored model still reads the recorded string. `SessionTreeRestoration.swift:352` calls `makeSession(transcript:tools:)`, which has no instructions argument. `LiveModelLoader.swift:51` builds `LanguageModelSession(model:tools:transcript:)` from the transcript alone. The rebuilt transcript keeps its leading `.instructions` entry (`TranscriptEntryMapper.swift:139`). State this limit in the parameter doc, or make the restore path give the override to the backend.
+      **Resolved by the second option.** The restore path now gives the
+      override to the backend. `applyInstructionsOverride(to:transcript:on:)`
+      substitutes the leading `.instructions` entry through
+      `TranscriptDiffer.replacingLeadingInstructions(of:with:)`, and
+      `makeSession(transcript:tools:)` reads that substituted transcript.
+      The parameter doc now states this.
+- [x] `Sources/FoundationModelsRouter/Recording/SessionRestoration.swift:97` `api/doc-honesty` — The doc tells a transcript reader that "the recorded instructions were not the ones in force". The recorded instructions were in force for the model. Correct this sentence.
+      **Resolved.** The sentence is now true, because the behaviour is
+      fixed. The doc reads: "A later reader of that file then learns the
+      session ran on instructions the file does not hold."
+- [x] `Sources/FoundationModelsRouter/Recording/SessionRestoration.swift:48` `recording/record-accuracy` — The divergence phrase tells a future reader that the session ran on other instructions. The model ran on the recorded string. Make the phrase name what really changed: the session actor, its sidecar and its forks.
+      **Resolved by correcting the behaviour, not the phrase.** The phrase
+      is now accurate word for word, so it stays stable for grep. The doc
+      above it states what the phrase covers: the session actor, the
+      sidecar of any later fork, and the transcript the model reads.
+- [x] `Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift:198` `api/doc-honesty` — The new `instructions` parameter doc promises a replacement on the root node. It does not say the backend keeps the recorded string. Add that limit here also. The commit message calls the gap "recorded in a comment", but no comment in this file records it.
+      **Resolved.** There is no limit left to state. The parameter doc now
+      says the override reaches the root's own backend, names the entry it
+      replaces, and says the recorded `transcript.jsonl` is not rewritten.
+
+### What the verification confirmed as correct
+
+- The public surface matches the card. `restoreSessionTree` and
+  `RestoredSessionTree` stay internal. Making `TranscriptTreeError` public
+  dragged nothing else in. Its cases carry only `ULID` and `URL`.
+- `instructions: nil` keeps the previous behaviour. `overrideForNode` is
+  `nil`, so `effectiveInstructions` is `node.sidecar.instructions` and the
+  write never runs.
+- The three instructions cases each have a test that can fail. The
+  equal-string test and the differing-string test form a matched pair.
+- A missing session raises `TranscriptTreeError.sessionNotFound`. The test
+  at `SessionRestorationTests.swift:295` proves it.
+- `recordedWorkingDirectory` loads the tree only. It builds no backend and
+  no session, and it writes nothing.
+- The removed `// periphery:ignore` marks hide no dead code. Periphery has
+  no config file in this repository and no CI step runs it.
+- `swift build --package-path IntegrationTests --build-tests`: exit 0.

@@ -184,11 +184,16 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     same root a session was vended with.
     ///   - instructions: Instructions that replace the recorded ones on the
     ///     root node alone, or `nil` (the default) to keep every node's own
-    ///     recorded string. A fork under the root always keeps its own. A
-    ///     supplied string that differs from the recorded one appends one
+    ///     recorded string. A recorded fork under the root always keeps its
+    ///     own. The override reaches the root's own backend, because it
+    ///     replaces the leading `.instructions` entry of the transcript that
+    ///     backend is seeded from. The recorded `transcript.jsonl` on disk
+    ///     keeps the entry it already holds. A supplied string that differs
+    ///     from the recorded one appends one
     ///     ``TranscriptEvent/Kind/divergence`` event to the root's
     ///     transcript. See
-    ///     ``RestoredSession/instructionsDivergenceText(recorded:supplied:)``.
+    ///     ``RestoredSession/instructionsDivergenceText(recorded:supplied:)``
+    ///     and this function's own `applyInstructionsOverride(to:transcript:on:)`.
     ///   - tools: The tools every restored node's model can call. Each node
     ///     gets its own per-session tool instances. Every recorded tool name
     ///     with no supplied instance is reported in
@@ -316,6 +321,13 @@ extension RoutedModel where Container == any LoadedLLMContainer {
 
             let transcript = try tree.effectiveTranscript(forSession: node.id)
 
+            // The caller's instructions override (task ^w30hzsy), applied to
+            // this node's own transcript before the backend reads it. See
+            // `applyInstructionsOverride(to:transcript:on:)` for why the
+            // transcript is the only place that reaches the model.
+            let (effectiveInstructions, seedTranscript) = await applyInstructionsOverride(
+                to: node, transcript: transcript, on: routedLLM)
+
             // The node's recorded configuration envelope (task ^ne5g9jn),
             // or `nil` for a recording made before the envelope existed —
             // which restores with the pre-envelope defaults below, exactly
@@ -349,7 +361,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 sessionID: node.id,
                 cappedToTokenLimit: configuration?.budget?.toolOutputLimit
             )
-            let backend = routedLLM.container.makeSession(transcript: transcript, tools: instancedTools)
+            let backend = routedLLM.container.makeSession(
+                transcript: seedTranscript, tools: instancedTools)
             // ``RoutedSession/contextFill``'s restored numerator
             // (compaction_plan.md §1.5, checkpoint-aware restore
             // precedence): the newest stamped `.response` event's usage
@@ -397,38 +410,6 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 await outbox.post(event: lostEvent)
             }
 
-            // The instructions override (task ^w30hzsy). A caller resumes one
-            // session by the id it holds, so the override reaches the named
-            // root alone and every fork under it keeps its own recorded
-            // string. `nil` keeps the recorded string everywhere, which is
-            // what every caller written before this parameter existed gets.
-            let overrideForNode = node.id == rootId ? instructions : nil
-            let effectiveInstructions = overrideForNode ?? node.sidecar.instructions
-            if let overrideForNode, overrideForNode != node.sidecar.instructions {
-                // The divergence goes into the journal rather than into the
-                // return value, because the reader who needs it is not the
-                // caller. A caller that supplied the string already knows. The
-                // person who reads the committed transcript next month did
-                // not, and the file says the model had the recorded
-                // instructions. One `.divergence` marker states the condition
-                // in the record itself. The write path is the one
-                // ``RecordingLanguageModel`` and ``RoutedSessionActor`` use
-                // for their own transcript-divergence markers.
-                await routedLLM.recorder.append(
-                    TranscriptEvent.Partial(
-                        routerId: routedLLM.routerId,
-                        sessionId: node.id,
-                        parentId: node.parentId,
-                        slot: slot,
-                        model: model,
-                        kind: .divergence,
-                        text: RestoredSession.instructionsDivergenceText(
-                            recorded: node.sidecar.instructions, supplied: overrideForNode)
-                    ),
-                    to: node.directory
-                )
-            }
-
             return makeRoutedSessionActor(
                 profile: owningProfile,
                 routerId: routedLLM.routerId,
@@ -462,10 +443,14 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 generationGate: routedLLM.generationGate,
                 forkAdmissionGate: routedLLM.forkAdmissionGate,
                 holdsAdmissionPermit: false,
-                persistedEntryCount: transcript.count,
+                // The transcript the backend really holds, which an
+                // instructions override can make one entry longer. The next
+                // turn's diff must treat every entry of it as persisted, or
+                // it records a substituted entry as new.
+                persistedEntryCount: seedTranscript.count,
                 // The restored session's position in its own append-only
                 // recorded history: the raw effective entry-event count —
-                // NOT `transcript.count`, which the checkpoint filter may
+                // NOT `seedTranscript.count`, which the checkpoint filter may
                 // have shrunk to the fold's live window (see
                 // ``RoutedSessionActor/historyOrdinal``).
                 historyOrdinal: effectiveEvents.count,
@@ -492,6 +477,70 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 // vended session takes it: a restored node reports where the
                 // live router reports.
                 tracer: routedLLM.tracer
+            )
+        }
+
+        /// Applies this call's `instructions` override to one node.
+        ///
+        /// A caller resumes one session by the id it holds, so the override
+        /// reaches the named root alone. Every recorded fork under that root
+        /// keeps its own recorded string, and
+        /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:)``
+        /// releases those forks anyway. A live fork taken later from the
+        /// restored root does inherit the override, because it inherits both
+        /// the backend transcript and ``RoutedSessionActor/instructions``.
+        ///
+        /// The model reads its instructions from the leading `.instructions`
+        /// entry of the transcript its backend is seeded with.
+        /// ``LoadedLLMContainer/makeSession(transcript:tools:)`` takes no
+        /// instructions argument, and no generation path reads
+        /// ``RoutedSessionActor/instructions``. So the override must enter
+        /// that entry, or fresh instructions never reach the model. The
+        /// substitution builds a new in-memory value through
+        /// ``TranscriptDiffer/replacingLeadingInstructions(of:with:)``. The
+        /// recorded `transcript.jsonl` keeps the entry it already holds.
+        ///
+        /// An override equal to the recorded string changes nothing. It
+        /// substitutes no entry, and it writes no event.
+        ///
+        /// - Parameters:
+        ///   - node: The node being rebuilt.
+        ///   - transcript: That node's reconstructed transcript.
+        ///   - routedLLM: The generation handle its recorded slot resolved to.
+        /// - Returns: The instructions the restored session holds, and the
+        ///   transcript to seed its backend with.
+        func applyInstructionsOverride(
+            to node: SessionNode, transcript: Transcript, on routedLLM: RoutedLLM
+        ) async -> (instructions: String?, seedTranscript: Transcript) {
+            let overrideForNode = node.id == rootId ? instructions : nil
+            let recorded = node.sidecar.instructions
+            guard let supplied = overrideForNode, supplied != recorded else {
+                return (overrideForNode ?? recorded, transcript)
+            }
+            // The divergence goes into the journal rather than into the return
+            // value, because the reader who needs it is not the caller. A
+            // caller that supplied the string already knows. The person who
+            // reads the committed transcript next month does not, and that
+            // file still holds the recorded instructions. One `.divergence`
+            // marker states the condition in the record itself. The write path
+            // is the one ``RecordingLanguageModel`` and ``RoutedSessionActor``
+            // use for their own transcript-divergence markers.
+            await routedLLM.recorder.append(
+                TranscriptEvent.Partial(
+                    routerId: routedLLM.routerId,
+                    sessionId: node.id,
+                    parentId: node.parentId,
+                    slot: node.sidecar.slot,
+                    model: node.sidecar.model,
+                    kind: .divergence,
+                    text: RestoredSession.instructionsDivergenceText(
+                        recorded: recorded, supplied: supplied)
+                ),
+                to: node.directory
+            )
+            return (
+                supplied,
+                TranscriptDiffer.replacingLeadingInstructions(of: transcript, with: supplied)
             )
         }
 
