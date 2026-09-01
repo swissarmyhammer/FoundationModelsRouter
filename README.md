@@ -66,6 +66,15 @@ two-model demo.
 
 ## Install
 
+The package needs macOS 27 or later. Declare that floor in your `Package.swift`:
+
+```swift
+platforms: [.macOS("27.0")],
+```
+
+SwiftPM applies macOS 12.0 when your manifest states no floor. The build then
+fails.
+
 The example above needs three packages. Add them to the `dependencies` list in
 `Package.swift`:
 
