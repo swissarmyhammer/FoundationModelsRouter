@@ -321,8 +321,42 @@ comments:
     - evidence: 1 file — `Sources/FoundationModelsRouter/Compaction/Summarization.swift`. Both findings are DOC repairs. No code and no test changed. Finding 1: the code is right, and a ceiling is a maximum, not a target. A condense call sized EQUAL to the ceiling that wrote its input can still shorten, because the condense prompt states a much smaller word budget. A guard that skipped an equal ceiling would stop the rung in almost every fold, because the condense allowance comes from `budgetBytes` while the map allowance comes from `0.75` of the content. Both doc sites now state the guarantee the code gives: the call is never sized ABOVE the input's ceiling, and `nil` means an empty answer or a repetition loop. Finding 2: a fold-wide bound would be wrong, because a chunked fold must make one call for each chunk, and the integration test pins the bound on a SINGLE-chunk fixture. The doc now scopes the bound to one answer. I removed the same cause at every site in the file: the `Answer` doc, the `resolveOversizedSummary` doc, and `resolveRepetitiveSummary`'s "The stage never asks a third time". Commands: `swift test` exit 0, 1164 tests in 128 suites plus 83 in 10 suites, 2 known issues. `swift build --package-path IntegrationTests --build-tests` exit 0. `swift test --package-path IntegrationTests --filter CompactionSmokeIntegrationTests` exit 0, 2 tests in 1 suite, `summarizerCalls=2 ceilings=[617, 617] answerTokens=[703, 789] summaryTokens=624 tokensAfter=694`. I dumped the review rules for `.swift` before editing: no rule bans a date or a task id in a comment, and `doc-parameter-naming` governs only `- Parameter` keys, which I did not change.
     - next: review. The task stays in `doing`.
   timestamp: 2026-09-01T16:32:58.135401+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m1exc2pfghvm8c8eetk5xsq3
+  text: |-
+    ### review — clean
+
+    - scope: `review sha HEAD~1..HEAD` (commit 89f09ec, "docs(compaction): correct condense and fold doc claims"). Round 2.
+    - engine: 0 findings over 1 file. 7 validators attempted, 0 failed. The 2 `.kanban/` files were excluded by `.reviewignore`.
+    - docs-only: `git diff HEAD~1..HEAD -- Sources` changes one file. Every changed line starts with `///`. No test file is in the commit, so no test was weakened.
+    - prior findings: both Round 1 items are checked. Both were doc repairs.
+
+    Verification of the two corrected claims, against the code:
+
+    1. `condense` sizes its call `min(outputTokenCeiling(forSummaryAllowance: allowance), inputCeiling)`. The `min` makes the call never larger than the ceiling that wrote its input. The doc states exactly that. The call runs before either `nil` return. The only `nil` returns are an empty answer and a repetition loop. The doc lists both, and says the call is always made. Both statements are true.
+    2. `summarize` calls `summarizeOnce` one time for each chunk, then `reduce` calls it more. Each call builds a new `Answer`, with `reAsked` false or true for that answer alone. A fold-wide bound would be false. The doc now scopes the bound to one answer, and states that each chunk's answer carries its own budget of one. This is true.
+
+    The new wording does not overclaim. One answer can spend at most one recovery generation: `resolveOversizedSummary` guards the condense rung with `!answer.reAsked`, calls `condense` one time, and uses no loop.
+
+    The three sites the findings did not name are true now:
+
+    - The `Answer` struct doc says the flag bounds the ladder for one answer, and not for a whole multi-chunk fold.
+    - The `resolveOversizedSummary` doc says the condense call runs once the rung runs, and documents both guards: a budget of zero or below, and an answer already re-asked.
+    - The `resolveRepetitiveSummary` doc says the stage never asks a third time for this one answer. The function asks one more time.
+
+    No other site in the file carries the old claim.
+
+    Tests, run by the reviewer:
+
+    - `swift test` — exit 0. 1164 tests in 128 suites passed with 2 known issues. A second run of 83 tests in 10 suites passed. This equals the baseline.
+    - `swift test --package-path IntegrationTests --filter CompactionSmokeIntegrationTests` — exit 0. 2 tests in 1 suite passed in 18.1 s. The fold measured `summarizerCalls=2 ceilings=[617, 617] summaryTokens=624`. This is the 2-call shape, not the 3-call shape that failed.
+
+    Prose check: every added sentence is a complete sentence below 20 words.
+
+    - next: The card moves to `done`. Note for the orchestrator: the Acceptance Criteria and Tests boxes are still unchecked. The reviewer ran the integration suite one time, not three times.
+  timestamp: 2026-09-01T16:38:23.695284+00:00
+position_column: done
+position_ordinal: ffffb680
 title: The compaction smoke fold fails again, deterministically, on code CI passed twice
 ---
 ## What
