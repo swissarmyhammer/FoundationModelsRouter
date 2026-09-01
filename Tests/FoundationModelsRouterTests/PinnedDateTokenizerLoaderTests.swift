@@ -16,6 +16,11 @@ import Testing
 /// `strftime_now` when nothing defines it. So a caller that states
 /// `date_string` stops the clock reaching the prompt. These tests hold the
 /// loader to stating it, and to leaving everything else the way it found it.
+///
+/// One name is not enough. Each model family names the variable itself, and
+/// the Muse Glimmer family reads `current_date` where the Llama family reads
+/// `date_string`. So these tests hold the loader to stating EVERY name it
+/// claims, and to leaving each name a call states alone by itself.
 @Suite("PinnedDateTokenizerLoader pins the chat template's date")
 struct PinnedDateTokenizerLoaderTests {
     /// The date every test of this suite pins.
@@ -23,6 +28,32 @@ struct PinnedDateTokenizerLoaderTests {
     /// Written the way the Llama 3.2 template writes it, so the value reads as
     /// the thing it replaces.
     private static let pinnedDate = "26 Jul 2024"
+
+    /// One pinned template variable, beside a second the same render carries.
+    ///
+    /// The rule the loader holds is stated per NAME, so a test of it needs two
+    /// names at once: the one the call states, and one the call leaves to the
+    /// loader.
+    struct NamePair: Sendable {
+        /// The variable the call states a date for itself.
+        let stated: String
+
+        /// A variable the call leaves alone, which the loader pins.
+        let other: String
+    }
+
+    /// Every pinned variable, each paired with another pinned variable.
+    ///
+    /// Both orders, so neither name is proved only as the one the call states
+    /// nor only as the one the loader pins.
+    private static let namePairs = [
+        NamePair(
+            stated: PinnedDateTokenizerLoader.dateStringTemplateKey,
+            other: PinnedDateTokenizerLoader.currentDateTemplateKey),
+        NamePair(
+            stated: PinnedDateTokenizerLoader.currentDateTemplateKey,
+            other: PinnedDateTokenizerLoader.dateStringTemplateKey),
+    ]
 
     /// The directory the loader is asked to load from.
     ///
@@ -174,8 +205,8 @@ struct PinnedDateTokenizerLoaderTests {
 
     // MARK: - The tests
 
-    @Test("a call that states no template context is still given the pinned date")
-    func pinsTheDateWhenTheCallStatesNoContext() async throws {
+    @Test("a call that states no template context is given the pinned date under every name")
+    func pinsEveryDateNameWhenTheCallStatesNoContext() async throws {
         let tokenizer = try await Self.pinnedTokenizer()
 
         let rendered = tokenizer.decode(
@@ -183,6 +214,7 @@ struct PinnedDateTokenizerLoaderTests {
                 messages: [], tools: nil, additionalContext: nil))
 
         #expect(rendered.contains("date_string=\(Self.pinnedDate)"))
+        #expect(rendered.contains("current_date=\(Self.pinnedDate)"))
     }
 
     @Test("the template variables the call states are kept beside the pinned date")
@@ -197,20 +229,23 @@ struct PinnedDateTokenizerLoaderTests {
         #expect(rendered.contains("thinking=false"))
     }
 
-    @Test("a date the call states itself is left alone")
-    func leavesADateTheCallStates() async throws {
+    @Test(
+        "a date the call states itself is left alone, and the other name is still pinned",
+        arguments: Self.namePairs)
+    func leavesADateTheCallStates(names: NamePair) async throws {
         let statedDate = "01 Jan 2000"
         let tokenizer = try await Self.pinnedTokenizer()
 
         let rendered = tokenizer.decode(
             tokenIds: try tokenizer.applyChatTemplate(
-                messages: [], tools: nil, additionalContext: ["date_string": statedDate]))
+                messages: [], tools: nil, additionalContext: [names.stated: statedDate]))
 
-        #expect(rendered.contains("date_string=\(statedDate)"))
-        #expect(!rendered.contains(Self.pinnedDate))
+        #expect(rendered.contains("\(names.stated)=\(statedDate)"))
+        #expect(!rendered.contains("\(names.stated)=\(Self.pinnedDate)"))
+        #expect(rendered.contains("\(names.other)=\(Self.pinnedDate)"))
     }
 
-    @Test("the generation-prompt render carries the pinned date and the flag it was given")
+    @Test("the generation-prompt render carries every pinned name and the flag it was given")
     func pinsTheDateOnTheGenerationPromptRender() async throws {
         let tokenizer = try await Self.pinnedTokenizer()
 
@@ -221,6 +256,7 @@ struct PinnedDateTokenizerLoaderTests {
         let rendered = tokenizer.decode(tokenIds: tokenIds)
 
         #expect(rendered.contains("date_string=\(Self.pinnedDate)"))
+        #expect(rendered.contains("current_date=\(Self.pinnedDate)"))
         #expect(rendered.contains("addGenerationPrompt=false"))
     }
 

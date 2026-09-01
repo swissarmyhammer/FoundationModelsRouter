@@ -172,8 +172,26 @@ comments:
     - Both pinned suites and the smoke suite reported identical numbers under both dates.
     - next: /review
   timestamp: 2026-09-01T18:26:12.368715+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m1f3rtb2scqgdbjw9q0f3ht6
+  text: |
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (fc40844). counts: 0 findings, 0 confirmed, 0 refuted, 7 attempted, 0 failed. 4 Swift files reviewed; 4 `.kanban/` files excluded by `.reviewignore`.
+    - No prior `## Review Findings` section exists on this card, and every acceptance and test item is checked.
+    - next: none. The card moves to done.
+  timestamp: 2026-09-01T18:30:12.578493+00:00
+- actor: claude-code
+  id: 01m1f3sg2xf4yts956fc5bc8ka
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 4 files. All 16 gated suites got a verdict. Pinned RecordedTranscriptCompaction and AutoCompactionTrigger (both drive the Llama template, which always reads the clock through `date_string`, and both assert on numbers from generated text). CompactionSmoke was already pinned. 13 suites stay unpinned, each with a stated reason. New constant `RealModelContainer.chatTemplateFallbackDate = "26 Jul 2024"`.
+    - test: green — `swift test` 1169 tests in 129 suites with 2 known issues, plus 83 tests in 10 suites, exit 0. `swift test --package-path IntegrationTests` 29 tests in 14 suites plus 2 tests in 2 suites, exit 0. Both pinned suites and CompactionSmoke report the same numbers under TZ=Pacific/Midway (01 Sep 2026) and TZ=Pacific/Kiritimati (02 Sep 2026).
+    - commit: fc40844 — 8 files
+    - review: clean — 0 findings, 7 validator passes attempted, 0 failed, on `review sha HEAD~1..HEAD`
+    - next: card is done. Follow-up card ^g8rywv2 holds the gap the work found: the pin sets `date_string`, but the Muse Glimmer template reads `current_date`, so the pin cannot reach it.
+  timestamp: 2026-09-01T18:30:34.845884+00:00
+position_column: done
+position_ordinal: ffffb880
 title: Decide which other gated suites must pin the chat template's date
 ---
 ## What

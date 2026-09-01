@@ -19,24 +19,66 @@ import MLXLMCommon
 ///
 /// This loader closes that hole for the callers that need it. It wraps another
 /// loader, and it wraps the tokenizer that loader vends, so every chat-template
-/// render made through the loaded model states ``dateStringTemplateKey``. The
-/// Llama family's template reads that variable FIRST and calls `strftime_now`
-/// only when nothing defines it, so a stated date keeps the clock out of the
-/// prompt.
+/// render made through the loaded model states every name of
+/// ``datePinnedTemplateKeys``. A template reads its own variable FIRST and
+/// calls `strftime_now` only when nothing defines it, so a stated date keeps
+/// the clock out of the prompt.
+///
+/// ## Each model family names the variable itself
+///
+/// There is no one name. Each family's template chooses one, so a pin that
+/// states one name reaches one family:
+///
+/// | family | the variable it reads | when it reads it |
+/// |---|---|---|
+/// | Llama 3.1 and 3.2 | ``dateStringTemplateKey`` | every call |
+/// | Muse Glimmer | ``currentDateTemplateKey`` | only with no system message |
+///
+/// The Qwen 2.5 and Qwen 3 templates read no clock at all, so no name reaches
+/// them and none is needed.
+///
+/// A pinned value is written once, in the Llama family's `%d %b %Y` shape. The
+/// Muse Glimmer template writes `%Y-%m-%d` when it reads the clock itself, so
+/// its prompt carries a date in the other family's shape under this pin. The
+/// pin exists to stop the date MOVING, and one value that never moves does
+/// that under either shape.
 ///
 /// ## What it does not do
 ///
-/// It pins one template variable, and it is opt-in. An application that wants
-/// the model to know today's date loads without it, which is the default
-/// everywhere in this package. A template that reads the clock through some
-/// other variable is not covered; ``dateStringTemplateKey`` is the name the
-/// Llama family uses.
+/// It is opt-in. An application that wants the model to know today's date
+/// loads without it, which is the default everywhere in this package. A
+/// template that reads the clock through a name the table above does not hold
+/// is not covered.
 public struct PinnedDateTokenizerLoader: TokenizerLoader {
-    /// The chat-template variable that carries the date.
+    /// The chat-template variable the Llama family reads.
     ///
     /// The name the Llama 3.1 and 3.2 templates read, and the name their
     /// `strftime_now` fallback assigns to.
     public static let dateStringTemplateKey = "date_string"
+
+    /// The chat-template variable the Muse Glimmer family reads.
+    ///
+    /// `mlx-community/Muse-Glimmer-30B-4bit` writes `Current date: <today>`
+    /// into the system header it builds for a conversation that carries NO
+    /// system message, and it reads this name first:
+    ///
+    /// ```
+    /// {%- if current_date is defined and current_date -%}
+    ///     {{- '\nCurrent date: ' + current_date + '.' -}}
+    /// {%- elif strftime_now is defined -%}
+    ///     {{- '\nCurrent date: ' + strftime_now('%Y-%m-%d') + '.' -}}
+    /// {%- endif -%}
+    /// ```
+    ///
+    /// A conversation that carries a system message takes the other branch of
+    /// the template, which writes no date at all.
+    public static let currentDateTemplateKey = "current_date"
+
+    /// Every chat-template variable this loader pins.
+    ///
+    /// One list rather than a name per call site, so a family added to the
+    /// table above reaches every render through one edit.
+    public static let datePinnedTemplateKeys = [dateStringTemplateKey, currentDateTemplateKey]
 
     /// The loader that reads the real tokenizer from disk.
     private let base: any TokenizerLoader
@@ -70,13 +112,16 @@ public struct PinnedDateTokenizerLoader: TokenizerLoader {
 
 /// The tokenizer ``PinnedDateTokenizerLoader`` vends.
 ///
-/// It states ``PinnedDateTokenizerLoader/dateStringTemplateKey`` on every
-/// chat-template render, and forwards every other operation to the tokenizer it
-/// wraps.
+/// It states every name of ``PinnedDateTokenizerLoader/datePinnedTemplateKeys``
+/// on every chat-template render, and forwards every other operation to the
+/// tokenizer it wraps.
 ///
-/// The date is stated only when the CALL states none of its own. A caller that
-/// named the date already has a prompt that does not move, which is the whole
-/// point, and overwriting it would take a decision away from that caller.
+/// The rule holds per NAME: a name the call states a date for itself is left
+/// alone, and every other name is still pinned. A caller that named the date
+/// already has a prompt that does not move, which is the whole point, and
+/// overwriting it would take a decision away from that caller. A name that
+/// caller did not state is a name the clock still reaches, so leaving the whole
+/// render alone would keep the defect the pin exists to close.
 struct PinnedDateTokenizer: Tokenizer {
     /// The tokenizer that holds the vocabulary and the chat template.
     private let base: any Tokenizer
@@ -94,17 +139,18 @@ struct PinnedDateTokenizer: Tokenizer {
         self.dateString = dateString
     }
 
-    /// The chat-template context a render is given, with the pinned date added.
+    /// The chat-template context a render is given, with the pinned date added
+    /// under each name the call left alone.
     ///
     /// - Parameter additionalContext: the template variables the call stated.
-    /// - Returns: those variables, plus the pinned date when the call stated no
-    ///   date of its own.
+    /// - Returns: those variables, plus the pinned date under each name of
+    ///   ``PinnedDateTokenizerLoader/datePinnedTemplateKeys`` the call stated no
+    ///   date for.
     private func pinningDate(
         in additionalContext: [String: any Sendable]?
     ) -> [String: any Sendable] {
         var pinned = additionalContext ?? [:]
-        let key = PinnedDateTokenizerLoader.dateStringTemplateKey
-        if pinned[key] == nil {
+        for key in PinnedDateTokenizerLoader.datePinnedTemplateKeys where pinned[key] == nil {
             pinned[key] = dateString
         }
         return pinned

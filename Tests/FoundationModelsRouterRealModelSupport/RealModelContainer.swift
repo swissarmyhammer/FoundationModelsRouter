@@ -67,10 +67,15 @@ public enum RealModelContainer {
     /// reason. Each suite still records its OWN measured numbers in its own
     /// doc comment.
     ///
-    /// It pins the Llama family only. `Muse-Glimmer-30B-4bit` reads
-    /// `current_date` rather than `date_string`, and it reads it only when the
-    /// conversation carries no system message. No gated suite that reaches
-    /// that branch asserts on generated text today.
+    /// It reaches every family the loader knows, and not the Llama family
+    /// alone. `Muse-Glimmer-30B-4bit` reads `current_date` rather than
+    /// `date_string`, and it reads it only when the conversation carries no
+    /// system message. ``FoundationModelsRouter/PinnedDateTokenizerLoader``
+    /// states this value under both names, so a Muse Glimmer prompt takes it
+    /// too (task ^g8rywv2). That prompt then writes the date in the Llama
+    /// family's shape rather than the `%Y-%m-%d` shape Muse Glimmer's own
+    /// fallback writes; what the pin owes each suite is a date that does not
+    /// move, and one value does that under either shape.
     public static let chatTemplateFallbackDate = "26 Jul 2024"
 
     /// Loads `ref` and returns the concrete container behind it.
