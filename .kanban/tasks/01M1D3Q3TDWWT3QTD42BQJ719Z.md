@@ -67,8 +67,65 @@ comments:
     - one unrelated flaky test appeared 3 times in 128 loaded runs: `RespondRunPlaneDrainTests`. It failed before this change as well. Raised as ^91m8p4k.
     - next: /review
   timestamp: 2026-09-01T13:53:29.511419+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m1em1nfy5aw5vt28bnws7tqm
+  text: |-
+    ### commit — changed
+    - evidence: 2a3e0c0 fix(tests): wait on an event, not a clock, for turn cancellation
+    - staged: Tests/FoundationModelsRouterTests/TurnCancellationTests.swift, .kanban/tasks/01M1D3Q3TDWWT3QTD42BQJ719Z.jsonl, .kanban/tasks/01M1D3Q3TDWWT3QTD42BQJ719Z.md, .kanban/tasks/01M1EKWSSNRDNE0MCCC91M8P4K.jsonl, .kanban/tasks/01M1EKWSSNRDNE0MCCC91M8P4K.md
+    - next: none, local commit only, not pushed
+  timestamp: 2026-09-01T13:55:25.310456+00:00
+- actor: claude-code
+  id: 01m1emrejmxc1w6pgvy5k7rth3
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD`. 7 validators ran. 0 findings, 0 confirmed, 0 refuted, 0 failed.
+    - scope: commit 2a3e0c0 only. `git diff HEAD~1..HEAD -- Sources` gives 0 lines. The change touches tests only.
+    - crux, the new failure mode is clean: `AwaitedEvent.wait()` uses `withTaskCancellationHandler`. A cancel resumes the waiter and throws `EventNeverArrived`. `AwaitedEventTests.aCancelledWaitEnds` proves this. So a cancellation that never reaches the tool fails the test. It does not hang the run.
+    - the `.timeLimit(.minutes(1))` is on the `@Suite` declaration. Swift Testing applies a suite trait to each test in the suite.
+    - no test was skipped, retried, weakened, or given a longer budget. The suite holds 23 `@Test` before and after. The diff adds no `.disabled`, no `withKnownIssue`, no retry, and no sleep.
+    - the new path is stricter. The old path recorded an issue and continued. The new path throws out of the test.
+    - the signal follows the observer write: `await observer.noteToolSawCancellation()` runs before `sawCancellation.signal()`. A resumed test always reads fresh state.
+    - the sibling `BoundedWait.spin` on `recorder.events.count` is unchanged, so it is outside the scope of a diff review. Leaving it is defensible. A hard `#expect` follows it, so a give-up fails cleanly. The measured margin is about 100 times.
+    - doc claims checked and true: the microsecond and two-second measurements; "thirty times the slowest crossing" (60 s over 2.07 s); and `AsyncSemaphore.wait()` ignores cancellation, because it is non-throwing and holds no cancellation handler.
+    - my own runs: 31 `swift test` invocations, 0 failures. 1 baseline, 20 filtered on `TurnCancellationTests`, 10 full. Full run reports 1159 tests in 128 suites and 83 tests in 10 suites, with 2 known issues.
+    - next: none. The task moves to done.
+  timestamp: 2026-09-01T14:07:51.892597+00:00
+- actor: claude-code
+  id: 01m1emsjshbhs8tm2a0vh7mnpt
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 1 test file. No source file changed.
+    - test: green — swift test, 1159 tests in 128 suites + 83 tests in 10 suites, exit 0
+    - commit: 2a3e0c0
+    - review: clean — 0 findings, 7 validators, 0 failed. Task moved to done.
+
+    The measurement is the valuable part of this card. The failure never appeared
+    in 100 runs of narrower shapes, so the wait itself was measured instead of
+    guessed at. 475 waits over 25 full runs under 96 busy processes: 14 of the 15
+    call sites take microseconds, and one takes p90 2.06 seconds against a
+    5-second ceiling. Every sample above one second in the whole set is that one
+    site.
+
+    The cause is structural and not load. `cancelCurrentTurn()` cancels the model
+    call directly. The `.callerTask` route cancels the stream consumer, and the
+    stop reaches the tool only when that consumer runs again on the shared main
+    actor. Run alone the same wait takes 50 microseconds.
+
+    The reviewer checked the thing that mattered: the new wait fails cleanly rather
+    than hanging. `AwaitedEvent.wait()` is cancellation-aware, the suite carries
+    `.timeLimit(.minutes(1))`, and `AwaitedEventTests.aCancelledWaitEnds` already
+    proves the throw. The new path is stricter than the old one, which recorded an
+    issue and continued.
+
+    Verification: 55 full loaded runs plus 20 filtered runs by the implementer, and
+    31 more runs by the reviewer. Zero cancellation failures.
+
+    Two unrelated flakes were found while measuring and carded rather than fixed
+    here: `^91m8p4k` (RespondRunPlaneDrainTests, 3 failures in 128 loaded runs).
+  timestamp: 2026-09-01T14:08:28.977029+00:00
+position_column: done
+position_ordinal: ffffb380
 title: 'A turn-cancellation test fails at random: the cancellation does not reach the tool in time'
 ---
 ## What

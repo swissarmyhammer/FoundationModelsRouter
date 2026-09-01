@@ -213,8 +213,85 @@ comments:
       and the kanban files alone. No harness reached the repository.
     - next: `/review`.
   timestamp: 2026-09-01T14:14:13.314969+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m1enebtjfz5s9wmpgabswtpp
+  text: |
+    ### review — clean
+
+    Scope: `review sha HEAD~1..HEAD`, commit 11760eb only.
+
+    - engine: 0 findings over 0 files. `README.md` matched no validator. That zero
+      is absence of coverage, not a pass. The reviewer verified by hand instead.
+    - version: `Package.swift` line 79 declares `.macOS("27.0")`. The README states
+      `platforms: [.macOS("27.0")],` and "macOS 27 or later". The strings agree. The
+      reviewer read the version. The reviewer did not assume it.
+    - GREEN, built by the reviewer: a consumer package in the scratchpad declares
+      ONLY the Install section content — the floor, the three packages and the three
+      products. The reviewer supplied the tools version, the name and the target
+      alone. `swift build` printed `Build complete! (27.13 sec)`, exit 0.
+    - RED control: the same package with the one `platforms:` line removed printed
+      all three errors, exit 1.
+
+          error: The package product 'FoundationModelsRouter-product' requires
+          minimum platform version 27.0 ... but this target supports 12.0
+          error: The package product 'HuggingFace-product' requires minimum
+          platform version 13.0 ... but this target supports 12.0
+          error: The package product 'Tokenizers-product' requires minimum
+          platform version 13.0 ... but this target supports 12.0
+
+    - the single line answers all three. 27.0 is above the 13.0 that `HuggingFace`
+      and `Tokenizers` need. The GREEN build proves this.
+    - no regression of `^2ennye2`: the GREEN build compiled the full README example
+      against the three packages and the three product links. The Install section
+      works end to end.
+    - the consumer resolved the router at `main` (44af734).
+      `git diff origin/main HEAD -- Package.swift` is empty, so the remote manifest
+      declares the same floor. The build measured the floor the README states.
+    - warnings: 4, all from the upstream `mlx-swift` C++ sources. None comes from
+      the README example or the consumer target.
+    - judgement: sound. The reviewer agrees. `name:` omitted stops the manifest at
+      once. `platforms:` omitted compiles, gives a wrong macOS 12.0, and fails only
+      after full resolution. The reviewer measured 11 packages and 36 seconds warm
+      before the error came. A reader cannot derive 27.0 from any other content.
+    - prose: each added sentence is complete, active and below 20 words. The counts
+      are 7, 6, 10 and 4 words.
+    - tree: `git status --porcelain` shows no repository file from this review.
+      `git diff Package.swift` is empty. Every build ran in the scratchpad.
+    - next: none. The task moves to `done`.
+  timestamp: 2026-09-01T14:19:49.970354+00:00
+- actor: claude-code
+  id: 01m1enfxkcjj5armb19dqqn6gp
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 1 file (README.md). The Install section now opens with the floor.
+    - test: green — swift test, 1159 tests in 128 suites + 83 tests in 10 suites, exit 0
+    - commit: 11760eb
+    - review: clean — 0 findings. Task moved to done.
+
+    The judgement, made and then agreed by the reviewer: the floor belongs in the
+    Install section. The other fragments are reader knowledge, because every
+    package has a name, a targets list and a tools version. The floor is package
+    knowledge that no reader can derive.
+
+    The reviewer added the stronger form of the argument. The distinguishing
+    property is the failure mode. An absent `name:` stops the manifest at once. An
+    absent `platforms:` compiles, applies a wrong macOS 12.0, and fails only after
+    full resolution. The reviewer's control run cloned 11 packages and took 36
+    seconds before the error appeared.
+
+    The work found two errors the card never named. `HuggingFace-product` and
+    `Tokenizers-product` each need macOS 13.0. One floor of 27.0 answers all three.
+
+    Both agents built a consumer package that declares only what the Install
+    section instructs. GREEN exit 0. The control without the `platforms:` line
+    reproduced all three errors, exit 1.
+
+    Noted and not actioned: ASD-STE100 approves "floor" only for the bottom surface
+    of a room. The word is used here for a minimum version, which matches the card
+    title and the project vocabulary. A person can rename it.
+  timestamp: 2026-09-01T14:20:40.940409+00:00
+position_column: done
+position_ordinal: ffffb480
 title: The README Install section does not state the macOS 27 platform floor
 ---
 ## What
