@@ -21,7 +21,7 @@ import Tokenizers
 let recordingsDir = URL.documentsDirectory.appending(path: "RouterTranscripts")
 
 // The two `MLXHuggingFace` macros expand to code that calls `HuggingFace`,
-// `MLXLMCommon` and `Tokenizers`, so all three are imported above.
+// `MLXLMCommon` and `Tokenizers`. The example imports all three modules above.
 let router = Router(
     recordingsDir: recordingsDir,
     loader: LiveModelLoader(
@@ -66,11 +66,26 @@ two-model demo.
 
 ## Install
 
-Add the package to `Package.swift`:
+The example above needs three packages. Add them to the `dependencies` list in
+`Package.swift`:
 
 ```swift
-.package(url: "https://github.com/swissarmyhammer/FoundationModelsRouter", branch: "main")
+.package(url: "https://github.com/swissarmyhammer/FoundationModelsRouter", branch: "main"),
+.package(url: "https://github.com/huggingface/swift-huggingface", from: "0.9.0"),
+.package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.0"),
 ```
+
+Then link three products from your own target:
+
+```swift
+.product(name: "FoundationModelsRouter", package: "FoundationModelsRouter"),
+.product(name: "HuggingFace", package: "swift-huggingface"),
+.product(name: "Tokenizers", package: "swift-transformers"),
+```
+
+The `#hubDownloader()` and `#huggingFaceTokenizerLoader()` macros expand to code
+that calls `HuggingFace` and `Tokenizers`. Your target must link both products.
+The router package does not link them for you.
 
 ## Documentation
 

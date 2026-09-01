@@ -172,6 +172,190 @@ comments:
       so the flake is not from this work. Carded as ^bqj719z.
     - next: `/review`.
   timestamp: 2026-08-31T23:51:42.198493+00:00
+- actor: claude-code
+  id: 01m1d4fffq7fn1gq8z9crtm5qn
+  text: |-
+    ### review — findings
+
+    - command: `review sha 3025c92`. counts: 0 findings, 0 confirmed, 0 refuted, 0 files reviewed.
+    - The engine gave no coverage. No validator declares a `*.md` match glob, so a
+      README-only commit reaches no validator. The reviewer compiled the blocks by hand.
+    - compile result, obtained by the reviewer: the corrected block 1 builds.
+      `swift build --target ReadmeCheck` printed `Build complete! (3.59 sec)`, exit 0.
+      The pre-change block fails in the same harness, exit 1, so the harness discriminates.
+    - The three claimed breaks are each real and each necessary. Removing any one of them
+      breaks the build. All six imports carry load. The added comment states the truth:
+      the macro expansion names `MLXLMCommon`.
+    - Blocks 2 and 3 are correct, as the implementer claimed.
+    - findings: 3 open — README.md:15, README.md:18, README.md:24.
+    - `Package.swift` is restored. `git diff Package.swift` is empty, and the tree holds
+      no part of the experiment.
+    - next: correct the Install block and the passive clause, then review again.
+  timestamp: 2026-09-01T00:04:06.263552+00:00
+- actor: claude-code
+  id: 01m1d4gm11d1e3jv981n8xkmbm
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 1 file (README.md). 3 examples checked by compiling. 1 broken, with 3 breaks.
+    - test: green — swift test, 1136 tests in 126 suites + 83 tests in 10 suites, exit 0
+    - commit: 3025c92
+    - review: findings — 3 open. README.md:15, :18, :24.
+
+    The review found the repair incomplete, from the reader's position rather than
+    from ours. The implementer compiled block 1 inside a target that already links
+    `swift-huggingface` and `swift-transformers`. A reader has no such target. The
+    reviewer built a consumer package that declares only what the Install block at
+    `README.md:72` instructs, and the example failed:
+
+        error: unable to resolve module dependency: 'HuggingFace'
+        error: unable to resolve module dependency: 'Tokenizers'
+        exit 1
+
+    `MLXHuggingFace` and `MLXLMCommon` resolve through the router package.
+    `HuggingFace` and `Tokenizers` do not, because the router target links neither
+    product. Only the example and test targets of this package do. The reviewer
+    added both packages to the consumer manifest and the example then built, so the
+    correction is measured and not a guess.
+
+    This is the same class of defect the card was written for: the example is
+    correct for us and wrong for a reader. Note it for the next round.
+
+    Also recorded: the review engine reviewed 0 files. No validator of the 13
+    declares a match glob for `*.md`, so a README-only commit reaches no validator.
+    The engine's zero was not a pass. The reviewer compiled the blocks by hand.
+  timestamp: 2026-09-01T00:04:43.681805+00:00
+- actor: claude-code
+  id: 01m1d518s6ffbsfxyhpc44t427
+  text: |
+    ## The three findings, and what each one needed
+
+    ### `README.md:15` and `README.md:18` — the Install block was incomplete
+
+    The Install block named one package. The example imports `HuggingFace` and
+    `Tokenizers`. Neither module reaches a reader's target through the router
+    package, because the router target links neither product.
+
+    The Install section now states two things, not one.
+
+    First, the reader adds three packages to the `dependencies` list:
+
+    ```swift
+    .package(url: "https://github.com/swissarmyhammer/FoundationModelsRouter", branch: "main"),
+    .package(url: "https://github.com/huggingface/swift-huggingface", from: "0.9.0"),
+    .package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.0"),
+    ```
+
+    Second, the reader links three products from the target:
+
+    ```swift
+    .product(name: "FoundationModelsRouter", package: "FoundationModelsRouter"),
+    .product(name: "HuggingFace", package: "swift-huggingface"),
+    .product(name: "Tokenizers", package: "swift-transformers"),
+    ```
+
+    The two version bounds match `Package.swift` exactly. That manifest pins
+    `swift-huggingface` at `from: "0.9.0"` and `swift-transformers` at
+    `from: "1.3.0"`.
+
+    Prose follows the second block. It tells the reader why the target must link
+    both products, so a reader who skips a block knows what broke.
+
+    ### `README.md:24` — passive voice
+
+    Old text: "so all three are imported above".
+    New text: "The example imports all three modules above."
+
+    The sentence is now active. It is 8 words. It carries one idea.
+
+    ## The tree
+
+    `git diff Package.swift` is empty. `git status --porcelain` lists `README.md`
+    and the kanban files alone. The harness lives in the scratchpad, outside the
+    repository.
+  timestamp: 2026-09-01T00:13:49.222990+00:00
+- actor: claude-code
+  id: 01m1d51p4gtn4s2x09ahj03ztr
+  text: |
+    ## Verified from the reader's position, not from ours
+
+    The last round compiled the example inside this package. That proved nothing,
+    because this package links more than a reader gets. This round builds a
+    consumer package instead.
+
+    ### The harness reads the shipped README, not a copy
+
+    `build_reader_package.py` (scratchpad) reads `README.md` and finds the fenced
+    blocks. It writes a package from three of them, and it adds nothing else:
+
+    - block 0 becomes `Sources/ReaderCheck/main.swift`
+    - block 1 becomes the manifest `dependencies` list
+    - block 2 becomes the target `dependencies` list
+
+    The manifest carries the package name, `platforms: [.macOS("27.0")]` and the
+    target path. A reader supplies those for any package. The script adds no
+    dependency and no product of its own. So the build measures exactly what the
+    Install section instructs.
+
+    ### The acceptance test passes
+
+    ```
+    cd scratchpad/FromReadme && swift build
+    Build complete! (29.62 sec)
+    exit 0
+    ```
+
+    ### Both controls fail, so both instructions carry load
+
+    Control 1 — the old Install block. The consumer declares the router package
+    alone, and links its product alone:
+
+    ```
+    error: .../main.swift:3:8 unable to resolve module dependency: 'HuggingFace'
+    error: .../main.swift:6:8 unable to resolve module dependency: 'Tokenizers'
+    exit 1
+    ```
+
+    This reproduces the reviewer's failure exactly.
+
+    Control 2 — the packages declared, the products not linked. The consumer
+    declares all three packages, and the target links the router product alone:
+
+    ```
+    error: .../main.swift:3:8 unable to resolve module dependency: 'HuggingFace'
+    error: .../main.swift:6:8 unable to resolve module dependency: 'Tokenizers'
+    exit 1
+    ```
+
+    This is the finding a reader would hit next. A `dependencies` entry alone does
+    not link a module. The second code block in the Install section answers it.
+
+    ### What this teaches about the two module classes
+
+    `MLXHuggingFace` and `MLXLMCommon` need no entry. The router target links both
+    products, and Swift lets a consumer import a transitively linked module.
+    `HuggingFace` and `Tokenizers` are different: the router target links neither,
+    so only the reader's own target can supply them.
+  timestamp: 2026-09-01T00:14:02.896671+00:00
+- actor: claude-code
+  id: 01m1d51wrhtkd69b9c6e1jvqms
+  text: |
+    ### implement — changed
+
+    - files: 1 changed — `README.md`. The Install section grew from one block to two
+      blocks plus prose. One comment line in the example became active voice.
+    - findings: 3 of 3 closed. `README.md:15`, `README.md:18`, `README.md:24`.
+    - acceptance test: a consumer package generated from the shipped README blocks
+      alone. `cd scratchpad/FromReadme && swift build` printed
+      `Build complete! (29.62 sec)`, exit 0.
+    - control 1 (the old Install block): exit 1, `unable to resolve module
+      dependency: 'HuggingFace'` and `'Tokenizers'`.
+    - control 2 (packages declared, products not linked): exit 1, the same two
+      errors. Both Install blocks carry load.
+    - `swift test`: 1136 tests in 126 suites passed with 2 known issues, plus 83
+      tests in 10 suites passed. exit 0. This matches the baseline.
+    - `git diff Package.swift` is empty. No harness reached the repository.
+    - next: `/review`.
+  timestamp: 2026-09-01T00:14:09.681626+00:00
 position_column: doing
 position_ordinal: '80'
 title: The README resolve example does not compile
@@ -217,3 +401,89 @@ this card without saying so.
 
 Reported by the FoundationModelsACPAgent session, verified here before carding:
 README.md:41 against Router.swift:228. #router #docs #defect
+
+## Review Findings (2026-08-31 19:12)
+
+> Scope: `review sha 3025c92` — the diffs only.
+> The validator fleet reviewed 0 files. No validator declares a `*.md` match
+> glob, so the engine gives a README-only commit no coverage. Its zero count is
+> absence of coverage, not evidence of correctness. The reviewer compiled the
+> code blocks directly to get the findings below.
+
+- [x] `README.md:15` `docs/install-completeness` — This change adds `import HuggingFace`, but the Install block at `README.md:72` names only the router package. A reader who obeys that block cannot build the example. The compiler reports `unable to resolve module dependency: 'HuggingFace'`. Add `swift-huggingface` (`from: "0.9.0"`) to the Install block, and name its `HuggingFace` product.
+- [x] `README.md:18` `docs/install-completeness` — This change adds `import Tokenizers`, but the Install block at `README.md:72` names only the router package. A reader who obeys that block cannot build the example. The compiler reports `unable to resolve module dependency: 'Tokenizers'`. Add `swift-transformers` (`from: "1.3.0"`) to the Install block, and name its `Tokenizers` product.
+- [x] `README.md:24` `docs/ste-active-voice` — The clause "so all three are imported above" is passive. Simplified Technical English requires active voice. Write a new sentence in active voice: "The example imports all three modules above."
+
+### How the reviewer verified the findings
+
+The reviewer did not read the blocks. The reviewer compiled them.
+
+`awk` found three fenced blocks in the committed README.md: Swift at lines
+12-60, Swift at lines 71-73, and shell at lines 91-100. This agrees with the
+implementer's count.
+
+**Block 1 compiles inside this package.** `sed -n '13,59p' README.md` extracted
+the block. A temporary `ReadmeCheck` executable target compiled it:
+
+```
+swift build --target ReadmeCheck
+Build complete! (3.59 sec)   exit 0
+```
+
+The harness discriminates. The pre-change block fails in the same harness with
+`cannot find 'recordingsDir' in scope`, exit 1.
+
+**Each of the three repairs is necessary.** The reviewer removed one repair at a
+time from the fixed block. Each removal breaks the build:
+
+| Removal | Exit |
+|---|---|
+| the `profile:` label | 1 |
+| the `recordingsDir` declaration | 1 |
+| the three added imports | 1 |
+
+**Every import carries load.** The reviewer removed each import alone. All six
+removals break the build, so the block holds no unused import.
+
+**The added comment states the truth.** A minimal program that holds only the
+two macros, without `import MLXLMCommon`, fails with
+`macro expansion #hubDownloader:5:38: error: cannot find type 'MLXLMCommon' in
+scope`. The macros do name all three modules.
+
+**Block 1 fails for a reader who obeys the Install block.** The reviewer built a
+throwaway consumer package that declares the router package alone, exactly as
+`README.md:72` instructs, and pasted the block in:
+
+```
+error: unable to resolve module dependency: 'HuggingFace'
+error: unable to resolve module dependency: 'Tokenizers'
+exit 1
+```
+
+`MLXHuggingFace` and `MLXLMCommon` resolve through the router's own target
+dependencies. `HuggingFace` and `Tokenizers` do not, because the router target
+links neither product. Only the package's example and test targets link them.
+
+**The proposed repair works.** The same consumer package, with
+`swift-huggingface` and `swift-transformers` added, builds the block:
+
+```
+Build complete! (10.14 sec)   exit 0
+```
+
+**Block 2 is correct.** `git ls-remote --heads origin main` returns
+`b4e8dcb2e601efa81d9794fa319d33151da4e407`, so the URL and the branch both
+resolve.
+
+**Block 3 is correct.** `swift test --package-path IntegrationTests list` lists
+34 tests. The README regex matches 5 of them, across the three named suites.
+The command cannot match nothing.
+
+**The tree is clean.** `git diff Package.swift` is empty, `Examples/` holds only
+`CompactionDemo` and `MultiModelGeneration`, and README.md matches HEAD.
+
+### A note on the example as documentation
+
+The example still demonstrates what it set out to demonstrate. The change added
+lines; it removed no step. Resolution, the progress stream, a session, a turn
+and the release all remain.
