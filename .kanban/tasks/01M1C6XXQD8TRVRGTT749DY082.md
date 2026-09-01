@@ -218,6 +218,26 @@ comments:
     One acceptance item stays open: CI green with the integration job, over more
     than one run. That needs a CI run and cannot be checked from a workstation.
   timestamp: 2026-09-01T01:28:08.854635+00:00
+- actor: claude-code
+  id: 01m1dggvmfk5gktr4zatfekp16
+  text: |-
+    ### CI is green, and the last acceptance item is closed
+
+    The remaining criterion asked for CI green with the integration job, over
+    more than one run. Two runs now satisfy it:
+
+    - `387a553` — completed, success.
+    - `6be2294` — completed, success. Both jobs passed:
+      `ci / Build & test` and
+      `ci / Integration (opt-in, real dependencies)`.
+
+    Note on the run between them. `587cfe7` reports `cancelled`, not `failure`.
+    Its `Build & test` job passed in 3 minutes 43 seconds. The concurrency group
+    stopped its integration job when the next push arrived. A cancelled run is
+    not a failed run.
+
+    Before this fix the branch failed on `5a0a732`, `5a8075b` and `b4e8dcb`.
+  timestamp: 2026-09-01T03:34:34.383151+00:00
 position_column: done
 position_ordinal: ffffb080
 title: A compaction fold drops a fact stated late in the span, because the summarizer answer degenerates and the stage stores it
