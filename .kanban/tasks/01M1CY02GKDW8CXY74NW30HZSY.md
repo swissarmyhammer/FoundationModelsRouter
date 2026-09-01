@@ -365,6 +365,272 @@ comments:
     - `swift build`: exit 0, no warning from any changed file.
     - next: `/review`.
   timestamp: 2026-09-01T02:11:19.864758+00:00
+- actor: claude-code
+  id: 01m1dcnyw14ca7jjwz3wsh9v0a
+  text: |-
+    ### review — findings
+
+    - scope: `review sha HEAD~1..HEAD`, which is commit `a8356cc` alone
+    - engine: 0 findings, 0 confirmed, 0 refuted, 7 validators attempted, 0 failed
+    - directed verification: 2 findings, both about tests that do not exist
+    - evidence: `TranscriptDiffer.swift:186`, `SessionTreeRestoration.swift:450`
+    - the central claim is true. The reviewer traced the override from
+      `restoreSession` to `LanguageModelSession(model:tools:transcript:)` at
+      `LiveModelLoader.swift:51`. The override reaches the model.
+    - the red-test claim is true. The reviewer reverted the three source files
+      to `a8356cc~1`, kept the tests, and ran them. Result: 12 tests, 2
+      failures. Both failures are seed-transcript tests.
+    - `swift test`: 1154 tests in 127 suites, plus 83 in 10 suites. Exit 0.
+    - `swift build --package-path IntegrationTests --build-tests`: exit 0.
+    - next: add the two tests. Then run the review again.
+  timestamp: 2026-09-01T02:27:27.233441+00:00
+- actor: claude-code
+  id: 01m1dcqderdgdb4mb0qssyfjex
+  text: |-
+    ### finish iteration 2 — findings
+    - implement: changed — 4 files. The override now reaches the model.
+    - test: green — swift test, 1154 tests in 127 suites + 83 tests in 10 suites, exit 0
+    - commit: a8356cc
+    - review: findings — 2 open. Recording/TranscriptDiffer.swift:186, Recording/SessionTreeRestoration.swift:450.
+
+    The reviewer traced the path itself and confirmed the fix:
+    `restoreSession` to `applyInstructionsOverride` to
+    `replacingLeadingInstructions` to `makeSession(transcript:tools:)` to
+    `LanguageModelSession(model:tools:transcript:)`. The SDK reads the
+    instructions from that transcript, so the override arrives.
+
+    The reviewer also proved the red test itself. It reverted the three source
+    files in a throwaway worktree, kept the tests, and ran them: 12 tests, 2
+    failures. The two failures read the seed transcript through
+    `SeedCapturingContainer`, which is the correct seam.
+
+    It ruled out one hazard nobody named: a substituted seed transcript could
+    raise a false transcript divergence on the first turn. It does not, because
+    the restore passes no `persistedBaseline`.
+
+    Correction to the earlier record: this pass adds 4 tests, not 12. Twelve is
+    the count of tests in the file. 1150 plus 4 is 1154.
+
+    Both remaining findings are the same shape as the defect of round 1: a line
+    that is correct today and that no test holds. Round 1 failed because a test
+    read the wrong property. Add the guards.
+  timestamp: 2026-09-01T02:28:14.936754+00:00
+- actor: claude-code
+  id: 01m1dd9cvqkh3343mha3y5eqac
+  text: |
+    ### Both findings are now guarded, and each guard was proved red
+
+    Four tests were added to
+    `Tests/FoundationModelsRouterTests/SessionRestorationTests.swift`. No
+    source behaviour changed. Each guarded line was broken, the test was run,
+    and the line was put back.
+
+    #### Finding 1 — `TranscriptDiffer.swift:186`
+
+    The substitution keeps the recorded entry id and the recorded tool
+    definitions. Two tests hold the two facts apart, because one test states
+    one behaviour.
+
+    - "an instructions override keeps the recorded entry id"
+    - "an instructions override keeps the recorded tool definitions"
+
+    Both read through `SeedCapturingContainer`, the seam the backend is built
+    at, and both compare against the entry the recording holds on disk.
+
+    The recorded entry must carry a real roster, or the tool-definition
+    assertion would hold an empty list against an empty list.
+    `SeedCapturingContainer` now takes `recordedToolDefinitions`, and the
+    suite declares one `Transcript.ToolDefinition` named `search`. The test
+    asserts the recorded payload carries that name before it asserts the
+    substituted entry does.
+
+    **Red proof A.** `toolDefinitions: recorded.toolDefinitions` was changed
+    to `toolDefinitions: []`:
+
+        ✘ "an instructions override keeps the recorded tool definitions"
+          SessionRestorationTests.swift:594: Expectation failed:
+          substitution.seeded.toolDefinitions.map(\.name) == [Self.recordedToolName]
+            substitution.seeded.toolDefinitions.map(\.name) → []
+            [Self.recordedToolName] → ["search"]
+
+        SessionRestorationTests.swift:595: Expectation failed:
+          substitution.seeded.toolDefinitions.map(\.description) == [Self.recordedToolDescription]
+            substitution.seeded.toolDefinitions.map(\.description) → []
+            [Self.recordedToolDescription] → ["search the recorded notes"]
+
+    **Red proof B.** `id: recorded.id` was removed, so the entry took a fresh
+    UUID:
+
+        ✘ "an instructions override keeps the recorded entry id"
+          SessionRestorationTests.swift:575: Expectation failed:
+          substitution.seeded.id == substitution.recorded.entryId
+            substitution.seeded.id → "8FFEAAE2-7668-42C7-B24B-29AA8A8BA15F"
+            substitution.recorded.entryId → "A6B3EE7B-3CEE-4EA4-BB53-F0C803E0FF10"
+
+    #### Finding 2 — `SessionTreeRestoration.swift:450`
+
+    Two tests run a turn after a restore.
+
+    - "a turn after a restore with an override records no instructions event"
+      is the finding word for word. It restores a recording that holds no
+      transcript entry at all, supplies an override, runs one turn, and
+      asserts the recorded file gains no `.instructions` event.
+    - "a turn after a restore with an override records only that turn's
+      entries" is the general case. The recording holds one turn. After the
+      restore and one more turn the recorded entry kinds must be exactly
+      `[.prompt, .response, .prompt, .response]`.
+
+    The second test is necessary. An undercount re-records the tail of the
+    transcript, not its head, so a recording that already holds entries never
+    gains an `.instructions` event from this break alone. The empty recording
+    is the case where the head itself is re-recorded. The two tests together
+    cover both.
+
+    `recordRoot` takes `answersAPrompt: Bool = true` for the empty case. Every
+    call that exists keeps its behaviour.
+
+    **Red proof C.** `persistedEntryCount: seedTranscript.count` was changed
+    to `persistedEntryCount: transcript.count`. Both tests failed:
+
+        ✘ "a turn after a restore with an override records no instructions event"
+          SessionRestorationTests.swift:623: Expectation failed: recorded.isEmpty
+            recorded.isEmpty → false
+            recorded → [TranscriptEvent(… kind: .instructions,
+              text: Optional("be verbose, cite the file, and name the module") …)]
+
+        ✘ "a turn after a restore with an override records only that turn's entries"
+          SessionRestorationTests.swift:647: Expectation failed:
+          kinds == [.prompt, .response, .prompt, .response]
+            kinds → [.prompt, .response, .response, .prompt, .response]
+
+    The first failure is the exact regression the card forbids: the override
+    text entered the recorded `transcript.jsonl` as an `.instructions` event.
+
+    #### The commands
+
+    - `swift test`: 1158 tests in 127 suites, plus 83 tests in 10 suites. Exit
+      0, 2 known issues. The baseline was 1154 plus 83, so the run adds this
+      pass's 4 tests and moves nothing else.
+    - `swift build --package-path IntegrationTests --build-tests`: exit 0.
+    - `swift build`: exit 0.
+    - `git status` shows one source-tree file changed: the test file. Both
+      guarded lines are back at their committed text.
+  timestamp: 2026-09-01T02:38:04.151861+00:00
+- actor: claude-code
+  id: 01m1ddkmp3cy37qm7m9q5snexd
+  text: |
+    ### Correction and final state: the tests were refactored, then proved red again
+
+    The earlier comment reported line numbers from before a refactor. This comment
+    replaces those numbers. It is the record to read.
+
+    #### The refactor, and why
+
+    I loaded the validator rules for `.swift` after writing the tests. The
+    `duplication` validator is a blocker, and it states: "Two blocks that differ
+    only by a value are one function with an argument." The two turn-after-restore
+    tests differed by `answersAPrompt` and by their assertion. So the shared body
+    moved into one helper:
+
+        takeOneTurnAfterRestoring(cacheDir:recordingsDir:answersAPrompt:)
+
+    Each test is now the temp-directory preamble, one call, and its own assertion.
+    The finding-1 tests already shared
+    `substituteInstructionsOnRestore(cacheDir:recordingsDir:)`, so they were not
+    touched.
+
+    #### The red proofs, re-run against the final file
+
+    **Finding 1** — `TranscriptDiffer.swift:186`. The line was replaced by
+    `Transcript.Instructions(segments: segments, toolDefinitions: [])`, which drops
+    both the recorded id and the recorded roster:
+
+        ✘ "an instructions override keeps the recorded tool definitions"
+          SessionRestorationTests.swift:626: Expectation failed:
+          substitution.seeded.toolDefinitions.map(\.name) == [Self.recordedToolName]
+            substitution.seeded.toolDefinitions.map(\.name) → []
+            [Self.recordedToolName] → ["search"]
+
+          SessionRestorationTests.swift:627: Expectation failed:
+          substitution.seeded.toolDefinitions.map(\.description) == [Self.recordedToolDescription]
+            substitution.seeded.toolDefinitions.map(\.description) → []
+            [Self.recordedToolDescription] → ["search the recorded notes"]
+
+        ✘ "an instructions override keeps the recorded entry id"
+          SessionRestorationTests.swift:607: Expectation failed:
+          substitution.seeded.id == substitution.recorded.entryId
+            substitution.seeded.id → "AA89CED5-FA2A-441E-AD91-F35AF0967FE2"
+            substitution.recorded.entryId → "BFAE90C5-0270-4262-A31E-CD7DA400ADFF"
+
+    An earlier pass also broke each half on its own, and each half failed on its own
+    test alone.
+
+    **Finding 2** — `SessionTreeRestoration.swift:450`. The line was changed to
+    `persistedEntryCount: transcript.count`:
+
+        ✘ "a turn after a restore with an override records no instructions event"
+          SessionRestorationTests.swift:649: Expectation failed: recorded.isEmpty
+            recorded.isEmpty → false
+            recorded → [TranscriptEvent(… seq: 2, kind: .instructions,
+              text: Optional("be verbose, cite the file, and name the module"),
+              entry: Optional(TranscriptEntryPayload(entryId: "2CA19897-…") …))]
+
+        ✘ "a turn after a restore with an override records only that turn's entries"
+          SessionRestorationTests.swift:667: Expectation failed:
+          kinds == [.prompt, .response, .prompt, .response]
+            kinds → [.prompt, .response, .response, .prompt, .response]
+
+    The first failure is the exact regression the card forbids: the override text
+    reached the recorded `transcript.jsonl` as an `.instructions` event.
+
+    #### One discovery worth keeping
+
+    A root session that answers no prompt is still restorable. `RoutedSessionActor`
+    writes the sidecar in its own `init`, and `TranscriptTree.load(under:)`
+    discovers a session by its `session.json`. So the recording holds a session with
+    no transcript entry at all, and its reconstructed transcript is empty. That is
+    the only shape where an off-by-one on `persistedEntryCount` re-records the head
+    of the transcript rather than its tail. It is why the finding's own assertion is
+    falsifiable, and it is what `answersAPrompt: false` builds.
+
+    #### Rule compliance the pass checked, item by item
+
+    - `duplication`: resolved by the helper above.
+    - `reuse`: the new tests call `recordRoot`, `recordedEvents`, and
+      `SeedCapturingContainer`. `recordedEntryKinds` has one caller, which the rule
+      permits and forbids inlining.
+    - `test-integrity/no-test-cheating`: each test carries one failable `#expect`,
+      and each was watched to fail.
+    - `magic-numbers-swift`: a Swift Testing suite gets no exemption. The new code
+      holds no numeric literal at all.
+    - `missing-docs-swift`: it reads `open` and `public` only. Nothing new is
+      public. Every new declaration still carries a doc comment.
+    - `doc-parameter-naming`: every `- Parameter` entry names the internal name.
+    - `access-control`: nothing narrowed, nothing published.
+    - `function-length-swift`: the longest new declaration is far under 250 lines.
+    - `test-partitioning`: unit target, stubs only, no environment variable. The
+      suite runs in 0.08 seconds.
+
+    #### The commands
+
+    - `swift test`: 1158 tests in 127 suites, plus 83 tests in 10 suites. Exit 0,
+      2 known issues. The baseline was 1154 plus 83.
+    - `swift build --package-path IntegrationTests --build-tests`: exit 0.
+    - `git diff -- Sources`: empty. Both guarded lines are back at their committed
+      text.
+  timestamp: 2026-09-01T02:43:39.843748+00:00
+- actor: claude-code
+  id: 01m1ddkwc4vwz3w3hwm234x5ej
+  text: |
+    ### implement — changed
+    - evidence: 1 file — `Tests/FoundationModelsRouterTests/SessionRestorationTests.swift`. No source file changed. `git diff -- Sources` is empty.
+    - 4 tests added, and each was watched to fail. `TranscriptDiffer.swift:186` broken: `substitution.seeded.toolDefinitions.map(\.name) == [Self.recordedToolName]` gave `[]` against `["search"]`, and `substitution.seeded.id == substitution.recorded.entryId` gave a fresh UUID against the recorded id. `SessionTreeRestoration.swift:450` broken: `recorded.isEmpty` gave one `.instructions` event carrying the override text, and `kinds == [.prompt, .response, .prompt, .response]` gave `[.prompt, .response, .response, .prompt, .response]`.
+    - both findings of 2026-08-31 21:13 are checked off in the description.
+    - `swift test`: 1158 tests in 127 suites, plus 83 tests in 10 suites, exit 0, 2 known issues. The baseline was 1154 plus 83.
+    - `swift build --package-path IntegrationTests --build-tests`: exit 0.
+    - `swift build`: exit 0.
+    - next: `/review`.
+  timestamp: 2026-09-01T02:43:47.716086+00:00
 position_column: doing
 position_ordinal: '80'
 title: 'Publish session restore for ACPAgent: one session by id, with an instructions override'
@@ -594,3 +860,118 @@ API verification of this pass. Each item is on a line this commit added.
 - The removed `// periphery:ignore` marks hide no dead code. Periphery has
   no config file in this repository and no CI step runs it.
 - `swift build --package-path IntegrationTests --build-tests`: exit 0.
+
+## Review Findings (2026-08-31 21:13)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 4 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+The validator fleet found nothing. The two items below come from the
+directed verification of this pass. Each item is on a line this commit
+added. The behaviour of each line is correct today. No test holds it.
+
+- [x] `Sources/FoundationModelsRouter/Recording/TranscriptDiffer.swift:186` `tests/new-code-unguarded` — The substitution keeps the recorded entry id and the recorded tool definitions. No test asserts this. A later edit can drop `toolDefinitions`, and every test still passes. The restored session then loses its recorded tool declarations, and nothing reports it. Add a test. Restore a session with an override. Then assert the seed transcript's first entry keeps the recorded id and the recorded tool definitions.
+      **Resolved.** Two tests hold the two facts apart, because one test
+      states one behaviour: "an instructions override keeps the recorded
+      entry id" and "an instructions override keeps the recorded tool
+      definitions". Both restore under an override and read the seed
+      transcript through `SeedCapturingContainer`. Both compare against the
+      `.instructions` payload the recording holds on disk.
+      `SeedCapturingContainer` now takes `recordedToolDefinitions`, so the
+      recorded entry carries one real tool definition and the assertion
+      cannot pass on two empty lists. Each half was proved red. Dropping
+      `toolDefinitions` gave `[] == ["search"]`. Dropping `id: recorded.id`
+      gave a fresh UUID against the recorded entry id. See the comment
+      thread for both failures word for word.
+- [x] `Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift:450` `tests/new-code-unguarded` — `persistedEntryCount: seedTranscript.count` stops the next turn's diff from recording a prepended entry. No test runs a turn after a restore, so no test holds this line. A later edit can write the override into the recorded `transcript.jsonl`. This breaks the rule this card states: the disk file stays as it is. Add a test. Restore a recording that holds no `.instructions` entry. Supply an override and run one turn. Then assert the recorded file gains no `.instructions` event.
+      **Resolved.** Two tests run a turn after a restore. "a turn after a
+      restore with an override records no instructions event" is this
+      finding word for word. "a turn after a restore with an override
+      records only that turn's entries" pins the whole recorded entry-kind
+      sequence. The second test is necessary, because an undercount
+      re-records the tail of the transcript rather than its head. A
+      recording that already holds entries thus never gains an
+      `.instructions` event from this break alone. The empty recording is
+      the case where the head itself is re-recorded, and `recordRoot` takes
+      `answersAPrompt: Bool = true` to build it. Both tests were proved
+      red. `persistedEntryCount: transcript.count` wrote the override text
+      into the recorded `transcript.jsonl` as an `.instructions` event.
+
+### What this pass verified as correct
+
+The reviewer traced the code. The reviewer did not accept the
+implementer's word or the tests' word.
+
+**The override reaches the model.** This is the trace:
+
+1. `SessionRestoration.swift:118` — `restoreSession` calls `restoreSessionTree`.
+2. `SessionTreeRestoration.swift:328` — `rebuild` calls `applyInstructionsOverride`.
+3. `SessionTreeRestoration.swift:512` — the helper returns a seed transcript.
+4. `TranscriptDiffer.swift:176` — the helper substitutes the leading entry.
+5. `SessionTreeRestoration.swift:364` — `makeSession(transcript: seedTranscript, tools:)`.
+6. `LiveModelLoader.swift:98` — the container calls `makeSessionBackend`.
+7. `LiveModelLoader.swift:51` — `LanguageModelSession(model:tools:transcript:)`.
+
+The SDK reads the instructions from that transcript. Thus the override
+reaches the model. `LiveModelLoader.swift:55` also derives the backend's
+own `instructions` from the same seed transcript.
+
+**The recorded `transcript.jsonl` is not rewritten.**
+`replacingLeadingInstructions` returns a new value. The restore writes
+only the `.divergence` event.
+
+**A recording with no `.instructions` entry works.** `recorded` is
+optional. A supplied string never equals `nil`. Thus the guard falls
+through, and `TranscriptDiffer.swift:181` prepends the entry.
+
+**The entry id and the tool definitions survive.**
+`TranscriptDiffer.swift:186` passes `recorded.id` and
+`recorded.toolDefinitions`.
+
+**`persistedEntryCount` counts the seed transcript.**
+`RoutedSessionActorRecording.swift:184` builds `lastSeen` from
+`entries.prefix(persistedEntryCount)`. The prefix covers the whole seed.
+Thus the next diff reports no new entry.
+
+**`historyOrdinal` stays correct.** The divergence write now happens
+before `effectiveEntryEvents` reads the disk again.
+`TranscriptEvent.swift:52` shows that `.divergence` is not an entry kind.
+Thus the filter removes it, and the count does not change. The same
+filter keeps a divergence event out of a later reconstructed transcript.
+
+**`instructions: nil` keeps the previous behaviour.** The guard returns
+the recorded string and the same transcript. A node that is not the root
+gets the same result.
+
+**The divergence event fires one time only.** `applyInstructionsOverride`
+runs one time for each node. Only the root receives a non-nil override.
+An equal string writes nothing.
+
+**The first turn after a restore writes no false divergence.** The
+restore passes no `persistedBaseline`. Thus
+`RoutedSessionActorRecording.swift:167` skips the check.
+
+**The three doc claims at `SessionRestoration.swift` are true.** Lines
+100, 106 and 48 each agree with the code.
+
+**The fork decision is root only.** `SessionTreeRestoration.swift:515`
+compares `node.id` with `rootId`. `restoreSessionTree` refuses a node
+that has a parent. The fork doc is true:
+`RoutedSessionActorForking.swift:192` seeds the child from the parent's
+live backend, and line 219 passes the parent's instructions.
+
+**The red-test claim is true.** This pass reverted the three source files
+to `a8356cc~1` and kept the tests at `a8356cc`. The run reported 12
+tests and 2 failures. The two failures are the seed-transcript tests.
+The tests read the seed transcript through `SeedCapturingContainer`, not
+through `RoutedSessionActor.instructions`. The commit adds 4 tests.
+"Twelve" is the count of tests in the file.
+
+**The commands are green.** `swift test`: 1154 tests in 127 suites, and
+83 tests in 10 suites. Exit 0, no failure and no skip. Two known issues
+are old and are in tests that pass. `swift build --package-path
+IntegrationTests --build-tests`: exit 0. Note: the working tree holds
+uncommitted test files that this commit does not touch. They were
+present during the run.

@@ -21,6 +21,12 @@ import Testing
 /// seam, so a test reads what the model itself receives. A test that reads
 /// ``RoutedSessionActor/instructions`` alone proves nothing about the model.
 ///
+/// Two more tests hold the substitution itself. The substituted entry keeps
+/// the recorded entry id and the recorded tool definitions, so a restored
+/// session keeps its tool declarations. A turn after a restore appends only
+/// that turn's own entries, so an override never enters the recorded
+/// `transcript.jsonl`.
+///
 /// Everything runs against stubs — a stub ``ModelLoader``, a plain stub
 /// ``LoadedLLMContainer`` over ``StubSessionBackend``, and a ``JSONLRecorder``
 /// writing into a temp directory — so the suite needs no network and no GPU.
@@ -56,20 +62,40 @@ struct SessionRestorationTests {
         /// for a recording whose transcript holds no such entry at all.
         let recordsInstructionsEntry: Bool
 
+        /// The tool definitions that entry declares. A live
+        /// `LanguageModelSession` states its whole tool roster there, so a
+        /// restore must carry the roster into the entry it substitutes.
+        let recordedToolDefinitions: [Transcript.ToolDefinition]
+
         /// Every transcript `makeSession(transcript:tools:)` was given, in
         /// call order.
         private(set) var seedTranscripts: [Transcript] = []
 
         /// Creates a capturing container.
         ///
-        /// - Parameter recordsInstructionsEntry: Whether a vended session's
-        ///   backend opens with an `.instructions` entry.
-        init(recordsInstructionsEntry: Bool) {
+        /// - Parameters:
+        ///   - recordsInstructionsEntry: Whether a vended session's backend
+        ///     opens with an `.instructions` entry.
+        ///   - recordedToolDefinitions: The tool definitions that entry
+        ///     declares, or empty.
+        init(
+            recordsInstructionsEntry: Bool,
+            recordedToolDefinitions: [Transcript.ToolDefinition] = []
+        ) {
             self.recordsInstructionsEntry = recordsInstructionsEntry
+            self.recordedToolDefinitions = recordedToolDefinitions
         }
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            StubSessionBackend(instructions: recordsInstructionsEntry ? instructions : nil)
+            guard recordsInstructionsEntry, let instructions else {
+                return StubSessionBackend()
+            }
+            return StubSessionBackend(entries: [
+                .instructions(
+                    Transcript.Instructions(
+                        segments: [.text(Transcript.TextSegment(content: instructions))],
+                        toolDefinitions: recordedToolDefinitions))
+            ])
         }
 
         func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
@@ -97,6 +123,36 @@ struct SessionRestorationTests {
     /// The prompt the recorded session answers, so its transcript and its
     /// sidecar are both on disk before a restore reads them.
     private static let recordedPrompt = "remember 42"
+
+    /// The prompt the restored session answers. A turn after a restore is what
+    /// makes the restored session diff its backend transcript and append to
+    /// the recorded file.
+    private static let resumedPrompt = "what did I ask you to remember"
+
+    /// The name of the tool the recorded session declared.
+    private static let recordedToolName = "search"
+
+    /// The description of the tool the recorded session declared.
+    private static let recordedToolDescription = "search the recorded notes"
+
+    /// The arguments ``recordedToolDefinition`` declares.
+    @Generable
+    struct SearchArguments: Equatable {
+        @Guide(description: "The search query.")
+        var query: String
+    }
+
+    /// The tool definition the recorded session's leading `.instructions`
+    /// entry carries.
+    ///
+    /// A live `LanguageModelSession` states its whole tool roster in that one
+    /// entry. An instructions override replaces that entry, so it must carry
+    /// the roster across. A restore that drops the roster leaves the model
+    /// unable to call any tool, and no error says so.
+    private static let recordedToolDefinition = Transcript.ToolDefinition(
+        name: recordedToolName,
+        description: recordedToolDescription,
+        parameters: SearchArguments.generationSchema)
 
     /// One recorded root session, plus everything a restore of it needs kept
     /// alive for the length of a test.
@@ -137,13 +193,17 @@ struct SessionRestorationTests {
     ///   - container: The container both routers load, or the plain stub. Pass
     ///     a ``SeedCapturingContainer`` to read the transcript the restore
     ///     seeds its backend from.
+    ///   - answersAPrompt: Whether the root session answers ``recordedPrompt``
+    ///     before the restore. `false` records a session that holds no
+    ///     transcript entry at all — a session a caller opened and left.
     /// - Returns: The recorded session and the profile to restore it with.
     private static func recordRoot(
         cacheDir: URL,
         recordingsDir: URL,
         instructions: String?,
         workingDirectory: URL? = nil,
-        container: any LoadedLLMContainer = BasicLLMContainer()
+        container: any LoadedLLMContainer = BasicLLMContainer(),
+        answersAPrompt: Bool = true
     ) async throws -> Recording {
         let recorder = JSONLRecorder(directory: recordingsDir)
         let loader = StubModelLoader(
@@ -155,7 +215,9 @@ struct SessionRestorationTests {
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let root = recordingProfile.standard.makeSession(
             instructions: instructions, workingDirectory: workingDirectory)
-        _ = try await root.respond(to: recordedPrompt)
+        if answersAPrompt {
+            _ = try await root.respond(to: recordedPrompt)
+        }
 
         let resumingRouter = RouterTestFixtures.makeRouter(
             id: recordingRouter.id,
@@ -190,6 +252,110 @@ struct SessionRestorationTests {
     ) throws -> [TranscriptEvent] {
         let tree = try TranscriptTree.load(under: routerDirectory)
         return try tree.events(forSession: id).filter { $0.kind == kind }
+    }
+
+    /// The kind of every entry-kind event one session recorded, in `seq` order.
+    ///
+    /// Router-only kinds are dropped, so the result is the recorded transcript
+    /// itself. A restore appends a `.divergence` marker, which this read never
+    /// reports.
+    ///
+    /// - Parameters:
+    ///   - id: The session's span id.
+    ///   - routerDirectory: The recording root to read.
+    /// - Returns: The recorded entry kinds, in order.
+    private static func recordedEntryKinds(
+        session id: ULID, under routerDirectory: URL
+    ) throws -> [TranscriptEvent.Kind] {
+        let tree = try TranscriptTree.load(under: routerDirectory)
+        return try tree.events(forSession: id).map(\.kind).filter(\.isEntryKind)
+    }
+
+    /// The leading `.instructions` entry of `transcript`, or `nil`.
+    ///
+    /// - Parameter transcript: The transcript to read.
+    /// - Returns: The entry, or `nil` when the transcript opens otherwise.
+    private static func leadingInstructions(
+        of transcript: Transcript
+    ) -> Transcript.Instructions? {
+        guard let first = transcript.first, case .instructions(let instructions) = first else {
+            return nil
+        }
+        return instructions
+    }
+
+    /// One instructions substitution, as the recording holds it and as the
+    /// restored backend received it.
+    private struct SubstitutedInstructions {
+        /// The `.instructions` entry payload the recording holds on disk.
+        let recorded: TranscriptEntryPayload
+
+        /// The leading `.instructions` entry of the transcript the restored
+        /// backend was seeded with.
+        let seeded: Transcript.Instructions
+    }
+
+    /// Records a root session whose leading `.instructions` entry declares
+    /// ``recordedToolDefinition``, then restores it under
+    /// ``freshInstructions``.
+    ///
+    /// - Parameters:
+    ///   - cacheDir: The per-test cache directory.
+    ///   - recordingsDir: The per-test durable transcripts root.
+    /// - Returns: The recorded entry and the entry the restore substituted.
+    @MainActor
+    private static func substituteInstructionsOnRestore(
+        cacheDir: URL, recordingsDir: URL
+    ) async throws -> SubstitutedInstructions {
+        let container = SeedCapturingContainer(
+            recordsInstructionsEntry: true,
+            recordedToolDefinitions: [recordedToolDefinition])
+        let recording = try await recordRoot(
+            cacheDir: cacheDir, recordingsDir: recordingsDir,
+            instructions: recordedInstructions, container: container)
+
+        _ = try await recording.resumingProfile.standard.restoreSession(
+            id: recording.sessionId, instructions: freshInstructions)
+
+        let recordedEntries = try recordedEvents(
+            session: recording.sessionId, under: recording.routerDirectory, ofKind: .instructions)
+        let seed = try #require(container.seedTranscripts.last)
+        return SubstitutedInstructions(
+            recorded: try #require(recordedEntries.first?.entry),
+            seeded: try #require(leadingInstructions(of: seed))
+        )
+    }
+
+    /// Records a root session whose transcript holds no `.instructions` entry,
+    /// restores it under ``freshInstructions``, and runs one turn on it.
+    ///
+    /// The turn is what makes the restored session diff its backend transcript
+    /// against the entries it counts as persisted. A restore that undercounts
+    /// them writes recorded entries to disk a second time.
+    ///
+    /// - Parameters:
+    ///   - cacheDir: The per-test cache directory.
+    ///   - recordingsDir: The per-test durable transcripts root.
+    ///   - answersAPrompt: Whether the recording holds one turn of its own
+    ///     before the restore.
+    /// - Returns: The recording, so a test can read what it now holds on disk.
+    @MainActor
+    private static func takeOneTurnAfterRestoring(
+        cacheDir: URL, recordingsDir: URL, answersAPrompt: Bool
+    ) async throws -> Recording {
+        let container = SeedCapturingContainer(recordsInstructionsEntry: false)
+        let recording = try await recordRoot(
+            cacheDir: cacheDir,
+            recordingsDir: recordingsDir,
+            instructions: nil,
+            container: container,
+            answersAPrompt: answersAPrompt
+        )
+
+        let restored = try await recording.resumingProfile.standard.restoreSession(
+            id: recording.sessionId, instructions: freshInstructions)
+        _ = try await restored.session.respond(to: resumedPrompt)
+        return recording
     }
 
     // MARK: - instructions: nil keeps the recorded string
@@ -421,6 +587,84 @@ struct SessionRestorationTests {
             session: recording.sessionId, under: recording.routerDirectory, ofKind: .instructions)
         #expect(recorded.count == 1)
         #expect(recorded.first?.text == Self.recordedInstructions)
+    }
+
+    // MARK: - The substitution keeps the recorded entry's identity
+
+    @Test("an instructions override keeps the recorded entry id")
+    @MainActor
+    func theOverrideKeepsTheRecordedEntryId() async throws {
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionRestorationTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionRestorationTests")
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let substitution = try await Self.substituteInstructionsOnRestore(
+            cacheDir: cacheDir, recordingsDir: recordingsDir)
+
+        #expect(substitution.seeded.id == substitution.recorded.entryId)
+    }
+
+    @Test("an instructions override keeps the recorded tool definitions")
+    @MainActor
+    func theOverrideKeepsTheRecordedToolDefinitions() async throws {
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionRestorationTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionRestorationTests")
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let substitution = try await Self.substituteInstructionsOnRestore(
+            cacheDir: cacheDir, recordingsDir: recordingsDir)
+
+        // The recording itself must carry the roster, or the assertion below
+        // would hold an empty list against an empty list.
+        #expect(substitution.recorded.toolDefinitions?.map(\.name) == [Self.recordedToolName])
+        #expect(substitution.seeded.toolDefinitions.map(\.name) == [Self.recordedToolName])
+        #expect(
+            substitution.seeded.toolDefinitions.map(\.description)
+                == [Self.recordedToolDescription])
+    }
+
+    // MARK: - A turn after a restore records only that turn
+
+    @Test("a turn after a restore with an override records no instructions event")
+    @MainActor
+    func aTurnAfterARestoreRecordsNoInstructionsEvent() async throws {
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionRestorationTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionRestorationTests")
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let recording = try await Self.takeOneTurnAfterRestoring(
+            cacheDir: cacheDir, recordingsDir: recordingsDir, answersAPrompt: false)
+
+        let recorded = try Self.recordedEvents(
+            session: recording.sessionId, under: recording.routerDirectory, ofKind: .instructions)
+        #expect(recorded.isEmpty)
+    }
+
+    @Test("a turn after a restore with an override records only that turn's entries")
+    @MainActor
+    func aTurnAfterARestoreRecordsOnlyItsOwnEntries() async throws {
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionRestorationTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionRestorationTests")
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let recording = try await Self.takeOneTurnAfterRestoring(
+            cacheDir: cacheDir, recordingsDir: recordingsDir, answersAPrompt: true)
+
+        let kinds = try Self.recordedEntryKinds(
+            session: recording.sessionId, under: recording.routerDirectory)
+        #expect(kinds == [.prompt, .response, .prompt, .response])
     }
 
     // MARK: - A missing session is a catchable error
