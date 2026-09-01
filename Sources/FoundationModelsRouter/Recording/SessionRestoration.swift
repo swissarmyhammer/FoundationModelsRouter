@@ -49,7 +49,13 @@ extension RestoredSession {
     /// true. The supplied string reaches the session actor, the sidecar of
     /// any later fork, and the transcript the model itself reads. See
     /// ``TranscriptDiffer/replacingLeadingInstructions(of:with:)``.
-    static let instructionsDivergencePhrase =
+    ///
+    /// This constant is public because the grep target is a contract. A
+    /// consumer in another package pins this symbol in a test, so a refactor
+    /// that edits the phrase fails a build. A consumer cannot pin a contract
+    /// it cannot name. Without this symbol, every saved grep finds nothing,
+    /// and the record then looks empty rather than broken.
+    public static let instructionsDivergencePhrase =
         "restored session instructions differ from the recorded instructions"
 
     /// The body of the ``TranscriptEvent/Kind/divergence`` event a restore
