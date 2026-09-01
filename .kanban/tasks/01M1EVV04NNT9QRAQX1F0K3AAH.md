@@ -153,8 +153,61 @@ comments:
 
     - next: review. The task stays in `doing`.
   timestamp: 2026-09-01T17:23:03.163785+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m1f0kvxa44pmf6p7re14dn7r
+  text: |
+    ### review — clean
+
+    - evidence: `review sha HEAD~1..HEAD` (commit e6c5b39). 0 findings, 0 confirmed, 0 refuted, 7 validators attempted, 0 failed. The 4 `.kanban/` files are excluded by `.reviewignore`.
+
+    I verified the central mechanism by reading the code. I did not accept the report alone.
+
+    **The template guard.** I read the template in the model checkout:
+    `~/.cache/huggingface/hub/models--mlx-community--Llama-3.2-1B-Instruct-4bit/snapshots/08231374eeacb049a0eade7922910865b8fce912/tokenizer_config.json`
+
+    ```
+    {%- if not date_string is defined %}
+        {%- if strftime_now is defined %}
+            {%- set date_string = strftime_now("%d %b %Y") %}
+        {%- else %}
+            {%- set date_string = "26 Jul 2024" %}
+    ```
+
+    A stated `date_string` stops `strftime_now`. The pinned value `26 Jul 2024` is the template's own fallback constant.
+
+    **The full chain, read end to end.**
+
+    1. `PinnedDateTokenizer.applyChatTemplate` adds `date_string`.
+    2. `TokenizerBridge.applyChatTemplate` forwards `additionalContext` unchanged. File: `.build/checkouts/mlx-swift-lm/Libraries/MLXHuggingFaceMacros/HuggingFaceIntegrationMacros.swift`.
+    3. `swift-transformers` copies each entry into the Jinja context: `for (key, value) in additionalContext { context[key] = try Value(any: value) }`. File: `.build/checkouts/swift-transformers/Sources/Tokenizers/Tokenizer.swift`.
+    4. The template guard above then skips the clock.
+
+    **Reproducibility, measured myself.** Two zones gave two different calendar dates at run time.
+
+    | zone | local date | result |
+    |---|---|---|
+    | `Pacific/Kiritimati` | 02 Sep 2026 | `summarizerCalls=2 ceilings=[617, 617] answerTokens=[689, 701] spanTokens=643 summaryTokens=443 tokensBefore=713 tokensAfter=513` |
+    | `Pacific/Midway` | 01 Sep 2026 | identical, every number |
+
+    Both runs exit 0. Both pass 2 tests in 1 suite. These numbers match no dated row in the measurement table. They match the pinned row. So the pin reaches the prompt.
+
+    **The other checks.**
+
+    - The default path holds. `chatTemplateDate` defaults to `nil`, and `tokenizerLoader(pinning:)` then returns the plain Hub loader. Only `CompactionSmokeIntegrationTests` states a date. No caller outside the tests uses the decorator.
+    - The decorator forwards all 9 requirements of `MLXLMCommon.Tokenizer`. I read the protocol. The extension members `bosTokenId`, `eosTokenId`, `unknownTokenId`, `encode(text:)` and `decode(tokenIds:)` all derive from forwarded primitives. The wrapper also implements the `addGenerationPrompt` overload, which the bridge below it leaves at the `nil` default. So the wrapper adds a capability and drops none.
+    - The wrapper writes the date only when the call states none: `if pinned[key] == nil`. A test proves it keeps a stated date.
+    - No assertion changed. The diff holds no added or removed `#expect` or `#require` line.
+    - The fork stays untouched. `git status --porcelain` is empty in `mlx-swift-lm`, `swift-transformers` and `swift-jinja`.
+
+    **Commands.**
+
+    - `swift test` — exit 0. 1169 tests in 129 suites with 2 known issues, plus 83 tests in 10 suites.
+    - `swift build --package-path IntegrationTests --build-tests` — exit 0.
+
+    - next: none. The task moves to `done`.
+  timestamp: 2026-09-01T17:35:04.618573+00:00
+position_column: done
+position_ordinal: ffffb780
 title: Pin the summarizer prompt's date, so a real-model fold is reproducible
 ---
 ## What
