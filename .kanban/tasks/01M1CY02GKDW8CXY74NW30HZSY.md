@@ -83,13 +83,100 @@ comments:
 
     Cross-session messages with `foundationmodelsacpagent-87`, 2026-08-31.
   timestamp: 2026-08-31T22:31:55.329737+00:00
-position_column: todo
-position_ordinal: '8480'
+- actor: claude-code
+  id: 01m1da9efpznbnv6s86htkyhtn
+  text: |
+    ### The working-directory decision, and why
+
+    **Chosen: add the accessor.** The new public method is
+    `RoutedModel.recordedWorkingDirectory(ofSession:recordingRoot:)` in
+    `Sources/FoundationModelsRouter/Recording/SessionRestoration.swift`.
+
+    The cost is one method with a three-line body. It calls the existing
+    internal `transcriptTree(recordingRoot:)`, reads `node.sidecar.workingDirectory`,
+    and returns it. It builds no backend and no session, and it writes nothing.
+    It throws `TranscriptTreeError.sessionNotFound(_:)` for an unknown id, the
+    same error `restoreSession` throws.
+
+    The after-the-fact comparison was rejected for one reason: it is the wrong
+    order. A caller that must refuse a resume in a new working directory would
+    have to reassemble the whole session first, and then throw it away. That
+    reassembly reads the session's transcript and every ancestor's, and it
+    builds a live backend. The accessor makes the check cost one tree load.
+
+    Publishing `SessionSidecar.workingDirectory` was rejected as the more
+    expensive path. It would need `TranscriptTree` and `SessionNode`, both
+    `package` today, to become public as well, so a caller could reach a
+    sidecar at all. That is three types instead of one method.
+
+    ### The instructions override reaches the root node alone
+
+    `restoreSessionTree` restores a whole tree. The override applies only to
+    the node named by `rootId`. A fork under that root keeps whatever its own
+    sidecar recorded. `restoreSession(id:)` names a root, so the override
+    always reaches the session the caller asked for.
+
+    ### A discovery: the model's own view of the instructions
+
+    The card states that "instructions are not in the transcript". That is
+    true of the RESTORE construction — `container.makeSession(transcript:tools:)`
+    takes no `instructions` argument — but it is not true of the recorded
+    stream. `RoutedLLM.makeSession` says so in its own comment: "the first
+    turn's whole transcript diff (including any leading `.instructions` entry)
+    is new". So a live root session records an `.instructions` entry, and
+    `effectiveTranscript` reconstructs it.
+
+    What the override changes is `RoutedSessionActor.instructions`. A fork
+    taken from the restored session inherits that value and writes it into its
+    own sidecar. What the restored model reads at its next turn still comes
+    from the reconstructed transcript.
+
+    This is what the card asked for, word for word: the override replaces
+    `node.sidecar.instructions` at the site the card names, and the divergence
+    marker states the difference in the record. Making the restored backend
+    see the new string as well is a separate change, and it needs its own
+    decision, because it would rewrite a recorded entry rather than append.
+    Raise a new card if ACPAgent needs it.
+
+    ### The divergence marker
+
+    The phrase is
+    `restored session instructions differ from the recorded instructions`,
+    declared once as `RestoredSession.instructionsDivergencePhrase`. The whole
+    text is built by `RestoredSession.instructionsDivergenceText(recorded:supplied:)`
+    and reads:
+
+        restored session instructions differ from the recorded instructions: recorded 26 characters, supplied 46 characters
+
+    No instructions body, no hash. A `nil` recorded string reads as a length
+    of zero.
+
+    The event is written through `routedLLM.recorder.append(_:to:)`, the same
+    call `RecordingLanguageModel` uses for its own divergence marker. A
+    `.divergence` event is not an entry kind, so it never enters
+    `effectiveEntryEvents` and it moves neither `historyOrdinal` nor a fork's
+    cut point.
+  timestamp: 2026-09-01T01:45:40.086841+00:00
+- actor: claude-code
+  id: 01m1da9rca3mv03h0shrjy59wd
+  text: |
+    ### implement — changed
+    - evidence: 6 files — `Sources/FoundationModelsRouter/Recording/SessionRestoration.swift` (new), `Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift`, `Sources/FoundationModelsRouter/Recording/TranscriptTree.swift`, `Sources/FoundationModelsRouter/Tracing/RouterTracing.swift`, `Tests/FoundationModelsRouterTests/SessionRestorationTests.swift` (new), `Tests/FoundationModelsRouterTests/SessionTreeRestorationTests.swift`.
+    - public symbols added: `RoutedModel.restoreSession(id:recordingRoot:instructions:tools:)`, `RoutedModel.recordedWorkingDirectory(ofSession:recordingRoot:)`, `RestoredSession` with `session`/`configurationReport`/`contextMismatches`, `RestoredSession.ContextMismatch` with `session`/`recorded`/`resolved`, `SessionConfigurationRestorationReport` with `missingTools`/`isComplete`, `SessionConfigurationRestorationReport.MissingTool` with `session`/`toolName`, `SessionTreeRestorationError`, `TranscriptTreeError`.
+    - internal, as the card requires: `restoreSessionTree(root:recordingRoot:instructions:tools:)` and `RestoredSessionTree`.
+    - `swift test`: 1150 tests in 127 suites, plus 83 in 10 suites, exit 0, 2 known issues. The baseline was 1142 in 126 plus 83 in 10, so the run adds this card's 8 tests in 1 suite and moves nothing else.
+    - `swift build --package-path IntegrationTests --build-tests`: Build complete, exit 0.
+    - `swift build`: exit 0, no warning from any changed file.
+    - next: `/review`.
+  timestamp: 2026-09-01T01:45:50.218444+00:00
+position_column: doing
+position_ordinal: '80'
 title: 'Publish session restore for ACPAgent: one session by id, with an instructions override'
 ---
-## Do not start this card yet
+## The decision
 
-A person must first make the publish decision. See "The decision" below.
+A person selected choice 1, publish now, on 2026-08-31. See the comment
+thread. The `needs-decision` gate is removed.
 
 ## The problem
 
@@ -216,45 +303,42 @@ Use a stable phrase that a person can find with grep. Do not put either
 instructions body in the event. Include the two lengths. Do not include a
 hash: a reader cannot resolve a hash back to a string.
 
-## The decision a person must make
-
-ACPAgent has no code. The package is a plan, a board and a stub
-`Package.swift` that builds an empty target. All answers above come from
-numbered plan sections that are older than this conversation.
-
-To do this card is to grow the public surface for a consumer that cannot
-yet fail a build. That is the same judgement that made `fe5ce0e` remove
-these symbols.
-
-Three choices:
-
-1. Publish now, on the strength of the plan.
-2. Keep this card. Do the work when ACPAgent builds against the Router.
-3. Do not publish. ACPAgent stays internal-only.
-
-The design does not change between the three. Only the time changes.
-
 ## Acceptance criteria
 
-- [ ] A person selects choice 1, 2 or 3, and the choice is recorded here.
-- [ ] `restoreSession(id:recordingRoot:instructions:tools:)` is public.
-- [ ] `RestoredSession` is public with `session`, `configurationReport`
+- [x] A person selects choice 1, 2 or 3, and the choice is recorded here.
+- [x] `restoreSession(id:recordingRoot:instructions:tools:)` is public.
+- [x] `RestoredSession` is public with `session`, `configurationReport`
       and `contextMismatches`.
-- [ ] `restoreSessionTree` and `RestoredSessionTree` stay internal. Do not
+- [x] `restoreSessionTree` and `RestoredSessionTree` stay internal. Do not
       publish the tree walk.
-- [ ] `instructions: nil` keeps the recorded instructions. This is the
+- [x] `instructions: nil` keeps the recorded instructions. This is the
       default, so all callers that exist keep their behaviour.
-- [ ] Supplied instructions that are equal to the recorded string write no
+- [x] Supplied instructions that are equal to the recorded string write no
       event.
-- [ ] Supplied instructions that are different write exactly one
+- [x] Supplied instructions that are different write exactly one
       `divergence` event. The text is stable and holds no instructions
       body.
-- [ ] A test proves each of the three instructions cases.
-- [ ] `swift build` and `swift test` are green.
-- [ ] `swift build --package-path IntegrationTests --build-tests` is
+- [x] A test proves each of the three instructions cases.
+- [x] `swift build` and `swift test` are green.
+- [x] `swift build --package-path IntegrationTests --build-tests` is
       green. Note: without `--build-tests` this command builds nothing.
+
+### The three additions ACPAgent asked for
+
+- [x] `SessionConfigurationRestorationReport`, its `MissingTool`, and
+      `ContextMismatch` are public with public members. `ContextMismatch`
+      moved out of `RestoredSessionTree` to `RestoredSession`, so the tree
+      stays internal. The `// periphery:ignore` marks are gone, because
+      `--retain-public` retains a public declaration.
+- [x] A catchable error for "no such session". `TranscriptTreeError` is
+      public, because `sessionNotFound` is what a missing session really
+      raises. `SessionTreeRestorationError` is public beside it, so a
+      caller can tell every other restore failure apart.
+- [x] A read-only accessor for the recorded working directory:
+      `recordedWorkingDirectory(ofSession:recordingRoot:)`. See the
+      comment thread for the reasoning.
 
 ## Source
 
 Cross-session messages with `foundationmodelsacpagent-87` on 2026-08-31.
-The reasoning about the transcript reader is ACPAgent's, not a paraphrase. #api #router #recording #needs-decision
+The reasoning about the transcript reader is ACPAgent's, not a paraphrase. #api #router #recording

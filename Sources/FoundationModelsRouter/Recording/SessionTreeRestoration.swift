@@ -1,9 +1,15 @@
 import Foundation
 import FoundationModels
 
-/// A failure to restore a session tree from disk via
-/// ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)``.
-enum SessionTreeRestorationError: Error, Equatable, LocalizedError {
+/// A failure to restore recorded sessions from disk, through
+/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:)`` or
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:)``.
+///
+/// A session that is not on disk at all raises
+/// ``TranscriptTreeError/sessionNotFound(_:)`` instead, because the tree read
+/// happens before any restoration-specific check. Catch both types to tell a
+/// deleted session from every other restore failure.
+public enum SessionTreeRestorationError: Error, Equatable, LocalizedError {
     /// The id names a session in the loaded tree that is not a root. Only a
     /// whole tree is restored, from its root id.
     case notARootSession(ULID)
@@ -21,7 +27,7 @@ enum SessionTreeRestorationError: Error, Equatable, LocalizedError {
     case modelMismatch(session: ULID, slot: ModelSlot, recorded: ModelRef, resident: ModelRef)
 
     /// A localized message describing what error occurred.
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .notARootSession(let id):
             return """
@@ -45,62 +51,40 @@ enum SessionTreeRestorationError: Error, Equatable, LocalizedError {
     }
 }
 
-/// What ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)``
-/// could not re-apply from the recorded configuration envelopes. A recording
-/// carries tool names, not tool instances. Every recorded name that no
-/// supplied tool matches is listed in ``missingTools``.
-struct SessionConfigurationRestorationReport: Sendable, Equatable {
+/// What a restore could not re-apply from the recorded configuration
+/// envelopes. A recording carries tool names, not tool instances. Every
+/// recorded name that no supplied tool matches is listed in ``missingTools``.
+///
+/// Resume is the point where the live tool roster can differ from the
+/// recorded one. A transcript that names a tool the process never connected
+/// is a silent divergence, and this report is the fact that names it.
+public struct SessionConfigurationRestorationReport: Sendable, Equatable {
     /// One recorded tool name that no supplied tool matched, on one restored
     /// session.
-    struct MissingTool: Sendable, Equatable {
+    public struct MissingTool: Sendable, Equatable {
         /// The restored session whose envelope recorded the name.
-        ///
-        /// Read by the synthesized `Equatable` conformance; periphery sees no caller.
-        // periphery:ignore
-        let session: ULID
+        public let session: ULID
 
         /// The recorded ``FoundationModels/Tool/name`` with no supplied instance.
-        ///
-        /// Read by the synthesized `Equatable` conformance; periphery sees no caller.
-        // periphery:ignore
-        let toolName: String
+        public let toolName: String
     }
 
     /// Every recorded tool name that no supplied tool matched, in walk order
     /// (each parent before its children), or empty.
-    let missingTools: [MissingTool]
+    public let missingTools: [MissingTool]
 
     /// `true` when ``missingTools`` is empty.
-    var isComplete: Bool { missingTools.isEmpty }
+    public var isComplete: Bool { missingTools.isEmpty }
 }
 
 /// A restored fork tree: every session under a router's recorded root,
 /// reconstructed as live ``RoutedSession``s synced with what is on disk.
+///
+/// This type stays internal. A caller resumes a session by an id it holds,
+/// and it holds no id for a fork, so
+/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:)`` is the
+/// published surface.
 struct RestoredSessionTree: Sendable {
-    /// One restored session whose recorded working context differs from the
-    /// context the restoring profile resolved. The session runs against
-    /// ``resolved``. This is a warning, not an error, because the same model
-    /// can resolve a different context on a different machine.
-    struct ContextMismatch: Sendable, Equatable {
-        /// The restored session whose ``SessionSidecar/context`` differs.
-        ///
-        /// Read by the synthesized `Equatable` conformance; periphery sees no caller.
-        // periphery:ignore
-        let session: ULID
-
-        /// The working context, in tokens, the session was recorded at.
-        ///
-        /// Read by the synthesized `Equatable` conformance; periphery sees no caller.
-        // periphery:ignore
-        let recorded: Int
-
-        /// The working context, in tokens, the restoring profile resolved.
-        ///
-        /// Read by the synthesized `Equatable` conformance; periphery sees no caller.
-        // periphery:ignore
-        let resolved: Int
-    }
-
     /// The restored root session.
     let root: RoutedSession
 
@@ -110,7 +94,7 @@ struct RestoredSessionTree: Sendable {
 
     /// Every restored session whose recorded working context differs from
     /// the live resolution, in walk order, or empty.
-    let contextMismatches: [ContextMismatch]
+    let contextMismatches: [RestoredSession.ContextMismatch]
 
     /// Every restored session, keyed by id.
     private let sessionsById: [ULID: RoutedSession]
@@ -124,7 +108,7 @@ struct RestoredSessionTree: Sendable {
         sessionsById: [ULID: RoutedSession],
         tree: TranscriptTree,
         configurationReport: SessionConfigurationRestorationReport,
-        contextMismatches: [ContextMismatch]
+        contextMismatches: [RestoredSession.ContextMismatch]
     ) {
         self.root = root
         self.sessionsById = sessionsById
@@ -195,13 +179,20 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///
     /// - Parameters:
     ///   - rootId: The root session's span id.
+    ///   - recordingRoot: The exact directory to load the tree from, or `nil`
+    ///     for the nested `<recordingsRoot>/<routerId>/` layout. Pass the
+    ///     same root a session was vended with.
+    ///   - instructions: Instructions that replace the recorded ones on the
+    ///     root node alone, or `nil` (the default) to keep every node's own
+    ///     recorded string. A fork under the root always keeps its own. A
+    ///     supplied string that differs from the recorded one appends one
+    ///     ``TranscriptEvent/Kind/divergence`` event to the root's
+    ///     transcript. See
+    ///     ``RestoredSession/instructionsDivergenceText(recorded:supplied:)``.
     ///   - tools: The tools every restored node's model can call. Each node
     ///     gets its own per-session tool instances. Every recorded tool name
     ///     with no supplied instance is reported in
     ///     ``RestoredSessionTree/configurationReport``.
-    ///   - recordingRoot: The exact directory to load the tree from, or `nil`
-    ///     for the nested `<recordingsRoot>/<routerId>/` layout. Pass the
-    ///     same root a session was vended with.
     /// - Returns: The restored tree, rooted at the session named by `rootId`.
     /// - Throws: ``SessionTreeRestorationError`` for a restoration-specific
     ///   failure; ``TranscriptTreeError`` or ``TranscriptReconstructionError``
@@ -210,6 +201,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     func restoreSessionTree(
         root rootId: ULID,
         recordingRoot: URL? = nil,
+        instructions: String? = nil,
         tools: [any Tool] = []
     ) async throws -> RestoredSessionTree {
         // The handle references its profile weakly, mirroring
@@ -242,9 +234,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         // ``SessionSidecar/context`` differs from the live resolution's is
         // collected here — one row per node, in walk order — for the
         // returned ``RestoredSessionTree/contextMismatches``. See
-        // ``RestoredSessionTree/ContextMismatch`` for why this is a typed
+        // ``RestoredSession/ContextMismatch`` for why this is a typed
         // warning rather than a `modelMismatch`-style error.
-        var contextMismatches: [RestoredSessionTree.ContextMismatch] = []
+        var contextMismatches: [RestoredSession.ContextMismatch] = []
         func restore(_ node: SessionNode) async throws -> RoutedSession {
             let slot = node.sidecar.slot
             let model = node.sidecar.model
@@ -311,11 +303,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // actually loaded with — never the recorded figure. A recorded
             // context the live figure no longer matches is reported, not
             // silently adopted and not an error (task ^xky3j8w; see
-            // ``RestoredSessionTree/ContextMismatch``).
+            // ``RestoredSession/ContextMismatch``).
             let resolvedContextTokens = routedLLM.resolution.contextTokens
             if node.sidecar.context != resolvedContextTokens {
                 contextMismatches.append(
-                    RestoredSessionTree.ContextMismatch(
+                    RestoredSession.ContextMismatch(
                         session: node.id,
                         recorded: node.sidecar.context,
                         resolved: resolvedContextTokens
@@ -405,6 +397,38 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 await outbox.post(event: lostEvent)
             }
 
+            // The instructions override (task ^w30hzsy). A caller resumes one
+            // session by the id it holds, so the override reaches the named
+            // root alone and every fork under it keeps its own recorded
+            // string. `nil` keeps the recorded string everywhere, which is
+            // what every caller written before this parameter existed gets.
+            let overrideForNode = node.id == rootId ? instructions : nil
+            let effectiveInstructions = overrideForNode ?? node.sidecar.instructions
+            if let overrideForNode, overrideForNode != node.sidecar.instructions {
+                // The divergence goes into the journal rather than into the
+                // return value, because the reader who needs it is not the
+                // caller. A caller that supplied the string already knows. The
+                // person who reads the committed transcript next month did
+                // not, and the file says the model had the recorded
+                // instructions. One `.divergence` marker states the condition
+                // in the record itself. The write path is the one
+                // ``RecordingLanguageModel`` and ``RoutedSessionActor`` use
+                // for their own transcript-divergence markers.
+                await routedLLM.recorder.append(
+                    TranscriptEvent.Partial(
+                        routerId: routedLLM.routerId,
+                        sessionId: node.id,
+                        parentId: node.parentId,
+                        slot: slot,
+                        model: model,
+                        kind: .divergence,
+                        text: RestoredSession.instructionsDivergenceText(
+                            recorded: node.sidecar.instructions, supplied: overrideForNode)
+                    ),
+                    to: node.directory
+                )
+            }
+
             return makeRoutedSessionActor(
                 profile: owningProfile,
                 routerId: routedLLM.routerId,
@@ -423,7 +447,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 slot: slot,
                 model: model,
                 recorder: routedLLM.recorder,
-                instructions: node.sidecar.instructions,
+                instructions: effectiveInstructions,
                 grammar: grammar,
                 // The per-node instanced tool list threaded to `backend`
                 // above; `originalTools` retains the true, un-instanced

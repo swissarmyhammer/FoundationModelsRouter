@@ -265,7 +265,7 @@ enum RouterTracing {
         case new
 
         /// One node of a tree rebuilt from what is on disk, through
-        /// ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)``.
+        /// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:)``.
         case restored
 
         /// A child taken from a live session, through

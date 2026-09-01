@@ -4,7 +4,7 @@ import Foundation
 private let transcriptFileName = "transcript.jsonl"
 
 /// A failure looking up or reconstructing data from a ``TranscriptTree``.
-enum TranscriptTreeError: Error, Equatable, LocalizedError {
+public enum TranscriptTreeError: Error, Equatable, LocalizedError {
     /// No session with this id exists in the loaded tree.
     case sessionNotFound(ULID)
 
@@ -31,7 +31,7 @@ enum TranscriptTreeError: Error, Equatable, LocalizedError {
     case transcriptLineCorrupt(session: ULID, file: URL)
 
     /// A localized message describing what error occurred.
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .sessionNotFound(let id):
             return "No session with id \(id.description) exists in this transcript tree."

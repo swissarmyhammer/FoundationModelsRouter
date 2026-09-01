@@ -1006,7 +1006,7 @@ struct SessionTreeRestorationTests {
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
         #expect(
             restored.contextMismatches == [
-                RestoredSessionTree.ContextMismatch(
+                RestoredSession.ContextMismatch(
                     session: root.id, recorded: recordedContext, resolved: resolvedContext)
             ])
     }
