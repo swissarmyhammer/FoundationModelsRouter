@@ -18,9 +18,15 @@ import Tokenizers
 /// greedy decoding, one at both — so each new suite copied whichever neighbour
 /// it happened to read.
 ///
-/// Exactly three things differed, and those three are this function's
-/// parameters. A suite still states its own model, its own context and its own
-/// decoding; nothing else about loading a real model is stated twice.
+/// Exactly three things differed, and those three are this function's first
+/// three parameters. A suite still states its own model, its own context and
+/// its own decoding; nothing else about loading a real model is stated twice.
+///
+/// A fourth parameter followed, and it is not a difference between the nine
+/// copies: ``load(ref:context:samplingMode:chatTemplateDate:)`` also pins the
+/// date a chat template writes into its prompt. A suite that asserts on the
+/// exact text a model wrote needs a prompt that does not move from one calendar
+/// day to the next. See ``FoundationModelsRouter/PinnedDateTokenizerLoader``.
 ///
 /// ## What is deliberately not a parameter
 ///
@@ -48,6 +54,15 @@ public enum RealModelContainer {
     ///     code produced different transcripts on every run (task `f80n046`).
     ///     Argmax decoding consumes no randomness at all, which is what lets a
     ///     red run be attributed to the change under test.
+    ///   - chatTemplateDate: The calendar date the model's chat template writes
+    ///     into its prompt, written the way the template writes it. Defaults to
+    ///     `nil`, which leaves the template reading the clock. A suite that
+    ///     asserts on the exact text a generation produces passes a date:
+    ///     greedy decoding pins the sampling but NOT the prompt, and the Llama
+    ///     family stamps `Today Date: <today>` into every system header, so the
+    ///     same code and the same weights answered differently on two calendar
+    ///     days (task ^f0k3aah). See
+    ///     ``FoundationModelsRouter/PinnedDateTokenizerLoader``.
     /// - Returns: The loaded container.
     /// - Throws: Whatever ``LiveModelLoader/loadLLM(ref:slot:context:reporting:)``
     ///   throws, or an expectation failure if what it loaded is not an
@@ -58,11 +73,12 @@ public enum RealModelContainer {
     package static func load(
         ref: ModelRef,
         context: Int = RealModels.context,
-        samplingMode: GenerationOptions.SamplingMode? = nil
+        samplingMode: GenerationOptions.SamplingMode? = nil,
+        chatTemplateDate: String? = nil
     ) async throws -> MLXFoundationModelsContainer {
         let loader = LiveModelLoader(
             downloader: #hubDownloader(),
-            tokenizerLoader: #huggingFaceTokenizerLoader(),
+            tokenizerLoader: tokenizerLoader(pinning: chatTemplateDate),
             samplingMode: samplingMode
         )
         let loaded = try await loader.loadLLM(
@@ -72,5 +88,19 @@ public enum RealModelContainer {
             reporting: { _ in }
         )
         return try #require(loaded as? MLXFoundationModelsContainer)
+    }
+
+    /// The tokenizer loader ``load(ref:context:samplingMode:chatTemplateDate:)``
+    /// builds its ``LiveModelLoader`` over.
+    ///
+    /// - Parameter chatTemplateDate: the date to pin, or `nil` to leave the
+    ///   chat template reading the clock.
+    /// - Returns: the Hub tokenizer loader, wrapped when a date is pinned.
+    private static func tokenizerLoader(pinning chatTemplateDate: String?)
+        -> any TokenizerLoader
+    {
+        let hub = #huggingFaceTokenizerLoader()
+        guard let chatTemplateDate else { return hub }
+        return PinnedDateTokenizerLoader(wrapping: hub, dateString: chatTemplateDate)
     }
 }

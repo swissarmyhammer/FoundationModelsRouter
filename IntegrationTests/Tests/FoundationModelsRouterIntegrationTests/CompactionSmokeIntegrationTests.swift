@@ -45,6 +45,33 @@ private let compactionSmokeContext = 4096
 /// tabulated on the suite below reported identical fold numbers.
 private let compactionSmokeSamplingMode: GenerationOptions.SamplingMode = .greedy
 
+/// The calendar date this suite pins into ``compactionSmokeModel``'s prompt.
+///
+/// Greedy decoding above pins the SAMPLING. It does not pin the PROMPT, and the
+/// Llama 3.2 chat template writes `Today Date: <today>` into the system header
+/// of every summarizer call. It takes that date from `strftime_now`, which the
+/// Jinja engine answers from `Date()` and the local time zone. So this suite's
+/// fold arithmetic was a new sample on every calendar day, and task ^erv2vxz
+/// measured exactly that: `answerTokens=[703, 789]` on 01 Sep 2026, then
+/// `[703, 836]` on 02 Sep 2026, from one binary with only `TZ` changed. A test
+/// that passes today and fails tomorrow with no change is not a test.
+///
+/// The value is the template's OWN fallback — the date it assigns when
+/// `strftime_now` is undefined:
+///
+/// ```
+/// {%- if not date_string is defined %}
+///     {%- if strftime_now is defined %}
+///         {%- set date_string = strftime_now("%d %b %Y") %}
+///     {%- else %}
+///         {%- set date_string = "26 Jul 2024" %}
+/// ```
+///
+/// So the constant is the template's, not a date chosen because it made a run
+/// green. The template reads `date_string` FIRST, so stating it stops
+/// `strftime_now` running at all.
+private let compactionSmokeChatTemplateDate = "26 Jul 2024"
+
 // MARK: - Suite
 
 /// The fast answer to one question: does the compaction path work end to end
@@ -144,6 +171,25 @@ private let compactionSmokeSamplingMode: GenerationOptions.SamplingMode = .greed
 /// the map call plus one repetition re-ask, storing the 517-token re-asked
 /// answer word for word with no condense call and no cut, and carrying the
 /// planted fact on 10 of 10.
+///
+/// Every number above was measured with the calendar date the run's own clock
+/// stamped, so each row is one day's sample. Task ^f0k3aah closed that hole
+/// with ``compactionSmokeChatTemplateDate``, and the measurement that shows
+/// why is this suite's fold under three stamped dates, one binary, nothing
+/// else changed:
+///
+/// | the date the template stamped | answerTokens | stored summary |
+/// |---|---|---|
+/// | 01 Sep 2026 | `[703, 789]` | 624 |
+/// | 02 Sep 2026 | `[703, 836]` | 615 |
+/// | 03 Sep 2026 | `[703, 792]` | 598 |
+/// | 26 Jul 2024, the pinned value | `[689, 701]` | 443 |
+///
+/// The first two rows are the rows task ^erv2vxz measured by moving `TZ`, and
+/// this run reproduced both from the stamped date alone. The last row is what
+/// the suite folds now, and it folded exactly that under `TZ=Pacific/Kiritimati`
+/// (02 Sep 2026), under `TZ=Pacific/Midway` and under `TZ=UTC`. The clock no
+/// longer reaches this fold.
 ///
 /// The smoke tier is what those numbers rest on: this suite,
 /// ``AutoCompactionTriggerIntegrationTests`` and
@@ -377,7 +423,8 @@ struct CompactionSmokeIntegrationTests {
         let container = try await RealModelContainer.load(
             ref: compactionSmokeModel,
             context: compactionSmokeContext,
-            samplingMode: compactionSmokeSamplingMode
+            samplingMode: compactionSmokeSamplingMode,
+            chatTemplateDate: compactionSmokeChatTemplateDate
         )
         modelLoadSeconds = Date().timeIntervalSince(loadStartedAt)
 
