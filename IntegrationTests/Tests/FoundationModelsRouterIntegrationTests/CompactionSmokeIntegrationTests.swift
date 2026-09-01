@@ -55,7 +55,7 @@ private let compactionSmokeSamplingMode: GenerationOptions.SamplingMode = .greed
 /// It proves the PATH WORKS. Five facts, and no more:
 ///
 /// 1. The summarizer was called — within the fold's own call budget of one
-///    map call plus at most one condense re-ask (task ^xx02yn6), which is
+///    map call plus at most one recovery re-ask on this fixture, which is
 ///    also this suite's generation budget.
 /// 2. It answered with text that is not empty (`^bgxtdk3` stored an empty
 ///    summary on 19 of 19 gated seeds).
@@ -71,9 +71,9 @@ private let compactionSmokeSamplingMode: GenerationOptions.SamplingMode = .greed
 /// the folded span is still in the summary the fold stores. That is one fact,
 /// on one fixture, against one small model, and it is deliberately narrow — it
 /// is a REGRESSION check on the way this fold was measured losing facts, not a
-/// recall score. The bound the stage applies to a summarizer's answer keeps a
-/// PREFIX of it, so it drops what the model wrote last, and nothing but a
-/// planted late fact catches that. Whether a fold keeps the facts a resumed
+/// recall score. A fold loses the END of a span first, whichever way it loses
+/// it — the model writes about a span in the order the span states it — so
+/// nothing but a planted late fact catches the loss. Whether a fold keeps the facts a resumed
 /// session needs IN GENERAL is still what
 /// `FoundationModelsRouterEvalIntegrationTests` measures, over a hand-written
 /// dataset. That tier stays where it is. This suite was written when that tier
@@ -91,8 +91,8 @@ private let compactionSmokeSamplingMode: GenerationOptions.SamplingMode = .greed
 /// - ``compactionSmokeModel`` rather than the 18 GB ``RealModels/standard``.
 /// - One fixture, not a dataset.
 /// - At most TWO generations: ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``
-///   and nothing after it — the map call, plus the one condense re-ask task
-///   ^xx02yn6's recovery ladder allows. No resumed session and no answering
+///   and nothing after it — the map call, plus the one recovery re-ask this
+///   fixture is measured taking. No resumed session and no answering
 ///   turn — that is another generation, and "works at all" does not need one.
 /// - ``reasoningTokenHeadroom``, sized for a model that writes no reasoning,
 ///   rather than the 8192 the thinking-model path needs.
@@ -130,9 +130,20 @@ private let compactionSmokeSamplingMode: GenerationOptions.SamplingMode = .greed
 /// then removed the per-call ratio cut entirely: the stored summary is now
 /// bounded once, against the folded span's own content bytes — an answer
 /// inside that bound is stored word for word, and an answer past it earns
-/// one condense re-ask before any cut. The run of 2026-08-20 measured this
-/// model taking the condense path on this fixture, and the condense answer
-/// still carried the planted fact.
+/// one condense re-ask before any cut.
+///
+/// Task ^49dy082 then measured this test red on 6 of 6 runs, and the cut was
+/// not the cause: the fold made ONE call, and it stored that answer word for
+/// word. The answer itself was the loss. Under greedy decoding the model
+/// degenerated into a repetition loop, and the loop copied a quoted example
+/// out of the compaction prompt — 60 copies of one line, no fact of the span,
+/// and a summary the fold reported as a success. Two changes answer it, and
+/// both are needed: `CompactionPrompt.default` quotes no example fact any
+/// more, and ``Summarization`` re-asks once when an answer repeats one line
+/// over and over. The 10 runs of 2026-08-31 then measured this fixture taking
+/// the map call plus one repetition re-ask, storing the 517-token re-asked
+/// answer word for word with no condense call and no cut, and carrying the
+/// planted fact on 10 of 10.
 ///
 /// The smoke tier is what those numbers rest on: this suite,
 /// ``AutoCompactionTriggerIntegrationTests`` and
@@ -175,13 +186,14 @@ struct CompactionSmokeIntegrationTests {
     /// whatever the model chooses to write.
     ///
     /// The measurement says the model really does write to that stop, so the
-    /// worst case is the case: the run of 2026-08-20 under task ^xx02yn6's
-    /// stated-budget ceilings measured this model generating to its map-call
-    /// ceiling, past the folded span's own byte budget — the one bound
-    /// ``Summarization`` holds a final summary to since that task — so the
-    /// stage made its condense re-ask and stored the condense answer. The
-    /// first test below pins that call count, and the run's own printed fold
-    /// line carries each call's ceiling.
+    /// worst case is the case: the runs of 2026-08-31 under task ^49dy082
+    /// measured this model generating to its map-call ceiling and looping
+    /// there, so the stage made its repetition re-ask and stored the re-asked
+    /// answer. That answer sat inside the folded span's own byte budget — the
+    /// one bound ``Summarization`` holds a final summary to since task
+    /// ^xx02yn6 — so no condense call followed it. The first test below pins
+    /// that call count, and the run's own printed fold line carries each
+    /// call's ceiling.
     ///
     /// Not zero, so a summary has a little room to finish its last sentence
     /// inside the ceiling rather than always ending at it.
@@ -390,18 +402,22 @@ struct CompactionSmokeIntegrationTests {
         let ceilings = outcome.ceilings
         let spanTokens = outcome.spanTokens
 
-        // 1. The summarizer ran, and within the fold's own call budget: ONE
-        //    map call, plus at most the ONE condense re-ask the recovery
-        //    ladder allows (task ^xx02yn6) when the raw answer overruns the
-        //    folded span's byte budget. The run of 2026-08-20 measured this
-        //    model taking exactly that path on this fixture — the map answer
-        //    overran the span budget and the condense re-ask fired. A THIRD
-        //    call would mean the fixture outgrew
-        //    `Summarization.maxChunkTokens` and bought a reduce round, and
-        //    fails here rather than merely getting slower.
+        // 1. The summarizer ran, and within the fold's own call budget on this
+        //    fixture: ONE map call, plus at most ONE recovery re-ask. The
+        //    ladder has two recovery rungs — the repetition re-ask (task
+        //    ^49dy082) when the answer repeats one line over and over, then
+        //    the condense re-ask (task ^xx02yn6) when the answer overruns the
+        //    folded span's byte budget. The 10 runs of 2026-08-31 measured
+        //    this model taking the first rung and not the second: the map
+        //    answer looped, the repetition re-ask answered 517 tokens, and
+        //    517 tokens sit inside the span budget. A THIRD call would mean
+        //    the fixture outgrew `Summarization.maxChunkTokens` and bought a
+        //    reduce round, or that both recovery rungs fired — either way the
+        //    fixture or the model moved, and that fails here rather than
+        //    merely getting slower.
         #expect(
             (1...2).contains(ceilings.count),
-            "expected the map call plus at most one condense re-ask, got \(ceilings.count) at ceilings \(ceilings)"
+            "expected the map call plus at most one recovery re-ask, got \(ceilings.count) at ceilings \(ceilings)"
         )
 
         // 2. It answered with text. `^bgxtdk3` was an empty summary on 19 of 19
@@ -444,13 +460,20 @@ struct CompactionSmokeIntegrationTests {
         // fold pays; carrying the facts forward is what it is paid FOR, and a
         // fold that shrank the transcript and dropped the fact has not worked.
         //
-        // `^azd033m` measured the way that failure arrives. The bound the stage
-        // applies to a summarizer's answer keeps a PREFIX of it, so it is
-        // content-blind: it keeps what the model said first and drops what it
-        // said last. On this fixture it cut a 330-token answer to 160 tokens —
-        // half of the answer discarded — and `plantedFact` stands at the very
-        // end of the span, which is where a prefix cut takes its loss. The
-        // model DID name the fact, twice; the fold stored neither mention.
+        // Two mechanisms have been measured taking that fact, and both take
+        // it from the END of the span, which is where `plantedFact` stands.
+        //
+        // `^azd033m` measured the first. The bound the stage applied to an
+        // answer kept a PREFIX of it, so it was content-blind: it kept what
+        // the model said first and dropped what it said last. On this fixture
+        // it cut a 330-token answer to 160 tokens, and the model had named the
+        // fact twice; the fold stored neither mention.
+        //
+        // `^49dy082` measured the second, on 6 of 6 runs, after task ^xx02yn6
+        // had already replaced that cut. No cut fired at all. The model
+        // degenerated into a repetition loop and spent its whole generation
+        // before it reached the end of the span, so the answer named no fact
+        // the span stated, and the fold stored the loop.
         let outcome = try await Self.foldTheFixture()
         let summary = try #require(
             outcome.result.summary, "the fold was discarded, so there is no summary to read")

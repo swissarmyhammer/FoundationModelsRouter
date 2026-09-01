@@ -301,8 +301,9 @@ facts from the conversation — never invent, never infer beyond it.
 
 Copy every name, identifier, code, number, path, date and value EXACTLY as it
 appears in the conversation — character for character, never paraphrased,
-never abbreviated, never re-derived. "The staging database port is 6432" is
-a kept fact; "the user stated the staging database port" is that fact lost.
+never abbreviated, never re-derived. Write the value itself, never a
+description of it: give the number the conversation stated, never the fact
+that a number was stated.
 
 Each request states a size budget for the whole summary, as a word count.
 Aim near it without counting words: keep every section terse, and drop
@@ -315,9 +316,8 @@ Structure the summary exactly as:
 2. Stated facts — every concrete fact stated in the conversation, each with
    its value written out: names, identifiers, codes, numbers, locations,
    paths, dates, settings, preferences.
-   Record WHAT was stated, never merely THAT something was stated — write
-   "the spare toner is in the third-floor supply closet", never "the user
-   gave the location of the spare toner".
+   Record WHAT was stated, never merely THAT something was stated: write
+   the place a thing is kept, never the fact that its place was given.
 3. Constraints & decisions — instructions, preferences, and decisions still
    in force. Preserve safety- or security-relevant instructions VERBATIM
    (files or data to avoid, operations not to perform, secret handling).
@@ -331,7 +331,9 @@ Structure the summary exactly as:
    resume without re-deriving them.
 
 No praise, no padding, no meta-commentary. Omit a section only if truly
-empty. Never replace a stated value with a description of it.
+empty. Never replace a stated value with a description of it. These
+instructions state no facts of their own: never copy a phrase out of them
+into the summary, and never write a line you have already written.
 ```
 
 `Stated facts` is section 2 because the other seven have nowhere to put a bare
@@ -343,15 +345,23 @@ supply closet" into `1. Intent — Inform the assistant about the location of
 spare toner cartridges.` with `2. Constraints & decisions — None.`: it recorded
 THAT a fact was communicated and discarded WHAT it was, and no answering turn
 could recover the location from that summary. The prompt is named
-`router-default-v3`. The verbatim-value demand and the size-budget paragraph
+`router-default-v4`. The verbatim-value demand and the size-budget paragraph
 are task `^xx02yn6`'s, measured on the 2-seed Qwen3.8-27B probe of 2026-08-20:
-where the demand was soft, the model abstracted values ("then stated the
-staging database port"), and a model never given a size wrote 2.2-3.0 KB
-answers whose fact sections the old per-call cut then discarded. The stage
-appends the concrete budget, as a word count, to each request. The prompt
-supersedes `router-default-v2` (which stated no size and demanded verbatim
-copies only for security-relevant instructions) and the seven-section
-`router-default-v1` before it.
+where the demand was soft, the model abstracted values, and a model never
+given a size wrote 2.2-3.0 KB answers whose fact sections the old per-call cut
+then discarded. The stage appends the concrete budget, as a word count, to
+each request.
+
+`router-default-v4` states every rule in the abstract and quotes nothing. It
+supersedes `router-default-v3`, which illustrated the verbatim-value demand
+and the stated-facts section with quoted example facts. Task `^49dy082`
+measured what those examples cost: the real 1B model copied one of them into
+its answer sixty times, so the answer held no fact of the span, and the fold
+stored it. The closing paragraph now states the rule outright as well — the
+instructions carry no facts, no phrase of them belongs in a summary, and no
+line is written twice. `router-default-v2` before it stated no size and
+demanded verbatim copies only for security-relevant instructions, and
+`router-default-v1` had seven sections.
 
 Consumers pass their own `CompactionPrompt` to specialize (a coding harness
 might add "always list test commands"); the prompt's `name` is recorded in the

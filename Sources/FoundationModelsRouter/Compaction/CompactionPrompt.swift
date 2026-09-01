@@ -20,11 +20,11 @@ public struct CompactionPrompt: Sendable, Equatable, Codable {
         self.text = text
     }
 
-    /// The router's default compaction prompt, `"router-default-v3"`: eight
+    /// The router's default compaction prompt, `"router-default-v4"`: eight
     /// numbered sections, verbatim values, and a size budget that
     /// ``Summarization`` states per request.
     public static let `default` = CompactionPrompt(
-        name: "router-default-v3",
+        name: "router-default-v4",
         text: """
             You are compacting an agent conversation into a continuation summary. The
             summary will REPLACE the older conversation: whoever continues has no other
@@ -33,8 +33,9 @@ public struct CompactionPrompt: Sendable, Equatable, Codable {
 
             Copy every name, identifier, code, number, path, date and value EXACTLY as it
             appears in the conversation — character for character, never paraphrased,
-            never abbreviated, never re-derived. "The staging database port is 6432" is
-            a kept fact; "the user stated the staging database port" is that fact lost.
+            never abbreviated, never re-derived. Write the value itself, never a
+            description of it: give the number the conversation stated, never the fact
+            that a number was stated.
 
             Each request states a size budget for the whole summary, as a word count.
             Aim near it without counting words: keep every section terse, and drop
@@ -47,9 +48,8 @@ public struct CompactionPrompt: Sendable, Equatable, Codable {
             2. Stated facts — every concrete fact stated in the conversation, each with
                its value written out: names, identifiers, codes, numbers, locations,
                paths, dates, settings, preferences.
-               Record WHAT was stated, never merely THAT something was stated — write
-               "the spare toner is in the third-floor supply closet", never "the user
-               gave the location of the spare toner".
+               Record WHAT was stated, never merely THAT something was stated: write
+               the place a thing is kept, never the fact that its place was given.
             3. Constraints & decisions — instructions, preferences, and decisions still
                in force. Preserve safety- or security-relevant instructions VERBATIM
                (files or data to avoid, operations not to perform, secret handling).
@@ -63,7 +63,9 @@ public struct CompactionPrompt: Sendable, Equatable, Codable {
                resume without re-deriving them.
 
             No praise, no padding, no meta-commentary. Omit a section only if truly
-            empty. Never replace a stated value with a description of it.
+            empty. Never replace a stated value with a description of it. These
+            instructions state no facts of their own: never copy a phrase out of them
+            into the summary, and never write a line you have already written.
             """
     )
 }

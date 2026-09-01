@@ -257,7 +257,7 @@ struct SummarizationStageTests {
     @Test("CompactionPrompt.default's name and text match compaction_plan.md §2 verbatim")
     func defaultPromptMatchesPlanText() {
         let prompt = CompactionPrompt.default
-        #expect(prompt.name == "router-default-v3")
+        #expect(prompt.name == "router-default-v4")
 
         let text = prompt.text
         #expect(
@@ -322,6 +322,25 @@ struct SummarizationStageTests {
         #expect(text.contains("character for character"))
     }
 
+    @Test(
+        "CompactionPrompt.default states no fact of its own, so a model cannot copy an example out of the instructions into the summary"
+    )
+    func defaultPromptQuotesNoExampleFact() {
+        // Task ^49dy082 measured the defect against the real 1B model. The
+        // instructions illustrated the verbatim-value demand with a quoted
+        // fact, and the model wrote that fact — a value the conversation never
+        // stated — sixty times in place of a summary of the span. The fold
+        // stored it, so the span's every real fact was lost.
+        let text = CompactionPrompt.default.text
+        // The instructions quote nothing, so they carry nothing shaped like a
+        // fact of the conversation. Each rule states itself in the abstract.
+        #expect(text.contains("\"") == false)
+        // The rule is stated outright as well, for a model that reads an
+        // instruction as content anyway.
+        #expect(text.contains("never copy a phrase out of them"))
+        #expect(text.contains("never write a line you have already written"))
+    }
+
     // MARK: - Segment contents: text segment + fully-populated CompactionSegment
 
     @Test("the synthesized summary entry carries the text segment and a fully-populated CompactionSegment")
@@ -379,7 +398,7 @@ struct SummarizationStageTests {
         // §1.5).
         #expect(abs(segment.content.tokensAfter - Compactor.estimatedTokenCount(of: unwrapped.transcript)) <= 1)
         #expect(segment.content.stagesApplied == ["ToolOutputElision", "TurnTruncation", "Summarization"])
-        #expect(segment.content.promptName == "router-default-v3")
+        #expect(segment.content.promptName == "router-default-v4")
 
         // The recency window itself survives byte-identical.
         #expect(Array(entries.suffix(expectedRecentTail.count)) == expectedRecentTail)
@@ -801,12 +820,20 @@ struct SummarizationStageTests {
         // "about N words ... never count": the same probes captured the model
         // counting its draft word by word against the target, so the line
         // forbids the verification outright as its own rule.
+        //
+        // The framing line between the budget and the separator is task
+        // ^49dy082's: without it a small model summarized these INSTRUCTIONS
+        // in place of the conversation, and named a value out of them that the
+        // conversation never stated.
         #expect(
             assembled
                 == "\(CompactionPrompt.default.text)\n\nSize budget: about \(words) words. "
                 + "This is a rough ceiling — never count or verify the length; a near miss is fine."
-                + "\n\n---\n\n\(condensed)"
+                + "\n\n\(Summarization.contentFramingDirective)\n\n---\n\n\(condensed)"
         )
+        // The framing has to stand where the model reads it as an instruction:
+        // ahead of the separator, never inside the content it describes.
+        #expect(condensed.contains(Summarization.contentFramingDirective) == false)
     }
 
     @Test("the ceiling a call generates under covers the stated budget, so a compliant answer is never truncated mid-write")
@@ -1212,6 +1239,146 @@ struct SummarizationStageTests {
                     headroom: stage.reasoningTokenHeadroom))
         let unbounded = Int((Double(Summarization.estimatedTokens(of: condensed)) * stage.summaryTokenRatio).rounded(.up))
         #expect(ceiling - stage.reasoningTokenHeadroom < unbounded)
+    }
+
+    // MARK: - A repetition loop in a summarizer's answer is never stored as the fold's memory
+
+    /// The one line a degenerate answer writes over and over.
+    ///
+    /// Task ^49dy082 measured the shape against the real 1B model: under
+    /// greedy decoding the model wrote one line 50 times and reached none of
+    /// the facts the span stated after it.
+    private static let loopedAnswerLine = "The archive keeps its records station by station."
+
+    /// The distinct line a degenerate answer opens with, so a test can tell
+    /// the answer's own content from the copies that follow it.
+    private static let loopedAnswerOpening = "1. Intent — the user asked for the archive plan."
+
+    /// How many copies of ``loopedAnswerLine`` one degenerate answer carries.
+    ///
+    /// Ten copies against one opening line put the repeated share at 0.91,
+    /// far past the bound the stage applies, and keep the fixture readable.
+    private static let loopedAnswerLineCount = 10
+
+    /// A summary a scripted summarizer answers with that repeats no line —
+    /// what the stage must store without asking again.
+    private static let unrepetitiveAnswer = """
+        1. Intent — the user asked for the archive plan.
+        2. Stated facts — the batch size is a setting, and rejected rows go to a rejects file.
+        3. Constraints & decisions — a station cuts over after seven clean reports.
+        8. Next steps — run the comparison job nightly.
+        """
+
+    /// Builds a degenerate answer: ``loopedAnswerOpening``, then
+    /// ``loopedAnswerLineCount`` copies of ``loopedAnswerLine``.
+    ///
+    /// - Parameter marker: The list marker each copy opens with, given the
+    ///   copy's one-based number. A loop that renumbers its copies writes the
+    ///   same line under a different marker.
+    /// - Returns: The answer text.
+    private static func loopedAnswer(markedBy marker: (Int) -> String) -> String {
+        let copies = (1...loopedAnswerLineCount).map { "\(marker($0))\(loopedAnswerLine)" }
+        return ([loopedAnswerOpening] + copies).joined(separator: "\n")
+    }
+
+    /// The stage and turns every repetition test folds with: a span whose byte
+    /// budget is far wider than any answer below, so the size ladder never
+    /// fires and the call count measures the repetition re-ask alone.
+    ///
+    /// - Returns: The turns to fold, and the stage to fold them with.
+    /// - Throws: Whatever the fixture build throws.
+    private static func repetitionFixture() throws -> (turns: [[Transcript.Entry]], stage: Summarization) {
+        (
+            try TranscriptFixtures.makeTurns(5, toolOutputText: largeSpanToolOutput),
+            Summarization(keepRecentTurns: 4, maxChunkTokens: wholeSpanChunkTokens)
+        )
+    }
+
+    @Test("a summarizer answer that repeats one line earns one re-ask, and the re-asked answer is what the fold stores")
+    func aLoopedAnswerEarnsOneReAsk() async throws {
+        // The property this guards: a fold is paid to carry facts forward, and
+        // an answer that writes one line over and over carries none. The stage
+        // used to store it, because it checked only that the answer was not
+        // empty and not too large.
+        let fixture = try Self.repetitionFixture()
+        let outcome = try await Self.foldOutcome(
+            folding: fixture.turns,
+            with: fixture.stage,
+            prompt: .default,
+            answering: [Self.loopedAnswer(markedBy: { _ in "- " }), Self.unrepetitiveAnswer]
+        )
+
+        #expect(outcome.prompts.count == 2)
+        let reAsk = try #require(outcome.prompts.last)
+        #expect(reAsk.contains(Summarization.repetitionRetryDirective))
+        // The re-ask condenses the same span, so the model answers the same
+        // question rather than editing its own broken answer.
+        #expect(try Self.condensedContent(of: reAsk) == Self.condensedContent(of: try #require(outcome.prompts.first)))
+
+        let folded = try #require(outcome.folded)
+        #expect(folded.summary == Self.unrepetitiveAnswer)
+    }
+
+    @Test("a repetition loop that renumbers each copy is still caught, because a list marker is not content")
+    func aRenumberedLoopIsCaught() async throws {
+        // Measured on the real model: the loop wrote "24. User: …", "25. User:
+        // …", so no two lines were byte-identical. Comparing the lines under
+        // their list markers is what sees one line written eleven times.
+        let fixture = try Self.repetitionFixture()
+        let outcome = try await Self.foldOutcome(
+            folding: fixture.turns,
+            with: fixture.stage,
+            prompt: .default,
+            answering: [Self.loopedAnswer(markedBy: { "\($0). " }), Self.unrepetitiveAnswer]
+        )
+
+        #expect(outcome.prompts.count == 2)
+        #expect(try #require(outcome.folded).summary == Self.unrepetitiveAnswer)
+    }
+
+    @Test("when the re-ask loops as well, the fold stores the first answer with its repeated lines removed")
+    func aSecondLoopedAnswerIsStoredWithoutItsRepeats() async throws {
+        // The stage never asks a third time — the fold's call budget is one
+        // map call and at most one recovery call for each rung of the ladder.
+        // What it stores instead carries every line the model actually wrote,
+        // once, so the repeats occupy none of the stored summary's budget.
+        let fixture = try Self.repetitionFixture()
+        let looped = Self.loopedAnswer(markedBy: { _ in "- " })
+        let outcome = try await Self.foldOutcome(
+            folding: fixture.turns,
+            with: fixture.stage,
+            prompt: .default,
+            answering: [looped, Self.loopedAnswer(markedBy: { "\($0). " })]
+        )
+
+        #expect(outcome.prompts.count == 2)
+        let folded = try #require(outcome.folded)
+        #expect(folded.summary == "\(Self.loopedAnswerOpening)\n- \(Self.loopedAnswerLine)")
+        #expect(looped.utf8.count > folded.summary.utf8.count)
+    }
+
+    @Test("an answer that repeats no line is stored as it stands, and costs no second call")
+    func anUnrepetitiveAnswerIsNotReAsked() async throws {
+        let fixture = try Self.repetitionFixture()
+        let outcome = try await Self.foldOutcome(
+            folding: fixture.turns, with: fixture.stage, prompt: .default, answering: [Self.unrepetitiveAnswer])
+
+        #expect(outcome.prompts.count == 1)
+        #expect(try #require(outcome.folded).summary == Self.unrepetitiveAnswer)
+    }
+
+    @Test("a short answer that says the same thing twice is not a loop, so it costs no re-ask")
+    func aShortAnswerThatRepeatsALineIsNotALoop() async throws {
+        // The bound needs a floor: two lines that agree are terse, not
+        // degenerate, and re-asking for them would spend a generation on
+        // nothing.
+        let fixture = try Self.repetitionFixture()
+        let terse = "\(Self.loopedAnswerLine)\n\(Self.loopedAnswerLine)"
+        let outcome = try await Self.foldOutcome(
+            folding: fixture.turns, with: fixture.stage, prompt: .default, answering: [terse])
+
+        #expect(outcome.prompts.count == 1)
+        #expect(try #require(outcome.folded).summary == terse)
     }
 
     // MARK: - Reasoning headroom: a call's ceiling holds the think block as well as the answer

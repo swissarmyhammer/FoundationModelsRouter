@@ -1,9 +1,167 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8380'
-title: A compaction fold drops a fact stated late in the span, because the summary bound is a content-blind prefix cut
+comments:
+- actor: claude-code
+  id: 01m1d627tg9vb817dmjpbqehf1
+  text: |-
+    ### Investigation — the card's diagnosis is refuted
+
+    I reproduced the failure 6 times of 6 runs. Every run printed identical fold numbers:
+
+    ```
+    [compactionSmoke] summarizerCalls=1 ceilings=[617] answerTokens=[586] spanTokens=643
+                      summaryTokens=586 tokensBefore=713 tokensAfter=656
+                      stages=["ToolOutputElision", "TurnTruncation", "Summarization"]
+    ```
+
+    `answerTokens=586` and `summaryTokens=586` are equal. The stored summary IS the
+    model's answer, word for word. No cut fired. The condense re-ask did not fire.
+    The summary bound is not the cause.
+
+    The real cause is the model's own answer. It degenerated into a repetition loop,
+    and the loop copies the compaction prompt's own illustration:
+
+    ```
+    1. Intent - The user's request to replace the ingest path for the station archive...
+    2. Stated facts - Every concrete fact mentioned in the conversation, with its exact value:
+    - The staging database port is 6432.
+    - The user stated the staging database port.
+    - The staging database port is 6432.
+       ... the same line 60 more times
+    ```
+
+    "The staging database port is 6432" appears nowhere in the fixture. It is the
+    example inside `CompactionPrompt.default`:
+
+    > "The staging database port is 6432" is a kept fact; "the user stated the
+    > staging database port" is that fact lost.
+
+    The model wrote BOTH halves of that example, then looped the first half. So the
+    answer holds no fact from the span at all, and the fold stored it.
+
+    Two product defects, and both are real:
+
+    1. `CompactionPrompt.default` states "State only facts from the conversation —
+       never invent". The next paragraph then hands the model an invented,
+       fact-shaped sentence. Section 2 carries a second such pair, the spare-toner
+       example. A small model copies them into the summary.
+    2. `Summarization` has no guard against a degenerate answer. It checks that the
+       answer is not empty, and it checks the answer's size. A summary of 60
+       identical lines passes both checks, so the fold reports success and the
+       transcript loses everything.
+
+    The failure is deterministic on this box, not intermittent. Sampling is greedy.
+    The earlier pass/fail table was measured under a different state.
+
+    ### ^bqj719z is NOT a duplicate
+
+    `^bqj719z` is a turn-cancellation test at `TurnCancellationTests.swift:950`. A
+    bounded spin gives up before the tool observes the cancellation. It shares no
+    code with the compaction fold. It stays open as its own card.
+  timestamp: 2026-09-01T00:31:49.584121+00:00
+- actor: claude-code
+  id: 01m1d8p3chxjy3xnv112xkrhnp
+  text: |-
+    ### What I changed, and why
+
+    The card asked for a content-aware summary bound. The bound was not the cause,
+    so I fixed what was. Two defects, and both are needed — I measured each alone
+    and neither alone makes the test pass.
+
+    **1. `CompactionPrompt.default` quoted example facts.** The instructions said
+    "State only facts from the conversation — never invent". The next paragraph
+    then handed the model an invented, fact-shaped sentence, and section 2 carried
+    a second such pair. The model copied one of them 60 times. The prompt now
+    states every rule in the abstract and quotes nothing, and it forbids the copy
+    outright: "These instructions state no facts of their own: never copy a phrase
+    out of them into the summary, and never write a line you have already written."
+    The name goes to `router-default-v4`, because the name exists so a recorded
+    fold can be attributed to the prompt that made it.
+
+    Measured alone: the answer stopped naming the invented value, and it still
+    looped on a line of its own. Test still red.
+
+    **2. `Summarization` had no guard on answer quality, and no framing.**
+
+    - The assembled prompt ran the instructions and the conversation together
+      behind a bare `---`. The model summarized the INSTRUCTIONS: its answer read
+      "1. Intent - The user's request to compact an agent conversation into a
+      continuation summary", then invented "John Smith, Jane Doe" and
+      "agent-123". `contentFramingDirective` now names the content as the
+      conversation, and as data rather than instructions.
+    - The stage checked only that an answer was not empty and not too large. A
+      summary of 60 identical lines passed both. `isRepetitive(_:)` now judges the
+      answer, and a loop earns one re-ask that states the question again. A second
+      loop is stored with its repeated lines removed, so the repeats occupy none of
+      the stored summary's byte budget. The stage never asks a third time.
+
+    Measured alone (framing, no guard): still red. Together: green.
+
+    Lines compare under `normalizedLine(_:)`, which drops a leading list marker.
+    The real model's second loop wrote "24. User: …", "25. User: …", so no two
+    lines were byte-identical; comparing under the marker is what sees one line
+    written fifty times.
+
+    ### The reproduction, and the bar
+
+    Before: `swift test --package-path IntegrationTests --filter
+    aPlantedFactLateInTheSpanSurvivesTheFold` failed **6 of 6** runs, with
+    identical fold numbers every run. Greedy decoding makes the failure
+    deterministic on this box, not intermittent — commit `2e07e98` pinned greedy,
+    and greedy is what makes a small model loop.
+
+    After: the smoke suite passed **10 of 10** consecutive runs, and 3 more after
+    the final doc edit — 13 of 13. Every run reported the same numbers:
+
+    ```
+    summarizerCalls=2 ceilings=[617, 617] answerTokens=[671, 517] spanTokens=643
+    summaryTokens=517 tokensBefore=713 tokensAfter=587
+    ```
+
+    Two calls: the map call, then the repetition re-ask. The re-asked answer of 517
+    tokens sits inside the folded span's byte budget, so no condense call fired and
+    no cut fired. The stored summary is the model's answer word for word, and it
+    carries `Kestrel`.
+
+    ### The test at :458
+
+    The assertion is unchanged, word for word. Its explanatory comment above it is
+    not: it stated the prefix-cut mechanism as fact, and I measured that mechanism
+    absent from this failure. The comment now records both mechanisms and which
+    task measured each. A comment that states a disproved cause is worse than none.
+
+    The sibling test keeps its `(1...2)` call bound. The ladder now has two
+    recovery rungs, so three calls are reachable in general, but this fixture takes
+    two, and the tighter bound is the stronger test. Its comment states what a
+    third call would now mean.
+
+    ### Also found
+
+    The whole integration package failed one unrelated test — a real-model backend
+    test exceeded its 120-second limit after 348 seconds. Raised as ^echfvpm. Every
+    compaction suite of that same run passed.
+
+    `HumanWaitGateTests` failed once under full-suite load at
+    `BoundedWait.swift:114`, then passed 3 of 3 alone and 4 of 4 in later full
+    runs. That file has uncommitted changes from other work in this tree.
+
+    ### Test counts
+
+    `swift test`: 1142 tests in 126 suites passed, 83 tests in 10 suites passed, 2
+    known issues. The baseline was 1136; the six added tests are the hermetic guard
+    the card asked for.
+  timestamp: 2026-09-01T01:17:37.553174+00:00
+- actor: claude-code
+  id: 01m1d8q44qw9exz9qex4btc5tv
+  text: |-
+    ### implement — changed
+    - evidence: 5 files — Sources/FoundationModelsRouter/Compaction/CompactionPrompt.swift, Sources/FoundationModelsRouter/Compaction/Summarization.swift, Tests/FoundationModelsRouterTests/SummarizationStageTests.swift, IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/CompactionSmokeIntegrationTests.swift, compaction_plan.md. Reproduction: `swift test --package-path IntegrationTests --filter aPlantedFactLateInTheSpanSurvivesTheFold` failed 6 of 6 before, passed 13 of 13 after. `swift test`: 1142 tests in 126 suites passed, 83 tests in 10 suites passed, 2 known issues.
+    - next: /review
+  timestamp: 2026-09-01T01:18:11.095966+00:00
+position_column: doing
+position_ordinal: '80'
+title: A compaction fold drops a fact stated late in the span, because the summarizer answer degenerates and the stage stores it
 ---
 ## What
 
@@ -16,77 +174,70 @@ Test "a fact planted at the very end of the folded span is still in the summary 
 Expectation failed: summary.contains(Self.plantedFactValue)
 ```
 
-## It is intermittent, and it is NOT caused by any recent change
+## The mechanism the card assumed, and what measurement found instead
 
-Measured today, same commits, different runs:
+The card was written from failure evidence, not from the fold implementation. It
+named a content-blind prefix cut as the cause. Measurement refuted that. The whole
+finding is in the first comment. In short:
 
-| commit | run 1 | re-run |
-|---|---|---|
-| `4162da1` | pass | — |
-| `475befb` | pass | **FAIL** |
-| `5a8075b` | **FAIL** | **FAIL** |
+- The fold made ONE call and stored that answer word for word. No cut fired.
+- The answer was a repetition loop: 60 copies of one line, and the line was a
+  quoted example out of `CompactionPrompt.default` itself.
+- The failure is deterministic on this box, not intermittent. Commit `2e07e98`
+  pinned greedy decoding, and greedy is what makes a small model loop.
 
-`475befb` passing and then failing on a re-run of the SAME commit is the decisive
-evidence. The change between `475befb` and `5a8075b` is card ^bbbkas1, which touches
-one access level and adds one `ToolContext` overload — nothing in the compaction path.
-So this is not a regression from that card.
-
-## The mechanism, from the test's own comment
-
-The test documents what card ^azd033m measured:
-
-> The bound the stage applies to a summarizer's answer keeps a PREFIX of it, so it is
-> content-blind: it keeps what the model said first and drops what it said last. On
-> this fixture it cut a 330-token answer to 160 tokens — half of the answer discarded
-> — and `plantedFact` stands at the very end of the span, which is where a prefix cut
-> takes its loss. The model DID name the fact, twice; the fold stored neither mention.
-
-So the model does its job and the STAGE loses the fact. Whether the run goes red
-depends on where the model happens to put the mention in its answer, which is why the
-same commit passes and fails.
+The card's instinct about POSITION was right. A fold loses the end of a span first,
+whichever way it loses it, because a model writes about a span in the order the span
+states it. The mechanism was the loop, not the bound.
 
 ## Why this must not be silenced
 
-The test asserts the property a fold exists for. Its own comment states it: shrinking
-a transcript is the cost a fold pays, and carrying the facts forward is what it is paid
-FOR. A fold that shrank the transcript and dropped the fact has not worked.
+The test asserts the property a fold exists for. Shrinking a transcript is the cost a
+fold pays, and carrying the facts forward is what it is paid FOR. A fold that shrank
+the transcript and dropped the fact has not worked.
 
 So do NOT make CI green by relaxing this assertion, marking the test flaky, or
-retrying it. It is red because the product loses information, intermittently, in the
-feature whose entire purpose is not to.
+retrying it.
 
-## What to do
+## What was done
 
-Make the summary bound content-aware instead of a prefix cut, so a fact stated late in
-the model's answer survives the bound. The bound exists to cap the stored summary's
-size; the defect is the strategy for choosing WHAT to drop, not that it drops.
+Two defects, and both are needed. Each was measured alone, and neither alone makes
+the test pass.
 
-Investigate first and record the finding before changing anything:
-
-- Where is the bound applied? The comment points at the stage that bounds a
-  summarizer's answer.
-- What is the current strategy, exactly? Confirm it is a prefix keep.
-- What options exist that keep the size cap? Re-prompting for a shorter answer,
-  sentence-level selection, or asking the summarizer for a bounded answer in the first
-  place, are three shapes. Do not pick one from this list without measuring.
+1. `CompactionPrompt.default` quoted example facts, in two places, while telling the
+   model to state only facts of the conversation. It now states every rule in the
+   abstract, quotes nothing, and forbids the copy outright. The name goes to
+   `router-default-v4`.
+2. `Summarization` framed nothing and guarded nothing. The assembled prompt ran the
+   instructions and the conversation together behind a bare separator, and the model
+   summarized the instructions. The stage checked only that an answer was not empty
+   and not too large, so a loop passed both. It now frames the content as the
+   conversation, judges an answer for repetition, and re-asks once.
 
 ## Acceptance Criteria
-- [ ] A fact stated at the END of a folded span survives the fold's stored summary.
-- [ ] The stored summary still respects its size bound.
-- [ ] The test at CompactionSmokeIntegrationTests.swift:458 passes, unchanged. If it
-      must change, say exactly why and what property it asserts afterwards.
-- [ ] Run it repeatedly, not once. It passed 2 of 4 runs today, so a single green run
-      proves nothing. State how many runs were made.
+- [x] A fact stated at the END of a folded span survives the fold's stored summary.
+- [x] The stored summary still respects its size bound. It sits inside the folded
+      span's byte budget with no cut, at 517 tokens against a 643-token span.
+- [x] The test at CompactionSmokeIntegrationTests.swift:458 passes. The assertion is
+      unchanged, word for word. Its explanatory comment changed, because it stated
+      the prefix cut as the cause and that cause was measured absent. The comment now
+      records both mechanisms and which task measured each.
+- [x] Run it repeatedly, not once. It failed 6 of 6 runs before the fix and passed 13
+      of 13 after it.
 
 ## Tests
-- [ ] A hermetic test of the bound itself, so the property is guarded without a real
-      model. The real-model test proves the end-to-end behaviour; a unit test proves
-      the strategy and runs on every push.
-- [ ] Run `swift test`. All tests pass.
+- [x] A hermetic test of the strategy, so the property is guarded without a real
+      model. Six tests were added to `SummarizationStageTests`: a loop earns one
+      re-ask, a renumbered loop is still caught, a second loop is stored without its
+      repeats, a clean answer costs no second call, a two-line answer is not a loop,
+      and the assembled prompt frames its content.
+- [x] Run `swift test`. All tests pass: 1142 tests in 126 suites, 83 tests in 10
+      suites, 2 known issues.
 - [ ] CI green, integration job included, over more than one run.
 
 ## Note
 
-Found while verifying CI after ^bbbkas1 merged. The investigation that cleared
-^bbbkas1 is the evidence above: re-running the predecessor commit is what separated
-"my change broke it" from "this test finds a real intermittent defect". #router #compaction #defect #ci #real-model
+Found while verifying CI after ^bbbkas1 merged. `^bqj719z` is NOT a duplicate of this
+card: it is a turn-cancellation bounded wait, and it shares no code with the fold.
+`^echfvpm` was raised from the same run for an unrelated real-model timeout.
+#router #compaction #defect #ci #real-model
