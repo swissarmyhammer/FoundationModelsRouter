@@ -137,8 +137,10 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// what the fold has already spent on it.
     ///
     /// The recovery ladder reads both fields. A condense re-ask is never sized
-    /// above ``ceiling``, and it is never made at all once ``reAsked`` records
-    /// that the fold already asked again about this same material.
+    /// above ``ceiling``. It is never made once ``reAsked`` records an earlier
+    /// ask about this answer's material. The flag bounds the ladder for one
+    /// answer. It does not bound a whole multi-chunk fold, where each chunk
+    /// carries an answer of its own.
     private struct Answer {
         /// The text the model answered with.
         let text: String
@@ -237,15 +239,20 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// An oversized summary walks a ladder, cheapest rung first. The free rung
     /// drops the lines the answer repeated, because a line the answer had
     /// already written states nothing new and must not occupy budget a stated
-    /// fact could hold. The paid rung is one condense re-ask, which
-    /// ``condense(_:toBytes:notExceeding:summarizer:)`` makes only when it can
-    /// be sized to shorten. ``cut(_:toCharacters:)`` is the last rung.
+    /// fact could hold. The paid rung is one condense re-ask, which asks the
+    /// model for a much shorter text.
+    /// Once the rung runs, ``condense(_:toBytes:notExceeding:summarizer:)``
+    /// always makes that call. It never sizes the call above the ceiling that
+    /// wrote its input. ``cut(_:toCharacters:)`` is the last rung.
     ///
-    /// A fold spends ONE recovery generation, whichever rung spends it. When
-    /// `answer` is itself a re-asked answer, the condense rung is free rungs
-    /// only: the fold has already asked again about this same material, and the
-    /// 2026-09-01 fold measured the second ask answering with a repetition loop
-    /// LONGER than the text it had to shorten.
+    /// ONE answer earns ONE recovery generation, whichever rung spends it. The
+    /// bound holds for one answer, not for a whole fold. A multi-chunk fold
+    /// summarizes each chunk on its own, and each chunk's answer carries its
+    /// own budget of one. When `answer` is itself a re-asked answer, the ladder
+    /// skips the condense rung and walks the free rungs only. The stage has
+    /// already asked again about this same material. The 2026-09-01 fold
+    /// measured that second ask. It answered with a repetition loop LONGER than
+    /// the text it had to shorten.
     ///
     /// - Parameters:
     ///   - answer: The answer the fold has in hand, and what it cost.
@@ -291,9 +298,9 @@ public struct Summarization: Sendable, Equatable, Codable {
     ///   - budgetBytes: The bytes the stored summary may occupy.
     ///   - inputCeiling: The ceiling the call that wrote `summary` ran under.
     ///   - summarizer: The model to ask again.
-    /// - Returns: The condensed answer, or `nil` when the call was not worth a
-    ///   generation, when the model answered no text, or when it answered with
-    ///   a repetition loop.
+    /// - Returns: The condensed answer, or `nil` when the model answered no
+    ///   text, or when it answered with a repetition loop. The call itself is
+    ///   always made.
     /// - Throws: Whatever `summarizer.summarize(_:maxTokens:)` throws, unmodified.
     private func condense(
         _ summary: String,
@@ -461,7 +468,8 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// A second answer that carries real content is the one to carry forward.
     /// When the second answer loops as well, or holds no text, `summary` goes
     /// forward with its repeated lines removed, so the repeats occupy none of
-    /// the stored summary's byte budget. The stage never asks a third time.
+    /// the stored summary's byte budget. The stage never asks a third time for
+    /// this one answer.
     ///
     /// - Parameters:
     ///   - summary: The looping answer the call already made.

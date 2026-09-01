@@ -245,8 +245,84 @@ comments:
     - evidence: 2 files — `Sources/FoundationModelsRouter/Compaction/Summarization.swift`, `Tests/FoundationModelsRouterTests/SummarizationStageTests.swift`. Fold before, on 01 Sep: `summarizerCalls=3 ceilings=[617, 617, 628] answerTokens=[703, 789, 810] summaryTokens=509 tokensAfter=579`, both tests red. Fold after, on 01 Sep: `summarizerCalls=2 ceilings=[617, 617] answerTokens=[703, 789] summaryTokens=624 tokensAfter=694`, both tests green. `swift test --package-path IntegrationTests --filter CompactionSmokeIntegrationTests` passed twice on 01 Sep, under the default zone and under `TZ=Pacific/Midway`. Under `TZ=Pacific/Kiritimati` the date is 02 Sep: the call-budget test passes at `summarizerCalls=2 ceilings=[617, 617] answerTokens=[703, 836] summaryTokens=615`, where the old code made 3 calls; the planted-fact test fails, because the model's own answer of 3344 bytes never states `Kestrel` — `grep -ic kestrel` reports 0, and the answer copies the user prompt back instead. No fold can store a fact the model never wrote. `swift test` exit 0, 1164 tests in 128 suites plus 83 in 10, 2 known issues. `swift build --package-path IntegrationTests --build-tests` exit 0.
     - next: review. The date pinning is still needed, and it is carded as ^f0k3aah. It needs a change in the `mlx-swift-lm` fork, so it stays out of this card.
   timestamp: 2026-09-01T16:11:45.874079+00:00
+- actor: claude-code
+  id: 01m1ewm67drscb54jwk4b425g5
+  text: |
+    ### review — findings
+
+    - evidence: engine `review sha HEAD~1..HEAD` reported 0 findings over 2 files. The driver's verification pass found 2 items, both on added lines: `Sources/FoundationModelsRouter/Compaction/Summarization.swift:241` and `Sources/FoundationModelsRouter/Compaction/Summarization.swift:244`. Both are doc statements the code does not implement. No behaviour defect was found.
+
+    All five defects are real, and all five are fixed:
+    1. Ceiling — line 309 now caps at `min(outputTokenCeiling(...), inputCeiling)`.
+    2. Loop test — line 315 discards a repetitive condense answer.
+    3. Free repair first — lines 264-265 drop repeated lines before line 267 condenses.
+    4. One recovery generation — line 267 gates condense on `!answer.reAsked`.
+    5. Final-section cut — lines 592-604 take the boundary cut when the sections end at the LAST header.
+
+    Defect 5 is safe. `sectionAlignedPrefix` sets `endsAtFinalSection` only when the prefix runs to the last header. Everything after that point is one section, so the byte cut can truncate that section only. It cannot truncate a later section. The `>=` test at line 603 keeps the section prefix when it stores more, so the branch never stores less than before.
+
+    No defect was traded for another:
+    - The fold cannot store an oversized summary. Every return of `cut` is a prefix within `limit`, except the blank-text fallback, which this commit did not change. `resolveOversizedSummary` returns the deduped text only when it fits.
+    - A clean map answer is not starved. `reAsked` is false there, so the condense rung still runs.
+    - Dropping repeated lines can drop a line that repeats an earlier line word for word under `normalizedLine`. The content is already stated. The rung runs only on an answer that already overruns the budget, where every other rung removes more.
+
+    Red-then-green reproduced. I reverted only the product file to `771c750~1` and ran the five new tests. All five failed, on 10 issues, and all five compiled. I then restored the file, and `git status --porcelain Sources/` was empty.
+
+    My own suite results:
+    - `swift test` — exit 0, 1164 tests in 128 suites, plus 83 tests in 10 suites, 2 known issues.
+    - `swift build --package-path IntegrationTests --build-tests` — exit 0.
+    - `swift test --package-path IntegrationTests --filter CompactionSmokeIntegrationTests` — exit 0. `summarizerCalls=2 ceilings=[617, 617] answerTokens=[703, 789] summaryTokens=624 tokensAfter=694`.
+    - The same command under `TZ=Pacific/Kiritimati` (02 Sep) — exit 1. The call-budget test PASSES at `summarizerCalls=2 ceilings=[617, 617] answerTokens=[703, 836] summaryTokens=615`. The planted-fact test fails.
+
+    The model-recall claim is confirmed. The failure message dumps both answers and the stored summary. `grep -ic kestrel` over the whole log reports 2, and both hits are the assertion text itself. No model answer states `Kestrel`. The loss is model recall, not fold arithmetic. That defect stays on ^f0k3aah.
+
+    - next: the implementer corrects the two doc statements, or states the weaker guarantee the code gives. The task stays in `review`.
+  timestamp: 2026-09-01T16:25:20.877006+00:00
+- actor: claude-code
+  id: 01m1ewsf0rqyztwxj1z70pxtjp
+  text: |
+    ### Research — both findings are doc defects, not code defects
+
+    I read the two doc statements against the code they describe.
+
+    **Finding 1 — the condense rung.**
+
+    `condense` has no "worth a generation" test. It sizes the call at
+    `min(outputTokenCeiling(forSummaryAllowance: allowance), inputCeiling)`, and
+    then it always generates. It returns `nil` for an empty answer, or for a
+    repetition loop. Nothing else returns `nil`.
+
+    The doc is the part that is wrong. A ceiling is a maximum, not a target. A
+    call sized EQUAL to the ceiling that wrote its input can still shorten,
+    because the condense prompt asks for a much smaller word budget. A guard that
+    skipped an equal ceiling would stop the rung in the common case, and it would
+    stop a call that shortens. So I state the guarantee the code gives: the call
+    is never sized ABOVE the ceiling that wrote its input.
+
+    **Finding 2 — "A fold spends ONE recovery generation".**
+
+    `summarize` calls `summarizeOnce` once for each chunk. Each call can spend its
+    own repetition re-ask. `reduce` then makes further calls. The `reAsked` flag
+    travels on one `Answer`, so it bounds the ladder for ONE answer.
+
+    A fold-wide bound would be wrong. A chunked fold must make one call for each
+    chunk, and each chunk holds different material. The integration test asserts
+    `(1...2).contains(ceilings.count)` on a SINGLE-chunk fixture, and its own
+    comment says a third call would mean the fixture outgrew `maxChunkTokens`.
+    That test pins a per-answer bound. So I scope the doc to one answer.
+
+    Both repairs are doc repairs. No test changes.
+  timestamp: 2026-09-01T16:28:13.720813+00:00
+- actor: claude-code
+  id: 01m1ex24rq5ngjqdyjxa13rpnq
+  text: |
+    ### implement — changed
+
+    - evidence: 1 file — `Sources/FoundationModelsRouter/Compaction/Summarization.swift`. Both findings are DOC repairs. No code and no test changed. Finding 1: the code is right, and a ceiling is a maximum, not a target. A condense call sized EQUAL to the ceiling that wrote its input can still shorten, because the condense prompt states a much smaller word budget. A guard that skipped an equal ceiling would stop the rung in almost every fold, because the condense allowance comes from `budgetBytes` while the map allowance comes from `0.75` of the content. Both doc sites now state the guarantee the code gives: the call is never sized ABOVE the input's ceiling, and `nil` means an empty answer or a repetition loop. Finding 2: a fold-wide bound would be wrong, because a chunked fold must make one call for each chunk, and the integration test pins the bound on a SINGLE-chunk fixture. The doc now scopes the bound to one answer. I removed the same cause at every site in the file: the `Answer` doc, the `resolveOversizedSummary` doc, and `resolveRepetitiveSummary`'s "The stage never asks a third time". Commands: `swift test` exit 0, 1164 tests in 128 suites plus 83 in 10 suites, 2 known issues. `swift build --package-path IntegrationTests --build-tests` exit 0. `swift test --package-path IntegrationTests --filter CompactionSmokeIntegrationTests` exit 0, 2 tests in 1 suite, `summarizerCalls=2 ceilings=[617, 617] answerTokens=[703, 789] summaryTokens=624 tokensAfter=694`. I dumped the review rules for `.swift` before editing: no rule bans a date or a task id in a comment, and `doc-parameter-naming` governs only `- Parameter` keys, which I did not change.
+    - next: review. The task stays in `doing`.
+  timestamp: 2026-09-01T16:32:58.135401+00:00
 position_column: doing
-position_ordinal: '8180'
+position_ordinal: '80'
 title: The compaction smoke fold fails again, deterministically, on code CI passed twice
 ---
 ## What
@@ -341,3 +417,14 @@ Found while working ^echfvpm. That card is a real-model time limit and shares
 no code with the fold. The failure blocks ^echfvpm's second acceptance
 criterion, which asks for three green package runs. #router #compaction
 #defect #real-model #ci
+
+## Review Findings (2026-09-01 11:24)
+
+> Scope: `review sha HEAD~1..HEAD` (commit 771c750) — reviewed the diffs only.
+> The engine reported 0 findings over 2 files. The 8 `.kanban/` files were
+> excluded by `.reviewignore`. The two items below come from the driver's
+> verification pass, which the caller asked for. Both are on lines this
+> commit added.
+
+- [x] `Sources/FoundationModelsRouter/Compaction/Summarization.swift:241` — the doc says `condense(_:toBytes:notExceeding:summarizer:)` is made "only when it can be sized to shorten", and line 294 repeats it as a `nil` return "when the call was not worth a generation". No such condition exists. `resolveOversizedSummary` calls `condense` whenever `budgetBytes > 0` and `!answer.reAsked`, and `condense` always generates. Line 309 caps the ceiling at `min(outputTokenCeiling(forSummaryAllowance: allowance), inputCeiling)`, which stops the call going ABOVE its input but permits a ceiling EQUAL to it. Either add the guard the doc states, or state the weaker guarantee the code gives, at both sites. — FIXED as a doc repair. The code is right and the doc was wrong. A ceiling is a maximum, not a target, so a call sized EQUAL to its input can still shorten; the condense prompt asks for a much smaller word budget. Both doc sites now state the guarantee the code gives.
+- [x] `Sources/FoundationModelsRouter/Compaction/Summarization.swift:244` — the doc says "A fold spends ONE recovery generation, whichever rung spends it". A multi-chunk fold can spend more. `summarize(_:prompt:summarizer:)` calls `summarizeOnce` once per chunk, and each call can spend its own repetition re-ask. The `reAsked` flag bounds the ladder for ONE answer, not for the fold. State the guarantee the flag gives. — FIXED as a doc repair. A fold-wide bound would be wrong, because a chunked fold must make one call for each chunk. The doc now scopes the bound to one answer, at every site in the file that stated it fold-wide.
