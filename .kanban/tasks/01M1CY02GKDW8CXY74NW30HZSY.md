@@ -1,6 +1,88 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m1cz6p61wvw8e9eyamx0j0dw
+  text: |-
+    ### The decision is made: choice 1, publish now
+
+    The user decided on 2026-08-31 to publish now. Do not wait for ACPAgent
+    to compile. Remove the `needs-decision` gate. The first acceptance
+    criterion is satisfied.
+
+    ### Three additions to the acceptance criteria
+
+    ACPAgent supplied these on 2026-08-31. Each one lets the card pass its
+    criteria and still leave ACPAgent unable to use the result. None of them
+    changes the design.
+
+    **1. The types behind the report properties must be public.**
+
+    Swift does not permit a public property with an internal type. Thus
+    `RestoredSession` cannot be public with `configurationReport` and
+    `contextMismatches` unless these come with it:
+
+    - `SessionConfigurationRestorationReport`
+    - `SessionConfigurationRestorationReport.MissingTool`
+    - `RestoredSessionTree.ContextMismatch`
+
+    `ContextMismatch` is nested in `RestoredSessionTree`, which stays
+    internal. Move it, or give it a new home. Do not make
+    `RestoredSessionTree` public to reach it.
+
+    The members of these types must be public also. `ContextMismatch` holds
+    `session`, `recorded` and `resolved`, each marked
+    `// periphery:ignore`. Examine those marks: a public property that a
+    consumer reads is no longer invisible to periphery.
+
+    Scope note: this card is not one method. Count the types.
+
+    **2. A catchable error for "no such session".**
+
+    `SessionTreeRestorationError` is internal. ACP `session/resume` on a
+    deleted session must give a clean protocol error, and ACPAgent has an
+    explicit criterion for it. With only `any Error`, ACPAgent cannot tell
+    "this session is gone" from "restore failed for another reason", and
+    must match on a message string.
+
+    Do one of these:
+
+    - Make `SessionTreeRestorationError` public.
+    - Give one distinguishable public case for a missing or unreadable
+      session.
+
+    Note that a missing session throws `TranscriptTreeError.sessionNotFound`
+    today, not `SessionTreeRestorationError`. Read the restore path before
+    you choose. The consumer must be able to catch the real error that a
+    missing session produces.
+
+    **3. Decide how a caller reads the recorded working directory.**
+
+    ACPAgent must compare the resume `cwd` with the recorded creation `cwd`,
+    and refuse if they differ. It must not silently use a new root.
+
+    There is no public way to read the recorded `cwd` before a restore.
+    `SessionSidecar` publishes no stored property. `TranscriptEvent` does not
+    hold a `cwd`.
+
+    To restore first and then compare `restored.session.workingDirectory` is
+    correct but reversed: the caller builds the full session, and then
+    rejects it.
+
+    Investigate and choose:
+
+    - If a read-only accessor for the recorded working directory costs one
+      property, add it.
+    - If it costs more, document the after-the-fact comparison as the
+      supported path.
+
+    Record which you chose and why.
+
+    ### Source
+
+    Cross-session messages with `foundationmodelsacpagent-87`, 2026-08-31.
+  timestamp: 2026-08-31T22:31:55.329737+00:00
 position_column: todo
 position_ordinal: '8480'
 title: 'Publish session restore for ACPAgent: one session by id, with an instructions override'

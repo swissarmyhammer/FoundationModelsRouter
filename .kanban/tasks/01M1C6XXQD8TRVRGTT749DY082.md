@@ -159,8 +159,67 @@ comments:
     - evidence: 5 files — Sources/FoundationModelsRouter/Compaction/CompactionPrompt.swift, Sources/FoundationModelsRouter/Compaction/Summarization.swift, Tests/FoundationModelsRouterTests/SummarizationStageTests.swift, IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/CompactionSmokeIntegrationTests.swift, compaction_plan.md. Reproduction: `swift test --package-path IntegrationTests --filter aPlantedFactLateInTheSpanSurvivesTheFold` failed 6 of 6 before, passed 13 of 13 after. `swift test`: 1142 tests in 126 suites passed, 83 tests in 10 suites passed, 2 known issues.
     - next: /review
   timestamp: 2026-09-01T01:18:11.095966+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m1d98b1syfhh3fx5cgbsm6vp
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 380164c). 0 findings, 0 confirmed, 0 refuted, 7 validators attempted, 0 failed. I ran the reproduction myself, 5 times of 5 runs. All 5 passed. Every run printed the same fold line: `summarizerCalls=2 ceilings=[617, 617] answerTokens=[671, 517] spanTokens=643 summaryTokens=517 tokensBefore=713 tokensAfter=587`.
+    - next: none. The card moves to `done`.
+
+    ### The refutation holds
+
+    I checked the refutation against the code and the fixture. It is sound.
+
+    - The old numbers gave `answerTokens=586` and `summaryTokens=586`, with one call. Equal counts prove the fold stored the answer word for word.
+    - 586 tokens sit under the 643-token span budget. So `resolveOversizedSummary` never ran, and no cut fired.
+    - The string `6432` appears nowhere under `IntegrationTests`. The looped line came from the prompt, not the fixture.
+    - The v3 prompt did quote that line. The diff removes it from `CompactionPrompt.swift`.
+
+    ### The four checks the review asked for
+
+    1. **The heuristic cannot misfire.** `isRepetitive` needs 4 content lines, and more than half must repeat. The 8-section scaffold writes 8 distinct headers. Even a scaffold that answers "None." in every section reaches 0.44. The test `aShortAnswerThatRepeatsALineIsNotALoop` guards the floor.
+    2. **The re-ask cannot loop.** `resolveRepetitiveSummary` calls `summarizer.summarize` directly. It never calls `summarizeOnce`. So each `summarizeOnce` costs 2 model calls at most.
+    3. **The name bump is complete.** Only 2 places read the literal name, and both now read `router-default-v4`. Every other place reads `CompactionPrompt.default.name`. A stored recording holds its own prompt name and text. No code compares that name to the default, so an old transcript still loads.
+    4. **No test lost strength.** The unit tests deleted 3 code lines: two name literals and one expected-prompt string. All three were updated, not removed. The integration test deleted comments and one message string. The assertion `summary.contains(Self.plantedFactValue)` is unchanged. The `(1...2)` call bound is unchanged. Nobody skipped, disabled, or relaxed a test.
+
+    ### One item stays open
+
+    The acceptance list still holds `- [ ] CI green, integration job included, over more than one run`. That item needs the CI run, not this review.
+  timestamp: 2026-09-01T01:27:35.225144+00:00
+- actor: claude-code
+  id: 01m1d99bwpezvn2ckbp6ch7sqb
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 5 files. The card's own diagnosis was refuted by measurement.
+    - test: green — swift test, 1142 tests in 126 suites + 83 tests in 10 suites, exit 0
+    - commit: 380164c
+    - review: clean — 0 findings, 7 validators, 0 failed. Task moved to done.
+
+    The reproduction, run twice by two agents: the integration test failed 6 of 6
+    runs before the change. It passed 13 of 13 for the implementer and 5 of 5 for
+    the reviewer, with identical fold numbers on every run.
+
+    Correction for the record. This card said a content-blind prefix cut dropped a
+    fact stated late in the span. That is wrong. No cut fired at all: the fold made
+    one call and stored the answer word for word, `answerTokens=586` and
+    `summaryTokens=586`, both under the 643-token span budget.
+
+    The card also called the failure intermittent. It is not. Commit `2e07e98`
+    pinned greedy decoding, which makes the loop deterministic.
+
+    The real cause: the 1B model degenerated into a repetition loop, and the loop
+    copied an example fact out of the compaction prompt itself. The prompt told the
+    model to state only facts from the conversation, then quoted an invented
+    fact-shaped sentence. The model wrote that sentence 60 times. The value appears
+    nowhere in the fixture.
+
+    Both defects needed a fix. Neither alone makes the test pass.
+
+    One acceptance item stays open: CI green with the integration job, over more
+    than one run. That needs a CI run and cannot be checked from a workstation.
+  timestamp: 2026-09-01T01:28:08.854635+00:00
+position_column: done
+position_ordinal: ffffb080
 title: A compaction fold drops a fact stated late in the span, because the summarizer answer degenerates and the stage stores it
 ---
 ## What

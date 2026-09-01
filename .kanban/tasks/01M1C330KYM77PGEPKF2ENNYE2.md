@@ -356,8 +356,164 @@ comments:
     - `git diff Package.swift` is empty. No harness reached the repository.
     - next: `/review`.
   timestamp: 2026-09-01T00:14:09.681626+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m1d5nhyr1fkspq4xcsba47we
+  text: |
+    ## Round 2 review — independently verified from the reader's position
+
+    The engine gave no coverage again. `review sha HEAD~1..HEAD` reported 0 findings
+    over 0 files. `README.md` matched no validator, because no validator declares a
+    `*.md` match glob. That zero is not a pass. This reviewer built the consumer
+    package again, and did not reuse the implementer's harness or numbers.
+
+    ### Every implementer claim was checked, and each one holds
+
+    **Version bounds match the manifest.** `Package.swift` declares
+    `swift-huggingface` at `from: "0.9.0"` and `swift-transformers` at
+    `from: "1.3.0"`. The README states the same two bounds.
+
+    **The acceptance test passes.** A throwaway consumer package in the scratchpad
+    declares the three packages from the first Install block, and links the three
+    products from the second block:
+
+    ```
+    cd scratchpad/consumer && rm -rf .build Package.resolved && swift build
+    Build complete! (30.05 sec)
+    exit 0
+    ```
+
+    SwiftPM resolved the router at remote `main` (b4e8dcb). That commit is one
+    behind local HEAD, but commits 3025c92 and 025f84c change `README.md` and the
+    kanban files alone. The library source is the same, so the build measures the
+    example against the current API.
+
+    **Control A fails: the old Install block.** The consumer declares the router
+    package alone and links its product alone:
+
+    ```
+    error: .../main.swift:3:8 unable to resolve module dependency: 'HuggingFace'
+    error: .../main.swift:6:8 unable to resolve module dependency: 'Tokenizers'
+    exit 1
+    ```
+
+    **Control B fails: the products not linked.** The consumer declares all three
+    packages, but the target links the router product alone:
+
+    ```
+    error: .../main.swift:3:8 unable to resolve module dependency: 'HuggingFace'
+    error: .../main.swift:6:8 unable to resolve module dependency: 'Tokenizers'
+    exit 1
+    ```
+
+    Both blocks carry load. A `dependencies` entry alone does not link a module.
+
+    A first run of control A reported `unable to resolve module dependency:
+    'yyjson'`, which is a stale build cache and not the true error. Each control was
+    then run again after `rm -rf .build Package.resolved`. The errors above come
+    from the clean runs.
+
+    **The passive clause is now active.** Commit 3025c92 wrote "so all three are
+    imported above". This commit replaced it with "The example imports all three
+    modules above." The sentence is active. It is 7 words.
+
+    ### The three findings of round 1 are closed
+
+    - `README.md:15` — closed. The Install section names `swift-huggingface` and its
+      `HuggingFace` product. Control A and control B both prove the entry is needed.
+    - `README.md:18` — closed. The Install section names `swift-transformers` and
+      its `Tokenizers` product. The same two controls prove it.
+    - `README.md:24` — closed. The clause is active voice.
+
+    ### The added prose meets ASD-STE100
+
+    Each added sentence is active, is under 20 words, and carries one idea.
+
+    | Sentence | Words |
+    |---|---|
+    | The example above needs three packages. | 6 |
+    | Add them to the `dependencies` list in `Package.swift`: | 8 |
+    | Then link three products from your own target: | 8 |
+    | The `#hubDownloader()` and `#huggingFaceTokenizerLoader()` macros expand to code that calls `HuggingFace` and `Tokenizers`. | 13 |
+    | Your target must link both products. | 6 |
+    | The router package does not link them for you. | 9 |
+    | The example imports all three modules above. | 7 |
+
+    ### One observation, outside the scope of this commit
+
+    The Install section never states the macOS 27.0 platform floor. A control that
+    declares exactly what the section instructs, and adds no `platforms:` line,
+    fails:
+
+    ```
+    error: The package product 'FoundationModelsRouter-product' requires minimum
+    platform version 27.0 for the macOS platform, but this target supports 12.0
+    exit 1
+    ```
+
+    This is not a finding on this commit. A diff review reports only on the lines
+    the change added or modified, and no added line carries a platform claim. The
+    gap is also older than the change: the previous text, "Add the package to
+    `Package.swift`:", was equally silent. The Install section gives manifest
+    fragments rather than a whole manifest, so the reader already supplies `name:`,
+    `targets:` and a tools version. The platform floor sits in that same class, and
+    SwiftPM names the needed version in its error.
+
+    A separate card can add the floor to the Install section. This reviewer did not
+    create one.
+
+    ### The tree
+
+    `git diff Package.swift` is empty. `git status --porcelain` lists kanban files
+    alone, and no `README.md`. Every build ran in the scratchpad, outside the
+    repository.
+  timestamp: 2026-09-01T00:24:53.976100+00:00
+- actor: claude-code
+  id: 01m1d5ntqdqkky8y1hcfmz2sga
+  text: |
+    ### review — clean
+
+    - command: `review sha HEAD~1..HEAD` (commit 025f84c). counts: 0 findings, 0
+      confirmed, 0 refuted, 0 files reviewed. `README.md` matched no validator, so
+      the engine gave no coverage. The reviewer verified by hand.
+    - acceptance test, obtained by this reviewer: a consumer package that declares
+      only the two Install blocks. `swift build` printed
+      `Build complete! (30.05 sec)`, exit 0.
+    - control A (the old Install block): exit 1, `unable to resolve module
+      dependency: 'HuggingFace'` and `'Tokenizers'`.
+    - control B (packages declared, products not linked): exit 1, the same two
+      errors. Both Install blocks carry load.
+    - version bounds: `Package.swift` declares `swift-huggingface` `from: "0.9.0"`
+      and `swift-transformers` `from: "1.3.0"`. The README matches.
+    - prose: every added sentence is active, is under 20 words, and carries one
+      idea. The passive clause of 3025c92 is now active.
+    - findings: 0 new. The 3 findings of round 1 are closed, and each closure was
+      measured rather than accepted.
+    - `git diff Package.swift` is empty. No harness reached the repository.
+    - next: none. The card moves to done.
+  timestamp: 2026-09-01T00:25:02.957225+00:00
+- actor: claude-code
+  id: 01m1d5q1cwpt6ensdrgzcc1agp
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 1 file (README.md). All 3 findings closed.
+    - test: green — swift test, 1136 tests in 126 suites + 83 tests in 10 suites, exit 0
+    - commit: 025f84c
+    - review: clean — 0 new findings. Task moved to done.
+
+    Card summary: 2 rounds, 6 findings, all fixed. The card asked for one wrong
+    label. The work found four defects.
+
+    The lesson worth keeping: round 1 made the example compile INSIDE this package,
+    where the targets link more than a reader gets. Round 2 built a consumer package
+    that declares only what the Install section instructs. That build is the correct
+    acceptance test, and it failed until the Install section named the products.
+
+    Both reviews reported 0 findings over 0 FILES. No validator of the 13 declares a
+    match glob for `*.md`. A README-only commit reaches no validator, so the engine
+    cannot pass or fail it. Each reviewer compiled by hand instead.
+  timestamp: 2026-09-01T00:25:42.556663+00:00
+position_column: done
+position_ordinal: ffffaf80
 title: The README resolve example does not compile
 ---
 ## What
