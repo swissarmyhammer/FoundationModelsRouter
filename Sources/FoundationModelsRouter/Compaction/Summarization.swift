@@ -133,6 +133,26 @@ public struct Summarization: Sendable, Equatable, Codable {
         let summaryCut: Bool
     }
 
+    /// One summarizer answer, with what the call that wrote it was allowed and
+    /// what the fold has already spent on it.
+    ///
+    /// The recovery ladder reads both fields. A condense re-ask is never sized
+    /// above ``ceiling``, and it is never made at all once ``reAsked`` records
+    /// that the fold already asked again about this same material.
+    private struct Answer {
+        /// The text the model answered with.
+        let text: String
+
+        /// The generation ceiling the call that wrote ``text`` ran under.
+        let ceiling: Int
+
+        /// Whether the fold already spent a recovery re-ask to obtain ``text``.
+        let reAsked: Bool
+    }
+
+    /// The blank line that joins two summaries into one call's content.
+    private static let summarySeparator = "\n\n"
+
     /// Folds the old span of `transcript` (everything but the header and the
     /// newest ``keepRecentTurns`` turns) into one summary entry.
     ///
@@ -158,14 +178,14 @@ public struct Summarization: Sendable, Equatable, Codable {
         let (old, recent) = TranscriptTurns.partition(turns, keepRecentTurns: keepRecentTurns)
         guard !old.isEmpty else { return nil }
 
-        let answeredSummary = try await summarize(old, prompt: prompt, summarizer: summarizer)
+        let answered = try await summarize(old, prompt: prompt, summarizer: summarizer)
         let spanBytes = old.flatMap(\.entries).reduce(0) { $0 + Compactor.contentByteCount(of: $1) }
         let renderingBytes =
             pendingRuns.isEmpty ? 0 : CompactionSegment.renderedPendingRuns(pendingRuns).utf8.count
         let budgetBytes = Self.summaryByteBudget(
             forSpanBytes: spanBytes, pendingRunsRenderingBytes: renderingBytes)
         let (summaryText, summaryCut) = try await resolveOversizedSummary(
-            answeredSummary, within: budgetBytes, summarizer: summarizer)
+            answered, within: budgetBytes, summarizer: summarizer)
 
         let entryId = "compaction-summary-\(UUID().uuidString)"
         let foldedEntryIds = old.flatMap(\.entries).map(\.id)
@@ -212,22 +232,41 @@ public struct Summarization: Sendable, Equatable, Codable {
     }
 
     /// Resolves a summary that may overrun `budgetBytes` into the text the
-    /// fold stores. A summary inside the budget is stored as is. An oversized
-    /// summary gets one condense re-ask; only then does ``cut(_:toCharacters:)``
-    /// fire on the smaller candidate. A budget of zero or below skips the re-ask.
+    /// fold stores. A summary inside the budget is stored as is.
     ///
+    /// An oversized summary walks a ladder, cheapest rung first. The free rung
+    /// drops the lines the answer repeated, because a line the answer had
+    /// already written states nothing new and must not occupy budget a stated
+    /// fact could hold. The paid rung is one condense re-ask, which
+    /// ``condense(_:toBytes:notExceeding:summarizer:)`` makes only when it can
+    /// be sized to shorten. ``cut(_:toCharacters:)`` is the last rung.
+    ///
+    /// A fold spends ONE recovery generation, whichever rung spends it. When
+    /// `answer` is itself a re-asked answer, the condense rung is free rungs
+    /// only: the fold has already asked again about this same material, and the
+    /// 2026-09-01 fold measured the second ask answering with a repetition loop
+    /// LONGER than the text it had to shorten.
+    ///
+    /// - Parameters:
+    ///   - answer: The answer the fold has in hand, and what it cost.
+    ///   - budgetBytes: The bytes the stored summary may occupy. Zero or below
+    ///     skips the re-ask, because no rewrite of any length would fit.
+    ///   - summarizer: The model to ask again.
     /// - Returns: The text to store, and whether the cut removed text.
     /// - Throws: Whatever the condense re-ask throws, unmodified.
     private func resolveOversizedSummary(
-        _ summary: String,
+        _ answer: Answer,
         within budgetBytes: Int,
         summarizer: any CompactionSummarizer
     ) async throws -> (text: String, cut: Bool) {
-        guard summary.utf8.count > budgetBytes else { return (summary, false) }
+        guard answer.text.utf8.count > budgetBytes else { return (answer.text, false) }
 
-        var candidate = summary
-        if budgetBytes > 0 {
-            let condensed = try await condense(summary, toBytes: budgetBytes, summarizer: summarizer)
+        var candidate = Self.withoutRepeatedLines(answer.text)
+        if candidate.utf8.count <= budgetBytes { return (candidate, false) }
+
+        if budgetBytes > 0, !answer.reAsked {
+            let condensed = try await condense(
+                candidate, toBytes: budgetBytes, notExceeding: answer.ceiling, summarizer: summarizer)
             if let condensed {
                 if condensed.utf8.count <= budgetBytes { return (condensed, false) }
                 if condensed.utf8.count < candidate.utf8.count { candidate = condensed }
@@ -240,11 +279,26 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// Asks `summarizer` once to condense its own oversized `summary` to fit
     /// `budgetBytes`, which must be positive.
     ///
-    /// - Returns: The condensed answer, or `nil` when the model answered no text.
+    /// The call is never sized above `inputCeiling`, the ceiling the call that
+    /// wrote `summary` ran under. A model writes up to its ceiling, so a
+    /// condense call given MORE room than the answer it must shorten is free to
+    /// answer with more text than it was given. The fold measured on 2026-09-01
+    /// did exactly that: a ceiling of 628 against an input written under 617,
+    /// and 3238 bytes out of 3153 bytes in.
+    ///
+    /// - Parameters:
+    ///   - summary: The oversized summary to shorten.
+    ///   - budgetBytes: The bytes the stored summary may occupy.
+    ///   - inputCeiling: The ceiling the call that wrote `summary` ran under.
+    ///   - summarizer: The model to ask again.
+    /// - Returns: The condensed answer, or `nil` when the call was not worth a
+    ///   generation, when the model answered no text, or when it answered with
+    ///   a repetition loop.
     /// - Throws: Whatever `summarizer.summarize(_:maxTokens:)` throws, unmodified.
     private func condense(
         _ summary: String,
         toBytes budgetBytes: Int,
+        notExceeding inputCeiling: Int,
         summarizer: any CompactionSummarizer
     ) async throws -> String? {
         let allowance = min(
@@ -252,9 +306,13 @@ public struct Summarization: Sendable, Equatable, Codable {
             max(Self.minimumSummaryTokens, Int(Double(budgetBytes) / Compactor.charsPerTokenEstimate)))
         let answer = try await summarizer.summarize(
             Self.makeCondensePrompt(summary: summary, budgetBytes: budgetBytes),
-            maxTokens: outputTokenCeiling(forSummaryAllowance: allowance)
+            maxTokens: min(outputTokenCeiling(forSummaryAllowance: allowance), inputCeiling)
         )
-        return answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : answer
+        guard !answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        // Every other rung tests its answer for a repetition loop, and this one
+        // must too: a loop states almost nothing, so the summary already in hand
+        // is the better text to keep.
+        return Self.isRepetitive(answer) ? nil : answer
     }
 
     /// Assembles the condense re-ask's prompt: the rewrite instruction with
@@ -288,13 +346,13 @@ public struct Summarization: Sendable, Equatable, Codable {
         _ turns: [TranscriptTurn],
         prompt: CompactionPrompt,
         summarizer: any CompactionSummarizer
-    ) async throws -> String {
+    ) async throws -> Answer {
         let chunks = Self.chunk(turns, maxTokens: maxChunkTokens)
         guard chunks.count > 1 else {
             return try await summarizeOnce(Self.render(chunks[0]), prompt: prompt, summarizer: summarizer)
         }
 
-        var chunkSummaries: [String] = []
+        var chunkSummaries: [Answer] = []
         // Serial deliberately: a fold's cancellability depends on it, and on more
         // than this file — see ``summarizeOnce(_:prompt:summarizer:)``.
         for chunk in chunks {
@@ -311,18 +369,19 @@ public struct Summarization: Sendable, Equatable, Codable {
     ///
     /// - Throws: Whatever `summarizer.summarize(_:maxTokens:)` throws, unmodified.
     private func reduce(
-        _ summaries: [String],
+        _ summaries: [Answer],
         prompt: CompactionPrompt,
         summarizer: any CompactionSummarizer
-    ) async throws -> String {
+    ) async throws -> Answer {
         guard summaries.count > 1 else { return summaries[0] }
 
-        let joined = summaries.joined(separator: "\n\n")
+        let texts = summaries.map(\.text)
+        let joined = texts.joined(separator: Self.summarySeparator)
         guard Self.estimatedTokens(of: joined) > maxChunkTokens else {
             return try await summarizeOnce(joined, prompt: prompt, summarizer: summarizer)
         }
 
-        let groups = Self.chunkStrings(summaries, maxTokens: maxChunkTokens)
+        let groups = Self.chunkStrings(texts, maxTokens: maxChunkTokens)
         guard groups.count < summaries.count else {
             // No progress possible: grouping produced one singleton group per
             // summary, so no two adjacent summaries fit together under
@@ -334,12 +393,13 @@ public struct Summarization: Sendable, Equatable, Codable {
             return try await summarizeOnce(joined, prompt: prompt, summarizer: summarizer)
         }
 
-        var nextRound: [String] = []
+        var nextRound: [Answer] = []
         // Serial deliberately, for the reason the map loop in
         // ``summarize(_:prompt:summarizer:)`` is — see ``summarizeOnce(_:prompt:summarizer:)``.
         for group in groups {
             nextRound.append(
-                try await summarizeOnce(group.joined(separator: "\n\n"), prompt: prompt, summarizer: summarizer))
+                try await summarizeOnce(
+                    group.joined(separator: Self.summarySeparator), prompt: prompt, summarizer: summarizer))
         }
         return try await reduce(nextRound, prompt: prompt, summarizer: summarizer)
     }
@@ -353,7 +413,8 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// call as the turn's one in-flight model call, so that a client stop can
     /// interrupt the fold. Concurrent calls would escape that stop.
     ///
-    /// - Returns: The summarizer's answer. An answer that repeated one line
+    /// - Returns: The summarizer's answer, with the ceiling it ran under and
+    ///   whether a recovery re-ask paid for it. An answer that repeated one line
     ///   over and over goes through ``resolveRepetitiveSummary(_:byReAsking:maxTokens:summarizer:)``
     ///   first; every other answer is returned unchanged.
     /// - Throws: Whatever `summarizer.summarize(_:maxTokens:)` throws, or
@@ -362,7 +423,7 @@ public struct Summarization: Sendable, Equatable, Codable {
         _ content: String,
         prompt: CompactionPrompt,
         summarizer: any CompactionSummarizer
-    ) async throws -> String {
+    ) async throws -> Answer {
         let allowance = summaryTokenAllowance(condensing: content)
         let budgetWords = Self.summaryBudgetWords(forBytes: statedBudgetBytes(condensing: content))
         // "about N words ... never count": the instrumented Qwen probe of
@@ -379,9 +440,12 @@ public struct Summarization: Sendable, Equatable, Codable {
         guard !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw SummarizationError.emptySummary
         }
-        guard Self.isRepetitive(summary) else { return summary }
-        return try await resolveRepetitiveSummary(
+        guard Self.isRepetitive(summary) else {
+            return Answer(text: summary, ceiling: ceiling, reAsked: false)
+        }
+        let recovered = try await resolveRepetitiveSummary(
             summary, byReAsking: assembled, maxTokens: ceiling, summarizer: summarizer)
+        return Answer(text: recovered, ceiling: ceiling, reAsked: true)
     }
 
     // MARK: - Repetition loops
@@ -515,13 +579,35 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// end, the last word boundary, or the budget itself. A cut that would
     /// leave no text returns `summary` unchanged.
     ///
+    /// A section-aligned cut that runs up to the LAST section header is the one
+    /// exception. Everything it drops then belongs to one section, and no later
+    /// section can be truncated, so dropping that section whole buys nothing
+    /// and costs every fact the model stated in it. The real-model fold of
+    /// 2026-09-01 measured that cost: the alignment shed 906 bytes to stay
+    /// inside a budget the text overran by 41, and the fact stated last in the
+    /// span went with them. The boundary cut is taken there instead, and only
+    /// when it stores MORE than the whole sections already in hand.
+    ///
     /// - Returns: `summary` when it already fits, otherwise a prefix of it.
     private static func cut(_ summary: String, toCharacters limit: Int) -> String {
         guard summary.utf8.count > limit else { return summary }
 
-        if let sections = sectionAlignedPrefix(of: summary, withinBytes: limit) { return sections }
+        let sections = sectionAlignedPrefix(of: summary, withinBytes: limit)
+        if let sections, !sections.endsAtFinalSection { return sections.text }
 
         let budgeted = UTF8Budget.prefix(of: summary, keepingAtMostBytes: limit)
+        let boundary = boundaryAlignedPrefix(of: budgeted) ?? budgeted
+        if let sections, sections.text.utf8.count >= boundary.utf8.count { return sections.text }
+        return boundary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? summary : boundary
+    }
+
+    /// Returns the longest prefix of `budgeted` that ends at a sentence or line
+    /// end, or failing that at a word boundary.
+    ///
+    /// - Parameter budgeted: The text already trimmed to the byte budget.
+    /// - Returns: The prefix, or `nil` when `budgeted` holds no boundary that
+    ///   leaves any text behind it.
+    private static func boundaryAlignedPrefix(of budgeted: String) -> String? {
         if let boundary = lastSentenceBoundary(in: budgeted) {
             let sentences = String(budgeted[...boundary])
             if !sentences.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return sentences }
@@ -530,7 +616,7 @@ public struct Summarization: Sendable, Equatable, Codable {
             let words = String(budgeted[..<space])
             if !words.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return words }
         }
-        return budgeted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? summary : budgeted
+        return nil
     }
 
     /// Returns the last index of `text` that holds a line end, or a
@@ -554,14 +640,21 @@ public struct Summarization: Sendable, Equatable, Codable {
     }
 
     /// Returns the longest prefix of `summary` that holds whole numbered
-    /// sections and fits in `limit` bytes, with trailing whitespace dropped.
-    /// Returns `nil` when `summary` has fewer than two section headers or
-    /// when not even the first section fits. The result is never empty.
-    private static func sectionAlignedPrefix(of summary: String, withinBytes limit: Int) -> String? {
+    /// sections and fits in `limit` bytes, with trailing whitespace dropped,
+    /// and whether the sections it keeps run up to the LAST section header.
+    ///
+    /// That flag is what tells ``cut(_:toCharacters:)`` whether the text this
+    /// prefix drops is one final section or several sections.
+    ///
+    /// Returns `nil` when `summary` has fewer than two section headers or when
+    /// not even the first section fits. The text is never empty.
+    private static func sectionAlignedPrefix(
+        of summary: String, withinBytes limit: Int
+    ) -> (text: String, endsAtFinalSection: Bool)? {
         let headers = sectionHeaderStarts(in: summary)
         guard headers.count > 1 else { return nil }
 
-        var best: String?
+        var best: (text: String, endsAtFinalSection: Bool)?
         for header in headers.dropFirst() {
             var end = header
             while end > summary.startIndex, summary[summary.index(before: end)].isWhitespace {
@@ -569,7 +662,7 @@ public struct Summarization: Sendable, Equatable, Codable {
             }
             let prefix = summary[..<end]
             guard prefix.utf8.count <= limit else { break }
-            best = String(prefix)
+            best = (String(prefix), header == headers.last)
         }
         return best
     }

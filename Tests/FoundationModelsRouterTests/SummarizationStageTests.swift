@@ -949,6 +949,154 @@ struct SummarizationStageTests {
         #expect(folded.summary.hasSuffix("."))
     }
 
+    /// The tool-output text that sizes a span so a fold under the stage's own
+    /// ``Summarization/maxChunkTokens`` gives its condense re-ask MORE room
+    /// than its map call had.
+    ///
+    /// The map call is asked for ``Summarization/statedBudgetShareOfContent``
+    /// of its own content, while the condense re-ask is asked for the whole
+    /// span byte budget, capped at what a full `maxChunkTokens` of content
+    /// earns. A span this size makes that cap the binding one, so the two
+    /// allowances part company — the shape the real-model fold of 2026-09-01
+    /// measured at a ceiling of 628 against one of 617.
+    private static let cappedAllowanceSpanToolOutput = String(repeating: summarySentence, count: 30)
+
+    /// How many times ``summarySentence`` repeats to make an answer that
+    /// overruns the byte budget a ``cappedAllowanceSpanToolOutput`` span earns.
+    private static let cappedAllowanceAnswerRepeats = 40
+
+    /// The tool-output text that sizes a span so an
+    /// ``answerStatingEachLineTwice()`` answer overruns its byte budget while
+    /// the distinct lines of that answer fit inside it — the band the free
+    /// repair decides.
+    private static let twiceStatedAnswerSpanToolOutput = String(repeating: summarySentence, count: 4)
+
+    /// How many distinct lines ``answerStatingEachLineTwice()`` writes before it
+    /// states them all a second time.
+    ///
+    /// Four is the fewest the stage's own repetition check reads, so the answer
+    /// is judged rather than passed over as terse. Stating each line twice puts
+    /// the repeated share at exactly one half, which is NOT past the share that
+    /// makes an answer a loop, so the answer earns no repetition re-ask and the
+    /// size ladder is what the test measures.
+    private static let twiceStatedAnswerLineCount = 4
+
+    /// An answer that states each of its lines twice.
+    ///
+    /// - Returns: The answer as the model wrote it, and its distinct lines
+    ///   alone — what the free repair leaves.
+    private static func answerStatingEachLineTwice() -> (answer: String, distinct: String) {
+        let lines = (1...twiceStatedAnswerLineCount).map {
+            "- Fact \($0) — the station archive keeps its records station by station."
+        }
+        let distinct = lines.joined(separator: "\n")
+        return ("\(distinct)\n\(distinct)", distinct)
+    }
+
+    @Test("a condense re-ask never generates under a ceiling above the call that wrote the answer it condenses")
+    func theCondenseReAskIsNeverSizedAboveTheCallThatWroteItsInput() async throws {
+        // A model writes up to its ceiling. A condense call given MORE room
+        // than the answer it must shorten is therefore free to answer with more
+        // text than it was given, which is no condensation at all. The
+        // 2026-09-01 real-model fold measured exactly that: a ceiling of 628
+        // against an input written under 617, and 3238 bytes out of 3153 in.
+        // The stage's own `maxChunkTokens` bounds the condense allowance here,
+        // rather than the 1,000,000 the other tests fold under, because that
+        // cap is what parts the two allowances.
+        let turns = try TranscriptFixtures.makeTurns(5, toolOutputText: Self.cappedAllowanceSpanToolOutput)
+        let stage = Summarization(keepRecentTurns: 4)
+        let oversized = String(repeating: Self.summarySentence, count: Self.cappedAllowanceAnswerRepeats)
+        let condensedAnswer = "The service reads its configuration from environment variables."
+        let outcome = try await Self.foldOutcome(
+            folding: turns, with: stage, prompt: .default, answering: [oversized, condensedAnswer])
+
+        let budget = Self.expectedSummaryByteBudget(foldingOld: Array(turns.prefix(1)))
+        #expect(oversized.utf8.count > budget)  // sanity: the map answer overruns, so the condense rung fires
+
+        #expect(outcome.ceilings.count == 2)
+        let mapCeiling = try #require(outcome.ceilings.first)
+        let condenseCeiling = try #require(outcome.ceilings.last)
+        #expect(
+            condenseCeiling <= mapCeiling,
+            "the condense call ran under \(condenseCeiling) against an input written under \(mapCeiling)"
+        )
+    }
+
+    @Test("an oversized answer's repeated lines are dropped before any condense re-ask, and an answer that then fits is stored whole")
+    func repeatedLinesAreDroppedBeforeTheCondenseReAsk() async throws {
+        // The free repair comes before the paid one. A line the answer had
+        // already written states nothing new, so it must never occupy budget a
+        // stated fact could hold, and it must never buy a generation either.
+        let turns = try TranscriptFixtures.makeTurns(5, toolOutputText: Self.twiceStatedAnswerSpanToolOutput)
+        let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: Self.wholeSpanChunkTokens)
+        let scripted = Self.answerStatingEachLineTwice()
+        let outcome = try await Self.foldOutcome(
+            folding: turns, with: stage, prompt: .default, answering: [scripted.answer])
+
+        let budget = Self.expectedSummaryByteBudget(foldingOld: Array(turns.prefix(1)))
+        // Sanity: the answer as written really overruns the budget, and its
+        // distinct lines really fit it, so the free repair is what decides.
+        #expect(
+            scripted.answer.utf8.count > budget,
+            "the answer holds \(scripted.answer.utf8.count) bytes against a \(budget)-byte budget")
+        #expect(
+            scripted.distinct.utf8.count <= budget,
+            "the distinct lines hold \(scripted.distinct.utf8.count) bytes against a \(budget)-byte budget")
+
+        #expect(outcome.prompts.count == 1)
+        let folded = try #require(outcome.folded)
+        #expect(folded.summary == scripted.distinct)
+        #expect(folded.summaryCut == false)
+    }
+
+    @Test("a fold that already re-asked about a repetition loop does not also re-ask to condense")
+    func aFoldSpendsOneRecoveryGenerationAndNoMore() async throws {
+        // The ladder has two recovery rungs, and a fold spends ONE generation
+        // across both of them. The re-asked answer already carries the
+        // strongest correction the stage states; asking a third time about the
+        // same material buys a generation and no information. The 2026-09-01
+        // fold measured the third call answering with a repetition loop LONGER
+        // than the text it had to shorten, which the fold then discarded.
+        let turns = try TranscriptFixtures.makeTurns(5, toolOutputText: Self.condensableSpanToolOutput)
+        let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: Self.wholeSpanChunkTokens)
+        let oversized = String(repeating: Self.summarySentence, count: Self.summarySentenceRepeats)
+        let outcome = try await Self.foldOutcome(
+            folding: turns,
+            with: stage,
+            prompt: .default,
+            answering: [Self.loopedAnswer(markedBy: { _ in "- " }), oversized]
+        )
+
+        let budget = Self.expectedSummaryByteBudget(foldingOld: Array(turns.prefix(1)))
+        #expect(oversized.utf8.count > budget)  // sanity: the re-asked answer overruns
+
+        #expect(outcome.prompts.count == 2)
+        #expect(try #require(outcome.prompts.last).contains(Summarization.repetitionRetryDirective))
+        let folded = try #require(outcome.folded)
+        #expect(folded.summaryCut)
+        #expect(oversized.hasPrefix(folded.summary))
+    }
+
+    @Test("a condense answer that repeats one line over and over is discarded, and the summary already in hand is kept")
+    func aRepetitiveCondenseAnswerIsDiscarded() async throws {
+        // Every other rung tests its answer for a repetition loop. This one
+        // must too: a loop states almost nothing, so a fold that stored it
+        // would trade a real summary for a line written over and over.
+        let turns = try TranscriptFixtures.makeTurns(5, toolOutputText: Self.condensableSpanToolOutput)
+        let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: Self.wholeSpanChunkTokens)
+        let oversized = String(repeating: Self.summarySentence, count: Self.summarySentenceRepeats)
+        let looped = Self.loopedAnswer(markedBy: { _ in "- " })
+        let outcome = try await Self.foldOutcome(
+            folding: turns, with: stage, prompt: .default, answering: [oversized, looped])
+
+        #expect(looped.utf8.count < oversized.utf8.count)  // sanity: the loop is the smaller candidate
+
+        #expect(outcome.prompts.count == 2)
+        let folded = try #require(outcome.folded)
+        #expect(!folded.summary.contains(Self.loopedAnswerLine))
+        #expect(oversized.hasPrefix(folded.summary))
+    }
+
     @Test(
         "the last-resort cut of a sectioned answer falls on a section boundary, so a stored summary never ends inside an unfinished section"
     )
@@ -976,6 +1124,39 @@ struct SummarizationStageTests {
         let folded = try #require(outcome.folded)
         #expect(folded.summary == kept)
         #expect(folded.summaryCut)
+    }
+
+    @Test("when the sections a cut keeps run up to the last header, the cut keeps what fits of the final section rather than dropping it")
+    func theFinalSectionIsCutRatherThanDroppedWhole() async throws {
+        // The section alignment exists so a stored summary never stops inside a
+        // section a LATER section follows — the `^51e9dyq` defect. There is no
+        // later section to protect when the overrun sits in the final one, so
+        // aligning there drops a whole section to shed a few bytes. The
+        // real-model fold of 2026-09-01 measured that trade: 906 bytes shed to
+        // stay inside a budget the text overran by 41, and the fact stated last
+        // in the span went with them.
+        let turns = try TranscriptFixtures.makeTurns(5, toolOutputText: Self.sectionedCutSpanToolOutput)
+        let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: Self.wholeSpanChunkTokens)
+        let sections = (1...(Self.keptSectionCount + 1)).map { Self.sectionedAnswerSection(index: $0) }
+        let answer = sections.joined(separator: "\n")
+        let outcome = try await Self.foldOutcome(
+            folding: turns, with: stage, prompt: .default, answering: [answer, answer])
+
+        let budget = Self.expectedSummaryByteBudget(foldingOld: Array(turns.prefix(1)))
+        let whole = sections.prefix(Self.keptSectionCount).joined(separator: "\n")
+        // Sanity: the whole sections really fit, and the final section really
+        // does not, so the cut point inside that final section is observable.
+        #expect(whole.utf8.count <= budget)
+        #expect(answer.utf8.count > budget)
+
+        let folded = try #require(outcome.folded)
+        #expect(folded.summaryCut)
+        #expect(folded.summary.utf8.count <= budget)
+        #expect(answer.hasPrefix(folded.summary))
+        #expect(
+            folded.summary.utf8.count > whole.utf8.count,
+            "the cut stored \(folded.summary.utf8.count) bytes against \(whole.utf8.count) of whole sections"
+        )
     }
 
     @Test("a sectioned answer whose first section overruns the whole budget falls back to the sentence boundary")

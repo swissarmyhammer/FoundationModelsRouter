@@ -148,8 +148,51 @@ comments:
     - evidence: 0 source files changed. The overrun is (a): the limit measures box load, not the work. The same test, unchanged, costs 35.8 to 41.4 s on a quiet box (8 samples), 38.6 s under 16 CPU hogs, 60.8 s under 32, and exceeds the 120 s limit under 64. It passed 3 of 3 whole-package runs at 35.8, 38.0 and 37.1 s. `swift test`: 1159 tests in 128 suites and 83 tests in 10 suites passed, exit 0, 2 known issues. `swift build --package-path IntegrationTests --build-tests`: exit 0. `swift test --package-path IntegrationTests`: red 3 of 3, never for this test — the compaction smoke fold fails, raised as ^erv2vxz.
     - next: a person chooses between the four options in the conclusion comment. Options 2 and 4 change what the repository proves.
   timestamp: 2026-09-01T15:13:01.786659+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m1et6t8mzn5va2ymbyy8wv7w
+  text: |-
+    ### The decision: keep the limit. Close this card.
+
+    The user decided on 2026-09-01. Keep `integrationTestBudgetMinutes` at 2
+    minutes. Change no test.
+
+    ### Why the measurement does not apply
+
+    The user supplied the facts this card lacked:
+
+    - This box runs this work alone.
+    - CI queues the tests and runs them one at a time.
+
+    So the contention that made the test slow does not happen in CI. The 64-hog
+    condition is not a real state of the machine. A limit that only fails under a
+    load the system never applies is not a defect.
+
+    ### What the 348-second run actually was
+
+    Two agent sessions ran real-model tests on this workstation at the same time.
+    The measurement found `swiftpm-testing-helper` processes from
+    `FoundationModelsMultitool` on this box. That is a development artifact, and
+    CI's serial queue prevents it.
+
+    ### On the stress runs
+
+    The CPU hogs were a diagnostic, and they were never a test. They were shell
+    loops in the scratchpad. No stress code entered the repository. `rg` over
+    `Tests`, `IntegrationTests` and `Sources` finds none.
+
+    The user's direction is explicit: the integration tests prove that the system
+    works from end to end. They do not measure the machine under load. Do not add
+    a stress test here.
+
+    ### What stands
+
+    The measurement itself stays useful, and this card keeps it: the test costs 36
+    to 41 seconds on a quiet box, and 35.8 seconds inside the whole package. The
+    2-minute limit gives about a 3x margin over the real cost. It still catches a
+    test that hangs, which is what it is for.
+  timestamp: 2026-09-01T15:43:05.492369+00:00
+position_column: done
+position_ordinal: ffffb580
 title: A real-model backend test exceeds its 120-second limit when the whole integration package runs
 ---
 ## What
