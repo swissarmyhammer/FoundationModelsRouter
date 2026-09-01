@@ -79,8 +79,33 @@ comments:
     - evidence: 2 files — `Sources/FoundationModelsRouter/Recording/SessionRestoration.swift` (the `public` keyword and the paragraph that states why), `Tests/FoundationModelsRouterTests/InstructionsDivergencePhrasePublicSurfaceTests.swift` (new, 1 test). The phrase edit failed with `Expectation failed: RestoredSession.instructionsDivergencePhrase == Self.savedGrepTarget`, `→ "…the recorded ones"` against `→ "…the recorded instructions"`. `swift test`: 1159 tests in 128 suites, plus 83 tests in 10 suites, exit 0, 2 known issues — the baseline of 1158 in 127 plus this one new test in its own suite. `swift build --package-path IntegrationTests --build-tests`: `Build complete!`, exit 0. `git status --porcelain` holds no trace of the phrase experiment.
     - next: `/review`
   timestamp: 2026-09-01T03:03:07.360693+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m1df27sgzyr50h15tkm1vjv3
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` on commit `e443a1f`. 0 findings, 0 confirmed, 0 refuted, 7 validators attempted, 0 failed. 2 files reviewed. The 2 `.kanban/` files are excluded by `.reviewignore`.
+
+      **The phrase text did not change.** `git diff HEAD~1..HEAD -- Sources/` holds the phrase line as a context line, not as an added or a deleted line. Only two lines changed on that declaration: `static let` became `public static let`, and a paragraph of 4 lines came into the doc comment.
+
+      **The test uses a plain import.** `Tests/FoundationModelsRouterTests/InstructionsDivergencePhrasePublicSurfaceTests.swift` imports `Testing` and `FoundationModelsRouter`. It has no `@testable` import. The two occurrences of the text `@testable` in that file stand inside the doc comment, which tells the reader why the plain import is the first assertion.
+
+      **The red state was made again, here.** The phrase was edited to `"restored session instructions differ from the recorded text"`. The test then failed:
+
+          ✘ Test "the published phrase is the exact text a saved grep looks for" failed after 0.001 seconds with 1 issue.
+          ↳ RestoredSession.instructionsDivergencePhrase → "restored session instructions differ from the recorded text"
+          ↳ Self.savedGrepTarget → "restored session instructions differ from the recorded instructions"
+
+      The phrase was then put back. The test passed again, and `git status --porcelain` shows no source file. It shows only the two `.kanban/` files this review writes.
+
+      **The public surface grew by one symbol only.** The commit adds one declaration with `public` in `Sources/`. The other match for the word `public` in the diff is prose in the doc comment. The constant is a `String`, so it pulls no other type onto the surface.
+
+      **The doc comment states why.** It says: "This constant is public because the grep target is a contract." Each new sentence is complete and active. The longest sentence has 21 words, which is in the ASD-STE100 limit of 25 words for descriptive text.
+
+      **Test and build.** `swift test`: 1159 tests in 128 suites, plus 83 tests in 10 suites, exit 0, with 2 known issues. That is the baseline of 1158 in 127, plus the one new test in its own suite. `swift build --package-path IntegrationTests --build-tests`: `Build complete!`, exit 0.
+    - next: task moves to `done`
+  timestamp: 2026-09-01T03:09:06.736630+00:00
+position_column: done
+position_ordinal: ffffb280
 title: Publish the instructions divergence phrase, because the doc names it a grep target
 ---
 ## What
