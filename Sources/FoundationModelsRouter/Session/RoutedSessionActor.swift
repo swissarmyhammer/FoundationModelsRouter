@@ -486,6 +486,12 @@ actor RoutedSessionActor: RoutedSession {
     /// A fork carries it forward.
     nonisolated let discoveryPriming: DiscoveryPriming?
 
+    /// The parent session and tool call that spawned this session, or `nil`.
+    /// Stamped on this session's `session` meta event
+    /// (``TranscriptEvent/agentSpawn``) and written to its sidecar
+    /// (``SessionSidecar/agentSpawn``). A fork's is always `nil`.
+    nonisolated let agentSpawn: SessionSidecar.AgentSpawn?
+
     /// The live ``streamSessionEvents()`` subscriptions, keyed by subscription
     /// id. ``emitSessionScopedEvent(_:)`` fans each session-scoped event out
     /// to them.
@@ -495,8 +501,8 @@ actor RoutedSessionActor: RoutedSession {
     /// A failed sidecar write is logged and dropped.
     ///
     /// Each parameter is documented on the stored property it initializes.
-    /// `agentSpawn` and `recordingRoot` are not stored; the sidecar write reads
-    /// them (see ``SessionSidecar/agentSpawn`` and ``SessionSidecar/configuration``).
+    /// `recordingRoot` is not stored; the sidecar write reads it (see
+    /// ``SessionSidecar/configuration``).
     init(
         profile: LanguageModelProfile,
         routerId: ULID,
@@ -558,6 +564,7 @@ actor RoutedSessionActor: RoutedSession {
         self.autoCompactionPrompt = autoCompactionPrompt
         self.summarization = summarization
         self.discoveryPriming = discoveryPriming
+        self.agentSpawn = agentSpawn
         self.tracer = tracer
 
         // The session's own directory is brought into existence here, by its

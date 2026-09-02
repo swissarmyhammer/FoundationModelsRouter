@@ -806,6 +806,75 @@ struct SessionSidecarTests {
         #expect(try SessionSidecar.read(in: forkDir)?.agentSpawn == nil)
     }
 
+    /// Runs `body` over a resolved profile whose router records into an
+    /// ``InMemoryRecorder``, so a test can read the stamped `.session` event
+    /// straight from the log. The temp cache and recordings directories are
+    /// removed when `body` returns.
+    ///
+    /// - Parameter body: The test body. It receives the recorder, the router,
+    ///   the resolved profile, and the recordings root.
+    @MainActor
+    private static func withInMemoryRecordedProfile(
+        _ body: (InMemoryRecorder, Router, LanguageModelProfile, URL) async throws -> Void
+    ) async throws {
+        let cacheDir = makeTempDir()
+        let recordingsDir = makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let recorder = InMemoryRecorder()
+        let router = makeRouter(recorder: recorder, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let resolved = try await router.resolve(profile: profile, reporting: ResolutionProgress())
+        try await body(recorder, router, resolved, recordingsDir)
+    }
+
+    @Test(
+        "a session vended with an agentSpawn stamps it on its recorded .session event and keeps it in session.json; a fork taken from it stamps nil"
+    )
+    @MainActor
+    func sessionVendedWithAgentSpawnStampsItOnTheSessionEventNotOnAFork() async throws {
+        try await Self.withInMemoryRecordedProfile { recorder, router, profile, recordingsDir in
+            let spawn = SessionSidecar.AgentSpawn(
+                parentSessionId: ULID.generate(), parentToolCallId: "agents-tool-call-2")
+            let root = profile.standard.makeSession(agentSpawn: spawn)
+            _ = try await root.respond(to: "hello")
+            let fork = try await root.fork(workingDirectory: nil)
+            _ = try await fork.respond(to: "hello again")
+
+            let events = await recorder.events
+            let rootFirst = try #require(events.first)
+            #expect(rootFirst.sessionId == root.id)
+            #expect(rootFirst.kind == .session)
+            #expect(rootFirst.agentSpawn == spawn)
+
+            let forkFirst = try #require(events.first { $0.sessionId == fork.id })
+            #expect(forkFirst.kind == .session)
+            #expect(forkFirst.agentSpawn == nil)
+
+            let rootDir = recordingsDir
+                .appendingPathComponent(router.id.description, isDirectory: true)
+                .appendingPathComponent(root.id.description, isDirectory: true)
+            #expect(try SessionSidecar.read(in: rootDir)?.agentSpawn == spawn)
+        }
+    }
+
+    @Test("a root session vended without an agentSpawn stamps nil on its recorded .session event")
+    @MainActor
+    func rootSessionWithoutAgentSpawnStampsNilOnTheSessionEvent() async throws {
+        try await Self.withInMemoryRecordedProfile { recorder, _, profile, _ in
+            let root = profile.standard.makeSession()
+            _ = try await root.respond(to: "hello")
+
+            let events = await recorder.events
+            let first = try #require(events.first)
+            #expect(first.sessionId == root.id)
+            #expect(first.kind == .session)
+            #expect(first.agentSpawn == nil)
+        }
+    }
+
     // MARK: - Recording levels
 
     @Test("a writer built at RecordingLevel.off writes nothing, wherever it was built")

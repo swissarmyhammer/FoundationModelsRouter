@@ -254,6 +254,10 @@ extension RoutedSessionActor {
             // A fold on a fork condenses exactly like a fold on its parent:
             // same recency window, same chunk ceiling, same compression ratio.
             summarization: summarization,
+            // A fork carries no spawn context, the same rule as its sidecar
+            // (``SessionSidecar/agentSpawn``): its lineage is stated by the
+            // parent link and the directory nesting, not by a spawn fact.
+            agentSpawn: nil,
             // Priming travels with the session for the same reason the
             // auto-compaction opt-in does: a fork continues its parent's
             // conversation, so it primes its turns exactly like its parent.

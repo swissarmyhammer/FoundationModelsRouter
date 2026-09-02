@@ -228,6 +228,24 @@ struct MergedAndRedactionTests {
         #expect(await inner.events.first?.text == "top *** plan")
     }
 
+    @Test("the redact hook leaves a .session event's agentSpawn untouched: it is provenance, not content")
+    func redactLeavesAgentSpawnUntouched() async throws {
+        let inner: InMemoryRecorder = .inMemory
+        let redact: @Sendable (String) -> String = { _ in "***" }
+        let recorder: any TranscriptRecorder = GatingRecorder(level: .full, redact: redact, wrapping: inner)
+        let spawn = SessionSidecar.AgentSpawn(
+            parentSessionId: .generate(), parentToolCallId: "agents-tool-call-1")
+        let partial = TranscriptEvent.Partial(
+            routerId: .generate(),
+            sessionId: .generate(),
+            kind: .session,
+            agentSpawn: spawn
+        )
+        await recorder.append(partial, to: nil)
+
+        #expect(await inner.events.first?.agentSpawn == spawn)
+    }
+
     @Test("the redact hook is applied verbatim: case-sensitivity is the caller's contract")
     func redactHookIsAppliedVerbatim() async throws {
         // The `redact` hook is caller-supplied, so its matching semantics are the

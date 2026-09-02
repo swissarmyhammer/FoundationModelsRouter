@@ -10,7 +10,9 @@ enum RecordingSchemaVersion {
     /// Version 2: adds ``TranscriptEvent/entry`` (``TranscriptEntryPayload``),
     /// the SDK-mirroring entry kinds, and ``TranscriptEntryPayload/contentRemoved``.
     /// Later optional keys and the `unknown` and `divergence` carriers landed
-    /// within v2 by the additive rule.
+    /// within v2 by the additive rule. The optional
+    /// ``TranscriptEvent/agentSpawn`` key on the `session` event is one of
+    /// them: absent, it decodes as `nil`.
     static let v2 = 2
 
     /// The version writers stamp on every new sidecar.

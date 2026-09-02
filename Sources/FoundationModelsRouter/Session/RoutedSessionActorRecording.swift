@@ -312,10 +312,12 @@ extension RoutedSessionActor {
     }
 
     /// Records the `session` meta event once, before the first recorded entry.
+    /// The event carries this session's ``agentSpawn``, so a live sink sees
+    /// the spawn fact without a read of `session.json`.
     func recordSessionMetaIfNeeded() async {
         guard !didRecordSessionMeta else { return }
         didRecordSessionMeta = true
-        await append(partial: makePartialEvent(kind: .session, grammar: grammar))
+        await append(partial: makePartialEvent(kind: .session, grammar: grammar, agentSpawn: agentSpawn))
     }
 
     /// Appends a partial event through the recorder into this session's
@@ -343,6 +345,8 @@ extension RoutedSessionActor {
     ///   - entry: The structural payload that mirrors `Transcript.Entry`, or `nil`.
     ///   - tokensIn: The turn's input token delta, or `nil`.
     ///   - tokensOut: The turn's output token delta, or `nil`.
+    ///   - agentSpawn: The spawn context to stamp, or `nil`. Only the
+    ///     `.session` kind carries one.
     /// - Returns: The partial event for the recorder to stamp and append.
     func makePartialEvent(
         kind: TranscriptEvent.Kind,
@@ -351,7 +355,8 @@ extension RoutedSessionActor {
         since: Date? = nil,
         entry: TranscriptEntryPayload? = nil,
         tokensIn: Int? = nil,
-        tokensOut: Int? = nil
+        tokensOut: Int? = nil,
+        agentSpawn: SessionSidecar.AgentSpawn? = nil
     ) -> TranscriptEvent.Partial {
         TranscriptEvent.Partial(
             routerId: routerId,
@@ -365,7 +370,8 @@ extension RoutedSessionActor {
             tokensIn: tokensIn,
             tokensOut: tokensOut,
             ms: since.map { Int(Date().timeIntervalSince($0) * Self.millisecondsPerSecond) },
-            entry: entry
+            entry: entry,
+            agentSpawn: agentSpawn
         )
     }
 }

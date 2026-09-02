@@ -8,6 +8,8 @@ import Foundation
 /// total order. `ts` is the wall-clock instant. Each event encodes as one
 /// self-contained JSON object. Schema v2 is additive over v1: `entry`
 /// decodes as `nil` when absent, and ``Kind/toolCall`` still decodes.
+/// ``agentSpawn`` is a later optional key within v2 and decodes as `nil`
+/// when absent by the same rule.
 public struct TranscriptEvent: Sendable, Codable, Equatable {
     /// What kind of moment an event records. Six kinds mirror
     /// `FoundationModels.Transcript.Entry` cases. ``session``, ``embedding``,
@@ -85,6 +87,14 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     /// The structural mirror of the `FoundationModels.Transcript.Entry` this
     /// event records. `nil` for router-only kinds and for v1 recordings.
     public let entry: TranscriptEntryPayload?
+    /// The parent session and tool call that spawned this event's session.
+    /// Set only on the ``Kind/session`` event of a session made with an
+    /// `agentSpawn`. `nil` for a root session, for a fork, on every other
+    /// kind, and on a recording made before this key existed. The value
+    /// matches ``SessionSidecar/agentSpawn`` in the session's `session.json`.
+    /// A live sink sees it when the session's first turn begins, because the
+    /// `session` event is recorded at the first turn, not at session creation.
+    public let agentSpawn: SessionSidecar.AgentSpawn?
 
     /// Creates a fully-stamped event. Callers normally hand a
     /// ``TranscriptEvent/Partial`` to a recorder instead.
@@ -102,7 +112,8 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         tokensIn: Int? = nil,
         tokensOut: Int? = nil,
         ms: Int? = nil,
-        entry: TranscriptEntryPayload? = nil
+        entry: TranscriptEntryPayload? = nil,
+        agentSpawn: SessionSidecar.AgentSpawn? = nil
     ) {
         self.routerId = routerId
         self.sessionId = sessionId
@@ -118,6 +129,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         self.tokensOut = tokensOut
         self.ms = ms
         self.entry = entry
+        self.agentSpawn = agentSpawn
     }
 
     /// An event minus the fields a recorder owns (`seq` and `ts`). The
@@ -147,6 +159,10 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         public let ms: Int?
         /// The structural entry payload, or `nil`.
         public let entry: TranscriptEntryPayload?
+        /// The spawn context, or `nil`. Set only on a ``Kind/session``
+        /// partial of a session made with an `agentSpawn`; see
+        /// ``TranscriptEvent/agentSpawn``.
+        public let agentSpawn: SessionSidecar.AgentSpawn?
 
         /// Describes an event without its recorder-owned ordering fields.
         init(
@@ -161,7 +177,8 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
             tokensIn: Int? = nil,
             tokensOut: Int? = nil,
             ms: Int? = nil,
-            entry: TranscriptEntryPayload? = nil
+            entry: TranscriptEntryPayload? = nil,
+            agentSpawn: SessionSidecar.AgentSpawn? = nil
         ) {
             self.routerId = routerId
             self.sessionId = sessionId
@@ -175,6 +192,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
             self.tokensOut = tokensOut
             self.ms = ms
             self.entry = entry
+            self.agentSpawn = agentSpawn
         }
 
         /// Returns a copy with ``text`` and ``entry`` replaced by
@@ -217,7 +235,8 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
                 tokensIn: tokensIn ?? self.tokensIn,
                 tokensOut: tokensOut ?? self.tokensOut,
                 ms: ms,
-                entry: entry ?? self.entry
+                entry: entry ?? self.entry,
+                agentSpawn: agentSpawn
             )
         }
 
@@ -239,7 +258,8 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
                 tokensIn: tokensIn,
                 tokensOut: tokensOut,
                 ms: ms,
-                entry: entry
+                entry: entry,
+                agentSpawn: agentSpawn
             )
         }
     }

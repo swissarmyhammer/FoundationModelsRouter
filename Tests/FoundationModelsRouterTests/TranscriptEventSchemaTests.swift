@@ -113,6 +113,86 @@ struct TranscriptEventSchemaTests {
         #expect(event.entry == nil)
     }
 
+    // MARK: - agentSpawn on the .session event (task ^1sddtxz)
+
+    /// A fixed spawn context, so two events built from it compare equal.
+    private static let sampleSpawn = SessionSidecar.AgentSpawn(
+        parentSessionId: ULID.generate(), parentToolCallId: "agents-tool-call-1")
+
+    /// Builds a `.session` partial that carries ``sampleSpawn``.
+    private func spawnedSessionPartial() -> TranscriptEvent.Partial {
+        TranscriptEvent.Partial(
+            routerId: .generate(),
+            sessionId: .generate(),
+            kind: .session,
+            agentSpawn: Self.sampleSpawn
+        )
+    }
+
+    @Test("agentSpawn is nil by default on a TranscriptEvent and on a Partial")
+    func agentSpawnDefaultsToNil() {
+        let partial = TranscriptEvent.Partial(
+            routerId: .generate(),
+            sessionId: .generate(),
+            kind: .session
+        )
+        let event = TranscriptEvent(
+            routerId: .generate(),
+            sessionId: .generate(),
+            seq: 0,
+            ts: Self.fixedInstant,
+            kind: .session
+        )
+        #expect(partial.agentSpawn == nil)
+        #expect(event.agentSpawn == nil)
+    }
+
+    @Test("a .session event with agentSpawn round-trips through Codable")
+    func sessionEventWithAgentSpawnRoundTrips() throws {
+        let event = TranscriptEvent(
+            routerId: .generate(),
+            sessionId: .generate(),
+            seq: 0,
+            ts: Self.fixedInstant,
+            kind: .session,
+            agentSpawn: Self.sampleSpawn
+        )
+        let data = try JSONEncoder().encode(event)
+        let decoded = try JSONDecoder().decode(TranscriptEvent.self, from: data)
+        #expect(decoded == event)
+        #expect(decoded.agentSpawn == Self.sampleSpawn)
+    }
+
+    @Test("a recorded line with no agentSpawn key decodes with agentSpawn == nil")
+    func lineWithoutAgentSpawnKeyDecodesAsNil() throws {
+        let routerId = ULID.generate().description
+        let sessionId = ULID.generate().description
+        let json = """
+        {"routerId":"\(routerId)","sessionId":"\(sessionId)","seq":0,"ts":0,"kind":"session"}
+        """
+        let decoded = try JSONDecoder().decode(TranscriptEvent.self, from: Data(json.utf8))
+        #expect(decoded.kind == .session)
+        #expect(decoded.agentSpawn == nil)
+    }
+
+    @Test("Partial.mapBody carries agentSpawn unchanged")
+    func mapBodyCarriesAgentSpawnUnchanged() {
+        let mapped = spawnedSessionPartial().mapBody { _, _ in (nil, nil) }
+        #expect(mapped.agentSpawn == Self.sampleSpawn)
+    }
+
+    @Test("Partial.stampingUsage carries agentSpawn unchanged")
+    func stampingUsageCarriesAgentSpawnUnchanged() {
+        let stamped = spawnedSessionPartial().stampingUsage(tokensIn: 1, tokensOut: 0)
+        #expect(stamped.agentSpawn == Self.sampleSpawn)
+    }
+
+    @Test("Partial.stamped carries agentSpawn onto the finished event")
+    func stampedCarriesAgentSpawn() {
+        let event = spawnedSessionPartial().stamped(seq: 0, ts: Self.fixedInstant)
+        #expect(event.agentSpawn == Self.sampleSpawn)
+    }
+
     // MARK: - TranscriptEntryPayload round trips
 
     @Test("contentRemoved defaults to false when absent from JSON")
