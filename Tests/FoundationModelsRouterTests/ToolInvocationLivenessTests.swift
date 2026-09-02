@@ -378,17 +378,21 @@ struct ToolInvocationLivenessTests {
 
     // MARK: - Tool call reports: delivered live on the turn's stream, or on the session feed
 
-    /// Keeps every ``ToolCallReport`` a session-scoped stream carries, so a
-    /// test can wait for one under a bound instead of on the stream itself.
-    private actor ReportLog {
-        /// Every report seen, in arrival order.
-        private(set) var reports: [ToolCallReport] = []
+    /// Keeps every event a session-scoped stream carries, in arrival order, so
+    /// a test can wait for a report under a bound instead of on the stream
+    /// itself, and can then read the order of a close record and its report.
+    private actor SessionEventLog {
+        /// Every event seen, in arrival order.
+        private(set) var events: [SessionEvent] = []
 
-        /// Records one report.
+        /// Every report seen, in arrival order.
+        var reports: [ToolCallReport] { events.compactMap(\.carriedReport) }
+
+        /// Records one event.
         ///
-        /// - Parameter report: The report the stream carried.
-        func record(_ report: ToolCallReport) {
-            reports.append(report)
+        /// - Parameter event: The event the stream carried.
+        func record(_ event: SessionEvent) {
+            events.append(event)
         }
     }
 
@@ -490,13 +494,11 @@ struct ToolInvocationLivenessTests {
         let outcome: TurnOutcome = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
         let close = try #require(outcome.toolInvocations.first)
 
-        let log = ReportLog()
+        let log = SessionEventLog()
         let sessionEvents = await fixture.session.streamSessionEvents()
         let collecting = Task {
             for await event in sessionEvents {
-                if case .toolCallReport(let report) = event {
-                    await log.record(report)
-                }
+                await log.record(event)
             }
         }
         defer { collecting.cancel() }
@@ -508,5 +510,215 @@ struct ToolInvocationLivenessTests {
             await BoundedWait.conditionReached("the report on streamSessionEvents()") {
                 await log.reports == [report]
             })
+    }
+
+    // MARK: - Tool call reports from the decorators: a closing call's attachments reach the stream
+
+    /// The temp directory prefix every fixture of this suite is built with.
+    private static let tempDirPrefix = "ToolInvocationLivenessTests"
+
+    /// One scripted round that calls `tool` one time, naming
+    /// ``ScriptedToolFixture/firstStepName``.
+    ///
+    /// - Parameter tool: The tool the one call names.
+    /// - Returns: The one-round script.
+    private static func oneCallScript(calling tool: any Tool) -> ScriptedTurnScript {
+        ScriptedTurnScript(rounds: [
+            [
+                ScriptedToolCall(
+                    id: "call-1", toolName: tool.name,
+                    argument: .literal(ScriptedToolFixture.firstStepName))
+            ]
+        ])
+    }
+
+    /// Every event of one scripted turn on `session`, in stream order.
+    ///
+    /// - Parameter session: The session to drive one turn on.
+    /// - Returns: The turn's events.
+    /// - Throws: Whatever the turn throws.
+    private static func turnEvents(on session: RoutedSession) async throws -> [SessionEvent] {
+        var events: [SessionEvent] = []
+        for try await event in await session.streamEvents(to: ScriptedToolFixture.prompt) {
+            events.append(event)
+        }
+        return events
+    }
+
+    /// Asserts that `events` open the one call before they close it.
+    ///
+    /// - Parameter events: The events to read, in stream order.
+    /// - Throws: When an open record or a close record is missing.
+    private static func expectOpenPrecedesClose(in events: [SessionEvent]) throws {
+        let openIndex = try #require(events.firstIndex { $0.isOpenInvocation })
+        let closeIndex = try #require(events.firstIndex { $0.isCloseInvocation })
+        #expect(openIndex < closeIndex)
+    }
+
+    /// Asserts that `events` carry one close record and then exactly one
+    /// report, for the same call, and that the report carries
+    /// ``MountFixtures/attachmentsInCallOrder``.
+    ///
+    /// - Parameter events: The events to read, in stream order.
+    /// - Throws: When the close record or the report is missing.
+    private static func expectOneReportFollowsClose(in events: [SessionEvent]) throws {
+        let closeIndex = try #require(events.firstIndex { $0.isCloseInvocation })
+        let reportIndex = try #require(events.firstIndex { $0.carriedReport != nil })
+        #expect(closeIndex < reportIndex)
+        #expect(events.compactMap(\.carriedReport).count == 1)
+        guard case .toolInvocation(let close) = events[closeIndex],
+            let report = events[reportIndex].carriedReport
+        else {
+            Issue.record("expected the close record at \(closeIndex) and the report at \(reportIndex)")
+            return
+        }
+        #expect(report.correlationID == close.correlationID)
+        #expect(report.tool == close.tool)
+        #expect(report.op == close.op)
+        #expect(report.sessionID == close.sessionID)
+        #expect(report.attachments == MountFixtures.attachmentsInCallOrder)
+    }
+
+    /// Drives one scripted turn that calls `tool` one time, and asserts the
+    /// turn's stream carries the open record, the close record, and then one
+    /// report for that call.
+    ///
+    /// - Parameter tool: The in-band attaching tool the one call names.
+    /// - Throws: Whatever the fixture or the turn throws.
+    private static func expectInBandCallReportsItsAttachments(calling tool: any Tool) async throws {
+        let fixture = try await ScriptedSessionFixture.make(
+            playing: oneCallScript(calling: tool), mounting: [tool], tempDirPrefix: tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let events = try await turnEvents(on: fixture.session)
+
+        try expectOpenPrecedesClose(in: events)
+        try expectOneReportFollowsClose(in: events)
+    }
+
+    @Test("a run-to-completion call that attaches produces open, close, then one report under the same correlationID on the turn's stream")
+    @MainActor
+    func runToCompletionCallReportsItsAttachmentsOnTheTurnStream() async throws {
+        try await Self.expectInBandCallReportsItsAttachments(calling: MountFixtures.AttachingTool())
+    }
+
+    @Test("a ContextBindingTool call that attaches produces open, close, then one report under the same correlationID on the turn's stream")
+    @MainActor
+    func contextBindingToolCallReportsItsAttachmentsOnTheTurnStream() async throws {
+        try await Self.expectInBandCallReportsItsAttachments(
+            calling: MountFixtures.AttachingNonStringOutputTool())
+    }
+
+    @Test("a background call that attaches produces its report on streamSessionEvents() after the close record, when the run settles")
+    @MainActor
+    func backgroundCallReportsItsAttachmentsOnTheSessionStreamWhenItSettles() async throws {
+        let gate = RunLatch()
+        let tool = MountFixtures.DeclaredBackgroundAttachingTool(gate: gate)
+        let fixture = try await ScriptedSessionFixture.make(
+            playing: Self.oneCallScript(calling: tool), mounting: [tool], tempDirPrefix: Self.tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        // The turn returns while the run waits on its gate, so the close record
+        // and the report can only arrive on the session stream.
+        let outcome: TurnOutcome = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
+        let open = try #require(outcome.toolInvocations.first)
+        #expect(open.closedAt == nil)
+
+        let log = SessionEventLog()
+        let sessionEvents = await fixture.session.streamSessionEvents()
+        let collecting = Task {
+            for await event in sessionEvents {
+                await log.record(event)
+            }
+        }
+        defer { collecting.cancel() }
+
+        // The run posts its close record and its report before it settles,
+        // so the settlement wait bounds the run's work, and the spin below
+        // covers only the hop from the stream to the log.
+        await gate.open()
+        _ = await fixture.session.mailbox.wait(
+            completionToken: open.correlationID, seconds: MountFixtures.settlementDeadline)
+        #expect(
+            await BoundedWait.conditionReached("the report on streamSessionEvents()") {
+                await log.reports.count == 1
+            })
+
+        let events = await log.events
+        try Self.expectOneReportFollowsClose(in: events)
+        #expect(events.compactMap(\.carriedReport).map(\.correlationID) == [open.correlationID])
+    }
+
+    @Test("a call that attaches nothing produces no toolCallReport")
+    @MainActor
+    func callWithNoAttachmentsProducesNoReport() async throws {
+        let tool = MarkerEmittingTool()
+        let fixture = try await ScriptedSessionFixture.make(
+            playing: Self.oneCallScript(calling: tool), mounting: [tool], tempDirPrefix: Self.tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let events = try await Self.turnEvents(on: fixture.session)
+
+        // The call ran and closed; only the report is absent.
+        try Self.expectOpenPrecedesClose(in: events)
+        #expect(events.compactMap(\.carriedReport).isEmpty)
+    }
+
+    @Test("a report is delivery-only: the outbox stages nothing for it and the recorder holds no event for it")
+    @MainActor
+    func reportIsNeverStagedOrRecorded() async throws {
+        let tool = MountFixtures.AttachingTool()
+        let fixture = try await ScriptedSessionFixture.make(
+            playing: Self.oneCallScript(calling: tool), mounting: [tool], tempDirPrefix: Self.tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let events = try await Self.turnEvents(on: fixture.session)
+
+        // The positive control: the report was delivered live.
+        #expect(events.compactMap(\.carriedReport).count == 1)
+        let pending = await fixture.session.outbox.pending()
+        #expect(pending.events.isEmpty)
+        // The persisted shape is the one the post-turn diff alone records, the
+        // same shape `invocationRecordsAreDeliveryOnlyAndChangeNoRecording`
+        // asserts for a turn with no attachments.
+        let recordedKinds = await fixture.recorder.events.map(\.kind)
+        #expect(recordedKinds == [.session, .instructions, .prompt, .toolCalls, .toolOutput, .response])
+    }
+
+    @Test("a ToolRun whose sink is a plain OperationEventSink drops the report without a trap and still posts both records")
+    func plainSinkDropsTheReportWithoutATrap() async throws {
+        let sink = RecordingInvocationSink()
+        let arguments = MountArguments(value: "x")
+        let run = MountFixtures.toolRun(wrapping: MountFixtures.AttachingTool(), arguments: arguments, sink: sink)
+
+        await run.open()
+        let settlement = await run.execute(arguments: arguments)
+
+        // The call attached, so a report was due; the plain sink is not a
+        // `ToolCallReportSink`, so the report went nowhere. Both records
+        // still arrived, and nothing trapped.
+        #expect(settlement.attachments == MountFixtures.attachmentsInCallOrder)
+        #expect(await sink.invocations.map { $0.closedAt == nil } == [true, false])
+        #expect(await sink.operationEvents.isEmpty)
+    }
+}
+
+extension SessionEvent {
+    /// Whether this event is an open ``ToolInvocationRecord``.
+    fileprivate var isOpenInvocation: Bool {
+        if case .toolInvocation(let record) = self { return record.closedAt == nil }
+        return false
+    }
+
+    /// Whether this event is a close ``ToolInvocationRecord``.
+    fileprivate var isCloseInvocation: Bool {
+        if case .toolInvocation(let record) = self { return record.closedAt != nil }
+        return false
+    }
+
+    /// The ``ToolCallReport`` this event carries, or `nil` for any other event.
+    fileprivate var carriedReport: ToolCallReport? {
+        if case .toolCallReport(let report) = self { return report }
+        return nil
     }
 }

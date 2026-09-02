@@ -99,12 +99,21 @@ struct ToolRun<Arguments: ConvertibleFromGeneratedContent & Sendable>: Sendable 
     }
 
     /// Runs the body under the bound context, settles the funnel with one
-    /// terminal, and posts the close invocation record.
+    /// terminal, posts the close invocation record, and then posts the
+    /// call's ``ToolCallReport`` when the call attached at least one record.
     func execute(arguments: Arguments) async -> RunSettlement {
         let settlement = await ToolContext.$current.withValue(context) {
             await settle(arguments: arguments)
         }
-        await sink.post(invocation: openRecord.closed(at: Date()))
+        let closeRecord = openRecord.closed(at: Date())
+        await sink.post(invocation: closeRecord)
+        if let report = ToolCallReport(closing: closeRecord, attachments: settlement.attachments) {
+            // The cast decides delivery. `OperationEventSink` is external, so
+            // no requirement carries a report; a sink that is not a
+            // `ToolCallReportSink` drops it. That drop is a consequence of
+            // the cast, not of a default implementation.
+            await (sink as? any ToolCallReportSink)?.post(report: report)
+        }
         return settlement
     }
 

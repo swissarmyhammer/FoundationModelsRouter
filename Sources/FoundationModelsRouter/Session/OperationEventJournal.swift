@@ -60,6 +60,49 @@ protocol ToolInvocationObserver: AnyObject, Sendable {
     func deliver(report: ToolCallReport) async
 }
 
+/// A destination a tool decorator posts a ``ToolCallReport`` to when a call
+/// closes with at least one attachment.
+///
+/// This protocol is Router-internal, and it is apart from `OperationEventSink`
+/// on purpose. `OperationEventSink` belongs to the FoundationModelsExtras
+/// package, and this package cannot add a requirement to it. A Router-side
+/// extension on that protocol would be statically dispatched: a call through
+/// `any OperationEventSink` would always run the extension body, and never a
+/// conforming type's own method. `SessionOutbox` would then never receive a
+/// report. The decorators therefore ask each sink at run time whether it is
+/// also a `ToolCallReportSink`, with a dynamic cast. A sink that is not one
+/// drops the report. That drop is a consequence of the cast, not of a default
+/// implementation: this protocol supplies none.
+protocol ToolCallReportSink: Sendable {
+    /// Receives one call's report, posted after the call's close
+    /// ``ToolInvocationRecord``.
+    ///
+    /// - Parameter report: The report for the call that closed.
+    func post(report: ToolCallReport) async
+}
+
+extension ToolCallReport {
+    /// Creates the report for one closing call, or returns `nil` when the
+    /// call attached nothing.
+    ///
+    /// The report carries the identity of `record`, so a host can join it to
+    /// the call's close record.
+    ///
+    /// - Parameters:
+    ///   - record: The call's close ``ToolInvocationRecord``.
+    ///   - attachments: The records the call attached, in call order.
+    init?(closing record: ToolInvocationRecord, attachments: [ToolCallAttachment]) {
+        guard !attachments.isEmpty else { return nil }
+        self.init(
+            tool: record.tool,
+            op: record.op,
+            correlationID: record.correlationID,
+            sessionID: record.sessionID,
+            attachments: attachments
+        )
+    }
+}
+
 /// A destination a session's `SessionMailbox` hands each naturally settled
 /// background run's terminal ``OperationEvent`` to, at the moment the run
 /// settles.

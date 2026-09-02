@@ -170,10 +170,13 @@ public struct ToolContext: Sendable {
     /// Hands `attachment` to the run this context belongs to.
     ///
     /// Attachments collect on the run named by ``completionToken``, in call
-    /// order. The run delivers them when the call closes (later cards). An
+    /// order. When the call closes with at least one attachment, the run
+    /// posts one ``ToolCallReport`` after the call's close record, and the
+    /// session delivers it as ``SessionEvent/toolCallReport(_:)``. An
     /// attachment is never rendered to the model, and it never becomes an
     /// `OperationEvent`. A call outside any run, on a context built with the
-    /// default sink, drops the attachment.
+    /// default sink, drops the attachment. A record attached after the call
+    /// closed belongs to no settlement, and is dropped.
     ///
     /// - Parameter attachment: The record to attach to this call.
     public func attach(_ attachment: ToolCallAttachment) {
@@ -313,6 +316,21 @@ public struct ToolContext: Sendable {
     /// ``mount(_:op:as:postingTo:)``. That overload tells two concurrent runs
     /// of one tool apart. It also lets a caller assert a run's own identity.
     ///
+    /// **The attachments a mounted call makes.** A record the mounted call
+    /// attaches through ``attach(_:)`` lands on THIS run, not on the mounted
+    /// run. The mounted run's sink forwards each attachment into this context
+    /// with ``attach(_:)``, and the mounted call posts no ``ToolCallReport``
+    /// of its own. The reason is correlation. This overload also swallows the
+    /// mounted call's own invocation records, so the host never sees the
+    /// mounted call's own correlation. The tool call the host knows is THIS
+    /// run's call, for example the `runCode` call that mounted the tool. The
+    /// mounted call's attachments therefore ride THIS run's report, under
+    /// THIS run's ``completionToken``, the same re-stamp rule every other
+    /// posted event follows. A binder can call ``attach(_:)`` on the mounted
+    /// tool's own context or on this mounting context. Both reach this run's
+    /// report. A mounted background run that closes after this run's call
+    /// closed attaches to no settlement, and its attachments are dropped.
+    ///
     /// The span each call opens resolves late. It reads
     /// `InstrumentationSystem.tracer` at call time. An application that starts
     /// a tracing backend after it mounts therefore still traces.
@@ -364,6 +382,12 @@ public struct ToolContext: Sendable {
     /// Two mounts post nothing at all. A binding-only mount posts no events of
     /// its own. A run-to-completion run posts no terminal when it posted no
     /// other event and then succeeded.
+    ///
+    /// `sink` does not carry a mounted call's ``ToolCallReport``. A report
+    /// goes only to a Router-internal report sink, and `sink` is a plain
+    /// `OperationEventSink`, so a mounted call that attached records drops
+    /// its report under this overload. Use ``mount(_:op:as:)`` to receive
+    /// those attachments, on THIS run's report.
     ///
     /// **What `sink` does NOT carry.** `sink` does not carry a terminal the
     /// MAILBOX BUILDS. ``RoutedSession/close()`` sweeps the session's MAILBOX,
@@ -459,11 +483,30 @@ public struct ToolContext: Sendable {
 /// token. A run that settles inside the sweep's canceler window keeps its own
 /// natural terminal instead. That terminal did pass through here, and the
 /// mailbox forwarded it, so the sweep's write of it is refused.
-private struct MountedRunUpstreamSink: OperationEventSink {
+///
+/// This sink is also a ``ToolCallReportSink``. A mounted call that closes with
+/// attachments posts its ``ToolCallReport`` here, and this sink hands each
+/// attachment to the mounting context with ``ToolContext/attach(_:)``. The
+/// mounted call therefore posts no report of its own upstream. Its records
+/// ride the mounting run's report, under the mounting run's token, the same
+/// re-stamp rule the events follow. The mounted call's invocation records take
+/// the `OperationEventSink` default and go nowhere, so the mounting run's call
+/// is the one the host can correlate the records to.
+private struct MountedRunUpstreamSink: OperationEventSink, ToolCallReportSink {
     /// The mounting context every event is forwarded through.
     let context: ToolContext
 
     func post(event: OperationEvent) async {
         await context.post(event)
+    }
+
+    /// Hands each attachment of `report` to the mounting context, in the
+    /// order the mounted call attached them.
+    ///
+    /// - Parameter report: The mounted call's report.
+    func post(report: ToolCallReport) {
+        for attachment in report.attachments {
+            context.attach(attachment)
+        }
     }
 }

@@ -37,12 +37,20 @@ enum MountFixtures {
 
     // MARK: - Sink
 
-    /// A sink that records every posted event, in order.
-    actor RecordingSink: OperationEventSink {
+    /// A sink that records every posted event, in order, and every posted
+    /// ``ToolCallReport``, in order.
+    actor RecordingSink: OperationEventSink, ToolCallReportSink {
         private(set) var events: [OperationEvent] = []
+
+        /// Every report a closing call posted, in post order.
+        private(set) var reports: [ToolCallReport] = []
 
         func post(event: OperationEvent) {
             events.append(event)
+        }
+
+        func post(report: ToolCallReport) {
+            reports.append(report)
         }
     }
 
@@ -87,12 +95,13 @@ enum MountFixtures {
     /// - Parameters:
     ///   - tool: The tool the run calls.
     ///   - arguments: The call's arguments, read for a per-call timeout.
-    ///   - sink: The sink the run's events funnel into.
+    ///   - sink: The sink the run's events funnel into, and the sink the
+    ///     run's records and report go to.
     /// - Returns: The prepared run. Call `open()` and then `execute(arguments:)`.
     static func toolRun<Arguments: ConvertibleFromGeneratedContent & Sendable>(
         wrapping tool: any Tool<Arguments, String>,
         arguments: Arguments,
-        sink: RecordingSink
+        sink: any OperationEventSink
     ) -> ToolRun<Arguments> {
         ToolRun(
             wrapped: tool,
@@ -497,6 +506,33 @@ enum MountFixtures {
             await gate.waitUntilOpen()
             ToolContext.current?.attach(secondAttachment)
             return "attached late: \(arguments.value)"
+        }
+    }
+
+    /// ``GatedAttachingTool`` with the background mount declared for itself,
+    /// so a session mounts it in `BackgroundToolRunner` with no configuration
+    /// of its own. The call returns to the model at once, and the run attaches
+    /// its second record after the test opens the gate.
+    struct DeclaredBackgroundAttachingTool: Tool, BackgroundTool {
+        let name = "declared_background_attaching_tool"
+        let description = "declares background, attaches one record, waits for its gate, then attaches a second"
+
+        /// The gated tool this tool runs. The attaching body lives there.
+        private let gated: GatedAttachingTool
+
+        /// Creates the tool over `gate`.
+        ///
+        /// - Parameter gate: The gate the run waits on between its two records.
+        init(gate: RunLatch) {
+            gated = GatedAttachingTool(gate: gate)
+        }
+
+        var mount: ToolMount? {
+            ToolMount(mode: .background, timeout: nil)
+        }
+
+        func call(arguments: MountArguments) async throws -> String {
+            try await gated.call(arguments: arguments)
         }
     }
 

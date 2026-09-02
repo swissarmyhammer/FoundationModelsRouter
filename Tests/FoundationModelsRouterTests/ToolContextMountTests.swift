@@ -23,8 +23,8 @@ struct ToolContextMountTests {
     /// The completion token of the enclosing run every test mounts under.
     private static let hostToken = "host-run-token"
 
-    /// One test's wiring: the enclosing run's context, and the mailbox and sink
-    /// standing behind it.
+    /// One test's wiring: the enclosing run's context, and the mailbox, sink,
+    /// and attachment box standing behind it.
     private struct Host {
         /// The context every mount is made on.
         let context: ToolContext
@@ -34,15 +34,20 @@ struct ToolContextMountTests {
 
         /// The upstream the mounted runs' events land in.
         let sink: Fixtures.RecordingSink
+
+        /// The box the enclosing run collects its attachments in.
+        let attachments: ToolCallAttachmentBox
     }
 
     /// Builds the enclosing run's wiring, stamped with ``hostTool``, ``hostOp``
     /// and ``hostToken``.
     ///
-    /// - Returns: A fresh context over a fresh mailbox and a fresh sink.
+    /// - Returns: A fresh context over a fresh mailbox, a fresh sink, and a
+    ///   fresh attachment box.
     private static func makeHost() -> Host {
         let mailbox = SessionMailbox()
         let sink = Fixtures.RecordingSink()
+        let attachments = ToolCallAttachmentBox()
         let context = ToolContext(
             sessionID: ULID.generate(),
             mailbox: mailbox,
@@ -50,9 +55,26 @@ struct ToolContextMountTests {
             tool: hostTool,
             op: hostOp,
             completionToken: hostToken,
-            isCancelled: { false }
+            isCancelled: { false },
+            attachmentSink: { attachments.append($0) }
         )
-        return Host(context: context, mailbox: mailbox, sink: sink)
+        return Host(context: context, mailbox: mailbox, sink: sink, attachments: attachments)
+    }
+
+    /// Mounts ``MountFixtures/AttachingTool`` on its own run's context through
+    /// ``ToolContext/mount(_:op:as:)`` and calls it in band. It attaches
+    /// nothing itself, so every record on its run came from the nested call.
+    private struct NestingAttachingTool: Tool {
+        let name = "nesting_attaching_tool"
+        let description = "mounts the attaching tool on its own context and calls it in band"
+
+        /// The output when no context is bound. A test never sees it.
+        static let noContextOutput = "no context"
+
+        func call(arguments: MountArguments) async throws -> String {
+            guard let context = ToolContext.current else { return Self.noContextOutput }
+            return try await context.mount(Fixtures.AttachingTool()).call(arguments: arguments)
+        }
     }
 
     // MARK: - The three decorators
@@ -148,6 +170,40 @@ struct ToolContextMountTests {
         // fixture returns the one its bound context carried.
         #expect(output.text != Self.hostToken)
         #expect(ULID(output.text) != nil)
+    }
+
+    // MARK: - The attachment route
+
+    @Test("a mounted tool's attachments reach the mounting context, and the mounted call posts no report of its own")
+    func mountedToolAttachmentsReachTheMountingContext() async throws {
+        let host = Self.makeHost()
+
+        let mounted = host.context.mount(Fixtures.AttachingTool())
+        _ = try await mounted.call(arguments: MountArguments(value: "nested"))
+
+        // The nested call's records landed on the mounting run, in call order.
+        #expect(host.attachments.drain() == Fixtures.attachmentsInCallOrder)
+        // The mounting context's sink saw no report and no event: the nested
+        // call's sink forwards attachments, never a report of its own.
+        #expect(await host.sink.reports.isEmpty)
+        #expect(await host.sink.events.isEmpty)
+    }
+
+    @Test("inside a run-to-completion call, a nested mounted call's attachments ride the mounting call's report under the mounting run's correlationID")
+    func nestedCallAttachmentsRideTheMountingCallReport() async throws {
+        let sink = Fixtures.RecordingSink()
+        let arguments = MountArguments(value: "outer")
+        let run = Fixtures.toolRun(wrapping: NestingAttachingTool(), arguments: arguments, sink: sink)
+
+        await run.open()
+        let settlement = await run.execute(arguments: arguments)
+
+        #expect(settlement.attachments == Fixtures.attachmentsInCallOrder)
+        // One report: the mounting call's, under the mounting run's own token.
+        let reports = await sink.reports
+        #expect(reports.map(\.correlationID) == [run.context.completionToken])
+        #expect(reports.map(\.tool) == [run.context.tool])
+        #expect(reports.map(\.attachments) == [Fixtures.attachmentsInCallOrder])
     }
 
     // MARK: - The return type

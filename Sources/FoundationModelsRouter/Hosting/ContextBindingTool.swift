@@ -67,8 +67,9 @@ struct ContextBindingTool<
         }
     }
 
-    /// The bound call itself: the settlement of one call, and its outcome
-    /// written onto `span`.
+    /// The bound call itself: the settlement of one call, its outcome written
+    /// onto `span`, and its ``ToolCallReport`` posted when the call attached
+    /// at least one record.
     ///
     /// - Parameters:
     ///   - arguments: The call's decoded arguments.
@@ -78,6 +79,13 @@ struct ContextBindingTool<
     private func bind(arguments: Arguments, reportingTo span: any Span) async throws -> Output {
         let settlement = await settle(arguments: arguments)
         ToolCallSpan.record(outcome: settlement.recordedOutcome, on: span)
+        if let report = ToolCallReport(closing: settlement.closeRecord, attachments: settlement.attachments) {
+            // The cast decides delivery. `OperationEventSink` is external, so
+            // no requirement carries a report; a sink that is not a
+            // `ToolCallReportSink` drops it. That drop is a consequence of
+            // the cast, not of a default implementation.
+            await (sink as? any ToolCallReportSink)?.post(report: report)
+        }
         return try settlement.outcome.get()
     }
 
@@ -85,8 +93,9 @@ struct ContextBindingTool<
     /// the close ``ToolInvocationRecord`` around it, and drains the records the
     /// call attached.
     ///
-    /// The settlement holds the drained attachments beside the outcome. A
-    /// later card posts them from ``bind(arguments:reportingTo:)``.
+    /// The settlement holds the drained attachments and the close record
+    /// beside the outcome. ``bind(arguments:reportingTo:)`` posts the
+    /// attachments as the call's ``ToolCallReport``.
     ///
     /// - Parameter arguments: The call's decoded arguments.
     /// - Returns: How the call ended, and what it attached.
@@ -128,16 +137,17 @@ struct ContextBindingTool<
             // Drained after the call returns. A record the tool attaches
             // later than this point belongs to no settlement, and is dropped.
             let attachments = attachmentBox.drain()
-            await sink.post(invocation: openRecord.closed(at: Date()))
-            return BindingSettlement(outcome: outcome, attachments: attachments)
+            let closeRecord = openRecord.closed(at: Date())
+            await sink.post(invocation: closeRecord)
+            return BindingSettlement(outcome: outcome, attachments: attachments, closeRecord: closeRecord)
         } onCancel: {
             cancellationFlag.request()
         }
     }
 }
 
-/// How one bound call ended: the wrapped tool's outcome, and the records the
-/// call attached.
+/// How one bound call ended: the wrapped tool's outcome, the records the call
+/// attached, and the close record that identifies the call.
 struct BindingSettlement<Output> {
     /// The wrapped tool's output, or the error that ended the call.
     let outcome: Result<Output, any Error>
@@ -145,6 +155,10 @@ struct BindingSettlement<Output> {
     /// The records the tool attached through ``ToolContext/attach(_:)``, in
     /// call order.
     let attachments: [ToolCallAttachment]
+
+    /// The call's close ``ToolInvocationRecord``, already posted. Its identity
+    /// is the identity the call's ``ToolCallReport`` carries.
+    let closeRecord: ToolInvocationRecord
 
     /// The outcome the call's span records: succeeded for an output, failed
     /// for an error.

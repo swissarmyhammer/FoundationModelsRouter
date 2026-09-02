@@ -23,7 +23,11 @@ import FoundationModels
 /// public and stands on its own, because ``RoutedSession``'s public methods
 /// carry those three types in their signatures. An app drives the queue
 /// through ``RoutedSession``'s methods; a session never exposes its outbox.
-actor SessionOutbox: OperationEventSink {
+///
+/// The outbox is also the session's ``ToolCallReportSink``: a tool decorator
+/// finds it through a dynamic cast when a call closes with attachments, and
+/// ``post(report:)`` forwards the report to the attached observer.
+actor SessionOutbox: OperationEventSink, ToolCallReportSink {
     /// A stable identifier the outbox assigns to a staged event at post time.
     ///
     /// The id stays the same across a coalesced event's in-place updates.
