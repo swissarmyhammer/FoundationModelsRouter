@@ -159,7 +159,7 @@ public final class SessionProjection {
             phase = .compacting
             transcript.append(
                 TranscriptEntry(id: result.id, kind: .compaction(result), sourceEntryId: result.summaryEntryId))
-        case .discoveryPrimingFailed, .generationStalled, .runSettled, .toolCallReport:
+        case .discoveryPrimingFailed, .generationStalled, .runSettled, .toolCallReport, .elicitationRequested:
             // Handled explicitly, and deliberately changes nothing. A settled
             // run's terminal reaches this mirror as the recorded tool output
             // of the turn that next carries it. A turn whose
@@ -170,9 +170,11 @@ public final class SessionProjection {
             // ``SessionEvent/generationStalled(_:)``). A tool call report
             // carries records for a host to decode, and the call's phase is
             // already mirrored from its ``SessionEvent/toolInvocation(_:)``
-            // records. So this projection's phase, transcript, and counters
-            // are already the faithful mirror of what happened. All of them
-            // are for a driver watching the event stream, not session state.
+            // records. An elicitation request names a question only a host
+            // can answer, and the asking call is still running. So this
+            // projection's phase, transcript, and counters are already the
+            // faithful mirror of what happened. All of them are for a driver
+            // watching the event stream, not session state.
             break
         case .turnEnded(let usage):
             tokensIn += usage.tokensIn

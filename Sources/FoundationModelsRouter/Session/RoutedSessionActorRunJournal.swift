@@ -6,7 +6,8 @@ import FoundationModels
 extension RoutedSessionActor: OperationEventJournal {
     /// Records one posted ``OperationEvent`` as its own entry, in post order.
     /// Entries of one run can interleave with a turn's entries. A terminal is
-    /// also delivered live as ``SessionEvent/runSettled(_:)``.
+    /// also delivered live as ``SessionEvent/runSettled(_:)``, and an
+    /// elicitation as ``SessionEvent/elicitationRequested(_:)``.
     ///
     /// - Parameter event: The event the outbox has just accepted.
     func record(event: OperationEvent) async {
@@ -15,6 +16,9 @@ extension RoutedSessionActor: OperationEventJournal {
         await append(partial: makeRunEventPartial(for: event))
         if event.kind == .completed {
             deliverLive(.runSettled(event))
+        }
+        if event.kind == .elicitation {
+            deliverLive(.elicitationRequested(event))
         }
     }
 

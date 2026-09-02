@@ -67,6 +67,29 @@ public enum SessionEvent: Sendable, Equatable {
     /// Always on ``RoutedSession/streamSessionEvents()``; on the turn's stream when it settles inside a turn.
     case runSettled(OperationEvent)
 
+    /// A run of this session asked the user a question through
+    /// ``ToolContext/elicit(_:)`` and is suspended until a host answers it.
+    /// Carries the `.elicitation` ``OperationEvent`` the run posted, at the
+    /// moment the session journals it. The mailbox registers the pending
+    /// entry before the run posts, so a host can answer as soon as it sees
+    /// this event.
+    ///
+    /// The event's `elicitation` is the typed ``ElicitationRequest``. Its
+    /// `elicitationId` is the id ``RoutedSession/respond(elicitationId:response:)``
+    /// and ``RoutedSession/complete(elicitationId:)`` take. The event's
+    /// `correlationID` is the posting run's `completionToken`; for a run
+    /// mounted through ``ToolContext/mount(_:op:as:)`` it is the mounting
+    /// run's token.
+    ///
+    /// Always on ``RoutedSession/streamSessionEvents()``; on the turn's stream
+    /// when the elicitation is raised inside a turn.
+    ///
+    /// Known limit: an elicitation posted through
+    /// ``ToolContext/mount(_:op:as:postingTo:)`` with a sink that does not
+    /// forward to the session's outbox never reaches the session's journal,
+    /// so it never reaches this event.
+    case elicitationRequested(OperationEvent)
+
     /// One generate attempt closed, with its measured token usage. Emitted once per inner generate call.
     case turnEnded(TokenUsage)
 }

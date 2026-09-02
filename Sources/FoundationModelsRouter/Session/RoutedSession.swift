@@ -188,7 +188,11 @@ public protocol RoutedSession: Actor {
     /// ``streamSessionEvents()``. A call that closes inside the turn reports
     /// its attachments here as ``SessionEvent/toolCallReport(_:)``, after its
     /// close ``SessionEvent/toolInvocation(_:)`` record; a call that closes
-    /// later reports them on ``streamSessionEvents()``.
+    /// later reports them on ``streamSessionEvents()``. A tool that elicits
+    /// inside the turn reports its request here as
+    /// ``SessionEvent/elicitationRequested(_:)`` before the tool resumes; an
+    /// elicitation raised outside the turn is reported on
+    /// ``streamSessionEvents()``.
     ///
     /// The turn opens one span, exactly as ``respond(to:maxTokens:)`` states,
     /// with `turn.entry_point` reading `stream`.
@@ -202,12 +206,15 @@ public protocol RoutedSession: Actor {
     /// Every turn-lifecycle event travels here, whichever entry point ran the
     /// turn: ``SessionEvent/turnStarted(_:)``, ``SessionEvent/reasoningDelta(_:)``,
     /// tool-lifecycle events, ``SessionEvent/toolCallReport(_:)``,
+    /// ``SessionEvent/elicitationRequested(_:)``,
     /// ``SessionEvent/entryRecorded(id:kind:)``,
     /// ``SessionEvent/compaction(_:)``, ``SessionEvent/discoveryPrimingFailed(_:)``,
     /// ``SessionEvent/generationStalled(_:)``, and ``SessionEvent/turnEnded(_:)``.
     /// ``SessionEvent/textDelta(_:)`` and ``SessionEvent/textReset`` travel only
     /// on ``streamEvents(to:maxTokens:)``. Every event belongs to the turn named
-    /// by the most recent ``SessionEvent/turnStarted(_:)``.
+    /// by the most recent ``SessionEvent/turnStarted(_:)``. A run's
+    /// ``SessionEvent/runSettled(_:)`` and ``SessionEvent/elicitationRequested(_:)``
+    /// travel here also between turns.
     ///
     /// Each call vends an independent subscription, buffered without bound.
     /// Ending iteration drops the subscription; ``close()`` finishes every

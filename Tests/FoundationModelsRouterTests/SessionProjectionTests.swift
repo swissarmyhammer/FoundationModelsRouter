@@ -158,11 +158,14 @@ struct SessionProjectionTests {
         #expect(projection.phase == .idle)
     }
 
-    // MARK: - toolCallReport: carried for a host to decode, changes nothing here
+    // MARK: - Live-driver events: carried for a host, change nothing here
 
-    @Test("a toolCallReport changes nothing: phase, transcript, turn, and counters stay as they were")
+    /// Applies `event` to a projection that is mid-turn and mid-tool-call,
+    /// and asserts that its phase, transcript, turn, and counters did not move.
+    ///
+    /// - Parameter event: The event under test.
     @MainActor
-    func toolCallReportChangesNothing() {
+    private static func expectProjectionUnchanged(by event: SessionEvent) {
         let projection = SessionProjection()
         projection.apply(.turnStarted(TurnStart(turnId: TurnID(1), promptId: nil)))
         projection.apply(.toolCall(id: "call-1", name: "search", argumentsJSON: "{}"))
@@ -171,11 +174,7 @@ struct SessionProjectionTests {
         let transcriptBefore = projection.transcript
         let turnBefore = projection.currentTurn
 
-        projection.apply(
-            .toolCallReport(
-                ToolCallReport(
-                    tool: "search", op: "search", correlationID: "token-1", sessionID: .generate(),
-                    attachments: [MountFixtures.firstAttachment])))
+        projection.apply(event)
 
         #expect(projection.phase == phaseBefore)
         #expect(projection.transcript == transcriptBefore)
@@ -183,6 +182,26 @@ struct SessionProjectionTests {
         #expect(projection.tokensIn == 0)
         #expect(projection.tokensOut == 0)
         #expect(projection.contextFill == 0)
+    }
+
+    @Test("a toolCallReport changes nothing: phase, transcript, turn, and counters stay as they were")
+    @MainActor
+    func toolCallReportChangesNothing() {
+        Self.expectProjectionUnchanged(
+            by: .toolCallReport(
+                ToolCallReport(
+                    tool: "search", op: "search", correlationID: "token-1", sessionID: .generate(),
+                    attachments: [MountFixtures.firstAttachment])))
+    }
+
+    @Test("an elicitationRequested changes nothing: phase, transcript, turn, and counters stay as they were")
+    @MainActor
+    func elicitationRequestedChangesNothing() {
+        Self.expectProjectionUnchanged(
+            by: .elicitationRequested(
+                OperationEvent(
+                    tool: "search", op: "search", correlationID: "token-1", kind: .elicitation, detail: "",
+                    elicitation: MountFixtures.proceedRequest())))
     }
 
     // MARK: - compaction: appended as its own entry, phase .compacting

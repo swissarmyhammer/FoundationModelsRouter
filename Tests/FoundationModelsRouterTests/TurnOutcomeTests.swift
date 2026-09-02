@@ -267,26 +267,48 @@ struct TurnOutcomeTests {
         return fold.outcome
     }
 
-    @Test("the fold does not carry a toolCallReport: the outcome is the same with and without one")
-    func foldDoesNotCarryAToolCallReport() {
-        let open = ToolInvocationRecord(
-            tool: "search", op: "search", correlationID: "token-1", sessionID: .generate(),
-            openedAt: Date(timeIntervalSince1970: 100))
-        let report = ToolCallReport(
-            tool: open.tool, op: open.op, correlationID: open.correlationID, sessionID: open.sessionID,
-            attachments: [MountFixtures.firstAttachment])
+    /// The open record of the one call the live-driver-event tests fold.
+    private static let openRecord = ToolInvocationRecord(
+        tool: "search", op: "search", correlationID: "token-1", sessionID: .generate(),
+        openedAt: Date(timeIntervalSince1970: 100))
+
+    /// Folds one turn with one call twice — once plain, once with `event`
+    /// between the call's close and the turn's end — and asserts the two
+    /// outcomes are the same.
+    ///
+    /// - Parameter event: The event the outcome must not carry.
+    private static func expectFoldIgnores(_ event: SessionEvent) {
+        let open = openRecord
         let turnStarted = SessionEvent.turnStarted(TurnStart(turnId: TurnID(1), promptId: nil))
         let close = SessionEvent.toolInvocation(open.closed(at: Date(timeIntervalSince1970: 102)))
         let turnEnded = SessionEvent.turnEnded(TokenUsage(tokensIn: 4, tokensOut: 2, contextFill: 0.4))
         let plainTurn: [SessionEvent] = [turnStarted, .toolInvocation(open), close, turnEnded]
-        let reportedTurn: [SessionEvent] = [
-            turnStarted, .toolInvocation(open), close, .toolCallReport(report), turnEnded,
-        ]
+        let turnWithEvent: [SessionEvent] = [turnStarted, .toolInvocation(open), close, event, turnEnded]
 
-        let reportedOutcome = Self.outcome(of: reportedTurn)
+        let outcomeWithEvent = outcome(of: turnWithEvent)
 
         // The fold saw the call: the comparison below is not between two empty outcomes.
-        #expect(reportedOutcome.toolInvocations.count == 1)
-        #expect(reportedOutcome == Self.outcome(of: plainTurn))
+        #expect(outcomeWithEvent.toolInvocations.count == 1)
+        #expect(outcomeWithEvent == outcome(of: plainTurn))
+    }
+
+    @Test("the fold does not carry a toolCallReport: the outcome is the same with and without one")
+    func foldDoesNotCarryAToolCallReport() {
+        let open = Self.openRecord
+        Self.expectFoldIgnores(
+            .toolCallReport(
+                ToolCallReport(
+                    tool: open.tool, op: open.op, correlationID: open.correlationID, sessionID: open.sessionID,
+                    attachments: [MountFixtures.firstAttachment])))
+    }
+
+    @Test("the fold does not carry an elicitationRequested: the outcome is the same with and without one")
+    func foldDoesNotCarryAnElicitationRequested() {
+        let open = Self.openRecord
+        Self.expectFoldIgnores(
+            .elicitationRequested(
+                OperationEvent(
+                    tool: open.tool, op: open.op, correlationID: open.correlationID, kind: .elicitation, detail: "",
+                    elicitation: MountFixtures.proceedRequest())))
     }
 }

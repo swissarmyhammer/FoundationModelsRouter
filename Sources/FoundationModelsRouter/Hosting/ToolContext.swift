@@ -187,11 +187,21 @@ public struct ToolContext: Sendable {
     ///
     /// The run suspends in the session's mailbox, keyed by the request's
     /// `elicitationId`, and the request rides upstream as an elicitation event.
-    /// The suspension resumes only through
-    /// `SessionMailbox.respond(elicitationId:_:)`,
-    /// `SessionMailbox.complete(elicitationId:)`, or `SessionMailbox.sweep()`.
-    /// Task cancellation does not resume it. The current implementation never throws.
+    /// When this context posts to the session's outbox — every context the
+    /// session binds around a tool call does — the request reaches a host as
+    /// ``SessionEvent/elicitationRequested(_:)``, on the session's event
+    /// streams, before this call resumes. The suspension resumes only through
+    /// ``RoutedSession/respond(elicitationId:response:)``,
+    /// ``RoutedSession/complete(elicitationId:)``, or the mailbox's sweep at
+    /// ``RoutedSession/close()``. Task cancellation does not resume it. The
+    /// current implementation never throws.
     ///
+    /// Known limit: a run mounted through ``mount(_:op:as:postingTo:)`` with a
+    /// sink that does not forward to the session's outbox posts its request
+    /// to that sink only, so the request never becomes a
+    /// ``SessionEvent/elicitationRequested(_:)``.
+    ///
+    /// - Parameter request: The question to ask.
     /// - Returns: The user's answer.
     public func elicit(_ request: ElicitationRequest) async throws -> ElicitationResponse {
         let event = OperationEvent(
