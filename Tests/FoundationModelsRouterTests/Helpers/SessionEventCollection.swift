@@ -16,6 +16,17 @@ func collect(_ stream: AsyncThrowingStream<SessionEvent, Error>) async throws ->
     return events
 }
 
+/// Drains a session-scoped `stream` into an array, in order.
+///
+/// ``RoutedSession/close()`` finishes the stream, so a caller drains it after
+/// it closes the session the stream came from.
+///
+/// - Parameter stream: The stream to drain.
+/// - Returns: Every event the stream yielded, in order.
+func collect(_ stream: AsyncStream<SessionEvent>) async -> [SessionEvent] {
+    await stream.reduce(into: []) { $0.append($1) }
+}
+
 /// Drains `session`'s `streamEvents(to:)` for one turn into an array, in
 /// production order.
 ///

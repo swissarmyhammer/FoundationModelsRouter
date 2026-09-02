@@ -563,21 +563,6 @@ struct PromptQueueTests {
 
     // MARK: - Prompt to turn to event correlation
 
-    /// Drains a session-scoped event stream into an array.
-    ///
-    /// The stream is finished by ``RoutedSession/close()``, so a caller drains
-    /// it after closing the session it came from.
-    ///
-    /// - Parameter stream: The stream to drain.
-    /// - Returns: Every event it yielded, in order.
-    private static func collect(_ stream: AsyncStream<SessionEvent>) async -> [SessionEvent] {
-        var events: [SessionEvent] = []
-        for await event in stream {
-            events.append(event)
-        }
-        return events
-    }
-
     /// The turn-start records among `events`, in order.
     ///
     /// - Parameter events: The events to filter.
@@ -601,7 +586,7 @@ struct PromptQueueTests {
         _ = try await session.dispatchNextPrompt()
         await session.close()
 
-        let starts = Self.turnStarts(in: await Self.collect(stream))
+        let starts = Self.turnStarts(in: await collect(stream))
         #expect(starts.count == 1)
         #expect(starts.first?.promptId == id)
     }
@@ -617,7 +602,7 @@ struct PromptQueueTests {
         _ = try await session.respond(to: "direct prompt")
         await session.close()
 
-        let starts = Self.turnStarts(in: await Self.collect(stream))
+        let starts = Self.turnStarts(in: await collect(stream))
         #expect(starts.count == 1)
         #expect(starts.first?.promptId == nil)
     }
@@ -634,7 +619,7 @@ struct PromptQueueTests {
         _ = try await session.respond(to: "second")
         await session.close()
 
-        let starts = Self.turnStarts(in: await Self.collect(stream))
+        let starts = Self.turnStarts(in: await collect(stream))
         #expect(starts.count == Self.consecutiveTurnCount)
         #expect(starts.first?.turnId != starts.last?.turnId)
     }
@@ -659,7 +644,7 @@ struct PromptQueueTests {
         // `respond(to:)` hands its caller a response, not a stream, so before
         // the fan-in this turn derived no events at all. The closing usage is
         // the proof it now does.
-        let events = await Self.collect(stream)
+        let events = await collect(stream)
         let usages = events.compactMap { event -> TokenUsage? in
             guard case .turnEnded(let usage) = event else { return nil }
             return usage

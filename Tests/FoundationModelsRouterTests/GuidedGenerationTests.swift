@@ -514,15 +514,6 @@ struct GuidedGenerationTests {
         )
     }()
 
-    /// Drains `stream` into an array, in order — mirrors `AutoCompactionTests.collect(_:)`.
-    private static func collect(_ stream: AsyncThrowingStream<SessionEvent, Error>) async throws -> [SessionEvent] {
-        var events: [SessionEvent] = []
-        for try await event in stream {
-            events.append(event)
-        }
-        return events
-    }
-
     @Test(
         "a guided session vended with a budget auto-compacts once measured fill reaches the trigger, proving the guided path actually exercises auto-compaction end-to-end (task 8213x39)"
     )
@@ -570,7 +561,7 @@ struct GuidedGenerationTests {
         // same proof `AutoCompactionTests.proactiveFoldPrefersFlashSummarizer()`
         // gives for the unguided path, now for a session vended through
         // `makeGuidedSession`.
-        let events = eventsAfterTurnFrame(try await Self.collect(session.streamEvents(to: "turn 6", maxTokens: nil)))
+        let events = eventsAfterTurnFrame(try await collect(session.streamEvents(to: "turn 6", maxTokens: nil)))
 
         guard case .compaction(let result) = events.first else {
             Issue.record("expected the first event to be .compaction, got \(String(describing: events.first))")

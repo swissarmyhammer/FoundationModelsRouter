@@ -306,35 +306,6 @@ struct DiscoveryPrimingTests {
         return Fixture(session: session, log: container.log, recorder: recorder, dir: dir)
     }
 
-    /// Drains an event stream into an array.
-    ///
-    /// - Parameter stream: The stream to drain.
-    /// - Returns: Every event it yielded, in order.
-    private static func collect(
-        _ stream: AsyncThrowingStream<SessionEvent, Error>
-    ) async throws -> [SessionEvent] {
-        var events: [SessionEvent] = []
-        for try await event in stream {
-            events.append(event)
-        }
-        return events
-    }
-
-    /// Drains a session-scoped event stream into an array.
-    ///
-    /// The stream is finished by ``RoutedSession/close()``, so a caller drains
-    /// it after closing the session it came from.
-    ///
-    /// - Parameter stream: The stream to drain.
-    /// - Returns: Every event it yielded, in order.
-    private static func collect(_ stream: AsyncStream<SessionEvent>) async -> [SessionEvent] {
-        var events: [SessionEvent] = []
-        for await event in stream {
-            events.append(event)
-        }
-        return events
-    }
-
     /// The priming failures among `events`, in order.
     ///
     /// - Parameter events: The events to filter.
@@ -447,7 +418,7 @@ struct DiscoveryPrimingTests {
         )
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
 
-        let events = try await Self.collect(await fixture.session.streamEvents(to: Self.prompt))
+        let events = try await collectEvents(fixture.session, prompt: Self.prompt)
 
         #expect(fixture.log.reseeds.isEmpty)
         #expect(fixture.log.entriesAtGeneration == [[]])
@@ -471,7 +442,7 @@ struct DiscoveryPrimingTests {
         )
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
 
-        let events = try await Self.collect(await fixture.session.streamEvents(to: Self.prompt))
+        let events = try await collectEvents(fixture.session, prompt: Self.prompt)
 
         #expect(fixture.log.reseeds.isEmpty)
         #expect(Self.primingFailures(in: events) == [.toolNotMounted(tool: "notMounted")])
@@ -486,7 +457,7 @@ struct DiscoveryPrimingTests {
         )
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
 
-        let events = try await Self.collect(await fixture.session.streamEvents(to: Self.prompt))
+        let events = try await collectEvents(fixture.session, prompt: Self.prompt)
 
         #expect(fixture.log.reseeds.isEmpty)
         #expect(Self.primingFailures(in: events) == [.toolOutputNotText(tool: "findAPIs")])
@@ -523,7 +494,7 @@ struct DiscoveryPrimingTests {
         )
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
 
-        let events = try await Self.collect(await fixture.session.streamEvents(to: Self.prompt))
+        let events = try await collectEvents(fixture.session, prompt: Self.prompt)
 
         #expect(fixture.log.reseeds.isEmpty)
         let failures = Self.primingFailures(in: events)
@@ -671,7 +642,7 @@ struct DiscoveryPrimingTests {
         #expect(fixture.log.reseeds.isEmpty)
 
         await fixture.session.close()
-        let failures = Self.primingFailures(in: await Self.collect(sessionEvents))
+        let failures = Self.primingFailures(in: await collect(sessionEvents))
         #expect(failures.count == 1)
         guard case .callFailed(let tool, _) = failures.first else {
             Issue.record("expected a .callFailed priming failure, got \(String(describing: failures.first))")
@@ -697,7 +668,7 @@ struct DiscoveryPrimingTests {
         #expect(fixture.log.reseeds.isEmpty)
 
         await fixture.session.close()
-        let failures = Self.primingFailures(in: await Self.collect(sessionEvents))
+        let failures = Self.primingFailures(in: await collect(sessionEvents))
         #expect(failures.count == 1)
         guard case .callFailed(let tool, _) = failures.first else {
             Issue.record("expected a .callFailed priming failure, got \(String(describing: failures.first))")

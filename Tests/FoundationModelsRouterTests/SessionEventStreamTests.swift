@@ -236,15 +236,6 @@ struct SessionEventStreamTests {
         return (profile.standard.makeSession(), container, recorder)
     }
 
-    /// Drains `stream` into an array, in order.
-    private static func collect(_ stream: AsyncThrowingStream<SessionEvent, Error>) async throws -> [SessionEvent] {
-        var collected: [SessionEvent] = []
-        for try await event in stream {
-            collected.append(event)
-        }
-        return collected
-    }
-
     // MARK: - Plain text: textDelta only
 
     @Test("a plain-text turn yields textDelta fragments in order, then the recorded .response entry's id")
@@ -262,7 +253,7 @@ struct SessionEventStreamTests {
                     id: "resp-1", segments: [.text(Transcript.TextSegment(content: "hello world"))])),
         ]
 
-        let events = try await Self.collect(session.streamEvents(to: "hi"))
+        let events = try await collectEvents(session, prompt: "hi")
         #expect(
             eventsAfterTurnFrame(events) == [
                 .textDelta("hello "), .textDelta("world"),
@@ -303,7 +294,7 @@ struct SessionEventStreamTests {
                     id: "resp-1", segments: [.text(Transcript.TextSegment(content: "it's sunny"))])),
         ]
 
-        let events = try await Self.collect(session.streamEvents(to: "weather?"))
+        let events = try await collectEvents(session, prompt: "weather?")
         #expect(
             eventsAfterTurnFrame(events) == [
                 .textDelta("it's sunny"),
@@ -347,7 +338,7 @@ struct SessionEventStreamTests {
                     id: "resp-1", segments: [.text(Transcript.TextSegment(content: "ok"))])),
         ]
 
-        let events = try await Self.collect(session.streamEvents(to: "weather?"))
+        let events = try await collectEvents(session, prompt: "weather?")
         var completedSummary: String?
         var completedOutput: [SegmentPayload]?
         for event in events {
@@ -414,7 +405,7 @@ struct SessionEventStreamTests {
                     id: "resp-1", segments: [.text(Transcript.TextSegment(content: "done"))])),
         ]
 
-        let events = try await Self.collect(session.streamEvents(to: "compare weather"))
+        let events = try await collectEvents(session, prompt: "compare weather")
         #expect(
             eventsAfterTurnFrame(events) == [
                 .textDelta("ok"),
@@ -477,7 +468,7 @@ struct SessionEventStreamTests {
                     id: "resp-1", segments: [.text(Transcript.TextSegment(content: "done"))])),
         ]
 
-        let events = try await Self.collect(session.streamEvents(to: "compare weather"))
+        let events = try await collectEvents(session, prompt: "compare weather")
         #expect(
             eventsAfterTurnFrame(events) == [
                 .textDelta("ok"),
@@ -517,7 +508,7 @@ struct SessionEventStreamTests {
             .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "ok"))])),
         ]
 
-        let events = try await Self.collect(session.streamEvents(to: "search something"))
+        let events = try await collectEvents(session, prompt: "search something")
         let statusEvents = events.compactMap { event -> ToolCallStatus? in
             guard case .toolStatus(id: "call-1", let status, _, _) = event else { return nil }
             return status
@@ -544,7 +535,7 @@ struct SessionEventStreamTests {
             .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "ok"))])),
         ]
 
-        let events = try await Self.collect(session.streamEvents(to: "weather?"))
+        let events = try await collectEvents(session, prompt: "weather?")
         #expect(events.contains(.reasoningDelta("the user wants the weather")))
         #expect(events.contains(.entryRecorded(id: "reasoning-1", kind: .reasoning)))
     }
@@ -563,7 +554,7 @@ struct SessionEventStreamTests {
             .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "ok"))]))
         ]
 
-        let events = try await Self.collect(session.streamEvents(to: "hi"))
+        let events = try await collectEvents(session, prompt: "hi")
         // contextFill is this turn's usage over the profile's default context
         // (``ProfileDefinition/defaultContext``, 8192) — this session was
         // vended with no explicit `context:`.
@@ -581,7 +572,7 @@ struct SessionEventStreamTests {
             .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "ok"))]))
         ]
 
-        let events = try await Self.collect(session.streamEvents(to: "hi"))
+        let events = try await collectEvents(session, prompt: "hi")
         #expect(!events.contains { if case .turnEnded = $0 { return true } else { return false } })
     }
 
@@ -650,7 +641,7 @@ struct SessionEventStreamTests {
             .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "hello"))])),
         ]
 
-        _ = try await Self.collect(session.streamEvents(to: "hi"))
+        _ = try await collectEvents(session, prompt: "hi")
 
         // Exactly the same persisted shape `streamResponseEmitsOpenAndClose`
         // (`SessionChokepointTests`) asserts for the plain `streamResponse`
