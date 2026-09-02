@@ -167,6 +167,26 @@ struct ToolMountingTests {
         #expect(inner.text != outer.completionToken)
     }
 
+    @Test("a non-String-output tool's attachments drain to the binding call's settlement in call order")
+    func nonStringOutputToolAttachmentsDrainToTheSettlement() async throws {
+        let sink = Fixtures.RecordingSink()
+        let wrapped = ToolMounting.makeWrapped(
+            tool: Fixtures.AttachingNonStringOutputTool(),
+            sessionID: ULID.generate(),
+            mailbox: SessionMailbox(),
+            sink: sink,
+            configuration: ToolMount(mode: .background)
+        )
+
+        let binding = try #require(wrapped as? ContextBindingTool<MountArguments, NonStringToolOutput>)
+        let settlement = await binding.settle(arguments: MountArguments(value: "x"))
+
+        #expect(settlement.attachments == Fixtures.attachmentsInCallOrder)
+        #expect(try settlement.outcome.get().text == "attached: x")
+        // The records ride the settlement alone: the event route stays silent.
+        #expect(await sink.events.isEmpty)
+    }
+
     // MARK: - The mount a tool declares for itself
 
     @Test("a tool that declares nothing mounts run-to-completion under the stock timeout, and its slow call stays in band")

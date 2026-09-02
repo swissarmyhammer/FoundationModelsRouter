@@ -36,6 +36,10 @@ public struct ToolContext: Sendable {
     /// The invoker-supplied probe behind ``isCancelled``.
     private let cancellationProbe: @Sendable () -> Bool
 
+    /// The invoker-supplied destination behind ``attach(_:)``. The default
+    /// drops every attachment.
+    private let attachmentSink: @Sendable (ToolCallAttachment) -> Void
+
     /// Whether cancellation has been requested, as reported by the bound probe.
     var isCancelled: Bool {
         cancellationProbe()
@@ -62,6 +66,8 @@ public struct ToolContext: Sendable {
     ///   - op: The op stamp. Must not be empty (precondition).
     ///   - completionToken: The run's completion token.
     ///   - isCancelled: Reports whether cancellation has been requested.
+    ///   - attachmentSink: Receives each record the tool attaches. The default
+    ///     drops every record.
     init(
         sessionID: ULID,
         mailbox: SessionMailbox,
@@ -69,7 +75,8 @@ public struct ToolContext: Sendable {
         tool: String,
         op: String,
         completionToken: String,
-        isCancelled: @escaping @Sendable () -> Bool
+        isCancelled: @escaping @Sendable () -> Bool,
+        attachmentSink: @escaping @Sendable (ToolCallAttachment) -> Void = { _ in }
     ) {
         precondition(!tool.isEmpty, "a ToolContext's tool stamp must not be empty")
         precondition(!op.isEmpty, "a ToolContext's op stamp must not be empty")
@@ -80,6 +87,7 @@ public struct ToolContext: Sendable {
         self.op = op
         self.completionToken = completionToken
         self.cancellationProbe = isCancelled
+        self.attachmentSink = attachmentSink
     }
 
     /// Creates a context for a plain wrapped `Tool` and stamps its identity.
@@ -101,6 +109,8 @@ public struct ToolContext: Sendable {
     ///   - sink: The upstream sink capabilities post through.
     ///   - completionToken: The run's completion token.
     ///   - isCancelled: Reports whether cancellation has been requested.
+    ///   - attachmentSink: Receives each record the tool attaches. The default
+    ///     drops every record.
     init(
         stamping tool: any Tool,
         op: String? = nil,
@@ -108,7 +118,8 @@ public struct ToolContext: Sendable {
         mailbox: SessionMailbox,
         sink: any OperationEventSink,
         completionToken: String,
-        isCancelled: @escaping @Sendable () -> Bool
+        isCancelled: @escaping @Sendable () -> Bool,
+        attachmentSink: @escaping @Sendable (ToolCallAttachment) -> Void = { _ in }
     ) {
         let stamp = tool.name.isEmpty ? String(describing: type(of: tool)) : tool.name
         let declared = op.flatMap { $0.isEmpty ? nil : $0 }
@@ -119,7 +130,8 @@ public struct ToolContext: Sendable {
             tool: stamp,
             op: declared ?? stamp,
             completionToken: completionToken,
-            isCancelled: isCancelled
+            isCancelled: isCancelled,
+            attachmentSink: attachmentSink
         )
     }
 
@@ -153,6 +165,19 @@ public struct ToolContext: Sendable {
                 detail: detail
             )
         )
+    }
+
+    /// Hands `attachment` to the run this context belongs to.
+    ///
+    /// Attachments collect on the run named by ``completionToken``, in call
+    /// order. The run delivers them when the call closes (later cards). An
+    /// attachment is never rendered to the model, and it never becomes an
+    /// `OperationEvent`. A call outside any run, on a context built with the
+    /// default sink, drops the attachment.
+    ///
+    /// - Parameter attachment: The record to attach to this call.
+    public func attach(_ attachment: ToolCallAttachment) {
+        attachmentSink(attachment)
     }
 
     /// Asks the user a question in the middle of the run.

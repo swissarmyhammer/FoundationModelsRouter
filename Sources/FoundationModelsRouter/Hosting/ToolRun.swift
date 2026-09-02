@@ -16,6 +16,10 @@ struct ToolRun<Arguments: ConvertibleFromGeneratedContent & Sendable>: Sendable 
 
     private let cancellationFlag: CancellationRequestFlag
 
+    /// The records the tool attaches through ``ToolContext/attach(_:)``,
+    /// drained into the settlement when the call closes.
+    private let attachmentBox: ToolCallAttachmentBox
+
     private let stopReport = AuthoritativeStopReport()
 
     private let timeoutSeconds: TimeInterval?
@@ -34,6 +38,7 @@ struct ToolRun<Arguments: ConvertibleFromGeneratedContent & Sendable>: Sendable 
     ) {
         let completionToken = SessionMailbox.makeCompletionToken()
         let cancellationFlag = CancellationRequestFlag()
+        let attachmentBox = ToolCallAttachmentBox()
         let funnel = RunEventFunnel(upstream: sink, mailbox: mailbox, completionToken: completionToken)
         let context = ToolContext(
             stamping: wrapped,
@@ -42,13 +47,15 @@ struct ToolRun<Arguments: ConvertibleFromGeneratedContent & Sendable>: Sendable 
             mailbox: mailbox,
             sink: funnel,
             completionToken: completionToken,
-            isCancelled: { cancellationFlag.isRequested }
+            isCancelled: { cancellationFlag.isRequested },
+            attachmentSink: { attachmentBox.append($0) }
         )
         self.wrapped = wrapped
         self.sink = sink
         self.context = context
         self.funnel = funnel
         self.cancellationFlag = cancellationFlag
+        self.attachmentBox = attachmentBox
         self.timeoutSeconds = Self.perCallTimeout(of: wrapped, from: arguments) ?? mountTimeout
         self.openRecord = ToolInvocationRecord(
             tool: context.tool,
@@ -111,6 +118,9 @@ struct ToolRun<Arguments: ConvertibleFromGeneratedContent & Sendable>: Sendable 
             cancellationFlag.request()
             inner.cancel()
         }
+        // Drained after the call returns. A record the tool attaches later
+        // than this point belongs to no settlement, and is dropped.
+        let attachments = attachmentBox.drain()
         let facts = Self.terminalFacts(for: result, stoppedAs: await stopReport.outcome())
         let terminal = OperationEvent(
             tool: context.tool,
@@ -121,7 +131,7 @@ struct ToolRun<Arguments: ConvertibleFromGeneratedContent & Sendable>: Sendable 
             outcome: facts.outcome
         )
         await funnel.settleRun(with: terminal)
-        return RunSettlement(result: result, terminal: terminal)
+        return RunSettlement(result: result, terminal: terminal, attachments: attachments)
     }
 
     /// Races `inner` against the resettable timeout. Expiry cancels `inner`
@@ -210,13 +220,38 @@ struct ToolRun<Arguments: ConvertibleFromGeneratedContent & Sendable>: Sendable 
     }
 }
 
-/// How one run's body ended: the in-band result and the terminal event.
+/// How one run's body ended: the in-band result, the terminal event, and the
+/// records the call attached.
 struct RunSettlement: Sendable {
     /// The wrapped tool's output, or the error that ended the call.
     let result: Result<String, any Error>
 
     /// The run's terminal event, already funneled upstream.
     let terminal: OperationEvent
+
+    /// The records the tool attached through ``ToolContext/attach(_:)``, in
+    /// call order.
+    let attachments: [ToolCallAttachment]
+}
+
+/// The records one call attaches: the tool appends them, and the run drains
+/// them one time when the call closes.
+final class ToolCallAttachmentBox: Sendable {
+    private let collected = Mutex<[ToolCallAttachment]>([])
+
+    /// Appends `attachment` after every record appended before it.
+    func append(_ attachment: ToolCallAttachment) {
+        collected.withLock { $0.append(attachment) }
+    }
+
+    /// Removes and returns every record appended so far, in call order.
+    func drain() -> [ToolCallAttachment] {
+        collected.withLock { records in
+            let drained = records
+            records.removeAll()
+            return drained
+        }
+    }
 }
 
 /// Whichever of the inner call's completion or the timeout arrives first.

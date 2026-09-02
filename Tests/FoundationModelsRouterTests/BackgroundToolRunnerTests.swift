@@ -238,6 +238,50 @@ struct BackgroundToolRunnerTests {
         #expect(events.filter { $0.kind == .completed }.count == 1)
     }
 
+    // MARK: - Attachments
+
+    @Test("attachments made after the run is handed back still reach that run's settlement, in call order")
+    func lateAttachmentsReachTheSettlement() async throws {
+        let gate = RunLatch()
+        let sink = Fixtures.RecordingSink()
+        let arguments = MountArguments(value: "late")
+        let run = Fixtures.toolRun(
+            wrapping: Fixtures.GatedAttachingTool(gate: gate), arguments: arguments, sink: sink
+        )
+
+        await run.open()
+        // The body runs behind the hand-back, the way `BackgroundToolRunner`
+        // runs it: this task is the run, and control returns at once.
+        let settling = Task { await run.execute(arguments: arguments) }
+        // The second record lands only after the gate opens, so it is made
+        // after the hand-back.
+        await gate.open()
+        let settlement = await settling.value
+
+        #expect(settlement.attachments == Fixtures.attachmentsInCallOrder)
+        #expect(try settlement.result.get() == "attached late: late")
+    }
+
+    @Test("attachments never reach the envelope, the terminal, or any event of a background call")
+    func attachmentsStayOutOfTheModelFacingOutput() async throws {
+        let gate = RunLatch()
+        let harness = Fixtures.backgroundHarness(wrapping: Fixtures.GatedAttachingTool(gate: gate))
+
+        let rendered = try await harness.mounted.call(arguments: MountArguments(value: "x"))
+        let envelope = try Fixtures.decodeEnvelope(rendered)
+        #expect(!Fixtures.isAttachmentMentioned(in: rendered))
+
+        await gate.open()
+        let terminal = try await Fixtures.settledTerminal(
+            of: envelope.completionToken, in: harness.mailbox
+        )
+        #expect(terminal.detail == "attached late: x")
+
+        let events = await harness.sink.events
+        #expect(events.map(\.kind) == [.progress, .completed])
+        #expect(!events.contains { Fixtures.isAttachmentMentioned(in: $0.detail) })
+    }
+
     // MARK: - The run-plane snapshot
 
     @Test("background-run progress feeds the mailbox's run-plane snapshot")

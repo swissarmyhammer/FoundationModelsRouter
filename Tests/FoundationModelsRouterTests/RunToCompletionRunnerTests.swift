@@ -221,6 +221,33 @@ struct RunToCompletionRunnerTests {
         #expect(events.last?.outcome == .timedOut)
     }
 
+    // MARK: - Attachments
+
+    @Test("two attach calls inside a run-to-completion run land on its settlement in call order")
+    func attachmentsLandOnTheSettlementInCallOrder() async throws {
+        let sink = Fixtures.RecordingSink()
+        let arguments = MountArguments(value: "x")
+        let run = Fixtures.toolRun(wrapping: Fixtures.AttachingTool(), arguments: arguments, sink: sink)
+
+        await run.open()
+        let settlement = await run.execute(arguments: arguments)
+
+        #expect(settlement.attachments == Fixtures.attachmentsInCallOrder)
+        #expect(try settlement.result.get() == "attached: x")
+    }
+
+    @Test("attachments never reach the rendered output or any event of a run-to-completion call")
+    func attachmentsStayOutOfTheModelFacingOutput() async throws {
+        let harness = Fixtures.runToCompletionHarness(wrapping: Fixtures.AttachingTool())
+
+        let rendered = try await harness.mounted.call(arguments: MountArguments(value: "x"))
+
+        #expect(rendered == "attached: x")
+        #expect(!Fixtures.isAttachmentMentioned(in: rendered))
+        // A silent success posts no event, so no detail can carry a record.
+        #expect(await harness.sink.events.isEmpty)
+    }
+
     // MARK: - The clockless mount
 
     @Test("the run-to-completion mount carries no timeout at all")

@@ -428,6 +428,40 @@ struct ToolContextTests {
         #expect(!posted.op.isEmpty)
     }
 
+    // MARK: - Attachments
+
+    @Test("attach hands each record to the sink the context was built with, in call order")
+    func attachRoutesToTheBoundSink() {
+        let box = ToolCallAttachmentBox()
+        let context = ToolContext(
+            stamping: PlainNamedTool(),
+            sessionID: ULID.generate(),
+            mailbox: SessionMailbox(),
+            sink: RecordingSink(),
+            completionToken: SessionMailbox.makeCompletionToken(),
+            isCancelled: { false },
+            attachmentSink: { box.append($0) }
+        )
+
+        context.attach(MountFixtures.firstAttachment)
+        context.attach(MountFixtures.secondAttachment)
+
+        #expect(box.drain() == MountFixtures.attachmentsInCallOrder)
+        // A drain empties the box: the same records never deliver twice.
+        #expect(box.drain().isEmpty)
+    }
+
+    @Test("attach on a context built with the default sink drops the record: no event carries it, and the call does not trap")
+    func attachOnTheDefaultSinkDrops() async {
+        let sink = RecordingSink()
+        let context = Self.makeContext(sink: sink)
+
+        context.attach(MountFixtures.firstAttachment)
+
+        // An attachment is never an event: the event route stays silent.
+        #expect(await sink.events.isEmpty)
+    }
+
     // MARK: - Run-plane capabilities
 
     @Test("backgroundRuns() reports the session's background runs, and a settled run leaves the report")

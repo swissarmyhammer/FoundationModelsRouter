@@ -67,8 +67,8 @@ struct ContextBindingTool<
         }
     }
 
-    /// The bound call itself: the per-call ``ToolContext``, the pair of
-    /// ``ToolInvocationRecord``s around it, and the outcome written onto `span`.
+    /// The bound call itself: the settlement of one call, and its outcome
+    /// written onto `span`.
     ///
     /// - Parameters:
     ///   - arguments: The call's decoded arguments.
@@ -76,7 +76,23 @@ struct ContextBindingTool<
     /// - Returns: The wrapped tool's output, unchanged.
     /// - Throws: The wrapped tool's error, unmodified.
     private func bind(arguments: Arguments, reportingTo span: any Span) async throws -> Output {
+        let settlement = await settle(arguments: arguments)
+        ToolCallSpan.record(outcome: settlement.recordedOutcome, on: span)
+        return try settlement.outcome.get()
+    }
+
+    /// Runs one call under a fresh ``ToolContext`` binding, posts the open and
+    /// the close ``ToolInvocationRecord`` around it, and drains the records the
+    /// call attached.
+    ///
+    /// The settlement holds the drained attachments beside the outcome. A
+    /// later card posts them from ``bind(arguments:reportingTo:)``.
+    ///
+    /// - Parameter arguments: The call's decoded arguments.
+    /// - Returns: How the call ended, and what it attached.
+    func settle(arguments: Arguments) async -> BindingSettlement<Output> {
         let cancellationFlag = CancellationRequestFlag()
+        let attachmentBox = ToolCallAttachmentBox()
         let context = ToolContext(
             stamping: wrapped,
             op: op,
@@ -84,7 +100,8 @@ struct ContextBindingTool<
             mailbox: mailbox,
             sink: sink,
             completionToken: SessionMailbox.makeCompletionToken(),
-            isCancelled: { cancellationFlag.isRequested }
+            isCancelled: { cancellationFlag.isRequested },
+            attachmentSink: { attachmentBox.append($0) }
         )
         let openRecord = ToolInvocationRecord(
             tool: context.tool,
@@ -94,7 +111,7 @@ struct ContextBindingTool<
             openedAt: Date()
         )
         await sink.post(invocation: openRecord)
-        return try await withTaskCancellationHandler {
+        return await withTaskCancellationHandler {
             // Captured as a `Result` so the close record is posted on the
             // throwing path too — `defer` cannot await.
             let outcome: Result<Output, any Error>
@@ -108,16 +125,33 @@ struct ContextBindingTool<
             } catch {
                 outcome = .failure(error)
             }
+            // Drained after the call returns. A record the tool attaches
+            // later than this point belongs to no settlement, and is dropped.
+            let attachments = attachmentBox.drain()
             await sink.post(invocation: openRecord.closed(at: Date()))
-            let recorded: OperationOutcome =
-                switch outcome {
-                case .success: .succeeded
-                case .failure: .failed
-                }
-            ToolCallSpan.record(outcome: recorded, on: span)
-            return try outcome.get()
+            return BindingSettlement(outcome: outcome, attachments: attachments)
         } onCancel: {
             cancellationFlag.request()
+        }
+    }
+}
+
+/// How one bound call ended: the wrapped tool's outcome, and the records the
+/// call attached.
+struct BindingSettlement<Output> {
+    /// The wrapped tool's output, or the error that ended the call.
+    let outcome: Result<Output, any Error>
+
+    /// The records the tool attached through ``ToolContext/attach(_:)``, in
+    /// call order.
+    let attachments: [ToolCallAttachment]
+
+    /// The outcome the call's span records: succeeded for an output, failed
+    /// for an error.
+    var recordedOutcome: OperationOutcome {
+        switch outcome {
+        case .success: .succeeded
+        case .failure: .failed
         }
     }
 }

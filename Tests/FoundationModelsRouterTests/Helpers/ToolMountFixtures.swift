@@ -81,6 +81,30 @@ enum MountFixtures {
         return Harness(mailbox: mailbox, sink: sink, mounted: mounted)
     }
 
+    /// One call's internal run, the body both runners share, over a fresh
+    /// mailbox and `sink`.
+    ///
+    /// - Parameters:
+    ///   - tool: The tool the run calls.
+    ///   - arguments: The call's arguments, read for a per-call timeout.
+    ///   - sink: The sink the run's events funnel into.
+    /// - Returns: The prepared run. Call `open()` and then `execute(arguments:)`.
+    static func toolRun<Arguments: ConvertibleFromGeneratedContent & Sendable>(
+        wrapping tool: any Tool<Arguments, String>,
+        arguments: Arguments,
+        sink: RecordingSink
+    ) -> ToolRun<Arguments> {
+        ToolRun(
+            wrapped: tool,
+            arguments: arguments,
+            sessionID: ULID.generate(),
+            mailbox: SessionMailbox(),
+            sink: sink,
+            op: nil,
+            mountTimeout: ToolMount.defaultTimeoutSeconds
+        )
+    }
+
     // MARK: - Envelope and settlement helpers
 
     /// The pending envelope's decoded shape.
@@ -411,6 +435,80 @@ enum MountFixtures {
         func call(arguments: MountArguments) async throws -> String {
             await gate.waitUntilOpen()
             return ToolContext.current?.sessionID.ulidString ?? "unbound"
+        }
+    }
+
+    // MARK: - Attachments
+
+    /// The first record the attaching fixtures hand to their run.
+    static let firstAttachment = ToolCallAttachment(
+        schemaName: "FileChangeSet",
+        contentJSON: #"{"changes":[{"path":"Sources/App.swift","kind":"modified"}]}"#
+    )
+
+    /// The second record the attaching fixtures hand to their run.
+    static let secondAttachment = ToolCallAttachment(
+        schemaName: "CommandExit",
+        contentJSON: #"{"status":0}"#
+    )
+
+    /// The records every attaching fixture hands to its run, in call order.
+    static let attachmentsInCallOrder = [firstAttachment, secondAttachment]
+
+    /// Hands ``firstAttachment`` and then ``secondAttachment`` to the ambient
+    /// context. Does nothing when no context is bound.
+    static func attachInCallOrder() {
+        ToolContext.current?.attach(firstAttachment)
+        ToolContext.current?.attach(secondAttachment)
+    }
+
+    /// Whether `text` carries any part of an attaching fixture's records: the
+    /// schema name or the JSON document.
+    ///
+    /// - Parameter text: The rendered output or event detail to read.
+    /// - Returns: `true` when the text names a record.
+    static func isAttachmentMentioned(in text: String) -> Bool {
+        attachmentsInCallOrder.contains { attachment in
+            text.contains(attachment.schemaName) || text.contains(attachment.contentJSON)
+        }
+    }
+
+    /// Attaches both records through the ambient context, then returns.
+    struct AttachingTool: Tool {
+        let name = "attaching_tool"
+        let description = "attaches two records then returns"
+
+        func call(arguments: MountArguments) async throws -> String {
+            attachInCallOrder()
+            return "attached: \(arguments.value)"
+        }
+    }
+
+    /// Attaches ``firstAttachment``, blocks on its gate, attaches
+    /// ``secondAttachment``, then returns. The second record therefore lands
+    /// after the test opens the gate.
+    struct GatedAttachingTool: Tool {
+        let name = "gated_attaching_tool"
+        let description = "attaches one record, waits for its gate, then attaches a second"
+        let gate: RunLatch
+
+        func call(arguments: MountArguments) async throws -> String {
+            ToolContext.current?.attach(firstAttachment)
+            await gate.waitUntilOpen()
+            ToolContext.current?.attach(secondAttachment)
+            return "attached late: \(arguments.value)"
+        }
+    }
+
+    /// The non-`String`-output twin of ``AttachingTool``: attaches both records
+    /// through the ambient context, then returns its text.
+    struct AttachingNonStringOutputTool: Tool {
+        let name = "attaching_non_string_output_tool"
+        let description = "attaches two records then returns a non-String output"
+
+        func call(arguments: MountArguments) async throws -> NonStringToolOutput {
+            attachInCallOrder()
+            return NonStringToolOutput(text: "attached: \(arguments.value)")
         }
     }
 }
