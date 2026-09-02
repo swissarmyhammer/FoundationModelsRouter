@@ -373,6 +373,80 @@ struct SessionOutboxTests {
         #expect(await waiter.wokeUp())
     }
 
+    // MARK: - post(report:): forwarded to the observer, never staged, never journaled
+
+    /// Keeps every ``ToolCallReport`` the outbox forwards to it, so a test can
+    /// compare what arrived with what was posted.
+    private actor ReportRecordingObserver: ToolInvocationObserver {
+        /// Every forwarded report, in delivery order.
+        private(set) var reports: [ToolCallReport] = []
+
+        func deliver(invocation record: ToolInvocationRecord) {}
+
+        func deliver(report: ToolCallReport) {
+            reports.append(report)
+        }
+    }
+
+    /// Keeps every ``OperationEvent`` the outbox records into it, so a test
+    /// can prove which posts entered the journal chain.
+    private actor RecordingJournal: OperationEventJournal {
+        /// Every recorded event, in record order.
+        private(set) var recorded: [OperationEvent] = []
+
+        func record(event: OperationEvent) {
+            recorded.append(event)
+        }
+    }
+
+    /// Builds a canned ``ToolCallReport`` for one call, so a test can focus on
+    /// the outbox's forwarding rather than on report field boilerplate.
+    private static func report() -> ToolCallReport {
+        ToolCallReport(
+            tool: "shell", op: "run command", correlationID: "1", sessionID: .generate(),
+            attachments: [MountFixtures.firstAttachment])
+    }
+
+    @Test("post(report:) hands the same report to the attached observer")
+    func postReportReachesTheObserver() async {
+        let outbox = SessionOutbox()
+        let observer = ReportRecordingObserver()
+        await outbox.attach(invocationObserver: observer)
+        let report = Self.report()
+
+        await outbox.post(report: report)
+
+        #expect(await observer.reports == [report])
+    }
+
+    @Test("post(report:) stages nothing and writes nothing to the journal")
+    func postReportStagesNothingAndJournalsNothing() async {
+        let outbox = SessionOutbox()
+        let observer = ReportRecordingObserver()
+        let journal = RecordingJournal()
+        await outbox.attach(invocationObserver: observer)
+        await outbox.attach(journal: journal)
+
+        await outbox.post(report: Self.report())
+        // The positive control: a plain event posted after the report does
+        // reach the journal, so an empty journal is not a stalled chain.
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .completed, detail: "control"))
+
+        let pending = await outbox.pending()
+        #expect(pending.events.map(\.event.detail) == ["control"])
+        #expect(await journal.recorded.map(\.detail) == ["control"])
+    }
+
+    @Test("post(report:) with no observer attached drops the report and stages nothing")
+    func postReportWithNoObserverIsDropped() async {
+        let outbox = SessionOutbox()
+
+        await outbox.post(report: Self.report())
+
+        let pending = await outbox.pending()
+        #expect(pending.events.isEmpty)
+    }
+
     // MARK: - Helpers
 
     private static func prompt(_ text: String) -> Transcript.Prompt {

@@ -93,8 +93,9 @@ actor SessionOutbox: OperationEventSink {
     /// ``attach(journal:)``. Weak to avoid a reference cycle.
     private weak var journal: (any OperationEventJournal)?
 
-    /// The observer every posted invocation record goes to, or `nil` before
-    /// ``attach(invocationObserver:)``. Weak to avoid a reference cycle.
+    /// The observer every posted invocation record and tool call report goes
+    /// to, or `nil` before ``attach(invocationObserver:)``. Weak to avoid a
+    /// reference cycle.
     private weak var invocationObserver: (any ToolInvocationObserver)?
 
     /// The FIFO chain every journal write is enqueued onto.
@@ -164,8 +165,8 @@ actor SessionOutbox: OperationEventSink {
         self.journal = journal
     }
 
-    /// Installs the observer that receives every ``ToolInvocationRecord``
-    /// posted from now on.
+    /// Installs the observer that receives every ``ToolInvocationRecord`` and
+    /// ``ToolCallReport`` posted from now on.
     ///
     /// - Parameter invocationObserver: The observer to install.
     internal func attach(invocationObserver: any ToolInvocationObserver) {
@@ -180,6 +181,16 @@ actor SessionOutbox: OperationEventSink {
     /// - Parameter record: The record to forward.
     func post(invocation record: ToolInvocationRecord) async {
         await invocationObserver?.deliver(invocation: record)
+    }
+
+    /// Posts one ``ToolCallReport`` to the attached observer.
+    ///
+    /// The report is not staged and not journaled. Before an observer is
+    /// attached, the report is dropped.
+    ///
+    /// - Parameter report: The report to forward.
+    func post(report: ToolCallReport) async {
+        await invocationObserver?.deliver(report: report)
     }
 
     /// Chains one journal write onto ``journalChain``.

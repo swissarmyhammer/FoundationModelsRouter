@@ -375,4 +375,138 @@ struct ToolInvocationLivenessTests {
         projection.apply(.toolInvocation(quick.closed(at: Date())))
         #expect(projection.phase == .generating)
     }
+
+    // MARK: - Tool call reports: delivered live on the turn's stream, or on the session feed
+
+    /// Keeps every ``ToolCallReport`` a session-scoped stream carries, so a
+    /// test can wait for one under a bound instead of on the stream itself.
+    private actor ReportLog {
+        /// Every report seen, in arrival order.
+        private(set) var reports: [ToolCallReport] = []
+
+        /// Records one report.
+        ///
+        /// - Parameter report: The report the stream carried.
+        func record(_ report: ToolCallReport) {
+            reports.append(report)
+        }
+    }
+
+    /// Builds the report a test posts for one closed call, with the same
+    /// identity the call's close record carries.
+    ///
+    /// - Parameter record: The call's close record.
+    /// - Returns: A report for that call, carrying one attachment.
+    private static func report(for record: ToolInvocationRecord) -> ToolCallReport {
+        ToolCallReport(
+            tool: record.tool, op: record.op, correlationID: record.correlationID,
+            sessionID: record.sessionID, attachments: [MountFixtures.firstAttachment])
+    }
+
+    /// The position of the first ``SessionEvent/turnEnded(_:)`` in `events`,
+    /// or `nil` when the backend reported no usage.
+    ///
+    /// - Parameter events: The turn's events, in stream order.
+    /// - Returns: The index of the first `turnEnded`, or `nil`.
+    private static func turnEndedIndex(in events: [SessionEvent]) -> Int? {
+        events.firstIndex {
+            if case .turnEnded = $0 { return true }
+            return false
+        }
+    }
+
+    @Test("a report posted mid-turn arrives on the turn's stream after the close record it follows")
+    @MainActor
+    func reportPostedMidTurnArrivesOnTheTurnStreamAfterTheCloseRecord() async throws {
+        let quickTool = MarkerEmittingTool()
+        let slowTool = GatedMarkerTool()
+        let fixture = try await ScriptedSessionFixture.make(
+            playing: ScriptedTurnScript(rounds: [
+                [
+                    ScriptedToolCall(
+                        id: "call-quick", toolName: MarkerEmittingTool.toolName,
+                        argument: .literal(ScriptedToolFixture.firstStepName))
+                ],
+                [
+                    ScriptedToolCall(
+                        id: "call-slow", toolName: GatedMarkerTool.toolName,
+                        argument: .literal(ScriptedToolFixture.firstStepName))
+                ],
+            ]),
+            mounting: [quickTool, slowTool],
+            tempDirPrefix: "ToolInvocationLivenessTests")
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        // Read the turn's stream up to the quick call's close record. The gated
+        // call of the second round has not returned, so the turn is in flight
+        // when the report is posted.
+        let stream = await fixture.session.streamEvents(to: ScriptedToolFixture.prompt)
+        var events: [SessionEvent] = []
+        var quickClose: ToolInvocationRecord?
+        var iterator = stream.makeAsyncIterator()
+        while quickClose == nil, let event = try await iterator.next() {
+            events.append(event)
+            if case .toolInvocation(let record) = event,
+                record.tool == MarkerEmittingTool.toolName, record.closedAt != nil
+            {
+                quickClose = record
+            }
+        }
+        let close = try #require(quickClose)
+        let closeIndex = events.count - 1
+
+        let report = Self.report(for: close)
+        await fixture.session.outbox.post(report: report)
+
+        slowTool.release()
+        while let event = try await iterator.next() {
+            events.append(event)
+        }
+
+        let reportIndex = try #require(events.firstIndex(of: .toolCallReport(report)))
+        #expect(closeIndex < reportIndex)
+        if let turnEndedIndex = Self.turnEndedIndex(in: events) {
+            #expect(reportIndex < turnEndedIndex)
+        }
+    }
+
+    @Test("a report posted between turns arrives on streamSessionEvents()")
+    @MainActor
+    func reportPostedBetweenTurnsArrivesOnTheSessionStream() async throws {
+        let fixture = try await ScriptedSessionFixture.make(
+            playing: ScriptedTurnScript(rounds: [
+                [
+                    ScriptedToolCall(
+                        id: "call-1", toolName: MarkerEmittingTool.toolName,
+                        argument: .literal(ScriptedToolFixture.firstStepName))
+                ]
+            ]),
+            mounting: [MarkerEmittingTool()],
+            tempDirPrefix: "ToolInvocationLivenessTests")
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        // One turn first: the session installs itself as the outbox's observer
+        // at the top of its first turn. A report posted before that is dropped.
+        let outcome: TurnOutcome = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
+        let close = try #require(outcome.toolInvocations.first)
+
+        let log = ReportLog()
+        let sessionEvents = await fixture.session.streamSessionEvents()
+        let collecting = Task {
+            for await event in sessionEvents {
+                if case .toolCallReport(let report) = event {
+                    await log.record(report)
+                }
+            }
+        }
+        defer { collecting.cancel() }
+
+        let report = Self.report(for: close)
+        await fixture.session.outbox.post(report: report)
+
+        #expect(
+            await BoundedWait.conditionReached("the report on streamSessionEvents()") {
+                await log.reports == [report]
+            })
+    }
 }

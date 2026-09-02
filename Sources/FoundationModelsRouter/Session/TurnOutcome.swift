@@ -77,13 +77,14 @@ struct TurnOutcomeFold {
             // attempt's usage with the retry's — the closing value.
             usage = attemptUsage
         case .turnStarted, .reasoningDelta, .entryRecorded, .discoveryPrimingFailed,
-            .generationStalled, .runSettled:
+            .generationStalled, .runSettled, .toolCallReport:
             // Deliberately not carried by the outcome: the frame, the priming
-            // report, the stall report, and a background run's settlement are
-            // live-driver concerns — a stall
+            // report, the stall report, a background run's settlement, and a
+            // call's attachments are live-driver concerns — a stall
             // report says the turn is still running and changes nothing about
             // what it finally produced, so it has no place in a finished
-            // turn's outcome. Reasoning is model prose the reply excludes, and
+            // turn's outcome, and a tool call report carries records only a
+            // host can decode. Reasoning is model prose the reply excludes, and
             // the recorded-entry closes exist for consumers (like
             // ``SessionProjection``) that key rows on durable SDK entry ids.
             // The `observing` callback still delivers every one of them raw.

@@ -36,6 +36,16 @@ public enum SessionEvent: Sendable, Equatable {
     /// Its ``ToolInvocationRecord/correlationID`` is the run's `completionToken`, never a `Transcript.ToolCall.id`.
     case toolInvocation(ToolInvocationRecord)
 
+    /// The records one tool call attached through ``ToolContext/attach(_:)``.
+    /// Delivery-only, never recorded. Emitted one time per call, after the
+    /// call's close ``toolInvocation(_:)`` record, and only when the call
+    /// attached at least one record. Its ``ToolCallReport/correlationID`` is the
+    /// run's `completionToken`, the same value as the call's
+    /// ``ToolInvocationRecord/correlationID``, never a `Transcript.ToolCall.id`.
+    /// Always on ``RoutedSession/streamSessionEvents()``; on the turn's stream
+    /// when the call closes inside a turn.
+    case toolCallReport(ToolCallReport)
+
     /// The turn's diff recorded one SDK transcript entry under its durable id.
     /// Emitted once per recorded `.response`, `.reasoning`, or `.toolCalls` entry.
     /// `id` is the `Transcript.Entry.id`, never a `Transcript.ToolCall.id`.
@@ -59,6 +69,45 @@ public enum SessionEvent: Sendable, Equatable {
 
     /// One generate attempt closed, with its measured token usage. Emitted once per inner generate call.
     case turnEnded(TokenUsage)
+}
+
+/// The records one tool call attached, carried by ``SessionEvent/toolCallReport(_:)``.
+///
+/// The Router does not read an attachment. A host decodes each one by its
+/// ``ToolCallAttachment/schemaName``. The report identifies its call the way
+/// the call's ``ToolInvocationRecord`` does, so a host can join the two.
+public struct ToolCallReport: Sendable, Equatable {
+    /// The session-visible tool name, the same stamp the call's record carries.
+    public let tool: String
+
+    /// The operation the call ran, the same `op` the call's record carries.
+    public let op: String
+
+    /// The run's `completionToken`: the same value as the call's
+    /// ``ToolInvocationRecord/correlationID``, never a `Transcript.ToolCall.id`.
+    public let correlationID: String
+
+    /// The session the call ran in.
+    public let sessionID: ULID
+
+    /// The records the call attached, in call order. At least one.
+    public let attachments: [ToolCallAttachment]
+
+    /// Creates a report for one call.
+    ///
+    /// - Parameters:
+    ///   - tool: The session-visible tool name.
+    ///   - op: The operation the call ran.
+    ///   - correlationID: The run's `completionToken`.
+    ///   - sessionID: The session the call ran in.
+    ///   - attachments: The records the call attached, in call order.
+    public init(tool: String, op: String, correlationID: String, sessionID: ULID, attachments: [ToolCallAttachment]) {
+        self.tool = tool
+        self.op = op
+        self.correlationID = correlationID
+        self.sessionID = sessionID
+        self.attachments = attachments
+    }
 }
 
 /// The kind of SDK transcript entry a ``SessionEvent/entryRecorded(id:kind:)`` names.

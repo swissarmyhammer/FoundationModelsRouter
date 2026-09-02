@@ -95,8 +95,9 @@ extension RoutedSessionActor: BackgroundRunSettlementObserver {
 }
 
 /// ``RoutedSessionActor``'s live invocation delivery. A
-/// ``ToolInvocationRecord`` becomes a ``SessionEvent/toolInvocation(_:)`` the
-/// moment it is posted. Delivery only: a record is never journaled.
+/// ``ToolInvocationRecord`` becomes a ``SessionEvent/toolInvocation(_:)`` and
+/// a ``ToolCallReport`` becomes a ``SessionEvent/toolCallReport(_:)`` the
+/// moment it is posted. Delivery only: neither is ever journaled.
 extension RoutedSessionActor: ToolInvocationObserver {
     /// Delivers one live ``ToolInvocationRecord`` as
     /// ``SessionEvent/toolInvocation(_:)``. See ``deliverLive(_:)``.
@@ -104,5 +105,13 @@ extension RoutedSessionActor: ToolInvocationObserver {
     /// - Parameter record: The record the outbox forwarded.
     func deliver(invocation record: ToolInvocationRecord) {
         deliverLive(.toolInvocation(record))
+    }
+
+    /// Delivers one live ``ToolCallReport`` as
+    /// ``SessionEvent/toolCallReport(_:)``. See ``deliverLive(_:)``.
+    ///
+    /// - Parameter report: The report the outbox forwarded.
+    func deliver(report: ToolCallReport) {
+        deliverLive(.toolCallReport(report))
     }
 }

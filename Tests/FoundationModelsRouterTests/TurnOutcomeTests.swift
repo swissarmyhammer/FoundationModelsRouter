@@ -254,4 +254,39 @@ struct TurnOutcomeTests {
         #expect(outcome.toolInvocations.first?.closedAt != nil)
         #expect(outcome.toolInvocations.first?.correlationID == "token-1")
     }
+
+    /// Folds `events` in order and returns the outcome.
+    ///
+    /// - Parameter events: The turn's events, in stream order.
+    /// - Returns: The folded ``TurnOutcome``.
+    private static func outcome(of events: [SessionEvent]) -> TurnOutcome {
+        var fold = TurnOutcomeFold()
+        for event in events {
+            fold.apply(event)
+        }
+        return fold.outcome
+    }
+
+    @Test("the fold does not carry a toolCallReport: the outcome is the same with and without one")
+    func foldDoesNotCarryAToolCallReport() {
+        let open = ToolInvocationRecord(
+            tool: "search", op: "search", correlationID: "token-1", sessionID: .generate(),
+            openedAt: Date(timeIntervalSince1970: 100))
+        let report = ToolCallReport(
+            tool: open.tool, op: open.op, correlationID: open.correlationID, sessionID: open.sessionID,
+            attachments: [MountFixtures.firstAttachment])
+        let turnStarted = SessionEvent.turnStarted(TurnStart(turnId: TurnID(1), promptId: nil))
+        let close = SessionEvent.toolInvocation(open.closed(at: Date(timeIntervalSince1970: 102)))
+        let turnEnded = SessionEvent.turnEnded(TokenUsage(tokensIn: 4, tokensOut: 2, contextFill: 0.4))
+        let plainTurn: [SessionEvent] = [turnStarted, .toolInvocation(open), close, turnEnded]
+        let reportedTurn: [SessionEvent] = [
+            turnStarted, .toolInvocation(open), close, .toolCallReport(report), turnEnded,
+        ]
+
+        let reportedOutcome = Self.outcome(of: reportedTurn)
+
+        // The fold saw the call: the comparison below is not between two empty outcomes.
+        #expect(reportedOutcome.toolInvocations.count == 1)
+        #expect(reportedOutcome == Self.outcome(of: plainTurn))
+    }
 }

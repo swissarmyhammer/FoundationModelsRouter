@@ -185,7 +185,10 @@ public protocol RoutedSession: Actor {
     /// Abandoning this stream cancels the turn. This surface does not drain the
     /// run plane. A run that settles before the stream ends is reported as
     /// ``SessionEvent/runSettled(_:)``; a later one is reported on
-    /// ``streamSessionEvents()``.
+    /// ``streamSessionEvents()``. A call that closes inside the turn reports
+    /// its attachments here as ``SessionEvent/toolCallReport(_:)``, after its
+    /// close ``SessionEvent/toolInvocation(_:)`` record; a call that closes
+    /// later reports them on ``streamSessionEvents()``.
     ///
     /// The turn opens one span, exactly as ``respond(to:maxTokens:)`` states,
     /// with `turn.entry_point` reading `stream`.
@@ -198,7 +201,8 @@ public protocol RoutedSession: Actor {
     ///
     /// Every turn-lifecycle event travels here, whichever entry point ran the
     /// turn: ``SessionEvent/turnStarted(_:)``, ``SessionEvent/reasoningDelta(_:)``,
-    /// tool-lifecycle events, ``SessionEvent/entryRecorded(id:kind:)``,
+    /// tool-lifecycle events, ``SessionEvent/toolCallReport(_:)``,
+    /// ``SessionEvent/entryRecorded(id:kind:)``,
     /// ``SessionEvent/compaction(_:)``, ``SessionEvent/discoveryPrimingFailed(_:)``,
     /// ``SessionEvent/generationStalled(_:)``, and ``SessionEvent/turnEnded(_:)``.
     /// ``SessionEvent/textDelta(_:)`` and ``SessionEvent/textReset`` travel only

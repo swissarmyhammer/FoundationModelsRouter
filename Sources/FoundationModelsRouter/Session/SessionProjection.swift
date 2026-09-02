@@ -159,7 +159,7 @@ public final class SessionProjection {
             phase = .compacting
             transcript.append(
                 TranscriptEntry(id: result.id, kind: .compaction(result), sourceEntryId: result.summaryEntryId))
-        case .discoveryPrimingFailed, .generationStalled, .runSettled:
+        case .discoveryPrimingFailed, .generationStalled, .runSettled, .toolCallReport:
             // Handled explicitly, and deliberately changes nothing. A settled
             // run's terminal reaches this mirror as the recorded tool output
             // of the turn that next carries it. A turn whose
@@ -167,10 +167,12 @@ public final class SessionProjection {
             // turn does (see ``SessionEvent/discoveryPrimingFailed(_:)``), and a
             // stall report bounds nothing at all — the turn is still running and
             // will still produce whatever it was going to produce (see
-            // ``SessionEvent/generationStalled(_:)``). So this projection's
-            // phase, transcript, and counters are already the faithful mirror of
-            // what happened. Both are diagnostics for a driver watching the
-            // event stream, not session state.
+            // ``SessionEvent/generationStalled(_:)``). A tool call report
+            // carries records for a host to decode, and the call's phase is
+            // already mirrored from its ``SessionEvent/toolInvocation(_:)``
+            // records. So this projection's phase, transcript, and counters
+            // are already the faithful mirror of what happened. All of them
+            // are for a driver watching the event stream, not session state.
             break
         case .turnEnded(let usage):
             tokensIn += usage.tokensIn

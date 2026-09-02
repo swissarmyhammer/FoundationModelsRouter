@@ -158,6 +158,33 @@ struct SessionProjectionTests {
         #expect(projection.phase == .idle)
     }
 
+    // MARK: - toolCallReport: carried for a host to decode, changes nothing here
+
+    @Test("a toolCallReport changes nothing: phase, transcript, turn, and counters stay as they were")
+    @MainActor
+    func toolCallReportChangesNothing() {
+        let projection = SessionProjection()
+        projection.apply(.turnStarted(TurnStart(turnId: TurnID(1), promptId: nil)))
+        projection.apply(.toolCall(id: "call-1", name: "search", argumentsJSON: "{}"))
+        projection.apply(.toolStatus(id: "call-1", status: .running, summary: nil, output: nil))
+        let phaseBefore = projection.phase
+        let transcriptBefore = projection.transcript
+        let turnBefore = projection.currentTurn
+
+        projection.apply(
+            .toolCallReport(
+                ToolCallReport(
+                    tool: "search", op: "search", correlationID: "token-1", sessionID: .generate(),
+                    attachments: [MountFixtures.firstAttachment])))
+
+        #expect(projection.phase == phaseBefore)
+        #expect(projection.transcript == transcriptBefore)
+        #expect(projection.currentTurn == turnBefore)
+        #expect(projection.tokensIn == 0)
+        #expect(projection.tokensOut == 0)
+        #expect(projection.contextFill == 0)
+    }
+
     // MARK: - compaction: appended as its own entry, phase .compacting
 
     @Test("a compaction event appends its result and sets phase .compacting")
