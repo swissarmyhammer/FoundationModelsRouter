@@ -275,7 +275,7 @@ struct SessionMailboxTests {
         /// Every forwarded terminal, in delivery order.
         private(set) var settledTerminals: [OperationEvent] = []
 
-        func deliver(settledTerminal terminal: OperationEvent) {
+        func deliver(settledTerminal terminal: OperationEvent) async {
             settledTerminals.append(terminal)
         }
     }
