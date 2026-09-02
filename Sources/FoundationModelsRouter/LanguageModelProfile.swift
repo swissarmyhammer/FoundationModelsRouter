@@ -24,6 +24,20 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// The chosen candidate's `× 1.2` footprint estimate in bytes.
     public let footprintBytes: Int64
 
+    /// The resolved working context, in tokens.
+    ///
+    /// This is the value the resolution ladder selected, not the value the
+    /// ``ProfileDefinition`` asked for. When the ladder steps down from a
+    /// candidate's native context to fit the budget, this value is smaller
+    /// than `ProfileDefinition.context` (see `JointFit`). Every slot of one
+    /// profile shares the same value.
+    ///
+    /// A session vended from this handle divides its context fill by this
+    /// value, and the sidecar records it as `context`. A caller that needs a
+    /// ``TokenBudget`` before it calls `makeSession` builds one with
+    /// `TokenBudget(limit: contextTokens)`.
+    public var contextTokens: Int { resolution.contextTokens }
+
     /// Why this model won its slot, and what was skipped or rejected.
     package let resolution: SlotResolution
 

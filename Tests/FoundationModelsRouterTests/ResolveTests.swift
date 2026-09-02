@@ -270,6 +270,14 @@ struct ResolveTests {
         #expect(resolved.flash.slot == .flash)
         #expect(resolved.embedding.slot == .embedding)
 
+        // Every handle reports the profile's own context as its resolved
+        // working context, because the profile fixes it and the ladder never
+        // runs.
+        let profileContext = try #require(Self.profile.context)
+        #expect(resolved.standard.contextTokens == profileContext)
+        #expect(resolved.flash.contextTokens == profileContext)
+        #expect(resolved.embedding.contextTokens == profileContext)
+
         // Progress reached ready with a full bar and every slot ready + chosen.
         #expect(progress.phase == .ready)
         #expect(progress.fraction == 1.0)
@@ -842,6 +850,13 @@ struct ResolveTests {
         #expect(resolved.standard.resolution.contextTokens == 32_768)
         #expect(resolved.flash.resolution.contextTokens == 32_768)
         #expect(resolved.embedding.resolution.contextTokens == 32_768)
+
+        // The public read reports the rung the ladder selected, not the
+        // candidate's native max from `ladderBigConfigJSON`.
+        let derivedRung = 32_768
+        let nativeMax = 131_072
+        #expect(resolved.standard.contextTokens == derivedRung)
+        #expect(resolved.standard.contextTokens != nativeMax)
     }
 
     // MARK: - Progress fraction math
