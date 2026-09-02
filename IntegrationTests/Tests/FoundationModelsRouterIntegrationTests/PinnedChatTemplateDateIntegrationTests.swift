@@ -165,6 +165,7 @@ struct PinnedChatTemplateDateIntegrationTests {
         var loadDuration: Duration = .zero
         var turnDuration: Duration = .zero
         defer {
+            // swiftlint:disable:next no_direct_standard_out_logs  the run table's grep reads this line from standard out
             print("[\(Self.phaseLabel)] load=\(loadDuration) turn=\(turnDuration)")
         }
 
@@ -187,6 +188,7 @@ struct PinnedChatTemplateDateIntegrationTests {
         )
         turnDuration = ContinuousClock.now - turnStarted
         let answer = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+        // swiftlint:disable:next no_direct_standard_out_logs  a red run shows on standard out what the model answered
         print("[\(Self.phaseLabel)] reply=\(answer)")
 
         // The model reads the date out of the system header the template wrote,
