@@ -178,6 +178,16 @@ private let compactionSmokeChatTemplateDate = RealModelContainer.chatTemplateFal
 /// (02 Sep 2026), under `TZ=Pacific/Midway` and under `TZ=UTC`. The clock no
 /// longer reaches this fold.
 ///
+/// Task ^3dy1ry9 then measured that pinned fold red on 3 of 3 runs, at
+/// `answerTokens=[689, 768]` and a stored summary of 39: the re-asked answer
+/// copied both prompts word for word under section 2, so the last-resort cut
+/// stored section 1 alone, and the planted fact went with section 2. The
+/// fixture's one scripted reply was the cause, and ``foldedTurnReplies``
+/// states the mechanism and the change. The fold measured on 2026-09-02
+/// under those replies: `ceilings=[628, 628] answerTokens=[746, 775]
+/// spanTokens=709 summaryTokens=652`, the planted fact stated in sections 2
+/// and 3 of the stored summary, and no cut.
+///
 /// The smoke tier is what those numbers rest on: this suite,
 /// ``AutoCompactionTriggerIntegrationTests`` and
 /// ``RecordedTranscriptCompactionIntegrationTests``. All three answer one
@@ -241,13 +251,44 @@ struct CompactionSmokeIntegrationTests {
     /// compaction stage may touch the header.
     private static let instructions = "You are a terse, literal assistant."
 
-    /// The reply text every scripted turn carries.
+    /// The reply text every turn of the recency window carries.
     ///
     /// Short on purpose. The fixture's size has to sit in the PROMPTS, because
     /// this suite builds the transcript itself rather than generating it: a
     /// long scripted reply would inflate the folded span without making the
-    /// fixture any more like a real conversation.
+    /// fixture any more like a real conversation. The two folded turns do not
+    /// carry it. ``foldedTurnReplies`` states why.
     private static let scriptedReply = "Acknowledged."
+
+    /// The reply text of each FOLDED turn, in turn order: one distinct
+    /// restatement of the prompt it answers, in the voice of the terse
+    /// assistant ``instructions`` names.
+    ///
+    /// Distinct, and not ``scriptedReply``, because task ^3dy1ry9 measured
+    /// what one identical reply on both folded turns costs. The rendered span
+    /// then reads `Assistant: Acknowledged.` twice, and
+    /// ``compactionSmokeModel`` writes that line back after almost every
+    /// bullet of its map answer: 25 of its 47 content lines repeated an
+    /// earlier line, so ``Summarization`` judged the answer a repetition loop
+    /// and made its re-ask. The re-ask then copied both prompts word for word
+    /// under section 2. A copy of the span can never fit the stored summary's
+    /// byte budget, because that budget is the span's own content bytes less
+    /// `Summarization.shrinkMarginBytes`. The last-resort cut kept section 1
+    /// alone, and the planted fact went with section 2, on 3 of 3 runs.
+    ///
+    /// With these replies the map answer still echoes both replies once per
+    /// section and is still re-asked, but the re-ask writes a summary rather
+    /// than a copy: 775 estimated tokens, with ``plantedFactValue`` stated in
+    /// sections 2 and 3. Section 1 and section 2 together are about 1850
+    /// bytes against a 2832-byte budget, so the fact fits with about 980
+    /// bytes to spare. The fold measured on 2026-09-02 stored that answer with
+    /// its repeated lines dropped, 652 estimated tokens, and made no cut.
+    private static let foldedTurnReplies: [String] = [
+        "Noted: the replacement streams each file, commits in bounded batches, keeps a rejects file beside the index, "
+            + "and reads batch size from a setting.",
+        "Clear: both paths run for one release, stations cut over oldest first after seven clean reports, "
+            + "and the old index stays until the release after.",
+    ]
 
     /// The distinctive value planted at the very END of the folded span, and
     /// the one thing ``aPlantedFactLateInTheSpanSurvivesTheFold`` reads the
@@ -374,13 +415,25 @@ struct CompactionSmokeIntegrationTests {
                     Transcript.Response(
                         id: "response-\(index)",
                         segments: [
-                            .text(Transcript.TextSegment(id: "response-\(index)-text", content: scriptedReply))
+                            .text(
+                                Transcript.TextSegment(
+                                    id: "response-\(index)-text", content: reply(forTurn: index)))
                         ]
                     )
                 )
             )
         }
         return Transcript(entries: entries)
+    }
+
+    /// The reply the turn at `index` of ``scriptedPrompts`` carries: its own
+    /// entry of ``foldedTurnReplies`` for a folded turn, and ``scriptedReply``
+    /// for a turn of the recency window.
+    ///
+    /// - Parameter index: The turn's position in ``scriptedPrompts``.
+    /// - Returns: The reply text.
+    private static func reply(forTurn index: Int) -> String {
+        index < foldedTurnReplies.count ? foldedTurnReplies[index] : scriptedReply
     }
 
     // MARK: - One folded run
@@ -444,7 +497,10 @@ struct CompactionSmokeIntegrationTests {
         //    folded span's byte budget. The 10 runs of 2026-08-31 measured
         //    this model taking the first rung and not the second: the map
         //    answer looped, the repetition re-ask answered 517 tokens, and
-        //    517 tokens sit inside the span budget. A THIRD call would mean
+        //    517 tokens sit inside the span budget. The fold of 2026-09-02,
+        //    under `foldedTurnReplies`, took the same rung: the re-ask
+        //    answered 775 tokens, and that answer fit the span budget once
+        //    its repeated lines were dropped. A THIRD call would mean
         //    the fixture outgrew `Summarization.maxChunkTokens` and bought a
         //    reduce round, or that both recovery rungs fired — either way the
         //    fixture or the model moved, and that fails here rather than
@@ -508,6 +564,14 @@ struct CompactionSmokeIntegrationTests {
         // degenerated into a repetition loop and spent its whole generation
         // before it reached the end of the span, so the answer named no fact
         // the span stated, and the fold stored the loop.
+        //
+        // `^3dy1ry9` measured a third, on 3 of 3 runs, and the fixture was
+        // the cause, not the fold. The map answer echoed the one scripted
+        // reply after almost every bullet, so it was re-asked, and the re-ask
+        // copied the span word for word under section 2. No two whole
+        // sections of that answer could fit the span's own byte budget, so
+        // the section-aligned cut stored section 1 alone. `foldedTurnReplies`
+        // records the mechanism and the change.
         let outcome = try await Self.foldTheFixture()
         let summary = try #require(
             outcome.result.summary, "the fold was discarded, so there is no summary to read")
