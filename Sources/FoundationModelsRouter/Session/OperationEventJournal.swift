@@ -81,6 +81,29 @@ protocol ToolCallReportSink: Sendable {
     func post(report: ToolCallReport) async
 }
 
+extension OperationEventSink {
+    /// Posts the ``ToolCallReport`` for one closing call to this sink, when
+    /// the call attached at least one record.
+    ///
+    /// This is an extension method, not a requirement, so a call through
+    /// `any OperationEventSink` always runs this body. The body then asks this
+    /// sink at run time whether it is also a ``ToolCallReportSink``, with a
+    /// dynamic cast. Both tool decorators post their report through here, so
+    /// the cast and the drop rule live in one place.
+    ///
+    /// - Parameters:
+    ///   - record: The call's close ``ToolInvocationRecord``, already posted.
+    ///   - attachments: The records the call attached, in call order.
+    func postToolCallReport(closing record: ToolInvocationRecord, attachments: [ToolCallAttachment]) async {
+        guard let report = ToolCallReport(closing: record, attachments: attachments) else { return }
+        // The cast decides delivery. `OperationEventSink` is external, so
+        // no requirement carries a report; a sink that is not a
+        // `ToolCallReportSink` drops it. That drop is a consequence of
+        // the cast, not of a default implementation.
+        await (self as? any ToolCallReportSink)?.post(report: report)
+    }
+}
+
 extension ToolCallReport {
     /// Creates the report for one closing call, or returns `nil` when the
     /// call attached nothing.

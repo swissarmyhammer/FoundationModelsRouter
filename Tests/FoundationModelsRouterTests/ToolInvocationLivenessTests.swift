@@ -532,19 +532,6 @@ struct ToolInvocationLivenessTests {
         ])
     }
 
-    /// Every event of one scripted turn on `session`, in stream order.
-    ///
-    /// - Parameter session: The session to drive one turn on.
-    /// - Returns: The turn's events.
-    /// - Throws: Whatever the turn throws.
-    private static func turnEvents(on session: RoutedSession) async throws -> [SessionEvent] {
-        var events: [SessionEvent] = []
-        for try await event in await session.streamEvents(to: ScriptedToolFixture.prompt) {
-            events.append(event)
-        }
-        return events
-    }
-
     /// Asserts that `events` open the one call before they close it.
     ///
     /// - Parameter events: The events to read, in stream order.
@@ -590,7 +577,7 @@ struct ToolInvocationLivenessTests {
             playing: oneCallScript(calling: tool), mounting: [tool], tempDirPrefix: tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        let events = try await turnEvents(on: fixture.session)
+        let events = try await collectEvents(fixture.session, prompt: ScriptedToolFixture.prompt)
 
         try expectOpenPrecedesClose(in: events)
         try expectOneReportFollowsClose(in: events)
@@ -657,7 +644,7 @@ struct ToolInvocationLivenessTests {
             playing: Self.oneCallScript(calling: tool), mounting: [tool], tempDirPrefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        let events = try await Self.turnEvents(on: fixture.session)
+        let events = try await collectEvents(fixture.session, prompt: ScriptedToolFixture.prompt)
 
         // The call ran and closed; only the report is absent.
         try Self.expectOpenPrecedesClose(in: events)
@@ -672,7 +659,7 @@ struct ToolInvocationLivenessTests {
             playing: Self.oneCallScript(calling: tool), mounting: [tool], tempDirPrefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        let events = try await Self.turnEvents(on: fixture.session)
+        let events = try await collectEvents(fixture.session, prompt: ScriptedToolFixture.prompt)
 
         // The positive control: the report was delivered live.
         #expect(events.compactMap(\.carriedReport).count == 1)
@@ -700,6 +687,63 @@ struct ToolInvocationLivenessTests {
         #expect(settlement.attachments == MountFixtures.attachmentsInCallOrder)
         #expect(await sink.invocations.map { $0.closedAt == nil } == [true, false])
         #expect(await sink.operationEvents.isEmpty)
+    }
+
+    // MARK: - The shared report post behind both decorators
+
+    /// One closed call's record, with a fresh identity, for a direct call of
+    /// `postToolCallReport(closing:attachments:)`.
+    ///
+    /// - Returns: The close record.
+    private static func makeClosedRecord() -> ToolInvocationRecord {
+        ToolInvocationRecord(
+            tool: "search", op: "search", correlationID: SessionMailbox.makeCompletionToken(),
+            sessionID: .generate(), openedAt: Date()
+        ).closed(at: Date())
+    }
+
+    @Test("postToolCallReport(closing:attachments:) posts one report with the close record's identity to a ToolCallReportSink")
+    func sharedReportPostDeliversToAReportSink() async throws {
+        let recording = MountFixtures.RecordingSink()
+        // Typed the way the decorators hold their sink, so the call goes
+        // through the dynamic cast the helper exists for.
+        let sink: any OperationEventSink = recording
+        let close = Self.makeClosedRecord()
+
+        await sink.postToolCallReport(closing: close, attachments: MountFixtures.attachmentsInCallOrder)
+
+        let reports = await recording.reports
+        let report = try #require(reports.first)
+        #expect(reports.count == 1)
+        #expect(report.correlationID == close.correlationID)
+        #expect(report.tool == close.tool)
+        #expect(report.op == close.op)
+        #expect(report.sessionID == close.sessionID)
+        #expect(report.attachments == MountFixtures.attachmentsInCallOrder)
+    }
+
+    @Test("postToolCallReport(closing:attachments:) posts nothing for a call that attached nothing")
+    func sharedReportPostSkipsACallWithNoAttachments() async {
+        let recording = MountFixtures.RecordingSink()
+        let sink: any OperationEventSink = recording
+
+        await sink.postToolCallReport(closing: Self.makeClosedRecord(), attachments: [])
+
+        #expect(await recording.reports.isEmpty)
+    }
+
+    @Test("postToolCallReport(closing:attachments:) drops the report on a sink that is not a ToolCallReportSink, without a trap")
+    func sharedReportPostDropsOnAPlainSink() async {
+        let recording = RecordingInvocationSink()
+        let sink: any OperationEventSink = recording
+
+        await sink.postToolCallReport(
+            closing: Self.makeClosedRecord(), attachments: MountFixtures.attachmentsInCallOrder)
+
+        // The plain sink is not a `ToolCallReportSink`, so the report went
+        // nowhere, and nothing else reached the sink either.
+        #expect(await recording.operationEvents.isEmpty)
+        #expect(await recording.invocations.isEmpty)
     }
 }
 

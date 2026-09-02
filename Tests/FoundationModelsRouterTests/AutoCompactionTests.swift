@@ -110,21 +110,6 @@ struct AutoCompactionTests {
         return Int(Double(midTarget) / 0.35)
     }
 
-    /// Drains `session`'s `streamEvents(to:)` for one turn into an array, in
-    /// production order.
-    private static func collectEvents(_ session: RoutedSession, prompt: String) async throws -> [SessionEvent] {
-        try await collect(session.streamEvents(to: prompt, maxTokens: nil))
-    }
-
-    /// Drains `stream` into an array, in order — mirrors `SessionEventStreamTests.collect(_:)`.
-    private static func collect(_ stream: AsyncThrowingStream<SessionEvent, Error>) async throws -> [SessionEvent] {
-        var events: [SessionEvent] = []
-        for try await event in stream {
-            events.append(event)
-        }
-        return events
-    }
-
     // MARK: - Proactive fold, preferring flash
 
     @Test(
@@ -139,7 +124,7 @@ struct AutoCompactionTests {
         // runs, with no caller-side compact() call anywhere in this test.
         #expect(await session.contextFill == 0.9)
 
-        let events = eventsAfterTurnFrame(try await Self.collectEvents(session, prompt: "turn 6"))
+        let events = eventsAfterTurnFrame(try await collectEvents(session, prompt: "turn 6"))
 
         guard case .compaction(let result) = events.first else {
             Issue.record("expected the first event to be .compaction, got \(String(describing: events.first))")
@@ -171,7 +156,7 @@ struct AutoCompactionTests {
         // is untouched, so the own-model fallback tier succeeds.
         #expect(standard.lastBackend?.shouldThrow == false)
 
-        let events = eventsAfterTurnFrame(try await Self.collectEvents(session, prompt: "turn 6"))
+        let events = eventsAfterTurnFrame(try await collectEvents(session, prompt: "turn 6"))
 
         guard case .compaction(let result) = events.first else {
             Issue.record("expected the first event to be .compaction, got \(String(describing: events.first))")
@@ -200,7 +185,7 @@ struct AutoCompactionTests {
         let (session, _, _) = try await Self.makeTriggeredSession(budget: nil)
         #expect(await session.contextFill == 0.9)
 
-        let events = try await Self.collectEvents(session, prompt: "turn 6")
+        let events = try await collectEvents(session, prompt: "turn 6")
 
         #expect(!events.contains { if case .compaction = $0 { return true }; return false })
     }
@@ -219,7 +204,7 @@ struct AutoCompactionTests {
         // proactively before running, with no warm-up of its own.
         #expect(await forked.contextFill == 0.9)
 
-        let events = eventsAfterTurnFrame(try await Self.collectEvents(forked, prompt: "fork turn"))
+        let events = eventsAfterTurnFrame(try await collectEvents(forked, prompt: "fork turn"))
 
         guard case .compaction(let result) = events.first else {
             Issue.record("expected the fork's first event to be .compaction, got \(String(describing: events.first))")
@@ -468,7 +453,7 @@ struct AutoCompactionTests {
         // mid-turn rather than only once the whole turn finished.
         standard.lastBackend?.usageIncrement = (input: 1_000, output: 0)
 
-        let events = eventsAfterTurnFrame(try await Self.collectEvents(session, prompt: "turn 6"))
+        let events = eventsAfterTurnFrame(try await collectEvents(session, prompt: "turn 6"))
 
         guard case .turnEnded(let blockedUsage) = events.first else {
             Issue.record(
@@ -601,7 +586,7 @@ struct AutoCompactionTests {
         // not change fold-triggering behavior at all.
         #expect(await session.contextFill == 0.9)
 
-        let events = eventsAfterTurnFrame(try await Self.collectEvents(session, prompt: "turn 6"))
+        let events = eventsAfterTurnFrame(try await collectEvents(session, prompt: "turn 6"))
 
         guard case .compaction(let result) = events.first else {
             Issue.record("expected the first event to be .compaction, got \(String(describing: events.first))")
@@ -631,8 +616,8 @@ struct AutoCompactionTests {
         // No caller-side compact() in either arm: the triggering turn folds on
         // its own, which is the fold this test exists for — it is the one no
         // caller could pass a Summarization to.
-        let narrowedEvents = try await Self.collectEvents(narrowedSession, prompt: "turn \(Self.turnCount)")
-        let unturnedEvents = try await Self.collectEvents(unturnedSession, prompt: "turn \(Self.turnCount)")
+        let narrowedEvents = try await collectEvents(narrowedSession, prompt: "turn \(Self.turnCount)")
+        let unturnedEvents = try await collectEvents(unturnedSession, prompt: "turn \(Self.turnCount)")
         #expect(narrowedEvents.contains { if case .compaction = $0 { return true }; return false })
         #expect(unturnedEvents.contains { if case .compaction = $0 { return true }; return false })
 

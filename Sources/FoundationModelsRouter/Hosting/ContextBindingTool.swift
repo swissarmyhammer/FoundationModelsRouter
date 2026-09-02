@@ -79,13 +79,7 @@ struct ContextBindingTool<
     private func bind(arguments: Arguments, reportingTo span: any Span) async throws -> Output {
         let settlement = await settle(arguments: arguments)
         ToolCallSpan.record(outcome: settlement.recordedOutcome, on: span)
-        if let report = ToolCallReport(closing: settlement.closeRecord, attachments: settlement.attachments) {
-            // The cast decides delivery. `OperationEventSink` is external, so
-            // no requirement carries a report; a sink that is not a
-            // `ToolCallReportSink` drops it. That drop is a consequence of
-            // the cast, not of a default implementation.
-            await (sink as? any ToolCallReportSink)?.post(report: report)
-        }
+        await sink.postToolCallReport(closing: settlement.closeRecord, attachments: settlement.attachments)
         return try settlement.outcome.get()
     }
 

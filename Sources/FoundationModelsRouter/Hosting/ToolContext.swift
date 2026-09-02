@@ -504,7 +504,7 @@ private struct MountedRunUpstreamSink: OperationEventSink, ToolCallReportSink {
     /// order the mounted call attached them.
     ///
     /// - Parameter report: The mounted call's report.
-    func post(report: ToolCallReport) {
+    func post(report: ToolCallReport) async {
         for attachment in report.attachments {
             context.attach(attachment)
         }

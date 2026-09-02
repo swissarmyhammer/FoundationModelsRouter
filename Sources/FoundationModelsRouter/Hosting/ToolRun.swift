@@ -107,13 +107,7 @@ struct ToolRun<Arguments: ConvertibleFromGeneratedContent & Sendable>: Sendable 
         }
         let closeRecord = openRecord.closed(at: Date())
         await sink.post(invocation: closeRecord)
-        if let report = ToolCallReport(closing: closeRecord, attachments: settlement.attachments) {
-            // The cast decides delivery. `OperationEventSink` is external, so
-            // no requirement carries a report; a sink that is not a
-            // `ToolCallReportSink` drops it. That drop is a consequence of
-            // the cast, not of a default implementation.
-            await (sink as? any ToolCallReportSink)?.post(report: report)
-        }
+        await sink.postToolCallReport(closing: closeRecord, attachments: settlement.attachments)
         return settlement
     }
 
