@@ -267,6 +267,100 @@ struct SessionMailboxTests {
         }
     }
 
+    // MARK: - Settlement forwarding
+
+    /// Records every terminal the mailbox forwards to it, so a test can count
+    /// the deliveries for one run.
+    private actor RecordingSettlementObserver: BackgroundRunSettlementObserver {
+        /// Every forwarded terminal, in delivery order.
+        private(set) var settledTerminals: [OperationEvent] = []
+
+        func deliver(settledTerminal terminal: OperationEvent) {
+            settledTerminals.append(terminal)
+        }
+    }
+
+    /// The detail the swept run's own body reports when it finishes after the
+    /// sweep. Distinct from the sweep's detail, so a forwarded copy is legible.
+    private static let lateBodyDetail = "finished after the sweep"
+
+    /// How long a test leaves the mailbox after a late settlement before it
+    /// reads the observer, so a forward the mailbox must not make has had
+    /// every chance to happen.
+    private static let forwardingGraceNanoseconds: UInt64 = 200_000_000
+
+    @Test("track forwards a naturally settled run's bounded terminal to the attached observer exactly once")
+    func trackForwardsTheBoundedTerminalOnce() async {
+        let mailbox = SessionMailbox()
+        let observer = RecordingSettlementObserver()
+        await mailbox.attach(settlementObserver: observer)
+        let latch = RunLatch()
+        let oversized = String(repeating: "y", count: ToolContext.terminalDetailTailLimit * 2) + "tail"
+        let token = await trackFakeRun(on: mailbox, latch: latch, detailOnSettle: oversized)
+
+        await latch.open()
+        let waited = await mailbox.wait(completionToken: token, seconds: 5)
+        #expect(
+            await BoundedWait.conditionReached("the observer receiving the settled terminal") {
+                await observer.settledTerminals.count == 1
+            })
+
+        // The observer gets the same bounded event `wait` returned: the detail
+        // is the trailing tail, never the whole output.
+        let forwarded = await observer.settledTerminals
+        #expect(forwarded.first.map(WaitOutcome.settled) == waited)
+        #expect(forwarded.first?.correlationID == token)
+        #expect(forwarded.first?.detail.count == ToolContext.terminalDetailTailLimit)
+        #expect(forwarded.first?.detail.hasSuffix("tail") == true)
+    }
+
+    @Test("track forwards nothing for a run the sweep already removed")
+    func trackForwardsNothingForASweptRun() async throws {
+        let mailbox = SessionMailbox()
+        let observer = RecordingSettlementObserver()
+        await mailbox.attach(settlementObserver: observer)
+        let latch = RunLatch()
+        let token = SessionMailbox.makeCompletionToken()
+        // A `.process` run: the canceler only reports, so the body stays on
+        // the latch through the sweep and finishes only when the test opens it.
+        let settling = Task<OperationEvent, Never> {
+            await latch.waitUntilOpen()
+            return OperationEvent(
+                tool: FakeRun.tool,
+                op: FakeRun.op,
+                correlationID: token,
+                kind: .completed,
+                detail: Self.lateBodyDetail,
+                outcome: .succeeded
+            )
+        }
+        await mailbox.track(
+            tool: FakeRun.tool,
+            op: FakeRun.op,
+            kind: .process,
+            completionToken: token,
+            settling: settling,
+            canceler: { .cancelled }
+        )
+
+        let swept = await mailbox.sweep()
+        #expect(swept.map(\.correlationID) == [token])
+
+        // The body finishes after the sweep. The mailbox no longer tracks the
+        // run, so its late terminal is dropped, and the observer hears nothing.
+        await latch.open()
+        _ = await settling.value
+        try await Task.sleep(nanoseconds: Self.forwardingGraceNanoseconds)
+        #expect(await observer.settledTerminals.isEmpty)
+
+        // The swept terminal is still the one `wait` reports.
+        guard case .settled(let terminal) = await mailbox.wait(completionToken: token, seconds: 5) else {
+            Issue.record("expected the swept terminal to be retained")
+            return
+        }
+        #expect(terminal.outcome == .cancelled)
+    }
+
     // MARK: - Unknown-id no-ops
 
     @Test("unknown completionToken operations are safe, reportable no-ops")

@@ -63,13 +63,34 @@ extension RoutedSessionActor: OperationEventJournal {
             kind: kind, text: OperationEventSegment.renderedLine(for: event), entry: payload)
     }
 
-    /// Installs this session as ``outbox``'s ``OperationEventJournal``, once.
-    /// Called from ``beginTurn()``. Idempotent.
+    /// Installs this session as ``outbox``'s ``OperationEventJournal`` and
+    /// ``ToolInvocationObserver``, and as ``mailbox``'s
+    /// ``BackgroundRunSettlementObserver``, once. Called from ``beginTurn()``.
+    /// Idempotent.
     func attachOutboxJournalIfNeeded() async {
         guard !didAttachOutboxJournal else { return }
         didAttachOutboxJournal = true
         await outbox.attach(journal: self)
         await outbox.attach(invocationObserver: self)
+        await mailbox.attach(settlementObserver: self)
+    }
+}
+
+/// ``RoutedSessionActor``'s settlement forwarding. A background run's own
+/// terminal reaches the journal under the run's own token at the moment the
+/// mailbox settles the run, whether or not the run's funnel delivered it.
+extension RoutedSessionActor: BackgroundRunSettlementObserver {
+    /// Journals one naturally settled run's terminal without staging it.
+    ///
+    /// `journalWithoutStaging`, not `post(event:)`: `post` would stage a
+    /// second pending `.completed` for a top-level run whose funnel already
+    /// staged one. The write joins the outbox's FIFO journal chain, and the
+    /// journal refuses it when the funnel's copy already claimed the
+    /// correlation. See ``claimJournalWrite(for:)``.
+    ///
+    /// - Parameter terminal: The terminal the mailbox forwarded.
+    func deliver(settledTerminal terminal: OperationEvent) async {
+        await outbox.journalWithoutStaging(event: terminal)
     }
 }
 

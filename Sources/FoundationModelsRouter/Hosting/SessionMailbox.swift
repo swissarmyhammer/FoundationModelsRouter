@@ -83,6 +83,11 @@ actor SessionMailbox {
     /// Continuations suspended by `wait`, keyed by completion token and then by waiter id.
     private var waiters: [String: [UUID: CheckedContinuation<WaitOutcome, Never>]] = [:]
 
+    /// The observer each naturally settled run's terminal is forwarded to, or
+    /// `nil` before ``attach(settlementObserver:)``. Weak to avoid a reference
+    /// cycle: the only implementation is the session that owns this mailbox.
+    private weak var settlementObserver: (any BackgroundRunSettlementObserver)?
+
     // MARK: - Pending-elicitation storage
 
     /// One pending elicitation's state.
@@ -108,8 +113,9 @@ actor SessionMailbox {
     /// Registers a background run under `completionToken`.
     ///
     /// The mailbox observes `settling`: when the run ends, its bounded terminal
-    /// event is retained and every waiter on the token resumes with it. A run
-    /// already swept settles silently, so each run has exactly one terminal event.
+    /// event is retained, every waiter on the token resumes with it, and the
+    /// attached ``BackgroundRunSettlementObserver`` receives it. A run already
+    /// swept settles silently, so each run has exactly one terminal event.
     ///
     /// - Parameters:
     ///   - tool: The tool's name that owns the run.
@@ -141,9 +147,20 @@ actor SessionMailbox {
         trackingOrder.append(completionToken)
         Task { [weak self] in
             let terminal = await settling.value
-            await self?.markSettled(completionToken: completionToken, terminal: terminal)
+            guard let bounded = await self?.markSettled(completionToken: completionToken, terminal: terminal) else {
+                return
+            }
+            await self?.forwardToSettlementObserver(bounded)
         }
         return .tracked
+    }
+
+    /// Installs the observer that receives each naturally settled run's
+    /// terminal from now on.
+    ///
+    /// - Parameter settlementObserver: The observer to install.
+    func attach(settlementObserver: any BackgroundRunSettlementObserver) {
+        self.settlementObserver = settlementObserver
     }
 
     /// Records the latest progress detail for a background run. Unknown token: a safe no-op.
@@ -346,16 +363,42 @@ actor SessionMailbox {
         elicitationOrder.removeAll { $0 == elicitationId }
     }
 
-    /// Records a run's natural settlement and resumes its waiters. An already
-    /// swept token is dropped.
-    private func markSettled(completionToken: String, terminal: OperationEvent) {
+    /// Records a run's natural settlement and resumes its waiters.
+    ///
+    /// - Returns: The bounded terminal the mailbox retained, or `nil` for a
+    ///   token the sweep already removed, whose late terminal is dropped.
+    private func markSettled(completionToken: String, terminal: OperationEvent) -> OperationEvent? {
         guard runsByToken.removeValue(forKey: completionToken) != nil else {
-            return
+            return nil
         }
         trackingOrder.removeAll { $0 == completionToken }
         let bounded = boundingDetail(terminal)
         retainSettledTerminalEvent(bounded, for: completionToken)
         resumeWaiters(for: completionToken, with: .settled(bounded))
+        return bounded
+    }
+
+    /// Hands a naturally settled run's bounded terminal to the attached
+    /// observer. The settlement task in `track` calls this after
+    /// ``markSettled(completionToken:terminal:)`` returned the terminal, and
+    /// only then, so a run the sweep removed is never forwarded.
+    ///
+    /// For a top-level run this forward comes after the run's own journal
+    /// write. `ToolRun.settle` awaits `funnel.settleRun`, which awaits
+    /// `SessionOutbox.post(event:)`, which awaits the journal write, before the
+    /// `RunSettlement` resolves. `BackgroundToolRunner`'s `settling` task
+    /// resolves only after that. So the journal claims the terminal before the
+    /// mailbox forwards it, and the journal refuses the forwarded copy.
+    /// `BackgroundToolRunner.launch` always posts a `.progress` first, so
+    /// `settleRun` always delivers a terminal for a top-level run. A run
+    /// mounted inside another run through `ToolContext.mount(_:op:as:)` is
+    /// the case this forward exists for: the mounting funnel drops that run's
+    /// re-stamped terminal, so this forward is the one write of the run's own
+    /// terminal under the run's own token.
+    ///
+    /// - Parameter terminal: The bounded terminal ``markSettled(completionToken:terminal:)`` retained.
+    private func forwardToSettlementObserver(_ terminal: OperationEvent) async {
+        await settlementObserver?.deliver(settledTerminal: terminal)
     }
 
     /// Retains a settled run's terminal event with bounded FIFO retention.

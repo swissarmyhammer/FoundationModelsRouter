@@ -286,14 +286,19 @@ extension RoutedSessionActor {
     /// nothing, because there is no next turn for a teardown terminal to
     /// ride.
     ///
-    /// **A run's ending is recorded once, even though two writers can produce
-    /// it.** A sweep synthesizes a terminal only for runs still running, but
-    /// that does not make one writer per run: `sweep()` suspends across each
-    /// run's canceler, so a run can settle naturally in that window and
-    /// journal its own terminal live before the sweep hands the same retained
-    /// event back; and cancelling a ``RunKind/swiftTask`` run
-    /// is cooperative, so a run swept here can still finish afterwards and
-    /// post its own terminal with a *different* outcome. Both are refused by
+    /// **A run's ending is recorded once, even though three writers can
+    /// produce it.** The run's own funnel writes its terminal live through the
+    /// outbox. The mailbox forwards the same terminal at settlement, through
+    /// ``deliver(settledTerminal:)``; that is the write that reaches the
+    /// journal for a run mounted inside another run, whose funnel copy is
+    /// dropped. The sweep's write here is the third. A sweep synthesizes a
+    /// terminal only for runs still running, but that does not make one
+    /// writer per run: `sweep()` suspends across each run's canceler, so a run
+    /// can settle naturally in that window and reach the journal through the
+    /// two earlier writers before the sweep hands the same retained event
+    /// back; and cancelling a ``RunKind/swiftTask`` run is cooperative, so a
+    /// run swept here can still finish afterwards and post its own terminal
+    /// with a *different* outcome. Every later write is refused by
     /// ``claimJournalWrite(for:)``, which lets the first write of a run's
     /// ending stand and appends no second one — the record is append-only, so
     /// nothing already written is ever revised away.

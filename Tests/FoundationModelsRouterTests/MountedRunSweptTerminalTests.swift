@@ -239,11 +239,16 @@ struct MountedRunSweptTerminalTests {
         #expect(posted.correlationID == token)
         #expect(posted.outcome == .succeeded)
 
-        // `close()` journals the very same event. The outcome assertion below
-        // is the one line this test adds. A sweep that built a terminal instead
-        // would journal `.cancelled`, the outcome the canceler reported. Keep
-        // that line. The count assertion cannot catch a doubled sweep, because
-        // the journal admits one terminal for each correlation.
+        // `close()` journals the very same event. This session ran no turn, so
+        // the journal and the mailbox's settlement observer attach only after
+        // the sweep, and the sweep's write is the one write here. A session
+        // that ran a turn would journal the natural terminal through the
+        // mailbox's forward first, and the sweep's write would be refused. The
+        // outcome assertion below is the one line this test adds. A sweep that
+        // built a terminal instead would journal `.cancelled`, the outcome the
+        // canceler reported. Keep that line. The count assertion cannot catch a
+        // doubled write, because the journal admits one terminal for each
+        // correlation.
         let journaled = await recorder.events.flatMap(\.operationEvents)
         let terminals = journaled.filter { $0.kind == .completed }
         #expect(terminals.count == 1)

@@ -51,3 +51,29 @@ protocol ToolInvocationObserver: AnyObject, Sendable {
     /// - Parameter record: The record the outbox has just received.
     func deliver(invocation record: ToolInvocationRecord) async
 }
+
+/// A destination a session's `SessionMailbox` hands each naturally settled
+/// background run's terminal ``OperationEvent`` to, at the moment the run
+/// settles.
+///
+/// The third attach point beside ``OperationEventJournal`` and
+/// ``ToolInvocationObserver``, installed at the same place
+/// (``RoutedSessionActor/attachOutboxJournalIfNeeded()``). A run's own terminal
+/// normally reaches the journal through the run's funnel and the outbox. A run
+/// mounted inside another run through ``ToolContext/mount(_:op:as:)`` is the
+/// exception: that overload re-stamps the terminal with the mounting run's
+/// token, and the mounting run's funnel drops it. The mailbox is the one place
+/// that always receives the run's own terminal, so this observer carries that
+/// terminal to the journal under the run's own token.
+///
+/// Class-bound because `SessionMailbox` holds its observer *weakly*, for the
+/// same reference-cycle reason ``OperationEventJournal`` documents: the only
+/// implementation is the ``RoutedSessionActor`` that owns the mailbox for its
+/// whole life.
+protocol BackgroundRunSettlementObserver: AnyObject, Sendable {
+    /// Receives one naturally settled run's terminal, bounded the way the
+    /// mailbox retains it.
+    ///
+    /// - Parameter terminal: The settled run's terminal event.
+    func deliver(settledTerminal terminal: OperationEvent) async
+}
