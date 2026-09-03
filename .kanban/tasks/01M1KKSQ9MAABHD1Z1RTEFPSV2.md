@@ -65,8 +65,24 @@ comments:
     - evidence: 5 files — Tests/FoundationModelsRouterTests/MountedRunAttachmentCarrierTests.swift (new), Tests/FoundationModelsRouterTests/Helpers/ToolMountFixtures.swift, Tests/FoundationModelsRouterTests/Helpers/SessionEventCollection.swift, Tests/FoundationModelsRouterTests/ToolContextMountTests.swift, Tests/FoundationModelsRouterTests/ToolInvocationLivenessTests.swift. `swift test` reports 1219 tests in 132 suites passed, plus 83 tests in 10 suites passed. No production file changed: both facts the card names already hold.
     - next: /review
   timestamp: 2026-09-03T12:45:15.778968+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m1kn87gjesya5dcdhddnkfdb
+  text: |
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit ab306ae) — 0 findings, 0 confirmed, 0 refuted, 7 attempted, 0 failed. 5 files reviewed; 2 `.kanban/` files excluded by `.reviewignore`. No prior Review Findings section, so no open items.
+    - next: task moved to done.
+  timestamp: 2026-09-03T12:52:41.106494+00:00
+- actor: claude-code
+  id: 01m1kn952qd3a7d9kbmm0kqrvr
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 5 test files, MountedRunAttachmentCarrierTests.swift is new
+    - test: green — swift test, 1302 passed, 0 failed, 0 skipped
+    - commit: ab306ae
+    - review: clean — zero findings, task moved to done
+  timestamp: 2026-09-03T12:53:11.383464+00:00
+position_column: done
+position_ordinal: ffffc480
 title: 'Prove the mounted-run attach carrier: a live toolCallReport under the mounting run''s correlationID'
 ---
 ## What
