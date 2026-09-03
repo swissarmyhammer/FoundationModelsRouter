@@ -61,22 +61,6 @@ struct ToolContextMountTests {
         return Host(context: context, mailbox: mailbox, sink: sink, attachments: attachments)
     }
 
-    /// Mounts ``MountFixtures/AttachingTool`` on its own run's context through
-    /// ``ToolContext/mount(_:op:as:)`` and calls it in band. It attaches
-    /// nothing itself, so every record on its run came from the nested call.
-    private struct NestingAttachingTool: Tool {
-        let name = "nesting_attaching_tool"
-        let description = "mounts the attaching tool on its own context and calls it in band"
-
-        /// The output when no context is bound. A test never sees it.
-        static let noContextOutput = "no context"
-
-        func call(arguments: MountArguments) async throws -> String {
-            guard let context = ToolContext.current else { return Self.noContextOutput }
-            return try await context.mount(Fixtures.AttachingTool()).call(arguments: arguments)
-        }
-    }
-
     // MARK: - The three decorators
 
     @Test(
@@ -193,7 +177,8 @@ struct ToolContextMountTests {
     func nestedCallAttachmentsRideTheMountingCallReport() async throws {
         let sink = Fixtures.RecordingSink()
         let arguments = MountArguments(value: "outer")
-        let run = Fixtures.toolRun(wrapping: NestingAttachingTool(), arguments: arguments, sink: sink)
+        let run = Fixtures.toolRun(
+            wrapping: Fixtures.NestingAttachingTool(), arguments: arguments, sink: sink)
 
         await run.open()
         let settlement = await run.execute(arguments: arguments)

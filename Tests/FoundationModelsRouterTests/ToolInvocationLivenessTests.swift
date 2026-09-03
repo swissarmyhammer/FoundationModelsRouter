@@ -747,22 +747,3 @@ struct ToolInvocationLivenessTests {
     }
 }
 
-extension SessionEvent {
-    /// Whether this event is an open ``ToolInvocationRecord``.
-    fileprivate var isOpenInvocation: Bool {
-        if case .toolInvocation(let record) = self { return record.closedAt == nil }
-        return false
-    }
-
-    /// Whether this event is a close ``ToolInvocationRecord``.
-    fileprivate var isCloseInvocation: Bool {
-        if case .toolInvocation(let record) = self { return record.closedAt != nil }
-        return false
-    }
-
-    /// The ``ToolCallReport`` this event carries, or `nil` for any other event.
-    fileprivate var carriedReport: ToolCallReport? {
-        if case .toolCallReport(let report) = self { return report }
-        return nil
-    }
-}

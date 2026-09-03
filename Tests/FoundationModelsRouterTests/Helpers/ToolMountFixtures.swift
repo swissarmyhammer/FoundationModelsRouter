@@ -536,6 +536,22 @@ enum MountFixtures {
         }
     }
 
+    /// Mounts ``AttachingTool`` on its own run's context through
+    /// ``ToolContext/mount(_:op:as:)`` and calls it in band. It attaches
+    /// nothing itself, so every record on its run came from the nested call.
+    struct NestingAttachingTool: Tool {
+        let name = "nesting_attaching_tool"
+        let description = "mounts the attaching tool on its own context and calls it in band"
+
+        /// The output when no context is bound. A test never sees it.
+        static let noContextOutput = "no context"
+
+        func call(arguments: MountArguments) async throws -> String {
+            guard let context = ToolContext.current else { return Self.noContextOutput }
+            return try await context.mount(AttachingTool()).call(arguments: arguments)
+        }
+    }
+
     /// The non-`String`-output twin of ``AttachingTool``: attaches both records
     /// through the ambient context, then returns its text.
     struct AttachingNonStringOutputTool: Tool {

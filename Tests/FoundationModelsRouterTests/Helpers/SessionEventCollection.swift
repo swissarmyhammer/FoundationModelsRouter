@@ -38,3 +38,27 @@ func collect(_ stream: AsyncStream<SessionEvent>) async -> [SessionEvent] {
 func collectEvents(_ session: RoutedSession, prompt: String) async throws -> [SessionEvent] {
     try await collect(session.streamEvents(to: prompt))
 }
+
+extension SessionEvent {
+    /// Whether this event is an open ``ToolInvocationRecord``.
+    var isOpenInvocation: Bool {
+        carriedInvocation.map { $0.closedAt == nil } ?? false
+    }
+
+    /// Whether this event is a close ``ToolInvocationRecord``.
+    var isCloseInvocation: Bool {
+        carriedInvocation.map { $0.closedAt != nil } ?? false
+    }
+
+    /// The ``ToolInvocationRecord`` this event carries, or `nil` for any other event.
+    var carriedInvocation: ToolInvocationRecord? {
+        if case .toolInvocation(let record) = self { return record }
+        return nil
+    }
+
+    /// The ``ToolCallReport`` this event carries, or `nil` for any other event.
+    var carriedReport: ToolCallReport? {
+        if case .toolCallReport(let report) = self { return report }
+        return nil
+    }
+}
