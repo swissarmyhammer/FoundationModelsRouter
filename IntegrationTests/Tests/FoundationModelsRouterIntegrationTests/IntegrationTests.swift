@@ -10,46 +10,6 @@ import Tokenizers
 
 @testable import FoundationModelsRouter
 
-// MARK: - Real models
-
-/// The profile the suite resolves, over ``RealModels``' `standard`/`flash`/
-/// `embedding` repos — a real generation model in both generation slots plus a
-/// real embedder, all co-resident, so the resolution/generation/embedding/
-/// guided-generation/fork assertions below run against real weights rather
-/// than one tiny placeholder repo.
-///
-/// Both generation slots name one repository today, because only one Muse
-/// Glimmer repository is published — see ``RealModels/flash``. The two slots
-/// therefore share one resident container, which is what
-/// ``realProfileResidentContainerCount`` counts.
-private let realProfile = ProfileDefinition(
-    name: "integration-real",
-    description: "Real mlx-community models for the gated integration suite.",
-    standard: [RealModels.standard],
-    flash: [RealModels.flash],
-    embedding: [RealModels.embedding],
-    context: RealModels.context
-)
-
-/// How many resident containers ``realProfile`` asks the loader to build, and
-/// so how many times the loader below records a load and a preload.
-///
-/// Read off the resolve path, not off a measured run. `Router.acquireModel`
-/// reads its pool before it reaches the loader and returns an already-resident
-/// entry, so the loader runs one time for each distinct residency key rather
-/// than one time for each slot; the preload loop guards itself the same way
-/// with its own set of already-preloaded keys. A generation key is the chosen
-/// reference together with the working context, and ``realProfile`` gives one
-/// context to every slot, so two generation slots that name one repository
-/// build one key and load one container. An embedding key carries a different
-/// role, so it never merges with a generation key however the references are
-/// named.
-private var realProfileResidentContainerCount: Int {
-    let generationRefs = Set([RealModels.standard, RealModels.flash])
-    let embeddingRefs = Set([RealModels.embedding])
-    return generationRefs.count + embeddingRefs.count
-}
-
 // MARK: - Phase-recording decorators
 
 /// Wraps a real ``MetadataSource`` and records the live ``ResolutionProgress``
@@ -203,7 +163,7 @@ private struct DownloadObservingLoader: ModelLoader {
 
 /// The gated end-to-end integration suite (milestone 7).
 ///
-/// It resolves the ``realProfile`` once — all three slots co-resident — over a
+/// It resolves the ``gatedRealProfile`` once — all three slots co-resident — over a
 /// real ``LiveModelLoader`` (a Hub `#hubDownloader()` + `#huggingFaceTokenizerLoader()`)
 /// and the real ``HuggingFaceMetadataSource``, then asserts every live capability
 /// in that one resolved profile: progress advancement, generation, embedding
@@ -372,7 +332,7 @@ struct IntegrationTests {
         )
 
         let resolveStarted = ContinuousClock.now
-        let profile = try await router.resolve(profile: realProfile, reporting: progress)
+        let profile = try await router.resolve(profile: gatedRealProfile, reporting: progress)
         resolveDuration = ContinuousClock.now - resolveStarted
 
         // 1. Progress advanced sizing -> downloading -> loading -> ready.
@@ -393,11 +353,11 @@ struct IntegrationTests {
         #expect(await source.observedPhases.contains(.sizing))
         #expect(await loader.observedLoadPhases.allSatisfy { $0 == .downloading })
         // One load and one preload for each resident container the profile
-        // asks for — see `realProfileResidentContainerCount`, which reads that
-        // number off the profile rather than restating it.
-        #expect(await loader.observedLoadPhases.count == realProfileResidentContainerCount)
+        // asks for — see `gatedRealProfileResidentContainerCount`, which reads
+        // that number off the profile rather than restating it.
+        #expect(await loader.observedLoadPhases.count == gatedRealProfileResidentContainerCount)
         #expect(await loader.observedPreloadPhases.allSatisfy { $0 == .loading })
-        #expect(await loader.observedPreloadPhases.count == realProfileResidentContainerCount)
+        #expect(await loader.observedPreloadPhases.count == gatedRealProfileResidentContainerCount)
 
         // 1b. The live byte percentage is real: every slot that downloaded
         //     observed a known byte total (> 0) and its byte count reached that
