@@ -31,12 +31,35 @@ comments:
     - warnings: none from source. The one `warning: missing creator for mutated node (... mlx-swift_Cmlx.bundle ...)` line is the build system's, and the root `swift test` prints the same line, so it predates this change
     - next: commit
   timestamp: 2026-09-05T17:17:37.815646+00:00
+- actor: claude-code
+  id: 01m1s97rnpgknn95pqdtqmm2ne
+  text: |-
+    ### commit — changed
+    - evidence: 69fb0f6 test(pool): prove two live routers over one pool load a real model one time — 6 files, 370 insertions, 57 deletions, local only
+    - next: review HEAD~1..HEAD
+  timestamp: 2026-09-05T17:18:09.590775+00:00
+- actor: claude-code
+  id: 01m1s9cx7zqnn20thj6e36pwhh
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` → 0 findings, 7 validator tasks attempted, 0 failed, 0 skipped; 4 files reviewed, 2 `.kanban/` files excluded by `.reviewignore`; no prior `## Review Findings` section on the card
+    - next: move to done
+  timestamp: 2026-09-05T17:20:58.111692+00:00
+- actor: claude-code
+  id: 01m1s9d6k47zf1736ertceg87n
+  text: |-
+    ### finish iteration 1 — review clean, card moved to done
+    - implement: changed — IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/CrossRouterPoolIntegrationTests.swift, IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/Support/GatedRealProfile.swift, IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/IntegrationTests.swift, IntegrationTests/Package.swift
+    - test: green — root `swift test` 1231 tests in 133 suites + 83 tests in 10 suites passed; `swift build --package-path IntegrationTests --build-tests` exit 0; `swift test --package-path IntegrationTests --filter CrossRouterPoolIntegrationTests` 2 tests in 1 suite passed (47.2 s, 25.9 s); `swift test --package-path IntegrationTests` 36 tests in 18 suites + 2 tests in 2 suites passed in 12.6 minutes; zero failures, zero source warnings
+    - commit: 69fb0f6
+    - review: clean — 0 findings, 7 attempted, 0 failed
+  timestamp: 2026-09-05T17:21:07.684158+00:00
 depends_on:
 - 01M1RREG728QK5FMX6N8H2G4SB
 - 01M1RRF9KB8W919YZ27A4721B3
 - 01M1RS3MJ88F1NEKZCCQABTHG8
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffca80
 title: 'Gated: two live routers over one pool load a real model one time'
 ---
 Plan: `model-pool.md` §3.
