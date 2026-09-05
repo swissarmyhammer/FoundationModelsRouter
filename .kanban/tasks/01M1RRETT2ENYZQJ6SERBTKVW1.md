@@ -40,8 +40,31 @@ comments:
     - evidence: fork (`swift build --build-tests` + `xcrun xctest` per bundle): MLXFoundationModelsTests 173 passed; MLXLMTests 640 XCTest (1 pre-existing skip, `testRealCheckpointBenchmark`, gated by `MLX_QWEN_GDN_BENCH_MODEL`, recorded as a new card) + 996 Swift Testing passed; MLXGuidedGenerationTests 70; CXGrammarTests 7; MLXHuggingFaceMacrosTests 5. Root `swift test`: 1235 passed in 134 suites (2 known issues, `withKnownIssue`) + 83 XCTest passed in 10 suites; 0 failed, 0 skipped, 0 warnings. `swift build --package-path IntegrationTests --build-tests`: exit 0, 0 warnings. `swift test --package-path IntegrationTests`: 36 passed in 18 suites (665 s) + 2 passed in 2 suites (68 s); 0 failed, 0 skipped.
     - next: commit
   timestamp: 2026-09-05T18:07:27.579780+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m1sc2rtzdywdnhx5bqp7cvvn
+  text: |-
+    ### commit — changed
+    - evidence: 18f1f09 chore(kanban): record the fork cache-key fix and the pin bump (^rbtkvw1); local only, no push of this repository; tracked changes are `.kanban/` only
+    - next: review
+  timestamp: 2026-09-05T18:07:51.647137+00:00
+- actor: claude-code
+  id: 01m1sc4yphdhr666wmenfme144
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` on 18f1f09 — counts: 0 findings, 0 confirmed, 0 refuted; 4 of 4 files excluded by `.reviewignore` (`.kanban/`), which the engine reports as a clean review. The fork commit `18ddcd16920237ba8dc8e3f6c68437cb1c1bf3bb` could not go through the engine: `review sha` with `cwd`, `path`, `repo`, or `workspace` set to the clone still resolves the sha against this repository (`revspec not found`). The fork change is covered by the fork's own tests (six new tests in `RevisionIdentity`; the five bundles green: 173, 640 + 996, 70, 7, 5) and by a check of the diff against the validator rule dump (`dump validators` for the fork's Swift files) before the commit: public items documented, the `"main"` literal named as `defaultRevision`, the switch exhaustive with no `default`, the three "never loads" model constructions folded into one `makeUnloadedModel` helper.
+    - next: done
+  timestamp: 2026-09-05T18:09:03.185051+00:00
+- actor: claude-code
+  id: 01m1sc53mt4d4x6bctv6vknhw6
+  text: |-
+    ### finish iteration 1 — done
+    - implement: changed — fork: `Libraries/MLXFoundationModels/MLXLanguageModel.swift`, `Libraries/MLXFoundationModels/MLXLanguageModel+Availability.swift`, `Tests/MLXFoundationModelsTests/MLXLanguageModelTests.swift`; fork sha `18ddcd16920237ba8dc8e3f6c68437cb1c1bf3bb` pushed to `stable` (`0147840..18ddcd1`, over SSH after the HTTPS keychain prompt hung); here: both `Package.resolved` files (git-ignored) and both `.build/checkouts/mlx-swift-lm` moved to that sha; tracked changes here are `.kanban/` only
+    - test: green — fork 173 + (640 XCTest, 1 pre-existing env-var skip → card ^44z4s00) + 996 + 70 + 7 + 5, 0 failed; root 1235 + 83 passed, 0 failed, 0 skipped, 0 warnings; IntegrationTests build exit 0; gated 36 + 2 passed, 0 failed
+    - commit: 18f1f09
+    - review: clean — 0 findings on HEAD~1..HEAD (4 `.kanban/` files excluded by `.reviewignore`); the fork commit is covered by the fork's tests, the engine cannot review a foreign clone
+  timestamp: 2026-09-05T18:09:08.250845+00:00
+position_column: done
+position_ordinal: ffffcc80
 title: 'Fork: key the MLXLanguageModel cache by id and revision, then bump Package.resolved'
 ---
 Plan: `model-pool.md` §1.4, §2.6.
@@ -57,16 +80,16 @@ Work in a separate clone of `https://github.com/swissarmyhammer/mlx-swift-lm`, n
 - Push to `stable`. Then, here: bump `Package.resolved` and `IntegrationTests/Package.resolved` to the new fork revision, and check `LiveModelLoader.weightsLocation` (`Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift`) still resolves in the gated suites.
 
 ## Acceptance Criteria
-- [ ] In the fork, two `MLXLanguageModel` values for one id at two revisions have two `modelID` values, two cache entries, and two container loads.
-- [ ] In the fork, `evict()` on one revision leaves the other revision cached.
-- [ ] In the fork, `modelExistsOnDisk()` still resolves through `configuration.name`.
-- [ ] Both `Package.resolved` files here pin the fork revision that carries the fix.
-- [ ] `swift test` and `swift test --package-path IntegrationTests` are green here.
+- [x] In the fork, two `MLXLanguageModel` values for one id at two revisions have two `modelID` values, two cache entries, and two container loads.
+- [x] In the fork, `evict()` on one revision leaves the other revision cached.
+- [x] In the fork, `modelExistsOnDisk()` still resolves through `configuration.name`.
+- [x] Both `Package.resolved` files here pin the fork revision that carries the fix. (Fork sha `18ddcd16920237ba8dc8e3f6c68437cb1c1bf3bb`; both files are git-ignored, so the pin is local.)
+- [x] `swift test` and `swift test --package-path IntegrationTests` are green here.
 
 ## Tests
-- [ ] Fork: new test in `Tests/MLXFoundationModelsTests/MLXLanguageModelTests.swift`, placed under the `@Suite(.serialized)` parent that `ModelCacheEvictionTests` documents (the cache is one process-global `static let`): configurations `(id: "org/repo", revision: "a")` and `(id: "org/repo", revision: "b")` give two distinct `modelID` values and two `loadContainer()` calls on a stub loader; `evict()` on one leaves the other.
-- [ ] Fork: `swift test --filter MLXLanguageModelTests` → all pass.
-- [ ] Here: `swift test` → all pass. `swift test --package-path IntegrationTests` → all pass.
+- [x] Fork: new test in `Tests/MLXFoundationModelsTests/MLXLanguageModelTests.swift`, placed under the `@Suite(.serialized)` parent that `ModelCacheEvictionTests` documents (the cache is one process-global `static let`): configurations `(id: "org/repo", revision: "a")` and `(id: "org/repo", revision: "b")` give two distinct `modelID` values and two `loadContainer()` calls on a stub loader; `evict()` on one leaves the other.
+- [x] Fork: `swift test --filter MLXLanguageModelTests` → all pass. (Run as `swift build --build-tests` and `xcrun xctest` on the `MLXFoundationModelsTests` bundle, the procedure the fork's `CLAUDE.md` gives; `swift test` stops at the first GPU test with a metallib error.)
+- [x] Here: `swift test` → all pass. `swift test --package-path IntegrationTests` → all pass.
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #model-pool #defect
