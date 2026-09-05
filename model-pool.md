@@ -248,8 +248,11 @@ loads; it must sit under the `@Suite(.serialized)` parent that
 The work needs its own clone of the fork and a push to `stable`. The checkout
 under `IntegrationTests/.build/checkouts/mlx-swift-lm` is a SwiftPM artifact,
 detached at the pinned revision, and `swift package resolve` discards edits
-there. Then bump `Package.resolved` and `IntegrationTests/Package.resolved`
-here.
+there. The pin is local: `.gitignore` ignores both `Package.resolved` files,
+and both manifests take the fork by `branch: "stable"`, so a fresh clone
+resolves the tip of `stable`, whatever revision this checkout holds. A
+tracked guarantee needs either a `revision:` pin in both manifests or an
+un-ignored `Package.resolved`.
 
 ### 2.7 Two rules the shared entry sets for every router
 

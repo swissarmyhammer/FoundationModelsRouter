@@ -625,10 +625,11 @@ struct PooledResidencyTests {
     /// free forever after, eroding the "single authority over the budget"
     /// guarantee toward an eventual OOM.
     ///
-    /// `poolLock` must therefore guard `release(token:)` too, not just
-    /// `resolve()` — this test proves a `release()` that starts while a
-    /// `resolve()` is suspended mid-acquisition cannot complete (and thus
-    /// cannot evict anything) until that `resolve()` finishes.
+    /// ``ModelPool/withResolveLock(isolation:_:)`` must therefore guard
+    /// `ModelPool.release(token:)` as well as `Router.resolve(profile:reporting:)`
+    /// — this test proves a `release()` that starts while a `resolve()` is
+    /// suspended mid-acquisition cannot complete (and thus cannot evict
+    /// anything) until that `resolve()` finishes.
     @Test("a release cannot interleave with an in-flight resolve and corrupt pool accounting")
     @MainActor
     func releaseCannotRaceAnInFlightResolveAndCorruptAccounting() async throws {

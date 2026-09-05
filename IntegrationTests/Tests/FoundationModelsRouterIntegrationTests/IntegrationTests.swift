@@ -321,168 +321,201 @@ struct IntegrationTests {
         )
         // The router carries the mode, not the loader: a loaded container
         // serves every router in the pool, and the mode belongs to the router
-        // (`model-pool.md` §2.5).
+        // (`model-pool.md` §2.5). The pool is this test's own, never
+        // `ModelPool.shared`: no other suite can hold a resident in it, and the
+        // release at the end empties the pool this test filled.
         let router = Router(
             cacheDir: cacheDir,
             recordingsDir: recordingsDir,
             recorder: JSONLRecorder(directory: recordingsDir),
             metadataSource: source,
             loader: loader,
-            samplingMode: Self.samplingMode
+            samplingMode: Self.samplingMode,
+            pool: ModelPool()
         )
 
         let resolveStarted = ContinuousClock.now
         let profile = try await router.resolve(profile: gatedRealProfile, reporting: progress)
         resolveDuration = ContinuousClock.now - resolveStarted
 
-        // 1. Progress advanced sizing -> downloading -> loading -> ready.
-        //
-        //    `ResolutionProgress` is `@MainActor`, so its reads hop to the main
-        //    actor here rather than isolating the whole test body to it. The
-        //    four generation turns below then run off the main actor, which is
-        //    what the target's own rule asks for.
-        try await MainActor.run {
-            #expect(progress.phase == .ready)
-            #expect(progress.fraction == 1.0)
-            for slot in [ModelSlot.standard, .flash, .embedding] {
-                let sp = try #require(progress.slots[slot])
-                #expect(sp.state == .ready)
-                #expect(sp.chosen != nil)
+        // Every step below runs under `releasing(_:after:)`, so a thrown `try`
+        // or an early `return` still frees the real models at once.
+        try await Self.releasing(profile) {
+            // 1. Progress advanced sizing -> downloading -> loading -> ready.
+            //
+            //    `ResolutionProgress` is `@MainActor`, so its reads hop to the main
+            //    actor here rather than isolating the whole test body to it. The
+            //    four generation turns below then run off the main actor, which is
+            //    what the target's own rule asks for.
+            try await MainActor.run {
+                #expect(progress.phase == .ready)
+                #expect(progress.fraction == 1.0)
+                for slot in [ModelSlot.standard, .flash, .embedding] {
+                    let sp = try #require(progress.slots[slot])
+                    #expect(sp.state == .ready)
+                    #expect(sp.chosen != nil)
+                }
             }
+            #expect(await source.observedPhases.contains(.sizing))
+            #expect(await loader.observedLoadPhases.allSatisfy { $0 == .downloading })
+            // One load and one preload for each resident container the profile
+            // asks for — see `gatedRealProfileResidentContainerCount`, which reads
+            // that number off the profile rather than restating it.
+            #expect(await loader.observedLoadPhases.count == gatedRealProfileResidentContainerCount)
+            #expect(await loader.observedPreloadPhases.allSatisfy { $0 == .loading })
+            #expect(await loader.observedPreloadPhases.count == gatedRealProfileResidentContainerCount)
+
+            // 1b. The live byte percentage is real: every slot that downloaded
+            //     observed a known byte total (> 0) and its byte count reached that
+            //     total across the ticks — a true percentage, not a single 0 -> 100
+            //     jump. (Cached weights still emit a full 0 -> total progression.)
+            let downloadedSlots = byteObserver.observedSlots.filter { !byteObserver.ticks(for: $0).isEmpty }
+            #expect(!downloadedSlots.isEmpty)
+            for slot in downloadedSlots {
+                let ticks = byteObserver.ticks(for: slot)
+                let maxTotal = ticks.map(\.bytesTotal).max() ?? 0
+                let maxDownloaded = ticks.map(\.bytesDownloaded).max() ?? 0
+                #expect(maxTotal > 0)
+                #expect(maxDownloaded == maxTotal)
+            }
+
+            // 2. A standard session returns non-empty text.
+            //
+            //    Every turn below states `GatedRealModelBudget.responseTokenCeiling`
+            //    as its reply ceiling. Without one each turn takes
+            //    `LiveModelLoader`'s own default of 8192 tokens, so a run whose
+            //    `<think>` block does not stop cannot be held inside the budget.
+            //    The ceiling gives space to the `<think>` block and to the answer —
+            //    see that constant — and a turn that stops earlier still costs only
+            //    the tokens it generated.
+            let session = profile.standard.makeSession(
+                instructions: "You are a terse assistant."
+            )
+            let plainTurnStarted = ContinuousClock.now
+            let reply = try await session.respond(
+                to: "Say hello in one short sentence.",
+                maxTokens: GatedRealModelBudget.responseTokenCeiling)
+            plainTurnDuration = ContinuousClock.now - plainTurnStarted
+            #expect(!reply.isEmpty)
+
+            // 3. Embedding returns dimension-length vectors, and writes no
+            //    transcript event at all. Card ^p3x0bbb took that recording away:
+            //    an embed call is no part of any session's conversation, so it has
+            //    nothing to append to one. A span is the replacement signal, and
+            //    `EmbedTracingTests` holds its whole contract. Step 6 asserts the
+            //    absence against the recordings tree.
+            let dimension = profile.embedding.dimension
+            #expect(dimension > 0)
+            let embedStarted = ContinuousClock.now
+            let vectors = try await profile.embedding.embed(texts: ["first document", "second document"])
+            embedDuration = ContinuousClock.now - embedStarted
+            #expect(vectors.count == 2)
+            #expect(vectors.allSatisfy { $0.count == dimension })
+
+            // 4. A guided session honors its grammar: the output parses against the
+            //    schema (structural validity is the xgrammar guarantee).
+            let schema = #"""
+                {"type":"object","properties":{"city":{"type":"string"},"country":{"type":"string"}},"required":["city","country"],"additionalProperties":false}
+                """#
+            let guidedTurnStarted = ContinuousClock.now
+            let guided = try await profile.standard.respond(
+                to: "Name a city to visit in Japan, as JSON.",
+                matching: schema,
+                maxTokens: GatedRealModelBudget.responseTokenCeiling
+            )
+            guidedTurnDuration = ContinuousClock.now - guidedTurnStarted
+            guard case .object(let object) = guided else {
+                Issue.record("guided output was not a JSON object: \(guided)")
+                return
+            }
+            #expect(object.keys.sorted() == ["city", "country"])
+            if case .string = object["city"] {} else { Issue.record("'city' should be a string") }
+            if case .string = object["country"] {} else { Issue.record("'country' should be a string") }
+
+            // 5. A fork continues the parent's conversation as an independent child
+            //    session, seeded from the parent's accumulated transcript via
+            //    `LanguageModelSessionBackend.makeFork()` — under the real
+            //    `LanguageModelSession`-backed live path this is not yet wired to any
+            //    real prefix-compute reuse (see plan.md's "Sessions & KV cache" open
+            //    question); fork lineage and independent generation are what this
+            //    asserts here.
+            var child: RoutedSession? = try await session.fork(workingDirectory: nil)
+            #expect(child?.parentId == session.id)
+            #expect(child?.id != session.id)
+            let childRecordingDirectory = try #require(child).recordingDirectory
+            // The child's transcript nests directly under the parent's directory.
+            #expect(
+                childRecordingDirectory.deletingLastPathComponent().standardizedFileURL
+                    == session.recordingDirectory.standardizedFileURL
+            )
+            let forkTurnStarted = ContinuousClock.now
+            let childReply = try await #require(child).respond(
+                to: "Say hi in one word.",
+                maxTokens: GatedRealModelBudget.responseTokenCeiling)
+            forkTurnDuration = ContinuousClock.now - forkTurnStarted
+            #expect(!childReply.isEmpty)
+
+            // Dropping the only reference releases the fork. No other binding
+            // retains it, so this is a genuine release; the parent is unaffected
+            // and keeps generating.
+            child = nil
+            let parentTurnStarted = ContinuousClock.now
+            let afterRelease = try await session.respond(
+                to: "Still there?",
+                maxTokens: GatedRealModelBudget.responseTokenCeiling)
+            parentTurnDuration = ContinuousClock.now - parentTurnStarted
+            #expect(!afterRelease.isEmpty)
+
+            // 6. Recording: the fork's transcript.jsonl is physically nested under
+            //    the parent's directory, and the merged log across the whole run is
+            //    totally ordered by (ts, seq).
+            let childFile = childRecordingDirectory
+                .appendingPathComponent("transcript.jsonl", isDirectory: false)
+            #expect(FileManager.default.fileExists(atPath: childFile.path))
+
+            let merged = try MergedTranscript.merged(under: recordingsDir)
+            #expect(!merged.isEmpty)
+            // The generation events landed in the tree, and no embedding event did.
+            // The absence is the contract, not a defect: card ^p3x0bbb took the
+            // recording out of `RoutedModel.embed(texts:)`, and
+            // `TranscriptEvent.Kind.embedding` survives only so that recordings
+            // written before that change still decode. `MergedAndRedactionTests`
+            // asserts the same absence over the unit path.
+            #expect(!merged.contains { $0.kind == .embedding })
+            // Totally ordered by (ts, seq): the recorder's monotonic seq is the tie
+            // breaker, so the merged stream is already sorted and its seqs unique.
+            let ordered = merged.sorted { ($0.ts, $0.seq) < ($1.ts, $1.seq) }
+            #expect(merged.map(\.seq) == ordered.map(\.seq))
+            #expect(Set(merged.map(\.seq)).count == merged.count)
         }
-        #expect(await source.observedPhases.contains(.sizing))
-        #expect(await loader.observedLoadPhases.allSatisfy { $0 == .downloading })
-        // One load and one preload for each resident container the profile
-        // asks for — see `gatedRealProfileResidentContainerCount`, which reads
-        // that number off the profile rather than restating it.
-        #expect(await loader.observedLoadPhases.count == gatedRealProfileResidentContainerCount)
-        #expect(await loader.observedPreloadPhases.allSatisfy { $0 == .loading })
-        #expect(await loader.observedPreloadPhases.count == gatedRealProfileResidentContainerCount)
+    }
 
-        // 1b. The live byte percentage is real: every slot that downloaded
-        //     observed a known byte total (> 0) and its byte count reached that
-        //     total across the ticks — a true percentage, not a single 0 -> 100
-        //     jump. (Cached weights still emit a full 0 -> total progression.)
-        let downloadedSlots = byteObserver.observedSlots.filter { !byteObserver.ticks(for: $0).isEmpty }
-        #expect(!downloadedSlots.isEmpty)
-        for slot in downloadedSlots {
-            let ticks = byteObserver.ticks(for: slot)
-            let maxTotal = ticks.map(\.bytesTotal).max() ?? 0
-            let maxDownloaded = ticks.map(\.bytesDownloaded).max() ?? 0
-            #expect(maxTotal > 0)
-            #expect(maxDownloaded == maxTotal)
+    /// Runs `body`, then releases `profile` however `body` ended.
+    ///
+    /// A `defer` block cannot `await`, so it cannot hold
+    /// ``LanguageModelProfile/release()``. This is the async form of that
+    /// `defer`: the profile is released on the success path, on the throw
+    /// path, and on an early `return` alike, so the real models leave the
+    /// pool at once instead of staying resident until the profile's `deinit`.
+    /// `GatedRealModelSuiteTrait` tears a suite down the same way.
+    ///
+    /// - Parameters:
+    ///   - profile: The profile to release when `body` ends.
+    ///   - body: The work that uses the profile.
+    /// - Throws: Whatever `body` throws, rethrown after the release.
+    private static func releasing(
+        _ profile: LanguageModelProfile,
+        after body: () async throws -> Void
+    ) async throws {
+        let outcome: Result<Void, any Error>
+        do {
+            try await body()
+            outcome = .success(())
+        } catch {
+            outcome = .failure(error)
         }
-
-        // 2. A standard session returns non-empty text.
-        //
-        //    Every turn below states `GatedRealModelBudget.responseTokenCeiling`
-        //    as its reply ceiling. Without one each turn takes
-        //    `LiveModelLoader`'s own default of 8192 tokens, so a run whose
-        //    `<think>` block does not stop cannot be held inside the budget.
-        //    The ceiling gives space to the `<think>` block and to the answer —
-        //    see that constant — and a turn that stops earlier still costs only
-        //    the tokens it generated.
-        let session = profile.standard.makeSession(
-            instructions: "You are a terse assistant."
-        )
-        let plainTurnStarted = ContinuousClock.now
-        let reply = try await session.respond(
-            to: "Say hello in one short sentence.",
-            maxTokens: GatedRealModelBudget.responseTokenCeiling)
-        plainTurnDuration = ContinuousClock.now - plainTurnStarted
-        #expect(!reply.isEmpty)
-
-        // 3. Embedding returns dimension-length vectors, and writes no
-        //    transcript event at all. Card ^p3x0bbb took that recording away:
-        //    an embed call is no part of any session's conversation, so it has
-        //    nothing to append to one. A span is the replacement signal, and
-        //    `EmbedTracingTests` holds its whole contract. Step 6 asserts the
-        //    absence against the recordings tree.
-        let dimension = profile.embedding.dimension
-        #expect(dimension > 0)
-        let embedStarted = ContinuousClock.now
-        let vectors = try await profile.embedding.embed(texts: ["first document", "second document"])
-        embedDuration = ContinuousClock.now - embedStarted
-        #expect(vectors.count == 2)
-        #expect(vectors.allSatisfy { $0.count == dimension })
-
-        // 4. A guided session honors its grammar: the output parses against the
-        //    schema (structural validity is the xgrammar guarantee).
-        let schema = #"""
-            {"type":"object","properties":{"city":{"type":"string"},"country":{"type":"string"}},"required":["city","country"],"additionalProperties":false}
-            """#
-        let guidedTurnStarted = ContinuousClock.now
-        let guided = try await profile.standard.respond(
-            to: "Name a city to visit in Japan, as JSON.",
-            matching: schema,
-            maxTokens: GatedRealModelBudget.responseTokenCeiling
-        )
-        guidedTurnDuration = ContinuousClock.now - guidedTurnStarted
-        guard case .object(let object) = guided else {
-            Issue.record("guided output was not a JSON object: \(guided)")
-            return
-        }
-        #expect(object.keys.sorted() == ["city", "country"])
-        if case .string = object["city"] {} else { Issue.record("'city' should be a string") }
-        if case .string = object["country"] {} else { Issue.record("'country' should be a string") }
-
-        // 5. A fork continues the parent's conversation as an independent child
-        //    session, seeded from the parent's accumulated transcript via
-        //    `LanguageModelSessionBackend.makeFork()` — under the real
-        //    `LanguageModelSession`-backed live path this is not yet wired to any
-        //    real prefix-compute reuse (see plan.md's "Sessions & KV cache" open
-        //    question); fork lineage and independent generation are what this
-        //    asserts here.
-        var child: RoutedSession? = try await session.fork(workingDirectory: nil)
-        #expect(child?.parentId == session.id)
-        #expect(child?.id != session.id)
-        let childRecordingDirectory = try #require(child).recordingDirectory
-        // The child's transcript nests directly under the parent's directory.
-        #expect(
-            childRecordingDirectory.deletingLastPathComponent().standardizedFileURL
-                == session.recordingDirectory.standardizedFileURL
-        )
-        let forkTurnStarted = ContinuousClock.now
-        let childReply = try await #require(child).respond(
-            to: "Say hi in one word.",
-            maxTokens: GatedRealModelBudget.responseTokenCeiling)
-        forkTurnDuration = ContinuousClock.now - forkTurnStarted
-        #expect(!childReply.isEmpty)
-
-        // Dropping the only reference releases the fork. No other binding
-        // retains it, so this is a genuine release; the parent is unaffected
-        // and keeps generating.
-        child = nil
-        let parentTurnStarted = ContinuousClock.now
-        let afterRelease = try await session.respond(
-            to: "Still there?",
-            maxTokens: GatedRealModelBudget.responseTokenCeiling)
-        parentTurnDuration = ContinuousClock.now - parentTurnStarted
-        #expect(!afterRelease.isEmpty)
-
-        // 6. Recording: the fork's transcript.jsonl is physically nested under
-        //    the parent's directory, and the merged log across the whole run is
-        //    totally ordered by (ts, seq).
-        let childFile = childRecordingDirectory
-            .appendingPathComponent("transcript.jsonl", isDirectory: false)
-        #expect(FileManager.default.fileExists(atPath: childFile.path))
-
-        let merged = try MergedTranscript.merged(under: recordingsDir)
-        #expect(!merged.isEmpty)
-        // The generation events landed in the tree, and no embedding event did.
-        // The absence is the contract, not a defect: card ^p3x0bbb took the
-        // recording out of `RoutedModel.embed(texts:)`, and
-        // `TranscriptEvent.Kind.embedding` survives only so that recordings
-        // written before that change still decode. `MergedAndRedactionTests`
-        // asserts the same absence over the unit path.
-        #expect(!merged.contains { $0.kind == .embedding })
-        // Totally ordered by (ts, seq): the recorder's monotonic seq is the tie
-        // breaker, so the merged stream is already sorted and its seqs unique.
-        let ordered = merged.sorted { ($0.ts, $0.seq) < ($1.ts, $1.seq) }
-        #expect(merged.map(\.seq) == ordered.map(\.seq))
-        #expect(Set(merged.map(\.seq)).count == merged.count)
-
         await profile.release()
+        try outcome.get()
     }
 
     /// Creates a unique temporary directory.
