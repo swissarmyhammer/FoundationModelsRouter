@@ -30,14 +30,37 @@ comments:
     - evidence: `swift test` — 1235 tests in 134 suites passed (2 known issues: `withKnownIssue` blocks at RealModelHarness.swift:72 and BoundedWait.swift:114, present before this card) plus 83 tests in 10 suites passed; 0 failures, 0 skipped. `swift build --package-path IntegrationTests --build-tests` — exit 0. The only `warning:` lines are SwiftPM's `missing creator for mutated node ... mlx-swift_Cmlx.bundle` note for the root and nested packages, emitted by the build system for a dependency bundle and present before this card; no compiler warning in any source file.
     - next: /commit
   timestamp: 2026-09-05T17:32:30.344468+00:00
+- actor: claude-code
+  id: 01m1sa344bya04ajk37wmddwd8
+  text: |-
+    ### commit — changed
+    - evidence: 6606f54 docs(pool): state that residency is process-wide in the README and the doc comments (local commit on branch `pool`, no push)
+    - next: /review 01M1RRGVGRRP1AMFPRDEV2MK48 HEAD~1..HEAD
+  timestamp: 2026-09-05T17:33:06.059812+00:00
+- actor: claude-code
+  id: 01m1sa894j3ty8cd2vqnh32e1z
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 6606f54) — 0 findings, 0 confirmed, 0 refuted, 7 attempted, 0 failed, 0 skipped. 8 files reviewed. Not reviewed: `.kanban/` (2 files, `.reviewignore`), `README.md` and `model-pool.md` (no validator matches Markdown). No prior `## Review Findings` section is on the card.
+    - next: move to done
+  timestamp: 2026-09-05T17:35:55.026076+00:00
+- actor: claude-code
+  id: 01m1sa8dnt1xjdy2m53awtr4wq
+  text: |-
+    ### finish iteration 1 — review clean, card moves to done
+    - implement: changed — README.md, model-pool.md, Sources/FoundationModelsRouter/Resolution/ModelPool.swift, Sources/FoundationModelsRouter/Router.swift, Sources/FoundationModelsRouter/Concurrency/ResidentModelGates.swift, Tests/FoundationModelsRouterTests/ReadmeSymbolsTests.swift, Tests/FoundationModelsRouterTests/Helpers/RepositoryRoot.swift, Tests/FoundationModelsRouterTests/Helpers/MarkdownSection.swift, Tests/FoundationModelsRouterTests/CIWorkflowTests.swift, Tests/FoundationModelsRouterTests/UpstreamAsksDocumentTests.swift
+    - test: green — `swift test` 1235 tests in 134 suites passed (2 pre-existing known issues) + 83 tests in 10 suites passed, 0 failures, 0 skipped; `swift build --package-path IntegrationTests --build-tests` exit 0
+    - commit: 6606f54
+    - review: clean — 0 findings, 0 failed tasks
+  timestamp: 2026-09-05T17:35:59.674716+00:00
 depends_on:
 - 01M1RREG728QK5FMX6N8H2G4SB
 - 01M1RRF9KB8W919YZ27A4721B3
 - 01M1RRFNF0JT50QDZHCRB2XNXC
 - 01M1RRG1E1EVTDZVRQ919T04M2
 - 01M1RS3MJ88F1NEKZCCQABTHG8
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffcb80
 title: Document process-wide residency in README, ModelPool, and Router doc comments
 ---
 Plan: `model-pool.md` §2, §2.7, §5.
