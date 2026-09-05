@@ -262,6 +262,7 @@ struct PooledResidencyTests {
         spy: LoadSpy,
         recommendedMaxWorkingSetSize: Int64,
         cacheDir: URL,
+        pool: ModelPool = ModelPool(),
         llmContainer: (@Sendable (ModelRef) -> any LoadedLLMContainer)? = nil,
         gatedRef: ModelRef? = nil,
         entrySignal: AsyncSemaphore? = nil,
@@ -280,8 +281,51 @@ struct PooledResidencyTests {
             loader: StubModelLoader(
                 spy: spy, dimension: 8, llmContainer: llmContainer,
                 gatedRef: gatedRef, entrySignal: entrySignal, releaseGate: releaseGate
-            )
+            ),
+            pool: pool
         )
+    }
+
+    // MARK: - The pool a router uses.
+
+    @Test("a router built with no pool uses the process-wide shared pool")
+    func defaultPoolIsShared() throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // The one router in this target built with no `pool:` argument. It
+        // pins the default and never resolves, so it puts nothing in the
+        // shared pool that another suite could see.
+        let router = Router(cacheDir: dir)
+        #expect(router.pool === ModelPool.shared)
+    }
+
+    @Test("a router built with its own pool uses that pool, which counts what one resolve makes resident")
+    @MainActor
+    func explicitPoolCountsThisRouterResidents() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let spy = LoadSpy()
+        let pool = ModelPool()
+        let router = Self.makeRouter(
+            spy: spy,
+            recommendedMaxWorkingSetSize: Self.oneTrioFootprint + Self.headroomBufferBytes,
+            cacheDir: dir,
+            pool: pool
+        )
+        #expect(router.pool === pool)
+        #expect(router.pool !== ModelPool.shared)
+        #expect(await pool.residentModelCount == 0)
+
+        let profile = ProfileDefinition(
+            name: "counted", description: "three models the pool counts",
+            standard: ["org/count-std"], flash: ["org/count-flash"], embedding: ["org/count-emb"]
+        )
+        let resolved = try await router.resolve(profile: profile, reporting: ResolutionProgress())
+        // One trio: the standard model, the flash model, and the embedder.
+        #expect(await pool.residentModelCount == 3)
+
+        await resolved.release()
+        #expect(await pool.residentModelCount == 0)
     }
 
     // MARK: - Two profiles sharing a ModelRef → one load, two live sessions, both generate.

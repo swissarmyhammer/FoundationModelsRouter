@@ -164,14 +164,15 @@ struct ElicitationRoutingTests {
 
     /// Builds a fresh router + resolved profile + vended session over a plain
     /// stub backend, recording through an ``InMemoryRecorder``.
-    private static func makeSession() async throws -> (session: RoutedSession, dir: URL) {
+    private static func makeSession(pool: ModelPool = ModelPool()) async throws -> (session: RoutedSession, dir: URL) {
         let dir = makeTempDir()
         let router = Router(
             cacheDir: dir,
             recorder: InMemoryRecorder(),
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: RawRepoMetadata(configJSON: configJSON, treeJSON: treeJSON)),
-            loader: StubModelLoader(container: BasicLLMContainer(), dimension: 8)
+            loader: StubModelLoader(container: BasicLLMContainer(), dimension: 8),
+            pool: pool
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
         return (profile.standard.makeSession(), dir)

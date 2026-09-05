@@ -256,7 +256,8 @@ struct ResolveTests {
             recorder: recorder,
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: source,
-            loader: loader
+            loader: loader,
+            pool: ModelPool()
         )
 
         let resolved = try await router.resolve(profile: Self.profile, reporting: progress)
@@ -312,7 +313,8 @@ struct ResolveTests {
             recorder: recorder,
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: source,
-            loader: loader
+            loader: loader,
+            pool: ModelPool()
         )
 
         let resolved = try await router.resolve(profile: Self.profile, reporting: progress)
@@ -342,7 +344,8 @@ struct ResolveTests {
             cacheDir: dir,
             probe: StubProbe(chip: "Apple Tiny", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 1_000),
             metadataSource: source,
-            loader: loader
+            loader: loader,
+            pool: ModelPool()
         )
 
         await #expect(throws: ResolutionFailure.self) {
@@ -413,7 +416,8 @@ struct ResolveTests {
             cacheDir: dir,
             probe: probe,
             metadataSource: source,
-            loader: loader
+            loader: loader,
+            pool: ModelPool()
         )
 
         let before = try await Self.resolutionFailure(
@@ -440,7 +444,8 @@ struct ResolveTests {
             cacheDir: dir,
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: source,
-            loader: loader
+            loader: loader,
+            pool: ModelPool()
         )
 
         _ = try await router.resolve(profile: Self.profile, reporting: progress)
@@ -455,14 +460,14 @@ struct ResolveTests {
     @Test("a passed-in id is retained")
     func passedInIDRetained() {
         let id = ULID.generate()
-        let router = Router(id: id)
+        let router = Router(id: id, pool: ModelPool())
         #expect(router.id == id)
     }
 
     @Test("a fresh Router gets a unique id when none is passed")
     func freshRouterGetsUniqueID() {
-        let a = Router()
-        let b = Router()
+        let a = Router(pool: ModelPool())
+        let b = Router(pool: ModelPool())
         #expect(a.id != b.id)
     }
 
@@ -482,7 +487,8 @@ struct ResolveTests {
             cacheDir: dir,
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: source,
-            loader: UnconfiguredModelLoader()
+            loader: UnconfiguredModelLoader(),
+            pool: ModelPool()
         )
 
         await #expect(throws: ModelLoaderError.self) {
@@ -551,7 +557,8 @@ struct ResolveTests {
             cacheDir: dir,
             probe: StubProbe(chip: "Apple Test", totalRAM: 13_000_000, recommendedMaxWorkingSetSize: 13_000_000),
             metadataSource: source,
-            loader: loader
+            loader: loader,
+            pool: ModelPool()
         )
 
         var caught: ResolutionFailure?
@@ -610,7 +617,8 @@ struct ResolveTests {
             cacheDir: dir,
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: source,
-            loader: loader
+            loader: loader,
+            pool: ModelPool()
         )
 
         let resolved = try await router.resolve(profile: profile, reporting: progress)
@@ -659,7 +667,8 @@ struct ResolveTests {
             cacheDir: dir,
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: source,
-            loader: loader
+            loader: loader,
+            pool: ModelPool()
         )
 
         var caught: ResolutionFailure?
@@ -715,7 +724,8 @@ struct ResolveTests {
             cacheDir: dir,
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: source,
-            loader: loader
+            loader: loader,
+            pool: ModelPool()
         )
 
         var caught: ResolutionFailure?
@@ -832,7 +842,8 @@ struct ResolveTests {
             cacheDir: dir,
             probe: StubProbe(chip: "Apple Test", totalRAM: 15_729_000, recommendedMaxWorkingSetSize: 15_729_000),
             metadataSource: source,
-            loader: loader
+            loader: loader,
+            pool: ModelPool()
         )
 
         let profile = ProfileDefinition(

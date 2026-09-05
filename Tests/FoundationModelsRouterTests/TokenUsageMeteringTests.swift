@@ -147,7 +147,8 @@ struct TokenUsageMeteringTests {
     private static func makeRouter(
         usageIncrement: (input: Int, output: Int)?,
         recorder: any TranscriptRecorder,
-        cacheDir: URL
+        cacheDir: URL,
+        pool: ModelPool = ModelPool()
     ) -> Router {
         Router(
             cacheDir: cacheDir,
@@ -157,7 +158,8 @@ struct TokenUsageMeteringTests {
             loader: StubModelLoader(
                 container: ConfiguredLLMContainer(text: cannedText, usageIncrement: usageIncrement),
                 dimension: stubDimension
-            )
+            ),
+            pool: pool
         )
     }
 
@@ -200,7 +202,8 @@ struct TokenUsageMeteringTests {
         id: ULID = .generate(),
         container: ConfiguredLLMContainer,
         recordingsDir: URL,
-        cacheDir: URL
+        cacheDir: URL,
+        pool: ModelPool = ModelPool()
     ) -> Router {
         Router(
             id: id,
@@ -209,7 +212,8 @@ struct TokenUsageMeteringTests {
             recorder: JSONLRecorder(directory: recordingsDir),
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
-            loader: StubModelLoader(container: container, dimension: stubDimension)
+            loader: StubModelLoader(container: container, dimension: stubDimension),
+            pool: pool
         )
     }
 

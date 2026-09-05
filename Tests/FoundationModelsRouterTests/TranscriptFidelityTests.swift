@@ -211,14 +211,16 @@ struct TranscriptFidelityTests {
     private static func makeRouter(
         container: any LoadedLLMContainer,
         recorder: any TranscriptRecorder,
-        cacheDir: URL
+        cacheDir: URL,
+        pool: ModelPool = ModelPool()
     ) -> Router {
         Router(
             cacheDir: cacheDir,
             recorder: recorder,
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
-            loader: StubModelLoader(container: container, dimension: stubDimension)
+            loader: StubModelLoader(container: container, dimension: stubDimension),
+            pool: pool
         )
     }
 
@@ -280,7 +282,8 @@ struct TranscriptFidelityTests {
             recorder: JSONLRecorder(directory: recordingsDir),
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: Self.rawMetadata),
-            loader: StubModelLoader(container: CannedLLMContainer(text: Self.cannedText), dimension: Self.stubDimension)
+            loader: StubModelLoader(container: CannedLLMContainer(text: Self.cannedText), dimension: Self.stubDimension),
+            pool: ModelPool()
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 

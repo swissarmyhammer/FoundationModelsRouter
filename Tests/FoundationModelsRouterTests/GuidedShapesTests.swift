@@ -139,7 +139,8 @@
         private static func makeRouter(
             recorder: any TranscriptRecorder,
             cacheDir: URL,
-            canned: String
+            canned: String,
+            pool: ModelPool = ModelPool()
         ) -> Router {
             Router(
                 cacheDir: cacheDir,
@@ -150,7 +151,8 @@
                     recommendedMaxWorkingSetSize: 48 << 30
                 ),
                 metadataSource: StubMetadataSource(raw: rawMetadata),
-                loader: StubModelLoader(dimension: 8, canned: canned)
+                loader: StubModelLoader(dimension: 8, canned: canned),
+                pool: pool
             )
         }
 

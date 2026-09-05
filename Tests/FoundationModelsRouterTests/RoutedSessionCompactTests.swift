@@ -161,7 +161,8 @@ struct RoutedSessionCompactTests {
         container: ConfiguredLLMContainer,
         recorder: any TranscriptRecorder,
         cacheDir: URL,
-        recordingsDir: URL? = nil
+        recordingsDir: URL? = nil,
+        pool: ModelPool = ModelPool()
     ) -> Router {
         Router(
             id: id,
@@ -170,7 +171,8 @@ struct RoutedSessionCompactTests {
             recorder: recorder,
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
-            loader: StubModelLoader(container: container, dimension: stubDimension)
+            loader: StubModelLoader(container: container, dimension: stubDimension),
+            pool: pool
         )
     }
 

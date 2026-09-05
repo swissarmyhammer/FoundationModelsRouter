@@ -1,7 +1,21 @@
 ---
 assignees:
 - claude-code
-position_column: todo
+comments:
+- actor: claude-code
+  id: 01m1rtqwbxq9eqepwbrvgxyav9
+  text: |-
+    Research and first implementation pass.
+
+    Discoveries:
+    - Swift 6 language mode (tools 6.1, no override). Region isolation rejects a non-Sendable closure that an actor hands to a `nonisolated` method on another actor. `withResolveLock` therefore takes `isolation: isolated (any Actor)? = #isolation` and forwards it to `AsyncSemaphore.withPermit`, which gains the same parameter (it had no callers). The body then runs on the caller's actor and never leaves its region. A method with an `isolated` parameter cannot also be `nonisolated`; the lock itself stays a `nonisolated let`.
+    - The `load` closure the router hands to `ModelPool.acquire` must be `@Sendable`, because the pool actor runs it. `Router.acquireModel` marks its `load` and `wrap` closures `@Sendable` and constrains `Loaded: Sendable`.
+    - `acquire` returns the `PoolEntry`. The router reads `entry.isFirstHold` (refcount == 1 under the resolve lock) to know that this call loaded the key, which is what `newKeys` tracked before.
+    - The default-pool identity test must build one `Router` with no `pool:` argument. That is the one site in the unit target without a pool. It never resolves, so it puts nothing in the shared pool.
+
+    Done so far: `ModelPool.swift` written, `Router.swift` rewired, two new tests in `PooledResidencyTests.swift`. `swift build --build-tests` is green. `swift test --filter PooledResidencyTests`: 15 tests in 1 suite passed. The sweep of the other 40 test files is in progress.
+  timestamp: 2026-09-05T13:04:49.021808+00:00
+position_column: doing
 position_ordinal: '80'
 title: Extract the residency pool from Router into a process-wide ModelPool actor
 ---

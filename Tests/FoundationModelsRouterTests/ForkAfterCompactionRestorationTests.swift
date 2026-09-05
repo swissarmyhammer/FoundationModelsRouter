@@ -72,7 +72,8 @@ struct ForkAfterCompactionRestorationTests {
         container: RetainingLLMContainer,
         recorder: JSONLRecorder,
         cacheDir: URL,
-        recordingsDir: URL
+        recordingsDir: URL,
+        pool: ModelPool = ModelPool()
     ) -> Router {
         Router(
             id: id,
@@ -82,7 +83,8 @@ struct ForkAfterCompactionRestorationTests {
             recorder: recorder,
             probe: RouterTestFixtures.stubProbe,
             metadataSource: StubMetadataSource(raw: RouterTestFixtures.rawMetadata),
-            loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension)
+            loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension),
+            pool: pool
         )
     }
 

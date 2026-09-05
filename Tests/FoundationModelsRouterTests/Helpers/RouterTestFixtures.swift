@@ -148,6 +148,8 @@ enum RouterTestFixtures {
     ///   - tracer: The tracer every vended handle opens its embed span
     ///     through, or `nil` (the default) to read
     ///     `InstrumentationSystem.tracer` at call time.
+    ///   - pool: The resident-model pool. Defaults to a fresh pool, so
+    ///     parallel suites never share residents.
     /// - Returns: The router.
     static func makeRouter(
         id: ULID = .generate(),
@@ -156,7 +158,8 @@ enum RouterTestFixtures {
         recordingsDir: URL? = nil,
         recorder: any TranscriptRecorder = InMemoryRecorder(),
         loader: any ModelLoader,
-        tracer: (any Tracer)? = nil
+        tracer: (any Tracer)? = nil,
+        pool: ModelPool = ModelPool()
     ) -> Router {
         Router(
             id: id,
@@ -167,7 +170,8 @@ enum RouterTestFixtures {
             tracer: tracer,
             probe: stubProbe,
             metadataSource: StubMetadataSource(raw: rawMetadata),
-            loader: loader
+            loader: loader,
+            pool: pool
         )
     }
 

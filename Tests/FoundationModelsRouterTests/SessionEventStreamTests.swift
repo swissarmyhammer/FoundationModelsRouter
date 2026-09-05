@@ -220,7 +220,7 @@ struct SessionEventStreamTests {
     /// Builds a router+resolved-profile pair wired with a fresh
     /// ``ScriptedLLMContainer``, returning the container and recorder so a
     /// test can drive the backend directly and inspect what was persisted.
-    private static func makeSession(cacheDir: URL) async throws -> (
+    private static func makeSession(cacheDir: URL, pool: ModelPool = ModelPool()) async throws -> (
         session: RoutedSession, container: ScriptedLLMContainer, recorder: InMemoryRecorder
     ) {
         let container = ScriptedLLMContainer()
@@ -230,7 +230,8 @@ struct SessionEventStreamTests {
             recorder: recorder,
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
-            loader: StubModelLoader(container: container, dimension: stubDimension)
+            loader: StubModelLoader(container: container, dimension: stubDimension),
+            pool: pool
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
         return (profile.standard.makeSession(), container, recorder)

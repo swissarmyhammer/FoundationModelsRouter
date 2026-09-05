@@ -162,11 +162,13 @@ struct TranscriptNestingTests {
     ///   instructions flow into its ``StubSessionBackend``'s synthetic
     ///   transcript as a leading `.instructions` entry, modeling an
     ///   instructed real `LanguageModelSession`.
+    ///   - pool: The resident-model pool. Defaults to a fresh pool, so parallel suites never share residents.
     private static func makeRouter(
         recorder: any TranscriptRecorder,
         cacheDir: URL,
         recordingsDir: URL,
-        forwardInstructions: Bool = false
+        forwardInstructions: Bool = false,
+        pool: ModelPool = ModelPool()
     ) -> Router {
         Router(
             cacheDir: cacheDir,
@@ -175,7 +177,8 @@ struct TranscriptNestingTests {
             probe: StubProbe(
                 chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
-            loader: StubModelLoader(dimension: stubDimension, text: cannedText, forwardInstructions: forwardInstructions)
+            loader: StubModelLoader(dimension: stubDimension, text: cannedText, forwardInstructions: forwardInstructions),
+            pool: pool
         )
     }
 
@@ -450,7 +453,8 @@ struct TranscriptNestingTests {
             probe: StubProbe(
                 chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: Self.rawMetadata),
-            loader: StubModelLoader(dimension: Self.stubDimension, text: Self.cannedText)
+            loader: StubModelLoader(dimension: Self.stubDimension, text: Self.cannedText),
+            pool: ModelPool()
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
@@ -593,7 +597,8 @@ struct TranscriptNestingTests {
             probe: StubProbe(
                 chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: Self.rawMetadataWithNativeMax32768),
-            loader: StubModelLoader(dimension: Self.stubDimension, text: Self.cannedText)
+            loader: StubModelLoader(dimension: Self.stubDimension, text: Self.cannedText),
+            pool: ModelPool()
         )
         // `profileWithDerivedContext` has `context: nil`, so JointFit derives
         // the working context via the ladder instead of using an authored figure.

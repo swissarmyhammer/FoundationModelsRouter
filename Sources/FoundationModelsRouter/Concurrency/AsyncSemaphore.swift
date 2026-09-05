@@ -5,7 +5,7 @@ import Synchronization
 ///
 /// ``wait()`` is non-throwing, so acquisition runs to completion even when
 /// the task is cancelled while suspended. Cancellation is observed at the
-/// surrounding `await` boundaries and by the body of ``withPermit(_:)``.
+/// surrounding `await` boundaries and by the body of ``withPermit(isolation:_:)``.
 public final class AsyncSemaphore: Sendable {
     /// All mutable state, guarded as a unit so check-and-suspend is atomic.
     private struct State {
@@ -69,10 +69,17 @@ public final class AsyncSemaphore: Sendable {
     /// returns normally, throws, or is unwound by cancellation — a permit can
     /// never leak.
     ///
-    /// - Parameter body: The work to run while holding a permit.
+    /// - Parameters:
+    ///   - isolation: The caller's actor isolation, which defaults to the
+    ///     caller's own. `body` runs there, so an actor-isolated closure
+    ///     never leaves its caller's region.
+    ///   - body: The work to run while holding a permit.
     /// - Returns: Whatever `body` returns.
     /// - Throws: Rethrows any error thrown by `body`.
-    package func withPermit<T>(_ body: () async throws -> T) async rethrows -> T {
+    package func withPermit<T>(
+        isolation: isolated (any Actor)? = #isolation,
+        _ body: () async throws -> T
+    ) async rethrows -> T {
         await wait()
         defer { signal() }
         return try await body()

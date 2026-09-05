@@ -173,7 +173,8 @@ struct ExamplesTests {
                     canned: cannedResponse,
                     perSlotCanned: cannedResponses,
                     dimension: embeddingDimension
-                )
+                ),
+                pool: ModelPool()
             )
         }
     }
@@ -587,7 +588,8 @@ struct ExamplesTests {
                 probe: ExampleHarness.StubProbe(
                     chip: "Apple Example", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
                 metadataSource: ExampleHarness.StubMetadataSource(raw: ExampleHarness.rawMetadata),
-                loader: StubModelLoader(backend: backend)
+                loader: StubModelLoader(backend: backend),
+                pool: ModelPool()
             )
             let profile = try await router.resolve(
                 profile: ProfileDefinition(

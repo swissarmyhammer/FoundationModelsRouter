@@ -298,13 +298,14 @@ struct ToolOutputCappingTests {
         return dir
     }
 
-    private static func makeRouter(container: any LoadedLLMContainer, cacheDir: URL) -> Router {
+    private static func makeRouter(container: any LoadedLLMContainer, cacheDir: URL, pool: ModelPool = ModelPool()) -> Router {
         Router(
             cacheDir: cacheDir,
             recorder: InMemoryRecorder(),
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
-            loader: StubModelLoader(container: container, dimension: stubDimension)
+            loader: StubModelLoader(container: container, dimension: stubDimension),
+            pool: pool
         )
     }
 

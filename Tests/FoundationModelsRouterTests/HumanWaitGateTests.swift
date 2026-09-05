@@ -284,14 +284,17 @@ struct HumanWaitGateTests {
 
     /// Builds a router wired with the stub loader, vending `container` for every
     /// generation slot.
-    private static func makeRouter(container: HookedLLMContainer, cacheDir: URL) -> Router {
+    private static func makeRouter(
+        container: HookedLLMContainer, cacheDir: URL, pool: ModelPool = ModelPool()
+    ) -> Router {
         Router(
             maxConcurrentForks: 4,
             cacheDir: cacheDir,
             recorder: InMemoryRecorder(),
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
-            loader: StubModelLoader(container: container, dimension: stubDimension)
+            loader: StubModelLoader(container: container, dimension: stubDimension),
+            pool: pool
         )
     }
 

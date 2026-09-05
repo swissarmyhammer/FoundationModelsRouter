@@ -16,83 +16,6 @@ public enum RecordingLevel: String, Sendable, Codable, Equatable, CaseIterable {
     case full
 }
 
-/// The exact identity of a resident model artifact.
-///
-/// Two candidates share a pool entry only when both the ``ModelRef`` and the
-/// ``Role`` match. A generation model is keyed by its working context because
-/// the KV cache is sized at load time.
-private struct ResidencyKey: Hashable, Sendable {
-    /// The role a resident model was loaded under.
-    enum Role: Hashable, Sendable {
-        /// Loaded as a generation model at this working context.
-        case llm(context: Int)
-        /// Loaded as an embedder — context-independent (weights only).
-        case embedding
-    }
-
-    /// The model reference (repo + optional pinned revision).
-    // Never read by name: both stored properties are consumed only through the
-    // synthesized `Hashable`/`Equatable` conformance, which is exactly what
-    // makes this a pool key. Deleting either would collapse every distinct
-    // model (or role) onto one bucket of `pool`.
-    // periphery:ignore
-    let ref: ModelRef
-
-    /// The role this instance was loaded under.
-    // periphery:ignore
-    let role: Role
-}
-
-/// A pool entry's loaded container, by container protocol.
-private enum PooledContainer: Sendable {
-    case llm(any LoadedLLMContainer)
-    case embedding(any LoadedEmbeddingContainer)
-
-    /// The container upcast to the common base, for ``ModelLoader/evict(container:)``.
-    var erased: any LoadedModelContainer {
-        switch self {
-        case .llm(let container): return container
-        case .embedding(let container): return container
-        }
-    }
-}
-
-/// One resident model in the router's pool, reference-counted across every
-/// slot acquisition that holds it. Every ``RoutedModel`` built over this
-/// entry shares its ``ResidentModelGates``.
-private struct PoolEntry: Sendable {
-    /// How many slot acquisitions currently hold this model.
-    var refcount: Int
-
-    /// This model's margined footprint at first load, the floor under ``footprintBytes``.
-    let baseFootprintBytes: Int64
-
-    /// The sum of the bytes every live acquisition charged the shared budget.
-    /// Each release gives back its own acquisition's charge.
-    var acquiredChargeBytes: Int64
-
-    /// The steady-state bytes this entry holds against the shared budget:
-    /// the live charge, floored at the first load's own footprint.
-    var footprintBytes: Int64 { max(baseFootprintBytes, acquiredChargeBytes) }
-
-    /// The loaded container.
-    let container: PooledContainer
-
-    /// The gates every handle built over this entry reuses.
-    let gates: ResidentModelGates
-}
-
-/// One slot acquisition's hold on a pooled model: the pool key and the bytes
-/// that acquisition charged the shared budget. A release gives back the
-/// charge.
-private struct ResidencyHold: Sendable {
-    /// The pooled model this hold references.
-    let key: ResidencyKey
-
-    /// The `× 1.2` bytes this acquisition charged the shared budget.
-    let chargedBytes: Int64
-}
-
 /// The shared entry point: built once at app start, it resolves authored
 /// ``ProfileDefinition``s into resident ``LanguageModelProfile``s for this
 /// machine, reporting UI-bindable progress.
@@ -103,10 +26,11 @@ private struct ResidencyHold: Sendable {
 /// each resolve, so no host measurement is kept.
 ///
 /// A router admits several resident profiles at one time. It prices the
-/// union of every resident model against one shared budget. Residency is
-/// reference-counted per ``ResidencyKey`` across every profile that
-/// references it. ``resolve(profile:reporting:)`` and ``release(token:)``
-/// are serialized by `poolLock`.
+/// union of every model resident in its ``ModelPool`` against one shared
+/// budget. Residency is reference-counted per ``ResidencyKey`` across every
+/// profile, from every router on the pool, that references it.
+/// ``resolve(profile:reporting:)`` and ``release(token:)`` are serialized by
+/// the pool's resolve lock.
 public actor Router {
     /// The recording root id; sortable by construction time.
     public nonisolated let id: ULID
@@ -141,20 +65,9 @@ public actor Router {
     /// The download+load step behind resolution.
     private let loader: any ModelLoader
 
-    /// Serializes every entry point that mutates ``pool``:
-    /// ``resolve(profile:reporting:)`` end to end and ``release(token:)``.
-    /// A resolve prices a pooled candidate at its marginal cost and acquires
-    /// it later, so a concurrent release must not evict that key in between.
-    private let poolLock = AsyncSemaphore(value: 1)
-
-    /// The resident-model pool, keyed by exact artifact identity and
-    /// reference-counted across every profile that references it.
-    private var pool: [ResidencyKey: PoolEntry] = [:]
-
-    /// The pool holds each resident profile was granted, by residency token.
-    /// ``release(token:)`` gives back each hold's charge and forgets the token,
-    /// so a double release is a no-op.
-    private var residentProfiles: [ULID: [ResidencyHold]] = [:]
+    /// The resident-model pool this router resolves into. Every router on
+    /// one pool shares its residents and its resolve lock.
+    package nonisolated let pool: ModelPool
 
     /// Creates a router.
     ///
@@ -174,6 +87,9 @@ public actor Router {
     ///   - probe: The machine probe behind the budget.
     ///   - metadataSource: The metadata fetch behind sizing.
     ///   - loader: The download and load step. Pass a configured ``LiveModelLoader`` for real loading.
+    ///   - pool: The resident-model pool to resolve into. The default,
+    ///     ``ModelPool/shared``, is one pool for the whole process. Pass a
+    ///     fresh ``ModelPool`` for a router that must not share residents.
     public init(
         id: ULID = .generate(),
         headroomReserve: Int64 = defaultHeadroomReserveBytes,
@@ -186,7 +102,8 @@ public actor Router {
         tracer: (any Tracer)? = nil,
         probe: any MachineProbe = SystemMachineProbe(),
         metadataSource: any MetadataSource = HuggingFaceMetadataSource(),
-        loader: any ModelLoader = UnconfiguredModelLoader()
+        loader: any ModelLoader = UnconfiguredModelLoader(),
+        pool: ModelPool = .shared
     ) {
         self.id = id
         self.headroomReserve = headroomReserve
@@ -209,6 +126,7 @@ public actor Router {
         self.probe = probe
         self.metadataReader = RepoMetadataReader(source: metadataSource, cacheDir: resolvedCacheDir)
         self.loader = loader
+        self.pool = pool
     }
 
     /// Resolves an authored profile into a resident ``LanguageModelProfile``
@@ -217,7 +135,8 @@ public actor Router {
     ///
     /// The effective budget is the machine budget less every pooled model's
     /// footprint. A pooled candidate is charged only its marginal cost. The
-    /// whole pipeline is single-flight on this router.
+    /// whole pipeline runs under the pool's resolve lock, so it is
+    /// single-flight across every router on the pool.
     ///
     /// - Parameters:
     ///   - def: The authored profile to resolve.
@@ -237,11 +156,24 @@ public actor Router {
             .withSpan(RouterTracing.SpanName.resolve, ofKind: .client) { span in
                 span.attributes[RouterTracing.AttributeKey.routerId] = id.description
                 span.attributes[RouterTracing.AttributeKey.profileDefinitionName] = def.name
-                return try await runResolve(profile: def, reporting: progress, span: span)
+                return try await pool.withResolveLock {
+                    try await runResolve(profile: def, reporting: progress, span: span)
+                }
             }
     }
 
-    /// The body of ``resolve(profile:reporting:)``, running inside its span.
+    /// One slot's acquisition this resolve holds: the hold to give back, and
+    /// the pool entry the slot's handle is built over.
+    private struct AcquiredSlot {
+        /// The hold this resolve gives back on failure or at release.
+        let hold: ResidencyHold
+
+        /// The pool entry after this acquisition.
+        let entry: PoolEntry
+    }
+
+    /// The body of ``resolve(profile:reporting:)``, running inside its span
+    /// and under the pool's resolve lock.
     ///
     /// - Parameters:
     ///   - def: The authored profile to resolve.
@@ -256,16 +188,13 @@ public actor Router {
         reporting progress: ResolutionProgress,
         span: any Span
     ) async throws -> LanguageModelProfile {
-        await poolLock.wait()
-        defer { poolLock.signal() }
-
         await beginSizing(progress: progress)
         let totalBudget = hostBudget()
-        let residentFootprint = pool.values.reduce(Int64(0)) { $0 + $1.footprintBytes }
+        let residentFootprint = await pool.residentFootprintBytes
         let effectiveBudget = totalBudget - residentFootprint
         span.attributes[RouterTracing.AttributeKey.budgetBytes] = effectiveBudget
         let metadataByRef = await sizeCandidates(profile: def)
-        let residentKeys = Set(pool.keys)
+        let residentKeys = await pool.residentKeys
 
         let resolution = try await runJointFit(
             profile: def,
@@ -276,12 +205,12 @@ public actor Router {
         )
         await markChosen(resolution: resolution, progress: progress)
 
-        // Populated incrementally as each slot is acquired — the key beside
-        // the bytes that acquisition charged the budget — so a mid-pipeline
-        // failure's `catch` below can see exactly what this attempt already
-        // holds and give each share back, whether that slot was freshly
-        // loaded or reused (bumped) an already-resident entry.
-        var slotHolds: [ModelSlot: ResidencyHold] = [:]
+        // Populated incrementally as each slot is acquired — the hold beside
+        // the entry it holds — so a mid-pipeline failure's `catch` below can
+        // see exactly what this attempt already holds and give each share
+        // back, whether that slot was freshly loaded or reused (bumped) an
+        // already-resident entry.
+        var acquiredSlots: [ModelSlot: AcquiredSlot] = [:]
         var newKeys: Set<ResidencyKey> = []
         do {
             await setPhase(.downloading, progress: progress)
@@ -295,8 +224,9 @@ public actor Router {
             ] {
                 let slotRes = Self.slotResolution(for: resolution, slot: slot)
                 let chargedBytes = Self.chosenCharge(for: slotRes)
-                let key = try await acquireLLM(
-                    key: ResidencyKey(ref: chosen, role: .llm(context: slotRes.contextTokens)),
+                let key = ResidencyKey(ref: chosen, role: .llm(context: slotRes.contextTokens))
+                let entry = try await acquireLLM(
+                    key: key,
                     chosen: chosen,
                     slot: slot,
                     context: slotRes.contextTokens,
@@ -305,20 +235,26 @@ public actor Router {
                     newKeys: &newKeys,
                     progress: progress
                 )
-                slotHolds[slot] = ResidencyHold(key: key, chargedBytes: chargedBytes)
+                acquiredSlots[slot] = AcquiredSlot(
+                    hold: ResidencyHold(key: key, chargedBytes: chargedBytes), entry: entry
+                )
             }
 
             let embeddingRes = Self.slotResolution(for: resolution, slot: .embedding)
             let embeddingCharge = Self.chosenCharge(for: embeddingRes)
-            let embeddingKey = try await acquireEmbedder(
-                key: ResidencyKey(ref: resolution.embedding, role: .embedding),
+            let embeddingKey = ResidencyKey(ref: resolution.embedding, role: .embedding)
+            let embeddingEntry = try await acquireEmbedder(
+                key: embeddingKey,
                 chosen: resolution.embedding,
                 footprintBytes: Self.chosenFootprint(for: embeddingRes),
                 chargedBytes: embeddingCharge,
                 newKeys: &newKeys,
                 progress: progress
             )
-            slotHolds[.embedding] = ResidencyHold(key: embeddingKey, chargedBytes: embeddingCharge)
+            acquiredSlots[.embedding] = AcquiredSlot(
+                hold: ResidencyHold(key: embeddingKey, chargedBytes: embeddingCharge),
+                entry: embeddingEntry
+            )
 
             await setPhase(.loading, progress: progress)
             // Only the freshly-acquired keys need preloading — a reused key
@@ -328,34 +264,35 @@ public actor Router {
             // both winning the identical ref+context).
             var preloadedKeys: Set<ResidencyKey> = []
             for slot in [ModelSlot.standard, .flash, .embedding] {
-                guard let key = slotHolds[slot]?.key, newKeys.contains(key) else { continue }
-                guard let entry = pool[key] else {
-                    preconditionFailure("a freshly-acquired key must still be in the pool")
+                guard let acquired = acquiredSlots[slot], newKeys.contains(acquired.hold.key) else {
+                    continue
                 }
-                if preloadedKeys.contains(key) {
+                if preloadedKeys.contains(acquired.hold.key) {
                     await setSlotState(slot, to: .ready, progress: progress)
                     continue
                 }
-                try await finalize(slot: slot, container: entry.container.erased, progress: progress)
-                preloadedKeys.insert(key)
+                try await finalize(
+                    slot: slot, container: acquired.entry.container.erased, progress: progress
+                )
+                preloadedKeys.insert(acquired.hold.key)
             }
 
             await complete(progress: progress)
-            guard let standardKey = slotHolds[.standard]?.key, let flashKey = slotHolds[.flash]?.key,
-                  let embeddingKey = slotHolds[.embedding]?.key
+            guard let standard = acquiredSlots[.standard], let flash = acquiredSlots[.flash],
+                  let embedding = acquiredSlots[.embedding]
             else {
-                preconditionFailure("the acquisition loop above populates all three slot holds")
+                preconditionFailure("the acquisition loop above populates all three slots")
             }
             let residencyToken = ULID.generate()
             let profile = buildProfile(
                 definition: def,
                 resolution: resolution,
-                standardKey: standardKey,
-                flashKey: flashKey,
-                embeddingKey: embeddingKey,
+                standard: standard.entry,
+                flash: flash.entry,
+                embedding: embedding.entry,
                 residencyToken: residencyToken
             )
-            residentProfiles[residencyToken] = Array(slotHolds.values)
+            await pool.grant(token: residencyToken, holds: acquiredSlots.values.map(\.hold))
             Self.recordChosenModels(resolution: resolution, on: span)
             return profile
         } catch {
@@ -363,8 +300,8 @@ public actor Router {
             // load is fully evicted, a reused entry's refcount bump and its
             // charge are undone — so a partial failure never leaks a
             // phantom-resident pool entry with no owning profile.
-            for hold in slotHolds.values {
-                await releaseKey(key: hold.key, chargedBytes: hold.chargedBytes)
+            for acquired in acquiredSlots.values {
+                await pool.release(hold: acquired.hold)
             }
             // A download/load/preload failure must move the bound progress to
             // `.failed` so a UI does not hang mid-pipeline, then rethrow.
@@ -395,8 +332,9 @@ public actor Router {
 
     // MARK: - Residency
 
-    /// Acquires the pooled model identified by `key`: bumps an existing
-    /// entry's refcount, or downloads through `load` and inserts a fresh entry.
+    /// Acquires the pooled model identified by `key` through the pool: bumps
+    /// a resident entry's refcount, or downloads through `load` and inserts
+    /// a fresh entry that this router's loader evicts at zero references.
     ///
     /// - Parameters:
     ///   - key: This candidate's exact residency identity.
@@ -408,9 +346,9 @@ public actor Router {
     ///   - progress: The progress to drive through acquisition.
     ///   - load: The loader call that produces a fresh resident container.
     ///   - wrap: Wraps a fresh container into a ``PooledContainer``.
-    /// - Returns: `key`.
+    /// - Returns: The pool entry after this acquisition.
     /// - Throws: Any error the loader raises.
-    private func acquireModel<Loaded>(
+    private func acquireModel<Loaded: Sendable>(
         key: ResidencyKey,
         chosen: ModelRef,
         slot: ModelSlot,
@@ -418,34 +356,36 @@ public actor Router {
         chargedBytes: Int64,
         newKeys: inout Set<ResidencyKey>,
         progress: ResolutionProgress,
-        load: (ModelRef, ModelSlot, @escaping @Sendable (DownloadProgress) -> Void) async throws ->
-            Loaded,
-        wrap: (Loaded) -> PooledContainer
-    ) async throws -> ResidencyKey {
-        if var entry = pool[key] {
-            entry.refcount += 1
-            entry.acquiredChargeBytes += chargedBytes
-            pool[key] = entry
-            await setSlotState(slot, to: .ready, progress: progress)
-            return key
-        }
-        // Below the early return above, so a slot the pool already held opens
-        // no load span at all: a trace therefore shows a fresh resolve's loads
-        // and a later resolve's reuse as two different shapes.
-        let container = try await withLoadSpan(
-            chosen: chosen, slot: slot, footprintBytes: footprintBytes
-        ) {
-            try await download(ref: chosen, slot: slot, progress: progress, load: load)
-        }
-        pool[key] = PoolEntry(
-            refcount: 1,
-            baseFootprintBytes: footprintBytes,
-            acquiredChargeBytes: chargedBytes,
-            container: wrap(container),
-            gates: ResidentModelGates(maxConcurrentForks: maxConcurrentForks)
+        load: @Sendable (ModelRef, ModelSlot, @escaping @Sendable (DownloadProgress) -> Void)
+            async throws -> Loaded,
+        wrap: @Sendable (Loaded) -> PooledContainer
+    ) async throws -> PoolEntry {
+        let loader = self.loader
+        let entry = try await pool.acquire(
+            key: key,
+            footprintBytes: footprintBytes,
+            chargedBytes: chargedBytes,
+            maxConcurrentForks: maxConcurrentForks,
+            load: {
+                // Runs only for a key the pool did not hold, so a slot the
+                // pool already held opens no load span at all: a trace
+                // therefore shows a fresh resolve's loads and a later
+                // resolve's reuse as two different shapes.
+                let container = try await withLoadSpan(
+                    chosen: chosen, slot: slot, footprintBytes: footprintBytes
+                ) {
+                    try await download(ref: chosen, slot: slot, progress: progress, load: load)
+                }
+                return wrap(container)
+            },
+            evict: { container in await loader.evict(container: container) }
         )
-        newKeys.insert(key)
-        return key
+        if entry.isFirstHold {
+            newKeys.insert(key)
+        } else {
+            await setSlotState(slot, to: .ready, progress: progress)
+        }
+        return entry
     }
 
     /// Acquires a generation slot for `key` through
@@ -461,7 +401,7 @@ public actor Router {
         chargedBytes: Int64,
         newKeys: inout Set<ResidencyKey>,
         progress: ResolutionProgress
-    ) async throws -> ResidencyKey {
+    ) async throws -> PoolEntry {
         try await acquireModel(
             key: key, chosen: chosen, slot: slot, footprintBytes: footprintBytes,
             chargedBytes: chargedBytes,
@@ -480,7 +420,7 @@ public actor Router {
         chargedBytes: Int64,
         newKeys: inout Set<ResidencyKey>,
         progress: ResolutionProgress
-    ) async throws -> ResidencyKey {
+    ) async throws -> PoolEntry {
         try await acquireModel(
             key: key, chosen: chosen, slot: .embedding, footprintBytes: footprintBytes,
             chargedBytes: chargedBytes,
@@ -491,32 +431,14 @@ public actor Router {
     }
 
     /// Releases the resident-model references a profile was granted at
-    /// resolve time. A pooled model that drops to zero references is evicted.
+    /// resolve time, through the pool. A pooled model that drops to zero
+    /// references is evicted.
     ///
-    /// Idempotent: a token not in ``residentProfiles`` is a no-op.
+    /// Idempotent: a token the pool does not know is a no-op.
     ///
     /// - Parameter token: The residency token of the profile to release.
     func release(token: ULID) async {
-        await poolLock.wait()
-        defer { poolLock.signal() }
-        guard let holds = residentProfiles.removeValue(forKey: token) else { return }
-        for hold in holds {
-            await releaseKey(key: hold.key, chargedBytes: hold.chargedBytes)
-        }
-    }
-
-    /// Decrements one pooled model's refcount and gives back `chargedBytes`.
-    /// Evicts the model at zero references. A no-op when `key` is not pooled.
-    private func releaseKey(key: ResidencyKey, chargedBytes: Int64) async {
-        guard var entry = pool[key] else { return }
-        entry.refcount -= 1
-        entry.acquiredChargeBytes -= chargedBytes
-        if entry.refcount <= 0 {
-            pool.removeValue(forKey: key)
-            await loader.evict(container: entry.container.erased)
-        } else {
-            pool[key] = entry
-        }
+        await pool.release(token: token)
     }
 
     // MARK: - Budget
@@ -780,14 +702,23 @@ public actor Router {
 
     // MARK: - Profile assembly
 
-    /// Assembles the resolved profile from the pool's loaded containers and the
+    /// Assembles the resolved profile from each slot's pool entry and the
     /// per-slot resolutions, stamping each handle with the router's id and recorder.
+    ///
+    /// - Parameters:
+    ///   - def: The authored profile this resolve applied.
+    ///   - resolution: The joint fit this resolve applied.
+    ///   - standard: The pool entry the `standard` slot acquired.
+    ///   - flash: The pool entry the `flash` slot acquired.
+    ///   - embedding: The pool entry the `embedding` slot acquired.
+    ///   - residencyToken: The token the pool holds this profile's holds under.
+    /// - Returns: The resolved profile.
     private func buildProfile(
         definition def: ProfileDefinition,
         resolution: JointResolution,
-        standardKey: ResidencyKey,
-        flashKey: ResidencyKey,
-        embeddingKey: ResidencyKey,
+        standard: PoolEntry,
+        flash: PoolEntry,
+        embedding: PoolEntry,
         residencyToken: ULID
     ) -> LanguageModelProfile {
         let embeddingRes = Self.slotResolution(for: resolution, slot: .embedding)
@@ -804,20 +735,20 @@ public actor Router {
                 slot: .standard,
                 chosen: resolution.standard,
                 resolution: Self.slotResolution(for: resolution, slot: .standard),
-                key: standardKey,
+                entry: standard,
                 resolvedProfile: resolvedProfile
             ),
             flash: makeRoutedLLM(
                 slot: .flash,
                 chosen: resolution.flash,
                 resolution: Self.slotResolution(for: resolution, slot: .flash),
-                key: flashKey,
+                entry: flash,
                 resolvedProfile: resolvedProfile
             ),
             embedding: makeRoutedEmbedder(
                 chosen: resolution.embedding,
                 resolution: embeddingRes,
-                key: embeddingKey,
+                entry: embedding,
                 resolvedProfile: resolvedProfile
             ),
             router: self,
@@ -825,7 +756,7 @@ public actor Router {
         )
     }
 
-    /// Builds a routed model handle for `slot` from its pooled entry, with
+    /// Builds a routed model handle for `slot` from its pool entry, with
     /// this router's id, recorder, tracer, transcripts root, and the entry's
     /// gates.
     ///
@@ -833,7 +764,7 @@ public actor Router {
     ///   - slot: The slot this handle fills.
     ///   - chosen: The chosen model reference for the slot.
     ///   - resolution: Why this model won its slot.
-    ///   - key: This slot's residency identity, looked up in ``pool``.
+    ///   - entry: The pool entry this slot acquired.
     ///   - resolvedProfile: The run's resolved-profile facts for root session sidecars.
     ///   - unwrap: Extracts the concrete container from a ``PooledContainer``, or `nil`.
     /// - Returns: The routed model handle.
@@ -841,13 +772,13 @@ public actor Router {
         slot: ModelSlot,
         chosen: ModelRef,
         resolution: SlotResolution,
-        key: ResidencyKey,
+        entry: PoolEntry,
         resolvedProfile: SessionSidecar.ResolvedProfile,
         unwrap: (PooledContainer) -> Container?
     ) -> RoutedModel<Container> {
-        guard let entry = pool[key], let container = unwrap(entry.container) else {
+        guard let container = unwrap(entry.container) else {
             preconditionFailure(
-                "a ResidencyKey acquired this resolve must have a matching pool entry for \(slot)"
+                "the entry acquired for \(slot) holds a container of the slot's own role"
             )
         }
         return RoutedModel(
@@ -869,16 +800,16 @@ public actor Router {
         )
     }
 
-    /// Builds a generation handle for a slot from its pooled entry.
+    /// Builds a generation handle for a slot from its pool entry.
     private func makeRoutedLLM(
         slot: ModelSlot,
         chosen: ModelRef,
         resolution: SlotResolution,
-        key: ResidencyKey,
+        entry: PoolEntry,
         resolvedProfile: SessionSidecar.ResolvedProfile
     ) -> RoutedLLM {
         makeRoutedModel(
-            slot: slot, chosen: chosen, resolution: resolution, key: key,
+            slot: slot, chosen: chosen, resolution: resolution, entry: entry,
             resolvedProfile: resolvedProfile
         ) { container in
             guard case .llm(let llm) = container else { return nil }
@@ -886,15 +817,15 @@ public actor Router {
         }
     }
 
-    /// Builds the embedding handle from its pooled entry.
+    /// Builds the embedding handle from its pool entry.
     private func makeRoutedEmbedder(
         chosen: ModelRef,
         resolution: SlotResolution,
-        key: ResidencyKey,
+        entry: PoolEntry,
         resolvedProfile: SessionSidecar.ResolvedProfile
     ) -> RoutedEmbedder {
         makeRoutedModel(
-            slot: .embedding, chosen: chosen, resolution: resolution, key: key,
+            slot: .embedding, chosen: chosen, resolution: resolution, entry: entry,
             resolvedProfile: resolvedProfile
         ) { container in
             guard case .embedding(let embedder) = container else { return nil }

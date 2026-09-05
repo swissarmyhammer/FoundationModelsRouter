@@ -137,14 +137,16 @@ struct ProfileLifecycleTests {
     private static func makeRouter(
         spy: EvictionSpy,
         recorder: any TranscriptRecorder,
-        cacheDir: URL
+        cacheDir: URL,
+        pool: ModelPool = ModelPool()
     ) -> Router {
         Router(
             cacheDir: cacheDir,
             recorder: recorder,
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
-            loader: StubModelLoader(spy: spy, dimension: stubDimension)
+            loader: StubModelLoader(spy: spy, dimension: stubDimension),
+            pool: pool
         )
     }
 

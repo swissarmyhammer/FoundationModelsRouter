@@ -154,17 +154,22 @@ struct ToolSharedProfileTests {
     }
 
     /// Builds a router wired with the stubs and the given recorder.
+    ///
+    /// - Parameters:
+    ///   - pool: The resident-model pool. Defaults to a fresh pool, so parallel suites never share residents.
     private static func makeRouter(
         spy: LoaderSpy,
         recorder: any TranscriptRecorder,
-        cacheDir: URL
+        cacheDir: URL,
+        pool: ModelPool = ModelPool()
     ) -> Router {
         Router(
             cacheDir: cacheDir,
             recorder: recorder,
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
-            loader: StubModelLoader(spy: spy, dimension: stubDimension, text: cannedText)
+            loader: StubModelLoader(spy: spy, dimension: stubDimension, text: cannedText),
+            pool: pool
         )
     }
 

@@ -317,7 +317,8 @@ struct RecordingLanguageModelTests {
         recorder: any TranscriptRecorder,
         recordingLevel: RecordingLevel = .full,
         redact: (@Sendable (String) -> String)? = nil,
-        cacheDir: URL
+        cacheDir: URL,
+        pool: ModelPool = ModelPool()
     ) -> Router {
         Router(
             cacheDir: cacheDir,
@@ -326,7 +327,8 @@ struct RecordingLanguageModelTests {
             redact: redact,
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
-            loader: StubModelLoader(container: container, dimension: stubDimension)
+            loader: StubModelLoader(container: container, dimension: stubDimension),
+            pool: pool
         )
     }
 
