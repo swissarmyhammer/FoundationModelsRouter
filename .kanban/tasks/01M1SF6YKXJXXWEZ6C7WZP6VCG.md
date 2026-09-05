@@ -34,8 +34,31 @@ comments:
     - evidence: `swift test` — 1236 tests in 134 suites passed (2 pre-existing known issues, `RealModelHarness.swift` and `BoundedWait.swift`) and 83 tests in 10 suites passed; 0 failures, 0 skipped; no compiler warning (the one `missing creator for mutated node` line is the SwiftPM mlx bundle warning present before this change). `swift build --package-path IntegrationTests --build-tests` — exit 0.
     - next: /commit
   timestamp: 2026-09-05T19:14:14.768511+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m1sfx3kpd3zw1s90kq5ammyf
+  text: |-
+    ### commit — changed
+    - evidence: 17c1423 fix(pool): charge the weights one time and each hold's KV cache, whatever the release order
+    - next: /review 01M1SF6YKXJXXWEZ6C7WZP6VCG HEAD~1..HEAD
+  timestamp: 2026-09-05T19:14:40.374892+00:00
+- actor: claude-code
+  id: 01m1sg2wp4emyz77wvbqy0pa1c
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` — 0 findings, 7 validators attempted, 0 failed; 4 files reviewed (`ModelPool.swift`, `Router.swift`, `ResidencyStubs.swift`, `PooledResidencyTests.swift`); `model-pool.md` and `.kanban/` not reviewed (no validator, ignore rule). No prior findings on the card.
+    - next: card moved to done
+  timestamp: 2026-09-05T19:17:49.892224+00:00
+- actor: claude-code
+  id: 01m1sg2yayrc9v0t3zjep1atpn
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 5 files
+    - test: green — swift test, 1236 + 83 tests passed, 0 failures, 0 skipped; IntegrationTests build exit 0
+    - commit: 17c1423
+    - review: clean — 0 findings; card moved to done
+  timestamp: 2026-09-05T19:17:51.582176+00:00
+position_column: done
+position_ordinal: ffffce80
 title: Charge the weights once and every KV cache per hold, whatever the release order
 ---
 Found by the holistic double-check of branch `pool` (2026-09-05). Plan: `model-pool.md` §2.3.
