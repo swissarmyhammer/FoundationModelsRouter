@@ -1,14 +1,43 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m1s9tb6tn86gpqdxqkqgkna1
+  text: |-
+    ### research
+
+    - The six dependency cards are done on branch `pool`. `ModelPool` (`Sources/FoundationModelsRouter/Resolution/ModelPool.swift`) has `shared`, `init()`, `residentModelCount`, and `withResolveLock`. `Router.init` has `samplingMode:` and `pool: ModelPool = .shared`. `Router.pool` is `package nonisolated let`, so a test compares it with `===`.
+    - `PooledResidencyTests.defaultPoolIsShared` already pins that a router with no `pool:` argument uses `ModelPool.shared`. The new suite does not repeat it.
+    - `RealModelHarnessTests` compares `samplingMode == .greedy`, so the type is comparable.
+    - `CIWorkflowTests` and `UpstreamAsksDocumentTests` each computed the repository root from `#filePath`. A third copy would be a duplication, so the root moved to one helper, `Tests/FoundationModelsRouterTests/Helpers/RepositoryRoot.swift`, and both suites use it.
+    - No formatter config (`.swiftformat`, `.swift-format`, `.swiftlint.yml`) is in the repository root. No DocC plugin is in `Package.swift`, so the DocC criterion does not apply.
+    - TDD: `ReadmeSymbolsTests.readmeSectionNamesEveryPinnedSymbol` was red first (README had no "## Residency is process-wide" heading) and went green after the README edit. The three symbol tests pin behavior that already exists, as the card asks, so they passed on the first run.
+    - The `warning: missing creator for mutated node ... mlx-swift_Cmlx.bundle` line in each `swift test` run is a SwiftPM build-system note about a dependency bundle. It is present before this change.
+  timestamp: 2026-09-05T17:28:18.394014+00:00
+- actor: claude-code
+  id: 01m1sa055xqcw6rg9vt1dz3d1g
+  text: |-
+    ### implement — changed
+    - evidence: 9 files — README.md, model-pool.md, Sources/FoundationModelsRouter/Resolution/ModelPool.swift, Sources/FoundationModelsRouter/Router.swift, Sources/FoundationModelsRouter/Concurrency/ResidentModelGates.swift, Tests/FoundationModelsRouterTests/ReadmeSymbolsTests.swift (new), Tests/FoundationModelsRouterTests/Helpers/RepositoryRoot.swift (new), Tests/FoundationModelsRouterTests/Helpers/MarkdownSection.swift (new), Tests/FoundationModelsRouterTests/CIWorkflowTests.swift and Tests/FoundationModelsRouterTests/UpstreamAsksDocumentTests.swift (both now call the two new helpers)
+    - tests: `swift test --filter 'ReadmeSymbolsTests|CIWorkflowTests|UpstreamAsksDocumentTests'` → 9 tests in 3 suites passed; full `swift test` → 1235 tests in 134 suites passed (2 known issues, present before) plus 83 tests in 10 suites passed; zero failures; the only `warning:` line is the SwiftPM `mlx-swift_Cmlx.bundle` note, present before this change
+    - next: /test, then /commit, then /review
+  timestamp: 2026-09-05T17:31:28.829585+00:00
+- actor: claude-code
+  id: 01m1sa2188z24ms74pwbw0xbqq
+  text: |-
+    ### test — green
+    - evidence: `swift test` — 1235 tests in 134 suites passed (2 known issues: `withKnownIssue` blocks at RealModelHarness.swift:72 and BoundedWait.swift:114, present before this card) plus 83 tests in 10 suites passed; 0 failures, 0 skipped. `swift build --package-path IntegrationTests --build-tests` — exit 0. The only `warning:` lines are SwiftPM's `missing creator for mutated node ... mlx-swift_Cmlx.bundle` note for the root and nested packages, emitted by the build system for a dependency bundle and present before this card; no compiler warning in any source file.
+    - next: /commit
+  timestamp: 2026-09-05T17:32:30.344468+00:00
 depends_on:
 - 01M1RREG728QK5FMX6N8H2G4SB
 - 01M1RRF9KB8W919YZ27A4721B3
 - 01M1RRFNF0JT50QDZHCRB2XNXC
 - 01M1RRG1E1EVTDZVRQ919T04M2
 - 01M1RS3MJ88F1NEKZCCQABTHG8
-position_column: todo
-position_ordinal: '8680'
+position_column: doing
+position_ordinal: '80'
 title: Document process-wide residency in README, ModelPool, and Router doc comments
 ---
 Plan: `model-pool.md` §2, §2.7, §5.
@@ -23,13 +52,13 @@ Make the process-wide pool visible to a reader who never opens `model-pool.md`.
 - `model-pool.md`: mark §1 as the state before the change.
 
 ## Acceptance Criteria
-- [ ] `README.md` has the new section and every code symbol it names exists in `Sources/`.
-- [ ] `ModelPool`, `Router`, and `ResidentModelGates` doc comments state the rules above.
-- [ ] `swift build` and `swift test` are green; DocC (`swift package generate-documentation`, if the project runs it) reports no broken symbol links.
+- [x] `README.md` has the new section and every code symbol it names exists in `Sources/`.
+- [x] `ModelPool`, `Router`, and `ResidentModelGates` doc comments state the rules above.
+- [x] `swift build` and `swift test` are green; DocC (`swift package generate-documentation`, if the project runs it) reports no broken symbol links. (The project has no DocC plugin, so no DocC run applies.)
 
 ## Tests
-- [ ] New `Tests/FoundationModelsRouterTests/ReadmeSymbolsTests.swift`: each backtick symbol in the new README section (`ModelPool.shared`, `ModelPool.residentModelCount`, `Router(pool:)`, `Router(samplingMode:)`) is referenced at compile time in the test, so a rename breaks the test.
-- [ ] Run `swift test --filter ReadmeSymbolsTests` → passes.
+- [x] New `Tests/FoundationModelsRouterTests/ReadmeSymbolsTests.swift`: each backtick symbol in the new README section (`ModelPool.shared`, `ModelPool.residentModelCount`, `Router(pool:)`, `Router(samplingMode:)`) is referenced at compile time in the test, so a rename breaks the test.
+- [x] Run `swift test --filter ReadmeSymbolsTests` → passes.
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #model-pool #docs

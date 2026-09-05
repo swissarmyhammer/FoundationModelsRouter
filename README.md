@@ -64,6 +64,22 @@ call, so cheap work (triage, classification) can route to it while `standard`
 handles the heavy turns — see `Examples/MultiModelGeneration` for a runnable,
 two-model demo.
 
+## Residency is process-wide
+
+One pool serves the whole process by default: `ModelPool.shared`. Every
+router resolves into that pool. When two routers name one model, the pool
+loads that model one time and prices it one time against the budget.
+
+A model stays resident while a profile in the process holds it. The pool
+evicts the model only when the last profile that holds it is released. A
+dropped `Router` frees nothing. Read `ModelPool.residentModelCount` to see
+how many models the process holds.
+
+Pass a fresh pool to `Router(pool:)` to give a router an isolated pool. Pass
+`Router(samplingMode:)` to set the decoding strategy of a router; two routers
+over one shared model each decode with their own mode. The fork ceiling of a
+shared model comes from the router that loaded it.
+
 ## Install
 
 The package needs macOS 27 or later. Declare that floor in your `Package.swift`:

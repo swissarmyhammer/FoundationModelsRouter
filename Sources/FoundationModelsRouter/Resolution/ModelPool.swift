@@ -90,16 +90,28 @@ package struct ResidencyHold: Sendable {
 
 /// The resident-model pool. One instance serves every router in a process,
 /// so a model that two routers name is loaded one time and priced one time.
+/// ``shared`` is that instance; a router names it when it is given no pool.
+///
+/// The first loader wins a key. The router that first loads a key makes the
+/// container with its own loader and mints the entry's ``ResidentModelGates``
+/// from its own fork ceiling. A later router that names the same key gets
+/// that container and that ceiling, whatever its own loader would have made.
 ///
 /// Residency is reference-counted per ``ResidencyKey`` across every profile
 /// that holds it. A resolve prices a resident candidate at its marginal cost
 /// and acquires it later, so a whole resolve and a whole release each run
-/// under ``withResolveLock(isolation:_:)``. The lock is what stops two
-/// routers from loading one key two times.
+/// under ``withResolveLock(isolation:_:)``. The lock is process-wide: every
+/// resolve on every router over one pool runs one at a time. The lock is
+/// what stops two routers from loading one key two times.
 ///
 /// A container is freed only by a release. The pool lives as long as the
 /// process, so a profile that is never released keeps its models resident and
-/// charged. A host reads ``residentModelCount`` to see what the process holds.
+/// charged. A dropped ``Router`` frees nothing. A host reads
+/// ``residentModelCount`` to see what the process holds.
+///
+/// Every test router names a pool: pass a fresh ``init()`` result as the
+/// `pool:` argument of ``Router``. Suites run in parallel, and a stub one
+/// suite makes resident in ``shared`` would satisfy another suite's key.
 public actor ModelPool {
     /// The pool every router uses when none is given.
     public static let shared = ModelPool()

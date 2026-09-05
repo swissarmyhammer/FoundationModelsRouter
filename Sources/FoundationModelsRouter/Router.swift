@@ -28,10 +28,13 @@ public enum RecordingLevel: String, Sendable, Codable, Equatable, CaseIterable {
 ///
 /// A router admits several resident profiles at one time. It prices the
 /// union of every model resident in its ``ModelPool`` against one shared
-/// budget. Residency is reference-counted per ``ResidencyKey`` across every
-/// profile, from every router on the pool, that references it.
-/// ``resolve(profile:reporting:)`` and ``release(token:)`` are serialized by
-/// the pool's resolve lock.
+/// budget. The pool is shared across routers: every router resolves into
+/// ``ModelPool/shared`` unless it is given its own pool, so a model that two
+/// routers name is loaded one time. Residency is reference-counted per
+/// ``ResidencyKey`` across every profile, from every router on the pool,
+/// that references it. ``resolve(profile:reporting:)`` and
+/// ``release(token:)`` are serialized by the pool's resolve lock. See
+/// ``ModelPool`` for the sharing, lifetime, and lock rules.
 public actor Router {
     /// The recording root id; sortable by construction time.
     public nonisolated let id: ULID

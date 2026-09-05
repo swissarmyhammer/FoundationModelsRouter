@@ -8,6 +8,8 @@ process, not the residents of one router.
 
 ## 1. What the code does today
 
+This section shows the state of the code before the change; §2 is what the code does now.
+
 Measured on `main` at commit `37c7942` (2026-09-05).
 
 ### 1.1 One router: pooling is done

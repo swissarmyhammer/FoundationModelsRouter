@@ -73,21 +73,14 @@ struct CIWorkflowTests {
     }
 
     /// Reads `.github/workflows/ci.yml` from the repository root, resolved
-    /// relative to this source file's own path (`#filePath` is
-    /// `Tests/FoundationModelsRouterTests/CIWorkflowTests.swift`, two
-    /// directories below the root). Keep this file directly inside
-    /// `Tests/FoundationModelsRouterTests/`, or adjust the step count to match
-    /// the new location. The split is ``TextFileLines/read(from:)``, the one
-    /// shared line reader, so this suite holds no copy of it.
+    /// from this file's own path by ``RepositoryRoot/url(from:)``. The split
+    /// is ``TextFileLines/read(from:)``, the one shared line reader, so this
+    /// suite holds no copy of it.
     ///
     /// - Returns: each non-empty line of the workflow file.
     /// - Throws: an error when the file cannot be read.
     private static func workflowLines() throws -> [String] {
-        let repoRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()  // Tests/FoundationModelsRouterTests/
-            .deletingLastPathComponent()  // Tests/
-            .deletingLastPathComponent()  // repository root
-        let workflow = repoRoot
+        let workflow = RepositoryRoot.url()
             .appendingPathComponent(".github/workflows/ci.yml")
         return try TextFileLines.read(from: workflow)
     }
