@@ -3,6 +3,13 @@ import FoundationModels
 
 @testable import FoundationModelsRouter
 
+// The stubs this file builds on are the shared ones in
+// `Helpers/RouterTestFixtures.swift`, at file scope in this target:
+// `StubProbe`, `StubMetadataSource`, and `StubEmbeddingContainer`. Other
+// suites use them too, so they are not defined again here. This file adds
+// only what the residency suites need beyond them: a load spy, a spying
+// loader, a canned container, the footprint constants, and a router factory.
+
 /// Counts every load and every eviction a router routes through its loader,
 /// keyed by the exact ``ModelRef`` (revision-sensitive), so a test can prove
 /// that a dedup happened (one load for two profiles) or did not (one load for
@@ -68,10 +75,12 @@ struct CannedLLMContainer: LoadedLLMContainer {
 
 /// A ``ModelLoader`` that reports every load and eviction to a ``LoadSpy``
 /// and vends a ``CannedLLMContainer`` for each generation ref and a
-/// ``StubEmbeddingContainer`` for each embedder ref. No download, no GPU.
+/// ``StubEmbeddingContainer`` (the shared stub in
+/// `Helpers/RouterTestFixtures.swift`) for each embedder ref. No download,
+/// no GPU.
 ///
-/// Distinct from the shared ``StubModelLoader``, which vends one fixed
-/// container and counts nothing.
+/// Distinct from the shared ``StubModelLoader`` in the same fixtures file,
+/// which vends one fixed container and counts nothing.
 struct SpyingModelLoader: ModelLoader {
     /// The spy every load and eviction is reported to.
     let spy: LoadSpy
@@ -118,6 +127,7 @@ struct SpyingModelLoader: ModelLoader {
     ) async throws -> any LoadedEmbeddingContainer {
         await spy.recordEmbedderLoad(ref)
         reporting(DownloadProgress(bytesDownloaded: 1, bytesTotal: 1))
+        // The shared embedder stub from `Helpers/RouterTestFixtures.swift`.
         return StubEmbeddingContainer(dimension: dimension)
     }
 
@@ -143,13 +153,17 @@ enum ResidencyFixtures {
     /// One embedder's margined footprint: weights only.
     static let embeddingModelFootprint: Int64 = 12_000_000
 
+    /// How many generation slots one trio profile has: standard and flash.
+    static let generationSlotsPerTrio: Int64 = 2
+
     /// How many models one trio profile (standard, flash, embedding) loads.
     static let modelsPerTrio = 3
 
-    /// One full trio's margined footprint at the default context: standard +
-    /// flash (each ``generationModelFootprint``) + embedding.
+    /// One full trio's margined footprint at the default context: one
+    /// ``generationModelFootprint`` for each generation slot, plus the
+    /// embedding model.
     static let oneTrioFootprint: Int64 =
-        generationModelFootprint + generationModelFootprint + embeddingModelFootprint
+        generationModelFootprint * generationSlotsPerTrio + embeddingModelFootprint
 
     /// Headroom added on top of a whole number of trio footprints when sizing
     /// a test router's simulated RAM, so a budget meant to fit exactly N
@@ -172,10 +186,10 @@ enum ResidencyFixtures {
         generationModelFootprint + sessionKVMarginedBytes + embeddingModelFootprint
 
     /// The whole reservation a later profile is charged when it resolves an
-    /// already-resident trio again: one session KV cache for each of its two
+    /// already-resident trio again: one session KV cache for each of its
     /// generation slots (its own new sessions materialize new caches on the
     /// shared containers) and zero for the reused embedder.
-    static let reusedTrioCharge: Int64 = sessionKVMarginedBytes * 2
+    static let reusedTrioCharge: Int64 = sessionKVMarginedBytes * generationSlotsPerTrio
 
     /// The whole reservation a later profile is charged when it reuses a
     /// resident trio's generation model and embedder but brings its own flash
@@ -192,6 +206,10 @@ enum ResidencyFixtures {
     /// Builds a ``Router`` with `headroomReserve: 0` over a probe whose whole
     /// budget is `recommendedMaxWorkingSetSize`, so the host budget every
     /// resolve prices against is exactly that figure.
+    ///
+    /// The probe is the shared ``StubProbe`` and the metadata source is the
+    /// shared ``StubMetadataSource``, both from
+    /// `Helpers/RouterTestFixtures.swift`.
     ///
     /// - Parameters:
     ///   - spy: The spy the router's loader reports every load and eviction to.
@@ -222,11 +240,13 @@ enum ResidencyFixtures {
             maxConcurrentForks: maxConcurrentForks,
             cacheDir: cacheDir,
             recorder: InMemoryRecorder(),
+            // The shared probe stub from `Helpers/RouterTestFixtures.swift`.
             probe: StubProbe(
                 chip: "Apple Test",
                 totalRAM: recommendedMaxWorkingSetSize,
                 recommendedMaxWorkingSetSize: recommendedMaxWorkingSetSize
             ),
+            // The shared metadata stub from the same fixtures file.
             metadataSource: StubMetadataSource(raw: RouterTestFixtures.rawMetadata),
             loader: SpyingModelLoader(
                 spy: spy, dimension: RouterTestFixtures.stubDimension, llmContainer: llmContainer,
