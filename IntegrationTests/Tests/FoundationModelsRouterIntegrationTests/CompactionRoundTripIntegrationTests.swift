@@ -153,14 +153,15 @@ struct CompactionRoundTripIntegrationTests {
             try? FileManager.default.removeItem(at: recordingsDir)
         }
 
-        let container = try await RealModelContainer.load(
+        let loaded = try await RealModelContainer.load(
             ref: compactionRoundTripModel,
             context: CompactionRoundTripFixture.context,
             samplingMode: Self.samplingMode)
         let profile = RealModelHarness.make(
             model: compactionRoundTripModel,
             context: CompactionRoundTripFixture.context,
-            container: container,
+            container: loaded.container,
+            samplingMode: loaded.samplingMode,
             cacheDir: cacheDir,
             recordingsDir: recordingsDir
         )
@@ -238,20 +239,21 @@ struct CompactionRoundTripIntegrationTests {
         #expect(!recall.isEmpty)
         #expect(recall.contains("CRIMSON-77"))
 
-        await container.model.evict()
+        await loaded.container.model.evict()
 
         // 4. Restore from disk — a fresh Router/profile over the same
         //    recording root, simulating a new process — yields the
         //    checkpointed live window: fewer entries than the full
         //    recorded history.
-        let container2 = try await RealModelContainer.load(
+        let reloaded = try await RealModelContainer.load(
             ref: compactionRoundTripModel,
             context: CompactionRoundTripFixture.context,
             samplingMode: Self.samplingMode)
         let profile2 = RealModelHarness.make(
             model: compactionRoundTripModel,
             context: CompactionRoundTripFixture.context,
-            container: container2,
+            container: reloaded.container,
+            samplingMode: reloaded.samplingMode,
             cacheDir: cacheDir,
             recordingsDir: recordingsDir,
             routerId: routerId
@@ -279,6 +281,6 @@ struct CompactionRoundTripIntegrationTests {
             to: "Reply with just the word \"restored\".", maxTokens: GatedRealModelBudget.responseTokenCeiling)
         #expect(!restoredReply.isEmpty)
 
-        await container2.model.evict()
+        await reloaded.container.model.evict()
     }
 }

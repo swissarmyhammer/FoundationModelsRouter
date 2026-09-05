@@ -7,7 +7,9 @@ import MLXLMCommon
 import Testing
 import Tokenizers
 
-/// The one way every gated suite puts a real model into its concrete
+/// A real model a gated suite loaded, with the decoding strategy the suite
+/// pinned. ``load(ref:context:samplingMode:chatTemplateDate:)`` is the one way
+/// every gated suite puts a real model into its concrete
 /// ``MLXFoundationModelsContainer``.
 ///
 /// Nine suites each carried a private copy of the same three-step body: build a
@@ -28,6 +30,18 @@ import Tokenizers
 /// exact text a model wrote needs a prompt that does not move from one calendar
 /// day to the next. See ``FoundationModelsRouter/PinnedDateTokenizerLoader``.
 ///
+/// ## Why the value carries the mode
+///
+/// The container stores no decoding strategy (`model-pool.md` §2.5, step B).
+/// The mode belongs to the router, and each `makeSession(...samplingMode:)`
+/// call names it. A gated suite that calls `makeSession` on the bare
+/// ``container`` has no router. So this value keeps the mode the suite passed
+/// to ``load(ref:context:samplingMode:chatTemplateDate:)``, and the suite
+/// passes ``samplingMode`` into each of those calls. A suite that builds a
+/// profile gives the mode to
+/// ``RealModelHarness/make(model:context:container:samplingMode:cacheDir:recordingsDir:routerId:)``,
+/// and each session the profile vends passes it on.
+///
 /// ## What is deliberately not a parameter
 ///
 /// The `.standard` slot and the discarded progress callback stay fixed. All
@@ -35,7 +49,15 @@ import Tokenizers
 /// needs to observe download progress, is asking for something this function
 /// does not describe — ``IntegrationTests`` builds its own instrumented loader
 /// stack for precisely that reason and is not a caller here.
-public enum RealModelContainer {
+public struct RealModelContainer: Sendable {
+    /// The loaded container. Each `makeSession` call on it must pass
+    /// ``samplingMode``, because the container stores no mode of its own.
+    package let container: MLXFoundationModelsContainer
+
+    /// The decoding strategy the suite loaded with, or `nil` for the provider
+    /// default.
+    public let samplingMode: GenerationOptions.SamplingMode?
+
     /// The date every gated suite pins into its prompt, written the way a
     /// Llama chat template writes it.
     ///
@@ -78,7 +100,8 @@ public enum RealModelContainer {
     /// move, and one value does that under either shape.
     public static let chatTemplateFallbackDate = "26 Jul 2024"
 
-    /// Loads `ref` and returns the concrete container behind it.
+    /// Loads `ref` and returns the concrete container behind it, with the
+    /// decoding strategy the suite pinned.
     ///
     /// - Parameters:
     ///   - ref: The model to download and load.
@@ -86,10 +109,12 @@ public enum RealModelContainer {
     ///     ``RealModels/context``, the budget the gated integration suites
     ///     request; a suite whose fixtures are sized against a different window
     ///     passes its own.
-    ///   - samplingMode: The decoding strategy the loaded container generates
-    ///     with. Defaults to `nil`, which leaves the provider's own default in
-    ///     place, and that default samples. A suite that asserts on the exact
-    ///     text a generation produces passes
+    ///   - samplingMode: The decoding strategy the suite pins. The value is
+    ///     kept on ``samplingMode``; the container stores no mode, so the suite
+    ///     passes it into each `makeSession(...samplingMode:)` call. Defaults
+    ///     to `nil`, which leaves the provider's own default in place, and
+    ///     that default samples. A suite that asserts on the exact text a
+    ///     generation produces passes
     ///     ``FoundationModels/GenerationOptions/SamplingMode/greedy``: the
     ///     provider default draws at temperature `0.6` from MLX's
     ///     process-global PRNG, which seeds itself from the clock, so identical
@@ -105,7 +130,7 @@ public enum RealModelContainer {
     ///     same code and the same weights answered differently on two calendar
     ///     days (task ^f0k3aah). See
     ///     ``FoundationModelsRouter/PinnedDateTokenizerLoader``.
-    /// - Returns: The loaded container.
+    /// - Returns: The loaded container and the pinned mode.
     /// - Throws: Whatever ``LiveModelLoader/loadLLM(ref:slot:context:reporting:)``
     ///   throws, or an expectation failure if what it loaded is not an
     ///   ``MLXFoundationModelsContainer``.
@@ -117,11 +142,10 @@ public enum RealModelContainer {
         context: Int = RealModels.context,
         samplingMode: GenerationOptions.SamplingMode? = nil,
         chatTemplateDate: String? = nil
-    ) async throws -> MLXFoundationModelsContainer {
+    ) async throws -> RealModelContainer {
         let loader = LiveModelLoader(
             downloader: #hubDownloader(),
-            tokenizerLoader: tokenizerLoader(pinning: chatTemplateDate),
-            samplingMode: samplingMode
+            tokenizerLoader: tokenizerLoader(pinning: chatTemplateDate)
         )
         let loaded = try await loader.loadLLM(
             ref: ref,
@@ -129,7 +153,8 @@ public enum RealModelContainer {
             context: context,
             reporting: { _ in }
         )
-        return try #require(loaded as? MLXFoundationModelsContainer)
+        let container = try #require(loaded as? MLXFoundationModelsContainer)
+        return RealModelContainer(container: container, samplingMode: samplingMode)
     }
 
     /// The tokenizer loader ``load(ref:context:samplingMode:chatTemplateDate:)``

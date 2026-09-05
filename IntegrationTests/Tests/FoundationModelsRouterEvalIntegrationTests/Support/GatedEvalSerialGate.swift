@@ -37,17 +37,18 @@ import Testing
 ///   nobody owns is never evicted at all, so the whole model stays resident
 ///   for the whole process.
 ///
-///   Decoding used to be the reason stated here, and it no longer separates the
-///   two. `samplingMode` is stored *on* the container (`LiveModelLoader` builds
-///   `MLXFoundationModelsContainer(model:samplingMode:)`) and every session
-///   opened over that container inherits it, so one container cannot carry two
-///   strategies. ``CompactionContinuityEvalRealSubjectRunner`` has always pinned
+///   Decoding is not a reason to reject a shared container, and it never
+///   separates the two runners. The mode is per call, not per container
+///   (`model-pool.md` §2.5): the container stores no `samplingMode`, and each
+///   `makeSession(...samplingMode:)` call names the strategy the backend it
+///   makes decodes with, so one container can serve two strategies at the
+///   same time. ``CompactionContinuityEvalRealSubjectRunner`` has always pinned
 ///   `.greedy`, because the provider default samples at temperature 0.6 from
 ///   MLX's clock-seeded process-global PRNG and made that eval's score a coin
 ///   flip across runs of identical code, and
 ///   ``CompactionEvalRealSubjectRunner`` now pins it for the same measured
-///   reason (task ^xscp198). Both runners want the same strategy today; the
-///   eviction argument above is what still rejects one shared container.
+///   reason (task ^xscp198). The gate stays for the GPU: the eviction
+///   argument above is what rejects one shared container, not the mode.
 /// - **`.serialized`** cannot close it at all. Swift Testing's parallelization
 ///   trait serializes *within* a `@Suite`; two different suites still overlap.
 ///   That is the same sentence

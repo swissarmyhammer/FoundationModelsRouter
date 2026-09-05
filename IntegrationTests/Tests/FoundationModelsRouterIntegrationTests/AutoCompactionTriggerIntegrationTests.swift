@@ -474,7 +474,7 @@ struct AutoCompactionTriggerIntegrationTests {
         }
 
         let loadStartedAt = Date()
-        let container = try await RealModelContainer.load(
+        let loaded = try await RealModelContainer.load(
             ref: autoCompactionTriggerModel,
             context: autoCompactionTriggerContext,
             samplingMode: autoCompactionTriggerSamplingMode,
@@ -485,7 +485,8 @@ struct AutoCompactionTriggerIntegrationTests {
         let profile = RealModelHarness.make(
             model: autoCompactionTriggerModel,
             context: autoCompactionTriggerContext,
-            container: container,
+            container: loaded.container,
+            samplingMode: loaded.samplingMode,
             cacheDir: cacheDir,
             recordingsDir: recordingsDir
         )
@@ -514,7 +515,7 @@ struct AutoCompactionTriggerIntegrationTests {
         let turn = try await Self.drive(session, prompt: Self.triggeringPrompt)
         let contextFillAfterTheTurn = await session.contextFill
 
-        await container.model.evict()
+        await loaded.container.model.evict()
 
         // The run's own numbers, on the record before any assertion reads them
         // — so a red run states what it went red on rather than only which

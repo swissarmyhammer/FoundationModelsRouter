@@ -110,11 +110,11 @@ struct PinnedChatTemplateDateIntegrationTests {
 
     /// Loads ``pinnedDateModel`` with the date pinned and argmax decoding.
     ///
-    /// - Returns: The loaded container.
+    /// - Returns: The loaded container and the pinned mode.
     /// - Throws: Whatever
     ///   ``RealModelContainer/load(ref:context:samplingMode:chatTemplateDate:)``
     ///   throws.
-    private static func makeContainer() async throws -> MLXFoundationModelsContainer {
+    private static func makeContainer() async throws -> RealModelContainer {
         try await RealModelContainer.load(
             ref: pinnedDateModel,
             samplingMode: pinnedDateSamplingMode,
@@ -145,9 +145,9 @@ struct PinnedChatTemplateDateIntegrationTests {
 
     @Test("the render of the real template carries the pinned date, and not the clock's")
     func pinnedDateReachesTheRealTemplate() async throws {
-        let container = try await Self.makeContainer()
+        let loaded = try await Self.makeContainer()
 
-        let modelContainer = try await container.model.loadContainer()
+        let modelContainer = try await loaded.container.model.loadContainer()
         let rendered = try await modelContainer.perform { context in
             let tokenIds = try context.tokenizer.applyChatTemplate(
                 messages: Self.conversationWithNoSystemMessage)
@@ -157,7 +157,7 @@ struct PinnedChatTemplateDateIntegrationTests {
         #expect(rendered.contains("\(currentDateHeaderPrefix)\(pinnedDate)."))
         #expect(!rendered.contains("\(currentDateHeaderPrefix)\(Self.clockDate())."))
 
-        await container.model.evict()
+        await loaded.container.model.evict()
     }
 
     @Test("a turn with no instructions answers the pinned date rather than today's")
@@ -170,7 +170,7 @@ struct PinnedChatTemplateDateIntegrationTests {
         }
 
         let loadStarted = ContinuousClock.now
-        let container = try await Self.makeContainer()
+        let loaded = try await Self.makeContainer()
         loadDuration = ContinuousClock.now - loadStarted
 
         // `instructions: nil` is what puts no system message into the
@@ -178,7 +178,8 @@ struct PinnedChatTemplateDateIntegrationTests {
         // session that states instructions gets no date at all, so it could not
         // measure the pin.
         let backend = try #require(
-            container.makeSession(instructions: nil) as? MLXFoundationModelsSessionBackend
+            loaded.container.makeSession(instructions: nil, samplingMode: loaded.samplingMode)
+                as? MLXFoundationModelsSessionBackend
         )
 
         let turnStarted = ContinuousClock.now
@@ -197,6 +198,6 @@ struct PinnedChatTemplateDateIntegrationTests {
         // the pin rather than of the model.
         #expect(answer == pinnedDate)
 
-        await container.model.evict()
+        await loaded.container.model.evict()
     }
 }

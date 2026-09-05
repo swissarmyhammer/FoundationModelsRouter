@@ -292,8 +292,8 @@ struct IntegrationTests {
 
     /// The decoding strategy every container this test loads generates with.
     ///
-    /// Until task ^pa5q5dt the test built its ``LiveModelLoader`` with no
-    /// sampling mode, so every turn took the provider's own default —
+    /// Until task ^pa5q5dt the test built its router with no sampling mode, so
+    /// every turn took the provider's own default —
     /// temperature 0.6 out of MLX's clock-seeded, process-global PRNG. The 30B
     /// always writes a `<think>` block before its answer, that block is a
     /// different length on every run of identical code, and this test's whole
@@ -353,19 +353,22 @@ struct IntegrationTests {
                             repo: Repo.ID(rawValue: id) ?? Repo.ID(namespace: id, name: ""),
                             kind: .model
                         ) ?? FileManager.default.temporaryDirectory
-                    },
-                    samplingMode: Self.samplingMode
+                    }
                 ),
                 observer: byteObserver
             ),
             progress: progress
         )
+        // The router carries the mode, not the loader: a loaded container
+        // serves every router in the pool, and the mode belongs to the router
+        // (`model-pool.md` §2.5).
         let router = Router(
             cacheDir: cacheDir,
             recordingsDir: recordingsDir,
             recorder: JSONLRecorder(directory: recordingsDir),
             metadataSource: source,
-            loader: loader
+            loader: loader,
+            samplingMode: Self.samplingMode
         )
 
         let resolveStarted = ContinuousClock.now

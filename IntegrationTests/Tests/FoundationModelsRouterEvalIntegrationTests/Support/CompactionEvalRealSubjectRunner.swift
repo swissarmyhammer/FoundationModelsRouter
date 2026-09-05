@@ -19,8 +19,9 @@ import FoundationModelsRouterTestSupport
 /// ``CompactionEvalSampleDiagnostic/summarizerCalls`` reports every one of them
 /// with the answer it produced.
 private actor BlankSlateSummarizer: CompactionSummarizer {
-    /// The resident container every call opens a fresh, empty session over.
-    private let container: MLXFoundationModelsContainer
+    /// The resident model every call opens a fresh, empty session over, with
+    /// the decoding strategy the tier pinned.
+    private let loaded: CompactionEvalRealModelContainer
 
     /// Every call ``summarize(_:maxTokens:)`` completed, in call order.
     ///
@@ -31,15 +32,18 @@ private actor BlankSlateSummarizer: CompactionSummarizer {
     /// with a failed call missing from it.
     private(set) var calls: [CompactionEvalSummarizerCall] = []
 
-    /// Creates a summarizer over a resident container.
+    /// Creates a summarizer over a resident model.
     ///
-    /// - Parameter container: The resident container to summarize with.
-    init(container: MLXFoundationModelsContainer) {
-        self.container = container
+    /// - Parameter loaded: The resident model to summarize with, and the
+    ///   decoding strategy the tier pinned. The container stores no mode, so
+    ///   each call passes ``CompactionEvalRealModelContainer/samplingMode``.
+    init(loaded: CompactionEvalRealModelContainer) {
+        self.loaded = loaded
     }
 
     func summarize(_ prompt: String, maxTokens: Int) async throws -> String {
-        let answer = try await container.makeSession(transcript: Transcript(entries: []))
+        let answer = try await loaded.container
+            .makeSession(transcript: Transcript(entries: []), samplingMode: loaded.samplingMode)
             .respond(to: prompt, maxTokens: maxTokens)
         calls.append(CompactionEvalSummarizerCall(maxTokens: maxTokens, answer: answer))
         return answer
@@ -55,7 +59,8 @@ private actor BlankSlateSummarizer: CompactionSummarizer {
 /// synchronously (as a `.evaluates(...)` trait argument requires) while the
 /// actual load only happens the first time a sample's subject work runs.
 actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
-    private var loaded: MLXFoundationModelsContainer?
+    /// The resident model with its pinned mode, once ``container()`` loaded it.
+    private var loaded: CompactionEvalRealModelContainer?
 
     /// The seeds this runner's tier measures, in the order the tier states
     /// them.
@@ -132,13 +137,13 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
     /// ``compactionEvalSubsetTimeLimitMinutes`` exists to bound and which the
     /// run of 2026-08-18 could not show (task ^h2xxsse).
     ///
-    /// - Returns: The cached container, if one was already loaded, or the
-    ///   newly-loaded and now-cached container otherwise.
+    /// - Returns: The cached container with its pinned mode, if one was
+    ///   already loaded, or the newly-loaded and now-cached one otherwise.
     /// - Throws: ``CompactionEvaluationError/unexpectedContainerType`` if the
     ///   loaded container is not an `MLXFoundationModelsContainer`, or
     ///   whatever error ``LiveModelLoader/loadLLM(ref:slot:context:reporting:)``
     ///   throws while resolving/loading ``CompactionEvalRealModel/ref``.
-    private func container() async throws -> MLXFoundationModelsContainer {
+    private func container() async throws -> CompactionEvalRealModelContainer {
         if let loaded { return loaded }
         // Decoding is pinned to greedy. The provider default samples at
         // temperature 0.6 from MLX's process-global PRNG, which seeds itself
@@ -219,13 +224,13 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
         // wait here is charged to no sample's own trail.
         await samplePermit.wait()
         defer { samplePermit.signal() }
-        let container = try await self.container()
+        let loaded = try await self.container()
         let label = makeSampleLabel(forQuestion: question)
         let sampleStartedAt = Date()
 
         CompactionEvalProgressLog.emit(
             CompactionEvalProgressLog.makeStepStartedLine(.fold, sample: label, elapsedSeconds: nil))
-        let summarizer = BlankSlateSummarizer(container: container)
+        let summarizer = BlankSlateSummarizer(loaded: loaded)
         // The summarization cuts `reasoningTokenHeadroom` to the shared eval
         // bound, because the resident model writes no `<think>` block and the
         // default headroom of 8192 is free generation room for it — see
@@ -255,7 +260,8 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
         CompactionEvalProgressLog.emit(
             CompactionEvalProgressLog.makeStepStartedLine(
                 .answer, sample: label, elapsedSeconds: foldSeconds))
-        let answer = try await container.makeSession(transcript: folded)
+        let answer = try await loaded.container
+            .makeSession(transcript: folded, samplingMode: loaded.samplingMode)
             .respond(to: question, maxTokens: GatedRealModelBudget.responseTokenCeiling)
         let answerReturnedAt = Date()
         CompactionEvalProgressLog.emit(
@@ -290,6 +296,6 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
     /// teardown.
     func evictIfLoaded() async {
         guard let loaded else { return }
-        await loaded.model.evict()
+        await loaded.container.model.evict()
     }
 }

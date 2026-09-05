@@ -109,14 +109,14 @@ struct RecordingHandleIntegrationTests {
 
     /// The options the one turn below passes to `session.respond(to:options:)`.
     ///
-    /// Two things are stated here, and deliberately here rather than on
-    /// ``RealModelContainer/load(ref:context:samplingMode:)``. A sampling mode
-    /// pinned at load time is read by the session backend a `RoutedSession`
-    /// drives, and this suite drives no `RoutedSession`: it drives a raw
-    /// `LanguageModelSession` over a ``RecordingLanguageModel`` handle, which
-    /// wraps the container's language model directly and passes each request
-    /// through untouched. The only options that reach the model on that path
-    /// are the ones the turn passes.
+    /// Two things are stated here, and deliberately here rather than through
+    /// ``RealModelContainer/samplingMode``. A mode a suite passes to
+    /// `makeSession(...samplingMode:)` is read by the session backend a
+    /// `RoutedSession` drives, and this suite drives no `RoutedSession`: it
+    /// drives a raw `LanguageModelSession` over a ``RecordingLanguageModel``
+    /// handle, which wraps the container's language model directly and passes
+    /// each request through untouched. The only options that reach the model
+    /// on that path are the ones the turn passes.
     ///
     /// - Argmax decoding, for the reason ``SessionTreeRestorationIntegrationTests``
     ///   pins it: the provider default samples at temperature `0.6` from MLX's
@@ -144,7 +144,7 @@ struct RecordingHandleIntegrationTests {
     /// transcript can be reloaded through ``TranscriptTree``/``MergedTranscript``
     /// after the turn completes.
     ///
-    /// The profile comes from ``RealModelHarness/make(model:context:container:cacheDir:recordingsDir:routerId:)``,
+    /// The profile comes from ``RealModelHarness/make(model:context:container:samplingMode:cacheDir:recordingsDir:routerId:)``,
     /// the one real-profile build every real-model suite of this target uses.
     /// This suite's own hand-built copy said the same thing and was folded onto
     /// it (task ^zz6kam0): the same `JSONLRecorder` for the router and every
@@ -154,7 +154,7 @@ struct RecordingHandleIntegrationTests {
     /// slot this suite never drives. The copy named its profile `"test"`; the
     /// harness stamps its own name, and nothing reads the field.
     private func makeHarness() async throws -> Harness {
-        let container = try await RealModelContainer.load(ref: recordingHandleTinyModel)
+        let loaded = try await RealModelContainer.load(ref: recordingHandleTinyModel)
 
         let recordingsDir = FileManager.default.temporaryDirectory
             .appendingPathComponent(
@@ -170,13 +170,14 @@ struct RecordingHandleIntegrationTests {
             // default. Stated explicitly here, because the harness has no
             // default of its own to inherit.
             context: ProfileDefinition.defaultContext,
-            container: container,
+            container: loaded.container,
+            samplingMode: loaded.samplingMode,
             cacheDir: cacheDir,
             recordingsDir: recordingsDir
         )
 
         return Harness(
-            profile: profile, container: container, recordingsDir: recordingsDir,
+            profile: profile, container: loaded.container, recordingsDir: recordingsDir,
             cacheDir: cacheDir)
     }
 

@@ -1,10 +1,28 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m1s1b8q8awrphde3kbt7pt4w
+  text: |-
+    ### implement — changed
+    - evidence: 26 files. Library: `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift` (the container and the loader store no `samplingMode`; each `makeSession(...samplingMode:)` gives the mode to the backend). Support: `RealModelContainer` is a struct that keeps `container` and `samplingMode`; `RealModelHarness.make` takes `samplingMode:`; `CompactionFold` and `CountingBlankSlateSummarizer` take the struct and pass the mode. Eval: `CompactionEvalRealModelContainer` is a struct with the same shape; both runners pass the mode; `GatedEvalSerialGate` states the new rule. Suites: 15 gated suites pass `loaded.samplingMode` at each bare `makeSession` site or to the harness. Examples and tools: `CompactionDemo` and `RecordCompactionFixture` pass the mode to `Router(samplingMode:)`. Unit test: `RealModelHarnessTests` has a new test that holds the mode on both generation handles.
+    - RED: `swift build --build-tests` failed at `RealModelHarnessTests.swift:199` with `extra argument 'samplingMode' in call`.
+    - GREEN: `swift build --build-tests`, `swift build --package-path IntegrationTests --build-tests`, `swift build --product CompactionDemo`, `swift build --product MultiModelGeneration` all exit 0 with no new warning.
+    - Discovery: the `files` tool option `replace_all` changed one site only in this environment. Each site got its own edit.
+    - next: test
+  timestamp: 2026-09-05T15:00:15.720441+00:00
+- actor: claude-code
+  id: 01m1s21sc7e64cerpc6emsh5sg
+  text: |-
+    ### test — green
+    - evidence: `swift test` → 1231 tests in 133 suites passed (2 known issues, both pre-existing `withKnownIssue` tests) and 83 tests in 10 suites passed, exit 0. `swift build --package-path IntegrationTests --build-tests` → exit 0, no new warning. `swift test --package-path IntegrationTests` → 34 tests in 17 suites passed after 616.8 s, and 2 tests in 2 suites passed after 71.8 s, exit 0. `swift build --product CompactionDemo` and `swift build --product MultiModelGeneration` → exit 0. The one warning in every build, `missing creator for mutated node`, is the SwiftPM bundle warning that the RED run also printed; it is not new.
+    - next: commit
+  timestamp: 2026-09-05T15:12:33.671622+00:00
 depends_on:
 - 01M1RRG1E1EVTDZVRQ919T04M2
-position_column: todo
-position_ordinal: '8780'
+position_column: doing
+position_ordinal: '80'
 title: 'Sampling mode, step B: remove the stored mode from the container and from LiveModelLoader'
 ---
 Plan: `model-pool.md` §2.5 step B.

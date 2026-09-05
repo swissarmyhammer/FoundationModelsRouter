@@ -19,7 +19,8 @@ import FoundationModelsRouterTestSupport
 /// cached, already-loaded ``MLXFoundationModelsContainer``, so every sample gets
 /// its own isolated recording root without paying for a second model download.
 actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
-    private var loaded: MLXFoundationModelsContainer?
+    /// The resident model with its pinned mode, once ``container()`` loaded it.
+    private var loaded: CompactionEvalRealModelContainer?
 
     /// The tasks this runner's tier measures, in the order the tier states them.
     ///
@@ -100,13 +101,13 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
     /// limit here leaves the started line and no returned line, which is the
     /// trail ``gatedEvalSuiteTimeLimitMinutes`` exists to bound (task ^aktsp2e).
     ///
-    /// - Returns: The cached container, if one was already loaded, or the
-    ///   newly-loaded and now-cached container otherwise.
+    /// - Returns: The cached container with its pinned mode, if one was
+    ///   already loaded, or the newly-loaded and now-cached one otherwise.
     /// - Throws: ``CompactionContinuityEvaluationError/unexpectedContainerType``
     ///   if the loaded container is not an `MLXFoundationModelsContainer`, or
     ///   whatever error ``LiveModelLoader/loadLLM(ref:slot:context:reporting:)``
     ///   throws while resolving/loading ``CompactionContinuityRealModel/ref``.
-    private func container() async throws -> MLXFoundationModelsContainer {
+    private func container() async throws -> CompactionEvalRealModelContainer {
         if let loaded { return loaded }
         // Decoding is pinned to greedy. The provider default samples at
         // temperature 0.6 from MLX's process-global PRNG, which seeds itself
@@ -186,7 +187,7 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
         // wait here is charged to no sample's own trail.
         await samplePermit.wait()
         defer { samplePermit.signal() }
-        let container = try await self.container()
+        let loaded = try await self.container()
         let label = makeSampleLabel(forFinalInstruction: finalInstruction)
         let cacheDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("CompactionContinuityEval-cache-\(UUID().uuidString)", isDirectory: true)
@@ -207,7 +208,8 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
         let profile = RealModelHarness.make(
             model: CompactionContinuityRealModel.ref,
             context: CompactionContinuityRealModel.context,
-            container: container,
+            container: loaded.container,
+            samplingMode: loaded.samplingMode,
             cacheDir: cacheDir,
             recordingsDir: recordingsDir
         )
@@ -354,6 +356,6 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
     /// mirroring ``CompactionEvalRealSubjectRunner/evictIfLoaded()``.
     func evictIfLoaded() async {
         guard let loaded else { return }
-        await loaded.model.evict()
+        await loaded.container.model.evict()
     }
 }

@@ -60,38 +60,39 @@ private func makeSessionBackend(
 
 /// The live ``LoadedLLMContainer``. Wraps an `MLXLanguageModel` and makes the
 /// ``LanguageModelSessionBackend`` every generation call runs through.
+///
+/// The container stores no decoding strategy. The mode belongs to the router
+/// (`model-pool.md` §2.5): each `makeSession(...samplingMode:)` call gives
+/// the backend it makes the mode that call names, so two routers over one
+/// pooled container each decode with their own mode. A call that names no
+/// mode gets the provider default.
 package struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     /// The `LanguageModel` conformance wrapping this slot's resident MLX model.
     let model: MLXLanguageModel
-
-    /// The decoding strategy a backend this container vends requests when the
-    /// caller names none, or `nil` for the provider default. Step B of
-    /// `model-pool.md` §2.5 removes it: the mode belongs to the router.
-    let samplingMode: GenerationOptions.SamplingMode?
 
     /// The `FoundationModels.LanguageModel` this container wraps.
     package var languageModel: any FoundationModels.LanguageModel { model }
 
     /// Makes a live session backend over ``model`` that decodes with the
-    /// container's own ``samplingMode``.
+    /// provider default.
     package func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
         makeSession(instructions: instructions, tools: [], samplingMode: nil)
     }
 
     /// Makes a live session backend over ``model`` with `tools` that decodes
-    /// with the container's own ``samplingMode``.
+    /// with the provider default.
     package func makeSession(instructions: String?, tools: [any FoundationModels.Tool]) -> any LanguageModelSessionBackend {
         makeSession(instructions: instructions, tools: tools, samplingMode: nil)
     }
 
     /// Makes a live session backend seeded from `transcript`, with no tools,
-    /// that decodes with the container's own ``samplingMode``.
+    /// that decodes with the provider default.
     package func makeSession(transcript: FoundationModels.Transcript) -> any LanguageModelSessionBackend {
         makeSession(transcript: transcript, tools: [], samplingMode: nil)
     }
 
     /// Makes a live session backend seeded from `transcript` with `tools`
-    /// that decodes with the container's own ``samplingMode``.
+    /// that decodes with the provider default.
     package func makeSession(
         transcript: FoundationModels.Transcript,
         tools: [any FoundationModels.Tool]
@@ -100,8 +101,8 @@ package struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     }
 
     /// Makes a live session backend over ``model`` that decodes with
-    /// `samplingMode`, or with the container's own ``samplingMode`` when
-    /// `samplingMode` is `nil`.
+    /// `samplingMode`, or with the provider default when `samplingMode` is
+    /// `nil`.
     package func makeSession(
         instructions: String?, samplingMode: GenerationOptions.SamplingMode?
     ) -> any LanguageModelSessionBackend {
@@ -109,20 +110,20 @@ package struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     }
 
     /// Makes a live session backend over ``model`` with `tools` that decodes
-    /// with `samplingMode`, or with the container's own ``samplingMode`` when
-    /// `samplingMode` is `nil`.
+    /// with `samplingMode`, or with the provider default when `samplingMode`
+    /// is `nil`.
     package func makeSession(
         instructions: String?, tools: [any FoundationModels.Tool], samplingMode: GenerationOptions.SamplingMode?
     ) -> any LanguageModelSessionBackend {
         let session = LanguageModelSession(model: model, tools: tools, instructions: instructions)
         return MLXFoundationModelsSessionBackend(
             session: session, model: model, instructions: instructions, tools: tools,
-            samplingMode: resolvedSamplingMode(samplingMode))
+            samplingMode: samplingMode)
     }
 
     /// Makes a live session backend seeded from `transcript`, with no tools,
-    /// that decodes with `samplingMode`, or with the container's own
-    /// ``samplingMode`` when `samplingMode` is `nil`.
+    /// that decodes with `samplingMode`, or with the provider default when
+    /// `samplingMode` is `nil`.
     package func makeSession(
         transcript: FoundationModels.Transcript, samplingMode: GenerationOptions.SamplingMode?
     ) -> any LanguageModelSessionBackend {
@@ -130,24 +131,15 @@ package struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     }
 
     /// Makes a live session backend seeded from `transcript` with `tools`
-    /// that decodes with `samplingMode`, or with the container's own
-    /// ``samplingMode`` when `samplingMode` is `nil`. The backend derives its
-    /// instructions from the leading `.instructions` entry of `transcript`.
+    /// that decodes with `samplingMode`, or with the provider default when
+    /// `samplingMode` is `nil`. The backend derives its instructions from the
+    /// leading `.instructions` entry of `transcript`.
     package func makeSession(
         transcript: FoundationModels.Transcript,
         tools: [any FoundationModels.Tool],
         samplingMode: GenerationOptions.SamplingMode?
     ) -> any LanguageModelSessionBackend {
-        makeSessionBackend(
-            model: model, transcript: transcript, tools: tools, samplingMode: resolvedSamplingMode(samplingMode))
-    }
-
-    /// The decoding strategy a new backend decodes with: `requested`, or the
-    /// container's own ``samplingMode`` when `requested` is `nil`.
-    private func resolvedSamplingMode(
-        _ requested: GenerationOptions.SamplingMode?
-    ) -> GenerationOptions.SamplingMode? {
-        requested ?? samplingMode
+        makeSessionBackend(model: model, transcript: transcript, tools: tools, samplingMode: samplingMode)
     }
 }
 
@@ -413,27 +405,23 @@ public struct LiveModelLoader: ModelLoader {
     /// `MLXLanguageModel` availability checks.
     private let weightsLocation: @Sendable (String) -> URL
 
-    /// The decoding strategy every generation container this loader vends
-    /// uses, or `nil` for the provider default.
-    private let samplingMode: GenerationOptions.SamplingMode?
-
     /// Creates a live loader.
     ///
-    /// - Parameters:
-    ///   - weightsLocation: Resolves a model id to its on-disk weights directory. The default never resolves a real path.
-    ///   - samplingMode: The decoding strategy. `nil` samples. `.greedy` gives repeatable output.
+    /// The loader stores no decoding strategy. A container it vends serves
+    /// every router in the pool, and the mode belongs to the router
+    /// (`model-pool.md` §2.5): pass it to `Router.init(samplingMode:)`.
+    ///
+    /// - Parameter weightsLocation: Resolves a model id to its on-disk weights directory. The default never resolves a real path.
     public init(
         downloader: any Downloader,
         tokenizerLoader: any TokenizerLoader,
         weightsLocation: @escaping @Sendable (String) -> URL = { _ in
             FileManager.default.temporaryDirectory
-        },
-        samplingMode: GenerationOptions.SamplingMode? = nil
+        }
     ) {
         self.downloader = downloader
         self.tokenizerLoader = tokenizerLoader
         self.weightsLocation = weightsLocation
-        self.samplingMode = samplingMode
     }
 
     /// Downloads and loads a generation model. The weights load before the
@@ -483,7 +471,7 @@ public struct LiveModelLoader: ModelLoader {
             }
         )
         _ = try await model.loadContainer()
-        return MLXFoundationModelsContainer(model: model, samplingMode: samplingMode)
+        return MLXFoundationModelsContainer(model: model)
     }
 
     /// Downloads and loads an embedding model. One probe embedding finds the
