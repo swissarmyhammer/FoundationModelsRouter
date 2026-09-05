@@ -89,6 +89,16 @@ public protocol ModelLoader: Sendable {
     /// Downloads and loads a generation model. Reports download progress to
     /// `reporting`.
     ///
+    /// The container is keyed in the pool by `ref` and its role only, and one
+    /// container serves every working context. `context` is advisory: a
+    /// loader must not size the container or its KV cache by it. The KV
+    /// cache is allocated per session and priced per session by the router.
+    ///
+    /// - Parameters:
+    ///   - ref: The model to download and load.
+    ///   - slot: The slot the model is loaded for.
+    ///   - context: The working context the first resolve decodes at. Advisory only.
+    ///   - reporting: Receives each download-progress observation.
     /// - Throws: If the download or load fails.
     func loadLLM(
         ref: ModelRef,

@@ -7,8 +7,9 @@ import Testing
 /// Exercises pooled model residency (task kh01tv2): a ``Router`` now supports
 /// several concurrently resident profiles that share one machine budget and
 /// dedupe identical resident model instances keyed on ``ModelRef`` (incl.
-/// revision) plus the load-time role/context that changes resident bytes —
-/// rather than admitting exactly one resident profile at a time.
+/// revision) plus the role the model was loaded under — rather than
+/// admitting exactly one resident profile at a time. The working context is
+/// not part of the key: a session's KV cache is priced per session.
 ///
 /// Everything runs against stubs — no network, no GPU — so the suite is fast
 /// and deterministic. The spies, the spying loader, the footprint constants,
@@ -407,11 +408,15 @@ struct PooledResidencyTests {
         #expect(vectors.count == 1)
     }
 
-    // MARK: - Same-ref-different-context does not share.
+    // MARK: - Same-ref-different-context shares one container.
 
-    @Test("the same repo resolved at two different working contexts does not share a resident instance")
+    /// The loader does not size a container by the working context: the KV
+    /// cache is allocated per session, and priced per session. So the same
+    /// repo at two contexts is one resident container, and the second
+    /// profile's sessions answer from it.
+    @Test("the same repo resolved at two different working contexts shares one resident container")
     @MainActor
-    func sameRepoDifferentContextDoesNotShare() async throws {
+    func sameRepoDifferentContextSharesOneContainer() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let spy = LoadSpy()
@@ -431,18 +436,91 @@ struct PooledResidencyTests {
             context: ResidencyFixtures.steppedDownContext
         )
 
-        // Both resolved profiles are held for the whole test: an unretained
-        // profile is deallocated immediately, and its `deinit` fires an
-        // unstructured release `Task` that would race the next resolve.
         let resolvedWide = try await router.resolve(profile: wide, reporting: ResolutionProgress())
         let resolvedNarrow = try await router.resolve(profile: narrow, reporting: ResolutionProgress())
-        withExtendedLifetime((resolvedWide, resolvedNarrow)) {}
 
-        // One and the same ref — the loads differ only in the context each
-        // container was sized for, so a key that ignored the context would
-        // hand the second profile the first's KV cache.
-        #expect(await spy.llmLoads.filter { $0 == "org/ctx-repo" }.count == 2)
-        #expect(Set(await spy.llmLoads.filter { $0 == "org/ctx-repo" }).count == 1)
+        // One and the same ref at two contexts: one load, not one for each
+        // context.
+        #expect(await spy.llmLoads.filter { $0 == "org/ctx-repo" }.count == 1)
+
+        // Both profiles' sessions answer from the one resident container.
+        let wideReply = try await resolvedWide.standard.makeSession(instructions: nil).respond(to: "hi")
+        let narrowReply = try await resolvedNarrow.standard.makeSession(instructions: nil).respond(to: "hi")
+        #expect(wideReply == "from-org/ctx-repo")
+        #expect(narrowReply == "from-org/ctx-repo")
+    }
+
+    // MARK: - A second context on a resident generation model is charged its own KV cache only.
+
+    /// The pricing half of the shared container: a profile at a second
+    /// context that reuses a resident generation model is charged one
+    /// session KV cache at its own context and zero weights. The budget a
+    /// failing third resolve sees pins the charge.
+    @Test("a profile at a second context reusing a resident generation model is charged one session KV cache at its own context and no weights")
+    @MainActor
+    func secondContextChargesOnlyItsOwnSessionKVCache() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let spy = LoadSpy()
+        // Exactly the wide trio, the narrow profile's own flash model at its
+        // context, and the narrow profile's one KV cache at its context on
+        // the reused generation model. Nothing for the reused embedder.
+        let router = ResidencyFixtures.makeRouter(
+            spy: spy,
+            recommendedMaxWorkingSetSize: ResidencyFixtures.oneTrioFootprint
+                + ResidencyFixtures.steppedDownReuseWithOwnFlashCharge + ResidencyFixtures.headroomBufferBytes,
+            cacheDir: dir
+        )
+
+        let wide = ProfileDefinition(
+            name: "wide", description: "owns the generation model and embedder the narrow profile reuses",
+            standard: ["org/ctx-charge-std"], flash: ["org/ctx-charge-flash"], embedding: ["org/ctx-charge-emb"]
+        )
+        let narrow = ProfileDefinition(
+            name: "narrow", description: "reuses the generation model and embedder at a smaller context, brings its own flash",
+            standard: ["org/ctx-charge-std"], flash: ["org/ctx-charge-narrow-flash"], embedding: ["org/ctx-charge-emb"],
+            context: ResidencyFixtures.steppedDownContext
+        )
+
+        let resolvedWide = try await router.resolve(profile: wide, reporting: ResolutionProgress())
+        let resolvedNarrow = try await router.resolve(profile: narrow, reporting: ResolutionProgress())
+
+        // The reused generation model was loaded one time at the first context.
+        #expect(await spy.llmLoads.filter { $0 == "org/ctx-charge-std" }.count == 1)
+
+        // A weights charge on the narrow profile's reused generation model
+        // would not fit the budget at all. A zero charge would leave one KV
+        // cache at the narrow context of budget here instead.
+        await Self.expectNoRoomLeft(in: router, beyond: ResidencyFixtures.headroomBufferBytes, refPrefix: "org/ctx-charge-pin")
+        withExtendedLifetime((resolvedWide, resolvedNarrow)) {}
+    }
+
+    /// Pins what the pool holds through the budget a failing resolve reports:
+    /// a disjoint trio at the default context must not fit, and the budget
+    /// its failure names is exactly `expectedBudgetBytes`.
+    ///
+    /// - Parameters:
+    ///   - router: The router whose pool is under test.
+    ///   - expectedBudgetBytes: The bytes the pool leaves free.
+    ///   - refPrefix: The prefix of the three refs the disjoint trio names.
+    @MainActor
+    private static func expectNoRoomLeft(
+        in router: Router, beyond expectedBudgetBytes: Int64, refPrefix: String
+    ) async {
+        let disjoint = ProfileDefinition(
+            name: "disjoint", description: "cannot fit beside the resident profiles",
+            standard: [ModelRef("\(refPrefix)-std")],
+            flash: [ModelRef("\(refPrefix)-flash")],
+            embedding: [ModelRef("\(refPrefix)-emb")]
+        )
+        do {
+            _ = try await router.resolve(profile: disjoint, reporting: ResolutionProgress())
+            Issue.record("the disjoint profile must not fit beside the resident profiles")
+        } catch let failure as ResolutionFailure {
+            #expect(failure.budgetBytes == expectedBudgetBytes)
+        } catch {
+            Issue.record("the disjoint profile failed with \(error), not a ResolutionFailure")
+        }
     }
 
     // MARK: - Single-profile callers are unaffected.

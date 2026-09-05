@@ -3,14 +3,15 @@ import Foundation
 /// The exact identity of a resident model artifact.
 ///
 /// Two candidates share a pool entry only when both the ``ModelRef`` and the
-/// ``Role`` match. A generation model is keyed by its working context because
-/// the KV cache is sized at load time.
+/// ``Role`` match. The working context is not part of the key: a loader does
+/// not size a container by it, and the KV cache is allocated and priced per
+/// session. One model at two contexts is one resident container.
 package struct ResidencyKey: Hashable, Sendable {
     /// The role a resident model was loaded under.
     package enum Role: Hashable, Sendable {
-        /// Loaded as a generation model at this working context.
-        case llm(context: Int)
-        /// Loaded as an embedder. The role has no context: weights only.
+        /// Loaded as a generation model: weights, and one KV cache for each session.
+        case llm
+        /// Loaded as an embedder: weights only.
         case embedding
     }
 

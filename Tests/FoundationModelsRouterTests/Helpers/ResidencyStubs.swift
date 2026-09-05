@@ -198,10 +198,30 @@ enum ResidencyFixtures {
     static let reuseWithOwnFlashCharge: Int64 = sessionKVMarginedBytes + generationModelFootprint
 
     /// A working context below ``ProfileDefinition/defaultContext``, for the
-    /// profile that names an already-resident repo at a second context: the
-    /// KV cache is sized into the container at load time, so the same repo at
-    /// this context is a different resident model.
+    /// profile that names an already-resident repo at a second context. The
+    /// context is not part of the ``ResidencyKey``: the loader does not size
+    /// a container by it, so the same repo at this context shares the
+    /// resident container and is charged one session KV cache at this
+    /// context.
     static let steppedDownContext = 4096
+
+    /// The `× 1.2` margined KV cache of ONE generation session at
+    /// ``steppedDownContext`` for the canned 2-layer config (raw 1_048_576
+    /// bytes): what a profile at that context is charged when it reuses a
+    /// resident generation model.
+    static let steppedDownSessionKVMarginedBytes: Int64 = 1_258_292
+
+    /// One generation model's margined footprint at ``steppedDownContext``:
+    /// weights plus one session KV cache at that context.
+    static let steppedDownGenerationModelFootprint: Int64 = 13_258_292
+
+    /// The whole reservation a profile at ``steppedDownContext`` is charged
+    /// when it reuses a resident trio's generation model and embedder but
+    /// brings its own flash model: one session KV cache at its own context
+    /// on the reused generation model, its own flash model's whole footprint
+    /// at that context, and zero for the reused embedder.
+    static let steppedDownReuseWithOwnFlashCharge: Int64 =
+        steppedDownSessionKVMarginedBytes + steppedDownGenerationModelFootprint
 
     /// Builds a ``Router`` with `headroomReserve: 0` over a probe whose whole
     /// budget is `recommendedMaxWorkingSetSize`, so the host budget every

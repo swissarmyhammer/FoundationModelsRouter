@@ -224,7 +224,7 @@ public actor Router {
             ] {
                 let slotRes = Self.slotResolution(for: resolution, slot: slot)
                 let chargedBytes = Self.chosenCharge(for: slotRes)
-                let key = ResidencyKey(ref: chosen, role: .llm(context: slotRes.contextTokens))
+                let key = ResidencyKey(ref: chosen, role: .llm)
                 let entry = try await acquireLLM(
                     key: key,
                     chosen: chosen,
@@ -391,7 +391,8 @@ public actor Router {
     /// Acquires a generation slot for `key` through
     /// ``acquireModel(key:chosen:slot:footprintBytes:chargedBytes:newKeys:progress:load:wrap:)``.
     ///
-    /// - Parameter context: The working context to load a fresh container at.
+    /// - Parameter context: The working context this resolve decodes at,
+    ///   passed to the loader as advice. It is not part of `key`.
     private func acquireLLM(
         key: ResidencyKey,
         chosen: ModelRef,
@@ -521,8 +522,9 @@ public actor Router {
     /// every slot it is a candidate for, with the largest figure kept.
     ///
     /// A candidate whose ``ResidencyKey`` is in `residentKeys` is charged its
-    /// marginal cost: one session KV cache for a generation model, zero for
-    /// an embedder.
+    /// marginal cost: one session KV cache at `context` for a generation
+    /// model, whatever context it was first loaded at, and zero for an
+    /// embedder.
     private static func footprintBytes(
         for ref: ModelRef,
         context: Int,
@@ -545,7 +547,7 @@ public actor Router {
                 candidates.append(residentKeys.contains(key) ? 0 : raw)
             }
             if slots.contains(.standard) || slots.contains(.flash) {
-                let key = ResidencyKey(ref: ref, role: .llm(context: context))
+                let key = ResidencyKey(ref: ref, role: .llm)
                 let raw = metadata.footprint.footprint(context: context)
                 let sessionKV = metadata.footprint.kvBytes(context: context)
                 candidates.append(residentKeys.contains(key) ? sessionKV : raw)
