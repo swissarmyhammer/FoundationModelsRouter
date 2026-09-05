@@ -25,11 +25,34 @@ comments:
     - evidence: `swift test` — 1228 tests in 133 suites passed, plus 83 tests in 10 suites passed; 0 failures, 0 skipped, 0 new warnings. The two "known issue" marks are the pre-existing `withKnownIssue` blocks in `BoundedWait` and `RealModelHarness`; this card does not touch them.
     - next: commit
   timestamp: 2026-09-05T14:10:07.619933+00:00
+- actor: claude-code
+  id: 01m1ryg10yck9acxd02twc8jp6
+  text: |-
+    ### commit — changed
+    - evidence: ac39499 fix(pool): drop the working context from the generation residency key
+    - next: review HEAD~1..HEAD
+  timestamp: 2026-09-05T14:10:25.950836+00:00
+- actor: claude-code
+  id: 01m1rynyr1hy95hqzay93mw1z1
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` — 0 findings, 7 validators attempted, 0 failed; 5 files reviewed (`.kanban/` excluded by `.reviewignore`). No prior `## Review Findings` section on the card.
+    - next: move to done
+  timestamp: 2026-09-05T14:13:40.225692+00:00
+- actor: claude-code
+  id: 01m1rypchdm354m9j2b5nfw7ev
+  text: |-
+    ### finish iteration 1 — review clean, card moved to done
+    - implement: changed — Sources/FoundationModelsRouter/Resolution/ModelPool.swift, Sources/FoundationModelsRouter/Router.swift, Sources/FoundationModelsRouter/Resolution/ModelLoader.swift, Tests/FoundationModelsRouterTests/Helpers/ResidencyStubs.swift, Tests/FoundationModelsRouterTests/PooledResidencyTests.swift
+    - test: green — `swift test`: 1228 tests in 133 suites passed, plus 83 tests in 10 suites passed; 0 failures, 0 skipped, 0 new warnings
+    - commit: ac39499
+    - review: clean — 0 findings (review sha HEAD~1..HEAD, 7 validators attempted, 0 failed)
+  timestamp: 2026-09-05T14:13:54.349178+00:00
 depends_on:
 - 01M1RREG728QK5FMX6N8H2G4SB
 - 01M1RRF9KB8W919YZ27A4721B3
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffc780
 title: Drop the working context from the generation residency key
 ---
 Plan: `model-pool.md` §1.3, §2.3.
@@ -43,15 +66,15 @@ Plan: `model-pool.md` §1.3, §2.3.
 - Keep `JointFit.ReservationKey` as it is; it carries no context already.
 
 ## Acceptance Criteria
-- [ ] One profile at the default context and one at 4096 tokens that name one generation model load it one time.
-- [ ] The second profile is charged one session KV cache at its own context and zero weights. Pin this through the `budgetBytes` a failing third resolve reports, as `reusingResidentGenerationModelChargesOneSessionKVCache` does.
-- [ ] `sameRepoDifferentContextDoesNotShare` is replaced by `sameRepoDifferentContextSharesOneContainer`; no test asserts two loads for one ref at two contexts.
-- [ ] `swift test` → all pass.
+- [x] One profile at the default context and one at 4096 tokens that name one generation model load it one time.
+- [x] The second profile is charged one session KV cache at its own context and zero weights. Pin this through the `budgetBytes` a failing third resolve reports, as `reusingResidentGenerationModelChargesOneSessionKVCache` does.
+- [x] `sameRepoDifferentContextDoesNotShare` is replaced by `sameRepoDifferentContextSharesOneContainer`; no test asserts two loads for one ref at two contexts.
+- [x] `swift test` → all pass.
 
 ## Tests
-- [ ] `PooledResidencyTests.sameRepoDifferentContextSharesOneContainer`: one load for `org/ctx-repo`, both profiles answer.
-- [ ] `PooledResidencyTests.secondContextChargesOnlyItsOwnSessionKVCache`: budget pin with the KV bytes of the canned config at 4096 tokens.
-- [ ] Run `swift test --filter PooledResidencyTests` → all pass.
+- [x] `PooledResidencyTests.sameRepoDifferentContextSharesOneContainer`: one load for `org/ctx-repo`, both profiles answer.
+- [x] `PooledResidencyTests.secondContextChargesOnlyItsOwnSessionKVCache`: budget pin with the KV bytes of the canned config at 4096 tokens.
+- [x] Run `swift test --filter PooledResidencyTests` → all pass.
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #model-pool #router
