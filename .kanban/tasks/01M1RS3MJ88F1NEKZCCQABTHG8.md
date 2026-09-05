@@ -19,10 +19,26 @@ comments:
     - evidence: `swift test` → 1231 tests in 133 suites passed (2 known issues, both pre-existing `withKnownIssue` tests) and 83 tests in 10 suites passed, exit 0. `swift build --package-path IntegrationTests --build-tests` → exit 0, no new warning. `swift test --package-path IntegrationTests` → 34 tests in 17 suites passed after 616.8 s, and 2 tests in 2 suites passed after 71.8 s, exit 0. `swift build --product CompactionDemo` and `swift build --product MultiModelGeneration` → exit 0. The one warning in every build, `missing creator for mutated node`, is the SwiftPM bundle warning that the RED run also printed; it is not new.
     - next: commit
   timestamp: 2026-09-05T15:12:33.671622+00:00
+- actor: claude-code
+  id: 01m1s7pb6drabj3cnc8ffynvaz
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` on 598e00f → 0 findings, 0 confirmed, 0 refuted, 21 review tasks attempted, 0 failed, 0 skipped. 25 files reviewed; 2 `.kanban/` files excluded by `.reviewignore`. A previous run reported 6 of 21 review tasks failed; that run was not a review and was not written to the card.
+    - next: done
+  timestamp: 2026-09-05T16:51:10.157104+00:00
+- actor: claude-code
+  id: 01m1s7pfz2bpx74bpr04sxvwmy
+  text: |-
+    ### finish iteration 1 — review clean, card moved to done
+    - implement: changed — 26 files: `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift`, `Tests/FoundationModelsRouterRealModelSupport/RealModelContainer.swift`, `RealModelHarness`, `CompactionFold`, `CountingBlankSlateSummarizer`, `RealModelHarnessTests.swift`, `CompactionEvalRealModelContainer`, both eval runners, `GatedEvalSerialGate.swift`, 15 gated suites, `Examples/CompactionDemo/main.swift`, `RecordCompactionFixture`
+    - test: green — `swift test` → 1231 tests in 133 suites and 83 tests in 10 suites, 0 failures; `swift test --package-path IntegrationTests` → 34 tests in 17 suites and 2 tests in 2 suites, 0 failures; both examples build
+    - commit: 598e00f
+    - review: clean — 0 findings, 21 attempted, 0 failed
+  timestamp: 2026-09-05T16:51:15.042948+00:00
 depends_on:
 - 01M1RRG1E1EVTDZVRQ919T04M2
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffc980
 title: 'Sampling mode, step B: remove the stored mode from the container and from LiveModelLoader'
 ---
 Plan: `model-pool.md` §2.5 step B.
