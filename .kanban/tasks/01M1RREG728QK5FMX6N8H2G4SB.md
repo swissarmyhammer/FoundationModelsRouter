@@ -43,8 +43,39 @@ comments:
     - commit: edb1506
     - review: findings — Tests/FoundationModelsRouterTests/SessionTreeRestorationToolWiringTests.swift:167 `completeness/invariant-propagation` doc-comment style mix (`- Parameter id:` beside a bulleted `- pool:`)
   timestamp: 2026-09-05T13:32:59.704344+00:00
-position_column: review
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m1rwcv84dw8z3c7n0x2tgejj
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — Tests/FoundationModelsRouterTests/SessionTreeRestorationToolWiringTests.swift (the `makeRouter` doc comment now documents `id` and `pool` under one `- Parameters:` list)
+    - next: test
+
+    ### test — green
+    - evidence: `swift test` — 1221 tests in 132 suites passed (2 pre-existing known issues) and 83 tests in 10 suites passed; 0 failed, 0 skipped, 0 `warning:` lines, 0 `error:` lines
+    - next: commit
+  timestamp: 2026-09-05T13:33:44.580601+00:00
+- actor: claude-code
+  id: 01m1rwczstjk1gs7ykpdg6n8gv
+  text: |-
+    ### commit — changed
+    - evidence: 542c760 docs(tests): document makeRouter's id and pool in one parameter list
+    - next: review HEAD~1..HEAD
+  timestamp: 2026-09-05T13:33:49.242330+00:00
+- actor: claude-code
+  id: 01m1rwf3smyb09gk53hspkybnp
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` — 0 findings, 0 confirmed, 0 refuted; the one prior finding (SessionTreeRestorationToolWiringTests.swift:167) is checked
+    - next: done
+
+    ### finish iteration 2 — review clean, card moved to done
+    - implement: changed — Tests/FoundationModelsRouterTests/SessionTreeRestorationToolWiringTests.swift
+    - test: green — `swift test`: 1221 tests in 132 suites passed (2 pre-existing known issues) and 83 tests in 10 suites passed; 0 failed, 0 skipped, 0 warnings
+    - commit: 542c760
+    - review: clean — no open findings
+  timestamp: 2026-09-05T13:34:58.868165+00:00
+position_column: done
+position_ordinal: ffffc580
 title: Extract the residency pool from Router into a process-wide ModelPool actor
 ---
 Plan: `model-pool.md` §2.1, §2.4, §2.7.
