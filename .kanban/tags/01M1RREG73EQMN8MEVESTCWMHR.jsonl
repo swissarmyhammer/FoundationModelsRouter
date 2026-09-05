@@ -1,0 +1,1 @@
+{"id":"01M1RREG74YNKCX133HS91CE9Y","timestamp":"2026-09-05T12:24:44.516071Z","op":"create","item_id":"01M1RREG73EQMN8MEVESTCWMHR","forward_patch":"--- original\n+++ modified\n@@ -0,0 +1,2 @@\n+color: 0e8a16\n+tag_name: model-pool\n","reverse_patch":"--- original\n+++ modified\n@@ -1,2 +0,0 @@\n-color: 0e8a16\n-tag_name: model-pool\n","transaction_id":null}
