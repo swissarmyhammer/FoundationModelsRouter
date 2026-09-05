@@ -238,37 +238,27 @@ public actor Router {
                 (resolution.standard, ModelSlot.standard), (resolution.flash, ModelSlot.flash),
             ] {
                 let slotRes = Self.slotResolution(for: resolution, slot: slot)
-                let chargedBytes = Self.chosenCharge(for: slotRes)
-                let key = ResidencyKey(ref: chosen, role: .llm)
-                let entry = try await acquireLLM(
-                    key: key,
+                acquiredSlots[slot] = try await acquireLLM(
+                    key: ResidencyKey(ref: chosen, role: .llm),
                     chosen: chosen,
                     slot: slot,
                     context: slotRes.contextTokens,
                     footprintBytes: Self.chosenFootprint(for: slotRes),
-                    chargedBytes: chargedBytes,
+                    sessionBytes: Self.chosenSessionBytes(
+                        for: chosen, context: slotRes.contextTokens, metadataByRef: metadataByRef
+                    ),
                     newKeys: &newKeys,
                     progress: progress
-                )
-                acquiredSlots[slot] = AcquiredSlot(
-                    hold: ResidencyHold(key: key, chargedBytes: chargedBytes), entry: entry
                 )
             }
 
             let embeddingRes = Self.slotResolution(for: resolution, slot: .embedding)
-            let embeddingCharge = Self.chosenCharge(for: embeddingRes)
-            let embeddingKey = ResidencyKey(ref: resolution.embedding, role: .embedding)
-            let embeddingEntry = try await acquireEmbedder(
-                key: embeddingKey,
+            acquiredSlots[.embedding] = try await acquireEmbedder(
+                key: ResidencyKey(ref: resolution.embedding, role: .embedding),
                 chosen: resolution.embedding,
                 footprintBytes: Self.chosenFootprint(for: embeddingRes),
-                chargedBytes: embeddingCharge,
                 newKeys: &newKeys,
                 progress: progress
-            )
-            acquiredSlots[.embedding] = AcquiredSlot(
-                hold: ResidencyHold(key: embeddingKey, chargedBytes: embeddingCharge),
-                entry: embeddingEntry
             )
 
             await setPhase(.loading, progress: progress)
@@ -355,31 +345,34 @@ public actor Router {
     ///   - key: This candidate's exact residency identity.
     ///   - chosen: The chosen model reference.
     ///   - slot: The slot being acquired.
-    ///   - footprintBytes: This slot's whole margined footprint, the floor of a fresh entry.
-    ///   - chargedBytes: The bytes this acquisition charged the shared budget.
+    ///   - footprintBytes: This slot's whole margined footprint: the weights
+    ///     plus this hold's own KV cache.
+    ///   - sessionBytes: The margined KV cache this hold adds on the model at
+    ///     its own context, and what its release gives back. Zero for an
+    ///     embedder.
     ///   - newKeys: Accumulates `key` when this call inserted a fresh entry.
     ///   - progress: The progress to drive through acquisition.
     ///   - load: The loader call that produces a fresh resident container.
     ///   - wrap: Wraps a fresh container into a ``PooledContainer``.
-    /// - Returns: The pool entry after this acquisition.
+    /// - Returns: The hold this acquisition took, beside the pool entry after it.
     /// - Throws: Any error the loader raises.
     private func acquireModel<Loaded: Sendable>(
         key: ResidencyKey,
         chosen: ModelRef,
         slot: ModelSlot,
         footprintBytes: Int64,
-        chargedBytes: Int64,
+        sessionBytes: Int64,
         newKeys: inout Set<ResidencyKey>,
         progress: ResolutionProgress,
         load: @Sendable (ModelRef, ModelSlot, @escaping @Sendable (DownloadProgress) -> Void)
             async throws -> Loaded,
         wrap: @Sendable (Loaded) -> PooledContainer
-    ) async throws -> PoolEntry {
+    ) async throws -> AcquiredSlot {
         let loader = self.loader
         let entry = try await pool.acquire(
             key: key,
             footprintBytes: footprintBytes,
-            chargedBytes: chargedBytes,
+            sessionBytes: sessionBytes,
             maxConcurrentForks: maxConcurrentForks,
             load: {
                 // Runs only for a key the pool did not hold, so a slot the
@@ -400,11 +393,11 @@ public actor Router {
         } else {
             await setSlotState(slot, to: .ready, progress: progress)
         }
-        return entry
+        return AcquiredSlot(hold: ResidencyHold(key: key, sessionBytes: sessionBytes), entry: entry)
     }
 
     /// Acquires a generation slot for `key` through
-    /// ``acquireModel(key:chosen:slot:footprintBytes:chargedBytes:newKeys:progress:load:wrap:)``.
+    /// ``acquireModel(key:chosen:slot:footprintBytes:sessionBytes:newKeys:progress:load:wrap:)``.
     ///
     /// - Parameter context: The working context this resolve decodes at,
     ///   passed to the loader as advice. It is not part of `key`.
@@ -414,13 +407,13 @@ public actor Router {
         slot: ModelSlot,
         context: Int,
         footprintBytes: Int64,
-        chargedBytes: Int64,
+        sessionBytes: Int64,
         newKeys: inout Set<ResidencyKey>,
         progress: ResolutionProgress
-    ) async throws -> PoolEntry {
+    ) async throws -> AcquiredSlot {
         try await acquireModel(
             key: key, chosen: chosen, slot: slot, footprintBytes: footprintBytes,
-            chargedBytes: chargedBytes,
+            sessionBytes: sessionBytes,
             newKeys: &newKeys, progress: progress,
             load: { try await loader.loadLLM(ref: $0, slot: $1, context: context, reporting: $2) },
             wrap: { .llm($0) }
@@ -428,18 +421,19 @@ public actor Router {
     }
 
     /// Acquires the embedding slot for `key` through
-    /// ``acquireModel(key:chosen:slot:footprintBytes:chargedBytes:newKeys:progress:load:wrap:)``.
+    /// ``acquireModel(key:chosen:slot:footprintBytes:sessionBytes:newKeys:progress:load:wrap:)``.
+    /// An embedder carries no KV cache, so its hold adds zero session bytes
+    /// and its footprint is its weights alone.
     private func acquireEmbedder(
         key: ResidencyKey,
         chosen: ModelRef,
         footprintBytes: Int64,
-        chargedBytes: Int64,
         newKeys: inout Set<ResidencyKey>,
         progress: ResolutionProgress
-    ) async throws -> PoolEntry {
+    ) async throws -> AcquiredSlot {
         try await acquireModel(
             key: key, chosen: chosen, slot: .embedding, footprintBytes: footprintBytes,
-            chargedBytes: chargedBytes,
+            sessionBytes: 0,
             newKeys: &newKeys, progress: progress,
             load: { try await loader.loadEmbedder(ref: $0, slot: $1, reporting: $2) },
             wrap: { .embedding($0) }
@@ -597,6 +591,31 @@ public actor Router {
         return metadataResult.map { $0.footprint.kvBytes(context: context) }
     }
 
+    /// The `× 1.2` margined KV cache one session of a chosen generation
+    /// candidate holds at `context`: the share its hold adds on the pooled
+    /// container, and what the hold's release gives back.
+    ///
+    /// Traps when the candidate has no metadata, because ``JointFit`` chooses
+    /// a candidate only after it sized it.
+    ///
+    /// - Parameters:
+    ///   - ref: The chosen candidate.
+    ///   - context: The working context its sessions decode at.
+    ///   - metadataByRef: The sizing metadata fetched for every candidate.
+    /// - Returns: The margined KV cache bytes.
+    private static func chosenSessionBytes(
+        for ref: ModelRef,
+        context: Int,
+        metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>]
+    ) -> Int64 {
+        switch sessionBytes(for: ref, context: context, metadataByRef: metadataByRef) {
+        case .success(let rawBytes):
+            return JointFit.withMargin(rawBytes)
+        case .failure:
+            preconditionFailure("JointFit sizes every candidate it chooses; \(ref.stringValue) has no metadata")
+        }
+    }
+
     // MARK: - Joint fit
 
     /// Runs the pure joint fit and, on failure, records the diagnostics into the
@@ -639,7 +658,7 @@ public actor Router {
     /// Opens one load span and runs `body` — the fetch and load of one slot's
     /// model — inside it.
     ///
-    /// The caller is ``acquireModel(key:chosen:slot:footprintBytes:chargedBytes:newKeys:progress:load:wrap:)``,
+    /// The caller is ``acquireModel(key:chosen:slot:footprintBytes:sessionBytes:newKeys:progress:load:wrap:)``,
     /// past the point where an already-resident model returns, so only a model
     /// this resolve really fetches opens a span here. The span is a child of
     /// the resolve span, because the resolve span is the current one for the
@@ -895,12 +914,6 @@ public actor Router {
     /// The chosen candidate's margined footprint estimate for a slot, or `0`.
     private static func chosenFootprint(for slotRes: SlotResolution) -> Int64 {
         chosenReport(for: slotRes)?.estimatedFootprintBytes ?? 0
-    }
-
-    /// The bytes ``JointFit`` charged the shared budget for a slot's chosen
-    /// candidate, or `0`.
-    private static func chosenCharge(for slotRes: SlotResolution) -> Int64 {
-        chosenReport(for: slotRes)?.chargedBytes ?? 0
     }
 
     // MARK: - Progress mutations (main actor)

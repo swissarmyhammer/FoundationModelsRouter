@@ -49,16 +49,20 @@ package struct PoolEntry: Sendable {
     /// How many slot acquisitions currently hold this model.
     var refcount: Int
 
-    /// This model's margined footprint at first load, the floor under ``footprintBytes``.
-    let baseFootprintBytes: Int64
+    /// This model's `× 1.2` margined weights alone: the first load's margined
+    /// footprint less that load's own margined KV cache at its context. The
+    /// pool charges them one time, however many holds share the model.
+    let baseWeightsBytes: Int64
 
-    /// The sum of the bytes every live acquisition charged the shared budget.
-    /// Each release gives back its own acquisition's charge.
+    /// The sum of the `× 1.2` margined KV cache bytes every live hold adds on
+    /// this model, each at its own context. Each release gives back its own
+    /// hold's share. An embedder carries no KV cache, so this stays zero.
     var acquiredChargeBytes: Int64
 
     /// The steady-state bytes this entry holds against the shared budget:
-    /// the live charge, floored at the first load's own footprint.
-    var footprintBytes: Int64 { max(baseFootprintBytes, acquiredChargeBytes) }
+    /// the weights one time, plus one KV cache for each live hold, whatever
+    /// order the holds release in.
+    var footprintBytes: Int64 { baseWeightsBytes + acquiredChargeBytes }
 
     /// The loaded container.
     let container: PooledContainer
@@ -77,15 +81,18 @@ package struct PoolEntry: Sendable {
     var isFirstHold: Bool { refcount == 1 }
 }
 
-/// One slot acquisition's hold on a pooled model: the pool key and the bytes
-/// that acquisition charged the shared budget. A release gives back the
-/// charge.
+/// One slot acquisition's hold on a pooled model: the pool key and the KV
+/// cache bytes that acquisition added on the model. A release gives back
+/// that share.
 package struct ResidencyHold: Sendable {
     /// The pooled model this hold references.
     let key: ResidencyKey
 
-    /// The `× 1.2` bytes this acquisition charged the shared budget.
-    let chargedBytes: Int64
+    /// The `× 1.2` margined KV cache bytes this hold adds on the pooled model
+    /// at its own context, and what its release gives back. Zero for an
+    /// embedder. The weights come back when the last hold releases and the
+    /// model is evicted.
+    let sessionBytes: Int64
 }
 
 /// The resident-model pool. One instance serves every router in a process,
@@ -170,8 +177,11 @@ public actor ModelPool {
     ///
     /// - Parameters:
     ///   - key: This candidate's exact residency identity.
-    ///   - footprintBytes: This slot's whole margined footprint, the floor of a fresh entry.
-    ///   - chargedBytes: The bytes this acquisition charged the shared budget.
+    ///   - footprintBytes: This slot's whole margined footprint: the weights
+    ///     plus this hold's own KV cache. A fresh entry's weights are this
+    ///     figure less `sessionBytes`.
+    ///   - sessionBytes: The margined KV cache this hold adds at its own
+    ///     context, and what its release gives back. Zero for an embedder.
     ///   - maxConcurrentForks: The fork ceiling a fresh entry's gates admit.
     ///   - load: The loader call that produces a fresh resident container.
     ///     It is `@Sendable` because the pool, not the caller, runs it.
@@ -182,21 +192,21 @@ public actor ModelPool {
     package func acquire(
         key: ResidencyKey,
         footprintBytes: Int64,
-        chargedBytes: Int64,
+        sessionBytes: Int64,
         maxConcurrentForks: Int,
         load: @Sendable () async throws -> PooledContainer,
         evict: @escaping @Sendable (any LoadedModelContainer) async -> Void
     ) async throws -> PoolEntry {
         if var entry = entries[key] {
             entry.refcount += 1
-            entry.acquiredChargeBytes += chargedBytes
+            entry.acquiredChargeBytes += sessionBytes
             entries[key] = entry
             return entry
         }
         let entry = PoolEntry(
             refcount: 1,
-            baseFootprintBytes: footprintBytes,
-            acquiredChargeBytes: chargedBytes,
+            baseWeightsBytes: footprintBytes - sessionBytes,
+            acquiredChargeBytes: sessionBytes,
             container: try await load(),
             gates: ResidentModelGates(maxConcurrentForks: maxConcurrentForks),
             evict: evict
@@ -231,15 +241,16 @@ public actor ModelPool {
         }
     }
 
-    /// Gives back one hold: decrements the model's refcount and its charge,
-    /// and evicts the model at zero references. A no-op when the key is not
-    /// resident. Call it under ``withResolveLock(isolation:_:)``.
+    /// Gives back one hold: decrements the model's refcount, gives back the
+    /// hold's KV cache share, and evicts the model at zero references. A
+    /// no-op when the key is not resident. Call it under
+    /// ``withResolveLock(isolation:_:)``.
     ///
     /// - Parameter hold: The hold to give back.
     package func release(hold: ResidencyHold) async {
         guard var entry = entries[hold.key] else { return }
         entry.refcount -= 1
-        entry.acquiredChargeBytes -= hold.chargedBytes
+        entry.acquiredChargeBytes -= hold.sessionBytes
         if entry.refcount <= 0 {
             entries.removeValue(forKey: hold.key)
             await entry.evict(entry.container.erased)

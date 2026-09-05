@@ -495,6 +495,62 @@ struct PooledResidencyTests {
         withExtendedLifetime((resolvedWide, resolvedNarrow)) {}
     }
 
+    // MARK: - Releasing the first-context hold leaves only the remaining KV cache charged.
+
+    /// The release half of the shared container at two contexts (task
+    /// wzp6vcg): the narrow profile loads the shared generation model at
+    /// ``ResidencyFixtures/steppedDownContext``, the wide profile reuses it at
+    /// the default context, and the narrow profile releases first. The pool
+    /// must then hold the weights one time plus the wide profile's KV cache,
+    /// with nothing of the narrow KV cache left charged. The budget a failing
+    /// third resolve reports pins that.
+    @Test("releasing the first-context hold on a shared generation model leaves only the remaining KV cache charged")
+    @MainActor
+    func releasingTheFirstContextHoldLeavesOnlyTheRemainingKVCharged() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let spy = LoadSpy()
+        // Exactly the narrow trio at its own context, then the wide profile's
+        // charge for reusing the generation model at the default context with
+        // its own flash model and embedder.
+        let hostBudget = ResidencyFixtures.steppedDownTrioFootprint
+            + ResidencyFixtures.reuseWithOwnFlashAndEmbedderCharge + ResidencyFixtures.headroomBufferBytes
+        let router = ResidencyFixtures.makeRouter(spy: spy, recommendedMaxWorkingSetSize: hostBudget, cacheDir: dir)
+
+        let narrow = ProfileDefinition(
+            name: "narrow", description: "loads the shared generation model first, at a smaller context",
+            standard: ["org/ctx-release-std"], flash: ["org/ctx-release-narrow-flash"],
+            embedding: ["org/ctx-release-narrow-emb"],
+            context: ResidencyFixtures.steppedDownContext
+        )
+        let wide = ProfileDefinition(
+            name: "wide", description: "reuses the generation model at the default context with its own flash model and embedder",
+            standard: ["org/ctx-release-std"], flash: ["org/ctx-release-wide-flash"],
+            embedding: ["org/ctx-release-wide-emb"]
+        )
+
+        let resolvedNarrow = try await router.resolve(profile: narrow, reporting: ResolutionProgress())
+        let resolvedWide = try await router.resolve(profile: wide, reporting: ResolutionProgress())
+        // The shared generation model was loaded one time, at the narrow context.
+        #expect(await spy.llmLoads.filter { $0 == "org/ctx-release-std" }.count == 1)
+
+        await resolvedNarrow.release()
+        // The wide profile still holds the shared generation model, so only
+        // the narrow profile's own flash model and embedder are evicted.
+        #expect(await spy.evictions == ResidencyFixtures.modelsPerTrio - 1)
+
+        // What stays charged is the weights one time, the wide profile's KV
+        // cache at the default context, and the wide profile's own flash model
+        // and embedder. A floor at the first load's whole footprint would keep
+        // the narrow KV cache charged as well.
+        await Self.expectNoRoomLeft(
+            in: router,
+            beyond: hostBudget - ResidencyFixtures.wideHoldAfterNarrowRelease,
+            refPrefix: "org/ctx-release-pin"
+        )
+        withExtendedLifetime(resolvedWide) {}
+    }
+
     /// Pins what the pool holds through the budget a failing resolve reports:
     /// a disjoint trio at the default context must not fit, and the budget
     /// its failure names is exactly `expectedBudgetBytes`.

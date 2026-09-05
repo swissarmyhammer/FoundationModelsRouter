@@ -177,8 +177,8 @@ weights, so §2.5 moves it off the container.
 ### 2.3 Drop the context from the generation key
 
 `ResidencyKey.Role` becomes `.llm` and `.embedding`, with no context. The
-per-session KV cache is already charged per acquisition (`chargedBytes` on
-`ResidencyHold`; `sessionBytes` in the joint fit at that resolve's own
+per-session KV cache is already charged per acquisition (`sessionBytes` on
+`ResidencyHold`, from `sessionBytes` in the joint fit at that resolve's own
 context), so the accounting is unchanged: the first hold charges weights plus
 its KV cache, and every later hold charges its own KV cache at its own
 context. `ModelLoader.loadLLM(context:)` keeps its parameter for source

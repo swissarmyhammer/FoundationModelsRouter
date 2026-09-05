@@ -223,6 +223,38 @@ enum ResidencyFixtures {
     static let steppedDownReuseWithOwnFlashCharge: Int64 =
         steppedDownSessionKVMarginedBytes + steppedDownGenerationModelFootprint
 
+    /// One generation model's `× 1.2` margined weights alone, with no KV
+    /// cache: the canned 10_000_000-byte shard × 1.2. It is the first load's
+    /// margined footprint less its own margined KV cache at either context
+    /// (`14_516_583 - 2_516_583` at the default context,
+    /// `13_258_292 - 1_258_292` at ``steppedDownContext``), and it is what a
+    /// resident generation model holds against the budget once every hold
+    /// that carries a KV cache has released.
+    static let generationWeightsMarginedBytes: Int64 = 12_000_000
+
+    /// One full trio's margined footprint at ``steppedDownContext``: one
+    /// ``steppedDownGenerationModelFootprint`` for each generation slot, plus
+    /// the embedding model.
+    static let steppedDownTrioFootprint: Int64 =
+        steppedDownGenerationModelFootprint * generationSlotsPerTrio + embeddingModelFootprint
+
+    /// The whole reservation a profile at the default context is charged when
+    /// it reuses a resident generation model but brings its own flash model
+    /// and its own embedder: one session KV cache on the reused generation
+    /// model, its own flash model's whole footprint, and its own embedder's
+    /// whole footprint.
+    static let reuseWithOwnFlashAndEmbedderCharge: Int64 =
+        sessionKVMarginedBytes + generationModelFootprint + embeddingModelFootprint
+
+    /// What the pool holds after the profile that loaded a shared generation
+    /// model at ``steppedDownContext`` releases while a profile at the default
+    /// context still holds it: the weights one time
+    /// (``generationWeightsMarginedBytes``), the remaining profile's KV cache
+    /// at the default context (``sessionKVMarginedBytes``), and that profile's
+    /// own flash model and embedder. Nothing of the released KV cache remains.
+    static let wideHoldAfterNarrowRelease: Int64 =
+        generationWeightsMarginedBytes + sessionKVMarginedBytes + generationModelFootprint + embeddingModelFootprint
+
     /// Builds a ``Router`` with `headroomReserve: 0` over a probe whose whole
     /// budget is `recommendedMaxWorkingSetSize`, so the host budget every
     /// resolve prices against is exactly that figure.
