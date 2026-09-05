@@ -161,10 +161,12 @@ struct SessionTreeRestorationToolWiringTests {
     /// Builds a router wired with the stubs and a durable recordings root, so
     /// vended sessions nest their transcripts and index under it.
     ///
-    /// - Parameter id: The router id to construct with — pass the first
-    ///   router's `id` to simulate a fresh process continuing the same
-    ///   recording root.
-    ///   - pool: The resident-model pool. Defaults to a fresh pool, so parallel suites never share residents.
+    /// - Parameters:
+    ///   - id: The router id to construct with — pass the first router's
+    ///     `id` to simulate a fresh process continuing the same recording
+    ///     root.
+    ///   - pool: The resident-model pool. Defaults to a fresh pool, so
+    ///     parallel suites never share residents.
     private static func makeRouter(
         id: ULID = .generate(),
         container: any LoadedLLMContainer,
