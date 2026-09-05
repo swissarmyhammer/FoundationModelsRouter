@@ -239,6 +239,8 @@ enum ResidencyFixtures {
     ///     routers share residents only when a test passes one pool to both.
     ///   - maxConcurrentForks: The in-flight fork ceiling the router mints for
     ///     every key it loads.
+    ///   - samplingMode: The decoding strategy the router passes to every
+    ///     backend it makes, or `nil` (the default) for the provider default.
     ///   - llmContainer: An override for the container each generation ref gets.
     ///   - gatedRef: The ref whose load suspends. See ``SpyingModelLoader/gatedRef``.
     ///   - entrySignal: Signalled when the gated load is reached.
@@ -250,6 +252,7 @@ enum ResidencyFixtures {
         cacheDir: URL,
         pool: ModelPool = ModelPool(),
         maxConcurrentForks: Int = defaultMaxConcurrentForks,
+        samplingMode: GenerationOptions.SamplingMode? = nil,
         llmContainer: (@Sendable (ModelRef) -> any LoadedLLMContainer)? = nil,
         gatedRef: ModelRef? = nil,
         entrySignal: AsyncSemaphore? = nil,
@@ -272,6 +275,7 @@ enum ResidencyFixtures {
                 spy: spy, dimension: RouterTestFixtures.stubDimension, llmContainer: llmContainer,
                 gatedRef: gatedRef, entrySignal: entrySignal, releaseGate: releaseGate
             ),
+            samplingMode: samplingMode,
             pool: pool
         )
     }

@@ -45,6 +45,59 @@ public protocol LoadedLLMContainer: LoadedModelContainer {
     /// default ignores `tools` and forwards to ``makeSession(transcript:)``.
     func makeSession(transcript: FoundationModels.Transcript, tools: [any Tool]) -> any LanguageModelSessionBackend
 
+    /// Makes a new session backend over this resident model that decodes
+    /// with `samplingMode`. The default drops `samplingMode` and forwards to
+    /// ``makeSession(instructions:)``.
+    ///
+    /// The mode is the router's, not the container's: two routers over one
+    /// pooled container each pass their own mode.
+    ///
+    /// - Parameters:
+    ///   - instructions: The session's system instructions, or `nil`.
+    ///   - samplingMode: The decoding strategy the router asked for, or `nil`
+    ///     for the container's default.
+    func makeSession(
+        instructions: String?, samplingMode: GenerationOptions.SamplingMode?
+    ) -> any LanguageModelSessionBackend
+
+    /// Makes a new session backend over this resident model with `tools`
+    /// that decodes with `samplingMode`. The default drops `samplingMode` and
+    /// forwards to ``makeSession(instructions:tools:)``.
+    ///
+    /// - Parameters:
+    ///   - instructions: The session's system instructions, or `nil`.
+    ///   - tools: The tools the model can call.
+    ///   - samplingMode: The decoding strategy the router asked for, or `nil`
+    ///     for the container's default.
+    func makeSession(
+        instructions: String?, tools: [any Tool], samplingMode: GenerationOptions.SamplingMode?
+    ) -> any LanguageModelSessionBackend
+
+    /// Makes a new session backend seeded from `transcript` that decodes
+    /// with `samplingMode`. The default drops `samplingMode` and forwards to
+    /// ``makeSession(transcript:)``.
+    ///
+    /// - Parameters:
+    ///   - transcript: The transcript to seed the backend from.
+    ///   - samplingMode: The decoding strategy the router asked for, or `nil`
+    ///     for the container's default.
+    func makeSession(
+        transcript: FoundationModels.Transcript, samplingMode: GenerationOptions.SamplingMode?
+    ) -> any LanguageModelSessionBackend
+
+    /// Makes a new session backend seeded from `transcript` with `tools`
+    /// that decodes with `samplingMode`. The default drops `samplingMode` and
+    /// forwards to ``makeSession(transcript:tools:)``.
+    ///
+    /// - Parameters:
+    ///   - transcript: The transcript to seed the backend from.
+    ///   - tools: The tools the model can call.
+    ///   - samplingMode: The decoding strategy the router asked for, or `nil`
+    ///     for the container's default.
+    func makeSession(
+        transcript: FoundationModels.Transcript, tools: [any Tool], samplingMode: GenerationOptions.SamplingMode?
+    ) -> any LanguageModelSessionBackend
+
     /// The raw `FoundationModels.LanguageModel` this container wraps. The
     /// default traps. Only a container that supports ``RoutedModel/makeLanguageModel()`` must override it.
     var languageModel: any FoundationModels.LanguageModel { get }
@@ -68,6 +121,34 @@ extension LoadedLLMContainer {
         transcript: FoundationModels.Transcript, tools: [any Tool]
     ) -> any LanguageModelSessionBackend {
         makeSession(transcript: transcript)
+    }
+
+    /// Drops `samplingMode` and forwards to ``makeSession(instructions:)``.
+    public func makeSession(
+        instructions: String?, samplingMode: GenerationOptions.SamplingMode?
+    ) -> any LanguageModelSessionBackend {
+        makeSession(instructions: instructions)
+    }
+
+    /// Drops `samplingMode` and forwards to ``makeSession(instructions:tools:)``.
+    public func makeSession(
+        instructions: String?, tools: [any Tool], samplingMode: GenerationOptions.SamplingMode?
+    ) -> any LanguageModelSessionBackend {
+        makeSession(instructions: instructions, tools: tools)
+    }
+
+    /// Drops `samplingMode` and forwards to ``makeSession(transcript:)``.
+    public func makeSession(
+        transcript: FoundationModels.Transcript, samplingMode: GenerationOptions.SamplingMode?
+    ) -> any LanguageModelSessionBackend {
+        makeSession(transcript: transcript)
+    }
+
+    /// Drops `samplingMode` and forwards to ``makeSession(transcript:tools:)``.
+    public func makeSession(
+        transcript: FoundationModels.Transcript, tools: [any Tool], samplingMode: GenerationOptions.SamplingMode?
+    ) -> any LanguageModelSessionBackend {
+        makeSession(transcript: transcript, tools: tools)
     }
 }
 

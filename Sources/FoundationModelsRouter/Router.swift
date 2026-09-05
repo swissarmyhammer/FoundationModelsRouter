@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModels
 import Tracing
 
 /// The default in-flight fork-session ceiling per resolved profile. It is
@@ -65,6 +66,12 @@ public actor Router {
     /// The download+load step behind resolution.
     private let loader: any ModelLoader
 
+    /// The decoding strategy every backend this router's handles make
+    /// decodes with, or `nil` for the provider default. A decode option of
+    /// the router, not of the shared container: two routers over one pooled
+    /// container each decode with their own mode (`model-pool.md` §2.5).
+    let samplingMode: GenerationOptions.SamplingMode?
+
     /// The resident-model pool this router resolves into. Every router on
     /// one pool shares its residents and its resolve lock.
     package nonisolated let pool: ModelPool
@@ -87,6 +94,9 @@ public actor Router {
     ///   - probe: The machine probe behind the budget.
     ///   - metadataSource: The metadata fetch behind sizing.
     ///   - loader: The download and load step. Pass a configured ``LiveModelLoader`` for real loading.
+    ///   - samplingMode: The decoding strategy every session this router
+    ///     vends decodes with. `nil` (the default) leaves the provider
+    ///     default, which samples. `.greedy` gives repeatable output.
     ///   - pool: The resident-model pool to resolve into. The default,
     ///     ``ModelPool/shared``, is one pool for the whole process. Pass a
     ///     fresh ``ModelPool`` for a router that must not share residents.
@@ -103,6 +113,7 @@ public actor Router {
         probe: any MachineProbe = SystemMachineProbe(),
         metadataSource: any MetadataSource = HuggingFaceMetadataSource(),
         loader: any ModelLoader = UnconfiguredModelLoader(),
+        samplingMode: GenerationOptions.SamplingMode? = nil,
         pool: ModelPool = .shared
     ) {
         self.id = id
@@ -126,6 +137,7 @@ public actor Router {
         self.probe = probe
         self.metadataReader = RepoMetadataReader(source: metadataSource, cacheDir: resolvedCacheDir)
         self.loader = loader
+        self.samplingMode = samplingMode
         self.pool = pool
     }
 
@@ -759,8 +771,8 @@ public actor Router {
     }
 
     /// Builds a routed model handle for `slot` from its pool entry, with
-    /// this router's id, recorder, tracer, transcripts root, and the entry's
-    /// gates.
+    /// this router's id, recorder, tracer, sampling mode, transcripts root,
+    /// and the entry's gates.
     ///
     /// - Parameters:
     ///   - slot: The slot this handle fills.
@@ -798,7 +810,8 @@ public actor Router {
                 resolvedProfile: resolvedProfile
             ),
             gates: entry.gates,
-            tracer: tracer
+            tracer: tracer,
+            samplingMode: samplingMode
         )
     }
 

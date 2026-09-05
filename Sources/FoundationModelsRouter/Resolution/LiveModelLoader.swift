@@ -64,38 +64,90 @@ package struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     /// The `LanguageModel` conformance wrapping this slot's resident MLX model.
     let model: MLXLanguageModel
 
-    /// The decoding strategy every backend this container vends requests, or
-    /// `nil` for the provider default.
+    /// The decoding strategy a backend this container vends requests when the
+    /// caller names none, or `nil` for the provider default. Step B of
+    /// `model-pool.md` §2.5 removes it: the mode belongs to the router.
     let samplingMode: GenerationOptions.SamplingMode?
 
     /// The `FoundationModels.LanguageModel` this container wraps.
     package var languageModel: any FoundationModels.LanguageModel { model }
 
-    /// Makes a live session backend over ``model``.
+    /// Makes a live session backend over ``model`` that decodes with the
+    /// container's own ``samplingMode``.
     package func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-        makeSession(instructions: instructions, tools: [])
+        makeSession(instructions: instructions, tools: [], samplingMode: nil)
     }
 
-    /// Makes a live session backend over ``model`` with `tools`.
+    /// Makes a live session backend over ``model`` with `tools` that decodes
+    /// with the container's own ``samplingMode``.
     package func makeSession(instructions: String?, tools: [any FoundationModels.Tool]) -> any LanguageModelSessionBackend {
-        let session = LanguageModelSession(model: model, tools: tools, instructions: instructions)
-        return MLXFoundationModelsSessionBackend(
-            session: session, model: model, instructions: instructions, tools: tools, samplingMode: samplingMode)
+        makeSession(instructions: instructions, tools: tools, samplingMode: nil)
     }
 
-    /// Makes a live session backend seeded from `transcript`, with no tools.
+    /// Makes a live session backend seeded from `transcript`, with no tools,
+    /// that decodes with the container's own ``samplingMode``.
     package func makeSession(transcript: FoundationModels.Transcript) -> any LanguageModelSessionBackend {
-        makeSession(transcript: transcript, tools: [])
+        makeSession(transcript: transcript, tools: [], samplingMode: nil)
     }
 
-    /// Makes a live session backend seeded from `transcript` with `tools`. The
-    /// backend derives its instructions from the leading `.instructions` entry
-    /// of `transcript`.
+    /// Makes a live session backend seeded from `transcript` with `tools`
+    /// that decodes with the container's own ``samplingMode``.
     package func makeSession(
         transcript: FoundationModels.Transcript,
         tools: [any FoundationModels.Tool]
     ) -> any LanguageModelSessionBackend {
-        makeSessionBackend(model: model, transcript: transcript, tools: tools, samplingMode: samplingMode)
+        makeSession(transcript: transcript, tools: tools, samplingMode: nil)
+    }
+
+    /// Makes a live session backend over ``model`` that decodes with
+    /// `samplingMode`, or with the container's own ``samplingMode`` when
+    /// `samplingMode` is `nil`.
+    package func makeSession(
+        instructions: String?, samplingMode: GenerationOptions.SamplingMode?
+    ) -> any LanguageModelSessionBackend {
+        makeSession(instructions: instructions, tools: [], samplingMode: samplingMode)
+    }
+
+    /// Makes a live session backend over ``model`` with `tools` that decodes
+    /// with `samplingMode`, or with the container's own ``samplingMode`` when
+    /// `samplingMode` is `nil`.
+    package func makeSession(
+        instructions: String?, tools: [any FoundationModels.Tool], samplingMode: GenerationOptions.SamplingMode?
+    ) -> any LanguageModelSessionBackend {
+        let session = LanguageModelSession(model: model, tools: tools, instructions: instructions)
+        return MLXFoundationModelsSessionBackend(
+            session: session, model: model, instructions: instructions, tools: tools,
+            samplingMode: resolvedSamplingMode(samplingMode))
+    }
+
+    /// Makes a live session backend seeded from `transcript`, with no tools,
+    /// that decodes with `samplingMode`, or with the container's own
+    /// ``samplingMode`` when `samplingMode` is `nil`.
+    package func makeSession(
+        transcript: FoundationModels.Transcript, samplingMode: GenerationOptions.SamplingMode?
+    ) -> any LanguageModelSessionBackend {
+        makeSession(transcript: transcript, tools: [], samplingMode: samplingMode)
+    }
+
+    /// Makes a live session backend seeded from `transcript` with `tools`
+    /// that decodes with `samplingMode`, or with the container's own
+    /// ``samplingMode`` when `samplingMode` is `nil`. The backend derives its
+    /// instructions from the leading `.instructions` entry of `transcript`.
+    package func makeSession(
+        transcript: FoundationModels.Transcript,
+        tools: [any FoundationModels.Tool],
+        samplingMode: GenerationOptions.SamplingMode?
+    ) -> any LanguageModelSessionBackend {
+        makeSessionBackend(
+            model: model, transcript: transcript, tools: tools, samplingMode: resolvedSamplingMode(samplingMode))
+    }
+
+    /// The decoding strategy a new backend decodes with: `requested`, or the
+    /// container's own ``samplingMode`` when `requested` is `nil`.
+    private func resolvedSamplingMode(
+        _ requested: GenerationOptions.SamplingMode?
+    ) -> GenerationOptions.SamplingMode? {
+        requested ?? samplingMode
     }
 }
 

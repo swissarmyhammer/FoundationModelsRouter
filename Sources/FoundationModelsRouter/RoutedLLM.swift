@@ -150,8 +150,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         // vended session owns and drives for its whole lifetime, born already
         // carrying `instructions` and `instancedTools` so generation calls
         // never pass them again and the model can call whatever `tools`
-        // supplies, with events routed to this session's own `outbox`.
-        let backend = container.makeSession(instructions: instructions, tools: instancedTools)
+        // supplies, with events routed to this session's own `outbox`. The
+        // decoding strategy is this handle's, so a pooled container shared
+        // with another router decodes with this router's mode.
+        let backend = container.makeSession(
+            instructions: instructions, tools: instancedTools, samplingMode: samplingMode)
 
         return makeRoutedSessionActor(
             profile: owningProfile,

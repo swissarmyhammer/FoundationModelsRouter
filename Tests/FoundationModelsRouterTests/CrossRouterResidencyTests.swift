@@ -87,6 +87,11 @@ struct CrossRouterResidencyTests {
     ///     the two routers share residents unless a test passes a second pool.
     ///   - firstForkCeiling: The first router's `maxConcurrentForks`.
     ///   - secondForkCeiling: The second router's `maxConcurrentForks`.
+    ///   - firstSamplingMode: The first router's sampling mode, or `nil`.
+    ///   - secondSamplingMode: The second router's sampling mode, or `nil`.
+    ///   - llmContainer: An override for the container each generation ref
+    ///     gets, applied to both routers' loaders, or `nil` for the plain
+    ///     ``CannedLLMContainer``.
     /// - Returns: The pair.
     private static func makePair(
         recommendedMaxWorkingSetSize: Int64,
@@ -94,7 +99,10 @@ struct CrossRouterResidencyTests {
         firstPool: ModelPool,
         secondPool: ModelPool? = nil,
         firstForkCeiling: Int = defaultMaxConcurrentForks,
-        secondForkCeiling: Int = defaultMaxConcurrentForks
+        secondForkCeiling: Int = defaultMaxConcurrentForks,
+        firstSamplingMode: GenerationOptions.SamplingMode? = nil,
+        secondSamplingMode: GenerationOptions.SamplingMode? = nil,
+        llmContainer: (@Sendable (ModelRef) -> any LoadedLLMContainer)? = nil
     ) -> RouterPair {
         let firstSpy = LoadSpy()
         let secondSpy = LoadSpy()
@@ -104,7 +112,9 @@ struct CrossRouterResidencyTests {
                 recommendedMaxWorkingSetSize: recommendedMaxWorkingSetSize,
                 cacheDir: cacheDir,
                 pool: firstPool,
-                maxConcurrentForks: firstForkCeiling
+                maxConcurrentForks: firstForkCeiling,
+                samplingMode: firstSamplingMode,
+                llmContainer: llmContainer
             ),
             firstSpy: firstSpy,
             second: ResidencyFixtures.makeRouter(
@@ -112,7 +122,9 @@ struct CrossRouterResidencyTests {
                 recommendedMaxWorkingSetSize: recommendedMaxWorkingSetSize,
                 cacheDir: cacheDir,
                 pool: secondPool ?? firstPool,
-                maxConcurrentForks: secondForkCeiling
+                maxConcurrentForks: secondForkCeiling,
+                samplingMode: secondSamplingMode,
+                llmContainer: llmContainer
             ),
             secondSpy: secondSpy
         )
@@ -315,5 +327,42 @@ struct CrossRouterResidencyTests {
         let admitted = try await secondFork
         #expect(admitted.parentId == root.id)
         withExtendedLifetime((fromFirst, root)) {}
+    }
+
+    // MARK: - Each router passes its own sampling mode to the shared container.
+
+    /// `model-pool.md` §2.5: the sampling mode is a decode option of the
+    /// router, not a property of the shared weights. Two routers over one
+    /// container each pass their own mode into every backend they make, so
+    /// the second router never inherits the first router's mode.
+    @Test("two routers with different sampling modes over one pool each pass their own mode to the shared container")
+    @MainActor
+    func eachRouterPassesItsOwnSamplingModeToTheSharedContainer() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // One recording container for every ref, so both routers' sessions
+        // record into one list in call order. The shared stub from
+        // `Helpers/AutoCompactionFixtures.swift`.
+        let container = ConfiguredLLMContainer(responseText: "shared")
+        let pair = Self.makePair(
+            recommendedMaxWorkingSetSize: Self.oneTrioPlusReuseBudget,
+            cacheDir: dir,
+            firstPool: ModelPool(),
+            firstSamplingMode: .greedy,
+            secondSamplingMode: nil,
+            llmContainer: { _ in container }
+        )
+
+        let fromFirst = try await pair.first.resolve(profile: Self.sharedTrio, reporting: ResolutionProgress())
+        let fromSecond = try await pair.second.resolve(profile: Self.sharedTrio, reporting: ResolutionProgress())
+
+        _ = fromFirst.standard.makeSession(instructions: nil)
+        _ = fromSecond.standard.makeSession(instructions: nil)
+
+        // The first router's session asked for greedy decoding and the second
+        // router's session asked for the provider default. A signature with no
+        // mode records nothing, so a router that skipped the mode leaves a gap.
+        #expect(container.receivedSamplingModes == [.greedy, nil])
+        withExtendedLifetime((fromFirst, fromSecond)) {}
     }
 }

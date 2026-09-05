@@ -38,6 +38,11 @@ final class ConfiguredLLMContainer: LoadedLLMContainer, @unchecked Sendable {
     /// test can configure the session's own live backend after it exists.
     private(set) var lastBackend: StubSessionBackend?
 
+    /// The sampling mode each mode-carrying `makeSession` received, in call
+    /// order. The signatures with no mode record nothing, so a caller that
+    /// skips the mode leaves a gap in this list.
+    private(set) var receivedSamplingModes: [GenerationOptions.SamplingMode?] = []
+
     /// Creates a container.
     ///
     /// - Parameters:
@@ -69,6 +74,46 @@ final class ConfiguredLLMContainer: LoadedLLMContainer, @unchecked Sendable {
         StubSessionBackend(
             responseText: responseText, shouldThrow: shouldThrow, entries: Array(transcript),
             generationLog: generationLog)
+    }
+
+    /// Records `samplingMode` and vends through ``makeSession(instructions:)``.
+    ///
+    /// - Parameters:
+    ///   - instructions: The session's system instructions, or `nil`.
+    ///   - samplingMode: The decoding strategy the router asked for, or `nil`.
+    /// - Returns: The vended backend.
+    func makeSession(
+        instructions: String?, samplingMode: GenerationOptions.SamplingMode?
+    ) -> any LanguageModelSessionBackend {
+        receivedSamplingModes.append(samplingMode)
+        return makeSession(instructions: instructions)
+    }
+
+    /// Ignores `tools` and forwards to ``makeSession(instructions:samplingMode:)``.
+    func makeSession(
+        instructions: String?, tools: [any Tool], samplingMode: GenerationOptions.SamplingMode?
+    ) -> any LanguageModelSessionBackend {
+        makeSession(instructions: instructions, samplingMode: samplingMode)
+    }
+
+    /// Records `samplingMode` and vends through ``makeSession(transcript:)``.
+    ///
+    /// - Parameters:
+    ///   - transcript: The transcript to seed the backend from.
+    ///   - samplingMode: The decoding strategy the router asked for, or `nil`.
+    /// - Returns: The vended backend.
+    func makeSession(
+        transcript: Transcript, samplingMode: GenerationOptions.SamplingMode?
+    ) -> any LanguageModelSessionBackend {
+        receivedSamplingModes.append(samplingMode)
+        return makeSession(transcript: transcript)
+    }
+
+    /// Ignores `tools` and forwards to ``makeSession(transcript:samplingMode:)``.
+    func makeSession(
+        transcript: Transcript, tools: [any Tool], samplingMode: GenerationOptions.SamplingMode?
+    ) -> any LanguageModelSessionBackend {
+        makeSession(transcript: transcript, samplingMode: samplingMode)
     }
 }
 
@@ -143,7 +188,7 @@ enum AutoCompactionFixtures {
     private static let cannedTextRepeatCount = 60
 
     /// How many warm-up turns
-    /// ``makeTriggeredSession(budget:tools:summarization:tracer:tempDirPrefix:)``
+    /// ``makeTriggeredSession(budget:tools:summarization:tracer:samplingMode:tempDirPrefix:)``
     /// drives — past ``TurnTruncation``'s default 4-turn recency window, so
     /// folding has real old-span content to work with.
     static let turnCount = 6
@@ -198,7 +243,7 @@ enum AutoCompactionFixtures {
     }()
 
     /// The exact entries
-    /// ``makeTriggeredSession(budget:tools:summarization:tracer:tempDirPrefix:)``'s
+    /// ``makeTriggeredSession(budget:tools:summarization:tracer:samplingMode:tempDirPrefix:)``'s
     /// warm-up turns produce, computed without ever running a session —
     /// prompt/response text is fixed regardless of the escalating usage those
     /// turns are driven with, so ``fixedBudget`` can be sized once, up front,
@@ -237,6 +282,8 @@ enum AutoCompactionFixtures {
     ///   - tracer: The tracer every handle of the resolved profile carries, or
     ///     `nil` (the default) to read `InstrumentationSystem.tracer` at call
     ///     time.
+    ///   - samplingMode: The decoding strategy the router passes to every
+    ///     backend it makes, or `nil` (the default) for the provider default.
     ///   - tempDirPrefix: The calling suite's name, so a leaked temp directory
     ///     is attributable.
     /// - Returns: The session plus its `standard`/`flash` containers, so a
@@ -247,6 +294,7 @@ enum AutoCompactionFixtures {
         tools: [any Tool] = [],
         summarization: Summarization = Summarization(),
         tracer: (any Tracer)? = nil,
+        samplingMode: GenerationOptions.SamplingMode? = nil,
         tempDirPrefix: String
     ) async throws -> (session: RoutedSession, standard: ConfiguredLLMContainer, flash: ConfiguredLLMContainer) {
         let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
@@ -256,7 +304,7 @@ enum AutoCompactionFixtures {
         let loader = PerSlotModelLoader(
             standard: standardContainer, flash: flashContainer, dimension: RouterTestFixtures.stubDimension)
         let router = RouterTestFixtures.makeRouter(
-            cacheDir: dir, recorder: recorder, loader: loader, tracer: tracer)
+            cacheDir: dir, recorder: recorder, loader: loader, tracer: tracer, samplingMode: samplingMode)
         let profile = try await router.resolve(
             profile: RouterTestFixtures.profile(context: warmUpContextTokens), reporting: ResolutionProgress())
 

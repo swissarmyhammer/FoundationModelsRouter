@@ -176,6 +176,32 @@ struct RoutedSessionCompactTests {
         )
     }
 
+    // MARK: - The flash summarizer carries the router's sampling mode
+
+    /// `model-pool.md` §2.5 step A: the flash summarizer is the one backend
+    /// a fold builds from a container, so it is where a router's sampling
+    /// mode would be lost. The fold path is the automatic one: a caller-driven
+    /// `compact()` folds on the session's own live backend and builds no
+    /// backend from a container.
+    @Test("an automatic fold's flash summarizer backend receives the router's sampling mode")
+    @MainActor
+    func autoFoldFlashSummarizerReceivesTheRoutersSamplingMode() async throws {
+        let (session, standard, flash) = try await AutoCompactionFixtures.makeTriggeredSession(
+            budget: AutoCompactionFixtures.fixedBudget,
+            samplingMode: .greedy,
+            tempDirPrefix: "RoutedSessionCompactTests")
+        // The root session's own backend already carries the mode, and no
+        // fold has asked the flash slot for a backend yet.
+        #expect(standard.receivedSamplingModes == [.greedy])
+        #expect(flash.receivedSamplingModes.isEmpty)
+
+        // Measured fill sits at the trigger, so this turn folds before its own
+        // work runs, summarizing through the flash slot.
+        _ = try await session.respond(to: "turn 6")
+
+        #expect(flash.receivedSamplingModes == [.greedy])
+    }
+
     // MARK: - Shrinks the live window; accurate result
 
     @Test("compact() shrinks the live window (post-compact contextFill < pre-compact) and returns an accurate CompactionResult")
