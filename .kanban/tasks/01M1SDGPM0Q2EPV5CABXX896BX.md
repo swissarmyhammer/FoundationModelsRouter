@@ -37,8 +37,32 @@ comments:
     - gated run: not needed; the change touches only a fork test target.
     - next: `/commit` here (`.kanban/` only; `Package.resolved` is git-ignored).
   timestamp: 2026-09-06T11:56:18.473609+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m1v97g5sq0xjsym01k3pesrm
+  text: |-
+    ### commit — changed
+    - evidence: `22c074f chore(kanban): record the fork benchmark suite deletion for card ^xx896bx` on branch `pool` here (`.kanban/` only; `Package.resolved` is git-ignored). Fork: `36a0464 test(kvcache): delete the environment-variable benchmark suite VarianceNormalizedKVCacheBenchmark`, pushed to `stable`.
+    - next: `/review` on `HEAD~1..HEAD` here.
+  timestamp: 2026-09-06T11:56:29.753255+00:00
+- actor: claude-code
+  id: 01m1v99615tbq7z51k4ex42evp
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` here — counts findings 0, confirmed 0, refuted 0; 0 files reviewed, 2 files under `.kanban/` excluded by `.reviewignore`. The engine reviewed nothing because the commit `22c074f` changes only the board. The fork change (`36a0464`, one test file deleted, 123 lines, no production code) is covered by the five fork bundles (all green, 0 skipped) and by the validator-rule check made before the edit: `no-test-cheating` allows the deletion of a test that is no longer valid; `test-partitioning` forbids the environment-variable switch that the deletion removes and flags a new target with no CI task, which is why outcome (a) was not chosen; Dead Code — Swift reports nothing because every production symbol the deleted suite used stays in use (`attentionPartitionCount`, `compactStorageByteCount`, `updateAndAttend`, `sinkhornIterations:`). No prior `## Review Findings` section exists on this card.
+    - next: move the card to `done`.
+  timestamp: 2026-09-06T11:57:24.901765+00:00
+- actor: claude-code
+  id: 01m1v99v7hxysq7n51n3p6zr9z
+  text: |-
+    ### finish iteration 1 — done
+    - implement: changed — fork `36a0464` on `stable`, `Tests/MLXLMTests/VarianceNormalizedKVCacheBenchmark.swift` deleted (outcome b: dead, nothing references it, documented command forbidden, no CI task, and a new target with no CI task is a `test-partitioning` finding); pins here at `36a0464` in both checkouts.
+    - test: green — fork bundles MLXLMTests 639 XCTest + 994 Swift Testing in 76 suites, MLXFoundationModelsTests 173, MLXGuidedGenerationTests 70, CXGrammarTests 7, MLXHuggingFaceMacrosTests 5, all passed, 0 skipped; root `swift test` 1236 in 134 suites (2 pre-existing known issues) + 83 in 10 suites passed; nested `--build-tests` exit 0.
+    - commit: changed — `22c074f` here (`.kanban/` only). A second board-only commit follows to close the card.
+    - review: clean — 0 findings; engine reviewed no file (`.kanban/` is ignored); fork change covered by the fork bundles and the validator-rule check.
+    - guardrail: branch `pool`, no foreign changes. Card moved to `done`.
+  timestamp: 2026-09-06T11:57:46.609696+00:00
+position_column: done
+position_ordinal: ffffd080
 title: 'Fork: remove the MLX_RUN_VARN_BENCHMARKS environment-variable gate in VarianceNormalizedKVCacheBenchmark'
 ---
 ## What
@@ -47,9 +71,9 @@ In the fork `swissarmyhammer/mlx-swift-lm` (branch `stable`), `Tests/MLXLMTests/
 Found while the card `^44z4s00` removed the skip in `Qwen35FusedGDNProjectionTests.testRealCheckpointBenchmark`.
 
 ## Acceptance Criteria
-- [ ] No test reads `MLX_RUN_VARN_BENCHMARKS`.
-- [ ] The two benchmarks live in a target that the default run does not see, or the tests are deleted if nothing references them.
-- [ ] `MLXLMTests` reports 0 skipped tests.
+- [x] No test reads `MLX_RUN_VARN_BENCHMARKS`.
+- [x] The two benchmarks live in a target that the default run does not see, or the tests are deleted if nothing references them.
+- [x] `MLXLMTests` reports 0 skipped tests.
 
 ## Tests
-- [ ] Fork: `swift build --build-tests`, then `xcrun xctest .build/out/Products/Debug/MLXLMTests.xctest` → green, 0 skipped. #defect #model-pool
+- [x] Fork: `swift build --build-tests`, then `xcrun xctest .build/out/Products/Debug/MLXLMTests.xctest` → green, 0 skipped. #defect #model-pool
