@@ -1,18 +1,19 @@
 /// The reference-counted claim on one resolved residency.
 ///
 /// ``Router/resolve(profile:reporting:)`` mints one hold for each residency it
-/// grants, and hands that one instance to the ``LanguageModelProfile`` and to
-/// all three ``RoutedModel`` handles. The residency therefore lives exactly as
-/// long as the last of those objects, and not as long as the profile object
-/// alone: a tool that takes only a handle — see `EmbedTool` — keeps its model
-/// resident after the profile object is gone.
+/// grants, and hands that one instance to all three ``RoutedModel`` handles.
+/// The ``LanguageModelProfile`` needs none of its own, because it holds those
+/// three handles strongly. The residency therefore lives exactly as long as the
+/// last of those objects, and not as long as the profile object alone: a tool
+/// that takes only a handle — see `EmbedTool` — keeps its model resident after
+/// the profile object is gone.
 ///
 /// The hold stores the router and the token and nothing else. It refers to no
 /// profile and no handle, so a hold can never close a reference cycle with the
 /// objects that store it.
 ///
-/// It is `package` rather than internal because the `package` initializers of
-/// ``RoutedModel`` and ``LanguageModelProfile`` take one.
+/// It is `package` rather than internal because the `package` initializer of
+/// ``RoutedModel`` takes one.
 package final class ResidencyHold: Sendable {
     /// The router that granted the residency.
     private let router: Router

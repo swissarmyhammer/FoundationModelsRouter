@@ -432,9 +432,10 @@ public actor Router {
                 preconditionFailure("the acquisition loop above populates all three slot charges")
             }
             let residencyToken = ULID.generate()
-            // One hold for this residency, shared by the profile and all three
-            // handles. The residency lives exactly as long as the last of them,
-            // so a tool that keeps only a handle keeps its model resident.
+            // One hold for this residency, shared by all three handles. The
+            // profile holds the handles, so the residency lives exactly as long
+            // as the last of the four objects, and a tool that keeps only a
+            // handle keeps its model resident.
             let hold = ResidencyHold(router: self, token: residencyToken)
             let profile = buildProfile(
                 definition: def,
@@ -453,9 +454,7 @@ public actor Router {
             // load is fully evicted, a reused entry's refcount bump and its
             // charge are undone — so a partial failure never leaks a
             // phantom-resident pool entry with no owning profile.
-            for charge in slotCharges.values {
-                await releaseKey(key: charge.key, chargedBytes: charge.chargedBytes)
-            }
+            await releaseCharges(Array(slotCharges.values))
             // A download/load/preload failure must move the bound progress to
             // `.failed` so a UI does not hang mid-pipeline, then rethrow. A
             // cancel is not a failure: its phase is set by the caller of this
@@ -642,6 +641,17 @@ public actor Router {
     /// - Parameter token: The residency token of the profile to release.
     private func releaseHoldingPoolLock(token: ULID) async {
         guard let charges = residentProfiles.removeValue(forKey: token) else { return }
+        await releaseCharges(charges)
+    }
+
+    /// Gives back every charge in `charges`, one pooled model at a time.
+    ///
+    /// The one place a set of charges is released, so a resolve that failed
+    /// part way and a whole residency that ended give their bytes back the
+    /// same way.
+    ///
+    /// - Parameter charges: The charges to release.
+    private func releaseCharges(_ charges: [SlotCharge]) async {
         for charge in charges {
             await releaseKey(key: charge.key, chargedBytes: charge.chargedBytes)
         }
@@ -933,7 +943,7 @@ public actor Router {
     ///   - embeddingKey: The `.embedding` slot's residency identity.
     ///   - residencyToken: The token that identifies this residency.
     ///   - hold: The one reference-counted hold on this residency, stored by
-    ///     the profile and by all three handles.
+    ///     all three handles the profile vends.
     /// - Returns: The assembled profile.
     private func buildProfile(
         definition def: ProfileDefinition,
@@ -978,8 +988,7 @@ public actor Router {
                 hold: hold
             ),
             router: self,
-            residencyToken: residencyToken,
-            residencyHold: hold
+            residencyToken: residencyToken
         )
     }
 

@@ -33,6 +33,59 @@ comments:
     - note: code_context LSP diagnostics reported 10 stale "Cannot find type 'ResidencyHold' in scope" errors on Router.swift and LanguageModelProfile.swift. This is a stale sourcekit-lsp index (lsp_indexed_percent was 90%, and the tool's own status reports sourcekit-lsp as not fully installed/version-mismatched); the real swiftc compiler resolves ResidencyHold cleanly, proven by a from-scratch recompile of the FoundationModelsRouter target and a fully green swift test run. Not a real error.
     - next: none
   timestamp: 2026-09-07T15:40:57.278608+00:00
+- actor: claude-code
+  id: 01m1y8gpywad4mev881st1mvkm
+  text: |-
+    ### commit — changed
+    - evidence: 2f6d603 feat(residency): move pooled model residency ownership to ARC (^fa7b61c)
+    - next: none
+  timestamp: 2026-09-07T15:41:46.332912+00:00
+- actor: claude-code
+  id: 01m1y8xfkmt1prvjr5wffw7v0y
+  text: |-
+    ### review — findings
+    - evidence: 3 findings (3 confirmed, 0 refuted) from `review sha HEAD~1..HEAD` — LanguageModelProfile.swift:119, LanguageModelProfile.swift:209, Router.swift:456
+    - next: correct the three findings in the description section dated 2026-09-07 10:42, then run the review again.
+  timestamp: 2026-09-07T15:48:44.788756+00:00
+- actor: wballard
+  id: 01m1y8y6jvrsadndf4v6k3mtac
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 4 files, ResidencyHold.swift new
+    - test: green — swift test, 1234 + 83 passed, 0 new warnings
+    - commit: 2f6d603
+    - review: findings — Sources/FoundationModelsRouter/LanguageModelProfile.swift:119, Sources/FoundationModelsRouter/LanguageModelProfile.swift:209, Sources/FoundationModelsRouter/Router.swift:456
+  timestamp: 2026-09-07T15:49:08.315687+00:00
+- actor: claude-code
+  id: 01m1y9vtj174d2ysfvt56jw9vj
+  text: |-
+    How the three findings were corrected.
+
+    Finding 3 (`duplication/duplication`, Router.swift): extracted `private func releaseCharges(_ charges: [SlotCharge]) async` beside `releaseKey`, and called it from the failed-resolve rollback and from `releaseHoldingPoolLock(token:)`. The two loop copies are gone.
+
+    Findings 1 and 2 (`code-hygiene/dead-code-swift`, assignOnlyProperty on `residencyHold`) have two different causes, so they got two different corrections:
+
+    - `LanguageModelProfile.residencyHold` was truly redundant storage. The profile holds its three handles strongly, and each handle holds the hold strongly, so the chain profile -> handle -> hold already keeps the residency alive for as long as the profile object. Deleting the property, its initializer parameter and its doc removes dead storage and removes NO strong reference. The class doc now states the chain.
+    - `RoutedModel.residencyHold` must stay: it is the only ARC edge from a handle, and a tool that keeps a handle alone depends on it. Nothing reads the value, and nothing should — the strong reference is the claim, and the read periphery cannot see is ARC's own release at deinit. The `dead-code-swift` rule provides exactly one contract for that case: `// periphery:ignore` on the line above the declaration, with the reason on its own comment line above the marker and no trailing text on the marker. The property carries that marker and the reason.
+
+    No validator was edited, and no strong reference was removed.
+
+    Verification: `periphery` reports nothing on either property, and `review file Sources/FoundationModelsRouter/LanguageModelProfile.swift --validators code-hygiene` returns 0 findings. `review file Sources/FoundationModelsRouter/Router.swift --validators code-hygiene,duplication` returns 0 duplication findings and 0 dead-code findings; it does return 16 `swift/naming-clarity` findings (`def`, `ref`, `sp`, `slotRes` and similar) on pre-existing lines this change never touched, all outside the diff this card's review scope covers.
+  timestamp: 2026-09-07T16:05:19.041427+00:00
+- actor: claude-code
+  id: 01m1y9w0gjk16wgmx54r2nyc21
+  text: |-
+    ### implement — changed
+    - evidence: 3 files — Sources/FoundationModelsRouter/Router.swift, Sources/FoundationModelsRouter/LanguageModelProfile.swift, Sources/FoundationModelsRouter/ResidencyHold.swift. `swift build --build-tests`: 0 errors, 0 new warnings (only the pre-existing vendored `mlx-swift_Cmlx.bundle` node warning). `swift test`: 1234 tests in 134 suites passed with 2 known issues, both pre-existing; 83 tests in 10 suites passed (Evals). Suite "Pooled model residency" passed. `swift test --filter PooledResidencyTests`: 15 tests in 1 suite passed, the same count as before this change.
+    - next: /review
+  timestamp: 2026-09-07T16:05:25.138549+00:00
+- actor: claude-code
+  id: 01m1ya1h42e2wxvmgzvj2k5a95
+  text: |-
+    ### test — green
+    - evidence: swift package clean && swift build --build-tests (forced full recompile, 0 warnings in FoundationModelsRouter/Tests/Evals targets — only pre-existing C++17-extension warnings from the vendored mlx-swift Cmlx checkout, unrelated to this change); swift test — 1234 tests in 134 suites passed (2 known issues, both pre-existing withKnownIssue blocks in BoundedWaitTests.swift and RealModelHarnessTests.swift, unrelated to Router.swift/LanguageModelProfile.swift/ResidencyHold.swift); FoundationModelsRouterEvals — 83 tests in 10 suites passed. IntegrationTests package not run, per instruction.
+    - next: none — build is clean, no known pre-existing issues in the touched files (Router.swift releaseCharges, LanguageModelProfile.swift residencyHold periphery:ignore, ResidencyHold.swift deletion of LanguageModelProfile.residencyHold).
+  timestamp: 2026-09-07T16:08:25.986848+00:00
 position_column: doing
 position_ordinal: '80'
 title: ARC-own pooled residency with a shared ResidencyHold and drain evictions inside Router.resolve
@@ -86,3 +139,17 @@ Out of scope, and left exactly as it is:
 
 - Use `/tdd` — write the failing tests first, then implement until they pass.
 #router #router-api #tech-debt
+
+## Review Findings (2026-09-07 10:42)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 4 file(s) reviewed, 7 not reviewed.
+
+> 6 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 6 file(s)
+
+> 1 file(s) not reviewed — no validator matched:
+> - `README.md` — no validator matches this file
+
+- [x] `Sources/FoundationModelsRouter/LanguageModelProfile.swift:119` `code-hygiene/dead-code-swift` — var.instance `residencyHold` is assignOnlyProperty.
+- [x] `Sources/FoundationModelsRouter/LanguageModelProfile.swift:209` `code-hygiene/dead-code-swift` — var.instance `residencyHold` is assignOnlyProperty.
+- [x] `Sources/FoundationModelsRouter/Router.swift:456` `duplication/duplication` — The loop structure that iterates over charges and releases each is duplicated across two locations. Both blocks are verbatim identical except for the source of charges. Extract a shared async helper function `private func releaseCharges(_ charges: [SlotCharge]) async { for charge in charges { await releaseKey(key: charge.key, chargedBytes: charge.chargedBytes) } }`. Replace line 456-457 with `await releaseCharges(Array(slotCharges.values))` and line 645-646 with `await releaseCharges(charges)`. This eliminates the loop duplication and creates a single source of truth for charge release logic.
