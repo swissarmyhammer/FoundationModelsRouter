@@ -45,8 +45,25 @@ comments:
     - evidence: 765460a docs(tests): correct stale deinit description in OwningProfileTests
     - next: review
   timestamp: 2026-09-07T17:24:05.241629+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m1yeezsm0w1me7zg6pmx9ry4
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit badd115) — 0 findings, 0 confirmed, 0 refuted, 7 validators attempted, 0 failed. 1 file reviewed: `Tests/FoundationModelsRouterTests/OwningProfileTests.swift`. 4 `.kanban/` files excluded by `.reviewignore`.
+    - checked: the corrected doc agrees with the code. `LanguageModelProfile` declares no `deinit`. `ResidencyHold.deinit` calls `Router.enqueuePendingRelease(_:)`. `LanguageModelProfile.init` takes `residencyHold: ResidencyHold? = nil`, so a hand-built fixture profile carries no hold. No comment in the file names a `LanguageModelProfile.deinit`.
+    - next: task moved to done. No open findings.
+  timestamp: 2026-09-07T17:25:41.300046+00:00
+- actor: wballard
+  id: 01m1yefqn661r0vtza3nvz8qnt
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 1 file, OwningProfileTests suite doc
+    - test: green — swift package clean + build, no warnings in our source; swift test 1234 + 83 passed
+    - commit: badd115
+    - review: clean — 0 findings, 7 validators; task moved to done
+  timestamp: 2026-09-07T17:26:05.734970+00:00
+position_column: done
+position_ordinal: ffffca80
 title: Correct the stale deinit description in OwningProfileTests
 ---
 ## What
