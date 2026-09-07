@@ -70,8 +70,40 @@ comments:
     - evidence: 7 files. Changed: Sources/FoundationModelsRouter/Concurrency/AsyncSemaphore.swift, Sources/FoundationModelsRouter/Router.swift, Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift, Tests/FoundationModelsRouterTests/AsyncSemaphoreTests.swift. Added: Sources/FoundationModelsRouter/Concurrency/CancellableWait.swift, Tests/FoundationModelsRouterTests/CancellableWaitTests.swift, Tests/FoundationModelsRouterTests/ResolveCancellationTests.swift. `swift test` — 1232 tests in 134 suites passed and 83 tests in 10 suites passed, zero failures, zero warnings, 2 pre-existing known issues. Card items 1, 2, 3 and 5 are complete, and item 4's code change is complete. The gap is the fourth listed test shape, "cancel a resolve during the download, then a second resolve continues from the part files": it cannot be written without either a stub that asserts itself or an integration test that passes vacuously on a warm Hugging Face cache. See the blocker comment above.
     - next: a person picks one of the three options in the blocker comment. The code is green and ready for review either way.
   timestamp: 2026-09-07T13:04:06.712110+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m1xzjzrwc71zvnfgd3t82ynz
+  text: |-
+    ### finish iteration 1 — stuck
+    - implement: changed — 7 files (AsyncSemaphore.swift, CancellableWait.swift new, Router.swift, LiveModelLoader.swift, AsyncSemaphoreTests.swift, CancellableWaitTests.swift new, ResolveCancellationTests.swift new)
+    - test: green — swift test, 1232 tests in 134 suites passed and 83 tests in 10 suites passed, zero failures, zero warnings
+    - commit: 4ca1ad5
+    - blocker: the fourth test shape (cancel during the download, then a second resolve continues from the part files) has no form that both exercises the resume and can fail. A person must pick one of the three options on the card.
+    - next: hold in `doing` until a person decides the test shape
+  timestamp: 2026-09-07T13:05:43.708654+00:00
+- actor: claude-code
+  id: 01m1y0xka521w5mwvatjrmsdcy
+  text: |-
+    ### decision — the person chose option 1
+    The fourth test shape ("cancel a resolve during the download, then a second resolve continues from the part files") is struck from the card. `CancellableWaitTests` — "a cancelled caller throws while the work runs on to completion" — is the accepted coverage for item 4: it proves the half this repo owns, that the cancel stops the caller and never aborts the transfer, so the bytes stay in the Hugging Face cache. The resume half belongs to swift-huggingface and the MLX model cache and is not tested here. The blocker is released; the card goes to review.
+  timestamp: 2026-09-07T13:28:59.973195+00:00
+- actor: claude-code
+  id: 01m1y12xrb276r0qc08sgezh5q
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 4ca1ad5) — 0 findings, 0 confirmed, 0 refuted, 7 files attempted, 0 failed. No prior `## Review Findings` section on the card, so no open item stays.
+    - next: the card goes to `done`. The fourth test shape stays struck by the person's decision (option 1).
+  timestamp: 2026-09-07T13:31:54.507393+00:00
+- actor: claude-code
+  id: 01m1y13eqxrxzse36t0wj94scf
+  text: |-
+    ### finish iteration 2 — clean
+    - decision: the person chose option 1; the fourth test shape is struck from the card
+    - commit: 4ca1ad5 (the checkpoint of iteration 1; no new change in this iteration)
+    - review: clean — zero findings on the seven changed files of HEAD~1..HEAD
+    - next: the card is in `done`
+  timestamp: 2026-09-07T13:32:11.901555+00:00
+position_column: done
+position_ordinal: ffffc580
 title: Stop Router.resolve when the caller cancels the Task
 ---
 ## What

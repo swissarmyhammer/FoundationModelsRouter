@@ -39,7 +39,7 @@ let coding = ProfileDefinition(
 )
 
 // `ResolutionProgress` binds into SwiftUI; `progress.phases` is the same
-// progress as an AsyncSequence, ending on its own at ready/failed.
+// progress as an AsyncSequence, ending on its own at ready/failed/cancelled.
 let progress = ResolutionProgress()
 let progressTask = Task { @MainActor in
     for await transition in progress.phases {

@@ -489,10 +489,13 @@ struct ResolveTests {
             _ = try await router.resolve(profile: Self.profile, reporting: progress)
         }
 
-        guard case .failed = progress.phase else {
+        guard case .failed(let message) = progress.phase else {
             Issue.record("expected phase .failed, got \(progress.phase)")
             return
         }
+        // A load failure keeps its diagnostic message. Only a cancel the user
+        // made gets the message-free `.cancelled` phase.
+        #expect(message == String(describing: ModelLoaderError.notConfigured))
         // The slot that was mid-download is marked failed, not left dangling.
         let standard = try #require(progress.slots[.standard])
         guard case .failed = standard.state else {

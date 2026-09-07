@@ -82,6 +82,10 @@ public final class ResolutionProgress {
         case ready
         /// Resolution failed; the associated value is the diagnostic message.
         case failed(String)
+        /// The caller cancelled the resolution, so it stopped before it was
+        /// ready. It carries no message: the user made the stop, and a
+        /// diagnostic would read as a fault they did not cause.
+        case cancelled
     }
 
     /// The current overall phase.
@@ -114,7 +118,8 @@ extension ResolutionProgress {
 
     /// The phase transitions of this resolution as an asynchronous sequence.
     /// It yields the current phase first, then each observed change of
-    /// ``phase``, and finishes after ``Phase/ready`` or ``Phase/failed(_:)``.
+    /// ``phase``, and finishes after ``Phase/ready``, ``Phase/failed(_:)`` or
+    /// ``Phase/cancelled``.
     public var phases: AsyncStream<PhaseTransition> {
         AsyncStream { continuation in
             yieldPhaseTransitions(into: continuation, after: nil)
@@ -133,7 +138,7 @@ extension ResolutionProgress {
             latestYielded = phase
         }
         switch phase {
-        case .ready, .failed:
+        case .ready, .failed, .cancelled:
             continuation.finish()
         case .sizing, .downloading, .loading:
             let observed = latestYielded

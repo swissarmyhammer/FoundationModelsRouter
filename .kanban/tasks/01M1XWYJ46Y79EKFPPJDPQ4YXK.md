@@ -1,8 +1,28 @@
 ---
+comments:
+- actor: claude-code
+  id: 01m1y17dgtjr6vknpa3v162cwg
+  text: |-
+    Picked up. Research notes before the edit:
+
+    - `ResolutionProgress.Phase` (Sources/FoundationModelsRouter/Resolution/ResolutionProgress.swift) has `sizing`, `downloading`, `loading`, `ready`, `failed(String)`. Only one `switch` over `Phase` is in the package: `yieldPhaseTransitions` in the same file, which finishes the `phases` stream at `.ready, .failed`. `SlotProgress.progressFraction` switches over `SlotProgress.State`, a different type, so it does not change.
+    - `runResolve` (Router.swift) can throw `CancellationError` from three places: `poolLock.waitUnlessCancelled()` before the `defer`, the `Task.checkCancellation()` calls before the inner `do`, and the checks inside the inner `do`. The inner `catch` today calls `recordLoadFailure`, which sets `.failed(String)`. So the cancel must be caught around the whole body, not only in that inner `catch`.
+    - Existing coverage: `ResolveCancellationTests` already cancels at four stages and while queued on the pool lock, and asserts `progress.phase != .ready`. It is the natural home for the `.cancelled` assertion, because it holds the `StageGate` machinery.
+  timestamp: 2026-09-07T13:34:21.722421+00:00
+- actor: claude-code
+  id: 01m1y1e1xbc4z0kt3706cx0gne
+  text: |-
+    ### implement — changed
+    - evidence: 5 files — Sources/FoundationModelsRouter/Resolution/ResolutionProgress.swift (new `public case cancelled` with a doc comment; the `phases` terminal switch now finishes at `.ready, .failed, .cancelled`, with no `default` arm), Sources/FoundationModelsRouter/Router.swift (`runResolve` keeps the pool-lock acquire and the `defer`, and splits the stages into a new private `runResolvePipeline`; a `CancellationError` from the queue or from any stage boundary now goes to the new `recordCancellation`, which sets `.cancelled`; the pipeline's own `catch` no longer calls `recordLoadFailure` for a cancel, so a cancel never becomes `.failed`), Tests/FoundationModelsRouterTests/ResolveCancellationTests.swift (all five cancel scenarios now assert `phase == .cancelled` in place of `phase != .ready`), Tests/FoundationModelsRouterTests/ResolveTests.swift (the loader-failure test now binds the message and asserts it is kept), README.md (the `phases` example comment names the third terminal phase).
+    - TDD: the `.cancelled` assertions failed to compile first (`swift build --build-tests`: "cannot convert value of type 'ResolutionProgress.Phase'" at ResolveCancellationTests.swift lines 168 and 238), then passed after the case was added.
+    - verification: `swift test --filter 'ResolveCancellationTests|ResolveTests|ResolutionProgressPhasesTests'` ran 29 tests in 3 suites, all passed. Full `swift test` ran 1232 tests in 134 suites and 83 tests in 10 suites, all passed, 0 failures, 0 new warnings. `swift build --package-path IntegrationTests --build-tests` also compiles, so the nested package sees no missing switch arm.
+    - discovery: only one `switch` over `Phase` exists in the package. `SlotProgress.State` has its own `failed(String)` and its own switch; it is a different type and the card does not touch it. Slot states are left as they were at the cancel, so a host can still show how far the attempt got.
+    - next: ready for `/review`.
+  timestamp: 2026-09-07T13:37:59.211297+00:00
 depends_on:
 - 01M1XWYD9XFBXWGPP11H59152D
-position_column: todo
-position_ordinal: '8180'
+position_column: doing
+position_ordinal: '80'
 title: Add a cancelled phase to ResolutionProgress
 ---
 ## What

@@ -17,9 +17,11 @@ import Testing
 /// instead.
 ///
 /// Every test closes the same way: the resolve throws `CancellationError`, the
-/// bound progress never reaches ``ResolutionProgress/Phase/ready``, and a second
-/// resolve on the same router succeeds — which is how a test outside the module
-/// observes that the pool lock was released.
+/// bound progress reaches ``ResolutionProgress/Phase/cancelled`` — the phase a
+/// host shows the user, and not ``ResolutionProgress/Phase/failed(_:)``, because
+/// the user made the cancel — and a second resolve on the same router succeeds,
+/// which is how a test outside the module observes that the pool lock was
+/// released.
 @Suite("Resolve cancellation")
 struct ResolveCancellationTests {
     // MARK: - Stage gating
@@ -161,7 +163,9 @@ struct ResolveCancellationTests {
         gate.release.signal()
         await #expect(throws: CancellationError.self) { try await resolve.value }
 
-        #expect(progress.phase != .ready)
+        // The user made the cancel, so the phase says so: `.cancelled`, never
+        // `.failed`, which would show the user a diagnostic for their own stop.
+        #expect(progress.phase == .cancelled)
 
         // The pool lock is free: a second resolve on the same router completes.
         let second = try await router.resolve(
@@ -231,7 +235,7 @@ struct ResolveCancellationTests {
         // has been sent, so the throw cannot have come from a freed permit.
         queued.cancel()
         await #expect(throws: CancellationError.self) { try await queued.value }
-        #expect(queuedProgress.phase != .ready)
+        #expect(queuedProgress.phase == .cancelled)
 
         // The holder was never disturbed and resolves normally.
         gate.release.signal()

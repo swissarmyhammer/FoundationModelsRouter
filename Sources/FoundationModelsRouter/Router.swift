@@ -213,7 +213,7 @@ public actor Router {
 
     /// Resolves an authored profile into a resident ``LanguageModelProfile``
     /// for this machine, reporting progress through sizing, downloading,
-    /// loading, and ready or failed.
+    /// loading, and ready, failed or cancelled.
     ///
     /// The effective budget is the machine budget less every pooled model's
     /// footprint. A pooled candidate is charged only its marginal cost. The
@@ -221,9 +221,11 @@ public actor Router {
     ///
     /// Cancelling the calling task stops the resolve. A caller queued behind
     /// another resolve leaves the queue at once; a caller that is already
-    /// running stops at the next stage boundary. Either way the pool lock is
-    /// released, every slot the attempt had acquired is given back, and no
-    /// half-resolved profile is left resident. The models already downloaded
+    /// running stops at the next stage boundary. Either way the bound progress
+    /// ends at ``ResolutionProgress/Phase/cancelled`` and not at
+    /// ``ResolutionProgress/Phase/failed(_:)``, the pool lock is released, every
+    /// slot the attempt had acquired is given back, and no half-resolved profile
+    /// is left resident. The models already downloaded
     /// stay in the Hugging Face cache, so a later resolve continues the
     /// transfer rather than starting it again.
     ///
@@ -270,9 +272,45 @@ public actor Router {
         // resolve queued behind another resolve holds nothing yet, so a caller
         // the user cancels leaves the queue at once instead of waiting for a
         // permit it no longer wants. See ``AsyncSemaphore/waitUnlessCancelled()``.
-        try await poolLock.waitUnlessCancelled()
+        do {
+            try await poolLock.waitUnlessCancelled()
+        } catch {
+            // A resolve cancelled in the queue never held the lock and never
+            // touched a slot, so the phase is the whole of what it leaves.
+            await recordCancellation(progress: progress)
+            throw error
+        }
         defer { poolLock.signal() }
 
+        // Every `CancellationError` the pipeline raises — from the queue above
+        // or from a stage boundary within — ends as ``ResolutionProgress/Phase/cancelled``
+        // and never as `.failed`, so a host tells the user's own stop apart
+        // from a fault.
+        do {
+            return try await runResolvePipeline(profile: def, reporting: progress, span: span)
+        } catch let cancellation as CancellationError {
+            await recordCancellation(progress: progress)
+            throw cancellation
+        }
+    }
+
+    /// The stages of ``runResolve(profile:reporting:span:)``, run while it holds
+    /// the pool lock.
+    ///
+    /// - Parameters:
+    ///   - def: The authored profile to resolve.
+    ///   - progress: The UI-bindable progress to drive, mutated on the main actor.
+    ///   - span: The resolve span, which takes the budget this attempt priced
+    ///     against and, on success, the model each slot chose.
+    /// - Returns: The resolved, resident profile.
+    /// - Throws: ``ResolutionFailure`` when no trio fits the effective budget,
+    ///   `CancellationError` when the calling task is cancelled, or any download
+    ///   or load error from the ``ModelLoader``.
+    private func runResolvePipeline(
+        profile def: ProfileDefinition,
+        reporting progress: ResolutionProgress,
+        span: any Span
+    ) async throws -> LanguageModelProfile {
         // Each stage below opens with a cancellation check, so a resolve the
         // user cancelled stops at the next stage boundary rather than paying
         // for the whole pipeline. The lock is released by the `defer` above and
@@ -392,8 +430,12 @@ public actor Router {
                 await releaseKey(key: hold.key, chargedBytes: hold.chargedBytes)
             }
             // A download/load/preload failure must move the bound progress to
-            // `.failed` so a UI does not hang mid-pipeline, then rethrow.
-            await recordLoadFailure(error: error, progress: progress)
+            // `.failed` so a UI does not hang mid-pipeline, then rethrow. A
+            // cancel is not a failure: its phase is set by the caller of this
+            // pipeline, which owns the `.cancelled` phase for every stage.
+            if !(error is CancellationError) {
+                await recordLoadFailure(error: error, progress: progress)
+            }
             throw error
         }
     }
@@ -1067,6 +1109,16 @@ public actor Router {
                 progress.slots[slot] = sp
             }
             progress.phase = .failed(message)
+            progress.refreshFraction()
+        }
+    }
+
+    /// Records a cancelled resolution into the progress: the phase says the
+    /// caller stopped it, and the slots keep the states they had reached, so a
+    /// host can still show how far the attempt got.
+    private func recordCancellation(progress: ResolutionProgress) async {
+        await MainActor.run {
+            progress.phase = .cancelled
             progress.refreshFraction()
         }
     }
