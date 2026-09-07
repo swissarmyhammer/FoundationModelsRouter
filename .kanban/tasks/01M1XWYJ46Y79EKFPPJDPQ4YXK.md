@@ -19,10 +19,27 @@ comments:
     - discovery: only one `switch` over `Phase` exists in the package. `SlotProgress.State` has its own `failed(String)` and its own switch; it is a different type and the card does not touch it. Slot states are left as they were at the cancel, so a host can still show how far the attempt got.
     - next: ready for `/review`.
   timestamp: 2026-09-07T13:37:59.211297+00:00
+- actor: claude-code
+  id: 01m1y1jt5cjaspf3ttmdedg32b
+  text: |
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit ab9f2de) — 0 findings, 0 confirmed, 0 refuted, 7 validator attempts, 0 failed. 4 source files reviewed; .kanban/ files excluded by .reviewignore; README.md has no matching validator.
+    - next: task moved to done.
+  timestamp: 2026-09-07T13:40:35.116322+00:00
+- actor: claude-code
+  id: 01m1y1kcxzg4s4zmqh6edjnj0w
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 5 files (ResolutionProgress.swift, Router.swift, ResolveCancellationTests.swift, ResolveTests.swift, README.md)
+    - test: green — swift test, 1232 tests in 134 suites and 83 tests in 10 suites passed, zero failures, no new warnings
+    - commit: ab9f2de
+    - review: clean — zero findings on the four source files of HEAD~1..HEAD
+    - next: the card is in `done`
+  timestamp: 2026-09-07T13:40:54.335474+00:00
 depends_on:
 - 01M1XWYD9XFBXWGPP11H59152D
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffc680
 title: Add a cancelled phase to ResolutionProgress
 ---
 ## What
