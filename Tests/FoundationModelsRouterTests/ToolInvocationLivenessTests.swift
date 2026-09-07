@@ -37,8 +37,8 @@ struct ToolInvocationLivenessTests {
         }
     }
 
-    /// A `String`-output test tool that does not return until the test
-    /// releases it — the "slow scripted tool" the card's acceptance names.
+    /// A `String`-output test tool that does not return until the test opens
+    /// its gate — the "slow scripted tool" the card's acceptance names.
     ///
     /// It records the step only *after* the gate opens, so an empty
     /// ``completedSteps`` proves the tool's own work has not completed yet.
@@ -51,31 +51,31 @@ struct ToolInvocationLivenessTests {
 
         /// The `Tool` description requirement — the SDK renders it into the
         /// tool definition it puts in the transcript.
-        let description = "test-only tool that waits for the test's release before it returns"
+        let description = "test-only tool that waits for the test to open its gate before it returns"
 
         /// The steps whose work completed, recorded after the gate opened.
         private let callLog = MarkerToolCallLog()
 
         /// The signal ``call(arguments:)`` waits on before it does its work.
-        private let releaseSignal: AsyncStream<Void>
+        private let gateSignal: AsyncStream<Void>
 
         /// The test-side handle that opens the gate.
-        private let releaseContinuation: AsyncStream<Void>.Continuation
+        private let gateContinuation: AsyncStream<Void>.Continuation
 
         /// Every step whose work completed, in completion order.
         var completedSteps: [String] { callLog.calls }
 
         /// Creates the tool with its gate closed.
         init() {
-            (releaseSignal, releaseContinuation) = AsyncStream.makeStream(of: Void.self)
+            (gateSignal, gateContinuation) = AsyncStream.makeStream(of: Void.self)
         }
 
         /// Opens the gate, letting the in-flight (or a later) call complete.
-        func release() {
-            releaseContinuation.finish()
+        func openGate() {
+            gateContinuation.finish()
         }
 
-        /// Waits for ``release()``, then records the step and returns its
+        /// Waits for ``openGate()``, then records the step and returns its
         /// marker.
         ///
         /// - Parameter arguments: The call's decoded arguments; `value` is the
@@ -83,7 +83,7 @@ struct ToolInvocationLivenessTests {
         /// - Returns: ``ScriptedToolFixture/marker(for:)`` for the named step.
         /// - Throws: Never — `throws` comes from the `Tool` requirement.
         func call(arguments: AmbientToolArguments) async throws -> String {
-            for await _ in releaseSignal {}
+            for await _ in gateSignal {}
             callLog.record(arguments.value)
             return ScriptedToolFixture.marker(for: arguments.value)
         }
@@ -216,12 +216,12 @@ struct ToolInvocationLivenessTests {
         #expect(open.tool == GatedMarkerTool.toolName)
         #expect(slowTool.completedSteps.isEmpty)
 
-        slowTool.release()
+        slowTool.openGate()
         while let event = try await iterator.next() {
             events.append(event)
         }
 
-        // The tool completed once released.
+        // The tool completed once the gate opened.
         #expect(slowTool.completedSteps == [ScriptedToolFixture.firstStepName])
 
         // Ordering: open before close, close before the diff's .toolCall,
@@ -462,7 +462,7 @@ struct ToolInvocationLivenessTests {
         let report = Self.report(for: close)
         await fixture.session.outbox.post(report: report)
 
-        slowTool.release()
+        slowTool.openGate()
         while let event = try await iterator.next() {
             events.append(event)
         }

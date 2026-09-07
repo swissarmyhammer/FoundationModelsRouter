@@ -401,11 +401,11 @@ struct PooledResidencyTests {
         #expect(replyA == "from-org/only-a-std")
     }
 
-    // MARK: - Releasing one session keeps a shared model loaded for the other; releasing both unloads it.
+    // MARK: - Dropping one profile keeps a shared model loaded for the other; dropping both unloads it.
 
-    @Test("a shared model stays loaded while either profile references it, and unloads only once both release")
+    @Test("a shared model stays loaded while either profile references it, and unloads only once both references are dropped")
     @MainActor
-    func releasingOneProfileKeepsSharedModelLoadedForTheOther() async throws {
+    func droppingOneProfileKeepsSharedModelLoadedForTheOther() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let spy = LoadSpy()
@@ -422,18 +422,32 @@ struct PooledResidencyTests {
             standard: ["org/rc-std"], flash: ["org/rc-flash"], embedding: ["org/rc-emb"]
         )
 
-        let first = try await router.resolve(profile: shared, reporting: ResolutionProgress())
-        let second = try await router.resolve(profile: shared, reporting: ResolutionProgress())
+        var first: LanguageModelProfile? = try await router.resolve(
+            profile: shared, reporting: ResolutionProgress())
+        var second: LanguageModelProfile? = try await router.resolve(
+            profile: shared, reporting: ResolutionProgress())
         #expect(await spy.evictions == 0)
 
-        await first.release()
-        // Still referenced by `second` — nothing evicted yet.
-        #expect(await spy.evictions == 0)
-        _ = try await second.standard.makeSession(instructions: nil).respond(to: "still alive")
+        // Residency is owned by ARC, so dropping the reference — not a call —
+        // is what gives the first profile's share back.
+        first.dropReference()
 
-        await second.release()
+        // A resolve is the drain point: it gives back every dropped residency
+        // before it measures the budget. This one fits only because the first
+        // profile's share came back, and it evicts nothing, because `second`
+        // still references all three models.
+        var third: LanguageModelProfile? = try await router.resolve(
+            profile: shared, reporting: ResolutionProgress())
+        #expect(await spy.evictions == 0)
+        _ = try await #require(second).standard.makeSession(instructions: nil)
+            .respond(to: "still alive")
+
+        second.dropReference()
+        third.dropReference()
         // Now unreferenced by anyone: all three models evicted.
+        let reresolved = try await router.resolve(profile: shared, reporting: ResolutionProgress())
         #expect(await spy.evictions == 3)
+        withExtendedLifetime(reresolved) {}
     }
 
     // MARK: - Concurrent generation on a shared model serializes on the model's generationGate.
@@ -583,7 +597,7 @@ struct PooledResidencyTests {
 
     // MARK: - Single-profile callers are unaffected.
 
-    @Test("a single caller resolving, releasing, and resolving again sees the same behavior as before pooling")
+    @Test("a single caller resolving, dropping, and resolving again sees the same behavior as before pooling")
     @MainActor
     func singleProfileCallerSequentialUseIsUnaffected() async throws {
         let dir = Self.makeTempDir()
@@ -596,40 +610,46 @@ struct PooledResidencyTests {
             standard: ["org/solo-std"], flash: ["org/solo-flash"], embedding: ["org/solo-emb"]
         )
 
-        let first = try await router.resolve(profile: profile, reporting: ResolutionProgress())
-        await first.release()
-        #expect(await spy.evictions == 3)
+        var first: LanguageModelProfile? = try await router.resolve(
+            profile: profile, reporting: ResolutionProgress())
+        first.dropReference()
 
-        // A fresh resolve of the same profile after release reloads from
-        // scratch — nothing lingers in the pool once fully released.
-        _ = try await router.resolve(profile: profile, reporting: ResolutionProgress())
+        // A fresh resolve of the same profile after the drop reloads from
+        // scratch — nothing lingers in the pool once the last reference is
+        // gone. That resolve is also the drain point, so the eviction of the
+        // three models it then reloads is visible once it returns.
+        let second = try await router.resolve(profile: profile, reporting: ResolutionProgress())
+        #expect(await spy.evictions == 3)
         #expect(await spy.llmLoads.filter { $0 == "org/solo-std" }.count == 2)
         #expect(await spy.embedderLoads.filter { $0 == "org/solo-emb" }.count == 2)
+        withExtendedLifetime(second) {}
     }
 
-    // MARK: - release() cannot race an in-flight resolve()'s pool mutations.
+    // MARK: - A dropped residency cannot race an in-flight resolve()'s pool mutations.
 
     /// Regression test for a TOCTOU race: `resolve()` prices an
     /// already-pool-resident candidate at its marginal cost up front — zero
     /// for a resident embedder, one session KV cache for a resident
     /// generation model (see `footprintBytes`'s `residentKeys` check) — then
     /// only actually acquires (refcount-bumps) that key later in its
-    /// acquisition loop. If a concurrent `release()` were allowed to evict
-    /// that same key in between — because `release()` held no lock against
-    /// an in-flight `resolve()` — the later acquisition step would find the
+    /// acquisition loop. If a concurrent release were allowed to evict that
+    /// same key in between — because the release held no lock against an
+    /// in-flight `resolve()` — the later acquisition step would find the
     /// key gone, silently reload it, and record it in the pool at the stale
     /// marginal charge the joint fit had already committed to. That corrupts
     /// every future budget computation: the model's weights would count as
     /// free forever after, eroding the "single authority over the budget"
     /// guarantee toward an eventual OOM.
     ///
-    /// `poolLock` must therefore guard `release(token:)` too, not just
-    /// `resolve()` — this test proves a `release()` that starts while a
-    /// `resolve()` is suspended mid-acquisition cannot complete (and thus
-    /// cannot evict anything) until that `resolve()` finishes.
-    @Test("a release cannot interleave with an in-flight resolve and corrupt pool accounting")
+    /// `poolLock` must therefore guard the release path too, not just
+    /// `resolve()` — this test proves a residency dropped while a `resolve()`
+    /// is suspended mid-acquisition cannot be given back (and thus cannot
+    /// evict anything) until that `resolve()` finishes. The drop queues the
+    /// token and starts a drain, and that drain takes the very lock the
+    /// in-flight resolve holds.
+    @Test("a dropped residency cannot interleave with an in-flight resolve and corrupt pool accounting")
     @MainActor
-    func releaseCannotRaceAnInFlightResolveAndCorruptAccounting() async throws {
+    func droppedResidencyCannotRaceAnInFlightResolveAndCorruptAccounting() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let spy = LoadSpy()
@@ -661,39 +681,55 @@ struct PooledResidencyTests {
             standard: [gatedRef], flash: ["org/race-b-flash"], embedding: [sharedEmbeddingRef]
         )
 
-        let resolvedA = try await router.resolve(profile: profileA, reporting: ResolutionProgress())
+        var resolvedA: LanguageModelProfile? = try await router.resolve(
+            profile: profileA, reporting: ResolutionProgress())
 
-        let resolveBTask = Task { try await router.resolve(profile: profileB, reporting: ResolutionProgress()) }
+        var resolveBTask: Task<LanguageModelProfile, any Error>? = Task {
+            try await router.resolve(profile: profileB, reporting: ResolutionProgress())
+        }
         await entrySignal.wait()
 
         // B is now suspended inside its own standard slot's download, with
         // the shared embedding ref already priced as free but not yet
-        // reacquired. Ask to release A — the only current reference on the
-        // shared embedding model — concurrently.
-        let releaseATask = Task { await resolvedA.release() }
+        // reacquired. Drop A — the only current reference on the shared
+        // embedding model. The hold's `deinit` queues the token and starts a
+        // drain, which must block on the pool lock B's resolve holds.
+        resolvedA.dropReference()
 
-        // Give the release every chance to run if it isn't actually blocked.
+        // Give that drain every chance to run if it isn't actually blocked.
         for _ in 0..<20 { await Task.yield() }
 
         releaseGate.signal()
-        let resolvedB = try await resolveBTask.value
-        await releaseATask.value
+        var resolvedB: LanguageModelProfile? = try await #require(resolveBTask).value
+        // A finished task holds its own result, so that handle is a second
+        // reference to B's profile. Drop it, or the drop below is not the last
+        // one and B's models stay resident.
+        resolveBTask = nil
 
         // The shared embedding model must have been loaded exactly once — a
         // second load means B's acquisition found it evicted mid-flight (the
         // race fired) and silently reloaded it while still charging it as free.
         #expect(await spy.embedderLoads.filter { $0 == sharedEmbeddingRef }.count == 1)
 
-        // A's release, once it finally runs, evicts its own two solo models
-        // (standard/flash) outright and gives back one reference on the
-        // shared embedding model — which B alone now holds, so it survives.
+        // A's residency, once it is finally given back, evicts its own two
+        // solo models (standard/flash) outright and gives back one reference
+        // on the shared embedding model — which B alone now holds, so it
+        // survives. This resolve is the drain point that observes it.
+        var drainer: LanguageModelProfile? = try await router.resolve(
+            profile: profileB, reporting: ResolutionProgress())
         #expect(await spy.evictions == 2)
 
-        // B's own reference is genuine: releasing it evicts its own two solo
+        // B's own reference is genuine: dropping it evicts its own two solo
         // models plus the now-fully-unreferenced shared embedding model — 5
-        // distinct keys evicted in total across both profiles' releases.
-        await resolvedB.release()
+        // distinct keys evicted in total across both profiles' residencies.
+        resolvedB.dropReference()
+        drainer.dropReference()
+        // The drain point is a resolve of A, not of B: B's standard slot is the
+        // gated ref, and its gate has already been consumed, so a reload of it
+        // would never return.
+        let reresolved = try await router.resolve(profile: profileA, reporting: ResolutionProgress())
         #expect(await spy.evictions == 5)
+        withExtendedLifetime(reresolved) {}
     }
 
     // MARK: - A shared generation pair holds both KV caches against the budget.
@@ -741,15 +777,15 @@ struct PooledResidencyTests {
         withExtendedLifetime(resolvedPair) {}
     }
 
-    // MARK: - Releasing one holder of a shared key gives back only its own share.
+    // MARK: - Dropping one holder of a shared key gives back only its own share.
 
     /// The release half of the same accounting (task pq5w87d): a second
     /// profile reusing a resident shared pair charges one session KV cache
-    /// for each of its two generation slots, and releasing it gives back
+    /// for each of its two generation slots, and dropping it gives back
     /// exactly that share — never the first profile's still-live reservation.
-    @Test("releasing one of two profiles on a shared generation pair gives back only its own share")
+    @Test("dropping one of two profiles on a shared generation pair gives back only its own share")
     @MainActor
-    func releasingOneHolderOfSharedPairGivesBackOnlyItsShare() async throws {
+    func droppingOneHolderOfSharedPairGivesBackOnlyItsShare() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let spy = LoadSpy()
@@ -768,15 +804,15 @@ struct PooledResidencyTests {
         let holder = try await router.resolve(profile: pair, reporting: ResolutionProgress())
         // The same trio again: the containers are shared, and each of its
         // two generation slots is charged its own session KV cache.
-        let reuser = try await router.resolve(profile: pair, reporting: ResolutionProgress())
+        var reuser: LanguageModelProfile? = try await router.resolve(
+            profile: pair, reporting: ResolutionProgress())
 
-        await reuser.release()
-        // The first profile still references everything — nothing is evicted,
-        // and only the reuser's own two KV shares came back.
-        #expect(await spy.evictions == 0)
+        reuser.dropReference()
 
-        // Pin the released share through the budget a failing resolve sees:
-        // the pool still holds the first profile's whole pair reservation.
+        // Pin the dropped share through the budget a failing resolve sees.
+        // That resolve is the drain point, so it gives the reuser's two KV
+        // shares back before it measures, and the pool still holds the first
+        // profile's whole pair reservation.
         let disjoint = ProfileDefinition(
             name: "disjoint", description: "cannot fit beside the pair trio",
             standard: ["org/share-pin-std"], flash: ["org/share-pin-flash"],
@@ -790,6 +826,10 @@ struct PooledResidencyTests {
                 failure.budgetBytes == Self.reusedTrioCharge + Self.headroomBufferBytes
             )
         }
+
+        // The first profile still references everything — nothing was evicted,
+        // and only the reuser's own two KV shares came back.
+        #expect(await spy.evictions == 0)
         withExtendedLifetime(holder) {}
     }
 

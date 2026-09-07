@@ -86,8 +86,31 @@ comments:
     - evidence: swift package clean && swift build --build-tests (forced full recompile, 0 warnings in FoundationModelsRouter/Tests/Evals targets — only pre-existing C++17-extension warnings from the vendored mlx-swift Cmlx checkout, unrelated to this change); swift test — 1234 tests in 134 suites passed (2 known issues, both pre-existing withKnownIssue blocks in BoundedWaitTests.swift and RealModelHarnessTests.swift, unrelated to Router.swift/LanguageModelProfile.swift/ResidencyHold.swift); FoundationModelsRouterEvals — 83 tests in 10 suites passed. IntegrationTests package not run, per instruction.
     - next: none — build is clean, no known pre-existing issues in the touched files (Router.swift releaseCharges, LanguageModelProfile.swift residencyHold periphery:ignore, ResidencyHold.swift deletion of LanguageModelProfile.residencyHold).
   timestamp: 2026-09-07T16:08:25.986848+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m1ya2hh7na373qv2jv86jr8e
+  text: |-
+    ### commit — changed
+    - evidence: 998186c fix(router): resolve review findings on residency hold ownership
+    - next: none
+  timestamp: 2026-09-07T16:08:59.175807+00:00
+- actor: claude-code
+  id: 01m1ya7bxkctxsxrnnk5n3z583
+  text: |
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (998186c) — 0 findings, 0 confirmed, 0 refuted, 7 validators attempted, 0 failed. All three prior findings verified fixed: Router.swift:654 releaseCharges(_:) called from :457 and :644; LanguageModelProfile.residencyHold storage deleted; RoutedModel.residencyHold at LanguageModelProfile.swift:123 marked `// periphery:ignore` with its reason.
+    - next: task moved to done.
+  timestamp: 2026-09-07T16:11:37.267217+00:00
+- actor: wballard
+  id: 01m1ya844by3j6djdxn7gdag80
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 3 files, all 3 findings fixed
+    - test: green — swift package clean + swift build --build-tests, 0 warnings; swift test 1234 + 83 passed
+    - commit: 998186c
+    - review: clean — 0 findings, 7 validators attempted; task moved to done
+  timestamp: 2026-09-07T16:12:02.059389+00:00
+position_column: done
+position_ordinal: ffffc780
 title: ARC-own pooled residency with a shared ResidencyHold and drain evictions inside Router.resolve
 ---
 ## What

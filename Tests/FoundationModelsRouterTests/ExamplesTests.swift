@@ -455,9 +455,9 @@ struct ExamplesTests {
 
     // MARK: - Residency lifecycle
 
-    @Test("Residency: pooled — a second resolve of the same profile shares its models; release() frees them once unreferenced")
+    @Test("Residency: pooled — a second resolve of the same profile shares its models; dropping the last reference frees them")
     @MainActor
-    func residencyPooledSharingAndRelease() async throws {
+    func residencyPooledSharingAndDrop() async throws {
         let router = ExampleHarness.makeRouter()
         let coding = ProfileDefinition(
             name: "coding",
@@ -467,21 +467,38 @@ struct ExamplesTests {
             embedding: ["mlx-community/bge-small-en-v1.5-4bit"]
         )
 
-        let profile = try await router.resolve(profile: coding, reporting: ResolutionProgress())
+        // Resolve: the profile, and every handle it vends, is what keeps the
+        // three models resident.
+        var profile: LanguageModelProfile? = try await router.resolve(
+            profile: coding, reporting: ResolutionProgress())
 
         // Pooled residency: the router now admits several resident profiles
         // sharing one machine budget, so a second resolve of the identical
         // profile succeeds and reuses the already-loaded models rather than
         // being rejected.
-        let second = try await router.resolve(profile: coding, reporting: ResolutionProgress())
+        var second: LanguageModelProfile? = try await router.resolve(
+            profile: coding, reporting: ResolutionProgress())
 
-        // Releasing one leaves the models loaded for the other; only once
-        // both release does the router's residency fully clear.
-        await profile.release()
-        await second.release()
+        // Use: each resolved profile drives its own handles over the shared
+        // resident models.
+        let vectors = try await #require(profile).embedding.embed(texts: ["hello"])
+        #expect(vectors.count == 1)
+        let secondVectors = try await #require(second).embedding.embed(texts: ["hello"])
+        #expect(secondVectors.count == 1)
 
-        // Now the slot is genuinely empty; another profile resolves cleanly.
-        _ = try await router.resolve(profile: coding, reporting: ResolutionProgress())
+        // Drop: residency is owned by ARC, so there is nothing to call and
+        // nothing to forget. Letting one profile go leaves the models loaded
+        // for the other; letting the last reference go frees them. In
+        // application code the reference simply goes out of scope —
+        // `dropReference()` is only how this test says so in mid-function.
+        profile.dropReference()
+        second.dropReference()
+
+        // Every resolve gives back the dropped residencies before it measures
+        // the budget, so this one starts from an empty pool.
+        let reresolved = try await router.resolve(
+            profile: coding, reporting: ResolutionProgress())
+        withExtendedLifetime(reresolved) {}
     }
 
     // MARK: - Guided generation: typed

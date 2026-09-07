@@ -257,22 +257,34 @@ struct ToolSharedProfileTests {
 
         let spy = LoaderSpy()
         let router = Self.makeRouter(spy: spy, recorder: InMemoryRecorder(), cacheDir: dir)
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        var profile: LanguageModelProfile? = try await router.resolve(
+            profile: Self.profile, reporting: ResolutionProgress())
 
-        // Construct several tools from the resolved handles.
-        _ = SummarizeTool(model: profile.standard)
-        _ = SummarizeTool(model: profile.flash)
-        _ = EmbedTool(model: profile.embedding)
+        // Construct several tools from the resolved handles. Nothing retains
+        // any of them, so none outlives the statement that builds it.
+        _ = SummarizeTool(model: try #require(profile).standard)
+        _ = SummarizeTool(model: try #require(profile).flash)
+        _ = EmbedTool(model: try #require(profile).embedding)
 
         // Pooled residency: a second resolve of the identical profile now
         // succeeds, reusing the already-resident models rather than being
         // rejected.
-        let second = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        var second: LanguageModelProfile? = try await router.resolve(
+            profile: Self.profile, reporting: ResolutionProgress())
 
-        // Releasing the first leaves the second's models resident; only
-        // once both release does the slot free again.
-        await profile.release()
-        await second.release()
-        _ = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        // Dropping the first leaves the second's models resident; only once
+        // every reference is dropped does the slot free again. Each resolve is
+        // the drain point that gives the dropped residencies back.
+        profile.dropReference()
+        var drainer: LanguageModelProfile? = try await router.resolve(
+            profile: Self.profile, reporting: ResolutionProgress())
+        #expect(await spy.evictions == 0)
+
+        second.dropReference()
+        drainer.dropReference()
+        let reresolved = try await router.resolve(
+            profile: Self.profile, reporting: ResolutionProgress())
+        #expect(await spy.evictions == 3)
+        withExtendedLifetime(reresolved) {}
     }
 }

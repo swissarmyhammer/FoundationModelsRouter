@@ -43,7 +43,6 @@ struct TranscriptTreeAccessTests {
         let tree = try profile.standard.transcriptTree()
 
         #expect(tree.session(session.id) != nil)
-        await profile.release()
     }
 
     @Test("an explicit recordingRoot loads that directory's flat layout")
@@ -62,7 +61,6 @@ struct TranscriptTreeAccessTests {
         let tree = try profile.standard.transcriptTree(recordingRoot: sessionRoot)
 
         #expect(tree.session(session.id) != nil)
-        await profile.release()
     }
 
     @Test("throws noDurableRecordingsRoot when the router records to memory")
@@ -76,6 +74,5 @@ struct TranscriptTreeAccessTests {
         #expect(throws: SessionTreeRestorationError.noDurableRecordingsRoot) {
             _ = try profile.standard.transcriptTree()
         }
-        await profile.release()
     }
 }
