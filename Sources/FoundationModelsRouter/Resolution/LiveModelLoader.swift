@@ -387,7 +387,12 @@ public struct LiveModelLoader: ModelLoader {
     /// Downloads and loads a generation model. The weights load before the
     /// container is returned.
     ///
-    /// - Throws: If the download or MLX container load fails.
+    /// Cancelling the calling task stops the wait. The transfer itself runs on,
+    /// which is what keeps the part files filling the Hugging Face cache — see
+    /// ``CancellableWait``.
+    ///
+    /// - Throws: `CancellationError` when the calling task is cancelled, or if
+    ///   the download or MLX container load fails.
     public func loadLLM(
         ref: ModelRef,
         slot: ModelSlot,
@@ -430,25 +435,35 @@ public struct LiveModelLoader: ModelLoader {
                 )
             }
         )
-        _ = try await model.loadContainer()
+        _ = try await CancellableWait.value { try await model.loadContainer() }
         return MLXFoundationModelsContainer(model: model, samplingMode: samplingMode)
     }
 
     /// Downloads and loads an embedding model. One probe embedding finds the
     /// dimension before the container is returned.
     ///
-    /// - Throws: If the download, MLX container load, or dimension probe fails.
+    /// Cancelling the calling task stops the wait. The transfer itself runs on,
+    /// which is what keeps the part files filling the Hugging Face cache — see
+    /// ``CancellableWait``.
+    ///
+    /// - Throws: `CancellationError` when the calling task is cancelled, or if
+    ///   the download, MLX container load, or dimension probe fails.
     public func loadEmbedder(
         ref: ModelRef,
         slot: ModelSlot,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> any LoadedEmbeddingContainer {
-        let container = try await EmbedderModelFactory.shared.loadContainer(
-            from: downloader,
-            using: tokenizerLoader,
-            configuration: configuration(for: ref),
-            progressHandler: Self.handler(reporting: reporting)
-        )
+        let downloader = self.downloader
+        let tokenizerLoader = self.tokenizerLoader
+        let modelConfiguration = configuration(for: ref)
+        let container = try await CancellableWait.value {
+            try await EmbedderModelFactory.shared.loadContainer(
+                from: downloader,
+                using: tokenizerLoader,
+                configuration: modelConfiguration,
+                progressHandler: Self.handler(reporting: reporting)
+            )
+        }
         let probe = try await LiveEmbeddingContainer.embed(texts: ["dimension probe"], in: container)
         return LiveEmbeddingContainer(container: container, dimension: probe.first?.count ?? 0)
     }

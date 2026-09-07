@@ -219,12 +219,21 @@ public actor Router {
     /// footprint. A pooled candidate is charged only its marginal cost. The
     /// whole pipeline is single-flight on this router.
     ///
+    /// Cancelling the calling task stops the resolve. A caller queued behind
+    /// another resolve leaves the queue at once; a caller that is already
+    /// running stops at the next stage boundary. Either way the pool lock is
+    /// released, every slot the attempt had acquired is given back, and no
+    /// half-resolved profile is left resident. The models already downloaded
+    /// stay in the Hugging Face cache, so a later resolve continues the
+    /// transfer rather than starting it again.
+    ///
     /// - Parameters:
     ///   - def: The authored profile to resolve.
     ///   - progress: The UI-bindable progress to drive, mutated on the main actor.
     /// - Returns: The resolved, resident profile.
     /// - Throws: ``ResolutionFailure`` when no trio fits the effective budget,
-    ///   or any download or load error from the ``ModelLoader``.
+    ///   `CancellationError` when the calling task is cancelled, or any download
+    ///   or load error from the ``ModelLoader``.
     public func resolve(
         profile def: ProfileDefinition,
         reporting progress: ResolutionProgress
@@ -250,21 +259,33 @@ public actor Router {
     ///     against and, on success, the model each slot chose.
     /// - Returns: The resolved, resident profile.
     /// - Throws: ``ResolutionFailure`` when no trio fits the effective budget,
-    ///   or any download or load error from the ``ModelLoader``.
+    ///   `CancellationError` when the calling task is cancelled, or any download
+    ///   or load error from the ``ModelLoader``.
     private func runResolve(
         profile def: ProfileDefinition,
         reporting progress: ResolutionProgress,
         span: any Span
     ) async throws -> LanguageModelProfile {
-        await poolLock.wait()
+        // The cancellable acquire, unlike the one every session gate takes: a
+        // resolve queued behind another resolve holds nothing yet, so a caller
+        // the user cancels leaves the queue at once instead of waiting for a
+        // permit it no longer wants. See ``AsyncSemaphore/waitUnlessCancelled()``.
+        try await poolLock.waitUnlessCancelled()
         defer { poolLock.signal() }
 
+        // Each stage below opens with a cancellation check, so a resolve the
+        // user cancelled stops at the next stage boundary rather than paying
+        // for the whole pipeline. The lock is released by the `defer` above and
+        // the `catch` gives back every slot this attempt already acquired, so a
+        // cancelled resolve leaves the router exactly as it found it.
+        try Task.checkCancellation()
         await beginSizing(progress: progress)
         let totalBudget = hostBudget()
         let residentFootprint = pool.values.reduce(Int64(0)) { $0 + $1.footprintBytes }
         let effectiveBudget = totalBudget - residentFootprint
         span.attributes[RouterTracing.AttributeKey.budgetBytes] = effectiveBudget
         let metadataByRef = await sizeCandidates(profile: def)
+        try Task.checkCancellation()
         let residentKeys = Set(pool.keys)
 
         let resolution = try await runJointFit(
@@ -293,6 +314,7 @@ public actor Router {
             for (chosen, slot) in [
                 (resolution.standard, ModelSlot.standard), (resolution.flash, ModelSlot.flash),
             ] {
+                try Task.checkCancellation()
                 let slotRes = Self.slotResolution(for: resolution, slot: slot)
                 let chargedBytes = Self.chosenCharge(for: slotRes)
                 let key = try await acquireLLM(
@@ -308,6 +330,7 @@ public actor Router {
                 slotHolds[slot] = ResidencyHold(key: key, chargedBytes: chargedBytes)
             }
 
+            try Task.checkCancellation()
             let embeddingRes = Self.slotResolution(for: resolution, slot: .embedding)
             let embeddingCharge = Self.chosenCharge(for: embeddingRes)
             let embeddingKey = try await acquireEmbedder(
@@ -328,6 +351,7 @@ public actor Router {
             // both winning the identical ref+context).
             var preloadedKeys: Set<ResidencyKey> = []
             for slot in [ModelSlot.standard, .flash, .embedding] {
+                try Task.checkCancellation()
                 guard let key = slotHolds[slot]?.key, newKeys.contains(key) else { continue }
                 guard let entry = pool[key] else {
                     preconditionFailure("a freshly-acquired key must still be in the pool")
@@ -340,6 +364,7 @@ public actor Router {
                 preloadedKeys.insert(key)
             }
 
+            try Task.checkCancellation()
             await complete(progress: progress)
             guard let standardKey = slotHolds[.standard]?.key, let flashKey = slotHolds[.flash]?.key,
                   let embeddingKey = slotHolds[.embedding]?.key

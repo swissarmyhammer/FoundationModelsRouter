@@ -185,4 +185,118 @@ struct AsyncSemaphoreTests {
         #expect(semaphore.availablePermits == 1)
         #expect(semaphore.waiterCount == 0)
     }
+
+    // MARK: - The cancellable acquire
+
+    @Test("a cancelled waitUnlessCancelled waiter leaves the queue and throws")
+    func cancellableWaiterLeavesTheQueue() async {
+        let semaphore = AsyncSemaphore(value: 1)
+
+        // The test task takes the only permit, so the waiter must suspend.
+        await semaphore.wait()
+
+        let waiter = Task { try await semaphore.waitUnlessCancelled() }
+        while semaphore.waiterCount < 1 { await Task.yield() }
+
+        waiter.cancel()
+        await #expect(throws: CancellationError.self) { try await waiter.value }
+
+        // It left the queue rather than staying in it until a signal.
+        #expect(semaphore.waiterCount == 0)
+
+        // The permit the test task holds is still the only one outstanding.
+        semaphore.signal()
+        #expect(semaphore.availablePermits == 1)
+    }
+
+    @Test("the next signal goes to the caller that still waits, not to the cancelled one")
+    func signalReachesTheRemainingWaiterAfterACancel() async {
+        let semaphore = AsyncSemaphore(value: 1)
+        let probe = OrderProbe()
+
+        // The test task takes the only permit; both waiters must suspend.
+        await semaphore.wait()
+
+        let cancelled = Task {
+            try await semaphore.waitUnlessCancelled()
+            await probe.record(0)
+            semaphore.signal()
+        }
+        while semaphore.waiterCount < 1 { await Task.yield() }
+
+        let remaining = Task {
+            await semaphore.wait()
+            await probe.record(1)
+            semaphore.signal()
+        }
+        while semaphore.waiterCount < 2 { await Task.yield() }
+
+        // Cancel the FRONT waiter. It must leave the queue, so the queue that
+        // remains holds the second waiter alone.
+        cancelled.cancel()
+        await #expect(throws: CancellationError.self) { try await cancelled.value }
+        #expect(semaphore.waiterCount == 1)
+
+        semaphore.signal()
+        await remaining.value
+
+        // Only the waiter that was never cancelled ran, and the accounting is exact.
+        #expect(await probe.order == [1])
+        #expect(semaphore.availablePermits == 1)
+        #expect(semaphore.waiterCount == 0)
+    }
+
+    @Test("an already-cancelled caller throws without taking a permit")
+    func alreadyCancelledCallerTakesNoPermit() async {
+        let semaphore = AsyncSemaphore(value: 1)
+
+        let waiter = Task {
+            // Cancelled before the acquire, so the permit must stay untouched.
+            while !Task.isCancelled { await Task.yield() }
+            try await semaphore.waitUnlessCancelled()
+        }
+        waiter.cancel()
+        await #expect(throws: CancellationError.self) { try await waiter.value }
+
+        #expect(semaphore.availablePermits == 1)
+        #expect(semaphore.waiterCount == 0)
+    }
+
+    @Test("an uncancelled waitUnlessCancelled acquires in FIFO turn beside plain waiters")
+    func cancellableWaiterKeepsFIFOTurn() async {
+        let semaphore = AsyncSemaphore(value: 1)
+        let probe = OrderProbe()
+
+        await semaphore.wait()
+
+        let first = Task {
+            await semaphore.wait()
+            await probe.record(0)
+            semaphore.signal()
+        }
+        while semaphore.waiterCount < 1 { await Task.yield() }
+
+        let second = Task {
+            try await semaphore.waitUnlessCancelled()
+            await probe.record(1)
+            semaphore.signal()
+        }
+        while semaphore.waiterCount < 2 { await Task.yield() }
+
+        let third = Task {
+            await semaphore.wait()
+            await probe.record(2)
+            semaphore.signal()
+        }
+        while semaphore.waiterCount < 3 { await Task.yield() }
+
+        semaphore.signal()
+        await first.value
+        try? await second.value
+        await third.value
+
+        #expect(await probe.order == [0, 1, 2])
+        #expect(semaphore.availablePermits == 1)
+        #expect(semaphore.waiterCount == 0)
+    }
 }
