@@ -6,8 +6,10 @@ A Swift router for local MLX language models on Apple silicon. Author a
 `ProfileDefinition` listing candidate models per role (`standard`, `flash`,
 `embedding`); `Router.resolve` measures the host's real RAM/GPU budget, picks
 the biggest candidate that fits each slot, and hands back a resident,
-sessionable, transcript-recording profile — one active profile at a time, so
-it never over-commits memory.
+sessionable, transcript-recording profile. Residency is pooled: several
+profiles can be resident together, they share one machine budget, and profiles
+that name the same model share its loaded copy. The router counts the
+references to each model and frees only the models that no profile uses.
 
 ```swift
 import Foundation

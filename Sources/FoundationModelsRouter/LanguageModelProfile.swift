@@ -79,11 +79,11 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// profile does not exist while a handle is initialized.
     ///
     /// The reference is weak because the profile holds its three handles
-    /// strongly. A strong back-reference would make a cycle, and
-    /// ``LanguageModelProfile``'s `deinit`, which gives the residency back to
-    /// the router, would never run. A vended session reads the profile out of
-    /// this slot and retains it for the session's lifetime, which is what
-    /// keeps the resident models alive while a session runs.
+    /// strongly. A strong back-reference would make a cycle, so neither the
+    /// profile nor its handles — and therefore neither one's ``ResidencyHold``
+    /// reference — would ever be released. A vended session reads the profile
+    /// out of this slot and retains it for the session's lifetime, which is
+    /// what keeps a session's sibling slots reachable while it runs.
     private let owningProfileSlot = Mutex(WeakProfile())
 
     /// The owning profile if it is still alive, else `nil`.
@@ -108,6 +108,16 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// `maxConcurrentForks`. A fork past the ceiling awaits a free slot.
     let forkAdmissionGate: AsyncSemaphore
 
+    /// The shared claim on the residency this handle's container belongs to,
+    /// or `nil` for a hand-built handle that resolved nothing.
+    ///
+    /// Held strongly, and shared with the owning profile and its two sibling
+    /// handles. It is what keeps the container resident, so a tool that stores
+    /// only this handle keeps its model loaded after the profile object is
+    /// gone. The hold refers to nothing but the router and a token, so no cycle
+    /// is possible.
+    private let residencyHold: ResidencyHold?
+
     /// Creates a routed model handle. ``Router/resolve(profile:reporting:)`` is
     /// the one way a consumer obtains a handle.
     ///
@@ -123,6 +133,9 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     ///   - gates: The gates `container` carries.
     ///   - tracer: The tracer an embed call opens its span through, or `nil`
     ///     (the default) to read `InstrumentationSystem.tracer` at call time.
+    ///   - residencyHold: The shared claim that keeps `container` resident, or
+    ///     `nil` (the default) for a hand-built handle that resolved nothing
+    ///     and therefore holds no residency.
     package init(
         slot: ModelSlot,
         chosen: ModelRef,
@@ -133,7 +146,8 @@ public final class RoutedModel<Container: Sendable>: Sendable {
         recorder: any TranscriptRecorder,
         durableRecording: DurableRecording? = nil,
         gates: ResidentModelGates,
-        tracer: (any Tracer)? = nil
+        tracer: (any Tracer)? = nil,
+        residencyHold: ResidencyHold? = nil
     ) {
         self.slot = slot
         self.chosen = chosen
@@ -146,6 +160,7 @@ public final class RoutedModel<Container: Sendable>: Sendable {
         self.durableRecording = durableRecording
         generationGate = gates.generation
         forkAdmissionGate = gates.forkAdmission
+        self.residencyHold = residencyHold
     }
 }
 
@@ -158,11 +173,13 @@ public typealias RoutedLLM = RoutedModel<any LoadedLLMContainer>
 public typealias RoutedEmbedder = RoutedModel<any LoadedEmbeddingContainer>
 
 /// A profile resolved for this machine: the three models that co-fit the
-/// budget, held resident for the profile's lifetime.
+/// budget, held resident while this profile OR any handle it vended is alive.
 ///
 /// Residency is pooled. The ``Router`` reference-counts each resident model
-/// across profiles. ``release()`` and `deinit` decrement this profile's
-/// references and evict only the models that drop to zero.
+/// across profiles. This profile and its three handles share one
+/// ``ResidencyHold``, and dropping the last of them decrements this profile's
+/// references and evicts only the models that drop to zero. ``release()`` does
+/// the same eagerly, and is idempotent against the hold.
 public final class LanguageModelProfile: Sendable {
     /// The name of the ``ProfileDefinition`` this was resolved from.
     public let definitionName: String
@@ -182,6 +199,15 @@ public final class LanguageModelProfile: Sendable {
     /// The router-minted, never-reused token that identifies this residency.
     let residencyToken: ULID
 
+    /// The shared claim on this residency, or `nil` for a hand-built profile
+    /// that resolved nothing.
+    ///
+    /// The same instance is stored by the three handles, so the residency
+    /// outlives this object whenever a handle does. This profile therefore
+    /// needs no `deinit` of its own: the hold's `deinit` gives the residency
+    /// back once this object AND every handle it vended is gone.
+    private let residencyHold: ResidencyHold?
+
     /// Creates a resolved profile. ``Router/resolve(profile:reporting:)`` is the
     /// one way a consumer obtains a profile.
     ///
@@ -192,13 +218,17 @@ public final class LanguageModelProfile: Sendable {
     ///   - embedding: The resident `.embedding` model.
     ///   - router: The resolving router.
     ///   - residencyToken: The router-minted token that identifies this residency.
+    ///   - residencyHold: The shared claim on this residency, the very instance
+    ///     the three handles store, or `nil` (the default) for a hand-built
+    ///     profile that resolved nothing.
     package init(
         definitionName: String,
         standard: RoutedLLM,
         flash: RoutedLLM,
         embedding: RoutedEmbedder,
         router: Router,
-        residencyToken: ULID
+        residencyToken: ULID,
+        residencyHold: ResidencyHold? = nil
     ) {
         self.definitionName = definitionName
         self.standard = standard
@@ -206,10 +236,11 @@ public final class LanguageModelProfile: Sendable {
         self.embedding = embedding
         self.router = router
         self.residencyToken = residencyToken
+        self.residencyHold = residencyHold
 
         // Register the weak back-reference now that `self` is fully initialized,
         // so a session vended from any of these handles can retain this profile
-        // and keep the resident models alive for its lifetime.
+        // and reach its sibling slots for the session's lifetime.
         standard.registerOwningProfile(self)
         flash.registerOwningProfile(self)
         embedding.registerOwningProfile(self)
@@ -219,13 +250,5 @@ public final class LanguageModelProfile: Sendable {
     /// the models that drop to zero references. Idempotent.
     public func release() async {
         await router.release(token: residencyToken)
-    }
-
-    /// Runs ``release()`` best-effort when the profile is dropped. The task
-    /// captures only the router and the token, never `self`.
-    deinit {
-        let router = self.router
-        let residencyToken = self.residencyToken
-        Task { await router.release(token: residencyToken) }
     }
 }

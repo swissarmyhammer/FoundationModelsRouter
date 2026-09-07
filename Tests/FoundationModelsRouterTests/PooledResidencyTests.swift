@@ -251,6 +251,9 @@ struct PooledResidencyTests {
     /// context is a different resident model.
     private static let steppedDownContext = 4096
 
+    /// The vector length every ``StubEmbeddingContainer`` in this suite vends.
+    private static let stubEmbeddingDimension = 8
+
     private static func makeTempDir() -> URL {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("PooledResidencyTests-\(UUID().uuidString)", isDirectory: true)
@@ -278,7 +281,7 @@ struct PooledResidencyTests {
             ),
             metadataSource: StubMetadataSource(raw: rawMetadata),
             loader: StubModelLoader(
-                spy: spy, dimension: 8, llmContainer: llmContainer,
+                spy: spy, dimension: stubEmbeddingDimension, llmContainer: llmContainer,
                 gatedRef: gatedRef, entrySignal: entrySignal, releaseGate: releaseGate
             )
         )
@@ -845,5 +848,99 @@ struct PooledResidencyTests {
             #expect(failure.budgetBytes == Self.headroomBufferBytes)
         }
         withExtendedLifetime((resolvedA, resolvedB)) {}
+    }
+
+    // MARK: - A handle held on its own keeps its pooled model resident.
+
+    /// A tool takes a handle in its initializer and never the profile object
+    /// — see ``EmbedTool``. Residency must therefore follow the handles, so a
+    /// profile object dropped while a tool still holds its embedding handle
+    /// evicts nothing, and the held handle still embeds.
+    ///
+    /// The test reaches the model through ``RoutedEmbedder/embed(texts:)``,
+    /// which needs no owning profile, and never through `makeSession`.
+    ///
+    /// A second resolve of the same definition follows the drop. It gives the
+    /// whole eviction path — the pool lock, the loader, the spy — its turn
+    /// before the counts are read, and its own reuse of the three resident
+    /// containers is a second witness that nothing was evicted.
+    @Test("a handle a tool holds keeps its pooled model resident after the profile object is dropped")
+    @MainActor
+    func handleAloneKeepsModelResident() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let spy = LoadSpy()
+        // Fits one trio plus the second resolve's two-KV-cache reuse charge.
+        let router = Self.makeRouter(
+            spy: spy,
+            recommendedMaxWorkingSetSize: Self.oneTrioFootprint + Self.reusedTrioCharge
+                + Self.headroomBufferBytes,
+            cacheDir: dir
+        )
+
+        let held = ProfileDefinition(
+            name: "held", description: "a tool outlives the profile object",
+            standard: ["org/held-std"], flash: ["org/held-flash"], embedding: ["org/held-emb"]
+        )
+
+        var profile: LanguageModelProfile? = try await router.resolve(
+            profile: held, reporting: ResolutionProgress()
+        )
+        let tool = EmbedTool(model: try #require(profile).embedding)
+        // The tool's handle is now the only reference to the residency.
+        profile = nil
+
+        let reuser = try await router.resolve(profile: held, reporting: ResolutionProgress())
+        #expect(await spy.evictions == 0)
+        // Reused, not reloaded: one load for each of the three models.
+        #expect(await spy.llmLoads.count == 2)
+        #expect(await spy.embedderLoads.count == 1)
+
+        let vectors = try await tool.embed(texts: ["one", "two"])
+        #expect(vectors.count == 2)
+        #expect(vectors.allSatisfy { $0.count == Self.stubEmbeddingDimension })
+        withExtendedLifetime(reuser) {}
+    }
+
+    // MARK: - Dropping the last reference frees the budget for the very next resolve.
+
+    /// Dropping the profile object AND every handle built from it is the one
+    /// eviction trigger here: no ``LanguageModelProfile/release()`` call. The
+    /// next ``Router/resolve(profile:reporting:)`` must see the freed bytes in
+    /// its FIRST budget measurement, so a second, disjoint trio that fits only
+    /// in the freed space resolves without any wait, retry or yield.
+    @Test("a resolve after the last reference to a profile is dropped sees the freed bytes at once")
+    @MainActor
+    func droppingLastHandleFreesBudgetForNextResolve() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let spy = LoadSpy()
+        // Room for exactly one trio: B fits only once A's three models are gone.
+        let router = Self.makeRouter(
+            spy: spy,
+            recommendedMaxWorkingSetSize: Self.oneTrioFootprint + Self.headroomBufferBytes,
+            cacheDir: dir
+        )
+
+        let profileA = ProfileDefinition(
+            name: "a", description: "profile A",
+            standard: ["org/drop-a-std"], flash: ["org/drop-a-flash"], embedding: ["org/drop-a-emb"]
+        )
+        let profileB = ProfileDefinition(
+            name: "b", description: "profile B, disjoint from A",
+            standard: ["org/drop-b-std"], flash: ["org/drop-b-flash"], embedding: ["org/drop-b-emb"]
+        )
+
+        var resolvedA: LanguageModelProfile? = try await router.resolve(
+            profile: profileA, reporting: ResolutionProgress()
+        )
+        #expect(try #require(resolvedA).standard.chosen == "org/drop-a-std")
+        // Drops the profile object and, with it, its three handles.
+        resolvedA = nil
+
+        let resolvedB = try await router.resolve(profile: profileB, reporting: ResolutionProgress())
+        #expect(resolvedB.standard.chosen == "org/drop-b-std")
+        #expect(await spy.evictions == 3)
+        withExtendedLifetime(resolvedB) {}
     }
 }
