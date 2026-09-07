@@ -46,10 +46,33 @@ comments:
     evidence: swift build --build-tests (30.12s, real recompile, 0 source warnings) + swift test (main: 1234/1234 passed, 2 known issues; Evals: 83/83 passed) + swift build --package-path IntegrationTests --build-tests (4.27s, 0 source warnings)
     task: ^m8vj0jr
   timestamp: 2026-09-07T17:07:52.896467+00:00
+- actor: claude-code
+  id: 01m1ydfqrazfv1w3h0pj1bwhhd
+  text: |-
+    ### commit — changed
+    - evidence: 012b107 refactor(router): delete LanguageModelProfile.release() and its router coupling
+    - next: review
+  timestamp: 2026-09-07T17:08:37.258183+00:00
+- actor: claude-code
+  id: 01m1ydnxmfgzxf0djbte1y00a8
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (012b107) — 0 findings, 0 confirmed, 0 refuted, 7 validators attempted, 0 failed. 12 files reviewed. `.kanban/` excluded by `.reviewignore`; `README.md` had no matching validator.
+    - next: task moved to `done`.
+  timestamp: 2026-09-07T17:11:59.887753+00:00
+- actor: wballard
+  id: 01m1ydprty4dd0cr9my99n0yp0
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 13 files, release() deleted plus the router coupling it served
+    - test: green — forced recompile, 0 warnings in our source; swift test 1234 + 83 passed; IntegrationTests --build-tests compiles; greps for release() and README clean
+    - commit: 012b107
+    - review: clean — 0 findings across 12 files, 7 validators; task moved to done
+  timestamp: 2026-09-07T17:12:27.742253+00:00
 depends_on:
 - 01M1Y6WTHKDJW2REXWR5PH8CDM
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffc980
 title: Delete LanguageModelProfile.release() and its remaining call sites
 ---
 ## What

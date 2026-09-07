@@ -15,16 +15,20 @@ import Testing
 /// itself.
 ///
 /// It is weak, because the profile holds the three handles strongly. A strong
-/// back-reference would make a cycle, and `LanguageModelProfile.deinit`, which
-/// gives the residency back to the router, would never run. A handle therefore
-/// reports `nil` again once the profile is released.
+/// back-reference would make a cycle: neither the profile nor its handles could
+/// ever be deallocated, so the ``ResidencyHold`` those handles share would keep
+/// its last reference forever, and `ResidencyHold.deinit`, which gives the
+/// residency back to the router, would never run. The profile itself has no
+/// `deinit` at all. A handle therefore reports `nil` again once ARC deallocates
+/// the profile.
 ///
 /// Everything runs against stubs -- a stub loader over an undriven container --
 /// so the suite needs no network and no GPU, and it waits on no clock. The
-/// release test is deterministic for the same reason: `deinit` clears the weak
-/// slot as the profile is deallocated, and the `Task` that `deinit` starts
-/// captures the router and the token only, never the profile, so no assertion
-/// here depends on when that task runs.
+/// release test is deterministic for the same reason: the weak slot clears as
+/// ARC deallocates the profile, and no residency work follows that. A
+/// hand-built profile resolves nothing and therefore carries no
+/// ``ResidencyHold``, and a real hold refers to the router and the token only,
+/// never to the profile, so no assertion here depends on when a release runs.
 @Suite("Owning profile back-reference")
 struct OwningProfileTests {
     // MARK: - Constants
