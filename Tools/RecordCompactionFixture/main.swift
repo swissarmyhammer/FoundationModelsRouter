@@ -181,8 +181,6 @@ for (index, prompt) in RecordingScript.prompts.enumerated() {
 }
 print("[record] \(String(format: "%.0f", Date().timeIntervalSince(recordingStartedAt))) s of recording wall clock")
 
-await profile.release()
-
 // MARK: - Flatten the layout to the fixture's shape
 
 // The fixture directory plays the recording root, with the session directly

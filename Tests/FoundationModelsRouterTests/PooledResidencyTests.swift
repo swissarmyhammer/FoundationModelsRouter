@@ -945,7 +945,7 @@ struct PooledResidencyTests {
     // MARK: - Dropping the last reference frees the budget for the very next resolve.
 
     /// Dropping the profile object AND every handle built from it is the one
-    /// eviction trigger here: no ``LanguageModelProfile/release()`` call. The
+    /// eviction trigger here: there is no explicit release to call. The
     /// next ``Router/resolve(profile:reporting:)`` must see the freed bytes in
     /// its FIRST budget measurement, so a second, disjoint trio that fits only
     /// in the freed space resolves without any wait, retry or yield.

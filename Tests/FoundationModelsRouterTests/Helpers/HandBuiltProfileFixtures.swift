@@ -76,7 +76,6 @@ enum HandBuiltProfileFixtures {
                 recorder: recorder,
                 gates: ResidentModelGates(maxConcurrentForks: defaultMaxConcurrentForks)
             ),
-            router: router,
             residencyToken: .generate()
         )
     }

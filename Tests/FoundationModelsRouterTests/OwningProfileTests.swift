@@ -10,7 +10,7 @@ import Testing
 ///
 /// It is filled after the handle's initializer, because
 /// ``Router/resolve(profile:reporting:)`` builds the three handles first and
-/// passes them into ``LanguageModelProfile/init(definitionName:standard:flash:embedding:router:residencyToken:)``
+/// passes them into ``LanguageModelProfile/init(definitionName:standard:flash:embedding:residencyToken:)``
 /// afterwards. A handle therefore reports `nil` until a profile registers
 /// itself.
 ///

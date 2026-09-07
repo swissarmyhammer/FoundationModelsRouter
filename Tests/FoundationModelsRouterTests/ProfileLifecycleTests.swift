@@ -237,13 +237,18 @@ struct ProfileLifecycleTests {
 
         // A release carrying the first profile's defunct token must be a
         // no-op: `first`'s pool entry is already gone, so this must neither
-        // evict anything further nor touch `second`'s residency.
-        await router.release(token: staleToken)
+        // evict anything further nor touch `second`'s residency. The pending
+        // queue is the one way a residency is given back, so the stale token
+        // goes on it, and the next resolve is the drain point that reads it.
+        router.enqueuePendingRelease(staleToken)
+        var drainer: LanguageModelProfile? = try await router.resolve(
+            profile: Self.profile, reporting: ResolutionProgress())
         #expect(await spy.count == 3)
 
         // `second` still gives its residency back cleanly, evicting its own
         // three models at the next drain point.
         second.dropReference()
+        drainer.dropReference()
         let reresolved = try await router.resolve(
             profile: Self.profile, reporting: ResolutionProgress())
         #expect(await spy.count == 6)

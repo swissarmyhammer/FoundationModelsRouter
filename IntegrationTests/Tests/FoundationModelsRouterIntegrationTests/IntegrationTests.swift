@@ -518,8 +518,6 @@ struct IntegrationTests {
         let ordered = merged.sorted { ($0.ts, $0.seq) < ($1.ts, $1.seq) }
         #expect(merged.map(\.seq) == ordered.map(\.seq))
         #expect(Set(merged.map(\.seq)).count == merged.count)
-
-        await profile.release()
     }
 
     /// Creates a unique temporary directory.

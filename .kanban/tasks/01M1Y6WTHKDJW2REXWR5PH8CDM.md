@@ -37,10 +37,33 @@ comments:
     - the "Pooled model residency" suite (PooledResidencyTests.swift) passed all cases, including the gated-ref case ("a live session retains its profile...", 0.451s) and the interleaving case ("a dropped residency cannot interleave with an in-flight resolve...", 2.330s) — no hang observed.
     - next: hand to review.
   timestamp: 2026-09-07T16:51:33.982596+00:00
+- actor: claude-code
+  id: 01m1ycjc6ww4f6qnr07ghf6zh4
+  text: |-
+    ### commit — changed
+    - evidence: 7350b7a test(residency): prove eviction by dropping references, not release() (^5ph8cdm)
+    - next: none
+  timestamp: 2026-09-07T16:52:35.164051+00:00
+- actor: claude-code
+  id: 01m1ycqa1h80h58ybtm3r6aqdr
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 7350b7a) — 0 findings, 0 confirmed, 0 refuted; 7 files reviewed, 4 `.kanban/` files excluded by `.reviewignore`.
+    - next: task moved to done. No open findings.
+  timestamp: 2026-09-07T16:55:16.785989+00:00
+- actor: wballard
+  id: 01m1ycqyhx5y3p9c8yphp4c63w
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 7 files, all six suites off release(), new Helpers/ResidencyDrop.swift
+    - test: green — swift package clean + build, 0 warnings in Sources/Tests; swift test 1234 + 83 passed; grep for .release() in Tests returns nothing; no sleep/retry/yield added
+    - commit: 7350b7a
+    - review: clean — 0 findings across 7 files; task moved to done
+  timestamp: 2026-09-07T16:55:37.789445+00:00
 depends_on:
 - 01M1Y6ESW0C8F9M0AKFFA7B61C
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffc880
 title: Prove eviction by dropping references instead of calling release() in the router suites
 ---
 ## What

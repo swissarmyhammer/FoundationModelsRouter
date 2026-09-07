@@ -57,8 +57,6 @@ let answer = try await session.respond(
     to: "Which Swift keyword marks a class that cannot be subclassed?"
 )
 print(answer)
-
-await profile.release()
 ```
 
 A second, smaller `flash` model resolves alongside `standard` from the same

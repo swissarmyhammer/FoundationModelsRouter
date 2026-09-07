@@ -183,8 +183,8 @@ public typealias RoutedEmbedder = RoutedModel<any LoadedEmbeddingContainer>
 /// Residency is pooled. The ``Router`` reference-counts each resident model
 /// across profiles. The three handles this profile vended share one
 /// ``ResidencyHold``, and dropping the last of them decrements this profile's
-/// references and evicts only the models that drop to zero. ``release()`` does
-/// the same eagerly, and is idempotent against the hold.
+/// references and evicts only the models that drop to zero. There is no
+/// explicit release: residency ends when the last reference goes away.
 ///
 /// This object needs no hold of its own, and no `deinit`: it holds its three
 /// handles strongly, so while this profile lives at least one hold does too,
@@ -203,9 +203,6 @@ public final class LanguageModelProfile: Sendable {
     /// The resident `.embedding` model.
     public let embedding: RoutedEmbedder
 
-    /// The router that resolved this profile and owns its residency slot.
-    private let router: Router
-
     /// The router-minted, never-reused token that identifies this residency.
     let residencyToken: ULID
 
@@ -217,21 +214,18 @@ public final class LanguageModelProfile: Sendable {
     ///   - standard: The resident `.standard` model.
     ///   - flash: The resident `.flash` model.
     ///   - embedding: The resident `.embedding` model.
-    ///   - router: The resolving router.
     ///   - residencyToken: The router-minted token that identifies this residency.
     package init(
         definitionName: String,
         standard: RoutedLLM,
         flash: RoutedLLM,
         embedding: RoutedEmbedder,
-        router: Router,
         residencyToken: ULID
     ) {
         self.definitionName = definitionName
         self.standard = standard
         self.flash = flash
         self.embedding = embedding
-        self.router = router
         self.residencyToken = residencyToken
 
         // Register the weak back-reference now that `self` is fully initialized,
@@ -240,11 +234,5 @@ public final class LanguageModelProfile: Sendable {
         standard.registerOwningProfile(self)
         flash.registerOwningProfile(self)
         embedding.registerOwningProfile(self)
-    }
-
-    /// Decrements this profile's reference on each resident model and evicts
-    /// the models that drop to zero references. Idempotent.
-    public func release() async {
-        await router.release(token: residencyToken)
     }
 }

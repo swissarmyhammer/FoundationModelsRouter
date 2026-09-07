@@ -209,9 +209,4 @@ _ = try await runObservedTurn(
     prompt: "Explain our \(category) policy for the customer's Q3 invoice."
 )
 
-// MARK: - Release residency
-
-// Frees both resident models and the router's residency slot.
-await profile.release()
-
 print(String(format: "\n[done] wall clock: %.1f seconds", Date().timeIntervalSince(startedAt)))

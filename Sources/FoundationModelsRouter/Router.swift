@@ -110,8 +110,8 @@ private struct SlotCharge: Sendable {
 /// A router admits several resident profiles at one time. It prices the
 /// union of every resident model against one shared budget. Residency is
 /// reference-counted per ``ResidencyKey`` across every profile that
-/// references it. ``resolve(profile:reporting:)`` and ``release(token:)``
-/// are serialized by `poolLock`.
+/// references it. ``resolve(profile:reporting:)`` and every release of a
+/// residency are serialized by `poolLock`.
 public actor Router {
     /// The recording root id; sortable by construction time.
     public nonisolated let id: ULID
@@ -147,7 +147,8 @@ public actor Router {
     private let loader: any ModelLoader
 
     /// Serializes every entry point that mutates ``pool``:
-    /// ``resolve(profile:reporting:)`` end to end and ``release(token:)``.
+    /// ``resolve(profile:reporting:)`` end to end and every release of a
+    /// residency.
     /// A resolve prices a pooled candidate at its marginal cost and acquires
     /// it later, so a concurrent release must not evict that key in between.
     private let poolLock = AsyncSemaphore(value: 1)
@@ -157,8 +158,8 @@ public actor Router {
     private var pool: [ResidencyKey: PoolEntry] = [:]
 
     /// The pool charges each resident profile was granted, by residency token.
-    /// ``release(token:)`` gives back each charge and forgets the token, so a
-    /// double release is a no-op.
+    /// A release gives back each charge and forgets the token, so a double
+    /// release is a no-op.
     private var residentProfiles: [ULID: [SlotCharge]] = [:]
 
     /// Residency tokens whose ``ResidencyHold`` was deallocated, waiting to be
@@ -583,18 +584,6 @@ public actor Router {
         )
     }
 
-    /// Releases the resident-model references a profile was granted at
-    /// resolve time. A pooled model that drops to zero references is evicted.
-    ///
-    /// Idempotent: a token not in ``residentProfiles`` is a no-op.
-    ///
-    /// - Parameter token: The residency token of the profile to release.
-    func release(token: ULID) async {
-        await poolLock.wait()
-        defer { poolLock.signal() }
-        await releaseHoldingPoolLock(token: token)
-    }
-
     /// Records that the ``ResidencyHold`` for `token` was deallocated, so its
     /// residency is given back.
     ///
@@ -631,12 +620,13 @@ public actor Router {
         }
     }
 
-    /// The body of ``release(token:)``, for a caller that already holds
-    /// `poolLock`.
+    /// Releases the resident-model references a profile was granted at
+    /// resolve time, for a caller that already holds `poolLock`. A pooled
+    /// model that drops to zero references is evicted.
     ///
-    /// Idempotent: a token not in ``residentProfiles`` is a no-op, so an
-    /// explicit ``LanguageModelProfile/release()`` followed by the hold's own
-    /// `deinit` still decrements each pooled model exactly once.
+    /// Idempotent: a token not in ``residentProfiles`` is a no-op, so a
+    /// token the queue carries twice still decrements each pooled model
+    /// exactly once.
     ///
     /// - Parameter token: The residency token of the profile to release.
     private func releaseHoldingPoolLock(token: ULID) async {
@@ -987,7 +977,6 @@ public actor Router {
                 resolvedProfile: resolvedProfile,
                 hold: hold
             ),
-            router: self,
             residencyToken: residencyToken
         )
     }

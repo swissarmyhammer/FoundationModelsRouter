@@ -113,7 +113,7 @@ public protocol ModelLoader: Sendable {
     func preload(container: any LoadedModelContainer) async throws
 
     /// Evicts a resident container and releases the memory it holds. Called
-    /// from ``LanguageModelProfile/release()``. Non-throwing.
+    /// when the last reference to a residency goes away. Non-throwing.
     func evict(container: any LoadedModelContainer) async
 }
 

@@ -346,9 +346,4 @@ print(
 
     \(fold.summary ?? "(no summary text: only deterministic stages applied — stages \(fold.stagesApplied))")
     """)
-
-// MARK: - Release residency
-
-await profile.release()
-
 print(String(format: "\n[done] wall clock: %.1f seconds", Date().timeIntervalSince(startedAt)))
