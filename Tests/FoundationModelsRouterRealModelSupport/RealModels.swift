@@ -20,11 +20,19 @@ import FoundationModelsRouter
 /// pure-text input when no image is supplied.
 public enum RealModels {
     /// `.standard` slot: Muse Glimmer, a dense text-plus-vision model this
-    /// suite drives text-only.
-    public static let standard: ModelRef = "mlx-community/Muse-Glimmer-30B-4bit"
+    /// suite drives text-only, in the `mxfp4` quantization.
+    ///
+    /// `mxfp4` replaced the affine `4bit` repository on 2026-09-08. The two
+    /// hold the same weights at the same bit width; `mxfp4` stores a shared
+    /// floating-point scale for each block of 32, which MLX decodes through
+    /// its own `fp_quantized` kernels. The Qwen 3.8 tool-turn suite drives
+    /// the same quantization, so every large model this package loads reads
+    /// the same weight format.
+    public static let standard: ModelRef = "mlx-community/Muse-Glimmer-30B-mxfp4"
 
-    /// `.flash` slot: Muse Glimmer again — only one Muse Glimmer repository
-    /// is published, so the two generation slots name the same model.
+    /// `.flash` slot: Muse Glimmer again. The published Muse Glimmer
+    /// repositories differ only in quantization, so the two generation slots
+    /// name the same model.
     ///
     /// The router pools resident models by `(ModelRef, role)`, and both
     /// slots ask for the same reference at the same `context`, so they share
@@ -32,7 +40,7 @@ public enum RealModels {
     /// suite's slot-differentiation and co-residency assertions therefore
     /// compare this model with itself; they still prove the routing path,
     /// but they can no longer tell two distinct models apart.
-    public static let flash: ModelRef = "mlx-community/Muse-Glimmer-30B-4bit"
+    public static let flash: ModelRef = "mlx-community/Muse-Glimmer-30B-mxfp4"
 
     /// `.embedding` slot: unchanged. Muse Glimmer is not an embedder, and
     /// this repository is small enough that co-residency alongside the

@@ -11,7 +11,7 @@ import Testing
 /// The real `mlx-community` model this suite folds against, and deliberately
 /// NOT ``RealModels/standard``.
 ///
-/// ``RealModels/standard`` is `Muse-Glimmer-30B-4bit`, 18 GB of weights. Its
+/// ``RealModels/standard`` is `Muse-Glimmer-30B-mxfp4`, 17 GB of weights. Its
 /// load alone costs more than this suite's whole budget, which is why this
 /// suite names a model of its own instead of the target's slot roster.
 ///

@@ -8,9 +8,11 @@ import Testing
 
 /// The model whose chat template this suite holds the pin against.
 ///
-/// `RealModels.standard` is `mlx-community/Muse-Glimmer-30B-4bit`, and
+/// `RealModels.standard` is `mlx-community/Muse-Glimmer-30B-mxfp4`, and
 /// `RealModels.flash` is the same repository. It is the model every other gated
-/// suite of this target loads for the `.standard` slot.
+/// suite of this target loads for the `.standard` slot. The quantization does
+/// not change the chat template, so the pin this suite holds is the same one
+/// it held against the `4bit` repository.
 private let pinnedDateModel: ModelRef = RealModels.standard
 
 /// The decoding the container this suite loads is pinned to.

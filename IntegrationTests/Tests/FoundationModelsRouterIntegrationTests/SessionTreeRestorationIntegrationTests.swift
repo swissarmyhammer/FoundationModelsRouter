@@ -9,8 +9,9 @@ import Testing
 /// The real `mlx-community` model the fork-tree test drives, and deliberately
 /// NOT ``RealModels/standard``.
 ///
-/// ``RealModels/standard`` is `Muse-Glimmer-30B-4bit`, and it is what the
-/// fork-tree test drove until task ^bpwfbyz. That test drives five turns and
+/// ``RealModels/standard`` is `Muse-Glimmer-30B-mxfp4`. Its `4bit`
+/// predecessor is what the fork-tree test drove until task ^bpwfbyz, and the
+/// measurements below are of that repository. That test drives five turns and
 /// no tool, and three of its turns are filler turns whose reply nothing reads.
 /// The 30B writes a `<think>` block of 196 to 275 tokens before it answers a
 /// filler prompt, so the three fillers were 74 of the test's 112 seconds, and

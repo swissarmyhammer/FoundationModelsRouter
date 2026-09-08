@@ -9,9 +9,10 @@ import Testing
 /// The real `mlx-community` model this round trip folds against, and
 /// deliberately NOT ``RealModels/standard``.
 ///
-/// ``RealModels/standard`` is `Muse-Glimmer-30B-4bit`, 18 GB of weights, and it
-/// is what this suite drove until task ^k0d30s4 gave every integration test a
-/// budget of two minutes. The run of 2026-08-20 measured this round trip at
+/// ``RealModels/standard`` is `Muse-Glimmer-30B-mxfp4`, 17 GB of weights. Its
+/// `4bit` predecessor, 18 GB, is what this suite drove until task ^k0d30s4
+/// gave every integration test a budget of two minutes. The run of 2026-08-20
+/// measured this round trip at
 /// 541.6 seconds against the 30B — 4.5 times the budget, and the only test of
 /// this target that did not fit.
 ///
