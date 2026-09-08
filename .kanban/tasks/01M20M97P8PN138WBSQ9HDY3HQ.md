@@ -43,6 +43,63 @@ comments:
     - flake check: `ToolInvocationLivenessTests/backgroundCallReportsItsAttachmentsOnTheSessionStreamWhenItSettles` (filed as ^z5pbt5e by the implementer) passed cleanly in this run — no recurrence observed.
     - next: /review. No commit, no push, no worktree used.
   timestamp: 2026-09-08T14:13:33.932694+00:00
+- actor: claude-code
+  id: 01m20nxvs17m2ewencshx6nyeq
+  text: |-
+    ### commit — changed
+    - evidence: a3612d3 fix(recording): encode schema JSON with sorted keys (^9hdy3hq); 13 files changed
+    - next: none
+  timestamp: 2026-09-08T14:14:37.601988+00:00
+- actor: claude-code
+  id: 01m20p3vc9ztjdptaamhkztv5w
+  text: |-
+    ### review — findings
+    - evidence: 1 finding on `review sha HEAD~1..HEAD` (commit a3612d3) — `Tests/FoundationModelsRouterTests/TranscriptFidelityTests.swift:708` `code-hygiene/idioms-swift` preferContains
+    - next: correct the finding in the `## Review Findings (2026-09-08 09:15)` section, check its box, then run `/review 01M20M97P8PN138WBSQ9HDY3HQ HEAD~1..HEAD` again
+  timestamp: 2026-09-08T14:17:53.801571+00:00
+- actor: claude-code
+  id: 01m20p4eg4t2n4v96kwmq9e47t
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 7 files (TranscriptEntryMapper.swift, TranscriptEntryPayload.swift, HeapChurn.swift, FixedToolSurface.swift, 3 test files)
+    - test: green — swift test, 1238 passed + 83 passed in Evals, 0 failed, 0 skipped
+    - commit: a3612d3
+    - review: findings — Tests/FoundationModelsRouterTests/TranscriptFidelityTests.swift:708 preferContains
+  timestamp: 2026-09-08T14:18:13.380768+00:00
+- actor: claude-code
+  id: 01m20p9pbpjamhs9pc7490v75g
+  text: |-
+    Picked up again from `review` to correct the one open finding: `Tests/FoundationModelsRouterTests/TranscriptFidelityTests.swift:708` `code-hygiene/idioms-swift` — preferContains: Prefer contains over filter(_:).isEmpty, first(where:) != nil, and range(of:) != nil.
+
+    Change: in `unchangedToolSurfaceAcrossTurnsRecordsNoDivergence`, `#expect(events.filter { $0.kind == .divergence }.isEmpty)` is now `#expect(!events.contains { $0.kind == .divergence })`. That is the shape the swiftformat `preferContains` rule writes.
+
+    Whole-file check: a grep of the full file for `filter(_:).isEmpty`, `first(where:) != nil`, `first { } != nil`, `range(of:) != nil` and `firstIndex != nil` finds no other use of the cause. The other `.filter` and `.first` uses in the file (lines 250, 254, 299, 307, 386, 388, 556, 609, 656, 745, 787) keep a value or a count; they are not the cause named by the finding, and all of them existed before this task, so they stay as they are.
+
+    The other files this task added or changed — TranscriptEntryMapperTests.swift, TranscriptDifferTests.swift, HeapChurn.swift, FixedToolSurface.swift, TranscriptEntryMapper.swift, TranscriptEntryPayload.swift — hold none of the cause forms.
+
+    Two files outside this task hold the same pattern (`Tests/FoundationModelsRouterTests/PromptQueueTests.swift:342` `filter { }.isEmpty`, `Tests/FoundationModelsRouterTestSupport/RecordingRedactionScan.swift:139` `range(of:) != nil`). They are outside the scope of this task and were not changed.
+
+    Did not run `swiftformat`, per the rule for this repo. No commit, no push, no worktree.
+  timestamp: 2026-09-08T14:21:05.270226+00:00
+- actor: claude-code
+  id: 01m20paced0964nmyrj6v1yxaf
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — Tests/FoundationModelsRouterTests/TranscriptFidelityTests.swift (`filter { }.isEmpty` replaced by `!contains { }` in `unchangedToolSurfaceAcrossTurnsRecordsNoDivergence`). The finding at `Tests/FoundationModelsRouterTests/TranscriptFidelityTests.swift:708` is checked in the `## Review Findings (2026-09-08 09:15)` section. Test: `swift test --filter 'FoundationModelsRouterTests.TranscriptFidelityTests/'` — build rebuilt the test target (Build complete, 8.17 sec), 12 tests in 1 suite passed, 0 failed, 0 skipped. The only build warning is the pre-existing "missing creator for mutated node" notice for the mlx bundle.
+    - next: /review 01M20M97P8PN138WBSQ9HDY3HQ. The task stays in `doing`. Not committed, not pushed, no worktree.
+  timestamp: 2026-09-08T14:21:27.885562+00:00
+- actor: claude-code
+  id: 01m20peskdrzxqd37wg02qey68
+  text: |-
+    ### test — green
+
+    - evidence: `swift build --build-tests` recompiled the changed file (FoundationModelsRouterTests-product rebuilt) with zero errors and one pre-existing, unrelated warning (`missing creator for mutated node` from the mlx-swift dependency's Cmlx bundle build step, not from any Swift source in this change). `swift test` full run: FoundationModelsRouterTests target — 1238 tests in 134 suites passed, 0 failed, 0 skipped (2 known issues from intentional `withKnownIssue` blocks, not failures). FoundationModelsRouterEvals target — 83 tests in 10 suites passed, 0 failed, 0 skipped.
+    - The only uncommitted source change, `TranscriptFidelityTests.swift:708`, replaced `events.filter { $0.kind == .divergence }.isEmpty` with `!events.contains { $0.kind == .divergence }` per review finding `preferContains`. Checked the whole file for the same pattern (`.filter{}.isEmpty`, `first(where:) != nil`, `range(of:) != nil`) — no other instances remain.
+    - The test containing the changed line, "two turns over one unchanged tool surface record no divergence marker", passed.
+    - `mcp__sah__diagnostics check working` reports 0 errors, 0 warnings.
+    - The known flaky liveness test ^z5pbt5e was not triggered/timed out in this run.
+    - next: none — build is clean.
+  timestamp: 2026-09-08T14:23:52.429913+00:00
 position_column: doing
 position_ordinal: '80'
 title: An append-only entry compares unequal on re-read, so the baseline check raises a false divergence
@@ -176,3 +233,12 @@ transcript must never lose a turn. This card stops the false alarm that
 made the loss happen.
 
 Raised from FoundationModelsACPAgent, card ^jz016kq.
+
+## Review Findings (2026-09-08 09:15)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 7 file(s) reviewed, 6 not reviewed.
+
+> 6 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 6 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/TranscriptFidelityTests.swift:708` `code-hygiene/idioms-swift` — preferContains: Prefer contains over filter(_:).isEmpty, first(where:) != nil, and range(of:) != nil.

@@ -705,7 +705,7 @@ struct TranscriptFidelityTests {
 
         let events = await recorder.events
         #expect(events.map(\.kind) == [.session, .instructions, .prompt, .response, .prompt, .response])
-        #expect(events.filter { $0.kind == .divergence }.isEmpty)
+        #expect(!events.contains { $0.kind == .divergence })
     }
 
     // MARK: - Throwing turn whose SDK transcript already gained a real .response
