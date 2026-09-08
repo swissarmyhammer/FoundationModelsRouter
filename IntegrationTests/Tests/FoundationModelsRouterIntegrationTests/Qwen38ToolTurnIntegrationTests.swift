@@ -213,12 +213,22 @@ struct Qwen38ToolTurnIntegrationTests {
             completedIds: [],
             failedIds: [],
             entries: await transcriptEntries(of: session))
+        let usage = await usageDescription(of: session)
+
+        // The turn is over and every fact the assertions read is in `run`, so
+        // the 14 GB of weights go back before the assertions run rather than
+        // after them. Every other gated suite of this target evicts what it
+        // loads. The CI run of 2026-09-08 for commit 422023d measured what a
+        // suite that does not evict costs the suites after it: on the runner,
+        // the Muse Glimmer load that took 6 seconds before this suite ran took
+        // 104 seconds after it, and four Muse suites timed out at the budget.
+        await container.model.evict()
 
         // Printed so a reader can see what the model did, and so the cost
         // splits into the load and the turn.
         print(
             """
-            QWEN38 load: \(loadDuration), respond turn: \(turnDuration), usage: \(await usageDescription(of: session))
+            QWEN38 load: \(loadDuration), respond turn: \(turnDuration), usage: \(usage)
             QWEN38 transcript:
             \(run.transcriptDescription)
             QWEN38 answer: \(run.answer.debugDescription)
