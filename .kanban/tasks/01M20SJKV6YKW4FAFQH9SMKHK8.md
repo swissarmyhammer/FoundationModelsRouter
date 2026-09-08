@@ -46,6 +46,13 @@ comments:
     - No new warnings, no skipped tests, no failures found in the changes for this task.
     - next: ready for review.
   timestamp: 2026-09-08T16:15:33.919469+00:00
+- actor: claude-code
+  id: 01m20wxdk389ygxcz91cnehq81
+  text: |-
+    ### commit — changed
+    - evidence: 8553529 test(session): guard StubSessionBackend state with one mutex (^9smkhk8) — 8 files changed, 354 insertions(+), 138 deletions(-)
+    - next: /review
+  timestamp: 2026-09-08T16:16:43.107086+00:00
 position_column: doing
 position_ordinal: '80'
 title: A failed streaming turn traps in recordTranscriptDelta while it records the failed turn
