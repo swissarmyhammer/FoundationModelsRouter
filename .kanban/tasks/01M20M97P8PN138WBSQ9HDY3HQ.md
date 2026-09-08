@@ -100,6 +100,13 @@ comments:
     - The known flaky liveness test ^z5pbt5e was not triggered/timed out in this run.
     - next: none — build is clean.
   timestamp: 2026-09-08T14:23:52.429913+00:00
+- actor: claude-code
+  id: 01m20pg6ra9w7th4c9e81sm2bd
+  text: |-
+    ### commit — changed
+    - evidence: b4930a7, 3 files changed (2 kanban files, 1 test file)
+    - next: none. This is a green checkpoint commit for ^9hdy3hq. It uses contains in place of filter(_:).isEmpty in TranscriptFidelityTests.swift, per the preferContains rule.
+  timestamp: 2026-09-08T14:24:38.666083+00:00
 position_column: doing
 position_ordinal: '80'
 title: An append-only entry compares unequal on re-read, so the baseline check raises a false divergence
