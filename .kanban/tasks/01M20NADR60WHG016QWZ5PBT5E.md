@@ -55,8 +55,31 @@ comments:
     - No skipped/ignored tests found; the "skipped" text matches were all test-name narrative (e.g. "throws sidecarMissing rather than being skipped"), not actual skips.
     - No code changes were needed beyond what was already in the working tree — reviewed the diff in `Tests/FoundationModelsRouterTests/ToolInvocationLivenessTests.swift` and confirmed `MountFixtures.settledTerminal(of:in:)`, `collect(_ stream: AsyncStream<SessionEvent>)`, and `RoutedSession.close()` all exist with matching signatures, and that `SessionEventLog`'s trimmed doc comment still matches its one remaining use in `reportPostedBetweenTurnsArrivesOnTheSessionStream`.
   timestamp: 2026-09-08T14:56:15.425352+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m20rbn0v570drpqr0ywgbjh8
+  text: |-
+    ### commit — changed
+    - evidence: e8ba8d7 test(liveness): remove the wall clock wait from the settlement test (^z5pbt5e) — 9 files changed, 153 insertions(+), 28 deletions(-)
+    - next: none
+  timestamp: 2026-09-08T14:57:06.587261+00:00
+- actor: claude-code
+  id: 01m20rf043e9t1d3ds6zptzce3
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit e8ba8d7) — 0 findings, 0 confirmed, 0 refuted, 7 validators attempted, 0 failed. 1 file reviewed: Tests/FoundationModelsRouterTests/ToolInvocationLivenessTests.swift. 8 files under `.kanban/` not reviewed (`.reviewignore`). No prior `## Review Findings` section on the card.
+    - next: none — task moved to done
+  timestamp: 2026-09-08T14:58:56.259880+00:00
+- actor: claude-code
+  id: 01m20rfmxq6m8zr23sx9gega2m
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 1 file (Tests/FoundationModelsRouterTests/ToolInvocationLivenessTests.swift); new cards ^7a0qs4p and ^d3fbqz7 filed
+    - test: green — swift test, 1238 passed + 83 passed in Evals, 0 failed, 0 skipped, 0 warnings
+    - commit: e8ba8d7
+    - review: clean — 0 findings on HEAD~1..HEAD; task moved to done
+  timestamp: 2026-09-08T14:59:17.559364+00:00
+position_column: done
+position_ordinal: ffffcc80
 title: A background-call liveness test times out under a full parallel test run
 ---
 ### What

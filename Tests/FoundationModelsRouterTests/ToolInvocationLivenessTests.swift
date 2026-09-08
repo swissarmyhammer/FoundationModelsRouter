@@ -378,24 +378,6 @@ struct ToolInvocationLivenessTests {
 
     // MARK: - Tool call reports: delivered live on the turn's stream, or on the session feed
 
-    /// Keeps every event a session-scoped stream carries, in arrival order, so
-    /// a test can wait for a report under a bound instead of on the stream
-    /// itself.
-    private actor SessionEventLog {
-        /// Every event seen, in arrival order.
-        private(set) var events: [SessionEvent] = []
-
-        /// Every report seen, in arrival order.
-        var reports: [ToolCallReport] { events.compactMap(\.carriedReport) }
-
-        /// Records one event.
-        ///
-        /// - Parameter event: The event the stream carried.
-        func record(_ event: SessionEvent) {
-            events.append(event)
-        }
-    }
-
     /// Builds the report a test posts for one closed call, with the same
     /// identity the call's close record carries.
     ///
@@ -494,22 +476,24 @@ struct ToolInvocationLivenessTests {
         let outcome: TurnOutcome = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
         let close = try #require(outcome.toolInvocations.first)
 
-        let log = SessionEventLog()
+        // Subscribed before the post, so the report cannot be lost by a late
+        // subscription.
         let sessionEvents = await fixture.session.streamSessionEvents()
-        let collecting = Task {
-            for await event in sessionEvents {
-                await log.record(event)
-            }
-        }
-        defer { collecting.cancel() }
 
+        // The post awaits the session actor's `deliverLive`, which yields the
+        // report to every session-event subscription before it returns. So
+        // once the post returns, the report is already buffered on the stream,
+        // and no wall clock stands between the post and the read below.
         let report = Self.report(for: close)
         await fixture.session.outbox.post(report: report)
 
-        #expect(
-            await BoundedWait.conditionReached("the report on streamSessionEvents()") {
-                await log.reports == [report]
-            })
+        // Closing the session finishes every session-event subscription, so
+        // the drain ends on its own once the buffered events are read. A
+        // report that never arrived leaves the drained events without one,
+        // and the assertion below says so.
+        await fixture.session.close()
+        let events = await collect(sessionEvents)
+        #expect(events.compactMap(\.carriedReport) == [report])
     }
 
     // MARK: - Tool call reports from the decorators: a closing call's attachments reach the stream
