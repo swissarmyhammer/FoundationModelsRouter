@@ -380,7 +380,7 @@ struct ToolInvocationLivenessTests {
 
     /// Keeps every event a session-scoped stream carries, in arrival order, so
     /// a test can wait for a report under a bound instead of on the stream
-    /// itself, and can then read the order of a close record and its report.
+    /// itself.
     private actor SessionEventLog {
         /// Every event seen, in arrival order.
         private(set) var events: [SessionEvent] = []
@@ -611,27 +611,24 @@ struct ToolInvocationLivenessTests {
         let open = try #require(outcome.toolInvocations.first)
         #expect(open.closedAt == nil)
 
-        let log = SessionEventLog()
+        // Subscribed before the gate opens, so the run cannot settle before
+        // the stream exists.
         let sessionEvents = await fixture.session.streamSessionEvents()
-        let collecting = Task {
-            for await event in sessionEvents {
-                await log.record(event)
-            }
-        }
-        defer { collecting.cancel() }
 
-        // The run posts its close record and its report before it settles,
-        // so the settlement wait bounds the run's work, and the spin below
-        // covers only the hop from the stream to the log.
+        // The run posts its close record and its report through awaited actor
+        // hops before its work completes, and the mailbox settles the run only
+        // after that. So once the run has settled, both events are already
+        // buffered on the stream: the settlement wait is the whole wait, and
+        // no wall clock stands between the settlement and the read below.
         await gate.open()
-        _ = await fixture.session.mailbox.wait(
-            completionToken: open.correlationID, seconds: MountFixtures.settlementDeadline)
-        #expect(
-            await BoundedWait.conditionReached("the report on streamSessionEvents()") {
-                await log.reports.count == 1
-            })
+        _ = try await MountFixtures.settledTerminal(of: open.correlationID, in: fixture.session.mailbox)
 
-        let events = await log.events
+        // Closing the session finishes every session-event subscription, so
+        // the drain ends on its own once the buffered events are read. A
+        // report that never arrived leaves the drained events without one,
+        // and the assertions below say so.
+        await fixture.session.close()
+        let events = await collect(sessionEvents)
         try Self.expectOneReportFollowsClose(in: events)
         #expect(events.compactMap(\.carriedReport).map(\.correlationID) == [open.correlationID])
     }

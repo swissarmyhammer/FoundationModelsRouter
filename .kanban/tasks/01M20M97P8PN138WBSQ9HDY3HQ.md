@@ -107,8 +107,24 @@ comments:
     - evidence: b4930a7, 3 files changed (2 kanban files, 1 test file)
     - next: none. This is a green checkpoint commit for ^9hdy3hq. It uses contains in place of filter(_:).isEmpty in TranscriptFidelityTests.swift, per the preferContains rule.
   timestamp: 2026-09-08T14:24:38.666083+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m20pmpt9jeb41frtpj5rprrs
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~2..HEAD` — 0 findings. The given range `HEAD~1..HEAD` is commit 807b179, which changes only `.kanban/` files. The named commit b4930a7 is `HEAD~2..HEAD~1`. The review used `HEAD~2..HEAD` so that it contains both. 1 file reviewed (`Tests/FoundationModelsRouterTests/TranscriptFidelityTests.swift`), 2 `.kanban/` files excluded by `.reviewignore`. The one prior finding (2026-09-08 09:15, TranscriptFidelityTests.swift:708) is checked.
+    - next: none. The task moved from `doing` to `review` to `done`.
+  timestamp: 2026-09-08T14:27:06.185908+00:00
+- actor: claude-code
+  id: 01m20pnewxbphyf8tsb34mmhn5
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 1 file (Tests/FoundationModelsRouterTests/TranscriptFidelityTests.swift, preferContains finding)
+    - test: green — swift test, 1238 passed + 83 passed in Evals, 0 failed, 0 skipped
+    - commit: b4930a7 (plus 807b179, kanban files only)
+    - review: clean — 0 findings on HEAD~2..HEAD; task moved to done
+  timestamp: 2026-09-08T14:27:30.845841+00:00
+position_column: done
+position_ordinal: ffffcb80
 title: An append-only entry compares unequal on re-read, so the baseline check raises a false divergence
 ---
 ### What
