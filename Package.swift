@@ -321,5 +321,20 @@ let package = Package(
             ] + mlxProducts,
             path: "Tests/FoundationModelsRouterEvals"
         ),
+        // The compile proof of the library's public surface (task ^5545bna).
+        // Every file in this target imports the library with a plain
+        // `import FoundationModelsRouter`, so a member that loses `public`
+        // stops the target from compiling. The Router test target cannot hold
+        // that proof: its other files import the library `@testable`, which
+        // reaches `internal` members, so a plain import there proves nothing
+        // about the module boundary. The target depends on the library alone
+        // and links nothing else, which is the shape a consumer has. It is a
+        // root test target, so `swift test` at the root runs it on every run,
+        // in CI and locally.
+        .testTarget(
+            name: "\(packageName)PublicSurfaceTests",
+            dependencies: [.target(name: packageName)],
+            path: "Tests/\(packageName)PublicSurfaceTests"
+        ),
     ]
 )

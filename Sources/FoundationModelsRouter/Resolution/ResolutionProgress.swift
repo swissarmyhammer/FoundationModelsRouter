@@ -3,9 +3,13 @@ import Observation
 
 /// One slot's live progress through a resolution: its state, the candidate
 /// that won it, and its download progress.
-struct SlotProgress: Sendable, Equatable {
+///
+/// A consumer reads this value through ``ResolutionProgress/slots`` to draw a
+/// per-slot download bar with byte counts. The router alone writes it, so
+/// every setter and the initializer stay internal.
+public struct SlotProgress: Sendable, Equatable {
     /// Where a single slot is in the resolution pipeline.
-    enum State: Sendable, Equatable {
+    public enum State: Sendable, Equatable {
         /// Not yet started.
         case pending
         /// Being sized against the budget.
@@ -21,16 +25,16 @@ struct SlotProgress: Sendable, Equatable {
     }
 
     /// The slot's current state.
-    var state: State
+    public internal(set) var state: State
 
     /// The candidate that won the slot in joint fit, or `nil` until chosen.
-    var chosen: ModelRef?
+    public internal(set) var chosen: ModelRef?
 
     /// Bytes of the chosen model's weights downloaded so far.
-    var bytesDownloaded: Int64
+    public internal(set) var bytesDownloaded: Int64
 
     /// Total bytes of the chosen model's weights, or `0` when not yet known.
-    var bytesTotal: Int64
+    public internal(set) var bytesTotal: Int64
 
     /// Creates a slot progress value.
     init(
@@ -49,7 +53,7 @@ struct SlotProgress: Sendable, Equatable {
     private static let downloadShare = 0.5
 
     /// This slot's contribution to the overall fraction, in `0...1`.
-    var progressFraction: Double {
+    public var progressFraction: Double {
         switch state {
         case .pending, .sizing, .failed:
             return 0
@@ -91,11 +95,13 @@ public final class ResolutionProgress {
     /// The current overall phase.
     public var phase: Phase = .sizing
 
-    /// The overall progress in `0...1`, driving a `ProgressView`.
-    var fraction: Double = 0
+    /// The overall progress in `0...1`, driving a `ProgressView`. A consumer
+    /// that wants the value without a subscription to ``phases`` reads it here.
+    public internal(set) var fraction: Double = 0
 
-    /// Per-slot progress, keyed by slot.
-    var slots: [ModelSlot: SlotProgress] = [:]
+    /// Per-slot progress, keyed by slot. A consumer reads it to draw one
+    /// download bar for each slot; the router writes it as resolution advances.
+    public internal(set) var slots: [ModelSlot: SlotProgress] = [:]
 
     /// Creates a fresh, empty progress in the ``Phase/sizing`` phase.
     public init() {}
