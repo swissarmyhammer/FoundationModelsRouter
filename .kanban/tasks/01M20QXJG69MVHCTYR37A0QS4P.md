@@ -53,8 +53,31 @@ comments:
     - evidence: `swift test` (root package, both test targets) — 1238 tests in 134 suites passed (FoundationModelsRouterTests), 83 tests in 10 suites passed (FoundationModelsRouterEvalsTests). Total 1321 passed, 0 failed, 0 skipped, 2 known issues (pre-existing intentional `withKnownIssue` assertions in RealModelHarness and BoundedWait tests, unrelated to this change). Zero compiler warnings — confirmed `ToolInvocationLivenessTests.o` recompiled after the source edit (obj mtime after src mtime) with an empty `.dia` diagnostics file. No `RoutedSessionActor.recordTranscriptDelta` trap (^9smkhk8) occurred. Ran full suite twice, both green, exit code 0 both times.
     - next: ready for review.
   timestamp: 2026-09-08T15:21:46.962218+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m20st805bj9ph5azgchj3syp
+  text: |-
+    ### commit — changed
+    - evidence: 2113013 test(liveness): read the report from the stream, not from a wait (7 files changed)
+    - next: none
+  timestamp: 2026-09-08T15:22:33.349568+00:00
+- actor: claude-code
+  id: 01m20swyvggvkp71c082axj8by
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 2113013) — 0 findings, 7 validator pairs attempted, 0 failed. 1 file reviewed, 6 `.kanban/` files excluded by `.reviewignore`. No prior `## Review Findings` sections on the card.
+    - next: none. The task moved from `review` to `done`.
+  timestamp: 2026-09-08T15:24:02.288634+00:00
+- actor: claude-code
+  id: 01m20sxjp7z74rtdycqq8njzp0
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 1 file (Tests/FoundationModelsRouterTests/ToolInvocationLivenessTests.swift); new card ^9smkhk8 filed
+    - test: green — swift test, 1238 passed + 83 passed in Evals, 0 failed, 0 skipped, 0 warnings
+    - commit: 2113013
+    - review: clean — 0 findings on HEAD~1..HEAD; task moved to done
+  timestamp: 2026-09-08T15:24:22.599873+00:00
+position_column: done
+position_ordinal: ffffcd80
 title: The between-turns report liveness test waits on a wall clock from the main actor
 ---
 ### What

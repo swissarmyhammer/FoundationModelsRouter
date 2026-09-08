@@ -4,24 +4,40 @@ import Testing
 
 @Suite("BoundedWait ends every wait on a wall clock, never on a count of scheduler hops")
 struct BoundedWaitTests {
-    /// How long the late signal below makes its waiter wait.
+    /// The share of ``BoundedWait/ceilingNanoseconds`` that passes before the
+    /// late change below lands: one part in this many.
     ///
-    /// Longer than any run of scheduler hops a test orders a state change
-    /// behind, and shorter than the bound's own ceiling. A wait that counts
-    /// hops gives up inside this span on a loaded machine; a wait that reads a
-    /// clock does not.
-    static let lateSignalDelayNanoseconds: UInt64 = 400_000_000
+    /// Ten leaves the delay long past any run of scheduler hops a test orders a
+    /// state change behind, and well inside the ceiling, whatever the ceiling
+    /// becomes. A wait that counts hops gives up inside this span on a loaded
+    /// machine; a wait that reads a clock does not.
+    static let lateChangeCeilingDivisor: UInt64 = 10
 
-    @Test("a signal that arrives late in wall-clock terms is still observed")
-    func aLateSignalIsStillObserved() async throws {
-        let signal = AsyncSemaphore(value: 0)
-        let signaller = Task {
-            try await Task.sleep(nanoseconds: Self.lateSignalDelayNanoseconds)
-            signal.signal()
-        }
-        defer { signaller.cancel() }
+    /// How long the late change below makes its waiter wait, on the clock the
+    /// wait reads.
+    static let lateChangeDelay: Duration = .nanoseconds(BoundedWait.ceilingNanoseconds / lateChangeCeilingDivisor)
 
-        #expect(await BoundedWait.signalArrived(signal, named: "the late signal"))
+    /// The decision this test records: it must survive a starved process.
+    ///
+    /// This suite exists to prove the wait is proof against load, so the premise
+    /// of the test — the late change lands inside the ceiling — cannot itself
+    /// rest on the scheduler. A first version signalled a semaphore from a second
+    /// task after a `Task.sleep`, and a process starved for longer than the
+    /// ceiling failed it: the sleep expired on time, but the task that signals
+    /// got no thread before the deadline, so the wait correctly reported that no
+    /// signal came. Moving that sleep onto the clock the wait reads does not
+    /// change this, because no clock can give a second task a thread.
+    ///
+    /// So the late change is a reading of the clock the wait reads, made inside
+    /// the wait's own condition. ``BoundedWait/spin(until:)`` reads the condition
+    /// before it reads the deadline on every turn, so a turn that runs late still
+    /// observes the change, however late it runs. The ceiling is what it always
+    /// was; nothing here is raised to cover the cause.
+    @Test("a change that lands late in wall-clock terms is still observed")
+    func aLateChangeIsStillObserved() async {
+        let landsAt = ContinuousClock.now.advanced(by: Self.lateChangeDelay)
+
+        #expect(await BoundedWait.conditionReached("the late change", when: { ContinuousClock.now >= landsAt }))
     }
 
     @Test("a condition that never holds ends the wait, and never before a late change would have landed")
@@ -35,6 +51,6 @@ struct BoundedWaitTests {
             issue.comments.contains { $0.description.contains(label) }
         }
 
-        #expect(started.duration(to: .now) >= .nanoseconds(Self.lateSignalDelayNanoseconds))
+        #expect(started.duration(to: .now) >= Self.lateChangeDelay)
     }
 }
