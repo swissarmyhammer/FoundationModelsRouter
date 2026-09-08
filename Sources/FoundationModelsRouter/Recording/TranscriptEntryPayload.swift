@@ -42,7 +42,8 @@ public struct TranscriptEntryPayload: Sendable, Codable, Equatable {
     let responseFormatName: String?
 
     /// The JSON-encoded `GenerationSchema` of a `.prompt` entry's
-    /// `Transcript.ResponseFormat`.
+    /// `Transcript.ResponseFormat`, with its object keys sorted so one schema
+    /// always encodes to the same bytes.
     let responseFormatSchemaJSON: String?
 
     /// Creates an entry payload. Each field not given stays `nil`.
@@ -221,7 +222,8 @@ struct ToolDefinitionPayload: Sendable, Codable, Equatable {
     let name: String
     /// The tool's declared description.
     let description: String
-    /// The tool's parameters `GenerationSchema`, encoded to JSON.
+    /// The tool's parameters `GenerationSchema`, encoded to JSON with its
+    /// object keys sorted so one schema always encodes to the same bytes.
     let parametersSchemaJSON: String
 
     /// Creates a tool definition payload.

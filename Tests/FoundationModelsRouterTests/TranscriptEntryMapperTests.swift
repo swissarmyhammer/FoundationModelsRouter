@@ -1,6 +1,7 @@
 import CoreImage
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import OSLog
 import Testing
 
@@ -894,6 +895,36 @@ struct TranscriptEntryMapperTests {
         #expect(throws: TranscriptEntryReconstructionError.unsupportedKind(.session)) {
             try TranscriptEntryMapper.entry(from: payload, kind: .session)
         }
+    }
+
+    // MARK: - Deterministic schema encoding
+
+    @Test("a tool definition set serializes to identical bytes across repeated encodings of one unchanged entry")
+    func toolDefinitionSetEncodesToIdenticalBytesAcrossReadings() {
+        // `GenerationSchema` encodes its objects from dictionaries, and a
+        // dictionary's key order follows its storage address. The readings
+        // are taken with the heap moved between them, the way a session turn
+        // moves it, so an address-dependent encoding cannot pass by chance.
+        let entry = FixedToolSurface.instructionsEntry(id: "instr-1", text: "be terse")
+        let readings = HeapChurn.readings(count: HeapChurn.readingCount) {
+            TranscriptEntryMapper.event(from: entry).payload.toolDefinitions?.map(\.parametersSchemaJSON)
+        }
+        #expect(Set(readings).count == 1)
+    }
+
+    @Test("a response-format schema serializes to identical bytes across repeated encodings of one unchanged entry")
+    func responseFormatSchemaEncodesToIdenticalBytesAcrossReadings() {
+        let entry = Transcript.Entry.prompt(
+            Transcript.Prompt(
+                id: "prompt-1",
+                segments: [.text(Transcript.TextSegment(content: "run it"))],
+                responseFormat: Transcript.ResponseFormat(schema: FixedToolSurface.runCodeSchema)
+            )
+        )
+        let readings = HeapChurn.readings(count: HeapChurn.readingCount) {
+            TranscriptEntryMapper.event(from: entry).payload.responseFormatSchemaJSON
+        }
+        #expect(Set(readings).count == 1)
     }
 
     // MARK: - Helpers

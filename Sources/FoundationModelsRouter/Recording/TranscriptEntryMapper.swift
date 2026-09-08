@@ -462,12 +462,28 @@ enum TranscriptEntryMapper {
 
     // MARK: - JSON helpers
 
-    /// Encodes `value` to a JSON string.
+    /// The encoder every persisted schema JSON is written with. Its output is
+    /// a function of the value alone.
+    ///
+    /// `GenerationSchema` encodes its objects from dictionaries, and Swift
+    /// seeds a dictionary's iteration order with the address of its storage.
+    /// Without `.sortedKeys`, one unchanged schema encodes to different bytes
+    /// on different readings, and ``TranscriptDiffer/Baseline`` — which
+    /// compares the mapped payload of one recorded entry against a later
+    /// reading of the same entry — reports a rewrite that never happened.
+    private static func makeDeterministicEncoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return encoder
+    }
+
+    /// Encodes `value` to a JSON string with its object keys sorted, so equal
+    /// values encode to equal bytes.
     /// - Throws: ``TranscriptEntryEncodingError/encodingFailed(context:underlying:)``.
     static func jsonString<T: Encodable>(for value: T, context: String) throws -> String {
         let data: Data
         do {
-            data = try JSONEncoder().encode(value)
+            data = try makeDeterministicEncoder().encode(value)
         } catch {
             throw TranscriptEntryEncodingError.encodingFailed(
                 context: context,

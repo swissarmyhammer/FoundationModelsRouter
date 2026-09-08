@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -243,5 +244,23 @@ struct TranscriptDifferTests {
         #expect(firstRun.map(\.kind) == secondRun.map(\.kind))
         #expect(firstRun.map(\.kind) == [.instructions, .prompt, .toolCalls, .toolOutput, .response])
         #expect(firstRun == secondRun)
+    }
+
+    // MARK: - Baseline stability
+
+    @Test("one unchanged entry read again after its baseline capture compares equal")
+    func unchangedEntryReadAgainComparesEqual() {
+        // The baseline's boundary is the one `.instructions` entry, at index
+        // 0, carrying a tool surface with several properties per schema. The
+        // later readings are taken with the heap moved between them, the way
+        // a session turn moves it, so an encoding whose key order follows a
+        // storage address cannot agree with the capture by chance.
+        let transcript = Transcript(entries: [FixedToolSurface.instructionsEntry(id: "instr-1", text: "be terse")])
+        let baseline = TranscriptDiffer.Baseline(transcript: transcript)
+
+        let divergences = HeapChurn.readings(count: HeapChurn.readingCount) {
+            TranscriptDiffer.divergence(from: baseline, in: transcript)
+        }
+        #expect(divergences.allSatisfy { $0 == nil })
     }
 }

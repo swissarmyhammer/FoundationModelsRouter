@@ -668,6 +668,46 @@ struct TranscriptFidelityTests {
         #expect(events.last?.text == "turn3 response")
     }
 
+    // MARK: - Unchanged tool surface across turns: no false divergence
+
+    @Test("two turns over one unchanged tool surface record no divergence marker")
+    @MainActor
+    func unchangedToolSurfaceAcrossTurnsRecordsNoDivergence() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let recorder = InMemoryRecorder()
+        let router = Self.makeRouter(container: UndrivenLanguageModelContainer(), recorder: recorder, cacheDir: dir)
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        // A consuming agent builds its one `LanguageModelSession` over a
+        // handle and mounts a fixed tool surface for the session's life. The
+        // handle's first sync sees the session's opening transcript — the
+        // `.instructions` entry alone — so for the first turn that entry is
+        // the baseline's boundary at index 0. Its tool definitions never
+        // change, so no later turn may read it as rewritten.
+        let handle = profile.standard.makeLanguageModel()
+        let instructions = FixedToolSurface.instructionsEntry(id: "instr-1", text: "be terse")
+        await handle.sync(Transcript(entries: [instructions]))
+
+        let firstTurn: [Transcript.Entry] = [
+            instructions,
+            .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "turn1 prompt"))])),
+            .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "turn1 response"))])),
+        ]
+        await handle.sync(Transcript(entries: firstTurn))
+
+        let secondTurn: [Transcript.Entry] = firstTurn + [
+            .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "turn2 prompt"))])),
+            .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "turn2 response"))])),
+        ]
+        await handle.sync(Transcript(entries: secondTurn))
+
+        let events = await recorder.events
+        #expect(events.map(\.kind) == [.session, .instructions, .prompt, .response, .prompt, .response])
+        #expect(events.filter { $0.kind == .divergence }.isEmpty)
+    }
+
     // MARK: - Throwing turn whose SDK transcript already gained a real .response
 
     @Test("a turn that throws after the SDK durably appended a real .response entry records exactly one .response event")
