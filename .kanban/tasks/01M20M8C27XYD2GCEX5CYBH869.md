@@ -65,6 +65,68 @@ comments:
     - evidence: `swift build --build-tests` (root) — Build complete, 0 pkg warnings; `swift test` (root) — 1250+83=1333 passed, 0 failed, 0 skipped; `swift build --build-tests` (IntegrationTests) — Build complete, 0 pkg warnings; `swift test --filter 'FoundationModelsRouterIntegrationTests\.'` (IntegrationTests) — 34 passed, 0 failed, 0 skipped
     - next: ready for review
   timestamp: 2026-09-08T17:04:45.532645+00:00
+- actor: claude-code
+  id: 01m20zq29kceedpqqyg8m450n9
+  text: |-
+    ### commit — changed
+    - evidence: efcf8d7 refactor(recording): make the transcript recorder append-only (^cybh869) — 17 files changed
+    - next: none
+  timestamp: 2026-09-08T17:05:40.659834+00:00
+- actor: claude-code
+  id: 01m210xgprjeb1nwt7qj1m64fd
+  text: |-
+    ### review — findings
+    - evidence: `review sha HEAD~1..HEAD` (commit efcf8d7, HEAD confirmed with `git log`; no kanban-only commit on top, so the range was not widened). Local backend. counts: 1 finding, 1 confirmed, 1 refuted, 21 attempted. Open finding: `Sources/FoundationModelsRouter/Recording/TranscriptReconstruction.swift:197` `completeness/inverse-operation-coverage` — reconstruction does not skip `divergence` markers, which have no `entry`, so `guard let payload = event.entry` throws `legacyEventMissingPayload`.
+    - next: The implementer reads the `## Review Findings (2026-09-08 12:06)` section, makes reconstruction skip the divergence marker in the same way it skips a failed-turn close, marks the item `[x]`, and runs `/review 01M20M8C27XYD2GCEX5CYBH869 <sha>` again. Card stays in `review`.
+  timestamp: 2026-09-08T17:26:40.600671+00:00
+- actor: claude-code
+  id: 01m210ycvyws3hne4ng58zvtdv
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 13 files (8 production under Sources/FoundationModelsRouter, 5 tests)
+    - test: green — swift test, 1250 passed + 83 passed in Evals, 0 failed, 0 skipped, 0 warnings; IntegrationTests 34 passed
+    - commit: efcf8d7
+    - review: findings — Sources/FoundationModelsRouter/Recording/TranscriptReconstruction.swift:197 completeness/inverse-operation-coverage (reconstruction does not skip divergence markers)
+  timestamp: 2026-09-08T17:27:09.438190+00:00
+- actor: claude-code
+  id: 01m21159qpacxzfgkvead2pzmk
+  text: |-
+    Picked up again for the open review finding (`TranscriptReconstruction.swift`, `completeness/inverse-operation-coverage`). Research:
+
+    - The finding is not a live crash. `TranscriptTree.effectiveTranscript(forSession:view:)` reads `effectiveEntryEvents(forSession:)`, and that reader filters each event with `TranscriptEvent.Kind.isEntryKind`. `isEntryKind` is `false` for `.divergence`, `.session`, `.embedding` and `.toolCall`. So a divergence marker never reaches the reconstruction loop today. The version before commit efcf8d7 (`git show HEAD~1:...TranscriptReconstruction.swift`) had the same loop with no `.divergence` skip, and divergence markers were recorded before this task (the card counts 29 of them). The upstream filter is the only guard, and the loop itself has no predicate for a marker.
+    - The finding stays mandatory: the loop must skip every entry-less marker through one predicate, so a reader that hands the loop unfiltered events cannot throw `legacyEventMissingPayload` on a marker.
+    - Other readers of recorded events, checked for the same gap: `TokenBudget.newestStampedUsage` reads only `kind == .response`, so a marker is skipped. `SessionTreeRestoration` reads `effectiveEntryEvents` (filtered) and `restoredUsageState`, which reads the compaction checkpoint (`kind == .response` with a `.structure` segment) and `newestStampedUsage`. `RoutedLLM.resume` counts `effectiveEntryEvents` (filtered), which matches `historyOrdinal` (counts `isEntryKind`). `SessionProjection` switches on `kind` and gives `.divergence` an empty arm. `MergedTranscript` reads no `entry`. `TranscriptTree.load` reads raw events only through `compactionCheckpoints`, which guards on `kind == .response`. `restoreFilteredEvents` skips an event with no `entry.entryId`. No other reader has the gap.
+
+    Plan: add `TranscriptEvent.mirrorsTranscriptEntry` (`kind.isEntryKind && !isFailedTurnClose`), make the reconstruction loop `continue` on `!mirrorsTranscriptEntry`, add predicate tests in `TranscriptEventSchemaTests` (red first: the predicate does not compile before the change) and a recording test in `TranscriptReconstructionTests` that writes a `divergence` marker between two appended entries and reconstructs both entries. A v1 entry-kind event with no `entry` still throws `legacyEventMissingPayload`, so the existing v1 tests keep their meaning.
+  timestamp: 2026-09-08T17:30:55.606162+00:00
+- actor: claude-code
+  id: 01m211c4xzz20p7d076zjjx5rd
+  text: |-
+    ### implement — changed
+
+    The review finding on `TranscriptReconstruction.swift` (`completeness/inverse-operation-coverage`) is fixed and marked `[x]`.
+
+    What changed, by file:
+
+    - `Sources/FoundationModelsRouter/Recording/TranscriptEvent.swift`: new `public var mirrorsTranscriptEntry: Bool` (`kind.isEntryKind && !isFailedTurnClose`). It is `true` for an entry-kind event that is not the failed-turn close, and `false` for every router-only marker (`session`, `embedding`, `divergence`, the legacy `toolCall`) and for the close. A v1 entry-kind line with no `entry` still reads `true`, so a reader refuses it instead of passing over it. The `isEntryKind` doc now names this predicate as a third reader.
+    - `Sources/FoundationModelsRouter/Recording/TranscriptReconstruction.swift`: the loop in `effectiveTranscript` skips an event with `guard event.mirrorsTranscriptEntry else { continue }`. That one predicate replaces the `isFailedTurnClose` skip and also covers a `divergence` marker and every other entry-less marker kind. The `legacyEventMissingPayload` throw for a v1 line is unchanged.
+    - `Tests/FoundationModelsRouterTests/TranscriptEventSchemaTests.swift`: four predicate tests (router-only kinds, the failed-turn close, a response with a segment, a v1 entry-kind line). Red first: the target did not compile before the predicate existed.
+    - `Tests/FoundationModelsRouterTests/TranscriptReconstructionTests.swift`: `divergenceMarkerBesideAppendedEntriesIsSkippedWithoutError` writes a `transcript.jsonl` with a `.prompt` entry, a `.divergence` marker with no entry, and a `.response` entry, then asserts the raw marker has `entry == nil` and `!mirrorsTranscriptEntry`, and that `effectiveTranscript` gives `[.prompt, .response]`.
+
+    Discovery for the next reader: the finding was not a live crash. `effectiveEntryEvents(forSession:)` filters on `isEntryKind`, so a marker never reached the loop, and the version before efcf8d7 had the same loop with no `.divergence` skip. The loop now guards itself, so a reader that hands it unfiltered events gets the same answer. Every other reader of recorded events was checked and has no gap (see the research comment above).
+
+    - evidence: 4 files changed — `Sources/FoundationModelsRouter/Recording/TranscriptEvent.swift`, `Sources/FoundationModelsRouter/Recording/TranscriptReconstruction.swift`, `Tests/FoundationModelsRouterTests/TranscriptEventSchemaTests.swift`, `Tests/FoundationModelsRouterTests/TranscriptReconstructionTests.swift`. `swift test --filter 'FoundationModelsRouterTests.TranscriptEventSchemaTests/|FoundationModelsRouterTests.TranscriptReconstructionTests/'` — 59 tests in 2 suites passed, the 5 new tests named in the output. Full `swift test` — 1255 tests in 135 suites passed (2 known issues, both pre-existing: `RealModelHarness.swift` and `BoundedWait.swift`) and 83 tests in 10 suites passed; 0 failed; the only warning is the pre-existing mlx `missing creator for mutated node` notice. Not committed.
+    - next: /review
+  timestamp: 2026-09-08T17:34:40.063748+00:00
+- actor: claude-code
+  id: 01m211h5vdn84zhvqahte3wkrt
+  text: |-
+    ### test — green
+    - evidence: `swift test` (root package) — Test run with 1255 tests in 135 suites passed (2 known issues, pre-existing, unrelated to the changed files) after 5.05s; Test run with 83 tests in 10 suites passed after 0.17s. Total 1338 tests, 0 failed, 0 skipped.
+    - build: `swift build --build-tests` recompiled the touched files (TranscriptEvent.swift, TranscriptReconstruction.swift, TranscriptEventSchemaTests.swift, TranscriptReconstructionTests.swift) after touching them to defeat cache; only warning present is the pre-existing, unrelated `mlx-swift_Cmlx.bundle` "missing creator for mutated node" warning.
+    - IntegrationTests: `swift build --build-tests` (IntegrationTests package) — Build complete, only the same pre-existing mlx-swift warning; no errors from the TranscriptEvent public API change.
+    - next: none — build is clean.
+  timestamp: 2026-09-08T17:37:24.845811+00:00
 position_column: doing
 position_ordinal: '80'
 title: The transcript recorder discards a whole turn on divergence, and it must only append
@@ -161,3 +223,12 @@ a turn for ANY reason. Do the two independently, and land this one even
 if the trigger takes longer.
 
 Raised from FoundationModelsACPAgent, card ^jz016kq.
+
+## Review Findings (2026-09-08 12:06)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 13 file(s) reviewed, 4 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Recording/TranscriptReconstruction.swift:197` `completeness/inverse-operation-coverage` — The recording side now emits divergence markers (via `appendDivergenceMarker` in both `RecordingLanguageModel` and `RoutedSessionActorRecording`), but the reconstruction side does not skip them. Divergence markers have no `entry` field, identical to failed turn closes. The current code skips failed turn closes but attempts to process divergence markers as normal events, causing the `guard let payload = event.entry` check at line 203–204 to fail and throw `legacyEventMissingPayload`. Reconstruction will crash whenever it encounters a recorded divergence marker. Add divergence markers to the skip condition, similar to failed turn closes: `if event.isFailedTurnClose || event.kind == .divergence { continue }`. Both cases represent synthetic markers that should not be reconstructed as transcript entries.

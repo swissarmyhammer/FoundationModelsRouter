@@ -794,6 +794,48 @@ struct TranscriptReconstructionTests {
         #expect(Array(reconstructed).isEmpty)
     }
 
+    // MARK: - A divergence marker beside appended entries is skipped, not an error
+
+    @Test("a recording that holds a divergence marker between two appended entries reconstructs both entries and skips the marker")
+    func divergenceMarkerBesideAppendedEntriesIsSkippedWithoutError() throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let sessionId = ULID.generate()
+        let routerId = ULID.generate()
+        let sessionDir = try Self.makeSessionDir(
+            dir.appendingPathComponent(sessionId.description, isDirectory: true))
+        // The marker is the shape the recorder writes after a diverged turn's
+        // entries: a router-only kind with a description and no entry.
+        let marker = TranscriptEvent(
+            routerId: routerId,
+            sessionId: sessionId,
+            seq: 1,
+            ts: Date(timeIntervalSince1970: 1),
+            kind: .divergence,
+            text: "entry p1 moved from index 0 to index 1"
+        )
+        try Self.writeTranscript(
+            [
+                Self.textEntryEvent(
+                    seq: 0, sessionId: sessionId, routerId: routerId, kind: .prompt, entryId: "p1", text: "hello"),
+                marker,
+                Self.textEntryEvent(
+                    seq: 2, sessionId: sessionId, routerId: routerId, kind: .response, entryId: "r1", text: "hi"),
+            ],
+            to: sessionDir
+        )
+
+        let tree = try TranscriptTree.load(under: dir)
+        let recordedMarker = try #require(try tree.events(forSession: sessionId).first { $0.kind == .divergence })
+        #expect(recordedMarker.entry == nil)
+        #expect(!recordedMarker.mirrorsTranscriptEntry)
+
+        let reconstructed = try tree.effectiveTranscript(forSession: sessionId)
+        let kinds = Array(reconstructed).map { TranscriptEntryMapper.event(from: $0).kind }
+        #expect(kinds == [.prompt, .response])
+    }
+
     // MARK: - Checkpoint-aware reconstruction: restore view, fullHistory view
 
     /// Fabricates a single session whose transcript carries one compaction

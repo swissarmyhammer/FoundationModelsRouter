@@ -163,6 +163,46 @@ struct TranscriptEventSchemaTests {
         #expect(!response.isFailedTurnClose)
     }
 
+    // MARK: - Which events mirror a Transcript.Entry
+
+    /// Builds an event of `kind` with no entry payload and a body text: the
+    /// shape of every router-only marker, and of a v1 entry-kind line.
+    private static func entrylessEvent(kind: TranscriptEvent.Kind) -> TranscriptEvent {
+        TranscriptEvent(
+            routerId: .generate(),
+            sessionId: .generate(),
+            seq: 0,
+            ts: fixedInstant,
+            kind: kind,
+            text: "a marker"
+        )
+    }
+
+    @Test("a divergence marker, and every other router-only kind, mirrors no Transcript.Entry")
+    func routerOnlyKindsMirrorNoTranscriptEntry() {
+        for kind: TranscriptEvent.Kind in [.divergence, .session, .embedding, .toolCall] {
+            #expect(!Self.entrylessEvent(kind: kind).mirrorsTranscriptEntry, "\(kind)")
+        }
+    }
+
+    @Test("the failed-turn close mirrors no Transcript.Entry")
+    func failedTurnCloseMirrorsNoTranscriptEntry() {
+        let close = Self.responseClose(entry: TranscriptEntryPayload(entryId: "close-1", segments: [], assetIds: []))
+        #expect(!close.mirrorsTranscriptEntry)
+    }
+
+    @Test("a .response whose entry holds a segment mirrors a Transcript.Entry")
+    func responseWithASegmentMirrorsATranscriptEntry() {
+        let response = Self.responseClose(
+            entry: TranscriptEntryPayload(entryId: "resp-1", segments: [.text(id: "s1", content: "hi")], assetIds: []))
+        #expect(response.mirrorsTranscriptEntry)
+    }
+
+    @Test("a v1 entry-kind line with no entry still mirrors a Transcript.Entry, so a reader refuses it instead of skipping it")
+    func v1EntryKindLineMirrorsATranscriptEntry() {
+        #expect(Self.entrylessEvent(kind: .prompt).mirrorsTranscriptEntry)
+    }
+
     // MARK: - agentSpawn on the .session event (task ^1sddtxz)
 
     /// A fixed spawn context, so two events built from it compare equal.

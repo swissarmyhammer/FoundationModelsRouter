@@ -45,8 +45,9 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         case unknown
 
         /// `true` when this kind mirrors a real `FoundationModels.Transcript.Entry`.
-        /// ``TranscriptTree/effectiveEntryEvents(forSession:)`` and
-        /// ``RoutedSessionActor/historyOrdinal`` both use this predicate.
+        /// ``TranscriptTree/effectiveEntryEvents(forSession:)``,
+        /// ``RoutedSessionActor/historyOrdinal`` and
+        /// ``TranscriptEvent/mirrorsTranscriptEntry`` all use this predicate.
         var isEntryKind: Bool {
             switch self {
             case .instructions, .prompt, .toolCalls, .toolOutput, .response, .reasoning, .unknown:
@@ -107,6 +108,18 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     /// transcript, or that reads a usage stamp, skips this event.
     public var isFailedTurnClose: Bool {
         kind == .response && text == nil && ms != nil && (entry?.segments?.isEmpty ?? true)
+    }
+
+    /// `true` when this event mirrors a `FoundationModels.Transcript.Entry`
+    /// that a reader can rebuild: an entry kind that is not the router's
+    /// failed-turn close. `false` for every router-only marker (``Kind/session``,
+    /// ``Kind/embedding``, ``Kind/divergence``, the legacy ``Kind/toolCall``)
+    /// and for the close, none of which carries an entry. A reader that
+    /// rebuilds the SDK's transcript skips an event where this is `false`. An
+    /// entry-kind event with no `entry` (a v1 line) still reads `true`, so that
+    /// reader refuses it instead of passing over it.
+    public var mirrorsTranscriptEntry: Bool {
+        kind.isEntryKind && !isFailedTurnClose
     }
 
     /// Creates a fully-stamped event. Callers normally hand a

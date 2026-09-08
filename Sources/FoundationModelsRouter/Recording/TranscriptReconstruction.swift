@@ -194,10 +194,12 @@ extension TranscriptTree {
         var entries: [Transcript.Entry] = []
         entries.reserveCapacity(events.count)
         for event in events {
-            // The close of a failed turn mirrors no `Transcript.Entry`, so
-            // reconstruction skips it. A v1 turn always records a `.prompt`
-            // first, which throws below before this check applies.
-            if event.isFailedTurnClose {
+            // A router-only marker (a `divergence` marker among them) and the
+            // close of a failed turn mirror no `Transcript.Entry`, so
+            // reconstruction skips them through one predicate. A v1 turn
+            // always records a `.prompt` first, which throws below before this
+            // check applies.
+            guard event.mirrorsTranscriptEntry else {
                 continue
             }
             guard let payload = event.entry else {
