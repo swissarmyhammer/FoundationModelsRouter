@@ -127,8 +127,31 @@ comments:
     - IntegrationTests: `swift build --build-tests` (IntegrationTests package) — Build complete, only the same pre-existing mlx-swift warning; no errors from the TranscriptEvent public API change.
     - next: none — build is clean.
   timestamp: 2026-09-08T17:37:24.845811+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m211jkkqqwwq3myk3he2zc5v
+  text: |-
+    ### commit — changed
+    - evidence: f03dc81 fix(recording): skip marker events with no entry, not fail turn only (^cybh869); 6 files changed
+    - next: none
+  timestamp: 2026-09-08T17:38:11.703144+00:00
+- actor: claude-code
+  id: 01m211xra0s7s78ze785y1bwxk
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (f03dc81) on backend `local` — 0 findings, 7 attempted, 0 failed, 0 refuted. 4 file(s) reviewed, 2 `.kanban/` file(s) excluded by `.reviewignore`. The one prior finding (2026-09-08 12:06, `TranscriptReconstruction.swift:197`) is checked. HEAD is f03dc81 with no kanban-only commit on top, so the range was not widened.
+    - next: task moved from `doing` to `review` to `done`. No open findings.
+  timestamp: 2026-09-08T17:44:16.960118+00:00
+- actor: claude-code
+  id: 01m211ya6kztndyhyzeawbceg5
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 4 files (Recording/TranscriptEvent.swift, Recording/TranscriptReconstruction.swift, 2 test files); mirrorsTranscriptEntry predicate
+    - test: green — swift test, 1255 passed + 83 passed in Evals, 0 failed, 0 skipped, 0 warnings; IntegrationTests builds
+    - commit: f03dc81
+    - review: clean — 0 findings on HEAD~1..HEAD; task moved to done
+  timestamp: 2026-09-08T17:44:35.283372+00:00
+position_column: done
+position_ordinal: ffffd080
 title: The transcript recorder discards a whole turn on divergence, and it must only append
 ---
 ### What
