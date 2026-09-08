@@ -389,72 +389,70 @@ struct TranscriptFidelityTests {
         #expect(responseEvent.entry != nil)
     }
 
-    // MARK: - Shrink clamp: never traps, resets baseline, recovers next turn
+    // MARK: - Shrink: the unseen entries and a marker are appended, the next turn diffs from the shrunken transcript
 
-    @Test("a transcript that shrinks below persistedEntryCount does not crash; the next turn diffs from the new baseline")
+    /// Runs the three turns of the shrink scenario through `turn`, one call
+    /// per turn, and asserts what the recorder holds after each one. The
+    /// non-streaming and the streaming turn share this one script.
     @MainActor
-    func shrinkingTranscriptClampsWithoutCrashing() async throws {
-        let dir = Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let container = VariableLLMContainer()
-        let recorder = InMemoryRecorder()
-        let router = Self.makeRouter(container: container, recorder: recorder, cacheDir: dir)
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
-        let session = profile.standard.makeSession()
-
+    private static func assertShrinkAppendsUnseenEntries(
+        container: VariableLLMContainer,
+        recorder: InMemoryRecorder,
+        turn: (String) async throws -> Void
+    ) async throws {
         // Turn 1: the backend "SDK transcript" holds two entries. The diff
         // persists both and advances `persistedEntryCount` to 2.
         container.backend.entries = [
             .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "turn1 prompt"))])),
             .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "turn1 response"))])),
         ]
-        _ = try await session.respond(to: "turn1")
+        try await turn("turn1")
 
         var events = await recorder.events
         #expect(events.map(\.kind) == [.session, .prompt, .response])
 
-        // Turn 2: the backend's transcript *shrinks* to a single entry — fewer
-        // than the 2 already persisted. This must never trap: it logs a
-        // warning, records nothing for this turn, and resets the baseline to
-        // the smaller count (1) instead of indexing `entries[2...]` on a
-        // 1-element array.
-        container.backend.entries = [
-            .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "post-shrink prompt"))]))
-        ]
-        _ = try await session.respond(to: "turn2")
+        // Turn 2: the backend's transcript *shrinks* to one entry the record
+        // has never seen — fewer entries than the 2 already persisted. A
+        // transcript only appends: the unseen entry is recorded, then one
+        // `.divergence` marker that says the transcript shrank, and nothing
+        // that was recorded before goes away.
+        let postShrinkPrompt = Transcript.Entry.prompt(
+            Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "post-shrink prompt"))]))
+        container.backend.entries = [postShrinkPrompt]
+        try await turn("turn2")
 
         events = await recorder.events
-        // No new entry events from the shrunk turn — only the router-only
-        // bodyless-close-equivalent is absent too, since this turn succeeded
-        // (not threw); a successful turn with a shrink simply adds nothing.
-        #expect(events.map(\.kind) == [.session, .prompt, .response])
+        #expect(events.map(\.kind) == [.session, .prompt, .response, .prompt, .divergence])
+        let recordedAfterShrink = events.filter { $0.text == "post-shrink prompt" }
+        #expect(recordedAfterShrink.count == 1)
+        let marker = try #require(events.last)
+        #expect(marker.text?.contains("shrank") == true)
+        #expect(marker.entry == nil)
 
-        // Turn 3: the backend grows again, from the *new* (post-shrink)
-        // baseline of 1. Two more entries are appended past index 1.
+        // Turn 3: the backend grows again past the shrunken transcript, which
+        // is the baseline now. The two new entries are appended after the
+        // marker.
         let toolCall = Transcript.ToolCall(
             id: UUID().uuidString,
             toolName: "lookup",
             arguments: try GeneratedContent(json: "{}")
         )
         container.backend.entries = [
-            .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "post-shrink prompt"))])),
+            postShrinkPrompt,
             .toolCalls(Transcript.ToolCalls([toolCall])),
             .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "turn3 response"))])),
         ]
-        _ = try await session.respond(to: "turn3")
+        try await turn("turn3")
 
         events = await recorder.events
-        // Diffing from the reset baseline (1) recovers correctly: the two
-        // entries past index 1 (`.toolCalls`, `.response`) are newly persisted.
-        #expect(events.map(\.kind) == [.session, .prompt, .response, .toolCalls, .response])
+        #expect(
+            events.map(\.kind) == [.session, .prompt, .response, .prompt, .divergence, .toolCalls, .response])
         #expect(events.last?.text == "turn3 response")
     }
 
-    @Test("a transcript that shrinks below persistedEntryCount during a streaming turn does not crash; the next turn diffs from the new baseline")
+    @Test("a transcript that shrinks below persistedEntryCount records its unseen entries and a divergence marker; the next turn diffs from the shrunken transcript")
     @MainActor
-    func streamingShrinkingTranscriptClampsWithoutCrashing() async throws {
+    func shrinkingTranscriptAppendsUnseenEntriesAndAMarker() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -464,56 +462,33 @@ struct TranscriptFidelityTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
-
-        // Turn 1 (streaming): the backend "SDK transcript" holds two entries.
-        // The diff persists both and advances `persistedEntryCount` to 2,
-        // mirroring shrinkingTranscriptClampsWithoutCrashing's non-streaming
-        // turn 1 but driven through streamResponse(to:) instead.
-        container.backend.entries = [
-            .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "turn1 prompt"))])),
-            .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "turn1 response"))])),
-        ]
-        for try await _ in await session.streamResponse(to: "turn1") {}
-
-        var events = await recorder.events
-        #expect(events.map(\.kind) == [.session, .prompt, .response])
-
-        // Turn 2 (streaming): the backend's transcript *shrinks* to a single
-        // entry — fewer than the 2 already persisted. This must never trap
-        // on the streaming path either: it logs a warning, records nothing
-        // for this turn, and resets the baseline to the smaller count (1).
-        container.backend.entries = [
-            .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "post-shrink prompt"))]))
-        ]
-        for try await _ in await session.streamResponse(to: "turn2") {}
-
-        events = await recorder.events
-        #expect(events.map(\.kind) == [.session, .prompt, .response])
-
-        // Turn 3 (streaming): the backend grows again, from the *new*
-        // (post-shrink) baseline of 1. Two more entries are appended past
-        // index 1, proving the streaming path recovers exactly like the
-        // non-streaming path does.
-        let toolCall = Transcript.ToolCall(
-            id: UUID().uuidString,
-            toolName: "lookup",
-            arguments: try GeneratedContent(json: "{}")
-        )
-        container.backend.entries = [
-            .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "post-shrink prompt"))])),
-            .toolCalls(Transcript.ToolCalls([toolCall])),
-            .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "turn3 response"))])),
-        ]
-        for try await _ in await session.streamResponse(to: "turn3") {}
-
-        events = await recorder.events
-        #expect(events.map(\.kind) == [.session, .prompt, .response, .toolCalls, .response])
-        #expect(events.last?.text == "turn3 response")
+        try await Self.assertShrinkAppendsUnseenEntries(container: container, recorder: recorder) { prompt in
+            _ = try await session.respond(to: prompt)
+        }
     }
 
-    // MARK: - Non-append divergence: loud marker, no wrong diff, recovery
+    @Test("a transcript that shrinks below persistedEntryCount during a streaming turn records its unseen entries and a divergence marker; the next turn diffs from the shrunken transcript")
+    @MainActor
+    func streamingShrinkingTranscriptAppendsUnseenEntriesAndAMarker() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
 
-    @Test("an in-place rewrite of an already-recorded entry records a divergence marker, records no wrong diff, and recovers on the next turn")
+        let container = VariableLLMContainer()
+        let recorder = InMemoryRecorder()
+        let router = Self.makeRouter(container: container, recorder: recorder, cacheDir: dir)
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        // Mirrors the non-streaming scenario but drives every turn through
+        // streamResponse(to:), so the streaming path appends the same events.
+        let session = profile.standard.makeSession()
+        try await Self.assertShrinkAppendsUnseenEntries(container: container, recorder: recorder) { prompt in
+            for try await _ in await session.streamResponse(to: prompt) {}
+        }
+    }
+
+    // MARK: - Non-append divergence: the turn's entries, then a loud marker beside them
+
+    @Test("an in-place rewrite of an already-recorded entry records a divergence marker after the turn's entries, never a second event under the recorded id, and the next turn appends past it")
     @MainActor
     func inPlaceRewriteRecordsDivergenceMarkerAndRecovers() async throws {
         let dir = Self.makeTempDir()
@@ -542,9 +517,10 @@ struct TranscriptFidelityTests {
         #expect(events.map(\.kind) == [.session, .prompt, .response])
 
         // Turn 2: the backend rewrites the recorded `.response` in place. The
-        // guard must record a loud `.divergence` marker and nothing else —
-        // never a duplicated or rewritten `.response` event, and never a
-        // silently-stale record with no signal at all.
+        // recorded id is already in the record, so no entry is new and the
+        // turn appends one loud `.divergence` marker — never a second event
+        // under the recorded id, and never a silently-stale record with no
+        // signal at all.
         container.backend.entries = [
             promptEntry,
             .response(Transcript.Response(id: responseId, segments: [.text(Transcript.TextSegment(content: "rewritten response"))])),
@@ -557,7 +533,8 @@ struct TranscriptFidelityTests {
         #expect(marker.text != nil)
         #expect(marker.entry == nil)
 
-        // Turn 3: appends past the reset baseline record normally again.
+        // Turn 3: the rewritten transcript is the baseline now, so an append
+        // past it records normally again.
         container.backend.entries.append(
             .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "turn3 response"))])))
         _ = try await session.respond(to: "turn3")
@@ -567,9 +544,9 @@ struct TranscriptFidelityTests {
         #expect(events.last?.text == "turn3 response")
     }
 
-    @Test("a mid-transcript insertion records a divergence marker and never re-records (duplicates) the tail")
+    @Test("a mid-transcript insertion records the inserted entry, then a divergence marker, and never re-records (duplicates) the tail")
     @MainActor
-    func midTranscriptInsertionRecordsDivergenceMarkerWithoutDuplicatingTail() async throws {
+    func midTranscriptInsertionRecordsInsertedEntryThenMarkerWithoutDuplicatingTail() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -595,8 +572,9 @@ struct TranscriptFidelityTests {
         // Turn 2: the backend inserts an entry MID-transcript, so the count
         // grows but the new entry is not at the tail. A purely positional
         // diff would re-record the last entry (the old tail) as if it were
-        // new; the guard must record a loud `.divergence` marker instead,
-        // and must not duplicate the tail.
+        // new. The diff runs by entry id instead: the inserted entry, whose
+        // id the record has never seen, is appended, then a loud
+        // `.divergence` marker, and the tail is not duplicated.
         container.backend.entries = [
             promptEntry,
             .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "inserted prompt"))])),
@@ -605,20 +583,204 @@ struct TranscriptFidelityTests {
         _ = try await session.respond(to: "turn2")
 
         events = await recorder.events
-        #expect(events.map(\.kind) == [.session, .prompt, .response, .divergence])
+        #expect(events.map(\.kind) == [.session, .prompt, .response, .prompt, .divergence])
+        #expect(events.filter { $0.text == "inserted prompt" }.count == 1)
         #expect(events.filter { $0.text == "turn1 response" }.count == 1)
 
-        // Turn 3: appends past the reset baseline record normally again.
+        // Turn 3: the transcript with the insertion is the baseline now, so
+        // an append past it records normally again.
         container.backend.entries.append(
             .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "turn3 response"))])))
         _ = try await session.respond(to: "turn3")
 
         events = await recorder.events
-        #expect(events.map(\.kind) == [.session, .prompt, .response, .divergence, .response])
+        #expect(events.map(\.kind) == [.session, .prompt, .response, .prompt, .divergence, .response])
         #expect(events.last?.text == "turn3 response")
     }
 
-    @Test("a bare handle whose synced transcript rewrites an entry in place records a divergence marker, records no wrong diff, and recovers on the next sync")
+    @Test("a turn that diverges is recorded whole: its prompt, its toolCalls with argumentsJSON, its response with an entry, then the divergence marker beside them")
+    @MainActor
+    func divergedTurnRecordsItsEntriesThenTheMarker() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let container = VariableLLMContainer()
+        let recorder = InMemoryRecorder()
+        let router = Self.makeRouter(container: container, recorder: recorder, cacheDir: dir)
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let session = profile.standard.makeSession()
+
+        // Turn 1: two entries, both recorded. The `.response` carries an
+        // explicit id so turn 2 can rewrite it in place.
+        let promptEntry = Transcript.Entry.prompt(
+            Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "turn1 prompt"))]))
+        let responseId = UUID().uuidString
+        container.backend.entries = [
+            promptEntry,
+            .response(Transcript.Response(id: responseId, segments: [.text(Transcript.TextSegment(content: "turn1 response"))])),
+        ]
+        _ = try await session.respond(to: "turn1")
+
+        // Turn 2: the backend rewrites the recorded `.response` in place AND
+        // appends a whole tool-using turn after it. The divergence is a note
+        // about the record, not a reason to drop the turn: the turn's three
+        // new entries are appended in transcript order, then the marker.
+        let arguments = try GeneratedContent(json: #"{"query":"weather"}"#)
+        let toolCalls = Transcript.ToolCalls(
+            id: "calls-1", [Transcript.ToolCall(id: "call-1", toolName: "lookup", arguments: arguments)])
+        container.backend.entries = [
+            promptEntry,
+            .response(Transcript.Response(id: responseId, segments: [.text(Transcript.TextSegment(content: "rewritten response"))])),
+            .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "turn2 prompt"))])),
+            .toolCalls(toolCalls),
+            .response(Transcript.Response(id: "resp-2", segments: [.text(Transcript.TextSegment(content: "turn2 response"))])),
+        ]
+        _ = try await session.respond(to: "turn2")
+
+        let events = await recorder.events
+        #expect(events.map(\.kind) == [.session, .prompt, .response, .prompt, .toolCalls, .response, .divergence])
+        #expect(events.filter { $0.text == "turn1 response" }.count == 1)
+
+        let turnTwoPrompt = try #require(events.first { $0.text == "turn2 prompt" })
+        #expect(turnTwoPrompt.entry != nil)
+
+        let recordedToolCalls = try #require(events.first { $0.kind == .toolCalls })
+        let recordedCall = try #require(recordedToolCalls.entry?.toolCalls?.first)
+        #expect(recordedCall.id == "call-1")
+        #expect(recordedCall.toolName == "lookup")
+        #expect(recordedCall.argumentsJSON == arguments.jsonString)
+
+        let turnTwoResponse = try #require(events.first { $0.text == "turn2 response" })
+        #expect(turnTwoResponse.entry?.entryId == "resp-2")
+        // The turn's own close carries the turn's `ms` stamp, as on a plain turn.
+        #expect(turnTwoResponse.ms != nil)
+
+        let marker = try #require(events.last)
+        #expect(marker.kind == .divergence)
+        #expect(marker.text?.contains(responseId) == true)
+        #expect(marker.entry == nil)
+    }
+
+    @Test("a turn that diverges still emits SessionEvent.toolCall on the wire for the tool call it recorded")
+    @MainActor
+    func divergedTurnEmitsToolCallOnTheWire() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let container = VariableLLMContainer()
+        let recorder = InMemoryRecorder()
+        let router = Self.makeRouter(container: container, recorder: recorder, cacheDir: dir)
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let session = profile.standard.makeSession()
+
+        let promptEntry = Transcript.Entry.prompt(
+            Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "turn1 prompt"))]))
+        let responseId = UUID().uuidString
+        container.backend.entries = [
+            promptEntry,
+            .response(Transcript.Response(id: responseId, segments: [.text(Transcript.TextSegment(content: "turn1 response"))])),
+        ]
+        for try await _ in await session.streamEvents(to: "turn1") {}
+
+        // Turn 2 diverges (the recorded `.response` is rewritten in place)
+        // and holds one answered tool call. The wire must carry that call
+        // exactly as it does for a plain turn.
+        let arguments = try GeneratedContent(json: #"{"query":"weather"}"#)
+        let outputSegment = Transcript.TextSegment(content: "found it")
+        container.backend.entries = [
+            promptEntry,
+            .response(Transcript.Response(id: responseId, segments: [.text(Transcript.TextSegment(content: "rewritten response"))])),
+            .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "turn2 prompt"))])),
+            .toolCalls(
+                Transcript.ToolCalls(
+                    id: "calls-1", [Transcript.ToolCall(id: "call-1", toolName: "lookup", arguments: arguments)])),
+            .toolOutput(Transcript.ToolOutput(id: "call-1", toolName: "lookup", segments: [.text(outputSegment)])),
+            .response(Transcript.Response(id: "resp-2", segments: [.text(Transcript.TextSegment(content: "ok"))])),
+        ]
+        var wire: [SessionEvent] = []
+        for try await event in await session.streamEvents(to: "turn2") {
+            wire.append(event)
+        }
+
+        #expect(
+            eventsAfterTurnFrame(wire) == [
+                .textDelta("ok"),
+                .toolCall(id: "call-1", name: "lookup", argumentsJSON: arguments.jsonString),
+                .toolStatus(id: "call-1", status: .running, summary: nil, output: nil),
+                .entryRecorded(id: "calls-1", kind: .toolCalls),
+                .toolStatus(
+                    id: "call-1", status: .completed, summary: "found it",
+                    output: [.text(id: outputSegment.id, content: "found it")]),
+                .entryRecorded(id: "resp-2", kind: .response),
+            ]
+        )
+
+        // And the record holds the same turn, with the marker beside it.
+        let events = await recorder.events
+        #expect(
+            events.map(\.kind) == [
+                .session, .prompt, .response, .prompt, .toolCalls, .toolOutput, .response, .divergence,
+            ])
+    }
+
+    @Test("the recorded entry count never falls between two reads of one session, across a shrink, a rewrite, and a failed turn")
+    @MainActor
+    func recordedEntryCountNeverFallsAcrossTurns() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let container = VariableLLMContainer()
+        let recorder = InMemoryRecorder()
+        let router = Self.makeRouter(container: container, recorder: recorder, cacheDir: dir)
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let session = profile.standard.makeSession()
+
+        let promptEntry = Transcript.Entry.prompt(
+            Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "turn1 prompt"))]))
+        let responseId = UUID().uuidString
+        // Each script is what the backend holds after one turn: a plain
+        // turn, a shrink, an in-place rewrite that grows, a plain append, and
+        // one more plain append the failed turn below reads.
+        let scripts: [[Transcript.Entry]] = [
+            [
+                promptEntry,
+                .response(Transcript.Response(id: responseId, segments: [.text(Transcript.TextSegment(content: "turn1 response"))])),
+            ],
+            [promptEntry],
+            [
+                promptEntry,
+                .response(Transcript.Response(id: responseId, segments: [.text(Transcript.TextSegment(content: "rewritten"))])),
+                .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "turn3 prompt"))])),
+            ],
+        ]
+
+        var lastEventCount = 0
+        var lastEntryCount = 0
+        for (index, script) in scripts.enumerated() {
+            container.backend.entries = script
+            _ = try await session.respond(to: "turn \(index)")
+            let events = await recorder.events
+            #expect(events.count >= lastEventCount)
+            let entryCount = events.count { $0.kind.isEntryKind }
+            #expect(entryCount >= lastEntryCount)
+            lastEventCount = events.count
+            lastEntryCount = entryCount
+        }
+
+        // A failed turn appends its close and nothing goes away.
+        container.backend.shouldThrow = true
+        await #expect(throws: (any Error).self) {
+            _ = try await session.respond(to: "failing turn")
+        }
+        let events = await recorder.events
+        #expect(events.count > lastEventCount)
+        #expect(events.count { $0.kind.isEntryKind } > lastEntryCount)
+    }
+
+    @Test("a bare handle whose synced transcript rewrites an entry in place records a divergence marker, never a second event under the recorded id, and appends past it on the next sync")
     @MainActor
     func handleInPlaceRewriteRecordsDivergenceMarkerAndRecovers() async throws {
         let dir = Self.makeTempDir()
@@ -628,9 +790,9 @@ struct TranscriptFidelityTests {
         let router = Self.makeRouter(container: UndrivenLanguageModelContainer(), recorder: recorder, cacheDir: dir)
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
-        // The bare-handle sibling of the two session-path tests above:
+        // The bare-handle sibling of the session-path tests above:
         // `sync(_:)` runs the same last-seen-vs-current diff, so the same
-        // guard must fire there. Entries are fabricated directly (see
+        // rule holds there. Entries are fabricated directly (see
         // CompactionSegmentTests' resume test for the same technique).
         let handle = profile.standard.makeLanguageModel()
         let promptEntry = Transcript.Entry.prompt(
@@ -646,7 +808,8 @@ struct TranscriptFidelityTests {
         #expect(events.map(\.kind) == [.session, .prompt, .response])
 
         // Sync 2: the same transcript with its `.response` rewritten in
-        // place — same id, same count, changed content.
+        // place — same id, same count, changed content. No id is new, so
+        // only the marker is appended.
         let rewrittenResponse = Transcript.Entry.response(
             Transcript.Response(id: responseId, segments: [.text(Transcript.TextSegment(content: "rewritten response"))]))
         await handle.sync(Transcript(entries: [promptEntry, rewrittenResponse]))
@@ -655,7 +818,8 @@ struct TranscriptFidelityTests {
         #expect(events.map(\.kind) == [.session, .prompt, .response, .divergence])
         #expect(events.filter { $0.kind == .response }.count == 1)
 
-        // Sync 3: an append past the reset baseline records normally again.
+        // Sync 3: the rewritten transcript is the baseline now, so an append
+        // past it records normally again.
         await handle.sync(
             Transcript(entries: [
                 promptEntry,
@@ -665,6 +829,86 @@ struct TranscriptFidelityTests {
 
         events = await recorder.events
         #expect(events.map(\.kind) == [.session, .prompt, .response, .divergence, .response])
+        #expect(events.last?.text == "turn3 response")
+    }
+
+    @Test("a bare handle whose synced transcript rewrites an entry in place and appends a new one records the new entry, then the divergence marker")
+    @MainActor
+    func handleDivergedSyncRecordsItsNewEntriesThenTheMarker() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let recorder = InMemoryRecorder()
+        let router = Self.makeRouter(container: UndrivenLanguageModelContainer(), recorder: recorder, cacheDir: dir)
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let handle = profile.standard.makeLanguageModel()
+        let promptEntry = Transcript.Entry.prompt(
+            Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "turn1 prompt"))]))
+        let responseId = UUID().uuidString
+        await handle.sync(
+            Transcript(entries: [
+                promptEntry,
+                .response(Transcript.Response(id: responseId, segments: [.text(Transcript.TextSegment(content: "turn1 response"))])),
+            ]))
+
+        // Sync 2: the recorded `.response` is rewritten in place AND a new
+        // `.response` follows it. The new entry is appended, then the marker.
+        await handle.sync(
+            Transcript(entries: [
+                promptEntry,
+                .response(Transcript.Response(id: responseId, segments: [.text(Transcript.TextSegment(content: "rewritten response"))])),
+                .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "second response"))])),
+            ]))
+
+        let events = await recorder.events
+        #expect(events.map(\.kind) == [.session, .prompt, .response, .response, .divergence])
+        #expect(events.filter { $0.kind == .response }.map(\.text) == ["turn1 response", "second response"])
+        let marker = try #require(events.last)
+        #expect(marker.text?.contains(responseId) == true)
+    }
+
+    @Test("a bare handle whose synced transcript shrinks records the unseen entries, then a divergence marker, and appends past the shrunken transcript on the next sync")
+    @MainActor
+    func handleShrinkRecordsUnseenEntriesThenTheMarker() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let recorder = InMemoryRecorder()
+        let router = Self.makeRouter(container: UndrivenLanguageModelContainer(), recorder: recorder, cacheDir: dir)
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let handle = profile.standard.makeLanguageModel()
+        await handle.sync(
+            Transcript(entries: [
+                .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "turn1 prompt"))])),
+                .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "turn1 response"))])),
+            ]))
+
+        var events = await recorder.events
+        #expect(events.map(\.kind) == [.session, .prompt, .response])
+
+        // Sync 2: the transcript shrinks to one entry the record has never
+        // seen. That entry is appended, then the marker.
+        let postShrinkPrompt = Transcript.Entry.prompt(
+            Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "post-shrink prompt"))]))
+        await handle.sync(Transcript(entries: [postShrinkPrompt]))
+
+        events = await recorder.events
+        #expect(events.map(\.kind) == [.session, .prompt, .response, .prompt, .divergence])
+        let marker = try #require(events.last)
+        #expect(marker.text?.contains("shrank") == true)
+
+        // Sync 3: the shrunken transcript is the baseline now, so an append
+        // past it records normally again.
+        await handle.sync(
+            Transcript(entries: [
+                postShrinkPrompt,
+                .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "turn3 response"))])),
+            ]))
+
+        events = await recorder.events
+        #expect(events.map(\.kind) == [.session, .prompt, .response, .prompt, .divergence, .response])
         #expect(events.last?.text == "turn3 response")
     }
 
@@ -743,8 +987,9 @@ struct TranscriptFidelityTests {
         // when `recordTranscriptDelta` already persisted a real `.response`.
         #expect(events.map(\.kind) == [.session, .prompt, .response])
         let responseEvent = try #require(events.first { $0.kind == .response })
-        // It is the SDK's own entry (non-nil `entry`, its real text), not the
-        // router-only bodyless synthetic close (which carries neither), and it
+        // It is the SDK's own entry (an entry with a segment, its real text),
+        // not the router-only synthetic close (an entry with no segment and
+        // no text), and it
         // still carries the turn's `ms` since it is the diff's last
         // `.response`-kind event.
         #expect(responseEvent.entry != nil)

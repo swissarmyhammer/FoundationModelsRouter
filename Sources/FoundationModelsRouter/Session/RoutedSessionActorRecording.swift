@@ -2,7 +2,7 @@ import Foundation
 import FoundationModels
 import os
 
-/// The logger for transcript shrink and divergence warnings.
+/// The logger for transcript divergence warnings.
 private let sessionRecordingLogger = makeModuleLogger(category: "Recording")
 
 /// The recording path of ``RoutedSessionActor``: the per-turn usage delta,
@@ -83,7 +83,7 @@ extension RoutedSessionActor {
         // `.prompt`-kind partial to attach them to — every `.ebnf`-guided
         // turn, whose backend validates and throws before touching its live
         // session at all (see `MLXFoundationModelsSessionBackend.respond(to:
-        // following:maxTokens:)`), or a transcript-shrink guard — the
+        // following:maxTokens:)`) — the
         // composed preamble was never actually delivered to the model and the
         // events were never persisted either. Re-queue them so a future turn
         // gets another chance, instead of the drain silently destroying state
@@ -120,14 +120,25 @@ extension RoutedSessionActor {
         return (after.input - before.input, after.output - before.output)
     }
 
-    /// Diffs the backend transcript against ``persistedEntryCount`` and
-    /// records each entry the SDK appended since the last diff.
+    /// Diffs the backend transcript against ``persistedBaseline`` and records
+    /// each entry the SDK appended since the last diff. A transcript only
+    /// appends: no branch here drops an entry.
     ///
-    /// A transcript shrink logs a warning, records nothing, and resets the
-    /// count and baseline. A divergence from ``persistedBaseline`` logs a
-    /// warning, records one ``TranscriptEvent/Kind/divergence`` marker, and
-    /// resets the count and baseline. Otherwise `ms` and `usage` are stamped
-    /// on the last `.response` partial only.
+    /// A transcript that still extends the recorded prefix is diffed by
+    /// position from ``persistedEntryCount``. A transcript that diverged from
+    /// the baseline (``TranscriptDiffer/divergence(from:in:)``: an entry id
+    /// moved, the boundary entry was rewritten in place, or the transcript
+    /// shrank) is diffed by entry id instead, so every entry the record has
+    /// never seen is appended, in transcript order, and then one
+    /// ``TranscriptEvent/Kind/divergence`` marker is appended beside them.
+    /// An entry rewritten under a recorded id is not appended a second time;
+    /// the marker names it. After any recorded diff the whole current
+    /// transcript becomes the baseline and ``persistedEntryCount`` its
+    /// count: every entry of it is then in the record, either from before or
+    /// from this diff, so the reset loses nothing. `ms` and `usage` are
+    /// stamped on the last `.response` partial only. Each recorded partial
+    /// emits its ``SessionEvent``s on a diverged turn exactly as on a plain
+    /// one.
     ///
     /// - Parameters:
     ///   - grammar: The guided-generation grammar in force.
@@ -145,51 +156,19 @@ extension RoutedSessionActor {
         pendingEvents: [OperationEvent],
         onEvent: ((SessionEvent) -> Void)? = nil
     ) async -> (diffIncludedResponse: Bool, pendingEventsAttached: Bool) {
-        let entries = backend.transcriptEntries()
-        guard entries.count >= persistedEntryCount else {
-            sessionRecordingLogger.warning(
-                """
-                transcript shrank from \(self.persistedEntryCount, privacy: .public) to \
-                \(entries.count, privacy: .public) entries for session \
-                \(self.id.description, privacy: .public); recording no entries for this turn and \
-                resetting the baseline
-                """
-            )
-            persistedEntryCount = entries.count
-            // The count now names entries this session never recorded, so no
-            // verifiable identity exists until the next successful diff
-            // re-establishes one — see ``persistedBaseline``.
-            persistedBaseline = nil
-            return (false, pendingEvents.isEmpty)
-        }
-
-        let current = Transcript(entries: entries)
-        if let baseline = persistedBaseline,
-            let divergence = TranscriptDiffer.divergence(from: baseline, in: current)
-        {
-            sessionRecordingLogger.warning(
-                """
-                \(divergence.description, privacy: .public) for session \
-                \(self.id.description, privacy: .public); recording a divergence marker instead of a \
-                wrong diff and resetting the baseline
-                """
-            )
-            await append(partial: makePartialEvent(kind: .divergence, grammar: grammar, text: divergence.description))
-            persistedEntryCount = entries.count
-            persistedBaseline = TranscriptDiffer.Baseline(transcript: current)
-            return (false, pendingEvents.isEmpty)
-        }
-
-        let diffPartials = TranscriptDiffer.diff(
-            lastSeen: Transcript(entries: entries.prefix(persistedEntryCount)),
+        let current = Transcript(entries: backend.transcriptEntries())
+        let divergence = TranscriptDiffer.divergence(from: persistedBaseline, in: current)
+        let diffPartials = TranscriptDiffer.partials(
+            baseline: persistedBaseline,
             current: current,
+            divergence: divergence,
             routerId: routerId,
             sessionId: id,
             parentId: parentId,
             slot: slot,
             model: model
         )
-        guard !diffPartials.isEmpty else { return (false, pendingEvents.isEmpty) }
+        guard divergence != nil || !diffPartials.isEmpty else { return (false, pendingEvents.isEmpty) }
 
         let lastResponseIndex = diffPartials.lastIndex { $0.kind == .response }
         let (recordedPartials, pendingEventsAttached) = Self.attachingPendingEventSegments(
@@ -229,9 +208,29 @@ extension RoutedSessionActor {
         for id in dispatchedToolCallIds where !completedToolCallIds.contains(id) {
             onEvent?(.toolStatus(id: id, status: .failed, summary: nil, output: nil))
         }
-        persistedEntryCount = entries.count
+        if let divergence {
+            await appendDivergenceMarker(divergence, grammar: grammar)
+        }
+        persistedEntryCount = current.count
         persistedBaseline = TranscriptDiffer.Baseline(transcript: current)
         return (lastResponseIndex != nil, pendingEventsAttached)
+    }
+
+    /// Logs `divergence` and appends its ``TranscriptEvent/Kind/divergence``
+    /// marker, after the entries the diverged turn recorded.
+    ///
+    /// - Parameters:
+    ///   - divergence: The non-append change the turn's diff found.
+    ///   - grammar: The guided-generation grammar in force.
+    private func appendDivergenceMarker(_ divergence: TranscriptDiffer.Divergence, grammar: Grammar?) async {
+        sessionRecordingLogger.warning(
+            """
+            \(divergence.description, privacy: .public) for session \
+            \(self.id.description, privacy: .public); the turn's unseen entries are recorded and a \
+            divergence marker follows them
+            """
+        )
+        await append(partial: makePartialEvent(kind: .divergence, grammar: grammar, text: divergence.description))
     }
 
     /// Appends one ``OperationEventSegment`` per event onto the last

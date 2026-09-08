@@ -395,12 +395,14 @@ struct SessionChokepointTests {
         #expect(promptEvent.ms == nil)
 
         // The `.response` close is the router-only synthetic trace every failed
-        // turn leaves — bodyless (no `entry`, no `text`) but carrying `ms`, since
+        // turn leaves — an entry with no segment, no `text`, and `ms` — since
         // the stub never appended a real `.response` entry when it threw.
         let responseEvent = try #require(events.first { $0.kind == .response })
-        #expect(responseEvent.entry == nil)
+        let closeEntry = try #require(responseEvent.entry)
+        #expect(closeEntry.segments?.isEmpty == true)
         #expect(responseEvent.text == nil)
         #expect(responseEvent.ms != nil)
+        #expect(responseEvent.isFailedTurnClose)
     }
 
     @Test("the chokepoint emits a close event even when the streamed body throws")
@@ -438,12 +440,14 @@ struct SessionChokepointTests {
         #expect(promptEvent.ms == nil)
 
         // The `.response` close is the router-only synthetic trace every failed
-        // turn leaves — bodyless (no `entry`, no `text`) but carrying `ms`, since
+        // turn leaves — an entry with no segment, no `text`, and `ms` — since
         // the stub never appended a real `.response` entry when it threw.
         let responseEvent = try #require(events.first { $0.kind == .response })
-        #expect(responseEvent.entry == nil)
+        let closeEntry = try #require(responseEvent.entry)
+        #expect(closeEntry.segments?.isEmpty == true)
         #expect(responseEvent.text == nil)
         #expect(responseEvent.ms != nil)
+        #expect(responseEvent.isFailedTurnClose)
     }
 
     // MARK: - Profile retention

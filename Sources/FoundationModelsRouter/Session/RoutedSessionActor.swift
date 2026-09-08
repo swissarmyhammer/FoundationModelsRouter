@@ -441,10 +441,14 @@ actor RoutedSessionActor: RoutedSession {
     var persistedEntryCount: Int
 
     /// The identity of the ``persistedEntryCount``-long backend prefix this
-    /// session has already persisted (``TranscriptDiffer/Baseline``), or `nil`
-    /// when no verifiable identity exists yet. `recordTranscriptDelta` verifies
-    /// it before a diff (``TranscriptDiffer/divergence(from:in:)``).
-    var persistedBaseline: TranscriptDiffer.Baseline?
+    /// session has already persisted or inherited (``TranscriptDiffer/Baseline``).
+    /// `recordTranscriptDelta` verifies it before a diff
+    /// (``TranscriptDiffer/divergence(from:in:)``) and takes the whole
+    /// current transcript as the next baseline after every recorded diff.
+    /// Set at construction from the backend's own prefix, so an identity
+    /// exists before the first turn: empty for a root, the parent's entries
+    /// for a fork, the seed transcript for a restore.
+    var persistedBaseline: TranscriptDiffer.Baseline
 
     /// This session's position in its own append-only recorded history: how
     /// many entry-kind events its effective recorded stream holds. Starts at
@@ -556,6 +560,8 @@ actor RoutedSessionActor: RoutedSession {
         self.forkAdmissionGate = forkAdmissionGate
         self.holdsAdmissionPermit = holdsAdmissionPermit
         self.persistedEntryCount = persistedEntryCount
+        self.persistedBaseline = TranscriptDiffer.Baseline(
+            transcript: Transcript(entries: backend.transcriptEntries().prefix(persistedEntryCount)))
         self.historyOrdinal = historyOrdinal
         self.sidecarOrigin = sidecarOrigin
         self.contextTokens = contextTokens

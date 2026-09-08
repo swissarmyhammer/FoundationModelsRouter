@@ -564,10 +564,10 @@ struct TranscriptReconstructionTests {
 
     @Test("a fabricated v1 turn (prompt then response, both entry-less, response shaped exactly like the router's synthetic close) throws on the prompt event, never silently skipping the response as if it were a failed-turn close")
     func v1TurnWithResponseShapedLikeBodylessCloseThrowsOnThePromptFirst() throws {
-        // This pins down the reasoning in `isFailedTurnBodylessClose`'s doc
-        // comment: a genuine v1 `.response` event recorded with its body
-        // stripped decodes with the exact same shape as the router's v2 synthetic
-        // bodyless close (`entry == nil`, `text == nil`, `ms` set) — the two
+        // This pins down the reasoning in `TranscriptEvent.isFailedTurnClose`'s
+        // doc comment: a genuine v1 `.response` event recorded with its body
+        // stripped decodes with the exact same shape as the router's legacy
+        // synthetic close (`entry == nil`, `text == nil`, `ms` set) — the two
         // are not distinguishable from that one event's fields alone. What
         // makes this safe is that the turn's own `.prompt` event (also
         // `entry == nil`, since it is a genuine v1 line) always precedes it
@@ -722,9 +722,13 @@ struct TranscriptReconstructionTests {
         let rawEvents = try tree.events(forSession: root.id)
         let closeEvent = try #require(rawEvents.last)
         #expect(closeEvent.kind == .response)
-        #expect(closeEvent.entry == nil)
+        // The close holds an entry with no segment: the turn answered with
+        // nothing. That shape is what reconstruction skips.
+        let closeEntry = try #require(closeEvent.entry)
+        #expect(closeEntry.segments?.isEmpty == true)
         #expect(closeEvent.text == nil)
         #expect(closeEvent.ms != nil)
+        #expect(closeEvent.isFailedTurnClose)
 
         let reconstructed = try tree.effectiveTranscript(forSession: root.id)
         let kinds = Array(reconstructed).map { TranscriptEntryMapper.event(from: $0).kind }
@@ -734,7 +738,7 @@ struct TranscriptReconstructionTests {
     @Test("a session whose very first turn fails before the backend appends anything at all reconstructs to an empty Transcript, not an error")
     @MainActor
     func firstTurnTotalFailureWithNoBackendEntriesReconstructsEmpty() async throws {
-        // The sharper edge case behind `isFailedTurnBodylessClose`'s doc
+        // The sharper edge case behind `TranscriptEvent.isFailedTurnClose`'s doc
         // comment: unlike a v1 recording (whose bracketing code wrote its
         // `.prompt` event *unconditionally*, before calling into the
         // backend at all — see `RoutedSession.swift` git history at
@@ -780,9 +784,11 @@ struct TranscriptReconstructionTests {
         // ever recorded — no `.prompt`/`.instructions` at all.
         #expect(rawEvents.map(\.kind) == [.session, .response])
         let closeEvent = try #require(rawEvents.last)
-        #expect(closeEvent.entry == nil)
+        let closeEntry = try #require(closeEvent.entry)
+        #expect(closeEntry.segments?.isEmpty == true)
         #expect(closeEvent.text == nil)
         #expect(closeEvent.ms != nil)
+        #expect(closeEvent.isFailedTurnClose)
 
         let reconstructed = try tree.effectiveTranscript(forSession: root.id)
         #expect(Array(reconstructed).isEmpty)

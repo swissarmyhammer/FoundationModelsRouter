@@ -1,17 +1,42 @@
 import FoundationModels
 
-/// Diffs a last-seen `FoundationModels.Transcript` snapshot against a current
+/// Diffs a recorded `FoundationModels.Transcript` baseline against a current
 /// one and maps each new entry to an identity-stamped
 /// ``TranscriptEvent/Partial`` via ``TranscriptEntryMapper``. Turn-specific
 /// stamps (`grammar`, `ms`, token counts) are the caller's concern.
 enum TranscriptDiffer {
-    /// Returns the ordered partial events for every entry `current` gained
-    /// beyond `lastSeen`, by position. A `current` that is not longer than
-    /// `lastSeen` yields an empty diff.
+    /// The partials a recorder appends for `current` against `baseline`: the
+    /// positional diff past the recorded count while `divergence` is `nil`,
+    /// and the diff by entry id
+    /// (``diffByEntryId(baseline:current:routerId:sessionId:parentId:slot:model:)``)
+    /// once the transcript diverged. So every entry the record has never seen
+    /// is appended, and a recorded entry is never appended a second time.
     ///
-    /// - Returns: The partial events, empty when `current` has nothing new.
-    static func diff(
-        lastSeen: Transcript,
+    /// - Returns: The partial events, in `current`'s order.
+    static func partials(
+        baseline: Baseline,
+        current: Transcript,
+        divergence: Divergence?,
+        routerId: ULID,
+        sessionId: ULID,
+        parentId: ULID?,
+        slot: ModelSlot,
+        model: ModelRef
+    ) -> [TranscriptEvent.Partial] {
+        guard divergence == nil else {
+            return diffByEntryId(
+                baseline: baseline, current: current, routerId: routerId, sessionId: sessionId,
+                parentId: parentId, slot: slot, model: model)
+        }
+        return diffByPosition(
+            recordedCount: baseline.entryIds.count, current: current, routerId: routerId, sessionId: sessionId,
+            parentId: parentId, slot: slot, model: model)
+    }
+
+    /// Maps every entry of `current` past index `recordedCount`, in order. A
+    /// `current` no longer than `recordedCount` maps nothing.
+    private static func diffByPosition(
+        recordedCount: Int,
         current: Transcript,
         routerId: ULID,
         sessionId: ULID,
@@ -19,7 +44,7 @@ enum TranscriptDiffer {
         slot: ModelSlot,
         model: ModelRef
     ) -> [TranscriptEvent.Partial] {
-        let newEntries = current[min(lastSeen.count, current.count)...]
+        let newEntries = current[min(recordedCount, current.count)...]
         return mapPartials(
             newEntries, routerId: routerId, sessionId: sessionId, parentId: parentId, slot: slot, model: model)
     }
@@ -39,7 +64,41 @@ enum TranscriptDiffer {
         slot: ModelSlot,
         model: ModelRef
     ) -> [TranscriptEvent.Partial] {
-        let seenIds = Set(lastSeen.map(\.id))
+        diffByEntryId(
+            seenIds: Set(lastSeen.map(\.id)), current: current, routerId: routerId, sessionId: sessionId,
+            parentId: parentId, slot: slot, model: model)
+    }
+
+    /// Returns the ordered partial events for every entry in `current` whose
+    /// `Transcript.Entry.id` is not in `baseline`. A diverged transcript's
+    /// recorded set is the baseline's ids, not its positional prefix, so this
+    /// is the diff for a turn ``divergence(from:in:)`` reported on.
+    ///
+    /// - Returns: The partial events, in `current`'s order.
+    static func diffByEntryId(
+        baseline: Baseline,
+        current: Transcript,
+        routerId: ULID,
+        sessionId: ULID,
+        parentId: ULID?,
+        slot: ModelSlot,
+        model: ModelRef
+    ) -> [TranscriptEvent.Partial] {
+        diffByEntryId(
+            seenIds: Set(baseline.entryIds), current: current, routerId: routerId, sessionId: sessionId,
+            parentId: parentId, slot: slot, model: model)
+    }
+
+    /// Maps every entry of `current` whose id is not in `seenIds`, in order.
+    private static func diffByEntryId(
+        seenIds: Set<String>,
+        current: Transcript,
+        routerId: ULID,
+        sessionId: ULID,
+        parentId: ULID?,
+        slot: ModelSlot,
+        model: ModelRef
+    ) -> [TranscriptEvent.Partial] {
         let unseenEntries = current.filter { !seenIds.contains($0.id) }
         return mapPartials(
             unseenEntries, routerId: routerId, sessionId: sessionId, parentId: parentId, slot: slot, model: model)
@@ -62,9 +121,13 @@ enum TranscriptDiffer {
     }
 
     /// One detected non-append backend-transcript change against a recorded
-    /// ``Baseline``. On a divergence the caller records no diff, logs a
-    /// warning with ``description``, records one
-    /// ``TranscriptEvent/Kind/divergence`` marker event, and resets its baseline.
+    /// ``Baseline``. A divergence is a note about the record, never a reason
+    /// to drop an entry: the caller records the entries whose id the baseline
+    /// does not hold
+    /// (``partials(baseline:current:divergence:routerId:sessionId:parentId:slot:model:)``),
+    /// then one ``TranscriptEvent/Kind/divergence`` marker event whose body
+    /// is ``description``, logs a warning, and takes the current transcript
+    /// as its next baseline.
     enum Divergence: Equatable, Sendable, CustomStringConvertible {
         /// The entry at `index` in the recorded prefix no longer carries the
         /// recorded id.
@@ -73,6 +136,10 @@ enum TranscriptDiffer {
         /// The boundary entry carries its recorded id but its content changed.
         /// Only the boundary index is probed.
         case rewrittenInPlace(index: Int, entryId: String)
+
+        /// The transcript holds fewer entries than the recorded prefix, so
+        /// some recorded entry is gone from the backend.
+        case shrank(recordedCount: Int, currentCount: Int)
 
         /// What diverged, and where — the warning-log and marker-event body.
         var description: String {
@@ -88,16 +155,25 @@ enum TranscriptDiffer {
                     backend transcript rewrote the recorded entry at index \(index) in place: entry id \
                     \(entryId) is unchanged but its content differs from what was recorded
                     """
+            case .shrank(let recordedCount, let currentCount):
+                return """
+                    backend transcript shrank from \(recordedCount) recorded entries to \(currentCount): \
+                    some recorded entry is gone from the backend
+                    """
             }
         }
     }
 
     /// Returns the first non-append change `current` shows against
     /// `baseline`, or `nil` when `current` still extends the recorded prefix.
-    /// Checks every recorded id at its index first, then the boundary
-    /// entry's payload. A `current` shorter than `baseline` returns `nil`.
+    /// A `current` shorter than `baseline` is
+    /// ``Divergence/shrank(recordedCount:currentCount:)``. Otherwise every
+    /// recorded id is checked at its index first, then the boundary entry's
+    /// payload.
     static func divergence(from baseline: Baseline, in current: Transcript) -> Divergence? {
-        guard current.count >= baseline.entryIds.count else { return nil }
+        guard current.count >= baseline.entryIds.count else {
+            return .shrank(recordedCount: baseline.entryIds.count, currentCount: current.count)
+        }
         for (index, (recordedId, entry)) in zip(baseline.entryIds, current).enumerated()
         where entry.id != recordedId {
             return .displaced(index: index, recordedId: recordedId, currentId: entry.id)
@@ -108,11 +184,6 @@ enum TranscriptDiffer {
             return .rewrittenInPlace(index: boundaryIndex, entryId: baseline.entryIds[boundaryIndex])
         }
         return nil
-    }
-
-    /// ``divergence(from:in:)`` over a ``Baseline`` captured from `lastSeen`.
-    static func divergence(lastSeen: Transcript, current: Transcript) -> Divergence? {
-        divergence(from: Baseline(transcript: lastSeen), in: current)
     }
 
     /// Maps `entries` to stamped ``TranscriptEvent/Partial`` values that carry

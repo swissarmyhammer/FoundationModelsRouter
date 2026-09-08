@@ -53,8 +53,24 @@ comments:
     - evidence: 8553529 test(session): guard StubSessionBackend state with one mutex (^9smkhk8) — 8 files changed, 354 insertions(+), 138 deletions(-)
     - next: /review
   timestamp: 2026-09-08T16:16:43.107086+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m20xb493a1dm0qy18fge6w73
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~2..HEAD` (local backend) — 0 findings on HEAD~2..HEAD. 7 validator runs attempted, 0 failed, 0 confirmed, 0 refuted. 4 source files reviewed (Sources/FoundationModelsRouter/Session/LanguageModelSessionBackend.swift, Tests/FoundationModelsRouterTests/Helpers/StubSessionBackend.swift, Tests/FoundationModelsRouterTests/RoutedSessionToolContextBindingTests.swift, Tests/FoundationModelsRouterTests/StubSessionBackendConcurrencyTests.swift). 4 `.kanban/` files skipped by `.reviewignore`. No prior `## Review Findings` section on the card.
+    - next: task moved from `review` to `done`. No open work.
+  timestamp: 2026-09-08T16:24:12.323415+00:00
+- actor: claude-code
+  id: 01m20xbr3f0bty14cn2j2ysdgv
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 4 files (Helpers/StubSessionBackend.swift, StubSessionBackendConcurrencyTests.swift, RoutedSessionToolContextBindingTests.swift, LanguageModelSessionBackend.swift doc only)
+    - test: green — swift test, 1239 passed + 83 passed in Evals, 0 failed, 0 skipped, 0 warnings
+    - commit: 8553529 (plus 9c45090, kanban files only)
+    - review: clean — 0 findings on HEAD~2..HEAD; task moved to done
+  timestamp: 2026-09-08T16:24:32.623357+00:00
+position_column: done
+position_ordinal: ffffcf80
 title: A failed streaming turn traps in recordTranscriptDelta while it records the failed turn
 ---
 ### What

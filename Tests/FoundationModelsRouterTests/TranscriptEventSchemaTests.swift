@@ -113,6 +113,56 @@ struct TranscriptEventSchemaTests {
         #expect(event.entry == nil)
     }
 
+    // MARK: - The failed-turn close
+
+    /// The duration stamp every turn close carries.
+    private static let closeDuration = 12
+
+    /// Builds a `.response` event with `entry`, no body text, and a duration
+    /// stamp: the shape of a turn's close.
+    private static func responseClose(entry: TranscriptEntryPayload?) -> TranscriptEvent {
+        TranscriptEvent(
+            routerId: .generate(),
+            sessionId: .generate(),
+            seq: 0,
+            ts: fixedInstant,
+            kind: .response,
+            ms: closeDuration,
+            entry: entry
+        )
+    }
+
+    @Test("a .response close whose entry holds no segment is the failed-turn close")
+    func failedTurnCloseWithAnEmptyEntryIsRecognized() {
+        let close = Self.responseClose(entry: TranscriptEntryPayload(entryId: "close-1", segments: [], assetIds: []))
+        #expect(close.isFailedTurnClose)
+    }
+
+    @Test("a .response close with no entry, from a recording made before the close carried one, is the failed-turn close")
+    func failedTurnCloseWithNoEntryIsRecognized() {
+        #expect(Self.responseClose(entry: nil).isFailedTurnClose)
+    }
+
+    @Test("a .response whose entry holds a segment is the SDK's own response, never the failed-turn close")
+    func responseWithASegmentIsNotTheFailedTurnClose() {
+        let response = Self.responseClose(
+            entry: TranscriptEntryPayload(entryId: "resp-1", segments: [.text(id: "s1", content: "")], assetIds: []))
+        #expect(!response.isFailedTurnClose)
+    }
+
+    @Test("a .response with no duration stamp is not the failed-turn close")
+    func responseWithNoDurationIsNotTheFailedTurnClose() {
+        let response = TranscriptEvent(
+            routerId: .generate(),
+            sessionId: .generate(),
+            seq: 0,
+            ts: Self.fixedInstant,
+            kind: .response,
+            entry: TranscriptEntryPayload(entryId: "close-1", segments: [], assetIds: [])
+        )
+        #expect(!response.isFailedTurnClose)
+    }
+
     // MARK: - agentSpawn on the .session event (task ^1sddtxz)
 
     /// A fixed spawn context, so two events built from it compare equal.

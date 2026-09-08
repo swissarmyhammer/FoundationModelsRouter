@@ -2,7 +2,7 @@ import Foundation
 import FoundationModels
 import os
 
-/// The logger that reports a transcript shrink or a non-append divergence.
+/// The logger that reports a non-append divergence of a synced transcript.
 private let recordingLanguageModelLogger = makeModuleLogger(category: "Recording")
 
 /// A `FoundationModels.LanguageModel` that records, gates, and supports tool
@@ -315,55 +315,35 @@ actor RecordingLanguageModelState {
     }
 
     /// Diffs `current` against ``lastSeen``, records what is new, and sets
-    /// ``lastSeen`` to `current`. A shrink resets the baseline and records
-    /// nothing. A non-append divergence records one
-    /// ``TranscriptEvent/Kind/divergence`` marker and resets the baseline.
-    /// A non-nil `usage` is stamped onto the last `.response` partial only.
+    /// ``lastSeen`` to `current`. A transcript only appends: no branch here
+    /// drops an entry. A `current` that extends ``lastSeen`` is diffed by
+    /// position. A `current` that diverged from it
+    /// (``TranscriptDiffer/divergence(from:in:)``: an entry id moved, the
+    /// boundary entry was rewritten in place, or the transcript shrank) is
+    /// diffed by entry id, so every entry the record has never seen is
+    /// appended, in transcript order, and then one
+    /// ``TranscriptEvent/Kind/divergence`` marker is appended beside them.
+    /// An entry rewritten under a recorded id is not appended a second time;
+    /// the marker names it. A non-nil `usage` is stamped onto the last
+    /// `.response` partial only.
     ///
     /// - Parameters:
     ///   - current: The transcript's current state.
     ///   - usage: This turn's `(input, output)` token usage, or `nil`.
     private func diffAndRecord(current: Transcript, usage: (input: Int, output: Int)? = nil) async {
-        guard current.count >= lastSeen.count else {
-            recordingLanguageModelLogger.warning(
-                """
-                transcript shrank from \(self.lastSeen.count, privacy: .public) to \
-                \(current.count, privacy: .public) entries for handle \
-                \(self.sessionId.description, privacy: .public); recording no entries for this call and \
-                resetting the baseline
-                """
-            )
-            lastSeen = current
-            return
-        }
-        if let divergence = TranscriptDiffer.divergence(lastSeen: lastSeen, current: current) {
-            recordingLanguageModelLogger.warning(
-                """
-                \(divergence.description, privacy: .public) for handle \
-                \(self.sessionId.description, privacy: .public); recording a divergence marker instead \
-                of a wrong diff and resetting the baseline
-                """
-            )
-            await recorder.append(
-                TranscriptEvent.Partial(
-                    routerId: routerId, sessionId: sessionId, parentId: parentId, slot: slot, model: model,
-                    kind: .divergence, text: divergence.description
-                ),
-                to: recordingDirectory
-            )
-            lastSeen = current
-            return
-        }
-        let diffPartials = TranscriptDiffer.diff(
-            lastSeen: lastSeen,
+        let baseline = TranscriptDiffer.Baseline(transcript: lastSeen)
+        let divergence = TranscriptDiffer.divergence(from: baseline, in: current)
+        let diffPartials = TranscriptDiffer.partials(
+            baseline: baseline,
             current: current,
+            divergence: divergence,
             routerId: routerId,
             sessionId: sessionId,
             parentId: parentId,
             slot: slot,
             model: model
         )
-        guard !diffPartials.isEmpty else { return }
+        guard divergence != nil || !diffPartials.isEmpty else { return }
         let lastResponseIndex = usage != nil ? diffPartials.lastIndex { $0.kind == .response } : nil
         for (index, partial) in diffPartials.enumerated() {
             let toRecord = (usage != nil && index == lastResponseIndex)
@@ -371,7 +351,31 @@ actor RecordingLanguageModelState {
                 : partial
             await recorder.append(toRecord, to: recordingDirectory)
         }
+        if let divergence {
+            await appendDivergenceMarker(divergence)
+        }
         lastSeen = current
+    }
+
+    /// Logs `divergence` and appends its ``TranscriptEvent/Kind/divergence``
+    /// marker, after the entries the diverged sync recorded.
+    ///
+    /// - Parameter divergence: The non-append change the sync found.
+    private func appendDivergenceMarker(_ divergence: TranscriptDiffer.Divergence) async {
+        recordingLanguageModelLogger.warning(
+            """
+            \(divergence.description, privacy: .public) for handle \
+            \(self.sessionId.description, privacy: .public); the unseen entries are recorded and a \
+            divergence marker follows them
+            """
+        )
+        await recorder.append(
+            TranscriptEvent.Partial(
+                routerId: routerId, sessionId: sessionId, parentId: parentId, slot: slot, model: model,
+                kind: .divergence, text: divergence.description
+            ),
+            to: recordingDirectory
+        )
     }
 
     /// Appends the entries of `compacted` that are not yet recorded,

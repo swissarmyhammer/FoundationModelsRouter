@@ -38,9 +38,10 @@ struct TranscriptDifferTests {
         current: [Transcript.Entry],
         identity: Identity = Identity()
     ) -> [TranscriptEvent.Partial] {
-        TranscriptDiffer.diff(
-            lastSeen: Transcript(entries: lastSeen),
+        TranscriptDiffer.partials(
+            baseline: TranscriptDiffer.Baseline(transcript: Transcript(entries: lastSeen)),
             current: Transcript(entries: current),
+            divergence: nil,
             routerId: identity.routerId,
             sessionId: identity.sessionId,
             parentId: identity.parentId,
@@ -244,6 +245,44 @@ struct TranscriptDifferTests {
         #expect(firstRun.map(\.kind) == secondRun.map(\.kind))
         #expect(firstRun.map(\.kind) == [.instructions, .prompt, .toolCalls, .toolOutput, .response])
         #expect(firstRun == secondRun)
+    }
+
+    // MARK: - A shrink is a divergence, and a diverged diff runs by entry id
+
+    @Test("a current shorter than the baseline is a shrink divergence that names both counts")
+    func shrunkenCurrentIsAShrinkDivergence() {
+        let recorded = [Self.promptEntry(), Self.responseEntry()]
+        let shrunken = [Self.promptEntry(id: "prompt-2", text: "after the shrink")]
+
+        let divergence = TranscriptDiffer.divergence(
+            from: TranscriptDiffer.Baseline(transcript: Transcript(entries: recorded)),
+            in: Transcript(entries: shrunken))
+
+        #expect(divergence == .shrank(recordedCount: recorded.count, currentCount: shrunken.count))
+        #expect(divergence?.description.contains("shrank") == true)
+    }
+
+    @Test("a diff by entry id against a baseline maps only the entries whose id the baseline does not hold, in current order")
+    func diffByEntryIdAgainstBaselineMapsOnlyUnseenIds() {
+        let prompt = Self.promptEntry()
+        let response = Self.responseEntry()
+        let inserted = Self.promptEntry(id: "prompt-inserted", text: "inserted")
+        let baseline = TranscriptDiffer.Baseline(transcript: Transcript(entries: [prompt, response]))
+        let identity = Identity()
+
+        let result = TranscriptDiffer.diffByEntryId(
+            baseline: baseline,
+            current: Transcript(entries: [prompt, inserted, response]),
+            routerId: identity.routerId,
+            sessionId: identity.sessionId,
+            parentId: identity.parentId,
+            slot: identity.slot,
+            model: identity.model
+        )
+
+        #expect(result.map(\.kind) == [.prompt])
+        #expect(result.map(\.text) == ["inserted"])
+        #expect(result.first?.entry?.entryId == "prompt-inserted")
     }
 
     // MARK: - Baseline stability

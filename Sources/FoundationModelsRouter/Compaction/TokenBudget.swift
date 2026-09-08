@@ -130,12 +130,15 @@ extension ContextUsageState {
 }
 
 /// Returns the newest stamped `.response` event's `(tokensIn, tokensOut)`
-/// in `events`, or `nil` when none carries a stamp. Skips a bodyless close
-/// (`entry == nil`): its stamp is not a real measurement.
+/// in `events`, or `nil` when none carries a stamp. Skips an event with no
+/// entry (a v1 line) and the close of a failed turn
+/// (``TranscriptEvent/isFailedTurnClose``): neither stamp is a real
+/// measurement.
 func newestStampedUsage(in events: [TranscriptEvent]) -> (input: Int, output: Int)? {
     guard
         let stamped = events.last(where: {
-            $0.kind == .response && $0.entry != nil && $0.tokensIn != nil && $0.tokensOut != nil
+            $0.kind == .response && $0.entry != nil && !$0.isFailedTurnClose && $0.tokensIn != nil
+                && $0.tokensOut != nil
         })
     else {
         return nil

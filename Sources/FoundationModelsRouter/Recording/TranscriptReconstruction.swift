@@ -194,7 +194,10 @@ extension TranscriptTree {
         var entries: [Transcript.Entry] = []
         entries.reserveCapacity(events.count)
         for event in events {
-            if Self.isFailedTurnBodylessClose(event) {
+            // The close of a failed turn mirrors no `Transcript.Entry`, so
+            // reconstruction skips it. A v1 turn always records a `.prompt`
+            // first, which throws below before this check applies.
+            if event.isFailedTurnClose {
                 continue
             }
             guard let payload = event.entry else {
@@ -218,14 +221,5 @@ extension TranscriptTree {
             }
         }
         return Transcript(entries: entries)
-    }
-
-    /// `true` when `event` is the router-only bodyless `.response` close that
-    /// a failed turn emits: `entry == nil`, `text == nil`, and `ms` set. This
-    /// event mirrors no `Transcript.Entry`, so reconstruction skips it. A v1
-    /// turn always records a `.prompt` first, which throws before this check
-    /// applies.
-    private static func isFailedTurnBodylessClose(_ event: TranscriptEvent) -> Bool {
-        event.kind == .response && event.entry == nil && event.text == nil && event.ms != nil
     }
 }

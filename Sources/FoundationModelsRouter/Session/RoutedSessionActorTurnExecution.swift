@@ -226,7 +226,7 @@ extension RoutedSessionActor {
                 // turn would leave no trace at all. Neither is a formality: an
                 // abandoned fold leaves `backend` exactly as it was, so the diff
                 // finds no `.prompt` partial to attach those events to and
-                // re-queues them, and the synthetic bodyless close is the trace.
+                // re-queues them, and the synthetic close is the trace.
                 await recordFailedTurn(
                     grammar: grammar, since: started, usageBefore: usageBefore, pendingEvents: pendingEvents,
                     onEvent: emit)
@@ -353,8 +353,11 @@ extension RoutedSessionActor {
     }
 
     /// Records a turn that ended in a failure: the transcript diff, the
-    /// attach-or-requeue of pending events, and a bodyless `.response` close
-    /// when the diff did not already include one.
+    /// attach-or-requeue of pending events, and a `.response` close when the
+    /// diff did not already include one. The close carries an entry that
+    /// mirrors a `Transcript.Response` with no segment — the turn answered
+    /// with nothing — so the record holds an entry for every turn it closes
+    /// (see ``TranscriptEvent/isFailedTurnClose``).
     ///
     /// - Parameters:
     ///   - grammar: The grammar in force for this turn.
@@ -373,11 +376,13 @@ extension RoutedSessionActor {
             grammar: grammar, since: started, usageBefore: usageBefore, pendingEvents: pendingEvents,
             onEvent: onEvent)
         guard !diffIncludedResponse else { return }
+        let close = TranscriptEntryMapper.event(from: .response(Transcript.Response(segments: [])))
         await append(
             partial: makePartialEvent(
                 kind: .response,
                 grammar: grammar,
                 since: started,
+                entry: close.payload,
                 tokensIn: usage?.input,
                 tokensOut: usage?.output
             )
