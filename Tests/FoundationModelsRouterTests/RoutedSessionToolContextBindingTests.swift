@@ -147,8 +147,12 @@ struct RoutedSessionToolContextBindingTests {
     /// flags *while* the driving turn is still in flight (that concurrent
     /// observation is the whole point), so every flag is a `Mutex`-guarded
     /// `Bool` (the ``ModelCallCancellationProbe`` precedent) and the only
-    /// other stored property, `inner`, is an immutable reference the
-    /// owning session drives one call at a time.
+    /// other stored property, `inner`, is an immutable reference to a
+    /// ``StubSessionBackend``, which guards its own state. That guard is
+    /// load-bearing here: the stream's producer task drives `inner` only
+    /// after it observed the cancellation, so it appends the turn's entries
+    /// while the cancelled turn's failed-turn recording reads
+    /// `inner.transcriptEntries()` on the actor (task ^9smkhk8).
     private final class CancellationObservingBackend: LanguageModelSessionBackend, @unchecked Sendable {
         private let inner = StubSessionBackend()
 

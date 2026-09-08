@@ -58,8 +58,31 @@ comments:
     - evidence: `swift test --parallel` — run 1: FoundationModelsRouterTests process trapped with signal 5 (SIGTRAP), matching known issue ^9smkhk8 (RoutedSessionActor.recordTranscriptDelta trap during a failed streamResponse turn); rerun per the rule. Run 2: clean — FoundationModelsRouterTests: 1238 passed, 0 failed, 0 skipped, 2 known issues (both deliberate `withKnownIssue` assertions: RealModelHarness.swift:72 embedding-slot check, BoundedWait.swift:114 never-holds-condition check); FoundationModelsRouterEvals: 83 passed, 0 failed, 0 skipped, 10 suites. 0 warnings from the changed file (Tests/FoundationModelsRouterTests/BoundedWaitTests.swift); only pre-existing C++17-extension warnings from the vendored mlx-swift dependency, unrelated to this change.
     - next: none
   timestamp: 2026-09-08T15:40:54.386072+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m20txazgn1dv8r7hfckefbyx
+  text: |-
+    ### commit — changed
+    - evidence: a890012 test(bounded-wait): make late-signal test survive a starved process (^d3fbqz7); 5 files changed
+    - next: none
+  timestamp: 2026-09-08T15:41:43.280306+00:00
+- actor: claude-code
+  id: 01m20v0ba26pp7d68832qv9asx
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit a890012) — 0 findings, 0 confirmed, 0 refuted, 7 validator runs attempted, 0 failed. 1 file reviewed; 4 `.kanban/` files excluded by `.reviewignore`. No prior findings on the card.
+    - next: task moved to `done`. No work is open.
+  timestamp: 2026-09-08T15:43:21.922229+00:00
+- actor: claude-code
+  id: 01m20v0zk4d0fzckt5fs0r42k9
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 1 file (Tests/FoundationModelsRouterTests/BoundedWaitTests.swift)
+    - test: green — swift test, 1238 passed + 83 passed in Evals, 0 failed, 0 skipped, 0 warnings; one rerun after the known trap ^9smkhk8
+    - commit: a890012
+    - review: clean — 0 findings on HEAD~1..HEAD; task moved to done
+  timestamp: 2026-09-08T15:43:42.692456+00:00
+position_column: done
+position_ordinal: ffffce80
 title: BoundedWaitTests late-signal test fails when the test process is starved for a whole minute
 ---
 ### What

@@ -74,6 +74,13 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// call of the owning session's own turn
     /// (``RoutedSessionActor/isInsideOwnTurnToolCall``), where no concurrent
     /// writer exists.
+    ///
+    /// The turn lock does not end a stream's producer. A turn cut short
+    /// mid-stream stops consuming and records itself at once, while the
+    /// producer behind ``streamResponse(to:maxTokens:)`` can still be
+    /// running. A backend whose producer writes the transcript from a task of
+    /// its own must guard the transcript, so this call sees a turn whole or
+    /// not at all.
     func transcriptEntries() -> [FoundationModels.Transcript.Entry]
 
     /// The backend's cumulative input/output token usage, or `nil` when the
