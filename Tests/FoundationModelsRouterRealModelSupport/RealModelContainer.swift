@@ -2,6 +2,7 @@ import Foundation
 import FoundationModels
 import FoundationModelsRouter
 import HuggingFace
+import MLXFoundationModels
 import MLXHuggingFace
 import MLXLMCommon
 import Testing
@@ -105,6 +106,26 @@ public enum RealModelContainer {
     ///     same code and the same weights answered differently on two calendar
     ///     days (task ^f0k3aah). See
     ///     ``FoundationModelsRouter/PinnedDateTokenizerLoader``.
+    ///
+    ///     A pinned load starts from an empty model cache. `MLXLanguageModel`
+    ///     keeps one process-wide cache of loaded containers, keyed by the
+    ///     model id alone, and the tokenizer lives inside the cached
+    ///     container. A load that finds its model already cached gets that
+    ///     container back, tokenizer and all, whatever loader this call built.
+    ///     So a pin is the one parameter of this function a cached container
+    ///     can defeat: a suite that loaded the same model with no pin and had
+    ///     not yet evicted it when this call ran would hand this call a
+    ///     tokenizer that reads the clock. The CI run of 2026-09-08 for commit
+    ///     f9d9e4a measured exactly that. The resolver end-to-end suite
+    ///     released Muse Glimmer by dropping its profile, that eviction is
+    ///     asynchronous, and the pinned-date suite that ran next rendered
+    ///     `Current date: 2026-09-08.` from the container the first suite had
+    ///     left behind, while its second test, which loaded after the first
+    ///     had evicted, answered the pinned date. Evicting everything is safe
+    ///     here: every gated suite holds the target's one real-model permit
+    ///     for its whole duration, so at the moment a pinned load begins no
+    ///     other suite holds a container, and a suite that pins loads one
+    ///     container at a time.
     /// - Returns: The loaded container.
     /// - Throws: Whatever ``LiveModelLoader/loadLLM(ref:slot:context:reporting:)``
     ///   throws, or an expectation failure if what it loaded is not an
@@ -118,6 +139,12 @@ public enum RealModelContainer {
         samplingMode: GenerationOptions.SamplingMode? = nil,
         chatTemplateDate: String? = nil
     ) async throws -> MLXFoundationModelsContainer {
+        if chatTemplateDate != nil {
+            // The pin lives in the tokenizer, and the tokenizer lives in the
+            // cached container, so a cached container from an unpinned load
+            // would win over the loader built below. See the parameter doc.
+            await MLXLanguageModel.evictAll()
+        }
         let loader = LiveModelLoader(
             downloader: #hubDownloader(),
             tokenizerLoader: tokenizerLoader(pinning: chatTemplateDate),
