@@ -326,7 +326,7 @@ actor SessionMailbox {
                 terminals.append(natural)
                 continue
             }
-            let synthesized = boundingDetail(
+            let synthesized = Self.boundingDetail(
                 OperationEvent(
                     tool: run.tool,
                     op: run.op,
@@ -372,7 +372,7 @@ actor SessionMailbox {
             return nil
         }
         trackingOrder.removeAll { $0 == completionToken }
-        let bounded = boundingDetail(terminal)
+        let bounded = Self.boundingDetail(terminal)
         retainSettledTerminalEvent(bounded, for: completionToken)
         resumeWaiters(for: completionToken, with: .settled(bounded))
         return bounded
@@ -439,7 +439,12 @@ actor SessionMailbox {
 
     /// Returns `event` with its `detail` truncated to the trailing
     /// ``ToolContext/terminalDetailTailLimit`` characters.
-    private func boundingDetail(_ event: OperationEvent) -> OperationEvent {
+    ///
+    /// Static, and not private, because two places must cut a terminal the
+    /// same way: this mailbox, which keeps what `wait` reports, and
+    /// ``BackgroundToolRunner``, which puts a settled run's detail in its
+    /// envelope. One rule, so the two reads of one run cannot differ.
+    static func boundingDetail(_ event: OperationEvent) -> OperationEvent {
         guard event.detail.count > ToolContext.terminalDetailTailLimit else {
             return event
         }

@@ -116,10 +116,14 @@ enum MountFixtures {
 
     // MARK: - Envelope and settlement helpers
 
-    /// The pending envelope's decoded shape.
+    /// The envelope's decoded shape. A run still going carries no `outcome`
+    /// and no `detail`; a run that settled inside its tool's grace carries
+    /// both.
     struct DecodedEnvelope: Decodable {
         let pending: Bool
         let completionToken: String
+        let outcome: String?
+        let detail: String?
         let next: String
     }
 
@@ -354,6 +358,55 @@ enum MountFixtures {
 
         func collectInstruction(forCompletionToken completionToken: String) -> String {
             Self.collectInstruction(forCompletionToken: completionToken)
+        }
+    }
+
+    /// Waits for its gate, then returns. Declares a grace, so a run that
+    /// settles inside that time is answered in the call's own envelope.
+    struct InlineGraceTool: Tool, BackgroundTool {
+        let name = "inline_grace_tool"
+        let description = "waits a short time for its own run before it answers"
+        let gate: RunLatch
+        let grace: TimeInterval
+
+        /// The output this tool returns for `value`.
+        static func output(for value: String) -> String {
+            "inline: \(value)"
+        }
+
+        /// The sentence this tool renders for a settled `completionToken`.
+        static func resultInstruction(forCompletionToken completionToken: String) -> String {
+            "Run \"\(completionToken)\" is done. Read the detail field beside this sentence."
+        }
+
+        var inlineSettleGrace: TimeInterval? { grace }
+
+        func call(arguments: MountArguments) async throws -> String {
+            await gate.waitUntilOpen()
+            return Self.output(for: arguments.value)
+        }
+
+        func resultInstruction(forCompletionToken completionToken: String) -> String {
+            Self.resultInstruction(forCompletionToken: completionToken)
+        }
+    }
+
+    /// Returns at once, declares a grace, and names no sentence of its own,
+    /// so a settled run carries the default one.
+    struct DefaultSentenceGraceTool: Tool, BackgroundTool {
+        let name = "default_sentence_grace_tool"
+        let description = "declares a grace and takes the default sentences"
+        let grace: TimeInterval
+
+        /// The output this tool returns for `value`.
+        static func output(for value: String) -> String {
+            "default: \(value)"
+        }
+
+        var inlineSettleGrace: TimeInterval? { grace }
+
+        func call(arguments: MountArguments) async throws -> String {
+            Self.output(for: arguments.value)
         }
     }
 

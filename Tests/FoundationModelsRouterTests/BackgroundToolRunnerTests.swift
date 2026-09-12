@@ -148,6 +148,157 @@ struct BackgroundToolRunnerTests {
         }
     }
 
+    // MARK: - The wait before the handle
+
+    @Test("a run that settles inside its tool's grace answers with the result in the same envelope, and the mailbox still reports that result")
+    func runSettlingInsideTheGraceAnswersInline() async throws {
+        let gate = RunLatch()
+        // Already open, so the body returns as soon as it starts and the
+        // grace never has to elapse.
+        await gate.open()
+        let harness = Fixtures.backgroundHarness(
+            wrapping: Fixtures.InlineGraceTool(gate: gate, grace: Fixtures.generousInterval)
+        )
+
+        let rendered = try await harness.mounted.call(arguments: MountArguments(value: "now"))
+
+        #expect(PendingRunEnvelope.isRendered(text: rendered))
+        let envelope = try Fixtures.decodeEnvelope(rendered)
+        #expect(!envelope.pending)
+        #expect(envelope.outcome == OperationOutcome.succeeded.rawValue)
+        #expect(envelope.detail == Fixtures.InlineGraceTool.output(for: "now"))
+        #expect(
+            envelope.next
+                == Fixtures.InlineGraceTool.resultInstruction(forCompletionToken: envelope.completionToken)
+        )
+
+        // The run settled by itself, so the mailbox holds the same result for
+        // a model that calls wait on the token anyway.
+        let terminal = try await Fixtures.settledTerminal(
+            of: envelope.completionToken, in: harness.mailbox
+        )
+        #expect(terminal.detail == Fixtures.InlineGraceTool.output(for: "now"))
+        #expect(terminal.outcome == .succeeded)
+
+        let events = await harness.sink.events
+        #expect(events.map(\.kind) == [.progress, .completed])
+    }
+
+    @Test("a tool that declares a grace and no sentence of its own carries the default settled sentence")
+    func settledEnvelopeTakesTheDefaultSentence() async throws {
+        let harness = Fixtures.backgroundHarness(
+            wrapping: Fixtures.DefaultSentenceGraceTool(grace: Fixtures.generousInterval)
+        )
+
+        let rendered = try await harness.mounted.call(arguments: MountArguments(value: "now"))
+
+        let envelope = try Fixtures.decodeEnvelope(rendered)
+        #expect(!envelope.pending)
+        #expect(envelope.detail == Fixtures.DefaultSentenceGraceTool.output(for: "now"))
+        #expect(
+            envelope.next
+                == PendingRunEnvelope.defaultResultInstruction(forCompletionToken: envelope.completionToken)
+        )
+    }
+
+    @Test("a run still going when the grace elapses answers with the pending envelope, and settles behind it as before")
+    func runStillGoingWhenTheGraceElapsesAnswersPending() async throws {
+        let gate = RunLatch()
+        let harness = Fixtures.backgroundHarness(
+            wrapping: Fixtures.InlineGraceTool(gate: gate, grace: Fixtures.shortInterval)
+        )
+
+        let rendered = try await harness.mounted.call(arguments: MountArguments(value: "later"))
+
+        let envelope = try Fixtures.decodeEnvelope(rendered)
+        #expect(envelope.pending)
+        #expect(envelope.detail == nil)
+        #expect(envelope.outcome == nil)
+        #expect(
+            envelope.next
+                == PendingRunEnvelope.defaultCollectInstruction(forCompletionToken: envelope.completionToken)
+        )
+
+        await gate.open()
+        let terminal = try await Fixtures.settledTerminal(
+            of: envelope.completionToken, in: harness.mailbox
+        )
+        #expect(terminal.detail == Fixtures.InlineGraceTool.output(for: "later"))
+    }
+
+    @Test("an inline result leaves nothing staged for a later prompt, and a pending run still stages its progress")
+    func inlineResultWithdrawsWhatTheRunStaged() async throws {
+        let mailbox = SessionMailbox()
+        let outbox = SessionOutbox()
+        let gate = RunLatch()
+        await gate.open()
+        let inline = BackgroundToolRunner(
+            wrapping: Fixtures.InlineGraceTool(gate: gate, grace: Fixtures.generousInterval),
+            sessionID: ULID.generate(),
+            mailbox: mailbox,
+            sink: outbox,
+            timeout: ToolMount.defaultTimeoutSeconds
+        )
+
+        let rendered = try await inline.call(arguments: MountArguments(value: "inline"))
+
+        let envelope = try Fixtures.decodeEnvelope(rendered)
+        #expect(!envelope.pending)
+        let afterInline = await outbox.pending()
+        #expect(afterInline.events.isEmpty)
+
+        // The same outbox still stages a run whose result the model has not
+        // been given, so the withdrawal is the settled case alone.
+        let held = RunLatch()
+        let pendingRun = BackgroundToolRunner(
+            wrapping: Fixtures.GatedTool(gate: held),
+            sessionID: ULID.generate(),
+            mailbox: mailbox,
+            sink: outbox,
+            timeout: ToolMount.defaultTimeoutSeconds
+        )
+
+        let pendingRendered = try await pendingRun.call(arguments: MountArguments(value: "held"))
+
+        let pendingEnvelope = try Fixtures.decodeEnvelope(pendingRendered)
+        #expect(pendingEnvelope.pending)
+        let afterPending = await outbox.pending()
+        #expect(afterPending.events.count == 1)
+        #expect(afterPending.events.first?.event.correlationID == pendingEnvelope.completionToken)
+
+        await held.open()
+        _ = try await Fixtures.settledTerminal(of: pendingEnvelope.completionToken, in: mailbox)
+    }
+
+    @Test("the capping layer cuts a settled envelope's detail and leaves its completionToken and sentence whole")
+    func tokenCappingCutsOnlyTheDetailOfASettledEnvelope() async throws {
+        let gate = RunLatch()
+        await gate.open()
+        let harness = Fixtures.backgroundHarness(
+            wrapping: Fixtures.InlineGraceTool(gate: gate, grace: Fixtures.generousInterval)
+        )
+        let capping = TokenCappingTool(wrapped: harness.mounted, limit: Self.tinyTokenLimit)
+
+        let rendered = try await capping.call(arguments: MountArguments(value: "capped"))
+
+        #expect(PendingRunEnvelope.isRendered(text: rendered))
+        let envelope = try Fixtures.decodeEnvelope(rendered)
+        #expect(!envelope.pending)
+        #expect(envelope.detail != Fixtures.InlineGraceTool.output(for: "capped"))
+        #expect(
+            envelope.detail
+                == ToolOutputCapping.capped(
+                    text: Fixtures.InlineGraceTool.output(for: "capped"),
+                    toTokenLimit: Self.tinyTokenLimit
+                )
+        )
+        #expect(
+            envelope.next
+                == Fixtures.InlineGraceTool.resultInstruction(forCompletionToken: envelope.completionToken)
+        )
+        #expect(ULID(ulidString: envelope.completionToken) != nil)
+    }
+
     // MARK: - Exactly one terminal on every path
 
     @Test("a background run that beats on after it is handed back settles once, with exactly one synthesized terminal")

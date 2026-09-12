@@ -19,6 +19,29 @@ public protocol BackgroundTool {
     /// - Returns: The `next` text as plain prose; the envelope escapes it.
     func collectInstruction(forCompletionToken completionToken: String) -> String
 
+    /// How long a background call waits for its own run before it answers, or
+    /// `nil` to answer at once.
+    ///
+    /// A short run that settles inside this time answers with the same
+    /// ``PendingRunEnvelope``, but with `pending` false and the result in it.
+    /// The model then reads the result in the tool output it already has, and
+    /// makes no `wait` call at all. A run still going when the time elapses
+    /// answers with the pending envelope, exactly as a tool that declares
+    /// nothing here does.
+    ///
+    /// Keep the value small. It holds the turn, so it buys a short run one
+    /// round trip and costs a long run that same small delay.
+    var inlineSettleGrace: TimeInterval? { get }
+
+    /// Returns the `next` sentence of the envelope a background call hands the
+    /// model when the run settled inside ``inlineSettleGrace``.
+    ///
+    /// It must tell the model to answer from the `detail` beside it, and that
+    /// there is nothing left to collect.
+    ///
+    /// - Returns: The `next` text as plain prose; the envelope escapes it.
+    func resultInstruction(forCompletionToken completionToken: String) -> String
+
     /// What kind of work a background call of this tool is.
     /// A ``RunKind/process`` tool must supply ``canceler(forCompletionToken:)``.
     var runKind: RunKind { get }
@@ -36,8 +59,16 @@ extension BackgroundTool {
         PendingRunEnvelope.defaultCollectInstruction(forCompletionToken: completionToken)
     }
 
+    /// Blanket default: ``PendingRunEnvelope/defaultResultInstruction(forCompletionToken:)``.
+    public func resultInstruction(forCompletionToken completionToken: String) -> String {
+        PendingRunEnvelope.defaultResultInstruction(forCompletionToken: completionToken)
+    }
+
     /// Blanket default: no declared mount.
     public var mount: ToolMount? { nil }
+
+    /// Blanket default: no wait, so a background call answers at once.
+    public var inlineSettleGrace: TimeInterval? { nil }
 
     /// Blanket default: no per-call timeout.
     public func timeout(from arguments: GeneratedContent) -> TimeInterval? {

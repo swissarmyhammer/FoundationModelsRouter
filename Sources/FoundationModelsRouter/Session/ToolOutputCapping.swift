@@ -71,20 +71,29 @@ struct TokenCappingTool<
 
     /// Calls `wrapped` and caps its result to ``limit`` tokens.
     ///
-    /// One exemption: a rendered ``PendingRunEnvelope`` passes through
-    /// untouched under any `limit`. It is control-plane data, and truncation
-    /// would destroy the `completionToken` the model needs. Recognition is
-    /// ``PendingRunEnvelope/isRendered(text:)``, which accepts no ordinary
-    /// tool output.
+    /// A rendered ``PendingRunEnvelope`` is treated as what it is:
+    /// control-plane data. A truncated envelope would lose the
+    /// `completionToken` the model needs, so the frame is never cut.
+    /// Recognition is ``PendingRunEnvelope/decoded(fromRendered:)``, which
+    /// accepts no ordinary tool output.
+    ///
+    /// An envelope that carries a settled run's result is still capped, but
+    /// only in its `detail` field. The result there is as big as any other
+    /// tool output, and the same `limit` must hold for it. The control fields
+    /// around it stay whole.
     ///
     /// - Throws: Whatever `wrapped` throws, unmodified. This decorator wraps
     ///   the output, never the error.
     func call(arguments: Arguments) async throws -> String {
         let output = try await wrapped.call(arguments: arguments)
-        if PendingRunEnvelope.isRendered(text: output) {
+        guard let envelope = PendingRunEnvelope.decoded(fromRendered: output) else {
+            return ToolOutputCapping.capped(text: output, toTokenLimit: limit)
+        }
+        guard let detail = envelope.detail else {
             return output
         }
-        return ToolOutputCapping.capped(text: output, toTokenLimit: limit)
+        let cappedDetail = ToolOutputCapping.capped(text: detail, toTokenLimit: limit)
+        return envelope.replacing(detail: cappedDetail).rendered
     }
 }
 

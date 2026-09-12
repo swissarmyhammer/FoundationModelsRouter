@@ -115,6 +115,74 @@ struct PendingRunEnvelopeTests {
         }
     }
 
+    @Test("a settled envelope renders, is recognized, and decodes back to the outcome, the detail and the sentence it was built with")
+    func settledEnvelopeRoundTrips() throws {
+        let completionToken = ULID.generate().ulidString
+        let next = PendingRunEnvelope.defaultResultInstruction(forCompletionToken: completionToken)
+        let detail = "the result \"quoted\", \\ escaped,\nand on two lines"
+        let envelope = PendingRunEnvelope(
+            completionToken: completionToken,
+            outcome: OperationOutcome.succeeded.rawValue,
+            detail: detail,
+            next: next
+        )
+
+        let rendered = envelope.rendered
+
+        #expect(PendingRunEnvelope.isRendered(text: rendered))
+        let decoded = try MountFixtures.decodeEnvelope(rendered)
+        #expect(!decoded.pending)
+        #expect(decoded.completionToken == completionToken)
+        #expect(decoded.outcome == OperationOutcome.succeeded.rawValue)
+        #expect(decoded.detail == detail)
+        #expect(decoded.next == next)
+    }
+
+    @Test("the default settled sentence names the detail, says to answer now, and says not to wait on the token")
+    func defaultResultInstructionTellsTheModelToAnswerNow() {
+        let completionToken = ULID.generate().ulidString
+
+        let next = PendingRunEnvelope.defaultResultInstruction(forCompletionToken: completionToken)
+
+        Self.expect(
+            next,
+            saysInOrder: [
+                // The run is over and the result is here.
+                "finished",
+                "detail",
+                // Answer from it, now.
+                "Answer from that result now",
+                // Nothing is left to collect.
+                "Do not call the wait tool",
+                completionToken,
+                "never reply that the result will arrive later",
+            ]
+        )
+    }
+
+    @Test("an envelope whose pending flag disagrees with its result fields is not recognized")
+    func mismatchedSettlementFieldsAreRejected() {
+        let completionToken = ULID.generate().ulidString
+
+        let mismatched = [
+            // Says settled, carries no result.
+            "{\"pending\":false,\"completionToken\":\"\(completionToken)\",\"next\":\"answer\"}",
+            // Says pending, carries a result.
+            "{\"pending\":true,\"completionToken\":\"\(completionToken)\",\"outcome\":\"succeeded\","
+                + "\"detail\":\"done\",\"next\":\"answer\"}",
+            // Settled, but the outcome field is missing.
+            "{\"pending\":false,\"completionToken\":\"\(completionToken)\",\"detail\":\"done\","
+                + "\"next\":\"answer\"}",
+            // Settled, but the fields are out of order.
+            "{\"pending\":false,\"completionToken\":\"\(completionToken)\",\"detail\":\"done\","
+                + "\"outcome\":\"succeeded\",\"next\":\"answer\"}",
+        ]
+
+        for text in mismatched {
+            #expect(!PendingRunEnvelope.isRendered(text: text))
+        }
+    }
+
     @Test("an envelope with anything added to or removed from it is not recognized")
     func alteredLengthIsRejected() {
         let completionToken = ULID.generate().ulidString
