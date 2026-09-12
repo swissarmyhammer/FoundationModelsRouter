@@ -27,7 +27,25 @@ import FoundationModels
 /// The outbox is also the session's ``ToolCallReportSink``: a tool decorator
 /// finds it through a dynamic cast when a call closes with attachments, and
 /// ``post(report:)`` forwards the report to the attached observer.
-actor SessionOutbox: OperationEventSink, ToolCallReportSink {
+/// A sink that can take back an event it staged for a later prompt.
+///
+/// ``BackgroundToolRunner`` uses it for one case: a background run that
+/// settled inside its tool's ``BackgroundTool/inlineSettleGrace`` answers with
+/// the result in its own envelope, so the staged copy of that run's events
+/// must not also ride in front of the next prompt. The journal keeps its own
+/// copy, and the host still gets its ``SessionEvent/runSettled(_:)``, because
+/// neither reads the staged events.
+///
+/// A sink that stages nothing, such as the sink of a mounted inner run, does
+/// not conform, and the runner then withdraws nothing.
+protocol StagedEventWithdrawing: Sendable {
+    /// Removes every event staged under `correlationID`.
+    ///
+    /// - Parameter correlationID: The run's completion token.
+    func withdrawStagedEvents(correlationID: String) async
+}
+
+actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdrawing {
     /// A stable identifier the outbox assigns to a staged event at post time.
     ///
     /// The id stays the same across a coalesced event's in-place updates.
@@ -121,6 +139,19 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink {
         stage(event: event)
         wakeUp()
         await journalWrite?.value
+    }
+
+    /// Removes every event staged under `correlationID`, and leaves the
+    /// journal and the prompt queue alone.
+    ///
+    /// A run whose result went to the model inside its own tool output calls
+    /// this, so the model does not read the same result a second time in front
+    /// of its next prompt. An event a turn already drained is gone from here,
+    /// and this call then removes nothing.
+    ///
+    /// - Parameter correlationID: The run's completion token.
+    func withdrawStagedEvents(correlationID: String) {
+        events.removeAll { $0.event.correlationID == correlationID }
     }
 
     /// Records one event in the journal without staging it for a future
