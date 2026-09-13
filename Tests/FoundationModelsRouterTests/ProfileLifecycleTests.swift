@@ -138,14 +138,16 @@ struct ProfileLifecycleTests {
     private static func makeRouter(
         spy: EvictionSpy,
         recorder: any TranscriptRecorder,
-        cacheDir: URL
+        cacheDir: URL,
+        pool: ModelPool = ModelPool()
     ) -> Router {
         Router(
             cacheDir: cacheDir,
             recorder: recorder,
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
-            loader: StubModelLoader(spy: spy, dimension: stubDimension)
+            loader: StubModelLoader(spy: spy, dimension: stubDimension),
+            pool: pool
         )
     }
 
@@ -240,7 +242,7 @@ struct ProfileLifecycleTests {
         // evict anything further nor touch `second`'s residency. The pending
         // queue is the one way a residency is given back, so the stale token
         // goes on it, and the next resolve is the drain point that reads it.
-        router.enqueuePendingRelease(staleToken)
+        router.pool.enqueuePendingRelease(staleToken)
         var drainer: LanguageModelProfile? = try await router.resolve(
             profile: Self.profile, reporting: ResolutionProgress())
         #expect(await spy.count == 3)

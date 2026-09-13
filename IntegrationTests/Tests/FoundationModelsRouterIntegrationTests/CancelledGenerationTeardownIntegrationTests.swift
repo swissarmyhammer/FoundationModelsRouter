@@ -57,12 +57,12 @@ private let cancellationDelaySeconds = 2
 struct CancelledGenerationTeardownIntegrationTests {
     @Test("a generation cancelled mid-decode unwinds as CancellationError, and the model evicts and reloads cleanly")
     func aCancelledGenerationUnwindsAndTheProcessSurvives() async throws {
-        let container = try await RealModelContainer.load(
+        let loaded = try await RealModelContainer.load(
             ref: cancellationSmokeModel,
             samplingMode: .greedy
         )
-        let backend = container.makeSession(
-            instructions: "You are a terse, literal assistant.")
+        let backend = loaded.container.makeSession(
+            instructions: "You are a terse, literal assistant.", samplingMode: loaded.samplingMode)
 
         // A prompt the model cannot finish early: it decodes until the token
         // ceiling, so the cancel below always lands mid-decode.
@@ -97,7 +97,7 @@ struct CancelledGenerationTeardownIntegrationTests {
         // after the cancelled run. The abort under investigation fired in
         // this window — after the report, around teardown of the cancelled
         // generation's GPU work.
-        await container.model.evict()
+        await loaded.container.model.evict()
 
         // And the next suite loads the model again and generates. The process
         // surviving a fresh generation proves the cancelled one left no
@@ -106,13 +106,13 @@ struct CancelledGenerationTeardownIntegrationTests {
             ref: cancellationSmokeModel,
             samplingMode: .greedy
         )
-        let reply = try await reloaded.makeSession(
-            instructions: "You are a terse, literal assistant."
+        let reply = try await reloaded.container.makeSession(
+            instructions: "You are a terse, literal assistant.", samplingMode: reloaded.samplingMode
         ).respond(
             to: "Say hi in one word.",
             maxTokens: GatedRealModelBudget.responseTokenCeiling
         )
         #expect(!reply.isEmpty)
-        await reloaded.model.evict()
+        await reloaded.container.model.evict()
     }
 }

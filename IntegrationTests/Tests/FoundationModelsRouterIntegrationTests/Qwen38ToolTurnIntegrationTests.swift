@@ -104,12 +104,13 @@ struct Qwen38ToolTurnIntegrationTests {
     /// Builds a `RoutedSession` over the loaded model with the scenario's two
     /// tools mounted.
     ///
-    /// - Parameter container: The loaded model container, already pinned to
-    ///   ``samplingMode`` by its caller.
+    /// - Parameter container: The loaded model container and the
+    ///   ``samplingMode`` its caller pinned, which every session it makes
+    ///   decodes with.
     /// - Returns: The vended session, the profile that must outlive it, and
     ///   the temp directory the caller removes.
     private func makeSession(
-        over container: MLXFoundationModelsContainer
+        over container: RealModelContainer
     ) -> (session: RoutedSession, profile: LanguageModelProfile, directory: URL) {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Qwen38ToolTurn-\(UUID().uuidString)", isDirectory: true)
@@ -118,7 +119,8 @@ struct Qwen38ToolTurnIntegrationTests {
         let profile = RealModelHarness.make(
             model: qwen38ToolTurnModel,
             context: ProfileDefinition.defaultContext,
-            container: container,
+            container: container.container,
+            samplingMode: container.samplingMode,
             cacheDir: directory,
             recordingsDir: directory
         )
@@ -222,7 +224,7 @@ struct Qwen38ToolTurnIntegrationTests {
         // suite that does not evict costs the suites after it: on the runner,
         // the Muse Glimmer load that took 6 seconds before this suite ran took
         // 104 seconds after it, and four Muse suites timed out at the budget.
-        await container.model.evict()
+        await container.container.model.evict()
 
         // Printed so a reader can see what the model did, and so the cost
         // splits into the load and the turn.

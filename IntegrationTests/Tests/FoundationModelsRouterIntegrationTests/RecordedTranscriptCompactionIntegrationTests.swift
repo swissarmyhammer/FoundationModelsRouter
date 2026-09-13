@@ -324,7 +324,7 @@ struct RecordedTranscriptCompactionIntegrationTests {
         let (transcript, _) = try Self.recordedTranscript()
 
         let loadStartedAt = Date()
-        let container = try await RealModelContainer.load(
+        let loaded = try await RealModelContainer.load(
             ref: recordedTranscriptCompactionModel,
             context: recordedTranscriptCompactionContext,
             samplingMode: recordedTranscriptCompactionSamplingMode,
@@ -335,10 +335,10 @@ struct RecordedTranscriptCompactionIntegrationTests {
         let outcome = try await CompactionFold.run(
             transcript,
             summarization: Self.foldSummarization,
-            container: container,
+            container: loaded,
             label: Self.foldLabel
         )
-        await container.model.evict()
+        await loaded.container.model.evict()
 
         let result = outcome.result
 

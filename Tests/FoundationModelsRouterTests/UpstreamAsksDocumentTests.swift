@@ -28,9 +28,6 @@ struct UpstreamAsksDocumentTests {
     /// The prefix of each heading this suite reads as one ask.
     private static let askHeadingPrefix = "## Ask"
 
-    /// The prefix of each heading that ends an ask's body.
-    private static let sectionHeadingPrefix = "## "
-
     /// The text an answer paragraph starts with.
     private static let answerMarker = "**Answer:**"
 
@@ -52,15 +49,9 @@ struct UpstreamAsksDocumentTests {
     /// ``backtickedSpan``.
     private static var identifierPattern: Regex<Substring> { #/[A-Za-z_][A-Za-z0-9_]*/# }
 
-    /// The repository root, resolved relative to this source file's own path
-    /// (`#filePath` is `Tests/FoundationModelsRouterTests/UpstreamAsksDocumentTests.swift`,
-    /// two directories below the root). Keep this file directly inside
-    /// `Tests/FoundationModelsRouterTests/`, or adjust the step count to match
-    /// the new location.
-    private static let repositoryRoot = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent()  // Tests/FoundationModelsRouterTests/
-        .deletingLastPathComponent()  // Tests/
-        .deletingLastPathComponent()  // repository root
+    /// The repository root, resolved from this file's own path by
+    /// ``RepositoryRoot/url(from:)``.
+    private static let repositoryRoot = RepositoryRoot.url()
 
     @Test("every Ask heading is followed by an Answer paragraph")
     func everyAskHasAnAnswer() throws {
@@ -98,8 +89,9 @@ struct UpstreamAsksDocumentTests {
     }
 
     /// Reads `UPSTREAM_ASKS.md` and splits it into one section for each
-    /// `## Ask` heading. The split is ``TextFileLines/read(from:)``, so this
-    /// suite holds no copy of it.
+    /// `## Ask` heading. The split is ``TextFileLines/read(from:)`` and the
+    /// body cut is ``MarkdownSection/body(below:in:)``, so this suite holds
+    /// no copy of either.
     ///
     /// - Returns: The ask sections, in file order.
     /// - Throws: An error when the document cannot be read.
@@ -108,9 +100,7 @@ struct UpstreamAsksDocumentTests {
         let lines = try TextFileLines.read(from: document)
         let headingIndices = lines.indices.filter { lines[$0].hasPrefix(askHeadingPrefix) }
         return headingIndices.map { headingIndex in
-            let below = lines[(headingIndex + 1)...]
-            let body = below.prefix { !$0.hasPrefix(sectionHeadingPrefix) }
-            return AskSection(heading: lines[headingIndex], body: Array(body))
+            AskSection(heading: lines[headingIndex], body: MarkdownSection.body(below: headingIndex, in: lines))
         }
     }
 

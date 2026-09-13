@@ -190,14 +190,16 @@ let recordingsDir = FileManager.default.temporaryDirectory
 
 // `.greedy` pins decoding to argmax so the run repeats exactly — the same
 // choice every compaction smoke test makes, and the reason two runs of this
-// demo print the same numbers.
+// demo print the same numbers. The router carries the mode, not the loader:
+// a loaded container serves every router in the pool, and the mode belongs
+// to the router (`model-pool.md` §2.5).
 let router = Router(
     recordingsDir: recordingsDir,
     loader: LiveModelLoader(
         downloader: #hubDownloader(),
-        tokenizerLoader: #huggingFaceTokenizerLoader(),
-        samplingMode: .greedy
-    )
+        tokenizerLoader: #huggingFaceTokenizerLoader()
+    ),
+    samplingMode: .greedy
 )
 
 // `standard` holds the conversation; `flash` writes the fold's summary

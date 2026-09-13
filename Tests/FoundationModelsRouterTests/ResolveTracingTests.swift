@@ -210,7 +210,8 @@ struct ResolveTracingTests {
                 recommendedMaxWorkingSetSize: Self.budgetTooSmallForAnyCandidate
             ),
             metadataSource: StubMetadataSource(raw: RouterTestFixtures.rawMetadata),
-            loader: Self.succeedingLoader
+            loader: Self.succeedingLoader,
+            pool: ModelPool()
         )
 
         await #expect(throws: ResolutionFailure.self) {

@@ -109,13 +109,14 @@ struct CompactionSpikeIntegrationTests {
     /// see the assertion below and this test's own inline result.
     @Test("a live LanguageModelSession rebuilt over a transcript containing a synthesized summary entry and an elision-placeholder entry completes one turn without error")
     func rebuiltSessionOverSynthesizedTranscriptCompletesATurn() async throws {
-        let container = try await RealModelContainer.load(ref: compactionSpikeTinyModel)
+        let loaded = try await RealModelContainer.load(ref: compactionSpikeTinyModel)
 
         let synthesizedTranscript = try Self.makeSynthesizedTranscript()
         let synthesizedIds = Array(synthesizedTranscript).map(\.id)
 
         let backend = try #require(
-            container.makeSession(transcript: synthesizedTranscript) as? MLXFoundationModelsSessionBackend
+            loaded.container.makeSession(transcript: synthesizedTranscript, samplingMode: loaded.samplingMode)
+                as? MLXFoundationModelsSessionBackend
         )
 
         // Verdict 2 (empirical half): the ids as the live session actually
@@ -141,6 +142,6 @@ struct CompactionSpikeIntegrationTests {
         let idsAfterTurn = Array(backend.session.transcript).map(\.id)
         #expect(Array(idsAfterTurn.prefix(synthesizedIds.count)) == synthesizedIds)
 
-        await container.model.evict()
+        await loaded.container.model.evict()
     }
 }

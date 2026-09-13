@@ -178,7 +178,7 @@ struct SessionTreeRestorationIntegrationTests {
     /// - Parameters:
     ///   - model: The model reference to stamp every slot with — the one
     ///     `container` was loaded from.
-    ///   - container: The model that is already loaded and resident.
+    ///   - loaded: The model that is already loaded and resident, with the decoding strategy this suite pinned.
     ///   - cacheDir: The directory the router caches under.
     ///   - recordingsDir: The directory the router records under.
     ///   - routerId: The id to stamp the router with. Pass the FIRST router's id
@@ -186,7 +186,7 @@ struct SessionTreeRestorationIntegrationTests {
     /// - Returns: The profile to vend sessions from.
     private static func makeProfile(
         model: ModelRef,
-        container: MLXFoundationModelsContainer,
+        loaded: RealModelContainer,
         cacheDir: URL,
         recordingsDir: URL,
         routerId: ULID = .generate()
@@ -198,7 +198,8 @@ struct SessionTreeRestorationIntegrationTests {
             // every slot took `SlotResolution`'s own default. Stated explicitly
             // here, because the harness has no default of its own to inherit.
             context: ProfileDefinition.defaultContext,
-            container: container,
+            container: loaded.container,
+            samplingMode: loaded.samplingMode,
             cacheDir: cacheDir,
             recordingsDir: recordingsDir,
             routerId: routerId
@@ -267,10 +268,10 @@ struct SessionTreeRestorationIntegrationTests {
     /// goes out of scope with it, simulating discarding the router and every
     /// in-memory session.
     private func driveOriginalTree(cacheDir: URL, recordingsDir: URL) async throws -> OriginalTree {
-        let container = try await RealModelContainer.load(
+        let loaded = try await RealModelContainer.load(
             ref: sessionTreeForkTreeModel, samplingMode: Self.samplingMode)
         let profile = Self.makeProfile(
-            model: sessionTreeForkTreeModel, container: container, cacheDir: cacheDir, recordingsDir: recordingsDir)
+            model: sessionTreeForkTreeModel, loaded: loaded, cacheDir: cacheDir, recordingsDir: recordingsDir)
         // The router's own id, read off the handle it stamped. The harness
         // returns no `Router`, because this is the only fact this suite needs of
         // one and every handle already carries it.
@@ -305,7 +306,7 @@ struct SessionTreeRestorationIntegrationTests {
 
         let rootSidecarBytes = try Data(contentsOf: Self.rootSidecarURL(routerDirectory: routerDirectory, rootId: root.id))
 
-        await container.model.evict()
+        await loaded.container.model.evict()
 
         return OriginalTree(
             routerId: routerId,
@@ -336,11 +337,11 @@ struct SessionTreeRestorationIntegrationTests {
         // Step 5: a brand-new Router/profile over the same recordings
         // directory and the same router id — a fresh process continuing the
         // same recording root, with a freshly (re-)loaded model container.
-        let container2 = try await RealModelContainer.load(
+        let reloaded = try await RealModelContainer.load(
             ref: sessionTreeForkTreeModel, samplingMode: Self.samplingMode)
         let profile2 = Self.makeProfile(
             model: sessionTreeForkTreeModel,
-            container: container2,
+            loaded: reloaded,
             cacheDir: cacheDir,
             recordingsDir: recordingsDir,
             routerId: original.routerId
@@ -387,7 +388,7 @@ struct SessionTreeRestorationIntegrationTests {
         )
         #expect(reply.contains("42"))
 
-        await container2.model.evict()
+        await reloaded.container.model.evict()
     }
 
     // MARK: - Tools threaded through restoration (task jkdae4b)
@@ -416,23 +417,23 @@ struct SessionTreeRestorationIntegrationTests {
         // Record a root session with no tools at all, then discard everything
         // that built it, mirroring `driveOriginalTree`'s teardown discipline.
         let (routerId, rootId): (ULID, ULID) = try await {
-            let container = try await RealModelContainer.load(
+            let loaded = try await RealModelContainer.load(
                 ref: sessionTreeToolCallingModel, samplingMode: Self.samplingMode)
             let profile = Self.makeProfile(
-                model: sessionTreeToolCallingModel, container: container, cacheDir: cacheDir,
+                model: sessionTreeToolCallingModel, loaded: loaded, cacheDir: cacheDir,
                 recordingsDir: recordingsDir)
             let root = profile.standard.makeSession()
             _ = try await root.respond(to: "Say hi in one word.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
-            await container.model.evict()
+            await loaded.container.model.evict()
             return (profile.standard.routerId, root.id)
         }()
 
         // A fresh process continuing the same recording root, restoring with
         // a real tool this time — the seam that used to hardcode `tools: []`.
-        let container2 = try await RealModelContainer.load(
+        let reloaded = try await RealModelContainer.load(
             ref: sessionTreeToolCallingModel, samplingMode: Self.samplingMode)
         let profile2 = Self.makeProfile(
-            model: sessionTreeToolCallingModel, container: container2, cacheDir: cacheDir,
+            model: sessionTreeToolCallingModel, loaded: reloaded, cacheDir: cacheDir,
             recordingsDir: recordingsDir, routerId: routerId)
         let restored = try await profile2.standard.restoreSessionTree(root: rootId, tools: [EchoTool()])
         // The same invariant the tree-restoration test above asserts: this
@@ -450,6 +451,6 @@ struct SessionTreeRestorationIntegrationTests {
         #expect(events.contains { $0.kind == .toolCalls })
         #expect(events.contains { $0.kind == .toolOutput })
 
-        await container2.model.evict()
+        await reloaded.container.model.evict()
     }
 }

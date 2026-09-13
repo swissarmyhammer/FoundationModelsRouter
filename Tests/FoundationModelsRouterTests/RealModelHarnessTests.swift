@@ -29,7 +29,7 @@ import Testing
 /// `any LoadedLLMContainer` so a stand-in satisfies it. The stand-in is this
 /// target's own ``UndrivenLanguageModelContainer``: it holds no model at all,
 /// which is the whole reason
-/// ``RealModelHarness/make(model:context:container:cacheDir:recordingsDir:routerId:)``
+/// ``RealModelHarness/make(model:context:container:samplingMode:cacheDir:recordingsDir:routerId:)``
 /// takes the protocol rather than the concrete ``MLXFoundationModelsContainer``
 /// — the concrete type wraps a real resident MLX model and cannot be
 /// constructed without one. Every fact the two suites depend on is then
@@ -186,6 +186,29 @@ struct RealModelHarnessTests {
             let routerId = profile.standard.routerId
             #expect(profile.flash.routerId == routerId)
             #expect(profile.embedding.routerId == routerId)
+        }
+    }
+
+    @Test("the built profile gives the sampling mode it was given to both generation handles")
+    func builtProfileGivesTheSamplingModeToBothGenerationHandles() {
+        Self.withTemporaryDirectories { cacheDir, recordingsDir in
+            let profile = RealModelHarness.make(
+                model: Self.model,
+                context: Self.context,
+                container: UndrivenLanguageModelContainer(),
+                samplingMode: .greedy,
+                cacheDir: cacheDir,
+                recordingsDir: recordingsDir
+            )
+
+            // The mode belongs to the router, not to the container
+            // (`model-pool.md` §2.5). A gated suite states its pin here one
+            // time, and each session the profile vends gives that pin to
+            // `makeSession`. A container that stored the mode is gone, so a
+            // handle that did not carry it would decode with the provider
+            // default and the suite would lose its pin.
+            #expect(profile.standard.samplingMode == .greedy)
+            #expect(profile.flash.samplingMode == .greedy)
         }
     }
 

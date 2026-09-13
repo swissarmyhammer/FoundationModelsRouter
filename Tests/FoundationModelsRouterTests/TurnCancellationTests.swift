@@ -807,9 +807,11 @@ struct TurnCancellationTests {
     ///     turn's `.prompt` entry before running the mid-turn tool hook — the
     ///     switch between a cancelled turn that durably delivered its drained
     ///     outbox events and one that delivered nothing.
+    ///   - pool: The resident-model pool. Defaults to a fresh pool, so parallel suites never share residents.
     private static func makeFixture(
         cacheDir: URL,
-        appendsPromptBeforeToolCall: Bool = true
+        appendsPromptBeforeToolCall: Bool = true,
+        pool: ModelPool = ModelPool()
     ) async throws -> Fixture {
         let hook = TurnHook()
         let observer = TurnObserver()
@@ -822,7 +824,8 @@ struct TurnCancellationTests {
             recorder: recorder,
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
-            loader: StubModelLoader(container: container, dimension: stubDimension)
+            loader: StubModelLoader(container: container, dimension: stubDimension),
+            pool: pool
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
         return Fixture(observer: observer, hook: hook, recorder: recorder, container: container, profile: profile)

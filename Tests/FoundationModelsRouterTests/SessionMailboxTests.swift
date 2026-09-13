@@ -551,7 +551,8 @@ struct SessionMailboxTests {
     /// Builds a fresh router + resolved profile + vended session over a plain
     /// stub backend, recording through `recorder`.
     private static func makeSession(
-        recorder: any TranscriptRecorder
+        recorder: any TranscriptRecorder,
+        pool: ModelPool = ModelPool()
     ) async throws -> (session: RoutedSession, dir: URL) {
         let dir = makeTempDir()
         let router = Router(
@@ -559,7 +560,8 @@ struct SessionMailboxTests {
             recorder: recorder,
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: RawRepoMetadata(configJSON: configJSON, treeJSON: treeJSON)),
-            loader: StubModelLoader(container: BasicLLMContainer(), dimension: 8)
+            loader: StubModelLoader(container: BasicLLMContainer(), dimension: 8),
+            pool: pool
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
         return (profile.standard.makeSession(), dir)
@@ -692,7 +694,8 @@ struct SessionMailboxTests {
             recorder: JSONLRecorder(directory: recordingsDir),
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: RawRepoMetadata(configJSON: Self.configJSON, treeJSON: Self.treeJSON)),
-            loader: StubModelLoader(container: BasicLLMContainer(), dimension: 8)
+            loader: StubModelLoader(container: BasicLLMContainer(), dimension: 8),
+            pool: ModelPool()
         )
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let session = profile1.standard.makeSession()
@@ -712,7 +715,8 @@ struct SessionMailboxTests {
             recorder: JSONLRecorder(directory: recordingsDir),
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: RawRepoMetadata(configJSON: Self.configJSON, treeJSON: Self.treeJSON)),
-            loader: StubModelLoader(container: BasicLLMContainer(), dimension: 8)
+            loader: StubModelLoader(container: BasicLLMContainer(), dimension: 8),
+            pool: ModelPool()
         )
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let restored = try await profile2.standard.restoreSessionTree(root: session.id)

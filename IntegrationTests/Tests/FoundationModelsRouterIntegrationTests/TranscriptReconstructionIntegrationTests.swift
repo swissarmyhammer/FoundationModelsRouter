@@ -54,14 +54,15 @@ struct TranscriptReconstructionIntegrationTests {
     /// transcript can be reloaded through ``TranscriptTree/load(under:)``
     /// after the turn completes.
     ///
-    /// The profile comes from ``RealModelHarness/make(model:context:container:cacheDir:recordingsDir:routerId:)``
+    /// The profile comes from ``RealModelHarness/make(model:context:container:samplingMode:cacheDir:recordingsDir:routerId:)``
     /// and the session is assembled over its `.standard` handle. The hand-built
     /// copy this replaced named its profile `"test"`; the harness stamps its own
     /// name, and nothing reads the field.
     private func makeHarness() async throws -> Harness {
-        let container = try await RealModelContainer.load(ref: transcriptReconstructionTinyModel)
+        let loaded = try await RealModelContainer.load(ref: transcriptReconstructionTinyModel)
         let backend = try #require(
-            container.makeSession(instructions: nil) as? MLXFoundationModelsSessionBackend
+            loaded.container.makeSession(instructions: nil, samplingMode: loaded.samplingMode)
+                as? MLXFoundationModelsSessionBackend
         )
 
         let recordingsDir = FileManager.default.temporaryDirectory
@@ -77,7 +78,8 @@ struct TranscriptReconstructionIntegrationTests {
             // every slot took `SlotResolution`'s own default. Stated explicitly
             // here, because the harness has no default of its own to inherit.
             context: ProfileDefinition.defaultContext,
-            container: container,
+            container: loaded.container,
+            samplingMode: loaded.samplingMode,
             cacheDir: cacheDir,
             recordingsDir: recordingsDir
         )
@@ -127,7 +129,7 @@ struct TranscriptReconstructionIntegrationTests {
         return Harness(
             session: session,
             backend: backend,
-            container: container,
+            container: loaded.container,
             routerId: standard.routerId,
             sessionId: sessionId,
             recordingsDir: recordingsDir,

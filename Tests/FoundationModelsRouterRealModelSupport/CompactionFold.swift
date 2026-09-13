@@ -16,8 +16,9 @@ import FoundationModelsRouter
 /// of each call rather than a bare count, so the count and the ceiling the fold
 /// arithmetic produced are one measurement rather than two.
 public actor CountingBlankSlateSummarizer: CompactionSummarizer {
-    /// The resident model each call opens its own session over.
-    private let container: MLXFoundationModelsContainer
+    /// The loaded real model each call opens its own session over, with the
+    /// decoding strategy the suite pinned.
+    private let loaded: RealModelContainer
 
     /// One completed summarizer call.
     ///
@@ -44,9 +45,11 @@ public actor CountingBlankSlateSummarizer: CompactionSummarizer {
 
     /// Creates a summarizer over `container`.
     ///
-    /// - Parameter container: The resident model to generate with.
-    package init(container: MLXFoundationModelsContainer) {
-        self.container = container
+    /// - Parameter container: The loaded real model to generate with, and the
+    ///   decoding strategy the suite pinned. The container stores no mode, so
+    ///   each call passes ``RealModelContainer/samplingMode``.
+    package init(container: RealModelContainer) {
+        self.loaded = container
     }
 
     /// Condenses `prompt` in one generation over a session that has seen
@@ -58,7 +61,8 @@ public actor CountingBlankSlateSummarizer: CompactionSummarizer {
     /// - Returns: The model's answer, unchanged.
     /// - Throws: Whatever the backend throws.
     public func summarize(_ prompt: String, maxTokens: Int) async throws -> String {
-        let answer = try await container.makeSession(transcript: Transcript(entries: []))
+        let answer = try await loaded.container
+            .makeSession(transcript: Transcript(entries: []), samplingMode: loaded.samplingMode)
             .respond(to: prompt, maxTokens: maxTokens)
         calls.append(Call(ceiling: maxTokens, answer: answer))
         return answer
@@ -170,7 +174,8 @@ public enum CompactionFold {
     /// - Parameters:
     ///   - transcript: The transcript to fold.
     ///   - summarization: The model-assisted stage to fold with.
-    ///   - container: The resident model every summarizer call generates over.
+    ///   - container: The loaded real model every summarizer call generates
+    ///     over, with the decoding strategy the suite pinned.
     ///   - label: The tag every printed line of this run carries, so a suite
     ///     that folds twice can tell its two runs apart in the output.
     /// - Returns: Everything the run measured.
@@ -181,7 +186,7 @@ public enum CompactionFold {
     package static func run(
         _ transcript: Transcript,
         summarization: Summarization,
-        container: MLXFoundationModelsContainer,
+        container: RealModelContainer,
         label: String
     ) async throws -> CompactionFoldOutcome {
         let summarizer = CountingBlankSlateSummarizer(container: container)

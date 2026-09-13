@@ -359,7 +359,8 @@ struct TranscriptReconstructionTests {
         recorder: any TranscriptRecorder,
         cacheDir: URL,
         recordingsDir: URL,
-        recordingLevel: RecordingLevel = .full
+        recordingLevel: RecordingLevel = .full,
+        pool: ModelPool = ModelPool()
     ) -> Router {
         Router(
             maxConcurrentForks: 4,
@@ -370,7 +371,8 @@ struct TranscriptReconstructionTests {
             probe: StubProbe(
                 chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
-            loader: StubModelLoader(container: container, dimension: stubDimension)
+            loader: StubModelLoader(container: container, dimension: stubDimension),
+            pool: pool
         )
     }
 

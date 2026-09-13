@@ -120,16 +120,18 @@ print("[record] decoding: argmax, reply ceiling \(RecordingScript.replyTokenCeil
 // the fixture directory plays.
 let rawRecordingsDirectory = outputDirectory.appendingPathComponent("raw", isDirectory: true)
 
-// Argmax decoding, pinned at the loader so every generation of the run is
+// Argmax decoding, pinned on the router so every generation of the run is
 // repeatable: the provider default samples from MLX's process-global PRNG,
-// which seeds itself from the clock.
+// which seeds itself from the clock. The router carries the mode, not the
+// loader: a loaded container serves every router in the pool, and the mode
+// belongs to the router (`model-pool.md` §2.5).
 let router = Router(
     recordingsDir: rawRecordingsDirectory,
     loader: LiveModelLoader(
         downloader: #hubDownloader(),
-        tokenizerLoader: #huggingFaceTokenizerLoader(),
-        samplingMode: .greedy
-    )
+        tokenizerLoader: #huggingFaceTokenizerLoader()
+    ),
+    samplingMode: .greedy
 )
 
 let definition = ProfileDefinition(

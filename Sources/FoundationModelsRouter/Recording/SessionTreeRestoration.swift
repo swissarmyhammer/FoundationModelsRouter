@@ -362,7 +362,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 cappedToTokenLimit: configuration?.budget?.toolOutputLimit
             )
             let backend = routedLLM.container.makeSession(
-                transcript: seedTranscript, tools: instancedTools)
+                transcript: seedTranscript, tools: instancedTools, samplingMode: routedLLM.samplingMode)
             // ``RoutedSession/contextFill``'s restored numerator
             // (compaction_plan.md §1.5, checkpoint-aware restore
             // precedence): the newest stamped `.response` event's usage

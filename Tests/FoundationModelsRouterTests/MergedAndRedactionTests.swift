@@ -630,7 +630,8 @@ struct MergedAndRedactionTests {
         recordingLevel: RecordingLevel,
         redact: (@Sendable (String) -> String)?,
         cacheDir: URL,
-        recordingsDir: URL
+        recordingsDir: URL,
+        pool: ModelPool = ModelPool()
     ) -> Router {
         Router(
             cacheDir: cacheDir,
@@ -640,7 +641,8 @@ struct MergedAndRedactionTests {
             redact: redact,
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
-            loader: StubModelLoader(dimension: stubDimension, text: cannedText)
+            loader: StubModelLoader(dimension: stubDimension, text: cannedText),
+            pool: pool
         )
     }
 }

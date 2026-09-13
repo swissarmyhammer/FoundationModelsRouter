@@ -126,7 +126,8 @@ struct SessionSidecarTests {
         cacheDir: URL,
         recordingsDir: URL,
         maxConcurrentForks: Int = 4,
-        recordingLevel: RecordingLevel = .full
+        recordingLevel: RecordingLevel = .full,
+        pool: ModelPool = ModelPool()
     ) -> Router {
         Router(
             maxConcurrentForks: maxConcurrentForks,
@@ -137,7 +138,8 @@ struct SessionSidecarTests {
             probe: StubProbe(
                 chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
-            loader: StubModelLoader(dimension: stubDimension, text: cannedText)
+            loader: StubModelLoader(dimension: stubDimension, text: cannedText),
+            pool: pool
         )
     }
 

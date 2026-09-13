@@ -142,7 +142,9 @@ extension RoutedSessionActor {
             do {
                 let result = try await fold(
                     prompt: prompt, budget: budget,
-                    summarizer: BackendCompactionSummarizer(backend: profile.flash.container.makeSession(instructions: nil)),
+                    summarizer: BackendCompactionSummarizer(
+                        backend: profile.flash.container.makeSession(
+                            instructions: nil, samplingMode: profile.flash.samplingMode)),
                     summarizerModel: profile.flash.chosen
                 )
                 return (result, .flash)

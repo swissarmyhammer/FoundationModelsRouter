@@ -181,7 +181,8 @@ struct PromptQueueTests {
     private static func makeSession(
         recorder: any TranscriptRecorder,
         container: any LoadedLLMContainer,
-        tools: [any Tool] = []
+        tools: [any Tool] = [],
+        pool: ModelPool = ModelPool()
     ) async throws -> (session: RoutedSession, dir: URL) {
         let dir = Self.makeTempDir()
         let router = Router(
@@ -189,7 +190,8 @@ struct PromptQueueTests {
             recorder: recorder,
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
-            loader: StubModelLoader(container: container, dimension: stubDimension)
+            loader: StubModelLoader(container: container, dimension: stubDimension),
+            pool: pool
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
         return (profile.standard.makeSession(tools: tools), dir)

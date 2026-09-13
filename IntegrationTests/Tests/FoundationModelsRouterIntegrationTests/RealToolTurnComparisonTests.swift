@@ -217,24 +217,25 @@ struct RealToolTurnComparisonTests {
     /// Builds a `RoutedSession` over the loaded real model with the scenario's
     /// two tools mounted.
     ///
-    /// The profile comes from ``RealModelHarness/make(model:context:container:cacheDir:recordingsDir:routerId:)``,
+    /// The profile comes from ``RealModelHarness/make(model:context:container:samplingMode:cacheDir:recordingsDir:routerId:)``,
     /// which this suite's own hand-built copy was folded onto (task ^zz6kam0).
     /// Two things the copy did differently went with the move. It re-wrapped the
     /// container it was handed to pin greedy decoding; ``loadContainer()`` now
-    /// asks ``RealModelContainer/load(ref:context:samplingMode:)`` for a greedy
-    /// container at load time instead, as
-    /// ``CompactionRoundTripIntegrationTests`` does. And its `.embedding` stub
-    /// recorded an issue if anything embedded through it; that tripwire is on
-    /// the harness stub now, so every caller of the harness carries it.
+    /// asks ``RealModelContainer/load(ref:context:samplingMode:chatTemplateDate:)``
+    /// for the mode at load time instead, as ``CompactionRoundTripIntegrationTests``
+    /// does, and the harness gives that mode to every session the profile vends.
+    /// And its `.embedding` stub recorded an issue if anything embedded through
+    /// it; that tripwire is on the harness stub now, so every caller of the
+    /// harness carries it.
     ///
-    /// - Parameter container: The loaded model container, already pinned to
-    ///   ``samplingMode`` by its caller (see
-    ///   ``MLXFoundationModelsContainer/samplingMode``).
+    /// - Parameter loaded: The loaded model, with the decoding strategy
+    ///   ``samplingMode`` its caller pinned (see
+    ///   ``RealModelContainer/samplingMode``).
     /// - Returns: The vended session, the profile that must outlive it (the
     ///   session's handle holds its owning profile weakly), and the temp
     ///   directory the caller removes.
     private func makeSession(
-        over container: MLXFoundationModelsContainer
+        over loaded: RealModelContainer
     ) -> (session: RoutedSession, profile: LanguageModelProfile, directory: URL) {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("RealToolTurnComparison-\(UUID().uuidString)", isDirectory: true)
@@ -247,7 +248,8 @@ struct RealToolTurnComparisonTests {
             // default. Stated explicitly here, because the harness has no
             // default of its own to inherit.
             context: ProfileDefinition.defaultContext,
-            container: container,
+            container: loaded.container,
+            samplingMode: loaded.samplingMode,
             cacheDir: directory,
             recordingsDir: directory
         )
@@ -295,19 +297,19 @@ struct RealToolTurnComparisonTests {
     /// the both-surfaces test loaded the 30B twice for one test; the suite
     /// doc states what that change no longer proves.
     ///
-    /// - Returns: The loaded container.
+    /// - Returns: The loaded container and the pinned mode.
     /// - Throws: Whatever loading throws.
-    private static func loadContainer() async throws -> MLXFoundationModelsContainer {
+    private static func loadContainer() async throws -> RealModelContainer {
         try await RealModelContainer.load(ref: realToolTurnModel, samplingMode: samplingMode)
     }
 
     /// Drives one real turn through `respond(to:)`.
     ///
-    /// - Parameter container: The loaded model container the turn runs over.
+    /// - Parameter loaded: The loaded model the turn runs over, with its pinned mode.
     /// - Returns: The run's answer and normalized transcript.
     /// - Throws: Whatever the turn throws.
-    private func respondRun(over container: MLXFoundationModelsContainer) async throws -> ToolTurnRunOutcome {
-        let (session, profile, directory) = makeSession(over: container)
+    private func respondRun(over loaded: RealModelContainer) async throws -> ToolTurnRunOutcome {
+        let (session, profile, directory) = makeSession(over: loaded)
         defer { try? FileManager.default.removeItem(at: directory) }
         // The session's handle holds its owning profile weakly, so the profile
         // has to stay referenced for the whole turn.
@@ -328,11 +330,11 @@ struct RealToolTurnComparisonTests {
     /// twice — once applying ``SessionEvent/textReset`` and once ignoring it —
     /// plus every tool id the turn reported.
     ///
-    /// - Parameter container: The loaded model container the turn runs over.
+    /// - Parameter loaded: The loaded model the turn runs over, with its pinned mode.
     /// - Returns: The run's answers, ids, and normalized transcript.
     /// - Throws: Whatever the turn throws.
-    private func streamRun(over container: MLXFoundationModelsContainer) async throws -> ToolTurnRunOutcome {
-        let (session, profile, directory) = makeSession(over: container)
+    private func streamRun(over loaded: RealModelContainer) async throws -> ToolTurnRunOutcome {
+        let (session, profile, directory) = makeSession(over: loaded)
         defer { try? FileManager.default.removeItem(at: directory) }
         // The session's handle holds its owning profile weakly, so the profile
         // has to stay referenced for the whole turn.
@@ -439,15 +441,15 @@ struct RealToolTurnComparisonTests {
     func realTurnDeliversToolDataOnBothSurfaces() async throws {
         // One container for both surfaces; see `loadContainer()`.
         let loadStarted = ContinuousClock.now
-        let container = try await Self.loadContainer()
+        let loaded = try await Self.loadContainer()
         let loadDuration = ContinuousClock.now - loadStarted
 
         let respondStarted = ContinuousClock.now
-        let responded = try await respondRun(over: container)
+        let responded = try await respondRun(over: loaded)
         let respondDuration = ContinuousClock.now - respondStarted
 
         let streamStarted = ContinuousClock.now
-        let streamed = try await streamRun(over: container)
+        let streamed = try await streamRun(over: loaded)
         let streamDuration = ContinuousClock.now - streamStarted
 
         // Printed so the scripted-versus-real comparison is checkable by a
@@ -568,8 +570,8 @@ struct RealToolTurnComparisonTests {
 
     @Test("the real transcript has the same entry kinds the scripted scenario produces")
     func realTranscriptShapeMatchesScriptedShape() async throws {
-        let container = try await Self.loadContainer()
-        let kinds = try await streamRun(over: container).transcript.map(\.kind)
+        let loaded = try await Self.loadContainer()
+        let kinds = try await streamRun(over: loaded).transcript.map(\.kind)
 
         // The scripted scenario's own shape, which
         // `ScriptedToolTurnComparisonTests.transcriptCarriesToolCallsAndToolOutputs`

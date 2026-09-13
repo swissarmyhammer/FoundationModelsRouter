@@ -27,7 +27,7 @@ import Testing
 /// and reads back every fact this function stamps: the definition name, each
 /// slot's resolution, the router id every handle carries, the one gate set the
 /// two generation handles share, and the `session.json` the durable recording
-/// actually writes to disk. That is why ``make(model:context:container:cacheDir:recordingsDir:routerId:)``
+/// actually writes to disk. That is why ``make(model:context:container:samplingMode:cacheDir:recordingsDir:routerId:)``
 /// takes `any LoadedLLMContainer` rather than the concrete MLX type: the
 /// protocol is the only thing this function uses, and taking it is what lets a
 /// hermetic test supply a stand-in.
@@ -80,7 +80,7 @@ public enum RealModelHarness {
     /// rather than reporting a decision: no budget was spent and no candidate
     /// was rejected, and `contextTokens` is the window the caller loaded at.
     ///
-    /// Separate from ``make(model:context:container:cacheDir:recordingsDir:routerId:)``
+    /// Separate from ``make(model:context:container:samplingMode:cacheDir:recordingsDir:routerId:)``
     /// because it needs no container, which is what lets ``RealModelHarnessTests``
     /// hold it to the exact value each hand-built copy produced.
     ///
@@ -154,6 +154,13 @@ public enum RealModelHarness {
     ///     the protocol rather than as ``MLXFoundationModelsContainer``, because
     ///     nothing here needs the concrete type and the protocol is what lets
     ///     ``RealModelHarnessTests`` prove this whole build with no model at all.
+    ///   - samplingMode: The decoding strategy every session vended from the
+    ///     profile passes to `makeSession`, or `nil` (the default) for the
+    ///     provider default. The container stores no mode (`model-pool.md`
+    ///     §2.5), so a gated suite that pinned one at load passes it here:
+    ///     ``RealModelContainer/samplingMode``. A profile that does not carry
+    ///     the mode decodes with the provider default, and the suite loses its
+    ///     pin.
     ///   - cacheDir: The directory the router caches under.
     ///   - recordingsDir: The directory the router records under.
     ///   - routerId: The id to stamp the router with. Defaults to a fresh one.
@@ -168,6 +175,7 @@ public enum RealModelHarness {
         model: ModelRef,
         context: Int,
         container: any LoadedLLMContainer,
+        samplingMode: GenerationOptions.SamplingMode? = nil,
         cacheDir: URL,
         recordingsDir: URL,
         routerId: ULID = .generate()
@@ -193,7 +201,8 @@ public enum RealModelHarness {
                 routerId: router.id,
                 recorder: recorder,
                 durableRecording: durableRecording(slot),
-                gates: generationGates
+                gates: generationGates,
+                samplingMode: samplingMode
             )
         }
         let embedding = RoutedEmbedder(

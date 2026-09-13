@@ -460,7 +460,7 @@ struct CompactionSmokeIntegrationTests {
         }
 
         let loadStartedAt = Date()
-        let container = try await RealModelContainer.load(
+        let loaded = try await RealModelContainer.load(
             ref: compactionSmokeModel,
             context: compactionSmokeContext,
             samplingMode: compactionSmokeSamplingMode,
@@ -471,10 +471,10 @@ struct CompactionSmokeIntegrationTests {
         let outcome = try await CompactionFold.run(
             makeTranscript(),
             summarization: Summarization(reasoningTokenHeadroom: reasoningTokenHeadroom),
-            container: container,
+            container: loaded,
             label: foldLabel
         )
-        await container.model.evict()
+        await loaded.container.model.evict()
         return outcome
     }
 

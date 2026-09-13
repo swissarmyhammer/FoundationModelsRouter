@@ -132,7 +132,8 @@ struct TranscriptTreeTests {
     private static func makeRouter(
         recorder: any TranscriptRecorder,
         cacheDir: URL,
-        recordingsDir: URL
+        recordingsDir: URL,
+        pool: ModelPool = ModelPool()
     ) -> Router {
         Router(
             maxConcurrentForks: 4,
@@ -143,7 +144,8 @@ struct TranscriptTreeTests {
             probe: StubProbe(
                 chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
-            loader: StubModelLoader(dimension: stubDimension, text: cannedText)
+            loader: StubModelLoader(dimension: stubDimension, text: cannedText),
+            pool: pool
         )
     }
 

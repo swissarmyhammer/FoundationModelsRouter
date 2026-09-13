@@ -265,14 +265,14 @@ struct PropagationProbeIntegrationTests {
 
     /// The options every probe turn passes to `session.respond(to:options:)`.
     ///
-    /// Stated here, and deliberately here rather than on
-    /// ``RealModelContainer/load(ref:context:samplingMode:)``, for the reason
+    /// Stated here, and deliberately here rather than through
+    /// ``RealModelContainer/samplingMode``, for the reason
     /// ``RecordingHandleIntegrationTests`` states on its own `turnOptions`: a
-    /// sampling mode pinned at load time is read by the session backend a
-    /// `RoutedSession` drives, and this suite drives no `RoutedSession`. It
-    /// drives a raw `LanguageModelSession` over the container's own language
-    /// model, so the only options that reach the model are the ones the turn
-    /// passes.
+    /// mode a suite passes to `makeSession(...samplingMode:)` is read by the
+    /// session backend a `RoutedSession` drives, and this suite drives no
+    /// `RoutedSession`. It drives a raw `LanguageModelSession` over the
+    /// container's own language model, so the only options that reach the
+    /// model are the ones the turn passes.
     ///
     /// - Argmax decoding, which task ^s49ya8p added. The provider default
     ///   draws at temperature `0.6` from MLX's process-global PRNG, which
@@ -342,13 +342,13 @@ struct PropagationProbeIntegrationTests {
     private func makeUncontaminatedContainer() async throws -> UncontaminatedLoad {
         let dropStarted = ContinuousClock.now
         let inherited = try await RealModelContainer.load(ref: propagationProbeModel)
-        await inherited.model.evict()
+        await inherited.container.model.evict()
         let dropDuration = ContinuousClock.now - dropStarted
 
         let loadStarted = ContinuousClock.now
-        let container = try await RealModelContainer.load(ref: propagationProbeModel)
+        let clean = try await RealModelContainer.load(ref: propagationProbeModel)
         return UncontaminatedLoad(
-            container: container,
+            container: clean.container,
             dropDuration: dropDuration,
             loadDuration: ContinuousClock.now - loadStarted
         )

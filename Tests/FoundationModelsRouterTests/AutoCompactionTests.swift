@@ -68,7 +68,7 @@ struct AutoCompactionTests {
 
     /// Vends the shared triggered session under this suite's own temp-directory
     /// prefix. See
-    /// ``AutoCompactionFixtures/makeTriggeredSession(budget:tools:summarization:tracer:tempDirPrefix:)``.
+    /// ``AutoCompactionFixtures/makeTriggeredSession(budget:tools:summarization:tracer:samplingMode:tempDirPrefix:)``.
     ///
     /// - Parameters:
     ///   - budget: The auto-compaction opt-in to vend the session with, or

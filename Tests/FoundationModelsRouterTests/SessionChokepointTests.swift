@@ -246,7 +246,8 @@ struct SessionChokepointTests {
         cacheDir: URL,
         text: String = cannedText,
         shouldThrow: Bool = false,
-        maxTokensSpy: MaxTokensSpy? = nil
+        maxTokensSpy: MaxTokensSpy? = nil,
+        pool: ModelPool = ModelPool()
     ) -> Router {
         Router(
             cacheDir: cacheDir,
@@ -259,7 +260,8 @@ struct SessionChokepointTests {
                 text: text,
                 shouldThrow: shouldThrow,
                 maxTokensSpy: maxTokensSpy
-            )
+            ),
+            pool: pool
         )
     }
 

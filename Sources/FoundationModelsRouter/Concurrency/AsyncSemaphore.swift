@@ -7,15 +7,16 @@ import Synchronization
 ///
 /// ``wait()`` is non-throwing, so acquisition runs to completion even when
 /// the task is cancelled while suspended. Cancellation is observed at the
-/// surrounding `await` boundaries and by the body of ``withPermit(_:)``. Every
-/// session gate — the turn lock, the per-model generation gate, fork admission
-/// — takes this acquire, because a cancelled waiter that walked away from those
-/// queues would leave a gate count that no later release ever balances.
+/// surrounding `await` boundaries and by the body of ``withPermit(isolation:_:)``.
+/// Every session gate — the turn lock, the per-model generation gate, fork
+/// admission — takes this acquire, because a cancelled waiter that walked away
+/// from those queues would leave a gate count that no later release ever
+/// balances.
 ///
 /// ``waitUnlessCancelled()`` throws `CancellationError` instead, and a caller
 /// the user cancels leaves the queue at once. ``Router/resolve(profile:reporting:)``
-/// takes this acquire for the pool lock, where a queued resolve holds nothing
-/// yet and can be abandoned safely.
+/// takes this acquire for the pool's resolve lock, where a queued resolve holds
+/// nothing yet and can be abandoned safely.
 ///
 /// One arrival order serves both kinds of waiter, so the queue stays fair
 /// whichever acquire each caller took, and each continuation is resumed
@@ -221,11 +222,41 @@ public final class AsyncSemaphore: Sendable {
     /// returns normally, throws, or is unwound by cancellation — a permit can
     /// never leak.
     ///
-    /// - Parameter body: The work to run while holding a permit.
+    /// - Parameters:
+    ///   - isolation: The caller's actor isolation, which defaults to the
+    ///     caller's own. `body` runs there, so an actor-isolated closure
+    ///     never leaves its caller's region.
+    ///   - body: The work to run while holding a permit.
     /// - Returns: Whatever `body` returns.
     /// - Throws: Rethrows any error thrown by `body`.
-    package func withPermit<T>(_ body: () async throws -> T) async rethrows -> T {
+    package func withPermit<T>(
+        isolation: isolated (any Actor)? = #isolation,
+        _ body: () async throws -> T
+    ) async rethrows -> T {
         await wait()
+        defer { signal() }
+        return try await body()
+    }
+
+    /// Acquires a permit through ``waitUnlessCancelled()``, runs `body`, and
+    /// releases the permit on the way out.
+    ///
+    /// A caller cancelled while it waits leaves the queue, runs nothing, and
+    /// owes no ``signal()``. After the acquire, the permit is returned in a
+    /// `defer`, as in ``withPermit(isolation:_:)``.
+    ///
+    /// - Parameters:
+    ///   - isolation: The caller's actor isolation, which defaults to the
+    ///     caller's own. `body` runs there.
+    ///   - body: The work to run while holding a permit.
+    /// - Returns: Whatever `body` returns.
+    /// - Throws: `CancellationError` when the calling task is cancelled before
+    ///   the permit is acquired, or any error thrown by `body`.
+    package func withPermitUnlessCancelled<T>(
+        isolation: isolated (any Actor)? = #isolation,
+        _ body: () async throws -> T
+    ) async throws -> T {
+        try await waitUnlessCancelled()
         defer { signal() }
         return try await body()
     }

@@ -278,7 +278,8 @@ struct ForkConcurrencyTests {
     private static func makeRouter(
         container: InstrumentedLLMContainer,
         cacheDir: URL,
-        maxConcurrentForks: Int = 4
+        maxConcurrentForks: Int = 4,
+        pool: ModelPool = ModelPool()
     ) -> Router {
         Router(
             maxConcurrentForks: maxConcurrentForks,
@@ -286,7 +287,8 @@ struct ForkConcurrencyTests {
             recorder: InMemoryRecorder(),
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
-            loader: StubModelLoader(container: container, dimension: stubDimension)
+            loader: StubModelLoader(container: container, dimension: stubDimension),
+            pool: pool
         )
     }
 

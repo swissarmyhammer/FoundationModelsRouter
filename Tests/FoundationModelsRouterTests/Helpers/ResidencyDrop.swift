@@ -21,3 +21,19 @@ extension Optional where Wrapped == LanguageModelProfile {
         self = nil
     }
 }
+
+extension ModelPool {
+    /// Gives back every residency whose last reference was dropped, and
+    /// returns once the evictions are done.
+    ///
+    /// A dropped ``ResidencyHold`` queues its token and starts a drain in a
+    /// task, so the eviction is not yet done when the drop returns. A test that
+    /// reads the pool or a loader spy at once, with no resolve to act as the
+    /// drain point, calls this first. It takes the resolve lock, as every drain
+    /// does.
+    func settleDroppedResidencies() async {
+        await withResolveLock {
+            await drainPendingReleases()
+        }
+    }
+}

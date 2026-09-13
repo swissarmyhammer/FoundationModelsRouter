@@ -21,6 +21,11 @@ let mlxPackage = "mlx-swift-lm"
 let huggingFacePackage = "swift-huggingface"
 let transformersPackage = "swift-transformers"
 
+// The tracing package the root manifest pins for the library's spans. The
+// integration test target links its `InMemoryTracing` product, the same product
+// the root unit test target links, to read a router's finished spans back.
+let tracingPackage = "swift-distributed-tracing"
+
 // The router package's products: the library under test and the three test
 // support libraries the root package publishes for this package (see the
 // root manifest's `products` list).
@@ -70,14 +75,22 @@ let package = Package(
             url: "https://github.com/huggingface/\(transformersPackage)",
             from: "1.3.0"
         ),
+        .package(
+            url: "https://github.com/apple/\(tracingPackage).git",
+            from: "1.4.1"
+        ),
     ],
     targets: [
         // The real-model suites (milestone 7): they download real models and
         // run them end to end. Selection is structural: this target exists
-        // only in this package, so a root `swift test` cannot see it.
+        // only in this package, so a root `swift test` cannot see it. The
+        // in-memory tracer is what `CrossRouterPoolIntegrationTests` counts a
+        // router's `load` spans with.
         .testTarget(
             name: "\(routerPackage)IntegrationTests",
-            dependencies: routerProducts + mlxProducts + hubProducts,
+            dependencies: routerProducts + mlxProducts + hubProducts + [
+                .product(name: "InMemoryTracing", package: tracingPackage)
+            ],
             path: "Tests/\(routerPackage)IntegrationTests"
         ),
         // The evals' real-model tiers. A target of its own rather than suites

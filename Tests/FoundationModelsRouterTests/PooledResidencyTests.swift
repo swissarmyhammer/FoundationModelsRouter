@@ -7,35 +7,16 @@ import Testing
 /// Exercises pooled model residency (task kh01tv2): a ``Router`` now supports
 /// several concurrently resident profiles that share one machine budget and
 /// dedupe identical resident model instances keyed on ``ModelRef`` (incl.
-/// revision) plus the load-time role/context that changes resident bytes —
-/// rather than admitting exactly one resident profile at a time.
+/// revision) plus the role the model was loaded under — rather than
+/// admitting exactly one resident profile at a time. The working context is
+/// not part of the key: a session's KV cache is priced per session.
 ///
 /// Everything runs against stubs — no network, no GPU — so the suite is fast
-/// and deterministic.
+/// and deterministic. The spies, the spying loader, the footprint constants,
+/// and the router factory live in `Helpers/ResidencyStubs.swift`, shared with
+/// `CrossRouterResidencyTests`.
 @Suite("Pooled model residency")
 struct PooledResidencyTests {
-    // MARK: - Stub containers
-
-    /// A stand-in generation container that returns a canned response
-    /// identifying which ref it was loaded for, so a test can prove two
-    /// profiles' sessions really hit the same (or different) resident model.
-    private struct StubLLMContainer: LoadedLLMContainer {
-        let canned: String
-        func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            StubSessionBackend(responseText: canned)
-        }
-        func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
-            StubSessionBackend(responseText: canned)
-        }
-    }
-
-    private struct StubEmbeddingContainer: LoadedEmbeddingContainer {
-        let dimension: Int
-        func embed(texts: [String]) async throws -> [[Float]] {
-            texts.map { _ in [Float](repeating: 0.5, count: dimension) }
-        }
-    }
-
     // MARK: - Concurrency-observing container (shared-gate test)
 
     /// Tracks how many bodies are concurrently inside a suspended `respond`
@@ -103,188 +84,54 @@ struct PooledResidencyTests {
         }
     }
 
-    // MARK: - Spies
-
-    /// Counts every load/evict the router routes through the loader, keyed by
-    /// the exact ``ModelRef`` (revision-sensitive), so a test can prove
-    /// dedup happened (one load for two profiles) or didn't (one load per
-    /// distinct ref/revision).
-    private actor LoadSpy {
-        private(set) var llmLoads: [ModelRef] = []
-        private(set) var embedderLoads: [ModelRef] = []
-        private(set) var evictions = 0
-
-        func recordLLMLoad(_ ref: ModelRef) { llmLoads.append(ref) }
-        func recordEmbedderLoad(_ ref: ModelRef) { embedderLoads.append(ref) }
-        func recordEviction() { evictions += 1 }
-    }
-
-    // MARK: - Other stubs
-
-    private struct StubProbe: MachineProbe {
-        let chip: String
-        let totalRAM: Int64
-        let recommendedMaxWorkingSetSize: Int64
-    }
-
-    private struct StubMetadataSource: MetadataSource {
-        let raw: RawRepoMetadata
-        func fetchRawMetadata(repo: String, revision: String?) async throws -> RawRepoMetadata { raw }
-    }
-
-    private struct StubModelLoader: ModelLoader {
-        let spy: LoadSpy
-        let dimension: Int
-        /// Optional override so the concurrency test can vend a
-        /// ``SuspendingLLMContainer`` instead of the plain ``StubLLMContainer``.
-        var llmContainer: (@Sendable (ModelRef) -> any LoadedLLMContainer)?
-
-        /// When set, `loadLLM` for exactly this ref signals `entrySignal`
-        /// (proving it has been reached) and then awaits `releaseGate` before
-        /// returning — a deterministic suspension window for tests exercising
-        /// what can interleave with an in-flight `resolve()`.
-        var gatedRef: ModelRef?
-        var entrySignal: AsyncSemaphore?
-        var releaseGate: AsyncSemaphore?
-
-        func loadLLM(
-            ref: ModelRef,
-            slot: ModelSlot,
-            context: Int,
-            reporting: @escaping @Sendable (DownloadProgress) -> Void
-        ) async throws -> any LoadedLLMContainer {
-            await spy.recordLLMLoad(ref)
-            reporting(DownloadProgress(bytesDownloaded: 1, bytesTotal: 1))
-            if ref == gatedRef, let entrySignal, let releaseGate {
-                entrySignal.signal()
-                await releaseGate.wait()
-            }
-            if let llmContainer { return llmContainer(ref) }
-            return StubLLMContainer(canned: "from-\(ref.stringValue)")
-        }
-
-        func loadEmbedder(
-            ref: ModelRef,
-            slot: ModelSlot,
-            reporting: @escaping @Sendable (DownloadProgress) -> Void
-        ) async throws -> any LoadedEmbeddingContainer {
-            await spy.recordEmbedderLoad(ref)
-            reporting(DownloadProgress(bytesDownloaded: 1, bytesTotal: 1))
-            return StubEmbeddingContainer(dimension: dimension)
-        }
-
-        func preload(container: any LoadedModelContainer) async throws {}
-
-        func evict(container: any LoadedModelContainer) async {
-            await spy.recordEviction()
-        }
-    }
-
     // MARK: - Fixtures
 
-    /// A 2-layer attention shape with a single 10 MB weight shard — the same
-    /// canned config every other suite in this target uses, so footprints
-    /// are the same well-understood magnitude
-    /// (`generationSlotMarginedFootprint` ≈ 14_516_583 bytes,
-    /// `embeddingSlotMarginedFootprint` == 12_000_000 bytes at the default
-    /// 8192-token context; see `ResolveTests`).
-    private static let configJSON = Data("""
-        {
-            "num_hidden_layers": 2,
-            "num_attention_heads": 8,
-            "num_key_value_heads": 2,
-            "head_dim": 16,
-            "hidden_size": 128
-        }
-        """.utf8)
-
-    private static let treeJSON = Data("""
-        [
-            {"type": "file", "path": "model.safetensors", "size": 10000000}
-        ]
-        """.utf8)
-
-    private static var rawMetadata: RawRepoMetadata {
-        RawRepoMetadata(configJSON: configJSON, treeJSON: treeJSON)
-    }
-
-    /// One full trio's margined footprint at the default context: standard +
-    /// flash (each ≈14_516_583) + embedding (12_000_000).
-    private static let oneTrioFootprint: Int64 = 14_516_583 + 14_516_583 + 12_000_000
-
-    /// Headroom added on top of a whole number of trio footprints when sizing
-    /// a test router's simulated RAM, so a budget meant to fit exactly N
-    /// trios isn't rejected by an off-by-a-few-bytes rounding difference
-    /// between this constant's footprint arithmetic and the joint fit's own.
-    private static let headroomBufferBytes: Int64 = 1_000
-
-    /// The `× 1.2` margined KV cache of ONE generation session at the default
-    /// 8192-token context for the canned 2-layer config (raw 2_097_152 bytes)
-    /// — the extra steady-state cost each generation slot beyond the first
-    /// adds on a shared resident model, and exactly what ``JointFit`` charges
-    /// a second generation slot naming an already-charged reference.
-    private static let sessionKVMarginedBytes: Int64 = 2_516_583
-
-    /// The whole reservation ``JointFit`` makes for a trio whose standard and
-    /// flash slots name ONE reference: that reference's weights plus one KV
-    /// cache (14_516_583), the second slot's own KV cache
-    /// (``sessionKVMarginedBytes``), and the embedding model (12_000_000).
-    private static let sharedPairTrioFootprint: Int64 =
-        14_516_583 + sessionKVMarginedBytes + 12_000_000
-
-    /// The whole reservation a later profile is charged when it resolves an
-    /// already-resident trio again: one session KV cache for each of its two
-    /// generation slots — its own new sessions materialize new caches on the
-    /// shared containers — and zero for the reused embedder.
-    private static let reusedTrioCharge: Int64 = sessionKVMarginedBytes * 2
-
-    /// The whole reservation a later profile is charged when it reuses a
-    /// resident trio's generation model and embedder but brings its own flash
-    /// model: one session KV cache on the reused generation model
-    /// (``sessionKVMarginedBytes``), its own flash model's whole footprint
-    /// (14_516_583), and zero for the reused embedder.
-    private static let reuseWithOwnFlashCharge: Int64 = sessionKVMarginedBytes + 14_516_583
-
-    /// A working context below ``ProfileDefinition/defaultContext``, for the
-    /// profile that names an already-resident repo at a second context: the KV
-    /// cache is sized into the container at load time, so the same repo at this
-    /// context is a different resident model.
-    private static let steppedDownContext = 4096
-
-    /// The vector length every ``StubEmbeddingContainer`` in this suite vends.
-    private static let stubEmbeddingDimension = 8
-
     private static func makeTempDir() -> URL {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("PooledResidencyTests-\(UUID().uuidString)", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
+        RouterTestFixtures.makeTempDir(prefix: "PooledResidencyTests")
     }
 
-    private static func makeRouter(
-        spy: LoadSpy,
-        recommendedMaxWorkingSetSize: Int64,
-        cacheDir: URL,
-        llmContainer: (@Sendable (ModelRef) -> any LoadedLLMContainer)? = nil,
-        gatedRef: ModelRef? = nil,
-        entrySignal: AsyncSemaphore? = nil,
-        releaseGate: AsyncSemaphore? = nil
-    ) -> Router {
-        Router(
-            headroomReserve: 0,
-            cacheDir: cacheDir,
-            recorder: InMemoryRecorder(),
-            probe: StubProbe(
-                chip: "Apple Test",
-                totalRAM: recommendedMaxWorkingSetSize,
-                recommendedMaxWorkingSetSize: recommendedMaxWorkingSetSize
-            ),
-            metadataSource: StubMetadataSource(raw: rawMetadata),
-            loader: StubModelLoader(
-                spy: spy, dimension: stubEmbeddingDimension, llmContainer: llmContainer,
-                gatedRef: gatedRef, entrySignal: entrySignal, releaseGate: releaseGate
-            )
+    // MARK: - The pool a router uses.
+
+    @Test("a router built with no pool uses the process-wide shared pool")
+    func defaultPoolIsShared() throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // The one router in this target built with no `pool:` argument. It
+        // pins the default and never resolves, so it puts nothing in the
+        // shared pool that another suite could see.
+        let router = Router(cacheDir: dir)
+        #expect(router.pool === ModelPool.shared)
+    }
+
+    @Test("a router built with its own pool uses that pool, which counts what one resolve makes resident")
+    @MainActor
+    func explicitPoolCountsThisRouterResidents() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let spy = LoadSpy()
+        let pool = ModelPool()
+        let router = ResidencyFixtures.makeRouter(
+            spy: spy,
+            recommendedMaxWorkingSetSize: ResidencyFixtures.oneTrioFootprint + ResidencyFixtures.headroomBufferBytes,
+            cacheDir: dir,
+            pool: pool
         )
+        #expect(router.pool === pool)
+        #expect(router.pool !== ModelPool.shared)
+        #expect(await pool.residentModelCount == 0)
+
+        let profile = ProfileDefinition(
+            name: "counted", description: "three models the pool counts",
+            standard: ["org/count-std"], flash: ["org/count-flash"], embedding: ["org/count-emb"]
+        )
+        var resolved: LanguageModelProfile? = try await router.resolve(
+            profile: profile, reporting: ResolutionProgress())
+        // One trio: the standard model, the flash model, and the embedder.
+        #expect(await pool.residentModelCount == 3)
+
+        resolved.dropReference()
+        await pool.settleDroppedResidencies()
+        #expect(await pool.residentModelCount == 0)
     }
 
     // MARK: - Two profiles sharing a ModelRef → one load, two live sessions, both generate.
@@ -298,10 +145,10 @@ struct PooledResidencyTests {
         // Fits one trio plus the second profile's reuse charge: the second
         // profile shares the resident containers, but each of its two
         // generation slots still pays for its own session KV cache.
-        let router = Self.makeRouter(
+        let router = ResidencyFixtures.makeRouter(
             spy: spy,
-            recommendedMaxWorkingSetSize: Self.oneTrioFootprint + Self.reusedTrioCharge
-                + Self.headroomBufferBytes,
+            recommendedMaxWorkingSetSize: ResidencyFixtures.oneTrioFootprint + ResidencyFixtures.reusedTrioCharge
+                + ResidencyFixtures.headroomBufferBytes,
             cacheDir: dir
         )
 
@@ -337,7 +184,11 @@ struct PooledResidencyTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let spy = LoadSpy()
         // Fits two full disjoint trios comfortably, not three.
-        let router = Self.makeRouter(spy: spy, recommendedMaxWorkingSetSize: Self.oneTrioFootprint * 2 + Self.headroomBufferBytes, cacheDir: dir)
+        let router = ResidencyFixtures.makeRouter(
+            spy: spy,
+            recommendedMaxWorkingSetSize: ResidencyFixtures.oneTrioFootprint * 2 + ResidencyFixtures.headroomBufferBytes,
+            cacheDir: dir
+        )
 
         let profileA = ProfileDefinition(
             name: "a", description: "profile A",
@@ -375,7 +226,11 @@ struct PooledResidencyTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let spy = LoadSpy()
         // Room for exactly one trio, nothing left for a second, disjoint one.
-        let router = Self.makeRouter(spy: spy, recommendedMaxWorkingSetSize: Self.oneTrioFootprint + Self.headroomBufferBytes, cacheDir: dir)
+        let router = ResidencyFixtures.makeRouter(
+            spy: spy,
+            recommendedMaxWorkingSetSize: ResidencyFixtures.oneTrioFootprint + ResidencyFixtures.headroomBufferBytes,
+            cacheDir: dir
+        )
 
         let profileA = ProfileDefinition(
             name: "a", description: "profile A",
@@ -410,10 +265,10 @@ struct PooledResidencyTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let spy = LoadSpy()
         // Fits one trio plus the second profile's two-KV-cache reuse charge.
-        let router = Self.makeRouter(
+        let router = ResidencyFixtures.makeRouter(
             spy: spy,
-            recommendedMaxWorkingSetSize: Self.oneTrioFootprint + Self.reusedTrioCharge
-                + Self.headroomBufferBytes,
+            recommendedMaxWorkingSetSize: ResidencyFixtures.oneTrioFootprint + ResidencyFixtures.reusedTrioCharge
+                + ResidencyFixtures.headroomBufferBytes,
             cacheDir: dir
         )
 
@@ -461,10 +316,10 @@ struct PooledResidencyTests {
         let observer = ConcurrencyObserver()
         let releaseGate = AsyncSemaphore(value: 0)
         // Fits one trio plus the second profile's two-KV-cache reuse charge.
-        let router = Self.makeRouter(
+        let router = ResidencyFixtures.makeRouter(
             spy: spy,
-            recommendedMaxWorkingSetSize: Self.oneTrioFootprint + Self.reusedTrioCharge
-                + Self.headroomBufferBytes,
+            recommendedMaxWorkingSetSize: ResidencyFixtures.oneTrioFootprint + ResidencyFixtures.reusedTrioCharge
+                + ResidencyFixtures.headroomBufferBytes,
             cacheDir: dir,
             llmContainer: { _ in SuspendingLLMContainer(observer: observer, releaseGate: releaseGate) }
         )
@@ -505,7 +360,11 @@ struct PooledResidencyTests {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let spy = LoadSpy()
-        let router = Self.makeRouter(spy: spy, recommendedMaxWorkingSetSize: Self.oneTrioFootprint * 2 + Self.headroomBufferBytes, cacheDir: dir)
+        let router = ResidencyFixtures.makeRouter(
+            spy: spy,
+            recommendedMaxWorkingSetSize: ResidencyFixtures.oneTrioFootprint * 2 + ResidencyFixtures.headroomBufferBytes,
+            cacheDir: dir
+        )
 
         let unpinned = ProfileDefinition(
             name: "unpinned", description: "tracks the default revision",
@@ -539,7 +398,11 @@ struct PooledResidencyTests {
         // The shared ref is a candidate for two slots, so it is sized under its
         // (larger) generation interpretation in both of them — more than a plain
         // trio costs. Two trios' worth of budget covers that comfortably.
-        let router = Self.makeRouter(spy: spy, recommendedMaxWorkingSetSize: Self.oneTrioFootprint * 2 + Self.headroomBufferBytes, cacheDir: dir)
+        let router = ResidencyFixtures.makeRouter(
+            spy: spy,
+            recommendedMaxWorkingSetSize: ResidencyFixtures.oneTrioFootprint * 2 + ResidencyFixtures.headroomBufferBytes,
+            cacheDir: dir
+        )
 
         let dualRole = ProfileDefinition(
             name: "dual-role", description: "one repo serves the standard slot and the embedding slot",
@@ -561,15 +424,23 @@ struct PooledResidencyTests {
         #expect(vectors.count == 1)
     }
 
-    // MARK: - Same-ref-different-context does not share.
+    // MARK: - Same-ref-different-context shares one container.
 
-    @Test("the same repo resolved at two different working contexts does not share a resident instance")
+    /// The loader does not size a container by the working context: the KV
+    /// cache is allocated per session, and priced per session. So the same
+    /// repo at two contexts is one resident container, and the second
+    /// profile's sessions answer from it.
+    @Test("the same repo resolved at two different working contexts shares one resident container")
     @MainActor
-    func sameRepoDifferentContextDoesNotShare() async throws {
+    func sameRepoDifferentContextSharesOneContainer() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let spy = LoadSpy()
-        let router = Self.makeRouter(spy: spy, recommendedMaxWorkingSetSize: Self.oneTrioFootprint * 2 + Self.headroomBufferBytes, cacheDir: dir)
+        let router = ResidencyFixtures.makeRouter(
+            spy: spy,
+            recommendedMaxWorkingSetSize: ResidencyFixtures.oneTrioFootprint * 2 + ResidencyFixtures.headroomBufferBytes,
+            cacheDir: dir
+        )
 
         let wide = ProfileDefinition(
             name: "wide", description: "runs the shared repo at the default context",
@@ -578,21 +449,152 @@ struct PooledResidencyTests {
         let narrow = ProfileDefinition(
             name: "narrow", description: "runs the identical repo at a smaller context",
             standard: ["org/ctx-repo"], flash: ["org/ctx-flash-b"], embedding: ["org/ctx-emb-b"],
-            context: Self.steppedDownContext
+            context: ResidencyFixtures.steppedDownContext
         )
 
-        // Both resolved profiles are held for the whole test: an unretained
-        // profile is deallocated immediately, and its `deinit` fires an
-        // unstructured release `Task` that would race the next resolve.
         let resolvedWide = try await router.resolve(profile: wide, reporting: ResolutionProgress())
         let resolvedNarrow = try await router.resolve(profile: narrow, reporting: ResolutionProgress())
-        withExtendedLifetime((resolvedWide, resolvedNarrow)) {}
 
-        // One and the same ref — the loads differ only in the context each
-        // container was sized for, so a key that ignored the context would
-        // hand the second profile the first's KV cache.
-        #expect(await spy.llmLoads.filter { $0 == "org/ctx-repo" }.count == 2)
-        #expect(Set(await spy.llmLoads.filter { $0 == "org/ctx-repo" }).count == 1)
+        // One and the same ref at two contexts: one load, not one for each
+        // context.
+        #expect(await spy.llmLoads.filter { $0 == "org/ctx-repo" }.count == 1)
+
+        // Both profiles' sessions answer from the one resident container.
+        let wideReply = try await resolvedWide.standard.makeSession(instructions: nil).respond(to: "hi")
+        let narrowReply = try await resolvedNarrow.standard.makeSession(instructions: nil).respond(to: "hi")
+        #expect(wideReply == "from-org/ctx-repo")
+        #expect(narrowReply == "from-org/ctx-repo")
+    }
+
+    // MARK: - A second context on a resident generation model is charged its own KV cache only.
+
+    /// The pricing half of the shared container: a profile at a second
+    /// context that reuses a resident generation model is charged one
+    /// session KV cache at its own context and zero weights. The budget a
+    /// failing third resolve sees pins the charge.
+    @Test("a profile at a second context reusing a resident generation model is charged one session KV cache at its own context and no weights")
+    @MainActor
+    func secondContextChargesOnlyItsOwnSessionKVCache() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let spy = LoadSpy()
+        // Exactly the wide trio, the narrow profile's own flash model at its
+        // context, and the narrow profile's one KV cache at its context on
+        // the reused generation model. Nothing for the reused embedder.
+        let router = ResidencyFixtures.makeRouter(
+            spy: spy,
+            recommendedMaxWorkingSetSize: ResidencyFixtures.oneTrioFootprint
+                + ResidencyFixtures.steppedDownReuseWithOwnFlashCharge + ResidencyFixtures.headroomBufferBytes,
+            cacheDir: dir
+        )
+
+        let wide = ProfileDefinition(
+            name: "wide", description: "owns the generation model and embedder the narrow profile reuses",
+            standard: ["org/ctx-charge-std"], flash: ["org/ctx-charge-flash"], embedding: ["org/ctx-charge-emb"]
+        )
+        let narrow = ProfileDefinition(
+            name: "narrow", description: "reuses the generation model and embedder at a smaller context, brings its own flash",
+            standard: ["org/ctx-charge-std"], flash: ["org/ctx-charge-narrow-flash"], embedding: ["org/ctx-charge-emb"],
+            context: ResidencyFixtures.steppedDownContext
+        )
+
+        let resolvedWide = try await router.resolve(profile: wide, reporting: ResolutionProgress())
+        let resolvedNarrow = try await router.resolve(profile: narrow, reporting: ResolutionProgress())
+
+        // The reused generation model was loaded one time at the first context.
+        #expect(await spy.llmLoads.filter { $0 == "org/ctx-charge-std" }.count == 1)
+
+        // A weights charge on the narrow profile's reused generation model
+        // would not fit the budget at all. A zero charge would leave one KV
+        // cache at the narrow context of budget here instead.
+        await Self.expectNoRoomLeft(in: router, beyond: ResidencyFixtures.headroomBufferBytes, refPrefix: "org/ctx-charge-pin")
+        withExtendedLifetime((resolvedWide, resolvedNarrow)) {}
+    }
+
+    // MARK: - Releasing the first-context hold leaves only the remaining KV cache charged.
+
+    /// The release half of the shared container at two contexts (task
+    /// wzp6vcg): the narrow profile loads the shared generation model at
+    /// ``ResidencyFixtures/steppedDownContext``, the wide profile reuses it at
+    /// the default context, and the narrow profile releases first. The pool
+    /// must then hold the weights one time plus the wide profile's KV cache,
+    /// with nothing of the narrow KV cache left charged. The budget a failing
+    /// third resolve reports pins that.
+    @Test("releasing the first-context hold on a shared generation model leaves only the remaining KV cache charged")
+    @MainActor
+    func releasingTheFirstContextHoldLeavesOnlyTheRemainingKVCharged() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let spy = LoadSpy()
+        // Exactly the narrow trio at its own context, then the wide profile's
+        // charge for reusing the generation model at the default context with
+        // its own flash model and embedder.
+        let hostBudget = ResidencyFixtures.steppedDownTrioFootprint
+            + ResidencyFixtures.reuseWithOwnFlashAndEmbedderCharge + ResidencyFixtures.headroomBufferBytes
+        let router = ResidencyFixtures.makeRouter(spy: spy, recommendedMaxWorkingSetSize: hostBudget, cacheDir: dir)
+
+        let narrow = ProfileDefinition(
+            name: "narrow", description: "loads the shared generation model first, at a smaller context",
+            standard: ["org/ctx-release-std"], flash: ["org/ctx-release-narrow-flash"],
+            embedding: ["org/ctx-release-narrow-emb"],
+            context: ResidencyFixtures.steppedDownContext
+        )
+        let wide = ProfileDefinition(
+            name: "wide", description: "reuses the generation model at the default context with its own flash model and embedder",
+            standard: ["org/ctx-release-std"], flash: ["org/ctx-release-wide-flash"],
+            embedding: ["org/ctx-release-wide-emb"]
+        )
+
+        var resolvedNarrow: LanguageModelProfile? = try await router.resolve(
+            profile: narrow, reporting: ResolutionProgress())
+        let resolvedWide = try await router.resolve(profile: wide, reporting: ResolutionProgress())
+        // The shared generation model was loaded one time, at the narrow context.
+        #expect(await spy.llmLoads.filter { $0 == "org/ctx-release-std" }.count == 1)
+
+        resolvedNarrow.dropReference()
+        await router.pool.settleDroppedResidencies()
+        // The wide profile still holds the shared generation model, so only
+        // the narrow profile's own flash model and embedder are evicted.
+        #expect(await spy.evictions == ResidencyFixtures.modelsPerTrio - 1)
+
+        // What stays charged is the weights one time, the wide profile's KV
+        // cache at the default context, and the wide profile's own flash model
+        // and embedder. A floor at the first load's whole footprint would keep
+        // the narrow KV cache charged as well.
+        await Self.expectNoRoomLeft(
+            in: router,
+            beyond: hostBudget - ResidencyFixtures.wideHoldAfterNarrowRelease,
+            refPrefix: "org/ctx-release-pin"
+        )
+        withExtendedLifetime(resolvedWide) {}
+    }
+
+    /// Pins what the pool holds through the budget a failing resolve reports:
+    /// a disjoint trio at the default context must not fit, and the budget
+    /// its failure names is exactly `expectedBudgetBytes`.
+    ///
+    /// - Parameters:
+    ///   - router: The router whose pool is under test.
+    ///   - expectedBudgetBytes: The bytes the pool leaves free.
+    ///   - refPrefix: The prefix of the three refs the disjoint trio names.
+    @MainActor
+    private static func expectNoRoomLeft(
+        in router: Router, beyond expectedBudgetBytes: Int64, refPrefix: String
+    ) async {
+        let disjoint = ProfileDefinition(
+            name: "disjoint", description: "cannot fit beside the resident profiles",
+            standard: [ModelRef("\(refPrefix)-std")],
+            flash: [ModelRef("\(refPrefix)-flash")],
+            embedding: [ModelRef("\(refPrefix)-emb")]
+        )
+        do {
+            _ = try await router.resolve(profile: disjoint, reporting: ResolutionProgress())
+            Issue.record("the disjoint profile must not fit beside the resident profiles")
+        } catch let failure as ResolutionFailure {
+            #expect(failure.budgetBytes == expectedBudgetBytes)
+        } catch {
+            Issue.record("the disjoint profile failed with \(error), not a ResolutionFailure")
+        }
     }
 
     // MARK: - Single-profile callers are unaffected.
@@ -603,7 +605,11 @@ struct PooledResidencyTests {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let spy = LoadSpy()
-        let router = Self.makeRouter(spy: spy, recommendedMaxWorkingSetSize: Self.oneTrioFootprint + Self.headroomBufferBytes, cacheDir: dir)
+        let router = ResidencyFixtures.makeRouter(
+            spy: spy,
+            recommendedMaxWorkingSetSize: ResidencyFixtures.oneTrioFootprint + ResidencyFixtures.headroomBufferBytes,
+            cacheDir: dir
+        )
 
         let profile = ProfileDefinition(
             name: "solo", description: "one profile, used sequentially",
@@ -641,12 +647,12 @@ struct PooledResidencyTests {
     /// free forever after, eroding the "single authority over the budget"
     /// guarantee toward an eventual OOM.
     ///
-    /// `poolLock` must therefore guard the release path too, not just
-    /// `resolve()` — this test proves a residency dropped while a `resolve()`
-    /// is suspended mid-acquisition cannot be given back (and thus cannot
-    /// evict anything) until that `resolve()` finishes. The drop queues the
-    /// token and starts a drain, and that drain takes the very lock the
-    /// in-flight resolve holds.
+    /// ``ModelPool/withResolveLock(isolation:_:)`` must therefore guard the
+    /// release path too, not just `resolve()` — this test proves a residency
+    /// dropped while a `resolve()` is suspended mid-acquisition cannot be given
+    /// back (and thus cannot evict anything) until that `resolve()` finishes.
+    /// The drop queues the token and starts a drain, and that drain takes the
+    /// very lock the in-flight resolve holds.
     @Test("a dropped residency cannot interleave with an in-flight resolve and corrupt pool accounting")
     @MainActor
     func droppedResidencyCannotRaceAnInFlightResolveAndCorruptAccounting() async throws {
@@ -663,9 +669,9 @@ struct PooledResidencyTests {
         let gatedRef: ModelRef = "org/race-b-std"
         let sharedEmbeddingRef: ModelRef = "org/race-shared-emb"
 
-        let router = Self.makeRouter(
+        let router = ResidencyFixtures.makeRouter(
             spy: spy,
-            recommendedMaxWorkingSetSize: Self.oneTrioFootprint * 2 + Self.headroomBufferBytes,
+            recommendedMaxWorkingSetSize: ResidencyFixtures.oneTrioFootprint * 2 + ResidencyFixtures.headroomBufferBytes,
             cacheDir: dir,
             gatedRef: gatedRef,
             entrySignal: entrySignal,
@@ -747,9 +753,10 @@ struct PooledResidencyTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let spy = LoadSpy()
         // Exactly the shared-pair trio's own reservation plus the rounding buffer.
-        let router = Self.makeRouter(
+        let router = ResidencyFixtures.makeRouter(
             spy: spy,
-            recommendedMaxWorkingSetSize: Self.sharedPairTrioFootprint + Self.headroomBufferBytes,
+            recommendedMaxWorkingSetSize: ResidencyFixtures.sharedPairTrioFootprint
+                + ResidencyFixtures.headroomBufferBytes,
             cacheDir: dir
         )
 
@@ -772,7 +779,7 @@ struct PooledResidencyTests {
             _ = try await router.resolve(profile: disjoint, reporting: ResolutionProgress())
             Issue.record("the disjoint profile must not fit beside the pair trio")
         } catch let failure as ResolutionFailure {
-            #expect(failure.budgetBytes == Self.headroomBufferBytes)
+            #expect(failure.budgetBytes == ResidencyFixtures.headroomBufferBytes)
         }
         withExtendedLifetime(resolvedPair) {}
     }
@@ -790,10 +797,10 @@ struct PooledResidencyTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let spy = LoadSpy()
         // Fits the pair trio, plus the reusing profile's two extra KV caches.
-        let router = Self.makeRouter(
+        let router = ResidencyFixtures.makeRouter(
             spy: spy,
-            recommendedMaxWorkingSetSize: Self.sharedPairTrioFootprint
-                + Self.reusedTrioCharge + Self.headroomBufferBytes,
+            recommendedMaxWorkingSetSize: ResidencyFixtures.sharedPairTrioFootprint
+                + ResidencyFixtures.reusedTrioCharge + ResidencyFixtures.headroomBufferBytes,
             cacheDir: dir
         )
 
@@ -823,7 +830,7 @@ struct PooledResidencyTests {
             Issue.record("the disjoint profile must not fit beside the pair trio")
         } catch let failure as ResolutionFailure {
             #expect(
-                failure.budgetBytes == Self.reusedTrioCharge + Self.headroomBufferBytes
+                failure.budgetBytes == ResidencyFixtures.reusedTrioCharge + ResidencyFixtures.headroomBufferBytes
             )
         }
 
@@ -849,10 +856,10 @@ struct PooledResidencyTests {
         let spy = LoadSpy()
         // Exactly A's trio, B's own flash model, and B's one KV cache on A's
         // reused generation model — and nothing for B's reused embedder.
-        let router = Self.makeRouter(
+        let router = ResidencyFixtures.makeRouter(
             spy: spy,
-            recommendedMaxWorkingSetSize: Self.oneTrioFootprint + Self.reuseWithOwnFlashCharge
-                + Self.headroomBufferBytes,
+            recommendedMaxWorkingSetSize: ResidencyFixtures.oneTrioFootprint + ResidencyFixtures.reuseWithOwnFlashCharge
+                + ResidencyFixtures.headroomBufferBytes,
             cacheDir: dir
         )
 
@@ -885,7 +892,7 @@ struct PooledResidencyTests {
             _ = try await router.resolve(profile: disjoint, reporting: ResolutionProgress())
             Issue.record("the disjoint profile must not fit beside A and B")
         } catch let failure as ResolutionFailure {
-            #expect(failure.budgetBytes == Self.headroomBufferBytes)
+            #expect(failure.budgetBytes == ResidencyFixtures.headroomBufferBytes)
         }
         withExtendedLifetime((resolvedA, resolvedB)) {}
     }
@@ -911,10 +918,10 @@ struct PooledResidencyTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let spy = LoadSpy()
         // Fits one trio plus the second resolve's two-KV-cache reuse charge.
-        let router = Self.makeRouter(
+        let router = ResidencyFixtures.makeRouter(
             spy: spy,
-            recommendedMaxWorkingSetSize: Self.oneTrioFootprint + Self.reusedTrioCharge
-                + Self.headroomBufferBytes,
+            recommendedMaxWorkingSetSize: ResidencyFixtures.oneTrioFootprint + ResidencyFixtures.reusedTrioCharge
+                + ResidencyFixtures.headroomBufferBytes,
             cacheDir: dir
         )
 
@@ -938,7 +945,7 @@ struct PooledResidencyTests {
 
         let vectors = try await tool.embed(texts: ["one", "two"])
         #expect(vectors.count == 2)
-        #expect(vectors.allSatisfy { $0.count == Self.stubEmbeddingDimension })
+        #expect(vectors.allSatisfy { $0.count == RouterTestFixtures.stubDimension })
         withExtendedLifetime(reuser) {}
     }
 
@@ -956,9 +963,9 @@ struct PooledResidencyTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let spy = LoadSpy()
         // Room for exactly one trio: B fits only once A's three models are gone.
-        let router = Self.makeRouter(
+        let router = ResidencyFixtures.makeRouter(
             spy: spy,
-            recommendedMaxWorkingSetSize: Self.oneTrioFootprint + Self.headroomBufferBytes,
+            recommendedMaxWorkingSetSize: ResidencyFixtures.oneTrioFootprint + ResidencyFixtures.headroomBufferBytes,
             cacheDir: dir
         )
 

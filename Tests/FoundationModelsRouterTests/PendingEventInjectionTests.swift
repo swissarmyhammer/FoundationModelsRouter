@@ -112,7 +112,8 @@ struct PendingEventInjectionTests {
     /// stub backend, recording through `recorder`.
     private static func makeSession(
         recorder: any TranscriptRecorder,
-        responseText: String = "stub response"
+        responseText: String = "stub response",
+        pool: ModelPool = ModelPool()
     ) async throws -> (session: RoutedSession, dir: URL) {
         let dir = Self.makeTempDir()
         let container = BasicLLMContainer(responseText: responseText)
@@ -121,7 +122,8 @@ struct PendingEventInjectionTests {
             recorder: recorder,
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
-            loader: StubModelLoader(container: container, dimension: stubDimension)
+            loader: StubModelLoader(container: container, dimension: stubDimension),
+            pool: pool
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
         return (profile.standard.makeSession(), dir)
@@ -318,7 +320,8 @@ struct PendingEventInjectionTests {
             recorder: recorder,
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: Self.rawMetadata),
-            loader: StubModelLoader(container: ThrowsBeforeAppendingContainer(), dimension: Self.stubDimension)
+            loader: StubModelLoader(container: ThrowsBeforeAppendingContainer(), dimension: Self.stubDimension),
+            pool: ModelPool()
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let session = profile.standard.makeSession()

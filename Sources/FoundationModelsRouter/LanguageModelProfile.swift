@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModels
 import Synchronization
 import Tracing
 
@@ -61,6 +62,12 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// Where this handle's sessions record durably, with the sidecar writer, or
     /// `nil` when recording to memory or none.
     let durableRecording: DurableRecording?
+
+    /// The decoding strategy every backend made through this handle decodes
+    /// with, or `nil` for the container's default. The mode is the resolving
+    /// router's, not the container's: two routers over one pooled container
+    /// each hand their own mode to every `makeSession` call.
+    let samplingMode: GenerationOptions.SamplingMode?
 
     /// The router's durable transcripts root, or `nil` when recording to
     /// memory or none.
@@ -138,6 +145,9 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     ///   - gates: The gates `container` carries.
     ///   - tracer: The tracer an embed call opens its span through, or `nil`
     ///     (the default) to read `InstrumentationSystem.tracer` at call time.
+    ///   - samplingMode: The decoding strategy every backend made through
+    ///     this handle decodes with, or `nil` (the default) for the
+    ///     container's default.
     ///   - residencyHold: The shared claim that keeps `container` resident, or
     ///     `nil` (the default) for a hand-built handle that resolved nothing
     ///     and therefore holds no residency.
@@ -152,6 +162,7 @@ public final class RoutedModel<Container: Sendable>: Sendable {
         durableRecording: DurableRecording? = nil,
         gates: ResidentModelGates,
         tracer: (any Tracer)? = nil,
+        samplingMode: GenerationOptions.SamplingMode? = nil,
         residencyHold: ResidencyHold? = nil
     ) {
         self.slot = slot
@@ -163,6 +174,7 @@ public final class RoutedModel<Container: Sendable>: Sendable {
         self.recorder = recorder
         self.tracer = tracer
         self.durableRecording = durableRecording
+        self.samplingMode = samplingMode
         generationGate = gates.generation
         forkAdmissionGate = gates.forkAdmission
         self.residencyHold = residencyHold

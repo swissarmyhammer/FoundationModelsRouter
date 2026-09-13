@@ -8,15 +8,16 @@
 /// that takes only a handle — see `EmbedTool` — keeps its model resident after
 /// the profile object is gone.
 ///
-/// The hold stores the router and the token and nothing else. It refers to no
-/// profile and no handle, so a hold can never close a reference cycle with the
-/// objects that store it.
+/// The hold stores the pool and the token and nothing else. It refers to no
+/// router, no profile, and no handle, so a hold can never close a reference
+/// cycle with the objects that store it, and it outlives the router that
+/// resolved it without harm.
 ///
 /// It is `package` rather than internal because the `package` initializer of
 /// ``RoutedModel`` takes one.
 package final class ResidencyHold: Sendable {
-    /// The router that granted the residency.
-    private let router: Router
+    /// The pool that holds the residency's charges.
+    private let pool: ModelPool
 
     /// The router-minted, never-reused token that identifies the residency.
     private let token: ULID
@@ -24,21 +25,21 @@ package final class ResidencyHold: Sendable {
     /// Creates the one hold on a residency.
     ///
     /// - Parameters:
-    ///   - router: The router that granted the residency.
+    ///   - pool: The pool that holds the residency's charges.
     ///   - token: The token that identifies the residency.
-    init(router: Router, token: ULID) {
-        self.router = router
+    init(pool: ModelPool, token: ULID) {
+        self.pool = pool
         self.token = token
     }
 
     /// Queues the residency for release when the last reference is dropped.
     ///
     /// `deinit` runs on whatever thread dropped that reference and cannot
-    /// `await` the router, so it appends the token to the router's pending
-    /// queue synchronously. Every resolve drains that queue before it measures
-    /// the host budget, so the freed bytes reach the very first measurement
-    /// instead of racing it.
+    /// `await` the pool, so it appends the token to the pool's pending queue
+    /// synchronously. Every resolve over the pool drains that queue before it
+    /// measures the host budget, so the freed bytes reach the very first
+    /// measurement instead of racing it.
     deinit {
-        router.enqueuePendingRelease(token)
+        pool.enqueuePendingRelease(token)
     }
 }

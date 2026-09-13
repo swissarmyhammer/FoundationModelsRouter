@@ -135,7 +135,11 @@ struct ResolveCancellationTests {
             recorder: InMemoryRecorder(),
             probe: RouterTestFixtures.stubProbe,
             metadataSource: GatedMetadataSource(raw: RouterTestFixtures.rawMetadata, gate: gate),
-            loader: GatedLoader(gate: gate, dimension: RouterTestFixtures.stubDimension)
+            loader: GatedLoader(gate: gate, dimension: RouterTestFixtures.stubDimension),
+            // The suite's own pool, never `ModelPool.shared`: its gated loads
+            // hold the resolve lock, and a shared lock would queue every other
+            // suite's resolve behind them.
+            pool: ModelPool()
         )
     }
 

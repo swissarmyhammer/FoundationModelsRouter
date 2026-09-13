@@ -137,12 +137,14 @@ struct SessionTreeRestorationTests {
     ///     one live writer, so a continuation router that must *write* while
     ///     the first router is still alive in this process has to share the
     ///     first writer's recorder; `nil` (the default) makes a fresh one.
+    ///   - pool: The resident-model pool. Defaults to a fresh pool, so parallel suites never share residents.
     private static func makeRouter(
         id: ULID = .generate(),
         cacheDir: URL,
         recordingsDir: URL,
         maxConcurrentForks: Int = 4,
-        recorder: JSONLRecorder? = nil
+        recorder: JSONLRecorder? = nil,
+        pool: ModelPool = ModelPool()
     ) -> Router {
         Router(
             id: id,
@@ -153,7 +155,8 @@ struct SessionTreeRestorationTests {
             probe: StubProbe(
                 chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
-            loader: StubModelLoader(dimension: stubDimension, text: cannedText)
+            loader: StubModelLoader(dimension: stubDimension, text: cannedText),
+            pool: pool
         )
     }
 

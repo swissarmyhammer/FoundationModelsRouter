@@ -117,10 +117,12 @@ struct LanguageModelSessionBackendIntegrationTests {
     /// attributed to the change under test, and what lets the wall clock be
     /// measured against the budget rather than against the run.
     ///
-    /// The pin is stated at LOAD time rather than on each turn's
-    /// `GenerationOptions`, because every test here drives
+    /// The pin is stated one time, at load, on ``RealModelContainer/samplingMode``,
+    /// and read back into each `makeSession(...samplingMode:)` call rather than
+    /// stated on each turn's `GenerationOptions`, because every test here drives
     /// ``MLXFoundationModelsSessionBackend``, and that backend is the one type
-    /// that reads the decoding its container stored. A suite that drives a raw
+    /// that reads the decoding the call that made it named. The container
+    /// stores no mode (`model-pool.md` §2.5). A suite that drives a raw
     /// `LanguageModelSession` needs the other pin; this one does not.
     private static let samplingMode: GenerationOptions.SamplingMode = .greedy
 
@@ -131,18 +133,19 @@ struct LanguageModelSessionBackendIntegrationTests {
     /// each did before. One loader rather than eight spelled-out calls, so the
     /// decoding cannot drift between them.
     ///
-    /// - Returns: The loaded container.
-    /// - Throws: Whatever ``RealModelContainer/load(ref:context:samplingMode:)``
+    /// - Returns: The loaded container and the pinned mode.
+    /// - Throws: Whatever ``RealModelContainer/load(ref:context:samplingMode:chatTemplateDate:)``
     ///   throws.
-    private static func makeContainer() async throws -> MLXFoundationModelsContainer {
+    private static func makeContainer() async throws -> RealModelContainer {
         try await RealModelContainer.load(ref: sessionBackendModel, samplingMode: samplingMode)
     }
 
     @Test("a second respond() call on the same backend sees the first turn's content in context")
     func secondRespondSeesPriorTurn() async throws {
-        let container = try await Self.makeContainer()
+        let loaded = try await Self.makeContainer()
         let backend = try #require(
-            container.makeSession(instructions: "You are a terse, literal assistant.")
+            loaded.container.makeSession(
+                instructions: "You are a terse, literal assistant.", samplingMode: loaded.samplingMode)
                 as? MLXFoundationModelsSessionBackend
         )
 
@@ -164,7 +167,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         // rather than starting over.
         #expect(backend.session.transcript.count > entriesAfterFirstTurn)
 
-        await container.model.evict()
+        await loaded.container.model.evict()
     }
 
     @Test("makeFork() seeds the child's transcript from the parent's at fork time")
@@ -189,10 +192,11 @@ struct LanguageModelSessionBackendIntegrationTests {
         }
 
         let loadStarted = ContinuousClock.now
-        let container = try await Self.makeContainer()
+        let loaded = try await Self.makeContainer()
         loadDuration = ContinuousClock.now - loadStarted
         let parent = try #require(
-            container.makeSession(instructions: "You are a terse, literal assistant.")
+            loaded.container.makeSession(
+                instructions: "You are a terse, literal assistant.", samplingMode: loaded.samplingMode)
                 as? MLXFoundationModelsSessionBackend
         )
 
@@ -233,7 +237,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         #expect(child.session.transcript.count == childEntryCountAfterOwnTurn)
 
         let evictStarted = ContinuousClock.now
-        await container.model.evict()
+        await loaded.container.model.evict()
         evictDuration = ContinuousClock.now - evictStarted
     }
 
@@ -243,9 +247,10 @@ struct LanguageModelSessionBackendIntegrationTests {
         "makeSession(transcript:) seeds a fresh backend that recalls content from a prior session's transcript"
     )
     func makeSessionFromTranscriptRecallsPriorContent() async throws {
-        let container = try await Self.makeContainer()
+        let loaded = try await Self.makeContainer()
         let prior = try #require(
-            container.makeSession(instructions: "You are a terse, literal assistant.")
+            loaded.container.makeSession(
+                instructions: "You are a terse, literal assistant.", samplingMode: loaded.samplingMode)
                 as? MLXFoundationModelsSessionBackend
         )
 
@@ -257,7 +262,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         // to rebuild a root session from a persisted transcript, with no live
         // parent backend/session involved at all.
         let restored = try #require(
-            container.makeSession(transcript: prior.session.transcript)
+            loaded.container.makeSession(transcript: prior.session.transcript, samplingMode: loaded.samplingMode)
                 as? MLXFoundationModelsSessionBackend
         )
 
@@ -267,7 +272,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         )
         #expect(reply.contains("42"))
 
-        await container.model.evict()
+        await loaded.container.model.evict()
     }
 
     // MARK: - Transcript growth and fork seeding (per-turn entry kinds)
@@ -310,12 +315,13 @@ struct LanguageModelSessionBackendIntegrationTests {
         "each respond() call leaves exactly one prompt entry and one response entry across two turns"
     )
     func eachTurnLeavesOnePromptAndOneResponse() async throws {
-        let container = try await Self.makeContainer()
+        let loaded = try await Self.makeContainer()
         // No instructions: an instructions-carrying session's transcript opens
         // with an extra `.instructions` entry, which no turn owes. Omitting
         // instructions leaves only turn-driven entries to check.
         let backend = try #require(
-            container.makeSession(instructions: nil) as? MLXFoundationModelsSessionBackend
+            loaded.container.makeSession(instructions: nil, samplingMode: loaded.samplingMode)
+                as? MLXFoundationModelsSessionBackend
         )
 
         _ = try await backend.respond(to: "Say 'hi' briefly.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
@@ -324,14 +330,15 @@ struct LanguageModelSessionBackendIntegrationTests {
         let drivenTurns = 2
         Self.expectTranscriptHolds(backend, turns: drivenTurns)
 
-        await container.model.evict()
+        await loaded.container.model.evict()
     }
 
     @Test("a fork taken after one turn begins holding exactly that turn's entries")
     func forkAfterOneTurnHoldsThatTurnsEntries() async throws {
-        let container = try await Self.makeContainer()
+        let loaded = try await Self.makeContainer()
         let parent = try #require(
-            container.makeSession(instructions: nil) as? MLXFoundationModelsSessionBackend
+            loaded.container.makeSession(instructions: nil, samplingMode: loaded.samplingMode)
+                as? MLXFoundationModelsSessionBackend
         )
 
         _ = try await parent.respond(to: "Say 'hi' briefly.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
@@ -341,16 +348,17 @@ struct LanguageModelSessionBackendIntegrationTests {
         let drivenTurns = 1
         Self.expectTranscriptHolds(child, turns: drivenTurns)
 
-        await container.model.evict()
+        await loaded.container.model.evict()
     }
 
     // MARK: - transcriptEntries() matches the test-only transcript accessor
 
     @Test("transcriptEntries().count equals session.transcript.count and grows across turns")
     func transcriptEntriesMatchesSessionTranscriptAndGrows() async throws {
-        let container = try await Self.makeContainer()
+        let loaded = try await Self.makeContainer()
         let backend = try #require(
-            container.makeSession(instructions: nil) as? MLXFoundationModelsSessionBackend
+            loaded.container.makeSession(instructions: nil, samplingMode: loaded.samplingMode)
+                as? MLXFoundationModelsSessionBackend
         )
 
         // Before any turn, the public seam and the test-only accessor agree.
@@ -366,7 +374,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         #expect(countAfterSecondTurn == backend.session.transcript.count)
         #expect(countAfterSecondTurn > countAfterFirstTurn)
 
-        await container.model.evict()
+        await loaded.container.model.evict()
     }
 
     // MARK: - Chokepoint fidelity: recorded entry kinds match the real transcript
@@ -391,7 +399,7 @@ struct LanguageModelSessionBackendIntegrationTests {
 
     /// Builds a ``ChokepointHarness`` over a freshly loaded model.
     ///
-    /// The profile comes from ``RealModelHarness/make(model:context:container:cacheDir:recordingsDir:routerId:)``,
+    /// The profile comes from ``RealModelHarness/make(model:context:container:samplingMode:cacheDir:recordingsDir:routerId:)``,
     /// which this harness's own hand-built copy was folded onto (task
     /// ^zz6kam0). One `JSONLRecorder` still reaches the router and every handle
     /// alike — `Router.recorder` is actor-isolated, and one sink keeps every
@@ -406,9 +414,10 @@ struct LanguageModelSessionBackendIntegrationTests {
     /// directory. Nothing in this suite reads the field, so the move corrects
     /// an inconsistency and changes no assertion.
     private func makeChokepointHarness() async throws -> ChokepointHarness {
-        let container = try await Self.makeContainer()
+        let loaded = try await Self.makeContainer()
         let backend = try #require(
-            container.makeSession(instructions: nil) as? MLXFoundationModelsSessionBackend
+            loaded.container.makeSession(instructions: nil, samplingMode: loaded.samplingMode)
+                as? MLXFoundationModelsSessionBackend
         )
 
         let recordingsDir = FileManager.default.temporaryDirectory
@@ -425,7 +434,8 @@ struct LanguageModelSessionBackendIntegrationTests {
             // default. Stated explicitly here, because the harness has no
             // default of its own to inherit.
             context: ProfileDefinition.defaultContext,
-            container: container,
+            container: loaded.container,
+            samplingMode: loaded.samplingMode,
             cacheDir: cacheDir,
             recordingsDir: recordingsDir
         )
@@ -470,7 +480,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         return ChokepointHarness(
             session: session,
             backend: backend,
-            container: container,
+            container: loaded.container,
             recordingDirectory: recordingDirectory,
             recordingsDir: recordingsDir,
             cacheDir: cacheDir
@@ -617,9 +627,10 @@ struct LanguageModelSessionBackendIntegrationTests {
         "turn 2's usage.input.cachedTokenCount is positive, covers turn 1's whole prompt, and does not exceed everything turn 1 processed — the KV cache is reused, not recomputed"
     )
     func secondTurnReusesFirstTurnsKVCache() async throws {
-        let container = try await Self.makeContainer()
+        let loaded = try await Self.makeContainer()
         let backend = try #require(
-            container.makeSession(instructions: "You are a terse, literal assistant.")
+            loaded.container.makeSession(
+                instructions: "You are a terse, literal assistant.", samplingMode: loaded.samplingMode)
                 as? MLXFoundationModelsSessionBackend
         )
 
@@ -703,7 +714,7 @@ struct LanguageModelSessionBackendIntegrationTests {
             """
         )
 
-        await container.model.evict()
+        await loaded.container.model.evict()
     }
 
     // MARK: - Timing signal (best-effort, non-fatal)
@@ -712,7 +723,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         "turn 2 tends to be faster than turn 1 on a session with a long system instruction (heuristic timing signal, never fails CI)"
     )
     func secondTurnTendsToBeFasterThanFirst() async throws {
-        let container = try await Self.makeContainer()
+        let loaded = try await Self.makeContainer()
         // A long instruction makes the fixed, cacheable prefix turn 2 should
         // reuse a much larger share of the input than a short one would, so a
         // real speed-up (if the cache is working) is more likely to be
@@ -723,7 +734,8 @@ struct LanguageModelSessionBackendIntegrationTests {
             count: 40
         )
         let backend = try #require(
-            container.makeSession(instructions: longInstructions) as? MLXFoundationModelsSessionBackend
+            loaded.container.makeSession(instructions: longInstructions, samplingMode: loaded.samplingMode)
+                as? MLXFoundationModelsSessionBackend
         )
 
         let turn1Start = Date()
@@ -744,6 +756,6 @@ struct LanguageModelSessionBackendIntegrationTests {
             "[secondTurnTendsToBeFasterThanFirst] turn1=\(turn1Duration)s turn2=\(turn2Duration)s ratio=\(ratio)"
         )
 
-        await container.model.evict()
+        await loaded.container.model.evict()
     }
 }

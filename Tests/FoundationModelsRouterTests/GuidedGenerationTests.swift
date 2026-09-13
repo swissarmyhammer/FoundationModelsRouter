@@ -195,14 +195,16 @@ struct GuidedGenerationTests {
     private static func makeRouter(
         recorder: any TranscriptRecorder,
         cacheDir: URL,
-        maxTokensSpy: MaxTokensSpy? = nil
+        maxTokensSpy: MaxTokensSpy? = nil,
+        pool: ModelPool = ModelPool()
     ) -> Router {
         Router(
             cacheDir: cacheDir,
             recorder: recorder,
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
-            loader: StubModelLoader(dimension: 8, canned: canned, maxTokensSpy: maxTokensSpy)
+            loader: StubModelLoader(dimension: 8, canned: canned, maxTokensSpy: maxTokensSpy),
+            pool: pool
         )
     }
 
@@ -531,7 +533,8 @@ struct GuidedGenerationTests {
             recorder: recorder,
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: Self.rawMetadata),
-            loader: loader
+            loader: loader,
+            pool: ModelPool()
         )
         // A 100,000-token working context, mirroring `AutoCompactionTests.makeTriggeredSession(budget:)`'s
         // own profile so the same escalating-usage warm-up below produces
