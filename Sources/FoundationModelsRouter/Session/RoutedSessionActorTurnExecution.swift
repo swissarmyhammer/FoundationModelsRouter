@@ -35,11 +35,10 @@ extension RoutedSessionActor {
     ///
     /// - Parameters:
     ///   - grammar: The grammar that constrains the response, or `nil`.
-    ///   - requested: The ceiling the caller named, or `nil` for the ceiling
-    ///     ``responseTokenCeiling(requested:contextTokens:)`` derives.
+    ///   - maxTokens: The ceiling to give the backend, as
+    ///     ``responseTokenCeiling(requested:contextTokens:)`` derives it.
     /// - Returns: The closure that runs the model call.
-    func respondBody(grammar: Grammar?, maxTokens requested: Int?) -> @Sendable (String) async throws -> String {
-        let maxTokens = Self.responseTokenCeiling(requested: requested, contextTokens: contextTokens)
+    func respondBody(grammar: Grammar?, responseTokenCeiling maxTokens: Int?) -> @Sendable (String) async throws -> String {
         guard let grammar else {
             return { composedPrompt in
                 try await self.backend.respond(to: composedPrompt, maxTokens: maxTokens)
@@ -61,6 +60,9 @@ extension RoutedSessionActor {
     ///     turn's span reports. Every caller states it, because the chokepoint
     ///     cannot tell one surface from another.
     ///   - prompt: This turn's own prompt text.
+    ///   - responseTokenCeiling: The token ceiling `body` gives the backend, or
+    ///     `nil` when it gives none. The recording reads it to find
+    ///     ``TokenUsage/finishReason``.
     ///   - onEvent: A sink for this turn's ``SessionEvent``s, or `nil`.
     ///   - body: The model work to run.
     /// - Returns: The response text `body` produced.
@@ -69,6 +71,7 @@ extension RoutedSessionActor {
         grammar: Grammar? = nil,
         entryPoint: RouterTracing.TurnEntryPoint,
         prompt: String,
+        responseTokenCeiling: Int?,
         onEvent: ((SessionEvent) -> Void)? = nil,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
@@ -101,7 +104,8 @@ extension RoutedSessionActor {
         await notifyTurnBoundaryTools()
         return try await runTurn(
             grammar: grammar, turnId: turnId, entryPoint: entryPoint, promptId: nil,
-            pendingEvents: pendingEvents, ownPrompt: prompt, onEvent: onEvent, body)
+            pendingEvents: pendingEvents, ownPrompt: prompt, responseTokenCeiling: responseTokenCeiling,
+            onEvent: onEvent, body)
     }
 
     /// Calls ``TurnBoundaryTool/turnWillBegin()`` once on every mounted tool
@@ -109,7 +113,7 @@ extension RoutedSessionActor {
     /// change it prepared at the side (task w77k41m).
     ///
     /// Runs at both drain sites (this turn's own ``outbox`` drain in
-    /// ``generate(grammar:entryPoint:prompt:onEvent:_:)`` and ``dispatchNextPrompt()``'s),
+    /// ``generate(grammar:entryPoint:prompt:responseTokenCeiling:onEvent:_:)`` and ``dispatchNextPrompt()``'s),
     /// after the drain and before the model call of the turn — so a turn that
     /// fails before the model call still made the hook call, and a fork's
     /// hook fires only on the fork's own tools (``ForkableTool`` composition).
@@ -146,6 +150,7 @@ extension RoutedSessionActor {
     ///   - promptId: The queued prompt this turn dispatched, or `nil`.
     ///   - pendingEvents: The events this turn drained from ``outbox``.
     ///   - ownPrompt: This turn's own prompt text.
+    ///   - responseTokenCeiling: The token ceiling `body` gives the backend, or `nil`.
     ///   - onEvent: A sink for this turn's ``SessionEvent``s, or `nil`.
     ///   - body: The model work to run.
     /// - Returns: The response text `body` produced.
@@ -158,6 +163,7 @@ extension RoutedSessionActor {
         promptId: PromptID?,
         pendingEvents: [OperationEvent],
         ownPrompt: String,
+        responseTokenCeiling: Int?,
         onEvent: ((SessionEvent) -> Void)? = nil,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
@@ -170,7 +176,8 @@ extension RoutedSessionActor {
                 span.attributes[RouterTracing.AttributeKey.turnEntryPoint] = entryPoint.rawValue
                 let response = try await runTurnWork(
                     grammar: grammar, turnId: turnId, promptId: promptId,
-                    pendingEvents: pendingEvents, ownPrompt: ownPrompt, onEvent: onEvent, body)
+                    pendingEvents: pendingEvents, ownPrompt: ownPrompt,
+                    responseTokenCeiling: responseTokenCeiling, onEvent: onEvent, body)
                 recordMeasuredTokens(on: span)
                 return response
             }
@@ -202,6 +209,7 @@ extension RoutedSessionActor {
     ///   - promptId: The queued prompt this turn dispatched, or `nil`.
     ///   - pendingEvents: The events this turn drained from ``outbox``.
     ///   - ownPrompt: This turn's own prompt text.
+    ///   - responseTokenCeiling: The token ceiling `body` gives the backend, or `nil`.
     ///   - onEvent: A sink for this turn's ``SessionEvent``s, or `nil`.
     ///   - body: The model work to run.
     /// - Returns: The response text `body` produced.
@@ -212,6 +220,7 @@ extension RoutedSessionActor {
         promptId: PromptID?,
         pendingEvents: [OperationEvent],
         ownPrompt: String,
+        responseTokenCeiling: Int?,
         onEvent: ((SessionEvent) -> Void)? = nil,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
@@ -232,7 +241,7 @@ extension RoutedSessionActor {
         // Compared in tokens against ``TokenBudget/triggerTokens``, never as
         // `contextFill >= budget.trigger` — see the matching note on the
         // hard-ceiling pre-check in
-        // ``runTurnAttempt(grammar:pendingEvents:ownPrompt:onEvent:allowOverflowRetry:_:)``
+        // ``runTurnAttempt(grammar:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:_:)``
         // and ``TokenBudget/triggerTokens`` itself for why those two fractions
         // are not interchangeable.
         if let budget = autoCompactionBudget,
@@ -256,8 +265,8 @@ extension RoutedSessionActor {
                 // finds no `.prompt` partial to attach those events to and
                 // re-queues them, and the synthetic close is the trace.
                 await recordFailedTurn(
-                    grammar: grammar, since: started, usageBefore: usageBefore, pendingEvents: pendingEvents,
-                    onEvent: emit)
+                    grammar: grammar, since: started, usageBefore: usageBefore,
+                    responseTokenCeiling: responseTokenCeiling, pendingEvents: pendingEvents, onEvent: emit)
                 throw error
             }
         }
@@ -265,7 +274,8 @@ extension RoutedSessionActor {
         await primeDiscoveryIfConfigured(prompt: ownPrompt, emit: emit)
 
         return try await runTurnAttempt(
-            grammar: grammar, pendingEvents: pendingEvents, ownPrompt: ownPrompt, onEvent: emit,
+            grammar: grammar, pendingEvents: pendingEvents, ownPrompt: ownPrompt,
+            responseTokenCeiling: responseTokenCeiling, onEvent: emit,
             allowOverflowRetry: autoCompactionBudget != nil, body)
     }
 
@@ -304,12 +314,21 @@ extension RoutedSessionActor {
     /// A recoverable context overflow is recorded as a failed attempt. When
     /// `allowOverflowRetry` is set, the session folds to a lower target and retries once.
     ///
+    /// - Parameters:
+    ///   - grammar: The grammar in force for this turn.
+    ///   - pendingEvents: The events this attempt carries in its preamble.
+    ///   - ownPrompt: This turn's own prompt text.
+    ///   - responseTokenCeiling: The token ceiling `body` gives the backend, or `nil`.
+    ///   - onEvent: A sink for this turn's ``SessionEvent``s, or `nil`.
+    ///   - allowOverflowRetry: Whether a recoverable context overflow folds and retries once.
+    ///   - body: The model work to run.
     /// - Returns: The response text `body` produced.
     /// - Throws: Whatever `body` throws, or the retry's own outcome when a retry ran.
     private func runTurnAttempt(
         grammar: Grammar?,
         pendingEvents: [OperationEvent],
         ownPrompt: String,
+        responseTokenCeiling: Int?,
         onEvent: ((SessionEvent) -> Void)? = nil,
         allowOverflowRetry: Bool,
         _ body: @escaping @Sendable (String) async throws -> String
@@ -355,15 +374,15 @@ extension RoutedSessionActor {
             // transcript unchanged for some future conformer — attach-or-requeue
             // applies uniformly on both exits (see the catch branch's matching
             // comment), not just the throwing one; that uniform check lives in
-            // ``finishTurnAndRequeueIfUnattached(grammar:since:usageBefore:pendingEvents:onEvent:)``.
+            // ``finishTurnAndRequeueIfUnattached(grammar:since:usageBefore:responseTokenCeiling:pendingEvents:onEvent:)``.
             _ = await finishTurnAndRequeueIfUnattached(
-                grammar: grammar, since: started, usageBefore: usageBefore, pendingEvents: pendingEvents,
-                onEvent: onEvent)
+                grammar: grammar, since: started, usageBefore: usageBefore,
+                responseTokenCeiling: responseTokenCeiling, pendingEvents: pendingEvents, onEvent: onEvent)
             return response
         } catch {
             await recordFailedTurn(
-                grammar: grammar, since: started, usageBefore: usageBefore, pendingEvents: pendingEvents,
-                onEvent: onEvent)
+                grammar: grammar, since: started, usageBefore: usageBefore,
+                responseTokenCeiling: responseTokenCeiling, pendingEvents: pendingEvents, onEvent: onEvent)
 
             guard allowOverflowRetry, let budget = autoCompactionBudget, Self.isRecoverableContextOverflow(error) else {
                 throw error
@@ -375,7 +394,8 @@ extension RoutedSessionActor {
             onEvent?(.compaction(result))
 
             return try await runTurnAttempt(
-                grammar: grammar, pendingEvents: [], ownPrompt: ownPrompt, onEvent: onEvent,
+                grammar: grammar, pendingEvents: [], ownPrompt: ownPrompt,
+                responseTokenCeiling: responseTokenCeiling, onEvent: onEvent,
                 allowOverflowRetry: false, body)
         }
     }
@@ -391,18 +411,20 @@ extension RoutedSessionActor {
     ///   - grammar: The grammar in force for this turn.
     ///   - started: The turn's start time.
     ///   - usageBefore: The token-usage snapshot taken before the failed work ran.
+    ///   - responseTokenCeiling: The token ceiling the turn gave its backend, or `nil`.
     ///   - pendingEvents: The events this turn drained from ``outbox``.
     ///   - onEvent: A sink for this turn's ``SessionEvent``s, or `nil`.
     private func recordFailedTurn(
         grammar: Grammar?,
         since started: Date,
         usageBefore: (input: Int, output: Int)?,
+        responseTokenCeiling: Int?,
         pendingEvents: [OperationEvent],
         onEvent: ((SessionEvent) -> Void)? = nil
     ) async {
         let (diffIncludedResponse, usage) = await finishTurnAndRequeueIfUnattached(
-            grammar: grammar, since: started, usageBefore: usageBefore, pendingEvents: pendingEvents,
-            onEvent: onEvent)
+            grammar: grammar, since: started, usageBefore: usageBefore,
+            responseTokenCeiling: responseTokenCeiling, pendingEvents: pendingEvents, onEvent: onEvent)
         guard !diffIncludedResponse else { return }
         let close = TranscriptEntryMapper.event(from: .response(Transcript.Response(segments: [])))
         await append(
@@ -585,7 +607,7 @@ extension RoutedSessionActor {
     ///
     /// Dequeues the front prompt and any pending events in one atomic
     /// `SessionOutbox.drainForDispatch()` call, inside the same two gates
-    /// ``generate(grammar:entryPoint:prompt:onEvent:_:)`` uses. Honors ``grammar``. The
+    /// ``generate(grammar:entryPoint:prompt:responseTokenCeiling:onEvent:_:)`` uses. Honors ``grammar``. The
     /// prompt's id is reported in ``SessionEvent/turnStarted(_:)``.
     ///
     /// A drain that finds no queued prompt but holds a settled run's terminal runs
@@ -646,12 +668,13 @@ extension RoutedSessionActor {
         turnId: TurnID, promptId: PromptID?, pendingEvents: [OperationEvent], ownPrompt: String
     ) async throws -> String {
         let outcome: Result<String, any Error>
+        let ceiling = Self.responseTokenCeiling(requested: nil, contextTokens: contextTokens)
         do {
             outcome = .success(
                 try await runTurn(
                     grammar: grammar, turnId: turnId, entryPoint: .dispatch, promptId: promptId,
-                    pendingEvents: pendingEvents, ownPrompt: ownPrompt,
-                    respondBody(grammar: grammar, maxTokens: nil)
+                    pendingEvents: pendingEvents, ownPrompt: ownPrompt, responseTokenCeiling: ceiling,
+                    respondBody(grammar: grammar, responseTokenCeiling: ceiling)
                 ))
         } catch {
             outcome = .failure(error)

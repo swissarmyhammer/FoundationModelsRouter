@@ -170,6 +170,13 @@ public struct TokenUsage: Sendable, Equatable {
 
     /// Why this attempt stopped. ``FinishReason/maxTokens`` when the response
     /// reached the token ceiling before the model ended it.
+    ///
+    /// The session finds this value in two ways. The backend can mark the
+    /// response entry as incomplete. Or, for an attempt that made one
+    /// generation call, ``tokensOut`` can be equal to or more than the ceiling
+    /// the attempt gave the backend. An attempt that called a tool made more
+    /// than one generation call, and its ``tokensOut`` is their sum, so only
+    /// the mark of the backend can report its stop at the ceiling.
     public let finishReason: FinishReason
 
     /// Creates a token usage value.

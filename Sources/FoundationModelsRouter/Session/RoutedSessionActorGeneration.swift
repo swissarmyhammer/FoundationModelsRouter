@@ -44,11 +44,12 @@ extension RoutedSessionActor {
         // the plain path. Both funnel through the same chokepoint, which stamps
         // the grammar (or `nil`) onto each event and composes `prompt` with
         // whatever the outbox drains for this turn (see
-        // ``generate(grammar:entryPoint:prompt:onEvent:_:)``).
+        // ``generate(grammar:entryPoint:prompt:responseTokenCeiling:onEvent:_:)``).
         let cancellationsBefore = cancelRequestCount
+        let ceiling = Self.responseTokenCeiling(requested: maxTokens, contextTokens: contextTokens)
         var answer = try await generate(
-            grammar: grammar, entryPoint: .respond, prompt: prompt,
-            respondBody(grammar: grammar, maxTokens: maxTokens))
+            grammar: grammar, entryPoint: .respond, prompt: prompt, responseTokenCeiling: ceiling,
+            respondBody(grammar: grammar, responseTokenCeiling: ceiling))
 
         // The run-plane drain. Each round runs outside the turn lock — the
         // chokepoint released it on its way out — so the background runs, and any
@@ -73,7 +74,7 @@ extension RoutedSessionActor {
             guard await settleBackgroundRuns(cancellationsBefore: cancellationsBefore) else { break }
             answer = try await generate(
                 grammar: grammar, entryPoint: .respond, prompt: Self.drainedRunContinuationPrompt,
-                respondBody(grammar: grammar, maxTokens: maxTokens))
+                responseTokenCeiling: ceiling, respondBody(grammar: grammar, responseTokenCeiling: ceiling))
         }
         return answer
     }
@@ -196,8 +197,8 @@ extension RoutedSessionActor {
     ///
     /// - Parameters:
     ///   - composedPrompt: The prompt, already composed with the outbox drain.
-    ///   - requested: The maximum number of tokens to generate, or `nil` for
-    ///     the ceiling ``responseTokenCeiling(requested:contextTokens:)`` derives.
+    ///   - maxTokens: The ceiling to give the backend, as
+    ///     ``responseTokenCeiling(requested:contextTokens:)`` derives it.
     ///   - continuation: The stream continuation each element is yielded to.
     ///   - wrapFragment: Wraps one fragment into zero or more elements.
     /// - Returns: The accumulated, unwrapped response text.
@@ -205,7 +206,7 @@ extension RoutedSessionActor {
     ///   the model call was cancelled during the stream.
     private func streamGeneratingBody<Element: Sendable>(
         composedPrompt: String,
-        maxTokens requested: Int?,
+        responseTokenCeiling maxTokens: Int?,
         into continuation: AsyncThrowingStream<Element, Error>.Continuation,
         wrapFragment: @Sendable (ResponseFragment) -> [Element]
     ) async throws -> String {
@@ -215,7 +216,6 @@ extension RoutedSessionActor {
         // still reported as one the session can see fragments on, and noted per
         // fragment below so the report is measured from the last one.
         observeGenerationFragments()
-        let maxTokens = Self.responseTokenCeiling(requested: requested, contextTokens: contextTokens)
         for try await fragment in backend.streamResponseFragments(
             to: composedPrompt, maxTokens: maxTokens)
         {
@@ -257,10 +257,11 @@ extension RoutedSessionActor {
         // Accumulate the streamed chunks so the close event can carry the full
         // response body; the accumulated text is the recorded response, while the
         // caller has already received each chunk through the continuation.
-        _ = try await generate(entryPoint: .stream, prompt: prompt) { composedPrompt in
+        let ceiling = Self.responseTokenCeiling(requested: maxTokens, contextTokens: contextTokens)
+        _ = try await generate(entryPoint: .stream, prompt: prompt, responseTokenCeiling: ceiling) { composedPrompt in
             try await self.streamGeneratingBody(
                 composedPrompt: composedPrompt,
-                maxTokens: maxTokens,
+                responseTokenCeiling: ceiling,
                 into: continuation,
                 // A `String` element cannot report a restart, so this surface
                 // delivers the text and nothing else — see
@@ -359,18 +360,20 @@ extension RoutedSessionActor {
         // `onEvent` forwards the chokepoint's own diff-derived events (tool
         // calls/status, reasoning, the closing usage) to this same
         // continuation once the turn's diff runs — see
-        // `generate(grammar:entryPoint:prompt:onEvent:_:)`. The live text itself goes
+        // `generate(grammar:entryPoint:prompt:responseTokenCeiling:onEvent:_:)`. The live text itself goes
         // through the same accumulate-and-forward loop
         // `streamGenerating(prompt:maxTokens:into:)` uses, via
-        // ``streamGeneratingBody(composedPrompt:maxTokens:into:wrapChunk:)``,
+        // ``streamGeneratingBody(composedPrompt:responseTokenCeiling:into:wrapFragment:)``,
         // wrapping each chunk as a ``SessionEvent/textDelta(_:)`` instead of
         // yielding it verbatim.
+        let ceiling = Self.responseTokenCeiling(requested: maxTokens, contextTokens: contextTokens)
         _ = try await generate(
-            entryPoint: .stream, prompt: prompt, onEvent: { continuation.yield($0) }
+            entryPoint: .stream, prompt: prompt, responseTokenCeiling: ceiling,
+            onEvent: { continuation.yield($0) }
         ) { composedPrompt in
             try await self.streamGeneratingBody(
                 composedPrompt: composedPrompt,
-                maxTokens: maxTokens,
+                responseTokenCeiling: ceiling,
                 into: continuation,
                 wrapFragment: Self.sessionEvents(for:)
             )

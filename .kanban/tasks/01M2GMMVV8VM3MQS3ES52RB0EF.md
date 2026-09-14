@@ -1,7 +1,38 @@
 ---
 assignees:
 - claude-code
-position_column: todo
+comments:
+- actor: claude-code
+  id: 01m2gpkb67pgqx4jf9gryq46v7
+  text: |-
+    Research results:
+    - Upstream MLXLanguageModel.swift sends `incompleteOutput` at 5 sites: (1) allowed-tool path when the result ended inside reasoning, (2) think-then-call phase 1 not closed, (3) required-tool guided decode `incomplete`, (4) guided schema decode `incomplete`, (5) unconstrained path only when `endedInsideReasoning`. The unconstrained path gives no metadata when the budget ends in the answer text.
+    - The unconstrained path gives `maxTokens` to MLX `GenerateParameters`. The generation stops when the count is equal to `maxTokens`, and `.updateUsage` reports `generationTokenCount`. Thus a truncated answer has output tokens equal to the ceiling.
+    - `Transcript.Response` has no usage of its own (SDK swiftinterface). Router only has the usage delta of the full attempt (`liveSession.usage`). In a tool loop, the SDK makes more than one executor call in one attempt, and the delta is the sum of all calls.
+    - The ceiling is calculated in `respondBody` and in `streamGeneratingBody`. `finishTurn` does not know it.
+    - Discovery priming adds seeded entries before the attempt. These entries are in `unrecordedTranscriptEntries()` before the `.prompt` entry of the attempt.
+  timestamp: 2026-09-14T19:34:12.423540+00:00
+- actor: claude-code
+  id: 01m2gq3evns5d76zepqqy0684d
+  text: |-
+    Implementation landed.
+
+    Decision: `FinishReason(turnEntries:outputTokens:responseTokenCeiling:)` gives `.maxTokens` when (a) the last response carries `incompleteOutput`, or (b) the ceiling is known, `tokensOut` of the attempt is equal to or more than that ceiling, and the attempt made one generation call. The attempt made more than one call when a `.toolCalls` entry follows the last `.prompt` entry. Seeded entries of discovery priming come before the prompt, so they do not count.
+
+    Why rule (b) excludes a tool loop: the usage delta of an attempt is the sum of all executor calls in the loop. With a named ceiling of 256, a tool call of 100 tokens and an answer of 200 tokens give 300 >= 256, and the turn would report `.maxTokens` falsely. A false `.maxTokens` is also a wrong stop reason. The remaining gap (a tool loop whose last call stops in the answer text) is recorded as new task ^rhpqq34.
+
+    The ceiling now flows as a parameter: the callers of `generate` calculate it one time with `responseTokenCeiling(requested:contextTokens:)` and pass it to `respondBody`/`streamGeneratingBody` and to `generate` -> `runTurn` -> `runTurnWork` -> `runTurnAttempt` -> `finishTurnAndRequeueIfUnattached`/`recordFailedTurn` -> `finishTurn`. I did not use a stored actor property, because the swift initialization rule forbids a stored property that a later method fills in. A `nil` ceiling (context unknown, caller named none) turns rule (b) off; the backend floor is not visible to the session.
+
+    Tests: `CeilingProbeEnding.truncatedInAnswerText` sends part of the answer and `.updateUsage` with output equal to `maximumResponseTokens`, and no metadata. RED was seen first: 5 issues, each `finishReason → .completed`. New tests cover respond with nil and named ceiling, streamEvents with a named ceiling, and 6 unit cases for the count rule.
+  timestamp: 2026-09-14T19:43:00.469436+00:00
+- actor: claude-code
+  id: 01m2gq3j0b79v015d6j5yqjbpr
+  text: |-
+    ### implement — changed
+    - evidence: `swift test` — 1316 tests in 141 suites passed (2 known issues from existing withKnownIssue tests), plus 1 and 83 tests passed; TurnFinishReasonTests 16 tests passed. 8 files: Sources/FoundationModelsRouter/Session/{FinishReason,RoutedSessionActor,RoutedSessionActorGeneration,RoutedSessionActorRecording,RoutedSessionActorTurnExecution,SessionEvent}.swift, Tests/FoundationModelsRouterTests/{TurnFinishReasonTests,Helpers/CeilingProbeLanguageModel,AutoCompactionTests}.swift
+    - next: /review
+  timestamp: 2026-09-14T19:43:03.691963+00:00
+position_column: doing
 position_ordinal: '80'
 title: A turn that reaches the ceiling in its answer text reports completed
 ---

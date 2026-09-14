@@ -16,6 +16,8 @@ extension RoutedSessionActor {
     ///   - grammar: The guided-generation grammar in force.
     ///   - since: The turn's start instant, used to stamp `ms`.
     ///   - usageBefore: The token-usage snapshot taken before the turn ran.
+    ///   - responseTokenCeiling: The token ceiling the turn gave its backend,
+    ///     or `nil` when it gave none.
     ///   - pendingEvents: The events this turn drained from the outbox.
     ///   - onEvent: A sink for derived ``SessionEvent``s, or `nil`.
     /// - Returns: Whether the diff included a `.response` entry, the turn's
@@ -25,13 +27,16 @@ extension RoutedSessionActor {
         grammar: Grammar?,
         since: Date,
         usageBefore: (input: Int, output: Int)?,
+        responseTokenCeiling: Int?,
         pendingEvents: [OperationEvent],
         onEvent: ((SessionEvent) -> Void)? = nil
     ) async -> (diffIncludedResponse: Bool, usage: (input: Int, output: Int)?, pendingEventsAttached: Bool) {
         let usage = Self.usageDelta(before: usageBefore, after: backend.usageTokenCounts())
         // Read before the diff below, which moves the baseline past this
         // attempt's entries.
-        let finishReason = FinishReason(turnEntries: unrecordedTranscriptEntries())
+        let finishReason = FinishReason(
+            turnEntries: unrecordedTranscriptEntries(), outputTokens: usage?.output,
+            responseTokenCeiling: responseTokenCeiling)
         let (diffIncludedResponse, pendingEventsAttached) = await recordTranscriptDelta(
             grammar: grammar, since: since, usage: usage, pendingEvents: pendingEvents, onEvent: onEvent)
         // Only a turn whose diff actually included a `.response`-kind entry
@@ -83,6 +88,8 @@ extension RoutedSessionActor {
     ///   - grammar: The guided-generation grammar in force for this turn.
     ///   - started: The turn's start time.
     ///   - usageBefore: The token-usage snapshot taken before the turn ran.
+    ///   - responseTokenCeiling: The token ceiling the turn gave its backend,
+    ///     or `nil` when it gave none.
     ///   - pendingEvents: The events drained from ``outbox`` for this turn.
     ///   - onEvent: A sink for derived ``SessionEvent``s, or `nil`.
     /// - Returns: Whether the diff included a `.response` entry, and the
@@ -91,12 +98,13 @@ extension RoutedSessionActor {
         grammar: Grammar?,
         since started: Date,
         usageBefore: (input: Int, output: Int)?,
+        responseTokenCeiling: Int?,
         pendingEvents: [OperationEvent],
         onEvent: ((SessionEvent) -> Void)? = nil
     ) async -> (diffIncludedResponse: Bool, usage: (input: Int, output: Int)?) {
         let (diffIncludedResponse, usage, pendingEventsAttached) = await finishTurn(
-            grammar: grammar, since: started, usageBefore: usageBefore, pendingEvents: pendingEvents,
-            onEvent: onEvent)
+            grammar: grammar, since: started, usageBefore: usageBefore,
+            responseTokenCeiling: responseTokenCeiling, pendingEvents: pendingEvents, onEvent: onEvent)
         // `drainForDispatch()` already destructively removed `pendingEvents`
         // from `outbox` before `body()` ran. When this turn's diff produced no
         // `.prompt`-kind partial to attach them to — every `.ebnf`-guided

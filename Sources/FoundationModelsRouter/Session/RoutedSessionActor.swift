@@ -465,7 +465,7 @@ actor RoutedSessionActor: RoutedSession {
     nonisolated let contextTokens: Int
 
     /// The state ``contextFill`` derives its numerator from. See
-    /// ``ContextUsageState``. ``finishTurn(grammar:since:usageBefore:pendingEvents:onEvent:)``
+    /// ``ContextUsageState``. ``finishTurn(grammar:since:usageBefore:responseTokenCeiling:pendingEvents:onEvent:)``
     /// updates it only when the turn's diff included a `.response` entry.
     var usageState: ContextUsageState
 

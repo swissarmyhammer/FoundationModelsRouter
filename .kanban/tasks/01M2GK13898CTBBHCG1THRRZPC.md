@@ -96,8 +96,24 @@ comments:
     - No skipped or disabled tests anywhere in the run.
     - next: /review or /commit.
   timestamp: 2026-09-14T19:27:23.151062+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m2gpd3qjxvscma0yfqe0wr62
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD — 0 findings (attempted 7, confirmed 0, refuted 0, failed 0). 4 files reviewed. 2 .kanban files excluded by .reviewignore. All 3 items of the prior Review Findings section are checked.
+    - next: none. The task moved to done.
+  timestamp: 2026-09-14T19:30:48.178965+00:00
+- actor: claude-code
+  id: 01m2gpdm59afwp36yhfncdz00e
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 4 files
+    - test: green — swift test, 1392 passed, 0 failed, 0 skipped
+    - commit: d429d5b
+    - review: clean — 0 findings, 3 of 3 prior findings checked; task in done
+  timestamp: 2026-09-14T19:31:05.001064+00:00
+position_column: done
+position_ordinal: ffffd480
 title: The token ceiling is a constant, and a truncated turn is silent
 ---
 ## The problem
