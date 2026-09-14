@@ -641,6 +641,7 @@ struct GuidedGenerationTests {
         )
         _ = try await profile.standard.respond(to: "hi", following: .jsonSchema(Self.smallSchema))
 
-        #expect(await maxTokensSpy.observed == [2048, nil])
+        // Omitting the override gives the guided call the resolved context.
+        #expect(await maxTokensSpy.observed == [2048, ProfileDefinition.defaultContext])
     }
 }

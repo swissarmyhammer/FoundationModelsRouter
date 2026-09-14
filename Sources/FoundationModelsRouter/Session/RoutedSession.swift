@@ -148,7 +148,7 @@ public protocol RoutedSession: Actor {
     /// the process through whatever backend the host application bootstrapped,
     /// so the payload stays free of the caller's own content.
     ///
-    /// - Parameter maxTokens: The token ceiling, or `nil` for the model's default.
+    /// - Parameter maxTokens: The token ceiling, or `nil` for the resolved context of the model.
     /// - Returns: The model's complete text response; the last drained turn's
     ///   when this call's own turn backgrounded work.
     /// - Throws: ``SessionReentryError/sameSessionTurnInFlight(sessionID:)`` when
@@ -166,7 +166,7 @@ public protocol RoutedSession: Actor {
     /// The turn opens one span, exactly as ``respond(to:maxTokens:)`` states,
     /// with `turn.entry_point` reading `stream`.
     ///
-    /// - Parameter maxTokens: The token ceiling, or `nil` for the model's default.
+    /// - Parameter maxTokens: The token ceiling, or `nil` for the resolved context of the model.
     func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error>
 
     /// Streams a rich event sequence for a prompt as it is produced, recording
@@ -197,7 +197,7 @@ public protocol RoutedSession: Actor {
     /// The turn opens one span, exactly as ``respond(to:maxTokens:)`` states,
     /// with `turn.entry_point` reading `stream`.
     ///
-    /// - Parameter maxTokens: The token ceiling, or `nil` for the model's default.
+    /// - Parameter maxTokens: The token ceiling, or `nil` for the resolved context of the model.
     func streamEvents(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<SessionEvent, Error>
 
     /// Streams the ``SessionEvent``s that belong to this *session* rather than
@@ -377,17 +377,17 @@ extension RoutedSession {
         try await compact(prompt: .default, budget: budget)
     }
 
-    /// See ``respond(to:maxTokens:)``, with the model's default token ceiling.
+    /// See ``respond(to:maxTokens:)``, with the resolved context of the model as the token ceiling.
     public func respond(to prompt: String) async throws -> String {
         try await respond(to: prompt, maxTokens: nil)
     }
 
-    /// See ``streamResponse(to:maxTokens:)``, with the model's default token ceiling.
+    /// See ``streamResponse(to:maxTokens:)``, with the resolved context of the model as the token ceiling.
     public func streamResponse(to prompt: String) -> AsyncThrowingStream<String, Error> {
         streamResponse(to: prompt, maxTokens: nil)
     }
 
-    /// See ``streamEvents(to:maxTokens:)``, with the model's default token ceiling.
+    /// See ``streamEvents(to:maxTokens:)``, with the resolved context of the model as the token ceiling.
     public func streamEvents(to prompt: String) -> AsyncThrowingStream<SessionEvent, Error> {
         streamEvents(to: prompt, maxTokens: nil)
     }

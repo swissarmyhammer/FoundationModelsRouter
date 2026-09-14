@@ -32,7 +32,7 @@ extension RoutedSessionActor {
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` for the
-    ///     model's default ceiling.
+    ///     resolved context of the model as the ceiling.
     /// - Returns: The model's complete text response.
     /// - Throws: Any error thrown by the model. A turn that throws is not
     ///   drained.
@@ -158,7 +158,7 @@ extension RoutedSessionActor {
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` for the
-    ///     model's default ceiling.
+    ///     resolved context of the model as the ceiling.
     /// - Returns: A stream of response fragments, finishing when generation
     ///   completes or throwing if it fails.
     func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
@@ -196,7 +196,8 @@ extension RoutedSessionActor {
     ///
     /// - Parameters:
     ///   - composedPrompt: The prompt, already composed with the outbox drain.
-    ///   - maxTokens: The maximum number of tokens to generate, or `nil`.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil` for
+    ///     the ceiling ``responseTokenCeiling(requested:contextTokens:)`` derives.
     ///   - continuation: The stream continuation each element is yielded to.
     ///   - wrapFragment: Wraps one fragment into zero or more elements.
     /// - Returns: The accumulated, unwrapped response text.
@@ -204,7 +205,7 @@ extension RoutedSessionActor {
     ///   the model call was cancelled during the stream.
     private func streamGeneratingBody<Element: Sendable>(
         composedPrompt: String,
-        maxTokens: Int?,
+        maxTokens requested: Int?,
         into continuation: AsyncThrowingStream<Element, Error>.Continuation,
         wrapFragment: @Sendable (ResponseFragment) -> [Element]
     ) async throws -> String {
@@ -214,6 +215,7 @@ extension RoutedSessionActor {
         // still reported as one the session can see fragments on, and noted per
         // fragment below so the report is measured from the last one.
         observeGenerationFragments()
+        let maxTokens = Self.responseTokenCeiling(requested: requested, contextTokens: contextTokens)
         for try await fragment in backend.streamResponseFragments(
             to: composedPrompt, maxTokens: maxTokens)
         {
@@ -243,7 +245,7 @@ extension RoutedSessionActor {
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` for the
-    ///     model's default ceiling.
+    ///     resolved context of the model as the ceiling.
     ///   - continuation: The stream continuation each chunk is yielded to.
     /// - Throws: Any error thrown by the model, after the close event is
     ///   recorded.
@@ -275,7 +277,7 @@ extension RoutedSessionActor {
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` for the
-    ///     model's default ceiling.
+    ///     resolved context of the model as the ceiling.
     /// - Returns: A stream of session events, finishing when generation
     ///   completes or throwing if it fails.
     func streamEvents(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<SessionEvent, Error> {
@@ -345,7 +347,7 @@ extension RoutedSessionActor {
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` for the
-    ///     model's default ceiling.
+    ///     resolved context of the model as the ceiling.
     ///   - continuation: The stream continuation each event is yielded to.
     /// - Throws: Any error thrown by the model, after the close event is
     ///   recorded and its events are yielded.

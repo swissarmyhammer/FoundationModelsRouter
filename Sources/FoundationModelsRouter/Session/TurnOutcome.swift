@@ -133,7 +133,7 @@ extension RoutedSession {
     ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
-    ///   - maxTokens: The maximum number of tokens to generate, or `nil` for the model's default.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil` for the resolved context of the model.
     ///   - observing: A callback that receives each raw ``SessionEvent`` before it is folded, or `nil`.
     /// - Returns: The turn's ``TurnOutcome``.
     /// - Throws: Whatever the turn throws, after `observing` has seen every event.

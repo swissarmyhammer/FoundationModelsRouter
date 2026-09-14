@@ -508,7 +508,7 @@ struct SessionChokepointTests {
 
     // MARK: - maxTokens threading
 
-    @Test("respond threads an explicit maxTokens override to the container; omitting it passes nil")
+    @Test("respond threads an explicit maxTokens override to the container; omitting it passes the resolved context")
     @MainActor
     func respondThreadsMaxTokensOverride() async throws {
         let dir = Self.makeTempDir()
@@ -528,14 +528,14 @@ struct SessionChokepointTests {
         _ = try await session.respond(to: "hello", maxTokens: 4096)
         _ = try await session.respond(to: "hello")
 
-        // The router does not silently substitute its own default before the
-        // container boundary — an explicit override reaches the container
-        // unchanged, and omitting it reaches the container as `nil` (the
-        // default lives in `LiveModelLoader` only).
-        #expect(await maxTokensSpy.observed == [4096, nil])
+        // An explicit override reaches the container unchanged. Omitting it
+        // reaches the container as the resolved working context of the
+        // session, and not as a constant (see
+        // `RoutedSessionActor.responseTokenCeiling(requested:contextTokens:)`).
+        #expect(await maxTokensSpy.observed == [4096, ProfileDefinition.defaultContext])
     }
 
-    @Test("streamResponse threads an explicit maxTokens override to the container; omitting it passes nil")
+    @Test("streamResponse threads an explicit maxTokens override to the container; omitting it passes the resolved context")
     @MainActor
     func streamResponseThreadsMaxTokensOverride() async throws {
         let dir = Self.makeTempDir()
@@ -552,13 +552,12 @@ struct SessionChokepointTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
-        for try await _ in await session.streamResponse(to: "hello", maxTokens: 8192) {}
+        for try await _ in await session.streamResponse(to: "hello", maxTokens: 2048) {}
         for try await _ in await session.streamResponse(to: "hello") {}
 
-        // Mirrors respondThreadsMaxTokensOverride for the streaming path: an
-        // explicit override reaches the container unchanged, and omitting it
-        // reaches the container as `nil` (the default lives in
-        // `LiveModelLoader` only).
-        #expect(await maxTokensSpy.observed == [8192, nil])
+        // Mirrors respondThreadsMaxTokensOverride for the streaming path. The
+        // explicit override is not the resolved context, so the two values
+        // stay distinguishable.
+        #expect(await maxTokensSpy.observed == [2048, ProfileDefinition.defaultContext])
     }
 }

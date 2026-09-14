@@ -168,10 +168,21 @@ public struct TokenUsage: Sendable, Equatable {
     /// The session's measured ``RoutedSession/contextFill`` immediately after this attempt closed.
     public let contextFill: Double
 
+    /// Why this attempt stopped. ``FinishReason/maxTokens`` when the response
+    /// reached the token ceiling before the model ended it.
+    public let finishReason: FinishReason
+
     /// Creates a token usage value.
-    public init(tokensIn: Int, tokensOut: Int, contextFill: Double) {
+    ///
+    /// - Parameters:
+    ///   - tokensIn: Input (prompt) tokens this attempt consumed.
+    ///   - tokensOut: Output (completion) tokens this attempt produced.
+    ///   - contextFill: The session's measured fill after this attempt closed.
+    ///   - finishReason: Why this attempt stopped. Defaults to ``FinishReason/completed``.
+    public init(tokensIn: Int, tokensOut: Int, contextFill: Double, finishReason: FinishReason = .completed) {
         self.tokensIn = tokensIn
         self.tokensOut = tokensOut
         self.contextFill = contextFill
+        self.finishReason = finishReason
     }
 }

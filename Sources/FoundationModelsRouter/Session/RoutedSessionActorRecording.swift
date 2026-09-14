@@ -29,6 +29,9 @@ extension RoutedSessionActor {
         onEvent: ((SessionEvent) -> Void)? = nil
     ) async -> (diffIncludedResponse: Bool, usage: (input: Int, output: Int)?, pendingEventsAttached: Bool) {
         let usage = Self.usageDelta(before: usageBefore, after: backend.usageTokenCounts())
+        // Read before the diff below, which moves the baseline past this
+        // attempt's entries.
+        let finishReason = FinishReason(turnEntries: unrecordedTranscriptEntries())
         let (diffIncludedResponse, pendingEventsAttached) = await recordTranscriptDelta(
             grammar: grammar, since: since, usage: usage, pendingEvents: pendingEvents, onEvent: onEvent)
         // Only a turn whose diff actually included a `.response`-kind entry
@@ -52,9 +55,25 @@ extension RoutedSessionActor {
         // `backend`) — live, per inner call, not only once the whole
         // (possibly retried) turn finishes (compaction_plan.md §1.7, task g2hcm36).
         if let usage {
-            onEvent?(.turnEnded(TokenUsage(tokensIn: usage.input, tokensOut: usage.output, contextFill: contextFill)))
+            onEvent?(
+                .turnEnded(
+                    TokenUsage(
+                        tokensIn: usage.input, tokensOut: usage.output, contextFill: contextFill,
+                        finishReason: finishReason)))
         }
         return (diffIncludedResponse, usage, pendingEventsAttached)
+    }
+
+    /// The entries of the backend transcript that ``persistedBaseline`` does
+    /// not hold: the entries the attempt in flight appended.
+    ///
+    /// Read by entry id, so a transcript that diverged from the baseline still
+    /// gives only its new entries.
+    ///
+    /// - Returns: The unrecorded entries, in transcript order.
+    private func unrecordedTranscriptEntries() -> [Transcript.Entry] {
+        let recordedIds = Set(persistedBaseline.entryIds)
+        return backend.transcriptEntries().filter { !recordedIds.contains($0.id) }
     }
 
     /// Finishes the turn and re-queues `pendingEvents` when the diff had no

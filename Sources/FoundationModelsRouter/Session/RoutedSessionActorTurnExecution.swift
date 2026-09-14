@@ -10,8 +10,36 @@ private let sessionPrimingLogger = makeModuleLogger(category: "DiscoveryPriming"
 /// ``RoutedSessionActor``'s turn execution: the recorder-bracketed generation
 /// chokepoint, the queued-prompt turn, discovery priming, overflow recovery, and cancellation.
 extension RoutedSessionActor {
+    /// The token ceiling a turn gives its backend.
+    ///
+    /// A ceiling the caller names wins. Otherwise the ceiling is the resolved
+    /// working context of the session: a response cannot be longer than the
+    /// context it decodes in, so the context is the one ceiling that comes from
+    /// the model. The length of a turn below that is for the bounds made to
+    /// govern it, such as the stall report and a host watchdog, and not for a
+    /// constant.
+    ///
+    /// - Parameters:
+    ///   - requested: The ceiling the caller named, or `nil`.
+    ///   - contextTokens: The resolved working context of the session, in tokens.
+    /// - Returns: The ceiling to give the backend, or `nil` when the caller
+    ///   named none and the context is unknown. The backend then applies its
+    ///   own floor.
+    static func responseTokenCeiling(requested: Int?, contextTokens: Int) -> Int? {
+        if let requested { return requested }
+        guard contextTokens > 0 else { return nil }
+        return contextTokens
+    }
+
     /// Builds the closure that submits a turn's composed prompt to `backend`.
-    func respondBody(grammar: Grammar?, maxTokens: Int?) -> @Sendable (String) async throws -> String {
+    ///
+    /// - Parameters:
+    ///   - grammar: The grammar that constrains the response, or `nil`.
+    ///   - maxTokens: The ceiling the caller named, or `nil` for the ceiling
+    ///     ``responseTokenCeiling(requested:contextTokens:)`` derives.
+    /// - Returns: The closure that runs the model call.
+    func respondBody(grammar: Grammar?, maxTokens requested: Int?) -> @Sendable (String) async throws -> String {
+        let maxTokens = Self.responseTokenCeiling(requested: requested, contextTokens: contextTokens)
         guard let grammar else {
             return { composedPrompt in
                 try await self.backend.respond(to: composedPrompt, maxTokens: maxTokens)

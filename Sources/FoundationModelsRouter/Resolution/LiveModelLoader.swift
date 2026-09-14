@@ -34,9 +34,6 @@ import MLXVLM
 // invoked by FoundationModels, not called directly here. See plan.md's
 // "Backends" and "Guided generation" sections.
 
-/// The token ceiling for a generation call that gives no `maxTokens`.
-private let defaultMaxTokens = 8192
-
 /// Builds a session backend over a new `LanguageModelSession` seeded from
 /// `transcript`.
 ///
@@ -163,6 +160,16 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// provider default.
     private let samplingMode: GenerationOptions.SamplingMode?
 
+    /// The token ceiling for a generation call whose caller gives no
+    /// `maxTokens`.
+    ///
+    /// This is a floor, and not a policy. A routed session gives every call
+    /// the ceiling it derives from the resolved context of its model (see
+    /// ``RoutedSessionActor/responseTokenCeiling(requested:contextTokens:)``).
+    /// This value applies only to a caller that reports no context and names
+    /// no ceiling, so that the MLX executor still gets a finite budget.
+    static let responseTokenFloor = 8192
+
     /// Test-only accessor onto ``liveSession``. Not part of the protocol.
     // periphery:ignore
     internal var session: LanguageModelSession { liveSession }
@@ -195,7 +202,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
         maxTokens: Int?
     ) async throws -> String {
         let options = GenerationOptions(
-            samplingMode: samplingMode, maximumResponseTokens: maxTokens ?? defaultMaxTokens)
+            samplingMode: samplingMode, maximumResponseTokens: maxTokens ?? Self.responseTokenFloor)
         guard let schema else {
             let response = try await liveSession.respond(to: prompt, options: options)
             return response.content
@@ -233,7 +240,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
         maxTokens: Int?
     ) -> AsyncThrowingStream<ResponseFragment, Error> {
         let options = GenerationOptions(
-            samplingMode: samplingMode, maximumResponseTokens: maxTokens ?? defaultMaxTokens)
+            samplingMode: samplingMode, maximumResponseTokens: maxTokens ?? Self.responseTokenFloor)
         let fragments = SnapshotDeltaIterator(
             liveSession.streamResponse(to: prompt, options: options)
         ) { $0.content }
