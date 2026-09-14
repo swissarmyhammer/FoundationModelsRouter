@@ -35,7 +35,7 @@ extension RoutedSessionActor {
     ///
     /// - Parameters:
     ///   - grammar: The grammar that constrains the response, or `nil`.
-    ///   - maxTokens: The ceiling the caller named, or `nil` for the ceiling
+    ///   - requested: The ceiling the caller named, or `nil` for the ceiling
     ///     ``responseTokenCeiling(requested:contextTokens:)`` derives.
     /// - Returns: The closure that runs the model call.
     func respondBody(grammar: Grammar?, maxTokens requested: Int?) -> @Sendable (String) async throws -> String {

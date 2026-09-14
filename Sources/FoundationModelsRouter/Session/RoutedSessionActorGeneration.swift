@@ -196,7 +196,7 @@ extension RoutedSessionActor {
     ///
     /// - Parameters:
     ///   - composedPrompt: The prompt, already composed with the outbox drain.
-    ///   - maxTokens: The maximum number of tokens to generate, or `nil` for
+    ///   - requested: The maximum number of tokens to generate, or `nil` for
     ///     the ceiling ``responseTokenCeiling(requested:contextTokens:)`` derives.
     ///   - continuation: The stream continuation each element is yielded to.
     ///   - wrapFragment: Wraps one fragment into zero or more elements.

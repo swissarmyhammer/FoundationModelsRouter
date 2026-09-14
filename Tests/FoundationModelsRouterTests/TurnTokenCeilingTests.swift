@@ -11,6 +11,9 @@ import Testing
 /// that names no `maxTokens` generates under that context. A turn that names
 /// one keeps it. The live backend keeps a named floor only for a caller that
 /// gives it no ceiling at all.
+///
+/// Each rule is proven on the respond path and on each stream path, because
+/// each path gives the backend its ceiling through a different call.
 @Suite("Turn token ceiling: derived from the resolved context")
 struct TurnTokenCeilingTests {
     /// The prefix of each temp directory this suite makes.
@@ -23,35 +26,82 @@ struct TurnTokenCeilingTests {
     /// An explicit ceiling a caller names, smaller than any context here.
     private static let requestedCeiling = 256
 
-    @Test("a respond turn that names no ceiling generates under the resolved context")
-    func respondUsesResolvedContext() async throws {
+    /// The prompt each turn of this suite sends.
+    private static let prompt = "fix the bug"
+
+    /// A public surface of ``RoutedSession`` that runs one turn.
+    enum SessionSurface: CaseIterable, Sendable {
+        /// ``RoutedSession/respond(to:maxTokens:)``.
+        case respond
+
+        /// ``RoutedSession/streamResponse(to:maxTokens:)``.
+        case streamResponse
+
+        /// ``RoutedSession/streamEvents(to:maxTokens:)``.
+        case streamEvents
+
+        /// Runs one turn on `session` through this surface, and consumes the
+        /// whole stream of a stream surface.
+        ///
+        /// - Parameters:
+        ///   - session: The session to run the turn on.
+        ///   - maxTokens: The ceiling the turn names, or `nil`.
+        /// - Throws: Whatever the turn throws.
+        func runTurn(on session: RoutedSession, maxTokens: Int?) async throws {
+            switch self {
+            case .respond:
+                let _: String = try await session.respond(to: TurnTokenCeilingTests.prompt, maxTokens: maxTokens)
+            case .streamResponse:
+                for try await _ in await session.streamResponse(to: TurnTokenCeilingTests.prompt, maxTokens: maxTokens) {}
+            case .streamEvents:
+                for try await _ in await session.streamEvents(to: TurnTokenCeilingTests.prompt, maxTokens: maxTokens) {}
+            }
+        }
+    }
+
+    /// A generation surface of ``MLXFoundationModelsSessionBackend``.
+    enum BackendSurface: CaseIterable, Sendable {
+        /// ``MLXFoundationModelsSessionBackend/respond(to:maxTokens:)``.
+        case respond
+
+        /// ``MLXFoundationModelsSessionBackend/streamResponse(to:maxTokens:)``.
+        case streamResponse
+
+        /// Runs one generation call on `backend` through this surface, and
+        /// consumes the whole stream of the stream surface.
+        ///
+        /// - Parameter backend: The backend to run the call on.
+        /// - Throws: Whatever the call throws.
+        func runCall(on backend: any LanguageModelSessionBackend) async throws {
+            switch self {
+            case .respond:
+                _ = try await backend.respond(to: TurnTokenCeilingTests.prompt, maxTokens: nil)
+            case .streamResponse:
+                for try await _ in backend.streamResponse(to: TurnTokenCeilingTests.prompt, maxTokens: nil) {}
+            }
+        }
+    }
+
+    @Test(
+        "a turn that names no ceiling generates under the resolved context",
+        arguments: SessionSurface.allCases)
+    func turnUsesResolvedContext(surface: SessionSurface) async throws {
         let fixture = try await CeilingProbeSessionFixture.make(
             ending: .finished, context: Self.resolvedContext, tempDirPrefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        let _: String = try await fixture.session.respond(to: "fix the bug", maxTokens: nil)
+        try await surface.runTurn(on: fixture.session, maxTokens: nil)
 
         #expect(fixture.log.requestedCeilings == [Self.resolvedContext])
     }
 
-    @Test("a streamed turn that names no ceiling generates under the resolved context")
-    func streamUsesResolvedContext() async throws {
+    @Test("a turn that names a ceiling keeps that ceiling", arguments: SessionSurface.allCases)
+    func explicitCeilingIsKept(surface: SessionSurface) async throws {
         let fixture = try await CeilingProbeSessionFixture.make(
             ending: .finished, context: Self.resolvedContext, tempDirPrefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        let _: TurnOutcome = try await fixture.session.respond(to: "fix the bug", maxTokens: nil)
-
-        #expect(fixture.log.requestedCeilings == [Self.resolvedContext])
-    }
-
-    @Test("a turn that names a ceiling keeps that ceiling")
-    func explicitCeilingIsKept() async throws {
-        let fixture = try await CeilingProbeSessionFixture.make(
-            ending: .finished, context: Self.resolvedContext, tempDirPrefix: Self.tempDirPrefix)
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
-
-        let _: String = try await fixture.session.respond(to: "fix the bug", maxTokens: Self.requestedCeiling)
+        try await surface.runTurn(on: fixture.session, maxTokens: Self.requestedCeiling)
 
         #expect(fixture.log.requestedCeilings == [Self.requestedCeiling])
     }
@@ -61,13 +111,15 @@ struct TurnTokenCeilingTests {
         #expect(RoutedSessionActor.responseTokenCeiling(requested: nil, contextTokens: 0) == nil)
     }
 
-    @Test("the live backend generates under its named floor when the caller gives no ceiling")
-    func liveBackendFallsBackToFloor() async throws {
+    @Test(
+        "the live backend generates under its named floor when the caller gives no ceiling",
+        arguments: BackendSurface.allCases)
+    func liveBackendFallsBackToFloor(surface: BackendSurface) async throws {
         let log = CeilingProbeLog()
         let container = CeilingProbeContainer(model: CeilingProbeLanguageModel(ending: .finished, log: log))
         let backend = container.makeSession(instructions: nil)
 
-        _ = try await backend.respond(to: "fix the bug", maxTokens: nil)
+        try await surface.runCall(on: backend)
 
         #expect(log.requestedCeilings == [MLXFoundationModelsSessionBackend.responseTokenFloor])
     }

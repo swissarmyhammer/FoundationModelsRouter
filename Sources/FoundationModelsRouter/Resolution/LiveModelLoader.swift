@@ -170,6 +170,20 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// no ceiling, so that the MLX executor still gets a finite budget.
     static let responseTokenFloor = 8192
 
+    /// Makes the generation options of one call on ``liveSession``.
+    ///
+    /// Each generation call uses this one helper, so the respond path and the
+    /// stream path always decode with the same ``samplingMode`` and the same
+    /// ceiling.
+    ///
+    /// - Parameter maxTokens: The ceiling the caller named, or `nil` for
+    ///   ``responseTokenFloor``.
+    /// - Returns: The options that carry ``samplingMode`` and the ceiling.
+    private func makeGenerationOptions(maxTokens: Int?) -> GenerationOptions {
+        GenerationOptions(
+            samplingMode: samplingMode, maximumResponseTokens: maxTokens ?? Self.responseTokenFloor)
+    }
+
     /// Test-only accessor onto ``liveSession``. Not part of the protocol.
     // periphery:ignore
     internal var session: LanguageModelSession { liveSession }
@@ -201,8 +215,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
         schema: GenerationSchema?,
         maxTokens: Int?
     ) async throws -> String {
-        let options = GenerationOptions(
-            samplingMode: samplingMode, maximumResponseTokens: maxTokens ?? Self.responseTokenFloor)
+        let options = makeGenerationOptions(maxTokens: maxTokens)
         guard let schema else {
             let response = try await liveSession.respond(to: prompt, options: options)
             return response.content
@@ -239,8 +252,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
         to prompt: String,
         maxTokens: Int?
     ) -> AsyncThrowingStream<ResponseFragment, Error> {
-        let options = GenerationOptions(
-            samplingMode: samplingMode, maximumResponseTokens: maxTokens ?? Self.responseTokenFloor)
+        let options = makeGenerationOptions(maxTokens: maxTokens)
         let fragments = SnapshotDeltaIterator(
             liveSession.streamResponse(to: prompt, options: options)
         ) { $0.content }

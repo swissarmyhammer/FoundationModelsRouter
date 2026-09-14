@@ -48,6 +48,54 @@ comments:
     - No skipped or disabled tests found anywhere in the run.
     - next: hand off to review.
   timestamp: 2026-09-14T19:06:01.144514+00:00
+- actor: claude-code
+  id: 01m2gnpen8qnd899tbap1bxa4w
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD — 3 findings (3 confirmed, 1 refuted): Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:243, Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnExecution.swift:38, Tests/FoundationModelsRouterTests/TurnTokenCeilingTests.swift:43
+    - design decision flagged by the implementer (the ceiling derivation is in the session, not in LiveModelLoader; 3 old tests changed their expected values): the engine gave no finding on it.
+    - next: implement the 3 open findings in the "Review Findings (2026-09-14 14:07)" section, then review again.
+  timestamp: 2026-09-14T19:18:25.704893+00:00
+- actor: claude-code
+  id: 01m2gnq80nhxxq7kh6tzaweksj
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 13 files
+    - test: green — swift test, 1393 passed, 0 failed, 0 skipped
+    - commit: 90d6bed
+    - review: findings — Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:243, Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnExecution.swift:38, Tests/FoundationModelsRouterTests/TurnTokenCeilingTests.swift:43
+  timestamp: 2026-09-14T19:18:51.669182+00:00
+- actor: claude-code
+  id: 01m2gnyrw3c3cjgaxmcszn56f1
+  text: |-
+    Review findings fixed (pass 2).
+
+    1. LiveModelLoader.swift: new private helper `MLXFoundationModelsSessionBackend.makeGenerationOptions(maxTokens:)`. The private `respond(to:schema:maxTokens:)` and `streamResponseFragments(to:maxTokens:)` both call it. No other copy of the GenerationOptions construction is in the file.
+    2. RoutedSessionActorTurnExecution.swift: the doc of `respondBody(grammar:maxTokens:)` now names the internal parameter `requested`. I checked all the other doc parameter lists in the file; each names the internal name. The same cause was in `streamGeneratingBody` in RoutedSessionActorGeneration.swift (doc named `maxTokens`, internal name `requested`). I fixed it there too, because it is the same change.
+    3. TurnTokenCeilingTests.swift: the tests are now parameterized over the surfaces. `turnUsesResolvedContext` and `explicitCeilingIsKept` run on `respond`, `streamResponse` and `streamEvents` of `RoutedSession`. `liveBackendFallsBackToFloor` runs on `respond` and `streamResponse` of the live backend. The mislabeled `streamUsesResolvedContext` (it called the TurnOutcome `respond`) is gone.
+
+    Red check: I changed `streamGeneratingBody` for a short time to give `requested` to the backend and not the derived ceiling. The `.streamResponse` and `.streamEvents` cases of `turnUsesResolvedContext` failed (log [8192], expected [32768]), and `.respond` passed. Then I restored the code.
+
+    Note: the red check proves that the old `respond()` overload that returns `TurnOutcome` goes through `streamEvents`, so it covered the stream path only by accident.
+  timestamp: 2026-09-14T19:22:58.307902+00:00
+- actor: claude-code
+  id: 01m2gnywcqhkyez7m4865h20b2
+  text: |-
+    ### implement — changed
+    - evidence: `swift test` -> 1308 tests in 141 suites passed (2 known issues, not new), 1 test passed, 83 tests in 10 suites passed. 0 failures. The only warning is the external mlx-swift bundle message `missing creator for mutated node`. Files: Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnExecution.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorGeneration.swift, Tests/FoundationModelsRouterTests/TurnTokenCeilingTests.swift. The test count went from 1309 to 1308 because two test functions became one parameterized function; the number of test cases went up (4 functions, 9 cases).
+    - next: /review. All 3 findings are checked.
+  timestamp: 2026-09-14T19:23:01.911054+00:00
+- actor: claude-code
+  id: 01m2gp6vgfm1mty2mf507jb4xt
+  text: |-
+    ### test — green
+    - evidence: `swift test` (root package) — 1308 + 1 + 83 = 1392 tests passed, 0 failed, 0 skipped, 2 pre-existing known issues (legitimate `withKnownIssue` proofs in `BoundedWaitTests.swift` and `RealModelHarnessTests.swift`, not part of this task's diff).
+    - evidence: `swift build` (root package) — clean, no compiler warning in `FoundationModelsRouter` source. One benign SwiftPM build-planner message, unrelated to our source or to `Libraries/MLXFoundationModels`: `warning: missing creator for mutated node: (.../mlx-swift_Cmlx.bundle/Contents/MacOS)`, from the vendored `mlx-swift` dependency's resource bundle target.
+    - evidence: `swift build --package-path IntegrationTests` and `swift build --build-tests --package-path IntegrationTests` — both complete clean, same benign external message only.
+    - The two review findings tied to code (duplication in `LiveModelLoader.swift`, doc-parameter naming in `RoutedSessionActorTurnExecution.swift`) and the test-coverage finding in `TurnTokenCeilingTests.swift` (both `turnUsesResolvedContext` and `explicitCeilingIsKept` now run over `SessionSurface.allCases`, covering `.respond`, `.streamResponse`, and `.streamEvents`) are all present in the diff.
+    - No skipped or disabled tests anywhere in the run.
+    - next: /review or /commit.
+  timestamp: 2026-09-14T19:27:23.151062+00:00
 position_column: doing
 position_ordinal: '80'
 title: The token ceiling is a constant, and a truncated turn is silent
@@ -152,3 +200,14 @@ signal this card needs is on the wire already.
 The host card is [[a-truncated-turn-reports-end-turn]] in
 `FoundationModelsACPAgent`. It maps this fact to an honest stop reason. This
 card must land first, because that card has nothing to map until it does.
+
+## Review Findings (2026-09-14 14:07)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 13 file(s) reviewed, 4 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:243` `duplication/duplication` — Identical GenerationOptions initialization repeated at lines 205 and 243. Both create the same options with `samplingMode: samplingMode, maximumResponseTokens: maxTokens ?? Self.responseTokenFloor`. Duplicated logic should be extracted into a shared helper method to avoid drift and reduce surface area. Extract a helper method `makeGenerationOptions(maxTokens:)` in MLXFoundationModelsSessionBackend that creates and returns the GenerationOptions. Call it from both locations to eliminate the duplicate.
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnExecution.swift:38` `swift/doc-parameter-naming` — Doc parameter uses external label `maxTokens` instead of internal name `requested`. Per the rule, doc-parameter entries must name the internal (local) parameter name as it appears in the function body, not the external argument label. Change line 38 from `///   - maxTokens: The ceiling the caller named, or `nil` for the ceiling` to `///   - requested: The ceiling the caller named, or `nil` for the ceiling`.
+- [x] `Tests/FoundationModelsRouterTests/TurnTokenCeilingTests.swift:43` `completeness/invariant-propagation` — The test `streamUsesResolvedContext` claims to verify streaming behavior (test name and function name both reference streaming) but calls `respond()` instead of `streamResponse()`. The same ceiling-from-context rule that is verified for `respond` at line 32 should also be verified for `streamResponse`, following the pattern established in SessionChokepointTests where `streamResponseThreadsMaxTokensOverride` (line 538) tests `streamResponse` separately. This test appears incomplete or mislabeled. Either: (1) replace `respond()` with `streamResponse()` to actually test streaming, or (2) rename the test and function to `respondUsesResolvedContext` and clarify it tests the respond path. If both methods should respect the rule, ensure both are tested — currently only respond is tested in this file for the resolved-context behavior.
