@@ -41,8 +41,24 @@ comments:
     - evidence: 7 files — Sources/FoundationModelsRouter/Session/LanguageModelSessionBackend.swift, Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift, Sources/FoundationModelsRouter/Session/FinishReason.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorRecording.swift, Sources/FoundationModelsRouter/Session/SessionEvent.swift, Tests/FoundationModelsRouterTests/Helpers/CeilingProbeLanguageModel.swift, Tests/FoundationModelsRouterTests/TurnFinishReasonTests.swift. `swift test`: 1323 tests in 141 suites passed (2 known issues that already existed), plus 1 and 83 tests in the other runs. `swift test --filter TurnFinishReasonTests`: 23 passed. `swift build --package-path IntegrationTests --build-tests`: build complete.
     - next: /review
   timestamp: 2026-09-14T20:09:17.589676+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m2gssds64jp0x4bahp0qw4vy
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD — 0 findings, 0 confirmed, 1 refuted, 7 files reviewed, 0 failed. The 4 .kanban/ files are excluded by .reviewignore.
+    - next: The task is in done.
+  timestamp: 2026-09-14T20:29:57.414315+00:00
+- actor: claude-code
+  id: 01m2gssz4tjj49s13e79fhz5xv
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 7 files
+    - test: green — swift test, 1323+1+83 passed, 0 failed, 0 skipped
+    - commit: e3c07ec
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-09-14T20:30:15.194650+00:00
+position_column: done
+position_ordinal: ffffd680
 title: A tool-calling turn that reaches the ceiling in its answer text reports completed
 ---
 ## The problem
