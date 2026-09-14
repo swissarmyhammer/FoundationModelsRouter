@@ -577,7 +577,9 @@ struct AutoCompactionTests {
         }
         // Every String-output tool arrives wrapped in the mount layer;
         // peel it to reach the threaded originals.
-        let innerTools = actor.tools.compactMap { ($0 as? RunToCompletionRunner<SampleToolArguments>)?.wrapped }
+        let innerTools = actor.tools.compactMap {
+            (ToolFailureDelivery.throwingTool(of: $0) as? RunToCompletionRunner<SampleToolArguments>)?.wrapped
+        }
         #expect(innerTools.contains { $0 is EchoTool })
         #expect(innerTools.contains { $0 is FailingTool })
 

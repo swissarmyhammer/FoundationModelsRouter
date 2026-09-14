@@ -253,7 +253,7 @@ struct SessionTreeRestorationToolWiringTests {
         // actually call — routes the ambient-context event to the restored
         // root's own outbox.
         guard
-            let threadedMounted = container2.threadedToolsByCall.first?.first
+            let threadedMounted = failureDeliveryPeeled(container2.threadedToolsByCall.first?.first)
                 as? RunToCompletionRunner<AmbientToolArguments>
         else {
             Issue.record("expected the container to receive a RunToCompletionRunner over the ambient fixture")
@@ -299,7 +299,7 @@ struct SessionTreeRestorationToolWiringTests {
         // restored root's own outbox under the tool's own identity and a
         // fresh per-call correlationID.
         guard
-            let threadedBound = container2.threadedToolsByCall.first?.first
+            let threadedBound = failureDeliveryPeeled(container2.threadedToolsByCall.first?.first)
                 as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>
         else {
             Issue.record("expected the container to receive a ContextBindingTool over the non-String fixture")
@@ -347,8 +347,8 @@ struct SessionTreeRestorationToolWiringTests {
         #expect(restored.root.outbox !== restoredFork.outbox)
 
         guard
-            let rootMounted = container2.threadedToolsByCall[0].first as? RunToCompletionRunner<AmbientToolArguments>,
-            let forkMounted = container2.threadedToolsByCall[1].first as? RunToCompletionRunner<AmbientToolArguments>
+            let rootMounted = failureDeliveryPeeled(container2.threadedToolsByCall[0].first) as? RunToCompletionRunner<AmbientToolArguments>,
+            let forkMounted = failureDeliveryPeeled(container2.threadedToolsByCall[1].first) as? RunToCompletionRunner<AmbientToolArguments>
         else {
             Issue.record("expected both restored nodes to receive their own RunToCompletionRunner wrapper")
             return
@@ -400,9 +400,9 @@ struct SessionTreeRestorationToolWiringTests {
         #expect(restored.root.outbox !== restoredFork.outbox)
 
         guard
-            let rootBound = container2.threadedToolsByCall[0].first
+            let rootBound = failureDeliveryPeeled(container2.threadedToolsByCall[0].first)
                 as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>,
-            let forkBound = container2.threadedToolsByCall[1].first
+            let forkBound = failureDeliveryPeeled(container2.threadedToolsByCall[1].first)
                 as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>
         else {
             Issue.record("expected both restored nodes to receive their own ContextBindingTool wrapper")
@@ -487,7 +487,7 @@ struct SessionTreeRestorationToolWiringTests {
         let child = try await restored.root.fork(workingDirectory: nil)
 
         guard let childActor = child as? RoutedSessionActor,
-            let childMounted = childActor.tools.first as? RunToCompletionRunner<AmbientToolArguments>
+            let childMounted = failureDeliveryPeeled(childActor.tools.first) as? RunToCompletionRunner<AmbientToolArguments>
         else {
             Issue.record("expected the fork of a restored session to expose its own RunToCompletionRunner wrapper")
             return
@@ -531,7 +531,7 @@ struct SessionTreeRestorationToolWiringTests {
         let child = try await restored.root.fork(workingDirectory: nil)
 
         guard let childActor = child as? RoutedSessionActor,
-            let childBound = childActor.tools.first
+            let childBound = failureDeliveryPeeled(childActor.tools.first)
                 as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>
         else {
             Issue.record("expected the fork of a restored session to expose its own ContextBindingTool wrapper")
@@ -593,10 +593,10 @@ struct SessionTreeRestorationToolWiringTests {
         let child = try await restored.root.fork(workingDirectory: nil)
 
         guard
-            let rootBound = container2.threadedToolsByCall.first?.first
+            let rootBound = failureDeliveryPeeled(container2.threadedToolsByCall.first?.first)
                 as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>,
             let childActor = child as? RoutedSessionActor,
-            let childBound = childActor.tools.first
+            let childBound = failureDeliveryPeeled(childActor.tools.first)
                 as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>
         else {
             Issue.record("expected both the restored root and its fork to expose their own ContextBindingTool wrapper")
@@ -649,7 +649,7 @@ struct SessionTreeRestorationToolWiringTests {
         let emitter = AmbientEventPostingTool()
         let restored = try await profile2.standard.restoreSessionTree(root: root.id, tools: [emitter])
 
-        let threaded = try #require(container2.threadedToolsByCall.first?.first)
+        let threaded = try #require(failureDeliveryPeeled(container2.threadedToolsByCall.first?.first))
         // Restore applies no capping — deliberately: no budget travels
         // through restoration, and the pending envelope is tiny.
         #expect(!(threaded is TokenCappingTool<AmbientToolArguments>))
@@ -694,7 +694,7 @@ struct SessionTreeRestorationToolWiringTests {
         let emitter = AmbientNonStringOutputTool()
         let restored = try await profile2.standard.restoreSessionTree(root: root.id, tools: [emitter])
 
-        let threaded = try #require(container2.threadedToolsByCall.first?.first)
+        let threaded = try #require(failureDeliveryPeeled(container2.threadedToolsByCall.first?.first))
         // Restore applies no capping — no budget travels through
         // restoration, and capping is String-only anyway — so the chain is
         // bind(tool), consistent with the makeSession and fork sites'

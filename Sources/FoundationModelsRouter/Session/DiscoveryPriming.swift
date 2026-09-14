@@ -90,7 +90,9 @@ enum DiscoveryPrimer {
     ///
     /// - Parameter mountedTools: The session's model-facing tool list — the
     ///   same instanced tools the model itself would call, so the seeded call
-    ///   runs through the same mounting and capping layers.
+    ///   runs through the same mounting and capping layers. It does not run
+    ///   through the failure-delivery decorator, so a failed call throws
+    ///   ``DiscoveryPrimingFailure/callFailed(tool:underlying:)``.
     static func seededEntries(
         for prompt: String,
         priming: DiscoveryPriming,
@@ -100,8 +102,12 @@ enum DiscoveryPrimer {
             throw .toolNotMounted(tool: priming.tool)
         }
         let callArguments = arguments(query: prompt, property: priming.queryProperty)
+        // The seeded call is not a model call, so it reaches the layer beneath
+        // the failure-delivery decorator. A failure then stays a throw, and it
+        // becomes a priming failure.
         let output = try await text(
-            from: tool, arguments: callArguments, property: priming.queryProperty)
+            from: ToolFailureDelivery.throwingTool(of: tool),
+            arguments: callArguments, property: priming.queryProperty)
         return entries(prompt: prompt, tool: tool.name, arguments: callArguments, output: output)
     }
 

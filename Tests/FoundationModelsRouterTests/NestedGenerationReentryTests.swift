@@ -226,7 +226,7 @@ struct NestedGenerationReentryTests {
         /// fixture declared background, a ``RunToCompletionRunner`` otherwise —
         /// or `nil` for a session that carries none.
         private var composedFixtureTool: (any Tool<ReentryToolArguments, String>)? {
-            for tool in tools {
+            for tool in tools.map(ToolFailureDelivery.throwingTool(of:)) {
                 if let background = tool as? BackgroundToolRunner<ReentryToolArguments> { return background }
                 if let inBand = tool as? RunToCompletionRunner<ReentryToolArguments> { return inBand }
             }

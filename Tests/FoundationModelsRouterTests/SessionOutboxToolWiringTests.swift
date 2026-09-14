@@ -190,7 +190,7 @@ struct SessionOutboxToolWiringTests {
 
         func respond(to prompt: String, maxTokens: Int?) async throws -> String {
             observedTurnTokens.append(ToolContext.current?.completionToken)
-            if let mounted = tools.first as? BackgroundToolRunner<FakeToolArguments> {
+            if let mounted = failureDeliveryPeeled(tools.first) as? BackgroundToolRunner<FakeToolArguments> {
                 toolCallStarted = true
                 let rendered = try await mounted.call(arguments: FakeToolArguments(value: prompt))
                 renderedToolOutputs.append(rendered)
@@ -199,7 +199,7 @@ struct SessionOutboxToolWiringTests {
             // from inside the turn — under the turn-scope ambient binding —
             // recording the output's text (the per-call token the tool
             // observed) for the shadowing assertions.
-            if let bound = tools.first
+            if let bound = failureDeliveryPeeled(tools.first)
                 as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>
             {
                 toolCallStarted = true
@@ -447,7 +447,7 @@ struct SessionOutboxToolWiringTests {
         // layer `makeSession(tools:)` composed binds the ambient
         // `ToolContext` (carrying this session's own outbox) around the
         // call, so the tool's post lands there.
-        guard let mounted = container.lastTools.first as? RunToCompletionRunner<AmbientToolArguments> else {
+        guard let mounted = failureDeliveryPeeled(container.lastTools.first) as? RunToCompletionRunner<AmbientToolArguments> else {
             Issue.record("expected the container to receive a RunToCompletionRunner over the ambient fixture")
             return
         }
@@ -474,9 +474,9 @@ struct SessionOutboxToolWiringTests {
         let mixedInnerTools = container.lastTools.compactMap(mountWrapped)
         guard
             let instancedPlain = mixedInnerTools.first(where: { $0 is PlainTool }) as? PlainTool,
-            let ambientMounted = container.lastTools.first(where: {
+            let ambientMounted = failureDeliveryPeeled(container.lastTools.first(where: {
                 mountWrapped($0) is AmbientEventPostingTool
-            }) as? RunToCompletionRunner<AmbientToolArguments>
+            })) as? RunToCompletionRunner<AmbientToolArguments>
         else {
             Issue.record("expected both an AmbientEventPostingTool and a PlainTool in the threaded list")
             return
@@ -512,7 +512,7 @@ struct SessionOutboxToolWiringTests {
         // form to ride on this tool, but per-tool identity and per-call
         // correlation still bind around every call.
         guard
-            let bound = container.lastTools.first
+            let bound = failureDeliveryPeeled(container.lastTools.first)
                 as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>
         else {
             Issue.record("expected the container to receive a ContextBindingTool over the non-String fixture")
@@ -619,8 +619,8 @@ struct SessionOutboxToolWiringTests {
 
         guard let parentActor = session as? RoutedSessionActor,
             let childActor = child as? RoutedSessionActor,
-            let parentMounted = parentActor.tools.first as? RunToCompletionRunner<AmbientToolArguments>,
-            let childMounted = childActor.tools.first as? RunToCompletionRunner<AmbientToolArguments>
+            let parentMounted = failureDeliveryPeeled(parentActor.tools.first) as? RunToCompletionRunner<AmbientToolArguments>,
+            let childMounted = failureDeliveryPeeled(childActor.tools.first) as? RunToCompletionRunner<AmbientToolArguments>
         else {
             Issue.record("expected both the parent and the fork to expose their own RunToCompletionRunner wrapper")
             return
@@ -661,9 +661,9 @@ struct SessionOutboxToolWiringTests {
 
         guard let parentActor = session as? RoutedSessionActor,
             let childActor = child as? RoutedSessionActor,
-            let parentBound = parentActor.tools.first
+            let parentBound = failureDeliveryPeeled(parentActor.tools.first)
                 as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>,
-            let childBound = childActor.tools.first
+            let childBound = failureDeliveryPeeled(childActor.tools.first)
                 as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>
         else {
             Issue.record("expected both the parent and the fork to expose their own ContextBindingTool wrapper")
@@ -710,9 +710,9 @@ struct SessionOutboxToolWiringTests {
 
         guard let parentActor = session as? RoutedSessionActor,
             let childActor = child as? RoutedSessionActor,
-            let parentBound = parentActor.tools.first
+            let parentBound = failureDeliveryPeeled(parentActor.tools.first)
                 as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>,
-            let childBound = childActor.tools.first
+            let childBound = failureDeliveryPeeled(childActor.tools.first)
                 as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>
         else {
             Issue.record("expected both the parent and the fork to expose their own ContextBindingTool wrapper")
@@ -758,7 +758,7 @@ struct SessionOutboxToolWiringTests {
         let session = profile.standard.makeSession(tools: [emitter])
 
         guard let parentActor = session as? RoutedSessionActor,
-            let capturedMounted = parentActor.tools.first as? RunToCompletionRunner<AmbientToolArguments>
+            let capturedMounted = failureDeliveryPeeled(parentActor.tools.first) as? RunToCompletionRunner<AmbientToolArguments>
         else {
             Issue.record("expected the parent session to expose its own RunToCompletionRunner wrapper")
             return
@@ -817,9 +817,9 @@ struct SessionOutboxToolWiringTests {
         // Calling the forked tool through the child's own mount wrapper
         // posts to the child's own outbox.
         guard
-            let childForkableMounted = childActor.tools.first(where: {
+            let childForkableMounted = failureDeliveryPeeled(childActor.tools.first(where: {
                 mountWrapped($0) is ForkableAmbientTool
-            }) as? RunToCompletionRunner<AmbientToolArguments>
+            })) as? RunToCompletionRunner<AmbientToolArguments>
         else {
             Issue.record("expected the child's tool list to hold the forked tool's own RunToCompletionRunner")
             return
@@ -865,7 +865,7 @@ struct SessionOutboxToolWiringTests {
         // reached the model-facing backend construction seam, not just the
         // fork's own actor-level bookkeeping array.
         #expect(rootBackend.lastForkTools.count == 1)
-        guard let forkedMountedAtBackend = rootBackend.lastForkTools.first as? RunToCompletionRunner<AmbientToolArguments>
+        guard let forkedMountedAtBackend = failureDeliveryPeeled(rootBackend.lastForkTools.first) as? RunToCompletionRunner<AmbientToolArguments>
         else {
             Issue.record("expected the backend's makeFork(tools:) to have received the child's RunToCompletionRunner")
             return
@@ -901,7 +901,7 @@ struct SessionOutboxToolWiringTests {
             budget: Self.budgetWithSmallToolOutputCap
         )
 
-        guard let capping = container.lastTools.first as? TokenCappingTool<AmbientToolArguments>,
+        guard let capping = failureDeliveryPeeled(container.lastTools.first) as? TokenCappingTool<AmbientToolArguments>,
             let mounting = capping.wrapped as? RunToCompletionRunner<AmbientToolArguments>,
             let inner = mounting.wrapped as? AmbientEventPostingTool
         else {
@@ -930,8 +930,8 @@ struct SessionOutboxToolWiringTests {
         let emitter = AmbientEventPostingTool()
         let session = profile.standard.makeSession(tools: [emitter])
 
-        #expect(!(container.lastTools.first is TokenCappingTool<AmbientToolArguments>))
-        guard let mounting = container.lastTools.first as? RunToCompletionRunner<AmbientToolArguments>,
+        #expect(!(failureDeliveryPeeled(container.lastTools.first) is TokenCappingTool<AmbientToolArguments>))
+        guard let mounting = failureDeliveryPeeled(container.lastTools.first) as? RunToCompletionRunner<AmbientToolArguments>,
             let inner = mounting.wrapped as? AmbientEventPostingTool
         else {
             Issue.record("expected mount(tool) at the container boundary")
@@ -962,7 +962,7 @@ struct SessionOutboxToolWiringTests {
         let child = try await session.fork(workingDirectory: nil)
 
         guard let childActor = child as? RoutedSessionActor,
-            let capping = childActor.tools.first as? TokenCappingTool<AmbientToolArguments>,
+            let capping = failureDeliveryPeeled(childActor.tools.first) as? TokenCappingTool<AmbientToolArguments>,
             let mounting = capping.wrapped as? RunToCompletionRunner<AmbientToolArguments>,
             let forkedInner = mounting.wrapped as? ForkableAmbientTool
         else {
@@ -995,8 +995,8 @@ struct SessionOutboxToolWiringTests {
             Issue.record("expected the fork to be a RoutedSessionActor")
             return
         }
-        #expect(!(childActor.tools.first is TokenCappingTool<AmbientToolArguments>))
-        guard let mounting = childActor.tools.first as? RunToCompletionRunner<AmbientToolArguments>,
+        #expect(!(failureDeliveryPeeled(childActor.tools.first) is TokenCappingTool<AmbientToolArguments>))
+        guard let mounting = failureDeliveryPeeled(childActor.tools.first) as? RunToCompletionRunner<AmbientToolArguments>,
             let forkedInner = mounting.wrapped as? ForkableAmbientTool
         else {
             Issue.record("expected mount(forked(tool)) in the fork's tool list")
@@ -1041,9 +1041,9 @@ struct SessionOutboxToolWiringTests {
         // output (``TokenCappingTool`` wraps only `Tool<Arguments, String>`)
         // — it documents the shape; the load-bearing chain proof is
         // `wrapped` being the original instance directly.
-        #expect(!(container.lastTools.first is TokenCappingTool<AmbientToolArguments>))
+        #expect(!(failureDeliveryPeeled(container.lastTools.first) is TokenCappingTool<AmbientToolArguments>))
         guard
-            let bound = container.lastTools.first
+            let bound = failureDeliveryPeeled(container.lastTools.first)
                 as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>,
             let inner = bound.wrapped as? AmbientNonStringOutputTool
         else {
@@ -1102,9 +1102,9 @@ struct SessionOutboxToolWiringTests {
         // output (``TokenCappingTool`` wraps only `Tool<Arguments, String>`)
         // — it documents the shape; the load-bearing chain proof is
         // `wrapped` being the original instance directly.
-        #expect(!(childActor.tools.first is TokenCappingTool<AmbientToolArguments>))
+        #expect(!(failureDeliveryPeeled(childActor.tools.first) is TokenCappingTool<AmbientToolArguments>))
         guard
-            let childBound = childActor.tools.first
+            let childBound = failureDeliveryPeeled(childActor.tools.first)
                 as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>,
             let childInner = childBound.wrapped as? AmbientNonStringOutputTool
         else {
@@ -1165,7 +1165,7 @@ struct SessionOutboxToolWiringTests {
         let gate = RunLatch()
         let session = profile.standard.makeSession(tools: [GatedBackgroundToolRunner(gate: gate)])
         let backend = try #require(container.lastBackend)
-        guard let mounted = container.lastTools.first as? BackgroundToolRunner<FakeToolArguments> else {
+        guard let mounted = failureDeliveryPeeled(container.lastTools.first) as? BackgroundToolRunner<FakeToolArguments> else {
             Issue.record("expected the composed tool list to hold a BackgroundToolRunner")
             return
         }
@@ -1225,7 +1225,7 @@ struct SessionOutboxToolWiringTests {
         let child = try await session.fork(workingDirectory: nil)
 
         guard let childActor = child as? RoutedSessionActor,
-            let childMounted = childActor.tools.first as? BackgroundToolRunner<FakeToolArguments>
+            let childMounted = failureDeliveryPeeled(childActor.tools.first) as? BackgroundToolRunner<FakeToolArguments>
         else {
             Issue.record("expected the fork's composed tool list to hold a BackgroundToolRunner")
             return
@@ -1265,7 +1265,7 @@ struct SessionOutboxToolWiringTests {
             budget: Self.budgetWithSmallToolOutputCap
         )
 
-        guard let capping = container.lastTools.first as? TokenCappingTool<FakeToolArguments> else {
+        guard let capping = failureDeliveryPeeled(container.lastTools.first) as? TokenCappingTool<FakeToolArguments> else {
             Issue.record("expected the composed tool list to hold a TokenCappingTool outermost")
             return
         }

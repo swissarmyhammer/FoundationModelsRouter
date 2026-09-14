@@ -6,7 +6,9 @@ import FoundationModels
 /// Router mounts no bare tool. ``ToolMounting`` composes each registered tool
 /// under a ``RunToCompletionRunner`` or a ``BackgroundToolRunner``, under a
 /// ``ContextBindingTool`` when the output is not `String`, and under a
-/// ``TokenCappingTool`` when a tool-output token cap is configured. A host that
+/// ``TokenCappingTool`` when a tool-output token cap is configured, and under a
+/// ``FailureDeliveringTextTool`` or ``FailureDeliveringResultTool`` on the
+/// session's model-facing list. A host that
 /// looks for an opt-in protocol on a mounted tool therefore meets a decorator,
 /// never the tool the caller registered.
 ///

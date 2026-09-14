@@ -328,7 +328,7 @@ struct ToolOutputCappingTests {
             budget: TokenBudget(limit: 4096, toolOutputLimit: 5)
         )
 
-        guard let capping = container.lastTools.first as? TokenCappingTool<FakeToolArguments>,
+        guard let capping = failureDeliveryPeeled(container.lastTools.first) as? TokenCappingTool<FakeToolArguments>,
             capping.wrapped is RunToCompletionRunner<FakeToolArguments>
         else {
             Issue.record("expected the container to receive a TokenCappingTool wrapping a RunToCompletionRunner")
@@ -354,8 +354,8 @@ struct ToolOutputCappingTests {
             budget: TokenBudget(limit: 4096)
         )
 
-        #expect(!(container.lastTools.first is TokenCappingTool<FakeToolArguments>))
-        #expect((container.lastTools.first as? RunToCompletionRunner<FakeToolArguments>)?.wrapped is StringOutputTool)
+        #expect(!(failureDeliveryPeeled(container.lastTools.first) is TokenCappingTool<FakeToolArguments>))
+        #expect((failureDeliveryPeeled(container.lastTools.first) as? RunToCompletionRunner<FakeToolArguments>)?.wrapped is StringOutputTool)
     }
 
     @Test("makeSession(tools:budget:) with no budget at all applies no capping layer — only the mount layer wraps the tool")
@@ -371,8 +371,8 @@ struct ToolOutputCappingTests {
         let tool = StringOutputTool(output: "unchanged")
         _ = profile.standard.makeSession(tools: [tool])
 
-        #expect(!(container.lastTools.first is TokenCappingTool<FakeToolArguments>))
-        #expect((container.lastTools.first as? RunToCompletionRunner<FakeToolArguments>)?.wrapped is StringOutputTool)
+        #expect(!(failureDeliveryPeeled(container.lastTools.first) is TokenCappingTool<FakeToolArguments>))
+        #expect((failureDeliveryPeeled(container.lastTools.first) as? RunToCompletionRunner<FakeToolArguments>)?.wrapped is StringOutputTool)
     }
 
     @Test("makeSession(tools:budget:) caps outermost: the mount layer's ambient event route still reaches the session's outbox through the capped wrapper")
@@ -392,7 +392,7 @@ struct ToolOutputCappingTests {
             budget: TokenBudget(limit: 4096, toolOutputLimit: 5)
         )
 
-        guard let capping = container.lastTools.first as? TokenCappingTool<AmbientToolArguments>,
+        guard let capping = failureDeliveryPeeled(container.lastTools.first) as? TokenCappingTool<AmbientToolArguments>,
             let mounting = capping.wrapped as? RunToCompletionRunner<AmbientToolArguments>,
             let inner = mounting.wrapped as? AmbientEventPostingTool
         else {
@@ -433,7 +433,7 @@ struct ToolOutputCappingTests {
         let child = try await session.fork(workingDirectory: nil)
 
         guard let childActor = child as? RoutedSessionActor,
-            let capping = childActor.tools.first as? TokenCappingTool<FakeToolArguments>,
+            let capping = failureDeliveryPeeled(childActor.tools.first) as? TokenCappingTool<FakeToolArguments>,
             capping.wrapped is RunToCompletionRunner<FakeToolArguments>
         else {
             Issue.record("expected the fork's own tool list to contain a TokenCappingTool wrapping a RunToCompletionRunner")
@@ -464,8 +464,8 @@ struct ToolOutputCappingTests {
             Issue.record("expected the fork to be a RoutedSessionActor")
             return
         }
-        #expect(!(childActor.tools.first is TokenCappingTool<FakeToolArguments>))
-        #expect((childActor.tools.first as? RunToCompletionRunner<FakeToolArguments>)?.wrapped is StringOutputTool)
+        #expect(!(failureDeliveryPeeled(childActor.tools.first) is TokenCappingTool<FakeToolArguments>))
+        #expect((failureDeliveryPeeled(childActor.tools.first) as? RunToCompletionRunner<FakeToolArguments>)?.wrapped is StringOutputTool)
     }
 
     @Test("fork() with no budget at all applies no capping layer to the child's tool list — only the mount layer wraps it")
@@ -486,7 +486,7 @@ struct ToolOutputCappingTests {
             Issue.record("expected the fork to be a RoutedSessionActor")
             return
         }
-        #expect(!(childActor.tools.first is TokenCappingTool<FakeToolArguments>))
-        #expect((childActor.tools.first as? RunToCompletionRunner<FakeToolArguments>)?.wrapped is StringOutputTool)
+        #expect(!(failureDeliveryPeeled(childActor.tools.first) is TokenCappingTool<FakeToolArguments>))
+        #expect((failureDeliveryPeeled(childActor.tools.first) as? RunToCompletionRunner<FakeToolArguments>)?.wrapped is StringOutputTool)
     }
 }

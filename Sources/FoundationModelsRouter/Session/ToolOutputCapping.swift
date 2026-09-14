@@ -51,8 +51,10 @@ enum ToolOutputCapping {
 /// ``ToolOutputCapping`` for the truncation rule and for why capping is
 /// discovered dynamically instead of requiring tool cooperation.
 ///
-/// Applied outermost over whatever the tool-instancing pipeline already
+/// Applied over whatever the tool-instancing pipeline already
 /// produced (a ``RunToCompletionRunner`` or ``BackgroundToolRunner`` wrapper),
+/// beneath only the ``ToolFailureDelivery`` decorator, which adds no text to
+/// a successful output,
 /// so the model-facing tool the SDK actually calls is the capped one: both
 /// continued generation and the transcript's own recorded `.toolOutput` entry
 /// — and therefore ``SessionEvent/toolStatus(id:status:summary:output:)``'s
@@ -114,6 +116,12 @@ extension ToolMounting {
     /// A non-`String`-output tool is mounted in the binding-only
     /// ``ContextBindingTool``.
     ///
+    /// The outermost layer is the ``ToolFailureDelivery`` decorator, over the
+    /// capping layer. This list is what the model calls, so a failed call is a
+    /// tool result that the model reads, and only a cancellation throws. A
+    /// caller that is not the model reaches the layer beneath through
+    /// ``ToolFailureDelivery/throwingTool(of:)``.
+    ///
     /// Every argument must be the owning session's own: `sessionID` is stamped
     /// into each background run's ``ToolContext``, `mailbox` tracks the
     /// background runs, and `sink` is the session's outbox, which receives
@@ -144,6 +152,7 @@ extension ToolMounting {
             configuration: .synchronous,
             tracer: tracer
         )
-        return ToolOutputCapping.optionallyCapped(tool: mounted, toTokenLimit: tokenLimit)
+        let capped = ToolOutputCapping.optionallyCapped(tool: mounted, toTokenLimit: tokenLimit)
+        return ToolFailureDelivery.makeWrapped(tool: capped)
     }
 }

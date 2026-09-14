@@ -1,5 +1,6 @@
 import FoundationModels
 import Synchronization
+import Testing
 
 /// The call log a marker tool records into: every `value` argument the tool was
 /// called with, in call order.
@@ -140,6 +141,108 @@ final class ThrowingMarkerTool: MarkerRecordingTool, Sendable {
         callLog.record(arguments.value)
         throw CallFailure(step: arguments.value)
     }
+}
+
+/// A `FoundationModels.Tool` that records its call and then throws
+/// `CancellationError`, as a tool body does when its task is cancelled.
+///
+/// The counterpart of ``ThrowingMarkerTool`` for a true cancellation: the
+/// mount gives an ordinary failure to the model as a tool result, but it must
+/// still throw a cancellation, so a turn that calls this tool must stop.
+final class CancellingMarkerTool: MarkerRecordingTool, Sendable {
+    /// The model-facing tool name a scripted call names to reach this tool.
+    static let toolName = "marker-cancelled"
+
+    /// The `Tool` name requirement, bound to ``toolName``.
+    let name = CancellingMarkerTool.toolName
+
+    /// The `Tool` description requirement — see ``MarkerEmittingTool/description``
+    /// for why a scripted fixture still carries one.
+    let description = "test-only tool that always ends as cancelled"
+
+    /// Backing store for ``calledSteps``.
+    private let callLog = MarkerToolCallLog()
+
+    /// Every step this tool was called for, in call order — recorded before the
+    /// throw, so a test can prove the call really ran.
+    var calledSteps: [String] { callLog.calls }
+
+    /// Records the step this call names, then throws `CancellationError`.
+    ///
+    /// - Parameter arguments: The call's decoded arguments; `value` is the step
+    ///   name.
+    /// - Returns: Nothing — this entry point never returns a value.
+    /// - Throws: `CancellationError`, always.
+    func call(arguments: AmbientToolArguments) async throws -> String {
+        callLog.record(arguments.value)
+        throw CancellationError()
+    }
+}
+
+// sah:allow duplication shares its recording shape with ThrowingMarkerTool, but the two outputs are different types — ThrowingMarkerTool returns String and so mounts in RunToCompletionRunner, this tool returns NonStringToolOutput and so mounts in ContextBindingTool — and a Tool conformance fixes one Output type, so no shared body can serve both mounting routes
+/// A `FoundationModels.Tool` whose `Output` is not `String`, which records its
+/// call and then always throws.
+///
+/// The non-`String` counterpart of ``ThrowingMarkerTool``: the mount sends it
+/// down the binding-only ``ContextBindingTool`` route, so a turn calling it
+/// proves that route also gives the failure to the model as a tool result.
+final class ThrowingNonStringMarkerTool: MarkerRecordingTool, Sendable {
+    /// The model-facing tool name a scripted call names to reach this tool.
+    static let toolName = "marker-non-string-failure"
+
+    /// The `Tool` name requirement, bound to ``toolName``.
+    let name = ThrowingNonStringMarkerTool.toolName
+
+    /// The `Tool` description requirement — see ``MarkerEmittingTool/description``
+    /// for why a scripted fixture still carries one.
+    let description = "test-only non-String-output tool that always fails with a distinctive marker"
+
+    /// Backing store for ``calledSteps``.
+    private let callLog = MarkerToolCallLog()
+
+    /// Every step this tool was called for, in call order — recorded before the
+    /// throw, so a test can prove the call really ran.
+    var calledSteps: [String] { callLog.calls }
+
+    /// Records the step this call names, then fails.
+    ///
+    /// - Parameter arguments: The call's decoded arguments; `value` is the step
+    ///   name.
+    /// - Returns: Nothing — this entry point never returns a value.
+    /// - Throws: ``ThrowingMarkerTool/CallFailure`` for the named step, always.
+    func call(arguments: AmbientToolArguments) async throws -> NonStringToolOutput {
+        callLog.record(arguments.value)
+        throw ThrowingMarkerTool.CallFailure(step: arguments.value)
+    }
+}
+
+/// One failing tool a failure-delivery test mounts. Each row reaches a
+/// different mount decorator, so a test that takes every row holds each route
+/// a tool failure crosses.
+struct FailingToolRow: Sendable, CustomTestStringConvertible {
+    /// The row's name, which also names the case in test output.
+    let name: String
+
+    /// The model-facing name a scripted call names to reach the tool.
+    let toolName: String
+
+    /// Builds a fresh instance of the failing tool.
+    let makeTool: @Sendable () -> any MarkerRecordingTool
+
+    /// The name this row is reported under in test output.
+    var testDescription: String { name }
+
+    /// The failing tools, one for each mount decorator a failure crosses.
+    static let everyMountRoute: [FailingToolRow] = [
+        FailingToolRow(
+            name: "a String-output tool (RunToCompletionRunner)",
+            toolName: ThrowingMarkerTool.toolName,
+            makeTool: { ThrowingMarkerTool() }),
+        FailingToolRow(
+            name: "a non-String-output tool (ContextBindingTool)",
+            toolName: ThrowingNonStringMarkerTool.toolName,
+            makeTool: { ThrowingNonStringMarkerTool() }),
+    ]
 }
 
 /// The `@Generable` output ``StructuredMarkerTool`` returns, carrying one

@@ -192,20 +192,20 @@ struct ToolTracingTests {
 
     // MARK: - The call that fails
 
-    @Test("a tool call that throws keeps its span, with the error recorded")
-    func failedToolCallRecordsItsErrorOnTheSpan() async throws {
+    @Test(
+        "a tool call that throws keeps its span, with the error recorded, while the turn goes on",
+        arguments: FailingToolRow.everyMountRoute)
+    func failedToolCallRecordsItsErrorOnTheSpan(_ row: FailingToolRow) async throws {
         let tracer = InMemoryTracer()
         let fixture = try await ScriptedSessionFixture.make(
-            playing: Self.script(
-                callingTool: ThrowingMarkerTool.toolName, naming: ScriptedToolFixture.firstStepName),
-            mounting: [ThrowingMarkerTool()],
+            playing: Self.script(callingTool: row.toolName, naming: ScriptedToolFixture.firstStepName),
+            mounting: [row.makeTool()],
             tempDirPrefix: "ToolTracingTests",
             tracer: tracer)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        await #expect(throws: (any Error).self) {
-            _ = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
-        }
+        // The failure is the call's output, so the turn completes.
+        _ = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
 
         let span = try Self.singleToolSpan(reportedTo: tracer)
         #expect(span.errors.count == 1)

@@ -18,13 +18,16 @@ struct ToolMountingTests {
     private static let declaredMountHoldWindows: Double = 3
 
     /// Mounts `tool` through the one session-mount composition every
-    /// session tool-instancing site shares.
+    /// session tool-instancing site shares, and returns the mount layer
+    /// beneath its outermost ``ToolFailureDelivery`` decorator — the layer
+    /// this suite reads.
     private static func makeSessionMounted(
         _ tool: any Tool, sessionID: ULID, mailbox: SessionMailbox, sink: Fixtures.RecordingSink
     ) -> any Tool {
-        ToolMounting.makeSessionMounted(
-            tool: tool, sessionID: sessionID, mailbox: mailbox, sink: sink, cappedToTokenLimit: nil
-        )
+        ToolFailureDelivery.throwingTool(
+            of: ToolMounting.makeSessionMounted(
+                tool: tool, sessionID: sessionID, mailbox: mailbox, sink: sink, cappedToTokenLimit: nil
+            ))
     }
 
     // MARK: - The String-output path

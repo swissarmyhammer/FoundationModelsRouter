@@ -166,11 +166,11 @@ struct SurfaceParityTests {
     /// The tool output a call naming ``Step/second`` produces.
     private static let secondOutput = ScriptedToolFixture.marker(for: Step.second)
 
-    /// The failure both surfaces must end the throwing shape with: the failing
-    /// tool's name and the error its body raised, as
-    /// ``failureDescription(of:)`` renders them.
-    private static let expectedFailure =
-        "\(ThrowingMarkerTool.toolName): \(ThrowingMarkerTool.CallFailure(step: Step.failing))"
+    /// The tool output the throwing shape's call delivers: the description of
+    /// the error its body raised, which the mount gives to the model as the
+    /// call's output (task ^dvkxz7n).
+    private static let failureOutput = String(
+        describing: ThrowingMarkerTool.CallFailure(step: Step.failing))
 
     /// The stable text a thrown turn is compared by: the failing tool's name
     /// and the error its body raised.
@@ -274,22 +274,22 @@ struct SurfaceParityTests {
             expectedDeliveredToolOutputs: [firstOutput, secondOutput],
             expectedFailureDescription: nil),
 
-        // The failing shape does NOT feed the error back into generation. The
-        // SDK aborts the turn at the failed call and raises the failure to the
-        // caller, so there is no answering generation, no answer text, and no
-        // delivered output — and both surfaces do exactly that, which is the
-        // parity claim this row locks. What proves the call really ran is
-        // `toolExecutionCount` plus the failure text, which names the tool and
-        // the step it was called with.
+        // The failing shape feeds the error back into generation. The mount
+        // gives the failure to the model as the call's output, so the turn does
+        // not end: the answering generation runs and reads the failure text,
+        // which names the step the call was made with. Both surfaces do exactly
+        // that, which is the parity claim this row locks.
         SurfaceParityRow(
             name: "a call that throws",
             script: ScriptedTurnScript(
                 rounds: [[call(on: ThrowingMarkerTool.toolName, naming: Step.failing)]]),
             makeTools: { [ThrowingMarkerTool()] },
-            expectedAnswer: "",
-            expectedCalls: [],
-            expectedDeliveredToolOutputs: [],
-            expectedFailureDescription: expectedFailure),
+            expectedAnswer: ScriptedToolFixture.answerPrefix + failureOutput,
+            expectedCalls: [
+                ScriptedCallRecord(toolName: ThrowingMarkerTool.toolName, argumentValue: Step.failing)
+            ],
+            expectedDeliveredToolOutputs: [failureOutput],
+            expectedFailureDescription: nil),
 
         SurfaceParityRow(
             name: "a tool with non-String output",

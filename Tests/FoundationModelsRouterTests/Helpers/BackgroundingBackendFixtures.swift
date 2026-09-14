@@ -98,7 +98,10 @@ final class BackgroundingBackend: LanguageModelSessionBackend, @unchecked Sendab
         }
         var rendered = ""
         for tool in tools {
-            guard let mounted = tool as? BackgroundToolRunner<BackgroundFixtureArguments> else { continue }
+            guard
+                let mounted = ToolFailureDelivery.throwingTool(of: tool)
+                    as? BackgroundToolRunner<BackgroundFixtureArguments>
+            else { continue }
             toolCallCount += 1
             rendered = try await mounted.call(arguments: BackgroundFixtureArguments(value: prompt))
             toolOutputs.append(rendered)
