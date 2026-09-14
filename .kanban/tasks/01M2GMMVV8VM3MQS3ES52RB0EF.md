@@ -32,8 +32,24 @@ comments:
     - evidence: `swift test` — 1316 tests in 141 suites passed (2 known issues from existing withKnownIssue tests), plus 1 and 83 tests passed; TurnFinishReasonTests 16 tests passed. 8 files: Sources/FoundationModelsRouter/Session/{FinishReason,RoutedSessionActor,RoutedSessionActorGeneration,RoutedSessionActorRecording,RoutedSessionActorTurnExecution,SessionEvent}.swift, Tests/FoundationModelsRouterTests/{TurnFinishReasonTests,Helpers/CeilingProbeLanguageModel,AutoCompactionTests}.swift
     - next: /review
   timestamp: 2026-09-14T19:43:03.691963+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m2gqmyhvbbc775pe3666w36j
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (b80e025); 0 findings, 0 confirmed, 0 refuted; 7 validator runs attempted, 0 failed; 9 files reviewed; 6 .kanban files not reviewed (.reviewignore).
+    - next: none. The task moved to done.
+  timestamp: 2026-09-14T19:52:33.595454+00:00
+- actor: claude-code
+  id: 01m2gqne4ytc3wher4edvky44q
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 9 files
+    - test: green — swift test, 1400 passed, 0 failed, 0 skipped
+    - commit: b80e025
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-09-14T19:52:49.566235+00:00
+position_column: done
+position_ordinal: ffffd580
 title: A turn that reaches the ceiling in its answer text reports completed
 ---
 ## The problem

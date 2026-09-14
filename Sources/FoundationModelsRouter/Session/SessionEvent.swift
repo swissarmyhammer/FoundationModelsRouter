@@ -172,11 +172,14 @@ public struct TokenUsage: Sendable, Equatable {
     /// reached the token ceiling before the model ended it.
     ///
     /// The session finds this value in two ways. The backend can mark the
-    /// response entry as incomplete. Or, for an attempt that made one
-    /// generation call, ``tokensOut`` can be equal to or more than the ceiling
-    /// the attempt gave the backend. An attempt that called a tool made more
-    /// than one generation call, and its ``tokensOut`` is their sum, so only
-    /// the mark of the backend can report its stop at the ceiling.
+    /// response entry as incomplete. Or the last generation call of the
+    /// attempt can spend an output token count equal to or more than the
+    /// ceiling the attempt gave the backend. An attempt that called a tool
+    /// made more than one generation call, and its ``tokensOut`` is their sum.
+    /// The session reads the count of the last call from
+    /// ``LanguageModelSessionBackend/lastGenerationCallOutputTokenCount()``.
+    /// When a backend gives no such count, only the mark of the backend can
+    /// report the stop of a tool-calling attempt at the ceiling.
     public let finishReason: FinishReason
 
     /// Creates a token usage value.

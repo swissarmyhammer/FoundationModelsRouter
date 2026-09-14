@@ -52,6 +52,17 @@ enum CeilingProbeCallEnding: Sendable, Hashable {
     /// text. The executor sends part of the answer and a usage whose output is
     /// equal to the ceiling, and no metadata, as the unconstrained MLX path does.
     case truncatedInAnswerText
+
+    /// The model says a short narration, calls
+    /// ``CeilingProbeLanguageModel/Executor/toolName``, and sends a usage whose
+    /// output is equal to the ceiling. The SDK then runs the tool and makes one
+    /// more generation call in the same attempt.
+    case callsTool
+
+    /// The model closes its thought and sends no answer text and no usage.
+    /// The executor sends only the model id metadata the MLX executor sends
+    /// at the start of each call, so the call still has a response entry.
+    case endsWithoutText
 }
 
 /// How a ``CeilingProbeLanguageModel`` ends each generation call.
@@ -69,6 +80,18 @@ enum CeilingProbeEnding: Sendable, Hashable {
     /// each later call ends as ``finished``.
     case truncatedOnFirstCallOnly
 
+    /// The first generation call ends as ``CeilingProbeCallEnding/callsTool``,
+    /// and each later call ends as ``truncatedInAnswerText``.
+    case toolCallThenTruncatedInAnswerText
+
+    /// The first generation call ends as ``CeilingProbeCallEnding/callsTool``,
+    /// and each later call ends as ``finished``.
+    case toolCallThenFinished
+
+    /// The first generation call ends as ``CeilingProbeCallEnding/callsTool``,
+    /// and each later call ends as ``CeilingProbeCallEnding/endsWithoutText``.
+    case toolCallThenNoText
+
     /// How the call at `callIndex` ends.
     ///
     /// - Parameter callIndex: The zero-based position of the call in the log.
@@ -83,6 +106,12 @@ enum CeilingProbeEnding: Sendable, Hashable {
             return .truncatedInAnswerText
         case .truncatedOnFirstCallOnly:
             return callIndex == 0 ? .truncatedInsideReasoning : .finished
+        case .toolCallThenTruncatedInAnswerText:
+            return callIndex == 0 ? .callsTool : .truncatedInAnswerText
+        case .toolCallThenFinished:
+            return callIndex == 0 ? .callsTool : .finished
+        case .toolCallThenNoText:
+            return callIndex == 0 ? .callsTool : .endsWithoutText
         }
     }
 }
@@ -95,7 +124,9 @@ enum CeilingProbeEnding: Sendable, Hashable {
 /// call sends reasoning text, then `["incompleteOutput": true]` as metadata on
 /// the response entry, with no response text. When generation stops inside the
 /// answer text, the call sends reasoning text, part of the answer, and a usage
-/// whose output is equal to the ceiling, with no metadata.
+/// whose output is equal to the ceiling, with no metadata. A call that asks for
+/// a tool sends the tool call and then its usage on the response entry, as the
+/// allowed tool path of the MLX executor does.
 struct CeilingProbeLanguageModel: LanguageModel {
     /// How each generation call ends.
     let ending: CeilingProbeEnding
@@ -103,8 +134,9 @@ struct CeilingProbeLanguageModel: LanguageModel {
     /// The log each generation call writes its ceiling into.
     let log: CeilingProbeLog
 
-    /// Declares reasoning, because the executor sends a reasoning entry.
-    var capabilities: LanguageModelCapabilities { LanguageModelCapabilities([.reasoning]) }
+    /// Declares reasoning, because the executor sends a reasoning entry, and
+    /// tool calling, because a tool-mounted session refuses a model without it.
+    var capabilities: LanguageModelCapabilities { LanguageModelCapabilities([.reasoning, .toolCalling]) }
 
     /// Builds the executor cache key from the ending and the log.
     var executorConfiguration: Executor.Configuration {
@@ -141,6 +173,59 @@ struct CeilingProbeLanguageModel: LanguageModel {
         /// The input token count a truncated call reports in its usage.
         private static let reportedInputTokens = 1
 
+        /// The name of the tool a ``CeilingProbeCallEnding/callsTool`` call
+        /// asks for. The session mounts a ``MarkerEmittingTool`` under it.
+        static let toolName = MarkerEmittingTool.toolName
+
+        /// The step name a ``CeilingProbeCallEnding/callsTool`` call gives the
+        /// tool as its `value` argument.
+        static let toolStep = "look-up"
+
+        /// The answer text a ``CeilingProbeCallEnding/callsTool`` call sends
+        /// before it asks for the tool.
+        private static let narrationText = "Let me look that up."
+
+        /// The id of the one tool call a ``CeilingProbeCallEnding/callsTool``
+        /// call sends.
+        private static let toolCallID = "ceiling-probe-call"
+
+        /// The tool-calls entry id the call at `callIndex` sends its call under.
+        ///
+        /// - Parameter callIndex: The zero-based position of the call.
+        /// - Returns: The entry id.
+        private static func toolCallsEntryID(callIndex: Int) -> String {
+            "ceiling-probe-tool-calls-\(callIndex)"
+        }
+
+        /// The output token count a call reports when it spends its whole
+        /// ceiling.
+        ///
+        /// - Parameter ceiling: The `maximumResponseTokens` of the call, or
+        ///   `nil` for ``MLXFoundationModelsSessionBackend/responseTokenFloor``.
+        /// - Returns: The ceiling the backend applied to the call.
+        private static func spentCeiling(_ ceiling: Int?) -> Int {
+            ceiling ?? MLXFoundationModelsSessionBackend.responseTokenFloor
+        }
+
+        /// Sends one usage whose output is equal to the ceiling of the call.
+        ///
+        /// - Parameters:
+        ///   - ceiling: The `maximumResponseTokens` of the call, or `nil`.
+        ///   - entryID: The response entry id of the call.
+        ///   - channel: The generation channel this call emits into.
+        private static func sendUsageSpendingCeiling(
+            _ ceiling: Int?,
+            entryID: String,
+            into channel: LanguageModelExecutorGenerationChannel
+        ) async {
+            await channel.send(
+                .response(
+                    entryID: entryID,
+                    action: .updateUsage(
+                        input: .init(totalTokenCount: reportedInputTokens, cachedTokenCount: 0),
+                        output: .init(totalTokenCount: spentCeiling(ceiling), reasoningTokenCount: emittedTokenCount))))
+        }
+
         /// The response entry id the call at `callIndex` sends its answer or
         /// its metadata under. Each call gets its own id, as each MLX call does.
         ///
@@ -162,6 +247,13 @@ struct CeilingProbeLanguageModel: LanguageModel {
         /// a thought. Spelled here as the upstream literal, so the test proves
         /// the wire contract and not a shared constant.
         private static let incompleteOutputKey = "incompleteOutput"
+
+        /// The metadata key the MLX executor sends the model id under at the
+        /// start of each call.
+        private static let modelIDKey = "modelID"
+
+        /// The model id a ``CeilingProbeCallEnding/endsWithoutText`` call sends.
+        private static let modelID = "ceiling-probe"
 
         /// The cache-key configuration the SDK constructed this executor with.
         private let configuration: Configuration
@@ -208,6 +300,14 @@ struct CeilingProbeLanguageModel: LanguageModel {
             case .truncatedInAnswerText:
                 await Self.sendAnswerTruncatedAtCeiling(
                     request.generationOptions.maximumResponseTokens, entryID: responseEntryID, into: channel)
+            case .callsTool:
+                await Self.sendToolCallSpendingCeiling(
+                    request.generationOptions.maximumResponseTokens, callIndex: callIndex, into: channel)
+            case .endsWithoutText:
+                await channel.send(
+                    .response(
+                        entryID: responseEntryID,
+                        action: .updateMetadata([Self.modelIDKey: Self.modelID])))
             }
         }
 
@@ -228,17 +328,42 @@ struct CeilingProbeLanguageModel: LanguageModel {
             entryID: String,
             into channel: LanguageModelExecutorGenerationChannel
         ) async {
-            let outputTokens = ceiling ?? MLXFoundationModelsSessionBackend.responseTokenFloor
             await channel.send(
                 .response(
                     entryID: entryID,
                     action: .appendText(truncatedAnswerText, tokenCount: emittedTokenCount)))
+            await sendUsageSpendingCeiling(ceiling, entryID: entryID, into: channel)
+        }
+
+        /// Sends a short narration, one call to ``toolName``, and then one
+        /// usage whose output is equal to `ceiling`.
+        ///
+        /// The allowed tool path of the MLX executor sends the tool call and
+        /// then the usage of the call on the response entry id. The usage here
+        /// spends the whole ceiling, so the summed output of the attempt
+        /// reaches the ceiling whatever the later call spends.
+        ///
+        /// - Parameters:
+        ///   - ceiling: The `maximumResponseTokens` of the call, or `nil` for
+        ///     ``MLXFoundationModelsSessionBackend/responseTokenFloor``.
+        ///   - callIndex: The zero-based position of the call.
+        ///   - channel: The generation channel this call emits into.
+        private static func sendToolCallSpendingCeiling(
+            _ ceiling: Int?,
+            callIndex: Int,
+            into channel: LanguageModelExecutorGenerationChannel
+        ) async {
+            let entryID = responseEntryID(callIndex: callIndex)
             await channel.send(
-                .response(
-                    entryID: entryID,
-                    action: .updateUsage(
-                        input: .init(totalTokenCount: reportedInputTokens, cachedTokenCount: 0),
-                        output: .init(totalTokenCount: outputTokens, reasoningTokenCount: emittedTokenCount))))
+                .response(entryID: entryID, action: .appendText(narrationText, tokenCount: emittedTokenCount)))
+            await channel.send(
+                .toolCalls(
+                    entryID: toolCallsEntryID(callIndex: callIndex),
+                    action: .toolCall(
+                        id: toolCallID,
+                        name: toolName,
+                        action: .appendArguments(#"{"value":"\#(toolStep)"}"#, tokenCount: emittedTokenCount))))
+            await sendUsageSpendingCeiling(ceiling, entryID: entryID, into: channel)
         }
     }
 }
@@ -250,26 +375,53 @@ struct CeilingProbeContainer: LoadedLLMContainer {
     /// The probe model every backend of this container runs over.
     let model: CeilingProbeLanguageModel
 
-    /// Vends a backend over a fresh session carrying `instructions`.
+    /// Vends a backend over a fresh session carrying `instructions`, with no
+    /// tools mounted.
     ///
     /// - Parameter instructions: The session's system instructions, or `nil`.
     /// - Returns: A live backend over ``model``.
     func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-        MLXFoundationModelsSessionBackend(
-            session: LanguageModelSession(model: model, instructions: instructions),
-            model: model,
-            instructions: instructions)
+        makeSession(instructions: instructions, tools: [])
     }
 
-    /// Vends a backend over a fresh session seeded from `transcript`.
+    /// Vends a backend over a fresh session carrying `instructions`, with
+    /// `tools` mounted so a ``CeilingProbeCallEnding/callsTool`` call can call
+    /// them. The protocol default drops the tools.
+    ///
+    /// - Parameters:
+    ///   - instructions: The session's system instructions, or `nil`.
+    ///   - tools: The tools to mount on the session.
+    /// - Returns: A live backend over ``model``.
+    func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
+        MLXFoundationModelsSessionBackend(
+            session: LanguageModelSession(model: model, tools: tools, instructions: instructions),
+            model: model,
+            instructions: instructions,
+            tools: tools)
+    }
+
+    /// Vends a backend over a fresh session seeded from `transcript`, with no
+    /// tools mounted.
     ///
     /// - Parameter transcript: The transcript to seed the session from.
     /// - Returns: A live backend over ``model``.
     func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
+        makeSession(transcript: transcript, tools: [])
+    }
+
+    /// Vends a backend over a fresh session seeded from `transcript`, with
+    /// `tools` mounted.
+    ///
+    /// - Parameters:
+    ///   - transcript: The transcript to seed the session from.
+    ///   - tools: The tools to mount on the session.
+    /// - Returns: A live backend over ``model``.
+    func makeSession(transcript: Transcript, tools: [any Tool]) -> any LanguageModelSessionBackend {
         MLXFoundationModelsSessionBackend(
-            session: LanguageModelSession(model: model, transcript: transcript),
+            session: LanguageModelSession(model: model, tools: tools, transcript: transcript),
             model: model,
-            instructions: TranscriptDiffer.leadingInstructionsText(of: transcript))
+            instructions: TranscriptDiffer.leadingInstructionsText(of: transcript),
+            tools: tools)
     }
 }
 
@@ -291,6 +443,7 @@ struct CeilingProbeSessionFixture {
     /// - Parameters:
     ///   - ending: How each generation call ends.
     ///   - context: The working context the profile resolves at.
+    ///   - tools: The tools the session mounts.
     ///   - tempDirPrefix: The calling suite's name, so a leaked temp directory
     ///     is attributable.
     /// - Returns: The session, its log, and the temp directory.
@@ -298,6 +451,7 @@ struct CeilingProbeSessionFixture {
     static func make(
         ending: CeilingProbeEnding,
         context: Int = ProfileDefinition.defaultContext,
+        tools: [any Tool] = [],
         tempDirPrefix: String
     ) async throws -> CeilingProbeSessionFixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
@@ -308,6 +462,7 @@ struct CeilingProbeSessionFixture {
             loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension))
         let profile = try await router.resolve(
             profile: RouterTestFixtures.profile(context: context), reporting: ResolutionProgress())
-        return CeilingProbeSessionFixture(session: profile.standard.makeSession(), log: log, directory: directory)
+        return CeilingProbeSessionFixture(
+            session: profile.standard.makeSession(tools: tools), log: log, directory: directory)
     }
 }

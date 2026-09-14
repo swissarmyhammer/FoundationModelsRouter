@@ -91,6 +91,26 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// totals since the session began, not a per-turn delta.
     func usageTokenCounts() -> (input: Int, output: Int)?
 
+    /// The output token count of the last generation call that the most
+    /// recent generating method of this backend made, or `nil` when the
+    /// backend cannot tell.
+    ///
+    /// One generating method can make more than one generation call: a call
+    /// that asks for a tool is followed by one more call after the tool runs.
+    /// ``usageTokenCounts()`` sums all those calls. This count is the output of
+    /// the last call alone, so a reader can tell whether that call spent its
+    /// token ceiling.
+    ///
+    /// A backend gives `nil` when it has no count of that call, when a
+    /// generating method started and did not yet give one, and when its
+    /// transcript no longer ends where that call ended.
+    ///
+    /// Call this only while the owning session's turn lock
+    /// (``RoutedSessionActor/turnLock``) is held.
+    ///
+    /// There is a default implementation that gives `nil`.
+    func lastGenerationCallOutputTokenCount() -> Int?
+
     /// Produces a new backend over the same underlying model, seeded from
     /// `transcript` instead of this backend's own history. An empty
     /// `transcript` gives a blank-slate backend.
@@ -130,6 +150,12 @@ extension LanguageModelSessionBackend {
             guard let chunk = try await chunks.next() else { return nil }
             return ResponseFragment(text: chunk)
         }
+    }
+
+    /// Default ``lastGenerationCallOutputTokenCount()``: `nil`, because a
+    /// backend that does not override it has no count of one call.
+    public func lastGenerationCallOutputTokenCount() -> Int? {
+        nil
     }
 
     /// Default ``makeFork(tools:)``: ignores `tools` and forwards to

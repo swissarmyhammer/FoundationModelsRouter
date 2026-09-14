@@ -13,7 +13,9 @@ import Testing
 /// the output token count of the call is equal to the ceiling. These tests
 /// prove that ``TokenUsage/finishReason`` carries both facts to the host, first
 /// over hand built transcript entries, then over a real `LanguageModelSession`
-/// whose executor sends the same channel actions as MLX.
+/// whose executor sends the same channel actions as MLX. A tool loop makes more
+/// than one generation call in one turn, so the tests of a tool loop prove that
+/// the count of the last call decides, and not the sum of all calls.
 @Suite("Turn finish reason: a truncated turn is distinguishable from a finished turn")
 struct TurnFinishReasonTests {
     /// The prefix of each temp directory this suite makes.
@@ -75,7 +77,7 @@ struct TurnFinishReasonTests {
     /// - Parameter entries: The entries the attempt appended.
     /// - Returns: The finish reason.
     private static func metadataOnlyReason(_ entries: [Transcript.Entry]) -> FinishReason {
-        FinishReason(turnEntries: entries, outputTokens: nil, responseTokenCeiling: nil)
+        FinishReason(turnEntries: entries, outputTokens: nil, lastCallOutputTokens: nil, responseTokenCeiling: nil)
     }
 
     // MARK: - The reading of the entries of one turn
@@ -124,7 +126,8 @@ struct TurnFinishReasonTests {
         let entries = [Self.prompt("fix the bug"), Self.reasoning("thinking"), Self.response("The answer is")]
 
         let reason = FinishReason(
-            turnEntries: entries, outputTokens: Self.requestedCeiling, responseTokenCeiling: Self.requestedCeiling)
+            turnEntries: entries, outputTokens: Self.requestedCeiling, lastCallOutputTokens: nil,
+            responseTokenCeiling: Self.requestedCeiling)
 
         #expect(reason == .maxTokens)
     }
@@ -134,7 +137,8 @@ struct TurnFinishReasonTests {
         let entries = [Self.prompt("fix the bug"), Self.response("done")]
 
         let reason = FinishReason(
-            turnEntries: entries, outputTokens: Self.outputBelowCeiling, responseTokenCeiling: Self.requestedCeiling)
+            turnEntries: entries, outputTokens: Self.outputBelowCeiling, lastCallOutputTokens: nil,
+            responseTokenCeiling: Self.requestedCeiling)
 
         #expect(reason == .completed)
     }
@@ -144,7 +148,8 @@ struct TurnFinishReasonTests {
         let entries = [Self.prompt("fix the bug"), Self.response("done")]
 
         let reason = FinishReason(
-            turnEntries: entries, outputTokens: Self.requestedCeiling, responseTokenCeiling: nil)
+            turnEntries: entries, outputTokens: Self.requestedCeiling, lastCallOutputTokens: nil,
+            responseTokenCeiling: nil)
 
         #expect(reason == .completed)
     }
@@ -154,19 +159,21 @@ struct TurnFinishReasonTests {
         let entries = [Self.prompt("fix the bug"), Self.response("done")]
 
         let reason = FinishReason(
-            turnEntries: entries, outputTokens: nil, responseTokenCeiling: Self.requestedCeiling)
+            turnEntries: entries, outputTokens: nil, lastCallOutputTokens: nil,
+            responseTokenCeiling: Self.requestedCeiling)
 
         #expect(reason == .completed)
     }
 
-    @Test("an attempt that called a tool does not end at the ceiling on its summed output count")
+    @Test("an attempt that called a tool, with no known last call count, does not end at the ceiling on its summed count")
     func toolLoopOutputIsNotReadAgainstCeiling() {
         let entries = [
             Self.prompt("fix the bug"), Self.toolCalls(), Self.response("done"),
         ]
 
         let reason = FinishReason(
-            turnEntries: entries, outputTokens: Self.requestedCeiling, responseTokenCeiling: Self.requestedCeiling)
+            turnEntries: entries, outputTokens: Self.requestedCeiling, lastCallOutputTokens: nil,
+            responseTokenCeiling: Self.requestedCeiling)
 
         #expect(reason == .completed)
     }
@@ -178,9 +185,42 @@ struct TurnFinishReasonTests {
         ]
 
         let reason = FinishReason(
-            turnEntries: entries, outputTokens: Self.requestedCeiling, responseTokenCeiling: Self.requestedCeiling)
+            turnEntries: entries, outputTokens: Self.requestedCeiling, lastCallOutputTokens: nil,
+            responseTokenCeiling: Self.requestedCeiling)
 
         #expect(reason == .maxTokens)
+    }
+
+    /// The entries of an attempt that called one tool and then answered.
+    private static let toolLoopEntries = [
+        prompt("fix the bug"), toolCalls(), response("The answer is"),
+    ]
+
+    @Test("an attempt that called a tool ends at the ceiling when its last call reaches the ceiling")
+    func toolLoopLastCallAtCeilingIsMaxTokens() {
+        let reason = FinishReason(
+            turnEntries: Self.toolLoopEntries, outputTokens: Self.requestedCeiling + Self.outputBelowCeiling,
+            lastCallOutputTokens: Self.requestedCeiling, responseTokenCeiling: Self.requestedCeiling)
+
+        #expect(reason == .maxTokens)
+    }
+
+    @Test("an attempt that called a tool ends as completed when only its earlier calls reach the ceiling")
+    func toolLoopLastCallBelowCeilingIsCompleted() {
+        let reason = FinishReason(
+            turnEntries: Self.toolLoopEntries, outputTokens: Self.requestedCeiling + Self.outputBelowCeiling,
+            lastCallOutputTokens: Self.outputBelowCeiling, responseTokenCeiling: Self.requestedCeiling)
+
+        #expect(reason == .completed)
+    }
+
+    @Test("a last call count above the output count of the attempt is not a call of the attempt and does not decide")
+    func lastCallCountAboveAttemptCountDoesNotDecide() {
+        let reason = FinishReason(
+            turnEntries: [], outputTokens: 0, lastCallOutputTokens: Self.requestedCeiling,
+            responseTokenCeiling: Self.requestedCeiling)
+
+        #expect(reason == .completed)
     }
 
     // MARK: - The whole turn over a live session backend
@@ -244,14 +284,94 @@ struct TurnFinishReasonTests {
             ending: .truncatedInAnswerText, tempDirPrefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
+        let usage = try #require(await Self.closingUsage(ofStreamedTurnOn: fixture.session))
+
+        #expect(usage.finishReason == .maxTokens)
+    }
+
+    // MARK: - A tool loop over a live session backend
+
+    /// Drives one turn through ``RoutedSession/streamEvents(to:maxTokens:)``
+    /// under ``requestedCeiling``, and gives the usage of its last
+    /// ``SessionEvent/turnEnded(_:)``.
+    ///
+    /// - Parameter session: The session to drive the turn on.
+    /// - Returns: The usage the turn closed with, or `nil` when no
+    ///   `turnEnded` event came.
+    /// - Throws: Whatever the stream throws.
+    private static func closingUsage(ofStreamedTurnOn session: RoutedSession) async throws -> TokenUsage? {
         var closingUsage: TokenUsage?
-        for try await event in await fixture.session.streamEvents(
-            to: "fix the bug", maxTokens: Self.requestedCeiling)
-        {
+        for try await event in await session.streamEvents(to: "fix the bug", maxTokens: requestedCeiling) {
             if case .turnEnded(let usage) = event { closingUsage = usage }
         }
+        return closingUsage
+    }
 
-        let usage = try #require(closingUsage)
+    /// Makes a fixture whose session mounts `tool` and whose model ends each
+    /// call as `ending` says.
+    ///
+    /// - Parameters:
+    ///   - ending: How each generation call ends.
+    ///   - tool: The tool the first generation call asks for.
+    /// - Returns: The fixture.
+    /// - Throws: Whatever profile resolution throws.
+    private static func toolLoopFixture(
+        ending: CeilingProbeEnding, tool: MarkerEmittingTool
+    ) async throws -> CeilingProbeSessionFixture {
+        try await CeilingProbeSessionFixture.make(ending: ending, tools: [tool], tempDirPrefix: tempDirPrefix)
+    }
+
+    @Test(
+        "a tool-calling turn whose last call reaches the ceiling in its answer text closes with finishReason maxTokens",
+        arguments: [nil, TurnFinishReasonTests.requestedCeiling])
+    func toolLoopAnswerTruncatedAtCeilingReportsMaxTokens(maxTokens: Int?) async throws {
+        let tool = MarkerEmittingTool()
+        let fixture = try await Self.toolLoopFixture(ending: .toolCallThenTruncatedInAnswerText, tool: tool)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let outcome: TurnOutcome = try await fixture.session.respond(to: "fix the bug", maxTokens: maxTokens)
+
+        #expect(tool.calledSteps == [CeilingProbeLanguageModel.Executor.toolStep])
+        #expect(outcome.reply == CeilingProbeLanguageModel.Executor.truncatedAnswerText)
+        #expect(try #require(outcome.usage).finishReason == .maxTokens)
+    }
+
+    @Test("a tool-calling turn whose earlier call spends the ceiling and whose last call finishes closes with completed")
+    func toolLoopFinishedAfterSpentToolCallReportsCompleted() async throws {
+        let tool = MarkerEmittingTool()
+        let fixture = try await Self.toolLoopFixture(ending: .toolCallThenFinished, tool: tool)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let outcome: TurnOutcome = try await fixture.session.respond(to: "fix the bug", maxTokens: Self.requestedCeiling)
+
+        #expect(tool.calledSteps == [CeilingProbeLanguageModel.Executor.toolStep])
+        #expect(outcome.reply == CeilingProbeLanguageModel.Executor.answerText)
+        let usage = try #require(outcome.usage)
+        #expect(usage.tokensOut > Self.requestedCeiling)
+        #expect(usage.finishReason == .completed)
+    }
+
+    @Test("a streamed tool-calling turn whose last call reaches the ceiling in its answer text closes with maxTokens")
+    func streamedToolLoopAnswerTruncatedAtCeilingReportsMaxTokens() async throws {
+        let tool = MarkerEmittingTool()
+        let fixture = try await Self.toolLoopFixture(ending: .toolCallThenTruncatedInAnswerText, tool: tool)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let usage = try #require(await Self.closingUsage(ofStreamedTurnOn: fixture.session))
+
+        #expect(tool.calledSteps == [CeilingProbeLanguageModel.Executor.toolStep])
         #expect(usage.finishReason == .maxTokens)
+    }
+
+    @Test("a streamed tool-calling turn whose last call sends no text does not read the count of the earlier call")
+    func streamedToolLoopWithSilentLastCallReportsCompleted() async throws {
+        let tool = MarkerEmittingTool()
+        let fixture = try await Self.toolLoopFixture(ending: .toolCallThenNoText, tool: tool)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let usage = try #require(await Self.closingUsage(ofStreamedTurnOn: fixture.session))
+
+        #expect(tool.calledSteps == [CeilingProbeLanguageModel.Executor.toolStep])
+        #expect(usage.finishReason == .completed)
     }
 }

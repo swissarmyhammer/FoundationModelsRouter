@@ -36,6 +36,7 @@ extension RoutedSessionActor {
         // attempt's entries.
         let finishReason = FinishReason(
             turnEntries: unrecordedTranscriptEntries(), outputTokens: usage?.output,
+            lastCallOutputTokens: backend.lastGenerationCallOutputTokenCount(),
             responseTokenCeiling: responseTokenCeiling)
         let (diffIncludedResponse, pendingEventsAttached) = await recordTranscriptDelta(
             grammar: grammar, since: since, usage: usage, pendingEvents: pendingEvents, onEvent: onEvent)

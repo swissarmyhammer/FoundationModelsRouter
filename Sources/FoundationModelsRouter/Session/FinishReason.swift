@@ -23,7 +23,7 @@ extension FinishReason {
     static let incompleteOutputMetadataKey = "incompleteOutput"
 
     /// Reads the finish reason of one attempt from the transcript entries the
-    /// attempt appended and from the output token count of the attempt.
+    /// attempt appended and from the output token counts of the attempt.
     ///
     /// The attempt ends at the token ceiling when one of these is true:
     ///
@@ -31,31 +31,39 @@ extension FinishReason {
     ///   Only the last response decides. A truncated generation ends the
     ///   attempt, so a flag on an earlier response that a later response
     ///   follows does not describe how the attempt stopped.
-    /// - The attempt made one generation call, and its output token count is
+    /// - The last generation call of the attempt spent an output token count
     ///   equal to or more than the ceiling the attempt gave the backend. The
-    ///   unconstrained MLX path stops at the ceiling inside the answer text
-    ///   and sends no metadata, so the count is the only sign of that stop.
+    ///   MLX executor stops at the ceiling inside the answer text and sends no
+    ///   metadata, on the unconstrained path and on the tool path, so the
+    ///   count is the only sign of that stop.
     ///
-    /// An attempt that called a tool made more than one generation call, and
-    /// its output token count is the sum of all those calls. That sum does not
-    /// tell which call stopped, so the count does not decide for such an
-    /// attempt. Only the metadata decides.
+    /// The count of the last call comes from `lastCallOutputTokens`. When the
+    /// backend gives no such count, an attempt with one generation call uses
+    /// its own output token count, because that one call is the whole attempt.
+    /// An attempt that called a tool made more than one call, and its own
+    /// count is the sum of all those calls. That sum does not tell which call
+    /// stopped, so for such an attempt only the metadata then decides.
     ///
     /// - Parameters:
     ///   - entries: The entries the attempt appended, in transcript order.
     ///   - outputTokens: The output token count of the attempt, or `nil` when
     ///     the backend reported no usage.
+    ///   - lastCallOutputTokens: The output token count of the last generation
+    ///     call, as ``LanguageModelSessionBackend/lastGenerationCallOutputTokenCount()``
+    ///     gives it, or `nil` when the backend gives none.
     ///   - responseTokenCeiling: The ceiling the attempt gave the backend, or
     ///     `nil` when the attempt gave none.
     init(
         turnEntries entries: some BidirectionalCollection<Transcript.Entry>,
         outputTokens: Int?,
+        lastCallOutputTokens: Int?,
         responseTokenCeiling: Int?
     ) {
+        let lastCallTokens = Self.lastCallOutputTokens(
+            entries, outputTokens: outputTokens, reportedLastCallTokens: lastCallOutputTokens)
         let stoppedAtCeiling =
             Self.lastResponseReportsIncompleteOutput(entries)
-            || Self.oneCallSpentCeiling(
-                entries, outputTokens: outputTokens, responseTokenCeiling: responseTokenCeiling)
+            || Self.lastCallSpentCeiling(lastCallTokens, responseTokenCeiling: responseTokenCeiling)
         self = stoppedAtCeiling ? .maxTokens : .completed
     }
 
@@ -75,23 +83,44 @@ extension FinishReason {
         return reportsIncompleteOutput(response)
     }
 
-    /// Whether the attempt made one generation call and that call spent the
-    /// whole ceiling.
+    /// Whether the last generation call of the attempt spent the whole ceiling.
+    ///
+    /// - Parameters:
+    ///   - lastCallTokens: The output token count of the last call, or `nil`.
+    ///   - responseTokenCeiling: The ceiling the attempt gave the backend, or `nil`.
+    /// - Returns: `false` when the count or the ceiling is unknown, or when the
+    ///   count is below the ceiling.
+    private static func lastCallSpentCeiling(_ lastCallTokens: Int?, responseTokenCeiling: Int?) -> Bool {
+        guard let lastCallTokens, let responseTokenCeiling else { return false }
+        return lastCallTokens >= responseTokenCeiling
+    }
+
+    /// The output token count of the last generation call of the attempt.
+    ///
+    /// The count the backend reports is a count of this attempt only when it
+    /// is not more than the output token count of the attempt, because the
+    /// last call is one part of the attempt. A larger count is of an earlier
+    /// generating method, for example when the attempt failed before it
+    /// reached the backend, so it does not decide.
     ///
     /// - Parameters:
     ///   - entries: The entries the attempt appended, in transcript order.
     ///   - outputTokens: The output token count of the attempt, or `nil`.
-    ///   - responseTokenCeiling: The ceiling the attempt gave the backend, or `nil`.
-    /// - Returns: `false` when the count or the ceiling is unknown, when the
-    ///   count is below the ceiling, or when the attempt called a tool.
-    private static func oneCallSpentCeiling(
+    ///   - reportedLastCallTokens: The count the backend reports for its last
+    ///     call, or `nil`.
+    /// - Returns: The reported count when it belongs to the attempt. Otherwise
+    ///   the output token count of the attempt when the attempt made one
+    ///   call, and `nil` when the attempt called a tool or its count is unknown.
+    private static func lastCallOutputTokens(
         _ entries: some BidirectionalCollection<Transcript.Entry>,
         outputTokens: Int?,
-        responseTokenCeiling: Int?
-    ) -> Bool {
-        guard let outputTokens, let responseTokenCeiling else { return false }
-        guard outputTokens >= responseTokenCeiling else { return false }
-        return !generationCalledTool(entries)
+        reportedLastCallTokens: Int?
+    ) -> Int? {
+        guard let outputTokens else { return nil }
+        if let reportedLastCallTokens, reportedLastCallTokens <= outputTokens {
+            return reportedLastCallTokens
+        }
+        return generationCalledTool(entries) ? nil : outputTokens
     }
 
     /// Whether the generation of the attempt appended a `.toolCalls` entry.

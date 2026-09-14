@@ -14,6 +14,7 @@ import MLXLMCommon
 // is registered only in `VLMModelFactory`, so without this import the id
 // throws `unsupportedModelType` *after* paying for the whole download.
 import MLXVLM
+import Synchronization
 
 // The MLX container types are the live loaded handles. They are `final class …:
 // Sendable`, so conforming them to the router's marker protocols lets
@@ -160,6 +161,23 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// provider default.
     private let samplingMode: GenerationOptions.SamplingMode?
 
+    /// The output token count of one generation call, with the id of the last
+    /// transcript entry that call left.
+    private struct GenerationCallUsage {
+        /// The output token count the call reported.
+        let outputTokens: Int
+
+        /// The id of the last transcript entry of the call.
+        let lastEntryID: String
+    }
+
+    /// The usage of the last generation call of the most recent generating
+    /// method, or `nil` before that method gave one.
+    ///
+    /// A lock guards it, because the stream path writes it from the task that
+    /// drives the stream while the session reads it from its own actor.
+    private let lastGenerationCall = Mutex<GenerationCallUsage?>(nil)
+
     /// The token ceiling for a generation call whose caller gives no
     /// `maxTokens`.
     ///
@@ -216,12 +234,41 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
         maxTokens: Int?
     ) async throws -> String {
         let options = makeGenerationOptions(maxTokens: maxTokens)
+        forgetLastGenerationCall()
         guard let schema else {
             let response = try await liveSession.respond(to: prompt, options: options)
+            recordLastGenerationCall(usage: response.usage, entries: response.transcriptEntries)
             return response.content
         }
         let response = try await liveSession.respond(to: prompt, schema: schema, options: options)
+        recordLastGenerationCall(usage: response.usage, entries: response.transcriptEntries)
         return response.content.jsonString
+    }
+
+    /// Clears the usage of the last generation call, so a generating method
+    /// that starts now and gives no count never reads the count of an earlier
+    /// method.
+    private func forgetLastGenerationCall() {
+        lastGenerationCall.withLock { $0 = nil }
+    }
+
+    /// Records the usage of the last generation call of a generating method.
+    ///
+    /// `LanguageModelSession.Response.usage` and the usage of a
+    /// `ResponseStream` snapshot hold the usage of the generation call that
+    /// made them, not the sum of the calls of the method. The session sums
+    /// the calls in `LanguageModelSession.usage` alone.
+    ///
+    /// - Parameters:
+    ///   - usage: The usage of the call.
+    ///   - entries: The transcript entries the method appended up to that
+    ///     call. Nothing is recorded when they are empty.
+    private func recordLastGenerationCall(
+        usage: LanguageModelSession.Usage, entries: ArraySlice<FoundationModels.Transcript.Entry>
+    ) {
+        guard let lastEntryID = entries.last?.id else { return }
+        let call = GenerationCallUsage(outputTokens: usage.output.totalTokenCount, lastEntryID: lastEntryID)
+        lastGenerationCall.withLock { $0 = call }
     }
 
     /// Streams a text response through ``liveSession`` as text fragments.
@@ -253,9 +300,13 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
         maxTokens: Int?
     ) -> AsyncThrowingStream<ResponseFragment, Error> {
         let options = makeGenerationOptions(maxTokens: maxTokens)
+        forgetLastGenerationCall()
         let fragments = SnapshotDeltaIterator(
-            liveSession.streamResponse(to: prompt, options: options)
-        ) { $0.content }
+            liveSession.streamResponse(to: prompt, options: options),
+            content: { $0.content },
+            observe: { [self] snapshot in
+                recordLastGenerationCall(usage: snapshot.usage, entries: snapshot.transcriptEntries)
+            })
         return AsyncThrowingStream { try await fragments.next() }
     }
 
@@ -268,19 +319,33 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
         /// Reads a snapshot's cumulative text.
         private let content: (Snapshots.Element) -> String
 
+        /// Receives each snapshot the stream gives, before its text is read.
+        private let observe: (Snapshots.Element) -> Void
+
         /// The snapshot before the current one, or the empty string at the start.
         private var previous = ""
 
         /// Creates an iterator that pulls from `snapshots`.
-        init(_ snapshots: Snapshots, content: @escaping (Snapshots.Element) -> String) {
+        ///
+        /// - Parameters:
+        ///   - snapshots: The snapshot stream to pull from.
+        ///   - content: Reads the cumulative text of a snapshot.
+        ///   - observe: Receives each snapshot, a repeated one included.
+        init(
+            _ snapshots: Snapshots,
+            content: @escaping (Snapshots.Element) -> String,
+            observe: @escaping (Snapshots.Element) -> Void
+        ) {
             self.iterator = snapshots.makeAsyncIterator()
             self.content = content
+            self.observe = observe
         }
 
         /// Returns the next fragment, or `nil` at the end of the stream. Skips
         /// snapshots that repeat without change.
         func next() async throws -> ResponseFragment? {
             while let snapshot = try await iterator.next() {
+                observe(snapshot)
                 let current = content(snapshot)
                 let fragment = MLXFoundationModelsSessionBackend.fragment(of: current, after: previous)
                 previous = current
@@ -348,6 +413,20 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     func usageTokenCounts() -> (input: Int, output: Int)? {
         let usage = liveSession.usage
         return (usage.input.totalTokenCount, usage.output.totalTokenCount)
+    }
+
+    /// Returns the output token count of the last generation call of the most
+    /// recent generating method. Call it under the turn lock.
+    ///
+    /// The recorded count is given only while the transcript of
+    /// ``liveSession`` still ends at the last entry of the recorded call. The
+    /// stream gives no snapshot for a last call that sends no text, so the
+    /// last snapshot can be one of an earlier call of the same method. Its
+    /// entries then end before the entries of the last call.
+    func lastGenerationCallOutputTokenCount() -> Int? {
+        guard let call = lastGenerationCall.withLock({ $0 }) else { return nil }
+        guard call.lastEntryID == liveSession.transcript.last?.id else { return nil }
+        return call.outputTokens
     }
 }
 
