@@ -102,8 +102,24 @@ comments:
     - evidence: command `swift package clean` then `swift test`. Result: 1380 tests ran. 0 tests failed. 0 tests did not run. 2 tests check that an issue gets recorded; this is by design, not a skip. The build gave 0 warnings in the project's own code (Sources and Tests). Warning text did show up in the vendored mlx-swift dependency code under `.build/checkouts`. That code is not part of this project, so it is out of scope for this step.
     - next: send the task to the review step.
   timestamp: 2026-09-14T15:28:00.016819+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m2g92x0d5ec4yffh5fjg5ja6
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (b7323a6). 0 findings, 0 confirmed, 0 refuted. 21 runs attempted, 0 failed, 0 skipped. 17 files reviewed. 2 .kanban files not reviewed (.reviewignore).
+    - next: none. The task is in done.
+  timestamp: 2026-09-14T15:38:02.125486+00:00
+- actor: claude-code
+  id: 01m2g93fq17gqqqhm8238sm67k
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — Option A: new ToolFailureDelivery decorator in ToolMounting.makeSessionMounted; RunToCompletionRunner, ContextBindingTool and ToolCallSpan are back to HEAD
+    - test: green — swift package clean && swift test, 1380 passed, 0 failed, 0 warnings in the package
+    - commit: b7323a6
+    - review: clean — review sha HEAD~1..HEAD, 0 findings
+  timestamp: 2026-09-14T15:38:21.281544+00:00
+position_column: done
+position_ordinal: ffffd380
 title: One failed tool call cancels the other calls of the turn, and ends the turn
 ---
 ## The problem
