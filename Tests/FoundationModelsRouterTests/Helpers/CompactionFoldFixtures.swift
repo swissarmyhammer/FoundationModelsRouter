@@ -9,9 +9,9 @@ import FoundationModels
 /// the fixture floor and the fold pipeline agree on which turns cannot fold.
 let defaultKeepRecentTurns = 4
 
-/// The divisor that puts ``deterministicFoldBudget(for:)``'s target token
-/// count at the midpoint of its two bounds — the recency-window-only floor
-/// and the full pre-fold estimate — strictly between them.
+/// The divisor that puts ``deterministicFoldBudget(for:protection:)``'s target
+/// token count at the midpoint of its two bounds — the floor ``TurnTruncation``
+/// leaves and the full pre-fold estimate — strictly between them.
 let foldTargetMidpointDivisor = 2
 
 /// Drives `count` sequential `respond(to:)` turns on `session`, each with the
@@ -49,16 +49,27 @@ func recencyWindowOnlyEstimate(_ entries: [Transcript.Entry]) -> Int {
     return Compactor.estimatedTokenCount(of: Transcript(entries: header + recent.flatMap(\.entries)))
 }
 
-/// A budget whose target sits strictly between `entries`' recency-window-only
-/// floor and its full estimate — the deterministic-shrink budget: guaranteed
-/// to fold something, and guaranteed that ``TurnTruncation`` alone lands
-/// under target, so no model-assisted ``Summarization`` stage runs and no
-/// synthesized summary entry skews what a test measures.
+/// A budget whose target sits strictly between what ``TurnTruncation`` leaves
+/// of `entries` and its full estimate — the deterministic-shrink budget:
+/// guaranteed to fold something, and guaranteed that ``TurnTruncation`` alone
+/// lands under target, so no model-assisted ``Summarization`` stage runs and
+/// no synthesized summary entry skews what a test measures.
 ///
-/// - Parameter entries: The live transcript entries about to be folded.
+/// With no rule, ``TurnTruncation`` leaves the recency window only, so the
+/// floor is ``recencyWindowOnlyEstimate(_:)``. With a rule, it also keeps the
+/// protected pairs of the old turns, and the floor holds them too.
+///
+/// - Parameters:
+///   - entries: The live transcript entries about to be folded.
+///   - protection: The host rule the session folds with, or `nil` (the
+///     default) for a session with no rule.
 /// - Returns: The budget to pass to `compact(budget:)`.
-func deterministicFoldBudget(for entries: [Transcript.Entry]) -> TokenBudget {
+func deterministicFoldBudget(
+    for entries: [Transcript.Entry], protection: ToolOutputProtection? = nil
+) -> TokenBudget {
     let preFoldTokens = Compactor.estimatedTokenCount(of: Transcript(entries: entries))
-    let targetTokens = (recencyWindowOnlyEstimate(entries) + preFoldTokens) / foldTargetMidpointDivisor
+    let truncation = TurnTruncation(keepRecentTurns: defaultKeepRecentTurns, protection: protection)
+    let floorTokens = Compactor.estimatedTokenCount(of: truncation.apply(Transcript(entries: entries)))
+    let targetTokens = (floorTokens + preFoldTokens) / foldTargetMidpointDivisor
     return TokenBudget(limit: preFoldTokens, target: Double(targetTokens) / Double(preFoldTokens))
 }

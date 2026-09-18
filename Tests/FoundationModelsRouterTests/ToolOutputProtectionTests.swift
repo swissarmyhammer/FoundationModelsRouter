@@ -16,20 +16,8 @@ struct ToolOutputProtectionTests {
     /// The fixtures every test here reads.
     private typealias Fixtures = ProtectedToolOutputFixtures
 
-    /// The fixed text the recording summarizer answers with.
+    /// The fixed text the shared ``RecordingSummarizer`` answers with.
     private static let summaryText = "1. Summary of the old turns."
-
-    /// A summarizer that records each prompt it gets and answers with
-    /// ``summaryText``.
-    private actor RecordingSummarizer: CompactionSummarizer {
-        /// Every prompt this summarizer got, in order.
-        private(set) var prompts: [String] = []
-
-        func summarize(_ prompt: String, maxTokens: Int) async throws -> String {
-            prompts.append(prompt)
-            return ToolOutputProtectionTests.summaryText
-        }
-    }
 
     /// The entries `stage` leaves of the fixture transcript.
     ///
@@ -73,7 +61,7 @@ struct ToolOutputProtectionTests {
                 [try Fixtures.skillsCall(id: Fixtures.listCallId, operation: Fixtures.listSkillsOperation)]),
             Fixtures.toolOutput(
                 callId: Fixtures.listCallId, toolName: Fixtures.skillsToolName, text: Fixtures.skillListOutput),
-            Fixtures.response(id: "response-list"),
+            Fixtures.response(id: "response-list")
         ]
         let transcript = Transcript(
             entries: [TranscriptFixtures.makeInstructions()] + listTurn + Fixtures.recentTurns())
@@ -104,7 +92,7 @@ struct ToolOutputProtectionTests {
             Fixtures.toolOutput(
                 callId: Fixtures.searchCallId, toolName: Fixtures.searchToolName, text: Fixtures.searchOutput),
             Fixtures.skillOutputEntry,
-            Fixtures.response(id: "response-mixed"),
+            Fixtures.response(id: "response-mixed")
         ]
         let transcript = Transcript(
             entries: [TranscriptFixtures.makeInstructions()] + mixedTurn + Fixtures.recentTurns())
@@ -130,7 +118,7 @@ struct ToolOutputProtectionTests {
     @Test("Summarization keeps a protected output word for word and never replaces it with summary text")
     func summarizationKeepsTheProtectedPair() async throws {
         let transcript = try Fixtures.transcript()
-        let summarizer = RecordingSummarizer()
+        let summarizer = RecordingSummarizer(summary: Self.summaryText)
 
         let folded = try #require(
             try await Summarization().apply(
@@ -139,7 +127,7 @@ struct ToolOutputProtectionTests {
 
         let result = Array(folded.transcript)
         let expectedPrefix = [
-            TranscriptFixtures.makeInstructions(), try Fixtures.skillCallsEntry(), Fixtures.skillOutputEntry,
+            TranscriptFixtures.makeInstructions(), try Fixtures.skillCallsEntry(), Fixtures.skillOutputEntry
         ]
         #expect(Array(result.prefix(expectedPrefix.count)) == expectedPrefix)
         #expect(result[expectedPrefix.count].id == folded.summaryEntryId)
@@ -149,7 +137,7 @@ struct ToolOutputProtectionTests {
     @Test("Summarization never sends a protected output to the summarizer")
     func summarizationDoesNotSummarizeTheProtectedOutput() async throws {
         let transcript = try Fixtures.transcript()
-        let summarizer = RecordingSummarizer()
+        let summarizer = RecordingSummarizer(summary: Self.summaryText)
 
         _ = try await Summarization().apply(
             transcript, prompt: .default, tokensBefore: Compactor.estimatedTokenCount(of: transcript),
@@ -168,13 +156,32 @@ struct ToolOutputProtectionTests {
         let folded = try #require(
             try await Summarization().apply(
                 transcript, prompt: .default, tokensBefore: Compactor.estimatedTokenCount(of: transcript),
-                priorStagesApplied: [], summarizer: RecordingSummarizer(), protection: Fixtures.rule))
+                priorStagesApplied: [], summarizer: RecordingSummarizer(summary: Self.summaryText),
+                protection: Fixtures.rule))
 
         let summaryEntry = try #require(Array(folded.transcript).first { $0.id == folded.summaryEntryId })
         let content = try #require(try Self.checkpointContent(of: summaryEntry))
         #expect(content.liveWindowEntryIds == Array(folded.transcript).map(\.id))
         #expect(!content.foldedEntryIds.contains(Fixtures.skillCallId))
         #expect(content.foldedEntryIds.contains(Fixtures.searchCallId))
+    }
+
+    @Test("Summarization with no rule folds the skill output into the summary, the behavior before the rule existed")
+    func summarizationWithoutARuleFoldsTheSkillOutput() async throws {
+        let transcript = try Fixtures.transcript()
+        let summarizer = RecordingSummarizer(summary: Self.summaryText)
+
+        let folded = try #require(
+            try await Summarization().apply(
+                transcript, prompt: .default, tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+                priorStagesApplied: [], summarizer: summarizer))
+
+        let result = Array(folded.transcript)
+        let expectedPrefixIds = [TranscriptFixtures.makeInstructions().id, folded.summaryEntryId]
+        #expect(result.prefix(expectedPrefixIds.count).map(\.id) == expectedPrefixIds)
+        #expect(Fixtures.outputText(in: result, id: Fixtures.skillCallId) == nil)
+        let prompts = await summarizer.prompts
+        #expect(prompts.contains { $0.contains(Fixtures.skillBody) })
     }
 
     /// The fold manifest a boundary entry carries.

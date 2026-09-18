@@ -25,12 +25,12 @@ struct ToolOutputProtectionSessionTests {
     /// Vends a ``StubSessionBackend`` per session. A fresh session starts with
     /// ``seedEntries``, as if it already took the two tool turns. A restored
     /// session starts with the transcript the restore rebuilt.
-    private final class SeededLLMContainer: LoadedLLMContainer, @unchecked Sendable {
+    private struct SeededLLMContainer: LoadedLLMContainer {
         /// The canned text every backend this container vends responds with.
-        let responseText = "stub answer"
+        private let responseText = "stub answer"
 
         /// The entries a fresh session starts with.
-        let seedEntries: [Transcript.Entry]
+        private let seedEntries: [Transcript.Entry]
 
         /// Creates a container whose fresh sessions start with `seedEntries`.
         ///
@@ -74,8 +74,7 @@ struct ToolOutputProtectionSessionTests {
     /// - Returns: The resolved profile.
     /// - Throws: What profile resolution throws.
     private static func resolveProfile(in directories: Directories, routerId: ULID) async throws
-        -> LanguageModelProfile
-    {
+        -> LanguageModelProfile {
         let container = SeededLLMContainer(
             seedEntries: [TranscriptFixtures.makeInstructions()] + (try Fixtures.skillTurn())
                 + (try Fixtures.searchTurn()))
@@ -86,30 +85,6 @@ struct ToolOutputProtectionSessionTests {
             recorder: JSONLRecorder(directory: directories.recordings),
             loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension))
         return try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-    }
-
-    /// Drives enough turns on `session` that both seeded tool turns are older
-    /// than the recency window.
-    ///
-    /// - Parameter session: The session to drive.
-    /// - Throws: What a turn throws.
-    private static func driveRecentTurns(on session: RoutedSession) async throws {
-        for index in 0..<Fixtures.recentTurnCount {
-            _ = try await session.respond(to: "recent turn \(index)")
-        }
-    }
-
-    /// A budget whose target sits between what ``TurnTruncation`` leaves of
-    /// `transcript`, protected pair included, and its whole size: a
-    /// deterministic fold always lands under it.
-    ///
-    /// - Parameter transcript: The live transcript about to be folded.
-    /// - Returns: The budget.
-    private static func deterministicBudget(for transcript: Transcript) -> TokenBudget {
-        let before = Compactor.estimatedTokenCount(of: transcript)
-        let floor = Compactor.estimatedTokenCount(of: TurnTruncation(protection: Fixtures.rule).apply(transcript))
-        let target = (floor + before) / foldTargetMidpointDivisor
-        return TokenBudget(limit: before, target: Double(target) / Double(before))
     }
 
     /// A budget whose target no deterministic stage can reach, so the fold
@@ -143,9 +118,10 @@ struct ToolOutputProtectionSessionTests {
         defer { directories.remove() }
         let profile = try await Self.resolveProfile(in: directories, routerId: .generate())
         let session = profile.standard.makeSession(toolOutputProtection: Fixtures.rule)
-        try await Self.driveRecentTurns(on: session)
+        try await driveTurns(Fixtures.recentTurnCount, on: session)
 
-        let result = try await session.compact(budget: Self.deterministicBudget(for: await session.transcript))
+        let budget = deterministicFoldBudget(for: Array(await session.transcript), protection: Fixtures.rule)
+        let result = try await session.compact(budget: budget)
 
         #expect(result.summary == nil)
         #expect(!result.stagesApplied.isEmpty)
@@ -160,7 +136,7 @@ struct ToolOutputProtectionSessionTests {
         let profile = try await Self.resolveProfile(in: directories, routerId: .generate())
         let session = profile.standard.makeSession(
             configuration: SessionConfiguration(toolOutputProtection: Fixtures.rule))
-        try await Self.driveRecentTurns(on: session)
+        try await driveTurns(Fixtures.recentTurnCount, on: session)
 
         let result = try await session.compact(budget: Self.summarizationBudget(for: await session.transcript))
 
@@ -174,9 +150,9 @@ struct ToolOutputProtectionSessionTests {
         defer { directories.remove() }
         let profile = try await Self.resolveProfile(in: directories, routerId: .generate())
         let session = profile.standard.makeSession()
-        try await Self.driveRecentTurns(on: session)
+        try await driveTurns(Fixtures.recentTurnCount, on: session)
 
-        _ = try await session.compact(budget: Self.deterministicBudget(for: await session.transcript))
+        _ = try await session.compact(budget: deterministicFoldBudget(for: Array(await session.transcript)))
 
         let transcript = await session.transcript
         #expect(Fixtures.outputText(in: Array(transcript), id: Fixtures.skillCallId) != Fixtures.skillBody)
@@ -191,10 +167,11 @@ struct ToolOutputProtectionSessionTests {
         let profile = try await Self.resolveProfile(in: directories, routerId: .generate())
         let session = profile.standard.makeSession(
             configuration: SessionConfiguration(toolOutputProtection: Fixtures.rule))
-        try await Self.driveRecentTurns(on: session)
+        try await driveTurns(Fixtures.recentTurnCount, on: session)
 
         let fork = try await session.fork(workingDirectory: nil)
-        _ = try await fork.compact(budget: Self.deterministicBudget(for: await fork.transcript))
+        _ = try await fork.compact(
+            budget: deterministicFoldBudget(for: Array(await fork.transcript), protection: Fixtures.rule))
 
         Self.expectProtectedOnly(in: await fork.transcript)
     }
@@ -209,13 +186,14 @@ struct ToolOutputProtectionSessionTests {
         let original = try await Self.resolveProfile(in: directories, routerId: routerId)
         let session = original.standard.makeSession(
             configuration: SessionConfiguration(toolOutputProtection: Fixtures.rule))
-        try await Self.driveRecentTurns(on: session)
+        try await driveTurns(Fixtures.recentTurnCount, on: session)
 
         let restoring = try await Self.resolveProfile(in: directories, routerId: routerId)
         let restored = try await restoring.standard.restoreSession(
             id: session.id, recordingRoot: nil, toolOutputProtection: Fixtures.rule
         ).session
-        _ = try await restored.compact(budget: Self.deterministicBudget(for: await restored.transcript))
+        _ = try await restored.compact(
+            budget: deterministicFoldBudget(for: Array(await restored.transcript), protection: Fixtures.rule))
 
         Self.expectProtectedOnly(in: await restored.transcript)
     }
@@ -228,7 +206,7 @@ struct ToolOutputProtectionSessionTests {
         let original = try await Self.resolveProfile(in: directories, routerId: routerId)
         let session = original.standard.makeSession(
             configuration: SessionConfiguration(toolOutputProtection: Fixtures.rule))
-        try await Self.driveRecentTurns(on: session)
+        try await driveTurns(Fixtures.recentTurnCount, on: session)
         _ = try await session.compact(budget: Self.summarizationBudget(for: await session.transcript))
         let liveTranscript = await session.transcript
         let liveIds = liveTranscript.map(\.id)
