@@ -5,9 +5,10 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises task jkdae4b: threading `[any FoundationModels.Tool]` through
-/// ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)`` — the seam that
-/// used to hardcode `tools: []` through ``LoadedLLMContainer/makeSession(transcript:)``,
-/// leaving a restored session tree with no live tool-calling at all.
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:)``
+/// — the seam that used to hardcode `tools: []` through
+/// ``LoadedLLMContainer/makeSession(transcript:)``, leaving a restored
+/// session tree with no live tool-calling at all.
 ///
 /// Mirrors `SessionOutboxToolWiringTests`'s stub-based approach (no MLX, no
 /// network, no GPU): a container that records the exact tool list threaded to
@@ -42,10 +43,10 @@ struct SessionTreeRestorationToolWiringTests {
 
     /// A ``LoadedLLMContainer`` that records the `tools` most recently passed
     /// to `makeSession(transcript:tools:)` — the seam
-    /// ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)`` threads its
-    /// own per-node instanced tool list through — plus every backend it has
-    /// vended, keyed by call order, so a test can inspect each restored
-    /// node's own threaded list rather than only the last one.
+    /// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:)``
+    /// threads its own per-node instanced tool list through — plus every
+    /// backend it has vended, keyed by call order, so a test can inspect each
+    /// restored node's own threaded list rather than only the last one.
     ///
     /// `@unchecked Sendable` is safe here without synchronization:
     /// `threadedToolsByCall` and `backendsByCall` are appended to only

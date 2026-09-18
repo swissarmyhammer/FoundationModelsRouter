@@ -11,7 +11,8 @@ import Testing
 /// with hand-built `Transcript.Entry` values, and the end-to-end claim — the
 /// seeded rows equal the rows a live projection produced during the original
 /// run, row for row by id — runs through a real recorded tool turn, a
-/// fresh-process ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)``,
+/// fresh-process
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:)``,
 /// and the new read-only ``RoutedSession/transcript`` accessor.
 @Suite("SessionProjection seeding from a cold Transcript (task ^5aky6xr)")
 struct SessionProjectionSeedingTests {

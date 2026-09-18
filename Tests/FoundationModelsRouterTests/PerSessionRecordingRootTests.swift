@@ -18,7 +18,8 @@ import Testing
 /// nested one level deeper under it); omitting it reproduces today's nested
 /// `<recordingsDir>/<routerId>/<sessionId>/` layout byte-for-byte; two
 /// sessions from the same Router with different roots never leak into each
-/// other; and ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)``
+/// other; and
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:)``
 /// round-trips both layouts, with the recording routerId still readable from
 /// the restored flat session's sidecar metadata.
 ///

@@ -101,8 +101,8 @@ private let compactionRoundTripReasoningTokenHeadroom = 128
 /// downloads too) — the same manual-harness technique
 /// ``SessionTreeRestorationIntegrationTests`` uses — so this suite reaches the
 /// real public ``RoutedSession/compact(prompt:budget:)`` /
-/// ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)`` surface without paying
-/// for two extra downloads.
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:)``
+/// surface without paying for two extra downloads.
 ///
 /// Every fixture dimension this loop drives — the working context, the reply
 /// ceiling, the instructions, the fold budget, and the scripted turns — lives

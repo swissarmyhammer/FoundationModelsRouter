@@ -6,9 +6,10 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises task zcxnbst: restoring a whole session tree from disk by root
-/// session id — ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)`` — the
-/// final piece of plan.md's "Transcript fidelity" section, "Reconstruction
-/// end-to-end".
+/// session id —
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:)``
+/// — the final piece of plan.md's "Transcript fidelity" section,
+/// "Reconstruction end-to-end".
 ///
 /// Everything here runs against stubs — a stub ``ModelLoader``, a canned LLM
 /// container backed by ``StubSessionBackend``, and a ``JSONLRecorder``
@@ -544,8 +545,9 @@ struct SessionTreeRestorationTests {
     }
 
     /// Documents and locks in a known, deliberate restoration limitation (see
-    /// ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)``'s doc comment,
-    /// "Known limitation: the `.ebnf` grammar case"): `SessionSidecar.grammar`
+    /// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:)``'s
+    /// doc comment, "Known limitation: the `.ebnf` grammar case"):
+    /// `SessionSidecar.grammar`
     /// persists only the grammar's `source` string, not which `Grammar` case
     /// it came from, so a session originally guided by `.ebnf(_:)` restores
     /// under the `.jsonSchema` case instead — its source text is preserved,
