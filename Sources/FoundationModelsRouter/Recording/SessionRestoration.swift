@@ -3,7 +3,7 @@ import FoundationModels
 
 /// One session restored from disk, with what the restore could not re-apply.
 ///
-/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:)`` returns
+/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:)`` returns
 /// this value. It names one session, never that session's recorded forks: a
 /// caller resumes a session by an id it holds, and it holds no id for a fork.
 ///
@@ -88,7 +88,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// transcript already on disk. Its model and slot resolve from its
     /// ``SessionSidecar`` against this call's owning profile, and a mismatch
     /// is a typed error. See
-    /// ``restoreSessionTree(root:recordingRoot:instructions:tools:)`` for what
+    /// ``restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:)`` for what
     /// the restore re-applies and what it does not.
     ///
     /// The recorded forks under the named session are rebuilt too, and are
@@ -115,6 +115,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - tools: The tools the restored session's model can call. Every
     ///     recorded tool name with no supplied instance is reported in
     ///     ``RestoredSession/configurationReport``.
+    ///   - toolOutputProtection: The host rule whose protected tool outputs
+    ///     every fold on the restored session keeps word for word, or `nil`
+    ///     (the default) to protect nothing. The recording does not hold the
+    ///     rule, because it is a closure, so a host gives it again here, as
+    ///     it gives the tools. See ``ToolOutputProtection``.
     /// - Returns: The restored session and the two restore reports.
     /// - Throws: ``TranscriptTreeError/sessionNotFound(_:)`` when the
     ///   recording root holds no session with this id;
@@ -125,10 +130,12 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         id: ULID,
         recordingRoot: URL? = nil,
         instructions: String? = nil,
-        tools: [any Tool] = []
+        tools: [any Tool] = [],
+        toolOutputProtection: ToolOutputProtection? = nil
     ) async throws -> RestoredSession {
         let tree = try await restoreSessionTree(
-            root: id, recordingRoot: recordingRoot, instructions: instructions, tools: tools)
+            root: id, recordingRoot: recordingRoot, instructions: instructions, tools: tools,
+            toolOutputProtection: toolOutputProtection)
         return RestoredSession(
             session: tree.root,
             configurationReport: tree.configurationReport,

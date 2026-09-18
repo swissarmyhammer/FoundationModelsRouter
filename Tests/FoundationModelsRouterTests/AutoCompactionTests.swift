@@ -4,7 +4,7 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises task 8213x39 (auto-compaction opt-in): ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``'s
+/// Exercises task 8213x39 (auto-compaction opt-in): ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:)``'s
 /// `budget`/`compactionPrompt` parameters, the proactive fold
 /// ``RoutedSessionActor/runTurn(grammar:turnId:promptId:pendingEvents:ownPrompt:onEvent:_:)``
 /// runs before a turn once measured fill reaches the budget's trigger, the

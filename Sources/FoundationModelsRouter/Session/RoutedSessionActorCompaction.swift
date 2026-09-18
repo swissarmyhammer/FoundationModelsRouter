@@ -255,7 +255,7 @@ extension RoutedSessionActor {
 
     /// The fold mechanics ``compact(prompt:budget:)`` and
     /// ``performAutoCompaction(prompt:budget:)`` share. Runs
-    /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``
+    /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:protection:)``
     /// over ``backend``'s transcript. When a stage applied, records the fold's
     /// new entries by id, appends one boundary entry, and replaces ``backend``
     /// with one seeded from the folded transcript. Otherwise leaves the
@@ -308,7 +308,10 @@ extension RoutedSessionActor {
             // and an automatic one condense the same way (see
             // ``RoutedSessionActor/summarization``).
             summarization: summarization,
-            pendingRuns: pendingRuns
+            pendingRuns: pendingRuns,
+            // The host rule this session was vended, forked or restored with,
+            // so no fold removes a protected tool output.
+            protection: toolOutputProtection
         )
 
         // The report names the model that wrote its summary — the signal task
@@ -341,9 +344,11 @@ extension RoutedSessionActor {
         // synthesizes its own (the summary entry, identified by
         // `result.summaryEntryId`); a deterministic-only fold produces none —
         // ``ToolOutputElision`` rewrites segments under the entry's original
-        // id and ``TurnTruncation`` only removes entries, so the id-diff
-        // below would otherwise see nothing new, record no checkpoint, and a
-        // restore would rebuild the whole pre-fold history — so one is
+        // id and ``TurnTruncation`` removes entries (it adds at most a
+        // `.toolCalls` entry reduced to its protected calls, under an id of
+        // its own), so the id-diff below would otherwise record no
+        // checkpoint, and a restore would rebuild the whole pre-fold
+        // history — so one is
         // synthesized here, carrying the fold's *measured* token counts so a
         // restore reports this fold's own post-fold fill.
         let applied: Transcript

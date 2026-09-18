@@ -31,7 +31,7 @@ public enum PromptCancellationResult: Sendable, Equatable {
 /// A generation session over a resident model: the recorded surface an
 /// application drives to produce text.
 ///
-/// A session is vended only by ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``,
+/// A session is vended only by ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:)``,
 /// and it retains its ``profile`` so the resident models stay loaded. The raw
 /// `LanguageModelSession` is never vended; ``RoutedSession`` is the only
 /// generation surface.

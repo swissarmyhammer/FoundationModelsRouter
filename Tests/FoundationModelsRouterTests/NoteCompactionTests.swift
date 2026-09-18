@@ -450,7 +450,7 @@ struct NoteCompactionTests {
     private static let deterministicFoldTurnCount = 6
 
     /// Scales a pre-fold estimate up to a `TokenBudget` limit whose target
-    /// sits far above the estimate, so ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``
+    /// sits far above the estimate, so ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:protection:)``
     /// applies no stage and returns the transcript unchanged.
     private static let noOpBudgetLimitMultiplier = 4
 

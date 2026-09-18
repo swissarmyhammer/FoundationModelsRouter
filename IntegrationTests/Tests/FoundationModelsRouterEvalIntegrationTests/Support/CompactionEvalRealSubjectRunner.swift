@@ -189,7 +189,7 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
 
     /// Runs one sample's real subject work (compaction_plan.md §1.4/§1.5's bare-session
     /// recipe): folds `entries` with `prompt`/`budget` via
-    /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``, resumes a live
+    /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:protection:)``, resumes a live
     /// session over the folded transcript, and asks `question`.
     ///
     /// - Parameters:
@@ -199,7 +199,7 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
     ///   - question: The question to ask the resumed session.
     /// - Returns: The resumed session's answer plus the fold's report.
     /// - Throws: Whatever ``container()`` throws while loading the resident
-    ///   model, or whatever ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``
+    ///   model, or whatever ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:protection:)``
     ///   or the resumed session's `respond(to:maxTokens:)` throws while
     ///   folding `entries` or answering `question`.
     ///

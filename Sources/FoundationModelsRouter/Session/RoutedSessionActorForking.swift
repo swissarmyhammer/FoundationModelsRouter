@@ -104,7 +104,7 @@ extension RoutedSessionActor {
         // for this session. This site's chain is fork →
         // mount → cap (task ^k4nygqa; the root and restore sites each
         // have their own deliberately distinct chain — see
-        // ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``
+        // ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:)``
         // and `restoreSessionTree`). Composition order matters: a tool is
         // forked first via its own `forked()` (falling back to sharing the
         // original unchanged when it doesn't conform to `ForkableTool`),
@@ -262,6 +262,9 @@ extension RoutedSessionActor {
             // auto-compaction opt-in does: a fork continues its parent's
             // conversation, so it primes its turns exactly like its parent.
             discoveryPriming: discoveryPriming,
+            // A fold on a fork keeps what a fold on its parent keeps: the
+            // same host rule protects the same tool outputs.
+            toolOutputProtection: toolOutputProtection,
             // The parent's own tracer: a fork continues its parent's
             // conversation, so its spans belong in the same trace and must
             // reach the same backend.

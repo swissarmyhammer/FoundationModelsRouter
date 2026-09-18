@@ -39,6 +39,14 @@ public struct SessionConfiguration: Sendable {
     /// or `nil` for an unconstrained session.
     public var grammar: Grammar?
 
+    /// The host rule whose protected tool outputs every fold on the vended
+    /// session keeps word for word, or `nil` (the default) to protect nothing.
+    ///
+    /// A closure, so ``persistable`` does not hold it and the sidecar does not
+    /// record it. A host gives it again when it restores the session, as it
+    /// gives the tools. A fork inherits it. See ``ToolOutputProtection``.
+    public var toolOutputProtection: ToolOutputProtection?
+
     /// Creates a session configuration. Every parameter defaults to the
     /// matching default of `RoutedModel.makeSession`.
     public init(
@@ -51,7 +59,8 @@ public struct SessionConfiguration: Sendable {
         summarization: Summarization = Summarization(),
         agentSpawn: SessionSidecar.AgentSpawn? = nil,
         discoveryPriming: DiscoveryPriming? = nil,
-        grammar: Grammar? = nil
+        grammar: Grammar? = nil,
+        toolOutputProtection: ToolOutputProtection? = nil
     ) {
         self.instructions = instructions
         self.workingDirectory = workingDirectory
@@ -63,10 +72,12 @@ public struct SessionConfiguration: Sendable {
         self.agentSpawn = agentSpawn
         self.discoveryPriming = discoveryPriming
         self.grammar = grammar
+        self.toolOutputProtection = toolOutputProtection
     }
 
     /// The `Codable` slice of this configuration, persisted in the session sidecar.
     /// ``tools`` is represented by each tool's ``FoundationModels/Tool/name``, in order.
+    /// ``toolOutputProtection`` is a closure and has no place in it.
     var persistable: Persistable {
         Persistable(
             instructions: instructions,
@@ -83,7 +94,9 @@ public struct SessionConfiguration: Sendable {
     }
 
     /// The `Codable`, `Equatable` snapshot of a ``SessionConfiguration``.
-    /// It mirrors the parent value field for field, except ``toolNames``.
+    /// It mirrors the parent value field for field, except ``toolNames``, and
+    /// except the parent's ``SessionConfiguration/toolOutputProtection``, which
+    /// it does not hold.
     // sah:allow duplication mirrors SessionConfiguration field for field by design; the one difference is toolNames standing in for the tool instances
     struct Persistable: Codable, Equatable, Sendable {
         /// The session's system instructions, or `nil`.

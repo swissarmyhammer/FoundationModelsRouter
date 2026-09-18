@@ -199,6 +199,7 @@ func makeRoutedSessionActor(
     summarization: Summarization = Summarization(),
     agentSpawn: SessionSidecar.AgentSpawn? = nil,
     discoveryPriming: DiscoveryPriming? = nil,
+    toolOutputProtection: ToolOutputProtection? = nil,
     recordingRoot: URL? = nil,
     tracer: (any Tracer)?
 ) -> RoutedSessionActor {
@@ -235,6 +236,7 @@ func makeRoutedSessionActor(
             summarization: summarization,
             agentSpawn: agentSpawn,
             discoveryPriming: discoveryPriming,
+            toolOutputProtection: toolOutputProtection,
             recordingRoot: recordingRoot,
             tracer: tracer
         )
@@ -490,6 +492,12 @@ actor RoutedSessionActor: RoutedSession {
     /// A fork carries it forward.
     nonisolated let discoveryPriming: DiscoveryPriming?
 
+    /// The host rule whose protected tool outputs every fold on this session
+    /// keeps word for word, or `nil` to protect nothing. A fork carries it
+    /// forward. The sidecar never records it, because it is a closure; a
+    /// restore takes it from the host again. See ``ToolOutputProtection``.
+    nonisolated let toolOutputProtection: ToolOutputProtection?
+
     /// The parent session and tool call that spawned this session, or `nil`.
     /// Stamped on this session's `session` meta event
     /// (``TranscriptEvent/agentSpawn``) and written to its sidecar
@@ -537,9 +545,11 @@ actor RoutedSessionActor: RoutedSession {
         summarization: Summarization = Summarization(),
         agentSpawn: SessionSidecar.AgentSpawn? = nil,
         discoveryPriming: DiscoveryPriming? = nil,
+        toolOutputProtection: ToolOutputProtection? = nil,
         recordingRoot: URL? = nil,
         tracer: (any Tracer)?
     ) {
+        self.toolOutputProtection = toolOutputProtection
         self.profile = profile
         self.routerId = routerId
         self.id = id

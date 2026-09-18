@@ -121,7 +121,7 @@ private let autoCompactionTriggerChatTemplateDate =
 /// No production code changed to make this suite possible, and none needed to.
 /// ``TokenBudget`` is public, its initializer takes `limit` and `trigger` as
 /// ordinary parameters, and
-/// ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``
+/// ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:)``
 /// takes the budget. The recency window rides on the same call, as
 /// ``Summarization/keepRecentTurns``. Every knob this suite sets is one a
 /// caller outside the package can set.
@@ -257,7 +257,7 @@ struct AutoCompactionTriggerIntegrationTests {
     /// One is the smallest window that is still a window: the fold replaces
     /// every turn before the newest, and the newest turn stays verbatim.
     ///
-    /// ``Compactor/stages`` is a fixed `static let` at the default of 4, so
+    /// ``Compactor/stages(protecting:)`` builds each stage at the default of 4, so
     /// ``TurnTruncation`` still keeps four turns and removes nothing here. That
     /// costs the run nothing — it removes no entry and makes no model call —
     /// and ``foldTargetShareOfContext`` means the pipeline never stops there

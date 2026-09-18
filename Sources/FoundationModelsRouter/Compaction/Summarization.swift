@@ -30,7 +30,7 @@ enum SummarizationError: Error, Equatable, LocalizedError {
 /// summarizes it with a ``CompactionPrompt`` through a ``CompactionSummarizer``,
 /// and synthesizes the summary entry: a `.response` that carries the summary
 /// text and its ``CompactionSegment``. It is async, so it does not conform to
-/// ``CompactionStage``; ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``
+/// ``CompactionStage``; ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:protection:)``
 /// calls it directly, always with the original transcript.
 public struct Summarization: Sendable, Equatable, Codable {
     /// This stage's name, as recorded in ``CompactionResult/stagesApplied``.
@@ -119,8 +119,8 @@ public struct Summarization: Sendable, Equatable, Codable {
 
     /// The result of one fold: the folded transcript and the summary text.
     struct Folded: Sendable, Equatable {
-        /// The folded transcript: the header, the summary entry, then the
-        /// untouched recency window.
+        /// The folded transcript: the header, the protected pairs of the old
+        /// span, the summary entry, then the untouched recency window.
         let transcript: Transcript
 
         /// The synthesized summary text.
@@ -158,6 +158,11 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// Folds the old span of `transcript` (everything but the header and the
     /// newest ``keepRecentTurns`` turns) into one summary entry.
     ///
+    /// The protected tool outputs of the old span are never summarized. Each
+    /// one, with the `.toolCalls` entry that holds its call reduced to the
+    /// protected calls, stays right after the header in its original order,
+    /// ahead of the summary entry.
+    ///
     /// - Parameters:
     ///   - transcript: The original transcript to fold.
     ///   - prompt: The compaction prompt sent to `summarizer` before the content of every call.
@@ -165,6 +170,8 @@ public struct Summarization: Sendable, Equatable, Codable {
     ///   - priorStagesApplied: The stages applied before this one; ``stageName`` is appended.
     ///   - summarizer: The model called to condense text.
     ///   - pendingRuns: The summaries of the runs still running, in tracking order. Their rendering is charged against the span byte budget.
+    ///   - protection: The host rule whose protected tool outputs stay word for
+    ///     word, or `nil` (the default) to fold the whole old span.
     /// - Returns: The fold, or `nil` when there is no old span to fold.
     /// - Throws: Whatever `summarizer.summarize(_:maxTokens:)` throws, or
     ///   ``SummarizationError/emptySummary`` when a call returns no text.
@@ -174,14 +181,19 @@ public struct Summarization: Sendable, Equatable, Codable {
         tokensBefore: Int,
         priorStagesApplied: [String],
         summarizer: any CompactionSummarizer,
-        pendingRuns: [CompactionSegment.PendingRunSummary] = []
+        pendingRuns: [CompactionSegment.PendingRunSummary] = [],
+        protection: ToolOutputProtection? = nil
     ) async throws -> Folded? {
         let (header, turns) = TranscriptTurns.split(Array(transcript))
         let (old, recent) = TranscriptTurns.partition(turns, keepRecentTurns: keepRecentTurns)
         guard !old.isEmpty else { return nil }
 
-        let answered = try await summarize(old, prompt: prompt, summarizer: summarizer)
-        let spanBytes = old.flatMap(\.entries).reduce(0) { $0 + Compactor.contentByteCount(of: $1) }
+        let protectedOld = old.map { ProtectedToolOutputs(entries: $0.entries, rule: protection) }
+        let kept = protectedOld.flatMap(\.keptEntries)
+        let answered = try await summarize(
+            protectedOld.map { TranscriptTurn(entries: $0.unprotectedEntries) }, prompt: prompt,
+            summarizer: summarizer)
+        let spanBytes = Self.contentByteCount(of: old.flatMap(\.entries)) - Self.contentByteCount(of: kept)
         let renderingBytes =
             pendingRuns.isEmpty ? 0 : CompactionSegment.renderedPendingRuns(pendingRuns).utf8.count
         let budgetBytes = Self.summaryByteBudget(
@@ -190,10 +202,12 @@ public struct Summarization: Sendable, Equatable, Codable {
             answered, within: budgetBytes, summarizer: summarizer)
 
         let entryId = "compaction-summary-\(UUID().uuidString)"
-        let foldedEntryIds = old.flatMap(\.entries).map(\.id)
+        let keptEntryIds = Set(kept.map(\.id))
+        let foldedEntryIds = old.flatMap(\.entries).map(\.id).filter { !keptEntryIds.contains($0) }
+        let liveHeader = header + kept
         let recentEntries = recent.flatMap(\.entries)
         let stagesApplied = priorStagesApplied + [Self.stageName]
-        let liveWindowEntryIds = header.map(\.id) + [entryId] + recentEntries.map(\.id)
+        let liveWindowEntryIds = liveHeader.map(\.id) + [entryId] + recentEntries.map(\.id)
 
         // The entry construction itself is shared with the deterministic-only
         // fold path — see ``CompactionSegment/boundaryEntry(id:summaryText:content:)``.
@@ -217,13 +231,23 @@ public struct Summarization: Sendable, Equatable, Codable {
         // synthesized entry itself — a two-pass build (placeholder, then
         // corrected) rather than an approximation that omits the entry's own
         // contribution to the final size.
-        let provisional = Transcript(entries: header + [makeSummaryEntry(tokensAfter: 0)] + recentEntries)
+        let provisional = Transcript(entries: liveHeader + [makeSummaryEntry(tokensAfter: 0)] + recentEntries)
         let tokensAfter = Compactor.estimatedTokenCount(of: provisional)
-        let finalTranscript = Transcript(entries: header + [makeSummaryEntry(tokensAfter: tokensAfter)] + recentEntries)
+        let finalTranscript = Transcript(
+            entries: liveHeader + [makeSummaryEntry(tokensAfter: tokensAfter)] + recentEntries)
 
         return Folded(
             transcript: finalTranscript, summary: summaryText, summaryEntryId: entryId,
             summaryCut: summaryCut)
+    }
+
+    /// The total content byte size of `entries`, measured the way
+    /// ``Compactor/estimatedTokenCount(of:)`` measures a transcript.
+    ///
+    /// - Parameter entries: The entries to measure.
+    /// - Returns: Their content size in bytes.
+    private static func contentByteCount(of entries: [Transcript.Entry]) -> Int {
+        entries.reduce(0) { $0 + Compactor.contentByteCount(of: $1) }
     }
 
     /// The bytes the final summary may occupy so that the boundary entry

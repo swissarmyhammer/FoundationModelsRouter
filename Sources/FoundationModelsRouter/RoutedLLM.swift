@@ -32,7 +32,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         return owningProfile
     }
 
-    // sah:allow duplication a frozen public convenience (^pckk91c) whose body only forwards its nine parameters into a SessionConfiguration and on to makeSession(configuration:); makeGuidedSession forwards the same nine plus its grammar, and neither body holds logic that can drift
+    // sah:allow duplication a public convenience (^pckk91c) whose body only forwards its parameters into a SessionConfiguration and on to makeSession(configuration:); makeGuidedSession forwards the same parameters plus its grammar, and neither body holds logic that can drift
     /// Vends a new generation session over this resident model.
     ///
     /// When the router records durably, this writes the session's
@@ -51,6 +51,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - summarization: The model-assisted compaction stage every fold runs.
     ///   - agentSpawn: The parent session and tool call this session was spawned from, or `nil`.
     ///   - discoveryPriming: The pre-discovery seeding opt-in, or `nil` to leave it off.
+    ///   - toolOutputProtection: The host rule whose protected tool outputs
+    ///     every fold keeps word for word, or `nil` to protect nothing.
     /// - Returns: A new ``RoutedSession`` over this model.
     public func makeSession(
         instructions: String? = nil,
@@ -61,7 +63,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         compactionPrompt: CompactionPrompt = .default,
         summarization: Summarization = Summarization(),
         agentSpawn: SessionSidecar.AgentSpawn? = nil,
-        discoveryPriming: DiscoveryPriming? = nil
+        discoveryPriming: DiscoveryPriming? = nil,
+        toolOutputProtection: ToolOutputProtection? = nil
     ) -> RoutedSession {
         makeSession(
             configuration: SessionConfiguration(
@@ -73,7 +76,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 compactionPrompt: compactionPrompt,
                 summarization: summarization,
                 agentSpawn: agentSpawn,
-                discoveryPriming: discoveryPriming))
+                discoveryPriming: discoveryPriming,
+                toolOutputProtection: toolOutputProtection))
     }
 
     /// Vends a new session over this resident model, configured by one
@@ -81,7 +85,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///
     /// A configuration with a ``SessionConfiguration/grammar`` vends a guided
     /// session. The precondition of
-    /// ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``
+    /// ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:)``
     /// applies.
     ///
     /// - Parameter configuration: The value that describes the session.
@@ -97,14 +101,15 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             compactionPrompt: configuration.compactionPrompt,
             summarization: configuration.summarization,
             agentSpawn: configuration.agentSpawn,
-            discoveryPriming: configuration.discoveryPriming)
+            discoveryPriming: configuration.discoveryPriming,
+            toolOutputProtection: configuration.toolOutputProtection)
     }
 
     /// The shared builder behind the plain and guided session surfaces.
     ///
     /// A non-`nil` `grammar` constrains every `respond` on the vended session
     /// and is stamped onto each recorded turn. The other parameters match
-    /// ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``.
+    /// ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:)``.
     ///
     /// - Parameter grammar: The grammar that constrains the session, or `nil`.
     /// - Returns: A new ``RoutedSession`` over this model.
@@ -118,7 +123,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         compactionPrompt: CompactionPrompt = .default,
         summarization: Summarization = Summarization(),
         agentSpawn: SessionSidecar.AgentSpawn? = nil,
-        discoveryPriming: DiscoveryPriming? = nil
+        discoveryPriming: DiscoveryPriming? = nil,
+        toolOutputProtection: ToolOutputProtection? = nil
     ) -> RoutedSession {
         let owningProfile = requireOwningProfile(apiName: "makeSession")
 
@@ -210,6 +216,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             summarization: summarization,
             agentSpawn: agentSpawn,
             discoveryPriming: discoveryPriming,
+            toolOutputProtection: toolOutputProtection,
             // Threaded only into the sidecar's configuration envelope (task
             // ^ne5g9jn), so the recorded configuration names the recording
             // root the session was actually vended with.

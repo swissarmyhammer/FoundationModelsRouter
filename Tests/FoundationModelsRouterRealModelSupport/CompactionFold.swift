@@ -82,7 +82,7 @@ public struct CompactionFoldOutcome: Sendable {
     /// The stage the fold ran with.
     public let summarization: Summarization
 
-    /// What ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``
+    /// What ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:protection:)``
     /// reported.
     public let result: CompactionResult
 

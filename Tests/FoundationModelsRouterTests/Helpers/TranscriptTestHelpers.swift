@@ -132,7 +132,7 @@ enum TranscriptFixtures {
     /// Builds a `.response`-kind event carrying a text summary segment plus a
     /// ``CompactionSegment`` — the exact shape a real compaction's
     /// synthesized entry takes (see ``CompactionSegment``'s own doc comment
-    /// and ``Summarization/apply(_:prompt:tokensBefore:priorStagesApplied:summarizer:pendingRuns:)``'s
+    /// and ``Summarization/apply(_:prompt:tokensBefore:priorStagesApplied:summarizer:pendingRuns:protection:)``'s
     /// `makeSummaryEntry`).
     ///
     /// Shared by `TranscriptReconstructionTests` and

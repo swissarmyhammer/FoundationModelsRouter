@@ -16,7 +16,7 @@ import FoundationModelsRouter
 /// it asks its final instruction, so it pays for as many generations as its task
 /// has steps (task ^aktsp2e).
 enum CompactionEvalProgressStep: String, Sendable, CaseIterable {
-    /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``
+    /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:protection:)``
     /// over the seed's entries, summarizer call included.
     case fold
 

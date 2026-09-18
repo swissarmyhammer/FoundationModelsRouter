@@ -30,6 +30,16 @@ public struct CompactionResult: Sendable, Equatable {
     /// ``summary``. `false` on a result rebuilt from a checkpoint.
     public let summaryCut: Bool
 
+    /// The estimated size, in tokens, of the protected tool outputs the
+    /// folded transcript keeps word for word (see ``ToolOutputProtection``).
+    /// `0` when the session has no rule, or when the rule protects nothing.
+    ///
+    /// Protected outputs count against the budget like other entries. When
+    /// they keep the fold over ``TokenBudget/targetTokens``, the fold still
+    /// completes with the other entries, and ``tokensAfter`` is over the
+    /// target. This value tells the host why.
+    public let protectedTokens: Int
+
     /// Creates a compaction result.
     ///
     /// - Parameters:
@@ -41,6 +51,8 @@ public struct CompactionResult: Sendable, Equatable {
     ///   - tokensBefore: The estimated pre-fold size, in tokens.
     ///   - tokensAfter: The estimated post-fold size, in tokens.
     ///   - stagesApplied: The stages that ran, in order.
+    ///   - protectedTokens: The estimated size of the protected tool outputs the
+    ///     folded transcript keeps. Defaults to `0`.
     public init(
         id: String = ULID.generate().description,
         summary: String?,
@@ -49,7 +61,8 @@ public struct CompactionResult: Sendable, Equatable {
         summaryCut: Bool = false,
         tokensBefore: Int,
         tokensAfter: Int,
-        stagesApplied: [String]
+        stagesApplied: [String],
+        protectedTokens: Int = 0
     ) {
         self.id = id
         self.summary = summary
@@ -59,6 +72,7 @@ public struct CompactionResult: Sendable, Equatable {
         self.tokensBefore = tokensBefore
         self.tokensAfter = tokensAfter
         self.stagesApplied = stagesApplied
+        self.protectedTokens = protectedTokens
     }
 
     /// Returns a copy of this result that names the model that wrote its
@@ -76,10 +90,15 @@ public struct CompactionResult: Sendable, Equatable {
             summaryCut: summaryCut,
             tokensBefore: tokensBefore,
             tokensAfter: tokensAfter,
-            stagesApplied: stagesApplied
+            stagesApplied: stagesApplied,
+            protectedTokens: protectedTokens
         )
     }
 }
+
+/// The logger a fold reports to when its protected tool outputs keep it over
+/// its target (see ``Compactor/foldKeptOverTarget(_:stagesApplied:tokensBefore:targetTokens:protection:)``).
+private let compactorLogger = makeModuleLogger(category: "Compaction")
 
 /// The compaction pipeline. It runs the deterministic stages in order until
 /// the transcript lands under ``TokenBudget/target``, then falls back to the
@@ -87,7 +106,13 @@ public struct CompactionResult: Sendable, Equatable {
 /// It reports the shortfall when no stage is enough.
 package enum Compactor {
     /// The deterministic stages this pipeline runs, in order.
-    static let stages: [any CompactionStage] = [ToolOutputElision(), TurnTruncation()]
+    ///
+    /// - Parameter protection: The host rule whose protected tool outputs
+    ///   every stage keeps, or `nil` to protect nothing.
+    /// - Returns: The stages, each carrying `protection`.
+    static func stages(protecting protection: ToolOutputProtection?) -> [any CompactionStage] {
+        [ToolOutputElision(protection: protection), TurnTruncation(protection: protection)]
+    }
 
     /// The characters-per-token ratio ``estimatedTokenCount(of:)`` applies to
     /// a transcript's content bytes.
@@ -99,6 +124,13 @@ package enum Compactor {
     /// transcript is returned unchanged with an empty
     /// ``CompactionResult/stagesApplied``.
     ///
+    /// The one exception is a fold that its protected tool outputs keep over
+    /// target: the protected outputs alone are over the target, or the fold
+    /// would land under it without them. That fold still completes with the
+    /// other entries, because no stage may remove a protected output, and its
+    /// ``CompactionResult/protectedTokens`` states why it is over target. The
+    /// pipeline runs each stage once, and it never loops.
+    ///
     /// - Parameters:
     ///   - transcript: The transcript to fold.
     ///   - prompt: The compaction prompt ``Summarization`` sends to `summarizer`.
@@ -106,6 +138,8 @@ package enum Compactor {
     ///   - summarizer: The model ``Summarization`` calls, or `nil` for the model-free pipeline.
     ///   - summarization: The model-assisted stage and its tuning.
     ///   - pendingRuns: The run-plane summaries of the runs still running, in tracking order.
+    ///   - protection: The host rule whose protected tool outputs every stage
+    ///     keeps word for word, or `nil` (the default) to protect nothing.
     /// - Returns: The folded transcript and a report of what happened.
     /// - Throws: What `summarizer.summarize(_:maxTokens:)` throws, or
     ///   ``SummarizationError/emptySummary`` when the summary holds no text.
@@ -115,7 +149,8 @@ package enum Compactor {
         budget: TokenBudget,
         summarizer: (any CompactionSummarizer)? = nil,
         summarization: Summarization = Summarization(),
-        pendingRuns: [CompactionSegment.PendingRunSummary] = []
+        pendingRuns: [CompactionSegment.PendingRunSummary] = [],
+        protection: ToolOutputProtection? = nil
     ) async throws -> (transcript: Transcript, result: CompactionResult) {
         let tokensBefore = estimatedTokenCount(of: transcript)
         let targetTokens = budget.targetTokens
@@ -125,7 +160,8 @@ package enum Compactor {
         // stage applied, no summary, and `tokensAfter` naming the size of what
         // is actually being returned. One value, so the two cannot drift.
         let shortfallResult = CompactionResult(
-            summary: nil, tokensBefore: tokensBefore, tokensAfter: tokensBefore, stagesApplied: [])
+            summary: nil, tokensBefore: tokensBefore, tokensAfter: tokensBefore, stagesApplied: [],
+            protectedTokens: protectedTokenCount(of: transcript, protection: protection))
 
         guard tokensBefore > targetTokens else {
             return (transcript, shortfallResult)
@@ -134,7 +170,7 @@ package enum Compactor {
         var current = transcript
         var stagesApplied: [String] = []
 
-        for stage in stages {
+        for stage in stages(protecting: protection) {
             current = stage.apply(current)
             stagesApplied.append(type(of: stage).stageName)
 
@@ -143,7 +179,8 @@ package enum Compactor {
                 return (
                     current,
                     CompactionResult(
-                        summary: nil, tokensBefore: tokensBefore, tokensAfter: estimated, stagesApplied: stagesApplied)
+                        summary: nil, tokensBefore: tokensBefore, tokensAfter: estimated, stagesApplied: stagesApplied,
+                        protectedTokens: protectedTokenCount(of: current, protection: protection))
                 )
             }
         }
@@ -160,7 +197,8 @@ package enum Compactor {
                 tokensBefore: tokensBefore,
                 priorStagesApplied: stagesApplied,
                 summarizer: summarizer,
-                pendingRuns: pendingRuns
+                pendingRuns: pendingRuns,
+                protection: protection
             )
         {
             // A fold is applied only when it actually shrank the transcript.
@@ -182,10 +220,21 @@ package enum Compactor {
                         summaryCut: folded.summaryCut,
                         tokensBefore: tokensBefore,
                         tokensAfter: tokensAfter,
-                        stagesApplied: stagesApplied + [Summarization.stageName]
+                        stagesApplied: stagesApplied + [Summarization.stageName],
+                        protectedTokens: protectedTokenCount(of: folded.transcript, protection: protection)
                     )
                 )
             }
+        }
+
+        // A deterministic fold that only its protected tool outputs keep over
+        // target completes: no stage may remove them, so returning the
+        // original would give up the whole fold for content that must stay.
+        if let kept = foldKeptOverTarget(
+            current, stagesApplied: stagesApplied, tokensBefore: tokensBefore, targetTokens: targetTokens,
+            protection: protection)
+        {
+            return kept
         }
 
         // Shortfall: every available stage ran and none of them left a
@@ -197,6 +246,61 @@ package enum Compactor {
         // `tokensBefore` — the size of what is actually being returned — not
         // the size of an attempt that was thrown away.
         return (transcript, shortfallResult)
+    }
+
+    /// Returns `folded` as a completed fold when its protected tool outputs
+    /// are what keep it over `targetTokens`, and logs that it ends over its
+    /// target. Otherwise returns `nil`.
+    ///
+    /// The protected outputs keep the fold over target when they alone are
+    /// over the target, or when the fold would land under the target without
+    /// them. The fold must also have shrunk the transcript.
+    ///
+    /// - Parameters:
+    ///   - folded: The transcript the deterministic stages produced.
+    ///   - stagesApplied: The stages that produced it, in order.
+    ///   - tokensBefore: The estimated size of the transcript before the fold.
+    ///   - targetTokens: The budget's target, in tokens.
+    ///   - protection: The host rule, or `nil`.
+    /// - Returns: The completed fold and its report, or `nil`.
+    private static func foldKeptOverTarget(
+        _ folded: Transcript,
+        stagesApplied: [String],
+        tokensBefore: Int,
+        targetTokens: Int,
+        protection: ToolOutputProtection?
+    ) -> (transcript: Transcript, result: CompactionResult)? {
+        let protectedTokens = protectedTokenCount(of: folded, protection: protection)
+        let tokensAfter = estimatedTokenCount(of: folded)
+        guard protectedTokens > 0, tokensAfter < tokensBefore,
+            protectedTokens > targetTokens || tokensAfter - protectedTokens <= targetTokens
+        else { return nil }
+        compactorLogger.warning(
+            """
+            a fold ends over its target of \(targetTokens, privacy: .public) tokens at \
+            \(tokensAfter, privacy: .public) tokens, because it keeps \(protectedTokens, privacy: .public) \
+            tokens of protected tool output
+            """
+        )
+        return (
+            folded,
+            CompactionResult(
+                summary: nil, tokensBefore: tokensBefore, tokensAfter: tokensAfter, stagesApplied: stagesApplied,
+                protectedTokens: protectedTokens)
+        )
+    }
+
+    /// The estimated size, in tokens, of the tool outputs `protection`
+    /// protects in `transcript`.
+    ///
+    /// - Parameters:
+    ///   - transcript: The transcript to measure.
+    ///   - protection: The host rule, or `nil` to protect nothing.
+    /// - Returns: The estimated token count, or `0` when nothing is protected.
+    static func protectedTokenCount(of transcript: Transcript, protection: ToolOutputProtection?) -> Int {
+        let protectedOutputs = ProtectedToolOutputs(entries: Array(transcript), rule: protection)
+            .protectedOutputEntries
+        return estimatedTokenCount(of: Transcript(entries: protectedOutputs))
     }
 
     /// Estimates `transcript`'s size in tokens: the total content byte size of
