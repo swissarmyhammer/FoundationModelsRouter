@@ -42,8 +42,24 @@ comments:
     - No fix was needed. The working tree still holds only the doc-comment changes for this task; no other file was changed.
     - next: none. The step is green.
   timestamp: 2026-09-18T23:16:30.082642+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m2vd3g3mc3gw882356e32j6a
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (01f3750). 0 findings, 0 confirmed, 0 refuted. 7 attempted, 0 failed. 8 files reviewed. 4 .kanban files excluded by .reviewignore.
+    - next: none. The task moved to done.
+  timestamp: 2026-09-18T23:19:54.740698+00:00
+- actor: claude-code
+  id: 01m2vd3xpyp3aw8kh71j21aka9
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 8 files (10 stale DocC links)
+    - test: green — swift test, 1427 passed in 3 products (1343 + 1 + 83), 0 failed, 0 skipped
+    - commit: 01f3750
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-09-18T23:20:08.670100+00:00
+position_column: done
+position_ordinal: ffffd880
 title: A test doc comment names a restoreSessionTree signature that does not exist
 ---
 ## What
