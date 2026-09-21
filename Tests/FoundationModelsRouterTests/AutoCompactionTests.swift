@@ -9,7 +9,7 @@ import Testing
 /// ``RoutedSessionActor/runTurn(grammar:turnId:promptId:pendingEvents:ownPrompt:onEvent:_:)``
 /// runs before a turn once measured fill reaches the budget's trigger, the
 /// reactive compact-and-retry-once recovery
-/// ``RoutedSessionActor/runTurnAttempt(grammar:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:_:)``
+/// ``RoutedSessionActor/runTurnAttempt(grammar:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetriesLeft:_:)``
 /// runs on `LanguageModelError.contextSizeExceeded`, the flash-then-own-model
 /// summarizer preference, and ``SessionEvent/compaction(_:)`` emission.
 ///

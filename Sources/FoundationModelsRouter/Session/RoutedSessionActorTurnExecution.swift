@@ -8,7 +8,8 @@ import os
 private let sessionPrimingLogger = makeModuleLogger(category: "DiscoveryPriming")
 
 /// ``RoutedSessionActor``'s turn execution: the recorder-bracketed generation
-/// chokepoint, the queued-prompt turn, discovery priming, overflow recovery, and cancellation.
+/// chokepoint, the queued-prompt turn, discovery priming, the recovery from an
+/// overflow or a rejected tool call, and cancellation.
 extension RoutedSessionActor {
     /// The token ceiling a turn gives its backend.
     ///
@@ -241,7 +242,7 @@ extension RoutedSessionActor {
         // Compared in tokens against ``TokenBudget/triggerTokens``, never as
         // `contextFill >= budget.trigger` — see the matching note on the
         // hard-ceiling pre-check in
-        // ``runTurnAttempt(grammar:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:_:)``
+        // ``runTurnAttempt(grammar:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetriesLeft:_:)``
         // and ``TokenBudget/triggerTokens`` itself for why those two fractions
         // are not interchangeable.
         if let budget = autoCompactionBudget,
@@ -276,7 +277,9 @@ extension RoutedSessionActor {
         return try await runTurnAttempt(
             grammar: grammar, pendingEvents: pendingEvents, ownPrompt: ownPrompt,
             responseTokenCeiling: responseTokenCeiling, onEvent: emit,
-            allowOverflowRetry: autoCompactionBudget != nil, body)
+            allowOverflowRetry: autoCompactionBudget != nil,
+            rejectedCallRetriesLeft: RejectedToolCallRetry.limit, body
+        )
     }
 
     /// Seeds this turn's pre-discovery entries into ``backend`` when ``discoveryPriming`` is set.
@@ -311,16 +314,20 @@ extension RoutedSessionActor {
 
     /// One physical attempt at a turn's model work and recording.
     ///
-    /// A recoverable context overflow is recorded as a failed attempt. When
-    /// `allowOverflowRetry` is set, the session folds to a lower target and retries once.
+    /// A failed attempt is recorded, and then
+    /// ``recoverFailedAttempt(from:grammar:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetriesLeft:_:)``
+    /// runs the attempt again when a recovery applies: a rejected tool call
+    /// goes back to the model, and a recoverable context overflow folds to a
+    /// lower target and retries once when `allowOverflowRetry` is set.
     ///
     /// - Parameters:
     ///   - grammar: The grammar in force for this turn.
     ///   - pendingEvents: The events this attempt carries in its preamble.
-    ///   - ownPrompt: This turn's own prompt text.
+    ///   - ownPrompt: This attempt's own prompt text.
     ///   - responseTokenCeiling: The token ceiling `body` gives the backend, or `nil`.
     ///   - onEvent: A sink for this turn's ``SessionEvent``s, or `nil`.
     ///   - allowOverflowRetry: Whether a recoverable context overflow folds and retries once.
+    ///   - rejectedCallRetriesLeft: How many more times a rejected tool call can run the attempt again.
     ///   - body: The model work to run.
     /// - Returns: The response text `body` produced.
     /// - Throws: Whatever `body` throws, or the retry's own outcome when a retry ran.
@@ -331,6 +338,7 @@ extension RoutedSessionActor {
         responseTokenCeiling: Int?,
         onEvent: ((SessionEvent) -> Void)? = nil,
         allowOverflowRetry: Bool,
+        rejectedCallRetriesLeft: Int,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
         let composedPrompt = Self.composedPrompt(pendingEvents: pendingEvents, prompt: ownPrompt)
@@ -383,21 +391,74 @@ extension RoutedSessionActor {
             await recordFailedTurn(
                 grammar: grammar, since: started, usageBefore: usageBefore,
                 responseTokenCeiling: responseTokenCeiling, pendingEvents: pendingEvents, onEvent: onEvent)
-
-            guard allowOverflowRetry, let budget = autoCompactionBudget, Self.isRecoverableContextOverflow(error) else {
-                throw error
-            }
-
-            let loweredBudget = TokenBudget(
-                limit: budget.limit, trigger: budget.trigger, target: Self.loweredRetryTarget(from: budget.target))
-            let result = try await performAutoCompaction(prompt: autoCompactionPrompt, budget: loweredBudget)
-            onEvent?(.compaction(result))
-
-            return try await runTurnAttempt(
-                grammar: grammar, pendingEvents: [], ownPrompt: ownPrompt,
+            return try await recoverFailedAttempt(
+                from: error, grammar: grammar, ownPrompt: ownPrompt,
                 responseTokenCeiling: responseTokenCeiling, onEvent: onEvent,
-                allowOverflowRetry: false, body)
+                allowOverflowRetry: allowOverflowRetry, rejectedCallRetriesLeft: rejectedCallRetriesLeft, body
+            )
         }
+    }
+
+    /// Runs the attempt again after a failed attempt that one of the two
+    /// recoveries can mend, or throws the error again.
+    ///
+    /// - A rejected tool call (``RejectedToolCallRetry``) goes back to the
+    ///   model: the next attempt sends the failed prompt again, with a tool
+    ///   error that says which call was rejected and why, so the model can
+    ///   write the call again. The
+    ///   retries stop at ``RejectedToolCallRetry/limit``.
+    /// - A recoverable context overflow folds to a lower target and retries
+    ///   once, when `allowOverflowRetry` is set.
+    ///
+    /// The caller has already recorded the failed attempt, so the retry
+    /// carries no pending events.
+    ///
+    /// - Parameters:
+    ///   - error: The error the failed attempt threw.
+    ///   - grammar: The grammar in force for this turn.
+    ///   - ownPrompt: The prompt text of the failed attempt.
+    ///   - responseTokenCeiling: The token ceiling `body` gives the backend, or `nil`.
+    ///   - onEvent: A sink for this turn's ``SessionEvent``s, or `nil`.
+    ///   - allowOverflowRetry: Whether a recoverable context overflow folds and retries once.
+    ///   - rejectedCallRetriesLeft: How many more times a rejected tool call can run the attempt again.
+    ///   - body: The model work to run.
+    /// - Returns: The response text of the retry.
+    /// - Throws: `error` when no recovery applies, or the retry's own outcome.
+    private func recoverFailedAttempt(
+        from error: any Error,
+        grammar: Grammar?,
+        ownPrompt: String,
+        responseTokenCeiling: Int?,
+        onEvent: ((SessionEvent) -> Void)?,
+        allowOverflowRetry: Bool,
+        rejectedCallRetriesLeft: Int,
+        _ body: @escaping @Sendable (String) async throws -> String
+    ) async throws -> String {
+        if rejectedCallRetriesLeft > 0, let retry = RejectedToolCallRetry(error: error) {
+            retry.logRetry(sessionID: id, retriesLeft: rejectedCallRetriesLeft - 1)
+            return try await runTurnAttempt(
+                grammar: grammar, pendingEvents: [], ownPrompt: retry.prompt(retrying: ownPrompt),
+                responseTokenCeiling: responseTokenCeiling, onEvent: onEvent,
+                allowOverflowRetry: allowOverflowRetry,
+                rejectedCallRetriesLeft: rejectedCallRetriesLeft - 1, body
+            )
+        }
+
+        guard allowOverflowRetry, let budget = autoCompactionBudget, Self.isRecoverableContextOverflow(error) else {
+            throw error
+        }
+
+        let loweredBudget = TokenBudget(
+            limit: budget.limit, trigger: budget.trigger, target: Self.loweredRetryTarget(from: budget.target)
+        )
+        let result = try await performAutoCompaction(prompt: autoCompactionPrompt, budget: loweredBudget)
+        onEvent?(.compaction(result))
+
+        return try await runTurnAttempt(
+            grammar: grammar, pendingEvents: [], ownPrompt: ownPrompt,
+            responseTokenCeiling: responseTokenCeiling, onEvent: onEvent,
+            allowOverflowRetry: false, rejectedCallRetriesLeft: rejectedCallRetriesLeft, body
+        )
     }
 
     /// Records a turn that ended in a failure: the transcript diff, the
