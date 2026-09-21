@@ -116,7 +116,7 @@ struct TurnTokenCeilingTests {
         arguments: BackendSurface.allCases)
     func liveBackendFallsBackToFloor(surface: BackendSurface) async throws {
         let log = CeilingProbeLog()
-        let container = CeilingProbeContainer(model: CeilingProbeLanguageModel(ending: .finished, log: log))
+        let container = LiveBackendContainer(model: CeilingProbeLanguageModel(ending: .finished, log: log))
         let backend = container.makeSession(instructions: nil)
 
         try await surface.runCall(on: backend)

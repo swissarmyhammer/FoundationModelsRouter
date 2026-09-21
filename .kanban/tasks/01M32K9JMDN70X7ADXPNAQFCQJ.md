@@ -43,8 +43,24 @@ comments:
     - SourceKit (`sourcekit-lsp`) reports 2 stale "Cannot find 'RejectedToolCallRetry' in scope" errors on `RoutedSessionActorTurnExecution.swift`. `swift build` and `swift test` — the real compiler and test runner — both resolve the symbol with no error, and the environment already flags `sourcekit-lsp` as not properly installed for this workspace, so this is a stale index, not a real build failure.
     - next: none. Ready for review.
   timestamp: 2026-09-21T18:43:08.601980+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m32mpe7bj29rn8annnmnd20s
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 3424179) — 0 findings, 0 confirmed, 0 refuted; 7 validator runs attempted, 0 failed, 0 skipped; 6 files reviewed, 4 `.kanban/` files not reviewed because of `.reviewignore`. The description has no earlier `## Review Findings` section.
+    - next: none. The task is in done. FoundationModelsACPAgent runs acceptance item 3 (its card ^0n045ea).
+  timestamp: 2026-09-21T18:47:16.459516+00:00
+- actor: claude-code
+  id: 01m32mpr7wbhdd08chqe8y4rzz
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 6 files
+    - test: green — swift test, 1345 passed, 0 failures, 0 warnings
+    - commit: 3424179
+    - review: clean — task moved to done
+  timestamp: 2026-09-21T18:47:26.716232+00:00
+position_column: done
+position_ordinal: ffffd980
 title: A rejected tool call ends the whole turn instead of going back to the model
 ---
 ## What happens

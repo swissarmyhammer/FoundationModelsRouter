@@ -233,9 +233,21 @@ struct ScriptedToolCallingModel: LanguageModel {
 /// It overrides both `tools:` factory overloads rather than taking the
 /// protocol's tool-dropping defaults: mounting the session's tools is exactly
 /// what this fixture exists to exercise.
+///
+/// It does not build a backend itself. Each factory asks a
+/// ``LiveBackendContainer`` for the backend, records it in ``vendedBackends``,
+/// and returns it. Thus one type in the test target builds the backend.
 struct ScriptedToolCallingContainer: LoadedLLMContainer {
-    /// The scripted model every backend this container vends runs over.
-    let model: ScriptedToolCallingModel
+    /// The container that builds every backend this container vends, over
+    /// the scripted model.
+    private let live: LiveBackendContainer<ScriptedToolCallingModel>
+
+    /// Makes a container whose backends run over `model`.
+    ///
+    /// - Parameter model: The scripted model to mount.
+    init(model: ScriptedToolCallingModel) {
+        live = LiveBackendContainer(model: model)
+    }
 
     /// Every backend this container has vended, in vending order.
     ///
@@ -249,7 +261,9 @@ struct ScriptedToolCallingContainer: LoadedLLMContainer {
 
     /// The raw model handle, so a test can build its own session over the very
     /// model the container mounts.
-    var languageModel: any FoundationModels.LanguageModel { model }
+    var languageModel: any FoundationModels.LanguageModel {
+        live.model
+    }
 
     /// Vends a backend over a fresh session carrying `instructions`, with no
     /// tools mounted.
@@ -274,14 +288,7 @@ struct ScriptedToolCallingContainer: LoadedLLMContainer {
     ///   - tools: The tools to mount on the session.
     /// - Returns: A backend a vended `RoutedSession` drives for its lifetime.
     func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
-        vendedBackends.record(
-            MLXFoundationModelsSessionBackend(
-                session: LanguageModelSession(
-                    model: model, tools: tools, instructions: instructions),
-                model: model,
-                instructions: instructions,
-                tools: tools
-            ))
+        vendedBackends.record(live.makeSession(instructions: instructions, tools: tools))
     }
 
     /// Vends a backend over a fresh session seeded from `transcript`, with no
@@ -303,13 +310,7 @@ struct ScriptedToolCallingContainer: LoadedLLMContainer {
     /// - Returns: A backend whose history begins with `transcript`'s entries,
     ///   with `tools` mounted.
     func makeSession(transcript: Transcript, tools: [any Tool]) -> any LanguageModelSessionBackend {
-        vendedBackends.record(
-            MLXFoundationModelsSessionBackend(
-                session: LanguageModelSession(model: model, tools: tools, transcript: transcript),
-                model: model,
-                instructions: TranscriptDiffer.leadingInstructionsText(of: transcript),
-                tools: tools
-            ))
+        vendedBackends.record(live.makeSession(transcript: transcript, tools: tools))
     }
 }
 

@@ -368,65 +368,9 @@ struct CeilingProbeLanguageModel: LanguageModel {
     }
 }
 
-/// A ``LoadedLLMContainer`` that vends the production
-/// ``MLXFoundationModelsSessionBackend`` over a ``CeilingProbeLanguageModel``,
-/// so a routed session drives the real backend with no GPU.
-struct CeilingProbeContainer: LoadedLLMContainer {
-    /// The probe model every backend of this container runs over.
-    let model: CeilingProbeLanguageModel
-
-    /// Vends a backend over a fresh session carrying `instructions`, with no
-    /// tools mounted.
-    ///
-    /// - Parameter instructions: The session's system instructions, or `nil`.
-    /// - Returns: A live backend over ``model``.
-    func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-        makeSession(instructions: instructions, tools: [])
-    }
-
-    /// Vends a backend over a fresh session carrying `instructions`, with
-    /// `tools` mounted so a ``CeilingProbeCallEnding/callsTool`` call can call
-    /// them. The protocol default drops the tools.
-    ///
-    /// - Parameters:
-    ///   - instructions: The session's system instructions, or `nil`.
-    ///   - tools: The tools to mount on the session.
-    /// - Returns: A live backend over ``model``.
-    func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
-        MLXFoundationModelsSessionBackend(
-            session: LanguageModelSession(model: model, tools: tools, instructions: instructions),
-            model: model,
-            instructions: instructions,
-            tools: tools)
-    }
-
-    /// Vends a backend over a fresh session seeded from `transcript`, with no
-    /// tools mounted.
-    ///
-    /// - Parameter transcript: The transcript to seed the session from.
-    /// - Returns: A live backend over ``model``.
-    func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
-        makeSession(transcript: transcript, tools: [])
-    }
-
-    /// Vends a backend over a fresh session seeded from `transcript`, with
-    /// `tools` mounted.
-    ///
-    /// - Parameters:
-    ///   - transcript: The transcript to seed the session from.
-    ///   - tools: The tools to mount on the session.
-    /// - Returns: A live backend over ``model``.
-    func makeSession(transcript: Transcript, tools: [any Tool]) -> any LanguageModelSessionBackend {
-        MLXFoundationModelsSessionBackend(
-            session: LanguageModelSession(model: model, tools: tools, transcript: transcript),
-            model: model,
-            instructions: TranscriptDiffer.leadingInstructionsText(of: transcript),
-            tools: tools)
-    }
-}
-
-/// A routed session over a ``CeilingProbeContainer``, with the log its model
-/// writes into and the directory the router cached into.
+/// A routed session over a ``LiveBackendContainer`` that runs a
+/// ``CeilingProbeLanguageModel``, with the log its model writes into and the
+/// directory the router cached into.
 struct CeilingProbeSessionFixture {
     /// The vended session a test drives its turn on.
     let session: RoutedSession
@@ -456,7 +400,7 @@ struct CeilingProbeSessionFixture {
     ) async throws -> CeilingProbeSessionFixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let log = CeilingProbeLog()
-        let container = CeilingProbeContainer(model: CeilingProbeLanguageModel(ending: ending, log: log))
+        let container = LiveBackendContainer(model: CeilingProbeLanguageModel(ending: ending, log: log))
         let router = RouterTestFixtures.makeRouter(
             cacheDir: directory,
             loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension))
