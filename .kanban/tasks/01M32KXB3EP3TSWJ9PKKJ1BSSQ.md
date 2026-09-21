@@ -36,8 +36,24 @@ comments:
     - swiftformat: ran with `--pattern-let inline --short-optionals always --single-line-for-each convert --guard-like-if-statements convert` restricted to the exact new-file line ranges this change touched (371-373, 403 in CeilingProbeLanguageModel.swift; 236-239, 241-250, 264, 289, 311 in ScriptedToolCallingModel.swift; 119 in TurnTokenCeilingTests.swift), not the whole file. One finding: the `wrapPropertyBodies` rule (a SwiftFormat default rule) flagged the touched `languageModel` property in ScriptedToolCallingModel.swift. Fixed by wrapping it onto multiple lines. No other touched line needed a change.
     - next: ready for review.
   timestamp: 2026-09-21T19:02:47.582189+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m32nry45g3dfby237g51btq4
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 83e2670). 0 findings, 0 confirmed, 0 refuted. The engine reviewed 3 files. It did not review 4 files in .kanban/ because .reviewignore excludes them.
+    - next: None. The task is in the done column.
+  timestamp: 2026-09-21T19:06:06.853246+00:00
+- actor: claude-code
+  id: 01m32ns57xd93kwyefp6md8765
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 3 files
+    - test: green — swift test, 1345 passed, 0 failures
+    - commit: 83e2670
+    - review: clean — task moved to done
+  timestamp: 2026-09-21T19:06:14.141182+00:00
+position_column: done
+position_ordinal: ffffda80
 title: Move ScriptedToolCallingContainer and CeilingProbeContainer onto LiveBackendContainer
 ---
 ## What is wrong
