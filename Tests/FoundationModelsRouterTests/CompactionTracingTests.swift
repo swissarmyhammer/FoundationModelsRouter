@@ -113,7 +113,7 @@ struct CompactionTracingTests {
     }
 
     @Test("a compaction span carries the compaction's own before and after token estimates")
-    func compactionSpanCarriesTheCompactionsOwnTokenCounts() async throws {
+    func compactionSpanCarriesItsOwnTokenCounts() async throws {
         let tracer = InMemoryTracer()
         let (session, _, _) = try await AutoCompactionFixtures.makeTriggeredSession(
             budget: nil, tracer: tracer, tempDirPrefix: Self.tempDirPrefix)

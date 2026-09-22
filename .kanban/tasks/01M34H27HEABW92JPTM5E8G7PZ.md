@@ -35,7 +35,38 @@ comments:
     - fix made in this step: `IntegrationTests/.../RealToolTurnComparisonTests.swift:365` — added `.generationCall` to the catch-all arm of the `switch event`, the case commit 5705477 added to `SessionEvent`. The package did not compile before this fix. The separate card written for it was deleted, because this task now carries the fix.
     - next: /commit, then /review.
   timestamp: 2026-09-22T13:41:46.629601+00:00
-position_column: doing
+- actor: claude-code
+  id: 01m34nmcycdjrybc96d3r1hmen
+  text: |-
+    ### commit — changed
+    - evidence: 177a9b4 refactor(compaction): use one word, "compaction", for the operation that shrinks the transcript
+    - next: /review 5e8g7pz HEAD~1..HEAD
+  timestamp: 2026-09-22T13:42:07.052171+00:00
+- actor: claude-code
+  id: 01m34qhws8pswfvfer01jaakse
+  text: |-
+    ### review — findings
+    - evidence: `review sha HEAD~1..HEAD` — 6 findings, 6 confirmed, 0 refuted, 112 attempted — Examples/CompactionDemo/main.swift:295, Examples/CompactionDemo/main.swift:329, IntegrationTests/.../CompactionContinuityEvalRealSubjectRunner.swift:258, Tests/FoundationModelsRouterTests/CompactionTracingTests.swift:116, Tests/FoundationModelsRouterTests/ExamplesTests.swift:663, Tests/FoundationModelsRouterTests/SummarizationStageTests.swift:1
+    - task moved doing -> review; findings appended to the description.
+    - next: /implement works the unchecked items.
+  timestamp: 2026-09-22T14:15:42.120495+00:00
+- actor: claude-code
+  id: 01m34qn5pkpbycr0rp1vpv44zd
+  text: |-
+    ### implement — changed (iteration 2: the review findings)
+    - evidence: 4 files — `Examples/CompactionDemo/main.swift` (a `// swiftlint:disable:next no_direct_standard_out_logs` line with its reason before every one of the 13 `print(` calls, not only the two flagged lines), `IntegrationTests/.../CompactionContinuityEvalRealSubjectRunner.swift` (the same before both `print(` calls), `Tests/FoundationModelsRouterTests/ExamplesTests.swift:663` ("to actually compact"), `Tests/FoundationModelsRouterTests/CompactionTracingTests.swift:116` (`compactionSpanCarriesItsOwnTokenCounts`, singular).
+    - the sixth finding (`SummarizationStageTests.swift:1`, split the file for the review prompt cap) is released by the written rule that drops findings which ask to refactor tests that already existed: the file existed before this task, and this change only renamed words in it. Flipped with this reason; no edit made to that file.
+    - `swift build --build-tests` and `swift build --package-path IntegrationTests --build-tests` clean; `swift test --filter 'ExamplesTests|CompactionTracingTests'` 20 tests passed.
+    - next: /test (full run), /commit, /review.
+  timestamp: 2026-09-22T14:17:29.555155+00:00
+- actor: claude-code
+  id: 01m34qnnrqnc7r67pb6203wvwt
+  text: |-
+    ### test — green (iteration 2)
+    - evidence: `swift test` — 1356 tests in 145 suites passed (2 known issues, pre-existing), 1 test in 1 suite passed, 83 tests in 10 suites passed; 0 failures, 0 skipped, 0 Swift warnings. `swift build --package-path IntegrationTests --build-tests` — Build complete.
+    - next: /commit, then /review 5e8g7pz HEAD~1..HEAD.
+  timestamp: 2026-09-22T14:17:46.007675+00:00
+position_column: review
 position_ordinal: '80'
 title: Replace "fold" with "compact" in code, comments, tests and docs
 ---
@@ -79,3 +110,23 @@ Leave these alone: `folder`, `folders`, `scaffold`, `scaffolding`, `scaffolds`. 
 ## Order
 
 Land this before ^9ddjkjm and ^46bz58k. They edit `RoutedSessionActorCompaction.swift` and `RoutedSessionActorTurnExecution.swift`, and a rename in flight makes their diffs hard to read. #compaction
+
+## Review Findings (2026-09-22 08:42)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 111 file(s) reviewed, 11 not reviewed.
+
+> 1 file(s) not reviewed — the rendered prompt would exceed the agent's prompt cap:
+> - `Tests/FoundationModelsRouterTests/SummarizationStageTests.swift` — 330666 rendered bytes, over the 262144-byte per-file cap; not reviewed by: duplication (split the file)
+
+> 6 file(s) not reviewed — excluded by an ignore rule: `.kanban/ (from .reviewignore)` — 6 file(s)
+
+> 4 file(s) not reviewed — no validator matched: `Examples/CompactionDemo/README.md`, `Sources/FoundationModelsRouter/FoundationModelsRouter.docc/SessionProjection.md`, `Tests/FoundationModelsRouterRealModelSupport/Fixtures/CompactionRecording/README.md`, `compaction_plan.md`.
+
+> The tool rules `disallowed-constructs-swift`, `function-length-swift`, `idioms-swift`, `magic-numbers-swift` and `missing-docs-swift` each declined the four renamed-away paths (`ResponseTextFold.swift`, `CompactionFold.swift`, `CompactionFoldFixtures.swift`, `FoldSpanObservation.swift`): the file no longer exists at that path, so its content is unread there.
+
+- [x] `Examples/CompactionDemo/main.swift:295` `code-hygiene/disallowed-constructs-swift` — no_direct_standard_out_logs: Do not commit print(…), debugPrint(…), dump(…) or _printChanges(), which write to standard out in release. Log to a dedicated logging system, or silence one debug-only line with // swiftlint:disable:next no_direct_standard_out_logs and the reason after it.
+- [x] `Examples/CompactionDemo/main.swift:329` `code-hygiene/disallowed-constructs-swift` — no_direct_standard_out_logs: Do not commit print(…), debugPrint(…), dump(…) or _printChanges(), which write to standard out in release. Log to a dedicated logging system, or silence one debug-only line with // swiftlint:disable:next no_direct_standard_out_logs and the reason after it.
+- [x] `IntegrationTests/Tests/FoundationModelsRouterEvalIntegrationTests/Support/CompactionContinuityEvalRealSubjectRunner.swift:258` `code-hygiene/disallowed-constructs-swift` — no_direct_standard_out_logs: Do not commit print(…), debugPrint(…), dump(…) or _printChanges(), which write to standard out in release. Log to a dedicated logging system, or silence one debug-only line with // swiftlint:disable:next no_direct_standard_out_logs and the reason after it.
+- [x] `Tests/FoundationModelsRouterTests/CompactionTracingTests.swift:116` `swift/naming-clarity` — The function name uses plural 'Compactions' when the corresponding test description and semantic meaning require singular 'Compaction'. The test name states 'the compaction's own' (singular possessive), but the function name appears to use 'Compactions' (plural), creating inconsistency and confusion. Rename the function to use singular form: 'compactionSpanCarriesTheCompactionOwnTokenCounts' or simplify to 'compactionSpanCarriesTokenCounts' (omitting needless words per naming-clarity rule).
+- [x] `Tests/FoundationModelsRouterTests/ExamplesTests.swift:663` `swift/naming-clarity` — The word 'compaction' is used as a verb when 'compact' should be used. The phrase 'had anything left to actually compaction' is grammatically incorrect and unclear. Replace 'compaction' with 'compact' on line 663: '// compact (that mechanics, and a real non-empty-stagesApplied compaction, is'.
+- [x] `Tests/FoundationModelsRouterTests/SummarizationStageTests.swift:1` `review-engine/prompt-cap` — This file exceeds the review prompt cap — 330666 rendered bytes against the 262144-byte per-file cap — so these validators could not review it: duplication. Split the file into smaller modules that fit the review prompt cap.

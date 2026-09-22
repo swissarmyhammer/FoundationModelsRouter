@@ -255,6 +255,7 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
                     // ignored without it — the debugging of 2026-08-19 read
                     // exactly this line to find that 9 of 10 summaries
                     // carried both facts verbatim while the answers did not.
+                    // swiftlint:disable:next no_direct_standard_out_logs  the eval trail is read from standard out
                     print("\(CompactionEvalProgressLog.linePrefix) compaction summary:\n\(result.summary ?? "<none>")")
                     stepCompactionCount += 1
                     stepTokensBefore = result.tokensBefore
@@ -325,6 +326,7 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
         // what the answering turn wrote before anyone can say whether the
         // compaction or the answer lost the fact. The framework's own per-sample
         // record is written nowhere unless an attachments path is configured.
+        // swiftlint:disable:next no_direct_standard_out_logs  the eval trail is read from standard out
         print("\(CompactionEvalProgressLog.linePrefix) final answer:\n\(finalAnswer)")
         let finalReturnedAt = Date()
         CompactionEvalProgressLog.emit(

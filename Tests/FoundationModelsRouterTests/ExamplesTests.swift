@@ -660,7 +660,7 @@ struct ExamplesTests {
         #expect(compactedAtTurn == 2)
 
         // Whether or not this toy transcript had anything left to actually
-        // compaction (that mechanics, and a real non-empty-stagesApplied compaction, is
+        // compact (that mechanics, and a real non-empty-stagesApplied compaction, is
         // exhaustively covered by RoutedSessionCompactTests), compact()
         // never breaks the session: it keeps responding normally right
         // afterward.

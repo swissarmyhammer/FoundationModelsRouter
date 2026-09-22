@@ -138,6 +138,7 @@ func runTurn(
 ) async throws -> (reply: String, compactions: [CompactionResult]) {
     let outcome = try await session.respond(to: prompt, maxTokens: demoReplyTokenCeiling) { event in
         guard case .compaction(let result) = event, !result.stagesApplied.isEmpty else { return }
+        // swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
         print(
             """
 
@@ -173,6 +174,7 @@ func measuredTokens(of session: RoutedSession, against budget: TokenBudget) asyn
 
 let startedAt = Date()
 
+// swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
 print(
     """
     === CompactionDemo: one automatic compaction, narrated ===
@@ -222,6 +224,7 @@ let progress = ResolutionProgress()
 async let resolvedProfile = router.resolve(profile: demoProfile, reporting: progress)
 for await transition in progress.phases {
     let percent = Int((transition.fraction * 100).rounded())
+    // swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
     print("[setup] \(transition.phase) \(percent)%")
 }
 let profile = try await resolvedProfile
@@ -247,6 +250,7 @@ let session = profile.standard.makeSession(
     )
 )
 
+// swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
 print(
     """
     [setup] resolved \(profile.standard.chosen.stringValue)
@@ -271,6 +275,7 @@ let fixtureURLs = try FileManager.default.contentsOfDirectory(
 .sorted { $0.lastPathComponent < $1.lastPathComponent }
 precondition(!fixtureURLs.isEmpty, "expected fixture documents under \(fixturesDirectory.path)")
 
+// swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
 print(
     """
 
@@ -292,11 +297,13 @@ for fixtureURL in fixtureURLs {
     let turn = try await runTurn(
         on: session, prompt: "Here is \(fixtureURL.lastPathComponent):\n\n\(contents)")
     guard turn.compactions.isEmpty else {
+        // swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
         print("[error] a compaction fired during the document turns; the trigger crossed earlier than this demo narrates")
         exit(EXIT_FAILURE)
     }
     documentsRead += 1
     usageTokens = await measuredTokens(of: session, against: budget)
+    // swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
     print(
         "[turn \(documentsRead)] read \(fixtureURL.lastPathComponent) — usage \(usageTokens) of \(budget.triggerTokens) trigger tokens"
     )
@@ -304,10 +311,12 @@ for fixtureURL in fixtureURLs {
 }
 
 guard usageTokens >= budget.triggerTokens else {
+    // swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
     print("[error] all \(documentsRead) documents together stayed under the trigger; lower demoTriggerShare")
     exit(EXIT_FAILURE)
 }
 
+// swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
 print(
     """
 
@@ -326,11 +335,13 @@ let triggerTurn = try await runTurn(
     on: session, prompt: "In one sentence: what kind of project do these documents describe?")
 
 guard let compaction = triggerTurn.compactions.last else {
+    // swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
     print("[error] the trigger turn applied no compaction, so there is no checkpoint to show")
     exit(EXIT_FAILURE)
 }
 
 let usageAfterCompaction = await measuredTokens(of: session, against: budget)
+// swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
 print(
     """
 
@@ -341,6 +352,7 @@ print(
 
 // MARK: - 3. The compacted summary the compaction wrote
 
+// swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
 print(
     """
 
@@ -348,4 +360,5 @@ print(
 
     \(compaction.summary ?? "(no summary text: only deterministic stages applied — stages \(compaction.stagesApplied))")
     """)
+// swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
 print(String(format: "\n[done] wall clock: %.1f seconds", Date().timeIntervalSince(startedAt)))
