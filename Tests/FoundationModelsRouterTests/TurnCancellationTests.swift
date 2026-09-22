@@ -523,10 +523,6 @@ struct TurnCancellationTests {
     /// target, which is never above it — stays far above the transcript.
     private static let inertCompactionTarget = 0.25
 
-    /// The response ceiling an overflowing turn in this suite names. See
-    /// ``AutoCompactionFixtures/retryableResponseCeiling``.
-    private static let retryableResponseCeiling = AutoCompactionFixtures.retryableResponseCeiling
-
     /// The auto-compaction opt-in ``cancellationSurvivesIntoTheOverflowRetry(route:)``
     /// vends its session with: enough to turn on the reactive
     /// compact-and-retry-once recovery, and nothing else.
@@ -1449,7 +1445,7 @@ struct TurnCancellationTests {
         }
 
         let turnTask = Task {
-            try await session.respond(to: "overflow-then-cancel", maxTokens: Self.retryableResponseCeiling)
+            try await session.respond(to: "overflow-then-cancel")
         }
         await insideTool.wait()
         // Both routes must behave identically here: neither may let the retry
@@ -1904,7 +1900,7 @@ struct TurnCancellationTests {
         }
 
         let turnTask = Task {
-            try await session.respond(to: Self.overflowingCompactionPrompt, maxTokens: Self.retryableResponseCeiling)
+            try await session.respond(to: Self.overflowingCompactionPrompt)
         }
         await insideSummarizer.wait()
         #expect(await session.cancelCurrentTurn() == .requested)

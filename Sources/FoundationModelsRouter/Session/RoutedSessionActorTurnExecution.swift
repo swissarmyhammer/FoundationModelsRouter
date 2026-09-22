@@ -61,9 +61,10 @@ extension RoutedSessionActor {
     ///     turn's span reports. Every caller states it, because the chokepoint
     ///     cannot tell one surface from another.
     ///   - prompt: This turn's own prompt text.
-    ///   - responseTokenCeiling: The token ceiling `body` gives the backend, or
-    ///     `nil` when it gives none. The recording reads it to find
-    ///     ``TokenUsage/finishReason``.
+    ///   - responseTokenCeiling: The token ceiling `body` gives the backend, and
+    ///     the ceiling the caller named. The recording reads the resolved
+    ///     ceiling to find ``TokenUsage/finishReason``. The retry after a
+    ///     context overflow reads the ceiling the caller named.
     ///   - onEvent: A sink for this turn's ``SessionEvent``s, or `nil`.
     ///   - body: The model work to run.
     /// - Returns: The response text `body` produced.
@@ -72,7 +73,7 @@ extension RoutedSessionActor {
         grammar: Grammar? = nil,
         entryPoint: RouterTracing.TurnEntryPoint,
         prompt: String,
-        responseTokenCeiling: Int?,
+        responseTokenCeiling: ResponseTokenCeiling,
         onEvent: ((SessionEvent) -> Void)? = nil,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
@@ -151,7 +152,7 @@ extension RoutedSessionActor {
     ///   - promptId: The queued prompt this turn dispatched, or `nil`.
     ///   - pendingEvents: The events this turn drained from ``outbox``.
     ///   - ownPrompt: This turn's own prompt text.
-    ///   - responseTokenCeiling: The token ceiling `body` gives the backend, or `nil`.
+    ///   - responseTokenCeiling: The token ceiling `body` gives the backend, and the ceiling the caller named.
     ///   - onEvent: A sink for this turn's ``SessionEvent``s, or `nil`.
     ///   - body: The model work to run.
     /// - Returns: The response text `body` produced.
@@ -164,7 +165,7 @@ extension RoutedSessionActor {
         promptId: PromptID?,
         pendingEvents: [OperationEvent],
         ownPrompt: String,
-        responseTokenCeiling: Int?,
+        responseTokenCeiling: ResponseTokenCeiling,
         onEvent: ((SessionEvent) -> Void)? = nil,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
@@ -210,7 +211,7 @@ extension RoutedSessionActor {
     ///   - promptId: The queued prompt this turn dispatched, or `nil`.
     ///   - pendingEvents: The events this turn drained from ``outbox``.
     ///   - ownPrompt: This turn's own prompt text.
-    ///   - responseTokenCeiling: The token ceiling `body` gives the backend, or `nil`.
+    ///   - responseTokenCeiling: The token ceiling `body` gives the backend, and the ceiling the caller named.
     ///   - onEvent: A sink for this turn's ``SessionEvent``s, or `nil`.
     ///   - body: The model work to run.
     /// - Returns: The response text `body` produced.
@@ -221,7 +222,7 @@ extension RoutedSessionActor {
         promptId: PromptID?,
         pendingEvents: [OperationEvent],
         ownPrompt: String,
-        responseTokenCeiling: Int?,
+        responseTokenCeiling: ResponseTokenCeiling,
         onEvent: ((SessionEvent) -> Void)? = nil,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
@@ -267,7 +268,7 @@ extension RoutedSessionActor {
                 // re-queues them, and the synthetic close is the trace.
                 await recordFailedTurn(
                     grammar: grammar, since: started, usageBefore: usageBefore,
-                    responseTokenCeiling: responseTokenCeiling, pendingEvents: pendingEvents, onEvent: emit)
+                    responseTokenCeiling: responseTokenCeiling.resolved, pendingEvents: pendingEvents, onEvent: emit)
                 throw error
             }
         }
@@ -317,13 +318,14 @@ extension RoutedSessionActor {
     /// ``recoverFailedAttempt(from:grammar:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetries:_:)``
     /// runs the attempt again when a recovery applies: a rejected tool call
     /// goes back to the model, and a recoverable context overflow compacts to the
-    /// room the turn needs and retries once when `allowOverflowRetry` is set.
+    /// target ``OverflowRetryTarget`` chooses and retries once when
+    /// `allowOverflowRetry` is set.
     ///
     /// - Parameters:
     ///   - grammar: The grammar in force for this turn.
     ///   - pendingEvents: The events this attempt carries in its preamble.
     ///   - ownPrompt: This attempt's own prompt text.
-    ///   - responseTokenCeiling: The token ceiling `body` gives the backend, or `nil`.
+    ///   - responseTokenCeiling: The token ceiling `body` gives the backend, and the ceiling the caller named.
     ///   - onEvent: A sink for this turn's ``SessionEvent``s, or `nil`.
     ///   - allowOverflowRetry: Whether a recoverable context overflow compacts and retries once.
     ///   - rejectedCallRetries: How many rejected tool calls this turn has already sent back to the model. The first attempt of a turn has sent none.
@@ -334,7 +336,7 @@ extension RoutedSessionActor {
         grammar: Grammar?,
         pendingEvents: [OperationEvent],
         ownPrompt: String,
-        responseTokenCeiling: Int?,
+        responseTokenCeiling: ResponseTokenCeiling,
         onEvent: ((SessionEvent) -> Void)? = nil,
         allowOverflowRetry: Bool,
         rejectedCallRetries: Int = 0,
@@ -345,7 +347,7 @@ extension RoutedSessionActor {
         let started = Date()
         let usageBefore = backend.usageTokenCounts()
         // Open for this attempt alone. `finishTurn` closes it on both exits.
-        openGenerationCallLedger(usageBefore: usageBefore, responseTokenCeiling: responseTokenCeiling)
+        openGenerationCallLedger(usageBefore: usageBefore, responseTokenCeiling: responseTokenCeiling.resolved)
         do {
             // The hard-ceiling pre-check (compaction_plan.md §1.7, task g2hcm36):
             // when the budget opts into ``TokenBudget/hardCeiling``, measured
@@ -386,12 +388,12 @@ extension RoutedSessionActor {
             // ``finishTurnAndRequeueIfUnattached(grammar:since:usageBefore:responseTokenCeiling:pendingEvents:onEvent:)``.
             _ = await finishTurnAndRequeueIfUnattached(
                 grammar: grammar, since: started, usageBefore: usageBefore,
-                responseTokenCeiling: responseTokenCeiling, pendingEvents: pendingEvents, onEvent: onEvent)
+                responseTokenCeiling: responseTokenCeiling.resolved, pendingEvents: pendingEvents, onEvent: onEvent)
             return response
         } catch {
             await recordFailedTurn(
                 grammar: grammar, since: started, usageBefore: usageBefore,
-                responseTokenCeiling: responseTokenCeiling, pendingEvents: pendingEvents, onEvent: onEvent)
+                responseTokenCeiling: responseTokenCeiling.resolved, pendingEvents: pendingEvents, onEvent: onEvent)
             return try await recoverFailedAttempt(
                 from: error, grammar: grammar, ownPrompt: ownPrompt,
                 responseTokenCeiling: responseTokenCeiling, onEvent: onEvent,
@@ -411,11 +413,13 @@ extension RoutedSessionActor {
     ///   turn, or the context fills. Each retry's prompt carries the earlier
     ///   tool errors, so a model that never corrects its call reaches the
     ///   overflow path.
-    /// - A recoverable context overflow compacts to the room the turn needs
-    ///   (``OverflowRetryTarget``) and retries once, when `allowOverflowRetry`
-    ///   is set. When the prompt and the response ceiling alone fill the
+    /// - A recoverable context overflow compacts and retries once, when
+    ///   `allowOverflowRetry` is set. ``OverflowRetryTarget`` chooses the
+    ///   target. When the caller named a response ceiling, the target is the
+    ///   room the turn needs; when the prompt and that ceiling alone fill the
     ///   window, no compaction helps: the turn does not retry, and `error`
-    ///   reaches the caller.
+    ///   reaches the caller. When the caller named no ceiling, the target is
+    ///   the configured target of the budget.
     ///
     /// The caller has already recorded the failed attempt, so the retry
     /// carries no pending events.
@@ -424,7 +428,7 @@ extension RoutedSessionActor {
     ///   - error: The error the failed attempt threw.
     ///   - grammar: The grammar in force for this turn.
     ///   - ownPrompt: The prompt text of the failed attempt.
-    ///   - responseTokenCeiling: The token ceiling `body` gives the backend, or `nil`.
+    ///   - responseTokenCeiling: The token ceiling `body` gives the backend, and the ceiling the caller named.
     ///   - onEvent: A sink for this turn's ``SessionEvent``s, or `nil`.
     ///   - allowOverflowRetry: Whether a recoverable context overflow compacts and retries once.
     ///   - rejectedCallRetries: How many rejected tool calls this turn has already sent back to the model.
@@ -435,7 +439,7 @@ extension RoutedSessionActor {
         from error: any Error,
         grammar: Grammar?,
         ownPrompt: String,
-        responseTokenCeiling: Int?,
+        responseTokenCeiling: ResponseTokenCeiling,
         onEvent: ((SessionEvent) -> Void)?,
         allowOverflowRetry: Bool,
         rejectedCallRetries: Int,
@@ -457,9 +461,9 @@ extension RoutedSessionActor {
         }
 
         let retryTarget = overflowRetryTarget(
-            retryPrompt: ownPrompt, responseTokenCeiling: responseTokenCeiling, budget: budget)
-        retryTarget?.log(sessionID: id)
-        guard let retryTarget, retryTarget.leavesRoom else {
+            retryPrompt: ownPrompt, requestedResponseTokenCeiling: responseTokenCeiling.requested, budget: budget)
+        retryTarget.log(sessionID: id)
+        guard retryTarget.leavesRoom else {
             throw error
         }
 
@@ -664,8 +668,13 @@ extension RoutedSessionActor {
         return false
     }
 
-    /// The compaction target of the retry after a context overflow: the room the
-    /// window keeps for the transcript after the retry's prompt and response room.
+    /// The compaction target of the retry after a context overflow.
+    ///
+    /// When the caller named a response ceiling, the rule is
+    /// ``OverflowRetryTarget/Rule/callerCeiling(_:)``: the room the window keeps
+    /// for the transcript after the retry's prompt and that ceiling. When the
+    /// caller named none, the rule is ``OverflowRetryTarget/Rule/configuredTarget``:
+    /// the configured target of `budget`.
     ///
     /// The retry's prompt is measured with this session's ``tokenCounter``,
     /// the tokenizer of its model. The retry carries no pending events, so its
@@ -673,16 +682,16 @@ extension RoutedSessionActor {
     ///
     /// - Parameters:
     ///   - retryPrompt: The prompt text the retry sends.
-    ///   - responseTokenCeiling: The token ceiling the turn gave the backend, or `nil`.
+    ///   - requestedResponseTokenCeiling: The response ceiling the caller named, or `nil`.
     ///   - budget: The session's own budget.
-    /// - Returns: The target, or `nil` when the turn gave the backend no ceiling.
+    /// - Returns: The target of the retry.
     private func overflowRetryTarget(
-        retryPrompt: String, responseTokenCeiling: Int?, budget: TokenBudget
-    ) -> OverflowRetryTarget? {
+        retryPrompt: String, requestedResponseTokenCeiling: Int?, budget: TokenBudget
+    ) -> OverflowRetryTarget {
         OverflowRetryTarget(
+            rule: requestedResponseTokenCeiling.map(OverflowRetryTarget.Rule.callerCeiling) ?? .configuredTarget,
             contextTokens: contextTokens,
             promptTokens: tokenCounter.count(Self.composedPrompt(pendingEvents: [], prompt: retryPrompt)),
-            responseTokenCeiling: responseTokenCeiling,
             configuredTargetTokens: budget.targetTokens)
     }
 
@@ -752,13 +761,13 @@ extension RoutedSessionActor {
         turnId: TurnID, promptId: PromptID?, pendingEvents: [OperationEvent], ownPrompt: String
     ) async throws -> String {
         let outcome: Result<String, any Error>
-        let ceiling = Self.responseTokenCeiling(requested: nil, contextTokens: contextTokens)
+        let ceiling = ResponseTokenCeiling(requested: nil, contextTokens: contextTokens)
         do {
             outcome = .success(
                 try await runTurn(
                     grammar: grammar, turnId: turnId, entryPoint: .dispatch, promptId: promptId,
                     pendingEvents: pendingEvents, ownPrompt: ownPrompt, responseTokenCeiling: ceiling,
-                    respondBody(grammar: grammar, responseTokenCeiling: ceiling)
+                    respondBody(grammar: grammar, responseTokenCeiling: ceiling.resolved)
                 ))
         } catch {
             outcome = .failure(error)

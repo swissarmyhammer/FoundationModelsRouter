@@ -197,13 +197,6 @@ enum AutoCompactionFixtures {
     /// compaction has real old-span content to work with.
     static let turnCount = 6
 
-    /// The response ceiling, in tokens, that an overflowing turn in a test names:
-    /// far under the window, so the window keeps room for the transcript after
-    /// the prompt and the response. The overflow retry runs only when that room
-    /// is positive (see ``OverflowRetryTarget``). A turn that names no ceiling
-    /// gets the whole window as its ceiling, and its overflow does not retry.
-    static let retryableResponseCeiling = 1
-
     /// The working context every session this fixture vends resolves at — the
     /// denominator of both ``RoutedSession/contextFill`` and, deliberately,
     /// ``fixedBudget``'s own ``TokenBudget/limit``.

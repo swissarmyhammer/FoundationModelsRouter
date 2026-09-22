@@ -400,17 +400,15 @@ struct AutoCompactionTests {
         // size (mirrors `ExamplesTests.reactiveCompactionRecoversFromContextOverflow()`),
         // guaranteeing the retry's compaction actually drops something real
         // (`TurnTruncation` alone lands under it) rather than no-op'ing on an
-        // already-under-target transcript. The window leaves far more room than
-        // that target, so the retry compacts to the configured target.
+        // already-under-target transcript.
         let session = try profile.standard.makeSession(
             budget: TokenBudget(limit: Self.reactiveRetryContextTokens(seedEntries), target: 0.35))
 
         // No `do`/`catch` here at all — unlike `ExamplesTests.respondWithReactiveCompaction`,
         // which the caller must wrap manually, this session recovers on its
-        // own. The turn names a ceiling far under the window, so the window
-        // keeps room for the transcript and the retry runs.
-        let response = try await session.respond(
-            to: "keep going", maxTokens: AutoCompactionFixtures.retryableResponseCeiling)
+        // own. The turn names no ceiling, so the retry compacts to the
+        // configured target of the budget.
+        let response = try await session.respond(to: "keep going")
 
         #expect(response == "recovered")
         // The backend was called twice: the overflowing first attempt, then
@@ -443,8 +441,7 @@ struct AutoCompactionTests {
 
         var caughtOverflow = false
         do {
-            _ = try await session.respond(
-                to: "keep going", maxTokens: AutoCompactionFixtures.retryableResponseCeiling)
+            _ = try await session.respond(to: "keep going")
         } catch LanguageModelError.contextSizeExceeded {
             caughtOverflow = true
         }
@@ -481,11 +478,7 @@ struct AutoCompactionTests {
         // mid-turn rather than only once the whole turn finished.
         standard.lastBackend?.usageIncrement = (input: 1_000, output: 0)
 
-        // The turn names a ceiling far under the window, so the window keeps room
-        // for the transcript and the retry runs.
-        let events = eventsAfterTurnFrame(
-            try await collect(
-                session.streamEvents(to: "turn 6", maxTokens: AutoCompactionFixtures.retryableResponseCeiling)))
+        let events = eventsAfterTurnFrame(try await collect(session.streamEvents(to: "turn 6")))
 
         guard case .turnEnded(let blockedUsage) = events.first else {
             Issue.record(
@@ -549,9 +542,7 @@ struct AutoCompactionTests {
         var collected: [SessionEvent] = []
         var caught: Error?
         do {
-            for try await event in await session.streamEvents(
-                to: "turn 6", maxTokens: AutoCompactionFixtures.retryableResponseCeiling)
-            {
+            for try await event in await session.streamEvents(to: "turn 6") {
                 collected.append(event)
             }
         } catch {
@@ -636,19 +627,21 @@ struct AutoCompactionTests {
         }
     }
 
-    /// Drives one turn with a ``roomTestPromptTokens``-token prompt and a
-    /// ``roomTestResponseCeiling`` ceiling on a session whose backend overflows
-    /// once, and returns the target its retry computed.
+    /// Drives one turn with a ``roomTestPromptTokens``-token prompt on a session
+    /// whose backend overflows once, and returns the target its retry computed.
     ///
-    /// - Parameter target: The configured target of the budget.
+    /// - Parameters:
+    ///   - target: The configured target of the budget.
+    ///   - responseCeiling: The response ceiling the turn names, or `nil` for a
+    ///     turn that names none.
     /// - Returns: The retry's target, and the number of model calls the turn made.
     /// - Throws: Whatever the turn throws, or a failed `#require`.
     private static func retryTargetOfOneOverflow(
-        target: Double
+        target: Double, responseCeiling: Int?
     ) async throws -> (target: OverflowRetryTarget, calls: Int) {
         let (session, container) = try await makeRoomTestSession(target: target, overflowsRemaining: 1)
         let prompt = String(repeating: "x", count: roomTestPromptTokens)
-        let events = try await collect(session.streamEvents(to: prompt, maxTokens: roomTestResponseCeiling))
+        let events = try await collect(session.streamEvents(to: prompt, maxTokens: responseCeiling))
         #expect(events.contains(.textDelta("recovered")))
         let retryTarget = try #require(overflowRetryTargets(in: events).first)
         return (retryTarget, container.callLog.count)
@@ -659,8 +652,10 @@ struct AutoCompactionTests {
     )
     @MainActor
     func overflowRetryCompactsToTheRoomTheTurnNeeds() async throws {
-        let (target, calls) = try await Self.retryTargetOfOneOverflow(target: Self.targetAboveRoom)
+        let (target, calls) = try await Self.retryTargetOfOneOverflow(
+            target: Self.targetAboveRoom, responseCeiling: Self.roomTestResponseCeiling)
 
+        #expect(target.rule == .callerCeiling(Self.roomTestResponseCeiling))
         #expect(target.contextTokens == 10_000)
         #expect(target.promptTokens == 1_000)
         #expect(target.responseTokenCeiling == 2_000)
@@ -674,12 +669,47 @@ struct AutoCompactionTests {
     @Test("the retry's target is capped at the configured target when the configured target is lower than the room")
     @MainActor
     func overflowRetryTargetIsCappedAtTheConfiguredTarget() async throws {
-        let (target, calls) = try await Self.retryTargetOfOneOverflow(target: Self.targetBelowRoom)
+        let (target, calls) = try await Self.retryTargetOfOneOverflow(
+            target: Self.targetBelowRoom, responseCeiling: Self.roomTestResponseCeiling)
 
+        #expect(target.rule == .callerCeiling(Self.roomTestResponseCeiling))
         #expect(target.roomTokens == 7_000)
         #expect(target.configuredTargetTokens == 5_000)
         #expect(target.targetTokens == 5_000)
         #expect(calls == 2)
+    }
+
+    // MARK: - With no caller ceiling, the retry compacts to the configured target (task n1khnxa)
+
+    @Test(
+        "an overflow of a turn that names no ceiling compacts to the configured target of 8,000 tokens and retries once"
+    )
+    @MainActor
+    func overflowRetryWithNoCallerCeilingCompactsToTheConfiguredTarget() async throws {
+        let (target, calls) = try await Self.retryTargetOfOneOverflow(
+            target: Self.targetAboveRoom, responseCeiling: nil)
+
+        #expect(target.rule == .configuredTarget)
+        #expect(target.contextTokens == 10_000)
+        #expect(target.promptTokens == 1_000)
+        #expect(target.responseTokenCeiling == nil)
+        #expect(target.roomTokens == nil)
+        #expect(target.configuredTargetTokens == 8_000)
+        #expect(target.targetTokens == 8_000)
+        #expect(target.leavesRoom)
+        // The overflowing attempt and the one retry.
+        #expect(calls == 2)
+    }
+
+    @Test("the retry of a turn that names no ceiling runs against the configured budget unchanged")
+    func overflowRetryWithNoCallerCeilingKeepsTheConfiguredBudget() {
+        let configured = TokenBudget(limit: Self.roomTestWindowTokens, target: Self.targetBelowRoom)
+        let target = OverflowRetryTarget(
+            rule: .configuredTarget, contextTokens: Self.roomTestWindowTokens,
+            promptTokens: Self.roomTestPromptTokens, configuredTargetTokens: configured.targetTokens)
+
+        #expect(target.budget(lowering: configured) == configured)
+        #expect(target.targetTokens == 5_000)
     }
 
     @Test("an overflow whose prompt is larger than the window retries nothing and throws the overflow")

@@ -20,8 +20,24 @@ comments:
     - evidence: `swift test` — 1356 tests in 145 suites passed (2 known issues are the intended `withKnownIssue` checks in BoundedWaitTests and RealModelHarnessTests), plus 1 and 83 tests in the other runners passed; 0 failed. The new test `settledTerminalEventsAreKeptForTheSessionLifetime` passed. `swift build --build-tests` and `swift build --package-path IntegrationTests --build-tests` complete with no compiler warning. The only build line is the SwiftPM note "missing creator for mutated node" on the mlx-swift_Cmlx.bundle dependency product, not on project source.
     - next: commit
   timestamp: 2026-09-22T19:21:26.397171+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m35967k0kv75gqjqvz1w0y8r
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (c204c8d): 0 findings, 0 confirmed, 0 refuted; 7 attempted, 0 failed. No prior findings on the card. The task moved to done.
+    - next: finish ledger
+  timestamp: 2026-09-22T19:23:54.336218+00:00
+- actor: claude-code
+  id: 01m3596ejajc1smwvw3mgefbwb
+  text: |-
+    ### finish iteration 1 — done
+    - implement: changed — Sources/FoundationModelsRouter/Hosting/SessionMailbox.swift (constant, `settledOrder`, eviction loop deleted; doc updated), Tests/FoundationModelsRouterTests/SessionMailboxTests.swift (new test `settledTerminalEventsAreKeptForTheSessionLifetime`); `rg 'settledTerminalEventRetentionLimit|settledOrder'` outside `.kanban/` finds nothing
+    - test: green — `swift test`: 1356 tests in 145 suites passed (2 intended known issues), plus 1 and 83 tests passed, 0 failed; `swift build --package-path IntegrationTests --build-tests` complete
+    - commit: c204c8d
+    - review: clean — none
+  timestamp: 2026-09-22T19:24:01.482775+00:00
+position_column: done
+position_ordinal: ffffe580
 title: Remove the settled terminal event retention bound in SessionMailbox
 ---
 ## Decision (from the owner, 2026-09-22)

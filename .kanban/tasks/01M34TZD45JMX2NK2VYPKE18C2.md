@@ -4,6 +4,7 @@ assignees:
 depends_on:
 - 01M34SPS7H39SK38H95M39WMX1
 - 01M34VATXAFNGB9WBF6XJK0PP8
+- 01M3599BYH1WBNJA33FN1KHNXA
 position_column: todo
 position_ordinal: '9380'
 title: 'Make compaction one call: current context + compaction prompt → a snapshot of instructions + summary'

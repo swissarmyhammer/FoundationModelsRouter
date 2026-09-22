@@ -42,7 +42,9 @@ public struct CompactionResult: Sendable, Equatable {
 
     /// The target the retry after a context overflow computed for this
     /// compaction, or `nil` for every other compaction. It states what the
-    /// retry aimed for and why.
+    /// retry aimed for and why. Its ``OverflowRetryTarget/rule`` states which
+    /// rule chose the target: the caller's response ceiling, or the configured
+    /// target of the budget.
     public let overflowRetryTarget: OverflowRetryTarget?
 
     /// Creates a compaction result.
