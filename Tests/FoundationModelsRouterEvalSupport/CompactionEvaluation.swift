@@ -130,7 +130,11 @@ enum CompactionEvaluationError: Error {
 /// The value before task ^pke18c2, `limit: 400, target: 0.10` (40 tokens), was
 /// sized for the compaction of that time. Under the one call it is under the
 /// instructions, so every compaction stopped with no call.
-let compactionEvalDefaultBudget = TokenBudget(limit: 418, trigger: 0.80, target: 1.0)
+let compactionEvalDefaultBudget = TokenBudget(limit: compactionEvalDefaultTargetTokens, target: 1.0)
+
+/// The target, in tokens, of ``compactionEvalDefaultBudget``: the top of the
+/// interval that both counters hold, as its doc comment measures.
+let compactionEvalDefaultTargetTokens = 418
 
 /// The compaction-quality evaluation (compaction_plan.md §5): plants a fact in
 /// a seed transcript's compactable head, compacts it with ``prompt``/``budget``,

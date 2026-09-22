@@ -44,11 +44,36 @@ comments:
     - For the owner: the card sets the output ceiling at window − input with no other bound. A small model that does not keep to the stated size writes until that ceiling. The did-it-shrink check then rejects the summary. The code follows the card. I made no change to the floors, and I added no bound.
     - `compactionEvalDefaultBudget` is now `TokenBudget(limit: 418, trigger: 0.80, target: 1.0)`. The old 40-token target was under the 78-token recall instructions, so every compaction stopped. The measurement is in its doc comment.
   timestamp: 2026-09-22T20:50:34.868885+00:00
+- actor: claude-code
+  id: 01m35fv7qhcph33zgxgqsxx6ge
+  text: |-
+    ### commit — changed
+    - evidence: 18965cd feat(compaction): compact in one summarizer call over the whole live context
+
+    ### review — findings
+    - evidence: 2 findings. Tests/FoundationModelsRouterEvalSupport/CompactionEvaluation.swift:133, Tests/FoundationModelsRouterTests/ToolOutputProtectionSessionTests.swift:101
+    - next: implement the findings, test, commit, review.
+  timestamp: 2026-09-22T21:20:14.065740+00:00
+- actor: claude-code
+  id: 01m35fxy6xvmg5nvewfedv5pee
+  text: |-
+    ### finish iteration 1 — review: findings
+    - implement: changed — 18965cd: the one-call compaction across Sources, the tests, the evals, IntegrationTests, the tool and the example
+    - test: green — `swift test`: 1297 unit tests in 145 suites (2 known issues, not new), 1 public-surface test, 83 eval tests: all pass. `swift build --package-path IntegrationTests --build-tests`: Build complete
+    - commit: 18965cd
+    - review: findings — Tests/FoundationModelsRouterEvalSupport/CompactionEvaluation.swift:133 (magic-numbers-swift), Tests/FoundationModelsRouterTests/ToolOutputProtectionSessionTests.swift:101 (swift/fluent-usage)
+
+    ### implement — changed
+    - evidence: The target is now the named constant `compactionEvalDefaultTargetTokens` (CompactionEvaluation.swift). The test helper is now `compact(session:)`, and all call sites use it (ToolOutputProtectionSessionTests.swift). Both findings are checked.
+
+    ### test — green
+    - evidence: `swift test`: 1297 unit tests in 145 suites passed (2 known issues, not new), 1 test passed, 83 eval tests passed. The only build warning is the old build-system "missing creator" warning.
+  timestamp: 2026-09-22T21:21:42.621742+00:00
 depends_on:
 - 01M34SPS7H39SK38H95M39WMX1
 - 01M34VATXAFNGB9WBF6XJK0PP8
 - 01M3599BYH1WBNJA33FN1KHNXA
-position_column: doing
+position_column: review
 position_ordinal: '80'
 title: 'Make compaction one call: current context + compaction prompt → a snapshot of instructions + summary'
 ---
@@ -107,3 +132,10 @@ Every construction site's arguments for the deleted parameters: `RoutedSessionAc
 ## Order
 
 After ^m39wmx1 (the overflow retry target), which reads `budget.target` the same way. Land this before ^9ddjkjm, which calls `performAutoCompaction`. #compaction #limits
+
+## Review Findings (2026-09-22 15:50)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 76 file(s) reviewed, 3 not reviewed.
+
+- [x] `Tests/FoundationModelsRouterEvalSupport/CompactionEvaluation.swift:133` `code-hygiene/magic-numbers-swift` — Magic numbers should be replaced by named constants.
+- [x] `Tests/FoundationModelsRouterTests/ToolOutputProtectionSessionTests.swift:101` `swift/fluent-usage` — Omit the first argument label only for value-preserving conversions. Compacting a session is a transformation, not a value-preserving conversion, so the first parameter should have a label. Change to `private static func compact(session: RoutedSession, ...)` so call sites read as `Self.compact(session: session, ...)` with semantic clarity of what is being transformed.

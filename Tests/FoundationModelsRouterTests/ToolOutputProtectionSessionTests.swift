@@ -98,7 +98,7 @@ struct ToolOutputProtectionSessionTests {
     /// - Returns: What the compaction did.
     /// - Throws: What the compaction throws.
     @discardableResult
-    private static func compact(_ session: RoutedSession) async throws -> CompactionResult {
+    private static func compact(session: RoutedSession) async throws -> CompactionResult {
         try await session.compact(budget: budgetJustUnder(await session.transcript))
     }
 
@@ -122,7 +122,7 @@ struct ToolOutputProtectionSessionTests {
         let session = profile.standard.makeSession(toolOutputProtection: Fixtures.rule)
         try await driveTurns(Fixtures.recentTurnCount, on: session)
 
-        let result = try await Self.compact(session)
+        let result = try await Self.compact(session: session)
 
         #expect(result.summary != nil)
         #expect(result.stagesApplied == [Summarization.stageName])
@@ -139,7 +139,7 @@ struct ToolOutputProtectionSessionTests {
             configuration: SessionConfiguration(toolOutputProtection: Fixtures.rule))
         try await driveTurns(Fixtures.recentTurnCount, on: session)
 
-        let result = try await Self.compact(session)
+        let result = try await Self.compact(session: session)
 
         #expect(result.stagesApplied == [Summarization.stageName])
         Self.expectProtectedOnly(in: await session.transcript)
@@ -153,7 +153,7 @@ struct ToolOutputProtectionSessionTests {
         let session = profile.standard.makeSession()
         try await driveTurns(Fixtures.recentTurnCount, on: session)
 
-        let result = try await Self.compact(session)
+        let result = try await Self.compact(session: session)
 
         #expect(result.protectedTokens == 0)
         let transcript = await session.transcript
@@ -172,7 +172,7 @@ struct ToolOutputProtectionSessionTests {
         try await driveTurns(Fixtures.recentTurnCount, on: session)
 
         let fork = try await session.fork(workingDirectory: nil)
-        try await Self.compact(fork)
+        try await Self.compact(session: fork)
 
         Self.expectProtectedOnly(in: await fork.transcript)
     }
@@ -193,7 +193,7 @@ struct ToolOutputProtectionSessionTests {
         let restored = try await restoring.standard.restoreSession(
             id: session.id, recordingRoot: nil, toolOutputProtection: Fixtures.rule
         ).session
-        try await Self.compact(restored)
+        try await Self.compact(session: restored)
 
         Self.expectProtectedOnly(in: await restored.transcript)
     }
@@ -207,7 +207,7 @@ struct ToolOutputProtectionSessionTests {
         let session = original.standard.makeSession(
             configuration: SessionConfiguration(toolOutputProtection: Fixtures.rule))
         try await driveTurns(Fixtures.recentTurnCount, on: session)
-        try await Self.compact(session)
+        try await Self.compact(session: session)
         let liveTranscript = await session.transcript
         let liveIds = liveTranscript.map(\.id)
 
