@@ -37,6 +37,28 @@ actor RecordingSummarizer: CompactionSummarizer {
     }
 }
 
+/// A ``CompactionSummarizer`` that does not keep to the stated size. It
+/// writes until the output ceiling of the call stops it.
+///
+/// Its answer holds one character for each token of the ceiling. Under
+/// ``characterTokenCounter`` the answer is thus exactly as long as the
+/// ceiling.
+actor RunawaySummarizer: CompactionSummarizer {
+    /// The output ceiling of every call this summarizer got, in order.
+    private(set) var maxTokens: [Int] = []
+
+    /// Records `maxTokens`, and answers with text that fills it.
+    ///
+    /// - Parameters:
+    ///   - prompt: The prompt the compaction sent. Not read.
+    ///   - maxTokens: The ceiling the compaction put on the answer.
+    /// - Returns: A text of `maxTokens` characters.
+    func summarize(_ prompt: String, maxTokens: Int) async throws -> String {
+        self.maxTokens.append(maxTokens)
+        return String(repeating: "s", count: maxTokens)
+    }
+}
+
 /// A ``CompactionSummarizer`` that fails every call.
 struct FailingSummarizer: CompactionSummarizer {
     /// The error every call throws.

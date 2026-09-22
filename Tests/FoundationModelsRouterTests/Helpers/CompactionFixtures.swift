@@ -53,6 +53,23 @@ func summarizingCompactionBudget(for entries: [Transcript.Entry]) -> TokenBudget
     TokenBudget(limit: characterCount(of: entries))
 }
 
+extension TokenBudget {
+    /// The size the compaction of `entries` allows its summary, in tokens,
+    /// when no tool output is protected and no run is pending: this budget's
+    /// target less the instructions. ``characterTokenCounter`` measures the
+    /// instructions.
+    ///
+    /// - Parameter entries: The live transcript entries about to be compacted.
+    /// - Returns: The allowed summary size, in tokens.
+    func allowedSummaryTokens(for entries: [Transcript.Entry]) -> Int {
+        let instructions = entries.filter {
+            if case .instructions = $0 { return true }
+            return false
+        }
+        return targetTokens - characterCount(of: instructions)
+    }
+}
+
 /// A summarizer slot of the own-model tier whose window has no bound, so
 /// every call fits in it.
 ///

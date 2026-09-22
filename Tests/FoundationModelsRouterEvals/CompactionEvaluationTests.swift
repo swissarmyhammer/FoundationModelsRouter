@@ -1133,19 +1133,19 @@ struct CompactionEvalSeedSizingTests {
 
     @Test("every seed's call fits the window the gated tier loads its model at, with the stated size to spare")
     func everySeedsCallFitsTheGatedWindow() throws {
-        // The call's ceiling is the room the window leaves after the input.
-        // A ceiling under the stated size cuts a summary that keeps to it.
-        // The character counter is the strict side here too: it counts the
-        // input as more tokens than the tokenizer does.
+        // The call's ceiling is the stated size, capped at the room the
+        // window leaves after the input. A room under the stated size cuts a
+        // summary that keeps to it. The character counter is the strict side
+        // here too: it counts the input as more tokens than the tokenizer does.
         let windowTokens = CompactionEvalRealModel.context
         for seed in compactionEvalSeeds {
             let stated = try Self.statedSummaryTokens(of: seed)
             let prompt = Summarization.assembledPrompt(
                 .default, allowedSummaryTokens: stated, content: Summarization.render(seed.entries))
-            let ceiling = windowTokens - compactionEvalCounter.count(prompt)
+            let room = windowTokens - compactionEvalCounter.count(prompt)
             #expect(
-                ceiling >= stated,
-                "seed \(seed.id)'s call leaves a ceiling of \(ceiling) tokens in a window of \(windowTokens), under the stated size of \(stated)"
+                room >= stated,
+                "seed \(seed.id)'s call leaves a room of \(room) tokens in a window of \(windowTokens), under the stated size of \(stated)"
             )
         }
     }

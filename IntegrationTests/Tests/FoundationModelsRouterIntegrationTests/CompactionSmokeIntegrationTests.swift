@@ -30,9 +30,10 @@ private let compactionSmokeModel: ModelRef = "mlx-community/Llama-3.2-1B-Instruc
 ///
 /// Deliberately smaller than ``RealModels/context`` (8192). The largest call
 /// this suite makes is one summarizer call: the compaction prompt and the
-/// whole live context as input, and the room the window leaves after that
-/// input as the output ceiling. The fixture fits well inside this window, and
-/// a smaller window costs less to allocate.
+/// whole live context as input, and the allowed summary size, capped at the
+/// room the window leaves after that input, as the output ceiling. The
+/// fixture fits well inside this window, and a smaller window costs less to
+/// allocate.
 private let compactionSmokeContext = 4096
 
 /// The decoding this suite loads ``compactionSmokeModel`` with.
@@ -240,8 +241,9 @@ struct CompactionSmokeIntegrationTests {
     /// to two properties at once.
     ///
     /// - Small enough that the call's input fits ``compactionSmokeContext``
-    ///   with room left for the summary. The call's output ceiling is that
-    ///   room, and the first test prints it.
+    ///   with room left for the summary. The call's output ceiling is the
+    ///   stated summary size, capped at that room, and the first test prints
+    ///   it.
     /// - Large enough that a summary of the stated size shrinks the context.
     ///   ``TranscriptCompaction/budget(of:counter:)`` sets the target at the
     ///   default share of the transcript's own size, and the compaction states

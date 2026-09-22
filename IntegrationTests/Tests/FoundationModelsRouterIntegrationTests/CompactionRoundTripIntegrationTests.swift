@@ -67,8 +67,9 @@ private let compactionRoundTripModel: ModelRef = "mlx-community/Qwen2.5-3B-Instr
 ///   the measured baseline this subject is held to there.
 ///
 /// Since task ^pke18c2 the compaction is one summarizer call over the whole
-/// live context. The call's output ceiling is the room the window leaves after
-/// the call's input, and the session sets no summarization settings. Nobody
+/// live context. Since task ^35j2zfg the call's output ceiling is the allowed
+/// summary size, capped at the room the window leaves after the call's input.
+/// The session sets no summarization settings. Nobody
 /// has measured this suite's time again since that change.
 ///
 /// Builds a ``LanguageModelProfile`` directly over an already-loaded

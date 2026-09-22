@@ -40,15 +40,31 @@ struct OneCallCompactionTierTests {
         }
     }
 
-    /// The live context and the budget every test here compacts: a small
-    /// instructions entry and one long turn, with the default target.
+    /// The size, in tokens, of the instructions entry of each live context here.
+    private static let instructionsTokens = 10
+
+    /// The size, in tokens, of the prompt and of the response of the live
+    /// context most tests here compact.
+    private static let turnTokens = 400
+
+    /// The size, in tokens, of the prompt and of the response of the live
+    /// context the runaway-summarizer test compacts. The snapshot carries a
+    /// checkpoint beside the summary, and the character counter counts it.
+    /// With turns of this size, a summary of the allowed size and the
+    /// checkpoint together are smaller than the live context.
+    private static let longTurnTokens = 4_000
+
+    /// The live context and the budget a test here compacts: a small
+    /// instructions entry and one turn, with the default target.
     ///
+    /// - Parameter turnTokens: The size of the prompt and of the response,
+    ///   in tokens.
     /// - Returns: The live context and its budget.
-    private static func sizedContext() -> (transcript: Transcript, budget: TokenBudget) {
+    private static func sizedContext(turnTokens: Int = turnTokens) -> (transcript: Transcript, budget: TokenBudget) {
         let transcript = Transcript(entries: [
-            SizedEntries.instructions(id: "instructions", tokens: 10),
-            SizedEntries.prompt(id: "prompt", tokens: 400),
-            SizedEntries.response(id: "response", tokens: 400),
+            SizedEntries.instructions(id: "instructions", tokens: instructionsTokens),
+            SizedEntries.prompt(id: "prompt", tokens: turnTokens),
+            SizedEntries.response(id: "response", tokens: turnTokens),
         ])
         return (transcript, summarizingCompactionBudget(for: Array(transcript)))
     }
@@ -68,11 +84,7 @@ struct OneCallCompactionTierTests {
         let summarizer = RecordingSummarizer(summary: "probe")
         _ = try await compactWithUnboundedWindow(transcript, budget: budget, summarizer: summarizer)
         let prompt = try #require(await summarizer.prompts.first)
-        let instructions = Array(transcript).filter {
-            if case .instructions = $0 { return true }
-            return false
-        }
-        return (prompt.count, budget.targetTokens - characterCount(of: instructions))
+        return (prompt.count, budget.allowedSummaryTokens(for: Array(transcript)))
     }
 
     /// Compacts `transcript` with the character counter and `slots`.
@@ -144,11 +156,12 @@ struct OneCallCompactionTierTests {
         #expect(await own.prompts.count == 1)
     }
 
-    @Test("the call's output ceiling is the room the window leaves after the input")
-    func ceilingIsWindowLessInput() async throws {
+    @Test("the room the window leaves after the input caps the call's output ceiling under the allowed size")
+    func roomCapsTheCeiling() async throws {
         let (transcript, budget) = Self.sizedContext()
-        let (inputTokens, _) = try await Self.probe(transcript, budget: budget)
+        let (inputTokens, allowedTokens) = try await Self.probe(transcript, budget: budget)
         let room = 1
+        #expect(room < allowedTokens)
         let own = RecordingSummarizer(summary: "own summary")
 
         _ = try await Self.compact(
@@ -156,6 +169,30 @@ struct OneCallCompactionTierTests {
             slots: [CompactionSummarizerSlot(tier: .ownModel, summarizer: own, windowTokens: inputTokens + room, model: nil)])
 
         #expect(await own.maxTokens == [room])
+    }
+
+    @Test("a summarizer that would write forever stops at the allowed size, and the summary applies because it shrinks the context")
+    func runawaySummarizerStopsAtTheAllowedSize() async throws {
+        let (transcript, budget) = Self.sizedContext(turnTokens: Self.longTurnTokens)
+        let (inputTokens, allowedTokens) = try await Self.probe(transcript, budget: budget)
+        let tokensBefore = characterCount(of: Array(transcript))
+        // The window leaves room for the whole live context after the input,
+        // which is more than the allowed size.
+        let windowTokens = inputTokens + tokensBefore
+        #expect(tokensBefore > allowedTokens)
+        let runaway = RunawaySummarizer()
+
+        let (compacted, result) = try await Self.compact(
+            transcript, budget: budget,
+            slots: [CompactionSummarizerSlot(tier: .ownModel, summarizer: runaway, windowTokens: windowTokens, model: nil)])
+
+        #expect(await runaway.maxTokens == [allowedTokens])
+        #expect(result.summary?.count == allowedTokens)
+        #expect(result.shortfall == nil)
+        #expect(result.stagesApplied == [Summarization.stageName])
+        #expect(result.tokensBefore == tokensBefore)
+        #expect(result.tokensAfter < result.tokensBefore)
+        #expect(compacted != transcript)
     }
 
     @Test("no window leaves room after the input: no call, the live context stays, the shortfall names the input and the largest window")
@@ -216,6 +253,7 @@ struct OneCallCompactionTierTests {
         let contextTokens = 100_000
         let instructionsTokens = 4_000
         let conversationTokens = 48_000
+        let statedTokens = 46_000
         let flashWindow = 32_768
         let ownWindow = 131_072
         let transcript = Transcript(entries: [
@@ -236,7 +274,7 @@ struct OneCallCompactionTierTests {
         let prompts = await own.prompts
         #expect(prompts.count == 1)
         let prompt = try #require(prompts.first)
-        #expect(prompt.contains("about 46000 tokens"))
-        #expect(await own.maxTokens == [ownWindow - prompt.count])
+        #expect(prompt.contains("about \(statedTokens) tokens"))
+        #expect(await own.maxTokens == [min(statedTokens, ownWindow - prompt.count)])
     }
 }

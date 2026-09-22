@@ -31,7 +31,8 @@ enum SummarizationError: Error, Equatable, LocalizedError {
 /// snapshot from the summary.
 ///
 /// The stage has no settings. The budget's target sets the size of the
-/// summary, and the summarizer's window sets the ceiling of the call.
+/// summary. That size is also the ceiling of the call, and the summarizer's
+/// window caps the ceiling.
 public struct Summarization: Sendable, Equatable, Codable {
     /// This stage's name, as recorded in ``CompactionResult/stagesApplied``.
     public static let stageName = "Summarization"
@@ -245,18 +246,25 @@ struct CompactionCall {
     /// The output ceiling of the call on `slot`, or `nil` when `slot` cannot
     /// run the call.
     ///
-    /// The ceiling is the room the window leaves after the input. The flash
-    /// tier runs only when that room holds the allowed summary size. The own
-    /// model runs when any room is left: its window holds the live context by
-    /// construction, and only a live context at the window leaves none.
+    /// The ceiling is the allowed summary size, the size the prompt states.
+    /// The room the window leaves after the input caps it. A reasoning model
+    /// fits its thinking inside the same ceiling. A summarizer that does not
+    /// keep to the stated size thus stops at that size, and the summary can
+    /// still shrink the live context.
+    ///
+    /// The flash tier runs only when the room holds the allowed summary size.
+    /// The own model runs when any room is left: its window holds the live
+    /// context by construction, and only a live context at the window leaves
+    /// none.
     ///
     /// - Parameter slot: The summarizer slot.
     /// - Returns: The ceiling, in tokens, or `nil`.
     func outputCeiling(for slot: CompactionSummarizerSlot) -> Int? {
-        let ceiling = slot.windowTokens - inputTokens
+        let room = slot.windowTokens - inputTokens
+        let ceiling = min(allowedSummaryTokens, room)
         switch slot.tier {
         case .flash:
-            return ceiling >= allowedSummaryTokens ? ceiling : nil
+            return room >= allowedSummaryTokens ? ceiling : nil
         case .ownModel:
             return ceiling > 0 ? ceiling : nil
         }

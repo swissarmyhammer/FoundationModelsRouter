@@ -707,10 +707,10 @@ struct RoutedSessionCompactTests {
     // MARK: - The one own-model call of a caller compaction
 
     @Test(
-        "compact() makes one call on the session's own model, over the whole live context, with the room its window leaves after the input"
+        "compact() makes one call on the session's own model, over the whole live context, with the allowed summary size capped at the room its window leaves after the input"
     )
     @MainActor
-    func compactMakesOneOwnModelCallWithTheRoomItsWindowLeaves() async throws {
+    func compactMakesOneOwnModelCallCappedAtTheAllowedSize() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let contextTokens = 100_000
@@ -724,12 +724,16 @@ struct RoutedSessionCompactTests {
 
         let backend = try #require(container.lastBackend)
         let callsBeforeCompaction = container.generationLog.calls.count
-        let result = try await session.compact(budget: summarizingCompactionBudget(for: backend.transcriptEntries()))
+        let entries = backend.transcriptEntries()
+        let budget = summarizingCompactionBudget(for: entries)
+        let allowedTokens = budget.allowedSummaryTokens(for: entries)
+        let result = try await session.compact(budget: budget)
 
         let calls = Array(container.generationLog.calls.suffix(from: callsBeforeCompaction))
         #expect(calls.count == 1)
         let call = try #require(calls.first)
-        #expect(call.maxTokens == contextTokens - call.prompt.count)
+        #expect(call.maxTokens == min(allowedTokens, contextTokens - call.prompt.count))
+        #expect(call.maxTokens == allowedTokens)
         #expect(call.prompt.contains("User: turn 0"))
         #expect(call.prompt.contains("User: turn 5"))
         #expect(result.summarizerTier == .ownModel)
