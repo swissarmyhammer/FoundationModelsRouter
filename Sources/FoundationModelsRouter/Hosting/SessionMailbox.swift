@@ -112,7 +112,7 @@ actor SessionMailbox {
 
     /// Registers a background run under `completionToken`.
     ///
-    /// The mailbox observes `settling`: when the run ends, its bounded terminal
+    /// The mailbox observes `settling`: when the run ends, its terminal
     /// event is retained, every waiter on the token resumes with it, and the
     /// attached ``BackgroundRunSettlementObserver`` receives it. A run already
     /// swept settles silently, so each run has exactly one terminal event.
@@ -147,10 +147,10 @@ actor SessionMailbox {
         trackingOrder.append(completionToken)
         Task { [weak self] in
             let terminal = await settling.value
-            guard let bounded = await self?.markSettled(completionToken: completionToken, terminal: terminal) else {
+            guard let retained = await self?.markSettled(completionToken: completionToken, terminal: terminal) else {
                 return
             }
-            await self?.forwardToSettlementObserver(bounded)
+            await self?.forwardToSettlementObserver(retained)
         }
         return .tracked
     }
@@ -326,15 +326,13 @@ actor SessionMailbox {
                 terminals.append(natural)
                 continue
             }
-            let synthesized = Self.boundingDetail(
-                OperationEvent(
-                    tool: run.tool,
-                    op: run.op,
-                    correlationID: token,
-                    kind: .completed,
-                    detail: run.latestProgressDetail ?? "",
-                    outcome: outcome
-                )
+            let synthesized = OperationEvent(
+                tool: run.tool,
+                op: run.op,
+                correlationID: token,
+                kind: .completed,
+                detail: run.latestProgressDetail ?? "",
+                outcome: outcome
             )
             runsByToken.removeValue(forKey: token)
             trackingOrder.removeAll { $0 == token }
@@ -365,20 +363,19 @@ actor SessionMailbox {
 
     /// Records a run's natural settlement and resumes its waiters.
     ///
-    /// - Returns: The bounded terminal the mailbox retained, or `nil` for a
-    ///   token the sweep already removed, whose late terminal is dropped.
+    /// - Returns: The terminal the mailbox retained, or `nil` for a token the
+    ///   sweep already removed, whose late terminal is dropped.
     private func markSettled(completionToken: String, terminal: OperationEvent) -> OperationEvent? {
         guard runsByToken.removeValue(forKey: completionToken) != nil else {
             return nil
         }
         trackingOrder.removeAll { $0 == completionToken }
-        let bounded = Self.boundingDetail(terminal)
-        retainSettledTerminalEvent(bounded, for: completionToken)
-        resumeWaiters(for: completionToken, with: .settled(bounded))
-        return bounded
+        retainSettledTerminalEvent(terminal, for: completionToken)
+        resumeWaiters(for: completionToken, with: .settled(terminal))
+        return terminal
     }
 
-    /// Hands a naturally settled run's bounded terminal to the attached
+    /// Hands a naturally settled run's terminal to the attached
     /// observer. The settlement task in `track` calls this after
     /// ``markSettled(completionToken:terminal:)`` returned the terminal, and
     /// only then, so a run the sweep removed is never forwarded.
@@ -396,7 +393,7 @@ actor SessionMailbox {
     /// re-stamped terminal, so this forward is the one write of the run's own
     /// terminal under the run's own token.
     ///
-    /// - Parameter terminal: The bounded terminal ``markSettled(completionToken:terminal:)`` retained.
+    /// - Parameter terminal: The terminal ``markSettled(completionToken:terminal:)`` retained.
     private func forwardToSettlementObserver(_ terminal: OperationEvent) async {
         await settlementObserver?.deliver(settledTerminal: terminal)
     }
@@ -435,28 +432,6 @@ actor SessionMailbox {
         for continuation in suspended.values {
             continuation.resume(returning: result)
         }
-    }
-
-    /// Returns `event` with its `detail` truncated to the trailing
-    /// ``ToolContext/terminalDetailTailLimit`` characters.
-    ///
-    /// Static, and not private, because two places must cut a terminal the
-    /// same way: this mailbox, which keeps what `wait` reports, and
-    /// ``BackgroundToolRunner``, which puts a settled run's detail in its
-    /// envelope. One rule, so the two reads of one run cannot differ.
-    static func boundingDetail(_ event: OperationEvent) -> OperationEvent {
-        guard event.detail.count > ToolContext.terminalDetailTailLimit else {
-            return event
-        }
-        return OperationEvent(
-            tool: event.tool,
-            op: event.op,
-            correlationID: event.correlationID,
-            kind: event.kind,
-            detail: String(event.detail.suffix(ToolContext.terminalDetailTailLimit)),
-            outcome: event.outcome,
-            elicitation: event.elicitation
-        )
     }
 }
 

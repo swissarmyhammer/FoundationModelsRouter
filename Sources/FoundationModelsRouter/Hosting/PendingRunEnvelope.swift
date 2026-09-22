@@ -37,8 +37,8 @@ public struct PendingRunEnvelope: Codable, Sendable, Equatable {
 
     /// The settled run's result, or `nil` while the run is still going.
     ///
-    /// It is the terminal event's `detail`, cut to the same length as the
-    /// detail the `wait` tool reports.
+    /// It is the terminal event's `detail`: the tool's report, the same text
+    /// the `wait` tool reports.
     public let detail: String?
 
     /// What the model must do instead of answering, as plain prose.

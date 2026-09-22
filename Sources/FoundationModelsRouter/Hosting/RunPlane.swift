@@ -30,7 +30,7 @@ public struct BackgroundRun: Sendable, Equatable {
 
 /// What ``ToolContext/wait(completionToken:seconds:)`` resolved to.
 public enum WaitOutcome: Sendable, Equatable {
-    /// The run settled; the terminal event carries the run's `correlationID`, its output tail capped at ``ToolContext/terminalDetailTailLimit``, and its outcome.
+    /// The run settled; the terminal event carries the run's `correlationID`, the tool's report as its `detail`, and its outcome.
     case settled(OperationEvent)
 
     /// The deadline elapsed before the run settled; the run stays running.

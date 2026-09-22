@@ -600,7 +600,7 @@ extension TranscriptTree {
     /// event for its `(tool, correlationID)` pair but no `.completed` event
     /// for that pair. One event is made per orphaned run, in order of first
     /// appearance. Its `detail` is the elicitation message, or the newest
-    /// event's `detail`, cut to ``ToolContext/terminalDetailTailLimit``.
+    /// event's `detail`, as the journal holds it.
     ///
     /// The journaled events are read through ``TranscriptEvent/operationEvents``,
     /// which passes over a stripped or undecodable segment. Transcript
@@ -620,13 +620,12 @@ extension TranscriptTree {
             guard !scan.completedRuns.contains(run), let newest = scan.newestNonTerminalByRun[run] else {
                 return nil
             }
-            let detail = newest.elicitation?.message ?? newest.detail
             return OperationEvent(
                 tool: run.tool,
                 op: newest.op,
                 correlationID: run.correlationID,
                 kind: .completed,
-                detail: String(detail.suffix(ToolContext.terminalDetailTailLimit)),
+                detail: newest.elicitation?.message ?? newest.detail,
                 outcome: .lost
             )
         }

@@ -6,6 +6,16 @@ import FoundationModels
 /// at once with a completion-token handle; the work goes on behind it.
 /// A plain `Tool` — one that does not conform — runs to completion in band.
 /// Each declaration has a default, so a tool states only the part it needs.
+///
+/// **The return value of a background call is a short report, never the
+/// output.** The output of a background run (a shell command, a build, a test
+/// run) stays in the tool. The tool returns a report: what ran, how it ended,
+/// and how to get the output. The run plane carries that report as it is. It
+/// is the terminal event's `detail` in the mailbox, in
+/// ``ToolContext/wait(completionToken:seconds:)``, in the
+/// ``PendingRunEnvelope`` (pending, or settled inside ``inlineSettleGrace``),
+/// and in the journal. Nothing on the run plane cuts it. The model asks the
+/// tool for the output when it wants it.
 public protocol BackgroundTool {
     /// The mount this tool needs, or `nil` to take the composition site's own.
     /// A declaration wins over the site, timeout included.
@@ -15,7 +25,7 @@ public protocol BackgroundTool {
     func timeout(from arguments: GeneratedContent) -> TimeInterval?
 
     /// Returns the `next` sentence of the pending envelope a background call hands the model.
-    /// It must name `completionToken` and keep the envelope under ``ToolContext/terminalDetailTailLimit``.
+    /// It must name `completionToken`.
     /// - Returns: The `next` text as plain prose; the envelope escapes it.
     func collectInstruction(forCompletionToken completionToken: String) -> String
 

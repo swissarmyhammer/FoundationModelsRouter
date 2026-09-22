@@ -192,7 +192,7 @@ struct BackgroundToolRunner<
         return PendingRunEnvelope(
             completionToken: completionToken,
             outcome: outcome.rawValue,
-            detail: SessionMailbox.boundingDetail(terminal).detail,
+            detail: terminal.detail,
             next: resultInstruction(forCompletionToken: completionToken)
         )
     }

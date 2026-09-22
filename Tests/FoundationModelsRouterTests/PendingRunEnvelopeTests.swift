@@ -5,7 +5,7 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises the ``PendingRunEnvelope`` wire form: rendering, recognition,
-/// the default `next` sentence, and the run-plane detail cap.
+/// and the default `next` sentences.
 @Suite("PendingRunEnvelope: the background handle's wire form")
 struct PendingRunEnvelopeTests {
     /// How many freshly generated tokens the round-trip test renders and
@@ -81,17 +81,6 @@ struct PendingRunEnvelopeTests {
         for fragment in Self.forbiddenDefaultCollectInstructionFragments {
             #expect(!next.contains(fragment), "default sentence must not say \(fragment)")
         }
-    }
-
-    @Test("the rendered envelope fits the run plane's detail cap, which truncates from the front")
-    func renderedEnvelopeFitsTheRunPlaneDetailCap() {
-        // `BackgroundToolRunner` carries the rendered envelope as the synthesized
-        // progress event's `detail`, and the mailbox keeps a detail's
-        // TRAILING characters — so an envelope that outgrew the cap would
-        // lose the completionToken the model needs.
-        let rendered = PendingRunEnvelope(completionToken: ULID.generate().ulidString).rendered
-
-        #expect(rendered.count <= ToolContext.terminalDetailTailLimit)
     }
 
     @Test("an envelope is recognized whatever collect sentence it carries: the default, a tool's own, and one that needs JSON escaping")

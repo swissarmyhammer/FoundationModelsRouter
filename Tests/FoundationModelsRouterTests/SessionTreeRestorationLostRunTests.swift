@@ -455,11 +455,16 @@ struct SessionTreeRestorationLostRunTests {
         #expect(forkPending.events.map(\.event.outcome) == [.lost])
     }
 
-    // MARK: - Manufactured detail is bounded like sweep()'s synthesized terminal
+    // MARK: - A run's report is carried whole
 
-    @Test("a manufactured .lost detail is truncated to the trailing terminalDetailTailLimit characters")
+    /// The length of the report the whole-report test drives through the run
+    /// plane. It is far longer than a short report, so a cut anywhere on the
+    /// path changes the text the test compares.
+    private static let wholeReportLength = 10_000
+
+    @Test("a settled run's 10,000-character report reaches wait, the envelope and the restored session whole")
     @MainActor
-    func manufacturedDetailIsBoundedToTerminalDetailTailLimit() async throws {
+    func settledRunReportIsCarriedWhole() async throws {
         let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationLostRunTests")
         let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationLostRunTests")
         defer {
@@ -467,13 +472,35 @@ struct SessionTreeRestorationLostRunTests {
             try? FileManager.default.removeItem(at: recordingsDir)
         }
 
-        // Progress details are journaled verbatim, so an orphaned run can
-        // carry an arbitrarily large one; the manufactured terminal must
-        // apply the same trailing-tail bound sweep()'s synthesized terminal
-        // does, keeping the end of the output (what a reader acts on).
-        let oversized = String(repeating: "x", count: ToolContext.terminalDetailTailLimit) + "TAIL-MARKER"
+        // The tool's return value is its report (see ``BackgroundTool``).
+        // The fixture tool builds its output from the call's value, so the
+        // value is sized to make the report exactly the length above.
+        let prefixLength = MountFixtures.InlineGraceTool.output(for: "").count
+        let value = String(repeating: "r", count: Self.wholeReportLength - prefixLength)
+        let report = MountFixtures.InlineGraceTool.output(for: value)
+        #expect(report.count == Self.wholeReportLength)
+
+        // The run settles inside the grace, so the envelope carries the
+        // report, and the mailbox keeps the same report for `wait`.
+        let gate = RunLatch()
+        await gate.open()
+        let harness = MountFixtures.backgroundHarness(
+            wrapping: MountFixtures.InlineGraceTool(gate: gate, grace: MountFixtures.generousInterval)
+        )
+        let rendered = try await harness.mounted.call(arguments: MountArguments(value: value))
+        let envelope = try MountFixtures.decodeEnvelope(rendered)
+        #expect(!envelope.pending)
+        #expect(envelope.detail == report)
+        let terminal = try await MountFixtures.settledTerminal(
+            of: envelope.completionToken, in: harness.mailbox
+        )
+        #expect(terminal.detail == report)
+
+        // The restore path: the one recorded event of this run is a progress
+        // event that carries the report, and no terminal reached the journal.
+        // The manufactured `.lost` terminal carries that report whole.
         let (restored, _) = try await Self.recordAndRestore(
-            journaled: [Self.event(correlationID: "run-1", kind: .progress, detail: oversized)],
+            journaled: [Self.event(correlationID: envelope.completionToken, kind: .progress, detail: report)],
             cacheDir: cacheDir,
             recordingsDir: recordingsDir
         )
@@ -481,8 +508,7 @@ struct SessionTreeRestorationLostRunTests {
         let pending = await restored.root.outbox.pending()
         let manufactured = try #require(pending.events.first?.event)
         #expect(manufactured.outcome == .lost)
-        #expect(manufactured.detail.count == ToolContext.terminalDetailTailLimit)
-        #expect(manufactured.detail.hasSuffix("TAIL-MARKER"))
+        #expect(manufactured.detail == report)
     }
 
     // MARK: - Round trip: a manufactured .lost survives journaling into a second restore

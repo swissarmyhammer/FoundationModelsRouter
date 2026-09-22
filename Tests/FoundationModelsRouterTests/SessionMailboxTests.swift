@@ -131,24 +131,6 @@ struct SessionMailboxTests {
         #expect(terminal.correlationID == token)
     }
 
-    @Test("wait() on a run with oversized output returns a bounded tail carrying the run identifier, never the full output")
-    func waitReturnsBoundedResult() async {
-        let mailbox = SessionMailbox()
-        let latch = RunLatch()
-        let oversized = String(repeating: "x", count: ToolContext.terminalDetailTailLimit * 3) + "end-of-output"
-        let token = await trackFakeRun(on: mailbox, latch: latch, detailOnSettle: oversized)
-
-        await latch.open()
-        let result = await mailbox.wait(completionToken: token, seconds: 5)
-        guard case .settled(let terminal) = result else {
-            Issue.record("expected .settled, got \(result)")
-            return
-        }
-        #expect(terminal.correlationID == token)
-        #expect(terminal.detail.count == ToolContext.terminalDetailTailLimit)
-        #expect(terminal.detail.hasSuffix("end-of-output"))
-    }
-
     // MARK: - cancel
 
     @Test("cancel() invokes the canceler, reports the outcome the canceler reports, and a concurrent wait() observes the cancelled terminal event")
@@ -289,14 +271,13 @@ struct SessionMailboxTests {
     /// every chance to happen.
     private static let forwardingGraceNanoseconds: UInt64 = 200_000_000
 
-    @Test("track forwards a naturally settled run's bounded terminal to the attached observer exactly once")
-    func trackForwardsTheBoundedTerminalOnce() async {
+    @Test("track forwards a naturally settled run's terminal to the attached observer exactly once")
+    func trackForwardsTheSettledTerminalOnce() async {
         let mailbox = SessionMailbox()
         let observer = RecordingSettlementObserver()
         await mailbox.attach(settlementObserver: observer)
         let latch = RunLatch()
-        let oversized = String(repeating: "y", count: ToolContext.terminalDetailTailLimit * 2) + "tail"
-        let token = await trackFakeRun(on: mailbox, latch: latch, detailOnSettle: oversized)
+        let token = await trackFakeRun(on: mailbox, latch: latch, detailOnSettle: "exit 0")
 
         await latch.open()
         let waited = await mailbox.wait(completionToken: token, seconds: 5)
@@ -305,13 +286,11 @@ struct SessionMailboxTests {
                 await observer.settledTerminals.count == 1
             })
 
-        // The observer gets the same bounded event `wait` returned: the detail
-        // is the trailing tail, never the whole output.
+        // The observer gets the same event `wait` returned.
         let forwarded = await observer.settledTerminals
         #expect(forwarded.first.map(WaitOutcome.settled) == waited)
         #expect(forwarded.first?.correlationID == token)
-        #expect(forwarded.first?.detail.count == ToolContext.terminalDetailTailLimit)
-        #expect(forwarded.first?.detail.hasSuffix("tail") == true)
+        #expect(forwarded.first?.detail == "exit 0")
     }
 
     @Test("track forwards nothing for a run the sweep already removed")

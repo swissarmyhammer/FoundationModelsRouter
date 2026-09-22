@@ -17,10 +17,6 @@ public struct ToolContext: Sendable {
     /// or infinite deadline is clamped to this value.
     public static let deadlineSecondsCeiling: Double = 86_400
 
-    /// The maximum character count of a terminal event's `detail`. A longer
-    /// detail is truncated to its trailing characters.
-    public static let terminalDetailTailLimit = 4_096
-
     // MARK: - Session scope
 
     /// The owning session's identity — ``RoutedSession/id``.
@@ -226,7 +222,8 @@ public struct ToolContext: Sendable {
     }
 
     /// Awaits a background run's settlement with a deadline. The result is the
-    /// run's terminal event with its detail capped at ``terminalDetailTailLimit``.
+    /// run's terminal event. Its `detail` is the tool's report, as the tool
+    /// returned it (see ``BackgroundTool``).
     ///
     /// - Parameters:
     ///   - completionToken: The run's completion token.

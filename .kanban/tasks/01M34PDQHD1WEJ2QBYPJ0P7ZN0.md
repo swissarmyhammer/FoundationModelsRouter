@@ -38,8 +38,31 @@ comments:
     - evidence: swift test — 1353 + 1 + 83 = 1437 tests passed, 0 failed, 0 skipped (2 pre-existing withKnownIssue expectations in RealModelHarness and BoundedWait); swift build --package-path IntegrationTests --build-tests — Build complete; rg 'nativeMaxContextFloor|nativeMaxContextCap|defaultNativeMaxContext|nativeMaxContextDiagnostic' over *.swift — no matches
     - next: commit
   timestamp: 2026-09-22T14:35:43.950493+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m34rq7grbs4fxtmzrpb43w0t
+  text: |-
+    ### commit — changed
+    - evidence: 1be78dd feat(sizing): use the config.json context window as-is
+    - next: review
+  timestamp: 2026-09-22T14:36:05.528760+00:00
+- actor: claude-code
+  id: 01m34smvahhrg6ne64k9fhb9zg
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (1be78dd) — 0 findings, 0 confirmed, 0 refuted, 70 attempted, 43 files reviewed, 10 .kanban files excluded by .reviewignore
+    - next: done
+  timestamp: 2026-09-22T14:52:16.081551+00:00
+- actor: claude-code
+  id: 01m34snek1j8bft0yc2fs5qr1x
+  text: |-
+    ### finish iteration 1 — review clean, task in done
+    - implement: changed — 44 files: RepoMetadata.swift, JointFit.swift, RepoMetadataTests.swift, JointFitTests.swift, TranscriptNestingTests.swift, ResolveTests.swift and 38 test files whose config.json fixture gained max_position_embeddings
+    - test: green — swift test: 1437 tests passed (1353 + 1 + 83), 0 failed, 0 skipped; swift build --package-path IntegrationTests --build-tests: Build complete; rg over *.swift for the four removed names: no matches
+    - commit: 1be78dd
+    - review: clean — review sha HEAD~1..HEAD, 0 findings, 43 files reviewed
+  timestamp: 2026-09-22T14:52:35.809249+00:00
+position_column: done
+position_ordinal: ffffde80
 title: Remove the native max context floor, cap and default; use config.json as-is
 ---
 ## Decision (from the owner, 2026-09-22)
