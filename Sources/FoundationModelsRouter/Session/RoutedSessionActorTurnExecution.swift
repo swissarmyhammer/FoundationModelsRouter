@@ -242,7 +242,7 @@ extension RoutedSessionActor {
         // Compared in tokens against ``TokenBudget/triggerTokens``, never as
         // `contextFill >= budget.trigger` — see the matching note on the
         // hard-ceiling pre-check in
-        // ``runTurnAttempt(grammar:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetriesLeft:_:)``
+        // ``runTurnAttempt(grammar:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetries:_:)``
         // and ``TokenBudget/triggerTokens`` itself for why those two fractions
         // are not interchangeable.
         if let budget = autoCompactionBudget,
@@ -277,8 +277,7 @@ extension RoutedSessionActor {
         return try await runTurnAttempt(
             grammar: grammar, pendingEvents: pendingEvents, ownPrompt: ownPrompt,
             responseTokenCeiling: responseTokenCeiling, onEvent: emit,
-            allowOverflowRetry: autoCompactionBudget != nil,
-            rejectedCallRetriesLeft: RejectedToolCallRetry.limit, body
+            allowOverflowRetry: autoCompactionBudget != nil, body
         )
     }
 
@@ -315,7 +314,7 @@ extension RoutedSessionActor {
     /// One physical attempt at a turn's model work and recording.
     ///
     /// A failed attempt is recorded, and then
-    /// ``recoverFailedAttempt(from:grammar:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetriesLeft:_:)``
+    /// ``recoverFailedAttempt(from:grammar:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetries:_:)``
     /// runs the attempt again when a recovery applies: a rejected tool call
     /// goes back to the model, and a recoverable context overflow compacts to a
     /// lower target and retries once when `allowOverflowRetry` is set.
@@ -327,7 +326,7 @@ extension RoutedSessionActor {
     ///   - responseTokenCeiling: The token ceiling `body` gives the backend, or `nil`.
     ///   - onEvent: A sink for this turn's ``SessionEvent``s, or `nil`.
     ///   - allowOverflowRetry: Whether a recoverable context overflow compacts and retries once.
-    ///   - rejectedCallRetriesLeft: How many more times a rejected tool call can run the attempt again.
+    ///   - rejectedCallRetries: How many rejected tool calls this turn has already sent back to the model. The first attempt of a turn has sent none.
     ///   - body: The model work to run.
     /// - Returns: The response text `body` produced.
     /// - Throws: Whatever `body` throws, or the retry's own outcome when a retry ran.
@@ -338,7 +337,7 @@ extension RoutedSessionActor {
         responseTokenCeiling: Int?,
         onEvent: ((SessionEvent) -> Void)? = nil,
         allowOverflowRetry: Bool,
-        rejectedCallRetriesLeft: Int,
+        rejectedCallRetries: Int = 0,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
         let composedPrompt = Self.composedPrompt(pendingEvents: pendingEvents, prompt: ownPrompt)
@@ -396,7 +395,7 @@ extension RoutedSessionActor {
             return try await recoverFailedAttempt(
                 from: error, grammar: grammar, ownPrompt: ownPrompt,
                 responseTokenCeiling: responseTokenCeiling, onEvent: onEvent,
-                allowOverflowRetry: allowOverflowRetry, rejectedCallRetriesLeft: rejectedCallRetriesLeft, body
+                allowOverflowRetry: allowOverflowRetry, rejectedCallRetries: rejectedCallRetries, body
             )
         }
     }
@@ -407,8 +406,11 @@ extension RoutedSessionActor {
     /// - A rejected tool call (``RejectedToolCallRetry``) goes back to the
     ///   model: the next attempt sends the failed prompt again, with a tool
     ///   error that says which call was rejected and why, so the model can
-    ///   write the call again. The
-    ///   retries stop at ``RejectedToolCallRetry/limit``.
+    ///   write the call again. The retries have no count: they continue until
+    ///   the model writes a call the parser accepts, the caller cancels the
+    ///   turn, or the context fills. Each retry's prompt carries the earlier
+    ///   tool errors, so a model that never corrects its call reaches the
+    ///   overflow path.
     /// - A recoverable context overflow compacts to a lower target and retries
     ///   once, when `allowOverflowRetry` is set.
     ///
@@ -422,7 +424,7 @@ extension RoutedSessionActor {
     ///   - responseTokenCeiling: The token ceiling `body` gives the backend, or `nil`.
     ///   - onEvent: A sink for this turn's ``SessionEvent``s, or `nil`.
     ///   - allowOverflowRetry: Whether a recoverable context overflow compacts and retries once.
-    ///   - rejectedCallRetriesLeft: How many more times a rejected tool call can run the attempt again.
+    ///   - rejectedCallRetries: How many rejected tool calls this turn has already sent back to the model.
     ///   - body: The model work to run.
     /// - Returns: The response text of the retry.
     /// - Throws: `error` when no recovery applies, or the retry's own outcome.
@@ -433,16 +435,17 @@ extension RoutedSessionActor {
         responseTokenCeiling: Int?,
         onEvent: ((SessionEvent) -> Void)?,
         allowOverflowRetry: Bool,
-        rejectedCallRetriesLeft: Int,
+        rejectedCallRetries: Int,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
-        if rejectedCallRetriesLeft > 0, let retry = RejectedToolCallRetry(error: error) {
-            retry.logRetry(sessionID: id, retriesLeft: rejectedCallRetriesLeft - 1)
+        if let retry = RejectedToolCallRetry(error: error) {
+            let ordinal = rejectedCallRetries + 1
+            retry.logRetry(sessionID: id, ordinal: ordinal)
             return try await runTurnAttempt(
                 grammar: grammar, pendingEvents: [], ownPrompt: retry.prompt(retrying: ownPrompt),
                 responseTokenCeiling: responseTokenCeiling, onEvent: onEvent,
                 allowOverflowRetry: allowOverflowRetry,
-                rejectedCallRetriesLeft: rejectedCallRetriesLeft - 1, body
+                rejectedCallRetries: ordinal, body
             )
         }
 
@@ -459,7 +462,7 @@ extension RoutedSessionActor {
         return try await runTurnAttempt(
             grammar: grammar, pendingEvents: [], ownPrompt: ownPrompt,
             responseTokenCeiling: responseTokenCeiling, onEvent: onEvent,
-            allowOverflowRetry: false, rejectedCallRetriesLeft: rejectedCallRetriesLeft, body
+            allowOverflowRetry: false, rejectedCallRetries: rejectedCallRetries, body
         )
     }
 

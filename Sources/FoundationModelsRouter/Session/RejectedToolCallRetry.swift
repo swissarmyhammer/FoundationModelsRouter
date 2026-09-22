@@ -20,11 +20,6 @@ private let rejectedToolCallLogger = makeModuleLogger(category: "RejectedToolCal
 /// argument values. The prompt and the log line thus never hold the raw text
 /// of the rejected call.
 struct RejectedToolCallRetry {
-    /// The most times one turn runs its attempt again after a rejected tool
-    /// call. A model that writes a rejected call on each attempt then ends the
-    /// turn with the rejection error.
-    static let limit = 2
-
     /// The reason the parser gave, in its wire spelling (for example
     /// `invalid_arguments`).
     let reason: String
@@ -80,10 +75,10 @@ struct RejectedToolCallRetry {
     ///
     /// - Parameters:
     ///   - sessionID: The session whose turn runs the retry.
-    ///   - retriesLeft: How many more retries the turn can run after this one.
-    func logRetry(sessionID: ULID, retriesLeft: Int) {
+    ///   - ordinal: Which retry of the turn this is: 1 for the first retry.
+    func logRetry(sessionID: ULID, ordinal: Int) {
         rejectedToolCallLogger.warning(
-            "session \(sessionID.description, privacy: .public): a rejected tool call (\(reason, privacy: .public), tool \(toolName ?? "unknown", privacy: .private)) goes back to the model; \(retriesLeft, privacy: .public) retries left"
+            "session \(sessionID.description, privacy: .public): a rejected tool call (\(reason, privacy: .public), tool \(toolName ?? "unknown", privacy: .private)) goes back to the model; retry \(ordinal, privacy: .public) of this turn"
         )
     }
 }

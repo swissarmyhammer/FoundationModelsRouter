@@ -1,8 +1,35 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '9480'
+comments:
+- actor: claude-code
+  id: 01m34wwv8s68wygzgv4mc6mppr
+  text: |-
+    ### research
+    - Sites found: `Session/RejectedToolCallRetry.swift:23-26` (the constant), `:79-88` (`logRetry(sessionID:retriesLeft:)`), `Session/RoutedSessionActorTurnExecution.swift:281, :318, :330, :341, :399, :411, :425, :436, :439-445, :462`, `Tests/.../AutoCompactionTests.swift:12` (a doc link that names the `rejectedCallRetriesLeft:` label), `Tests/.../RejectedToolCallRetryTests.swift:13-14, :31-33, :87-102`.
+    - The test fixture `RejectingLanguageModel(rejectionCount:)` already rejects the first N calls and then answers. The new test needs no new fixture.
+    - No test exists for a cancellation during a rejected-call retry. The cancellation test that stays is `TurnCancellationTests.swift:1404`: a cancellation that lands during a failed attempt stops the retry before the model runs again. A rejected-call retry runs through the same `runTurnAttempt` path, so the same guard applies.
+    - The log line needs the retry ordinal. The card names it. A parameter `rejectedCallRetries` (how many rejected-call retries this turn has run) replaces `rejectedCallRetriesLeft`. It is not a bound.
+  timestamp: 2026-09-22T15:49:03.897478+00:00
+- actor: claude-code
+  id: 01m34x6djqy6cw60f7y3wdjzc8
+  text: |-
+    ### implement — changed
+    - evidence: 4 files — Sources/FoundationModelsRouter/Session/RejectedToolCallRetry.swift (the `limit` constant is deleted; `logRetry(sessionID:ordinal:)` writes "retry N of this turn"), Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnExecution.swift (`rejectedCallRetriesLeft` is deleted; `rejectedCallRetries` carries the ordinal, with a default of 0 for the first attempt; a `RejectedToolCallError` always retries; the doc says the retries have no count), Tests/FoundationModelsRouterTests/RejectedToolCallRetryTests.swift (`retriesStopAtTheBound` is replaced by `retriesContinueUntilTheModelWritesAValidCall`: 5 rejections, then the answer; the last retry prompt holds 5 tool errors), Tests/FoundationModelsRouterTests/AutoCompactionTests.swift (a doc link names the new label).
+    - acceptance: `rg 'rejectedCallRetriesLeft|RejectedToolCallRetry\.limit'` finds nothing (exit 1).
+    - build: `swift build --build-tests` complete; `swift build --package-path IntegrationTests --build-tests` complete.
+    - tests: `swift test --skip-build --filter RejectedToolCallRetryTests`: 2 tests in 1 suite passed.
+    - next: run the test skill, then commit, then review.
+  timestamp: 2026-09-22T15:54:17.559364+00:00
+- actor: claude-code
+  id: 01m34x96e69c62m216bd4ay1da
+  text: |-
+    ### test — green
+    - evidence: `swift test` — 1349 tests in 145 suites passed, plus 1 test and 83 tests in the other targets; 0 failures. The 2 known issues are pre-existing `withKnownIssue` marks in RealModelHarnessTests.swift and BoundedWaitTests.swift, files this task did not touch. `swift build --build-tests`: zero code warnings. `swift build --package-path IntegrationTests --build-tests`: complete. `swift-format lint` under the seven idioms-swift rules: 0 findings on the 4 changed files.
+    - next: commit, then review.
+  timestamp: 2026-09-22T15:55:48.550882+00:00
+position_column: doing
+position_ordinal: '80'
 title: Delete RejectedToolCallRetry.limit; a rejected tool call retries until the model writes a valid call
 ---
 ## Decision (from the owner, 2026-09-22)

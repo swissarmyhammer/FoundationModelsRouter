@@ -39,8 +39,42 @@ comments:
     - evidence: 2 findings — Tests/FoundationModelsRouterTests/RespondRunPlaneDrainTests.swift:35, Tests/FoundationModelsRouterTests/RespondRunPlaneDrainTests.swift:136 (`review sha HEAD~1..HEAD`, counts: findings 2, confirmed 2, refuted 0)
     - next: implement — write `// swiftlint:disable:next no_unchecked_sendable` with the synchronization invariant above each `@unchecked Sendable` class
   timestamp: 2026-09-22T15:42:36.148075+00:00
-position_column: review
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m34wkpv1kc2cn4752n0npmqv
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — Tests/FoundationModelsRouterTests/RespondRunPlaneDrainTests.swift. Both `@unchecked Sendable` classes now carry `// swiftlint:disable:next no_unchecked_sendable` directly above the declaration with the invariant on that line; both docs state the invariant in full. Both findings flipped to `- [x]`.
+    - next: test
+
+    ### test — green
+    - evidence: `swift test` — 1349 + 1 + 83 = 1433 tests in 156 suites passed, 0 failed, 0 skipped; 2 known issues are the pre-existing `withKnownIssue` records. No source warning; the one `warning:` line is SwiftPM's `mlx-swift_Cmlx.bundle` note. `swift build --package-path IntegrationTests --build-tests` — Build complete.
+    - next: commit
+  timestamp: 2026-09-22T15:44:04.449422+00:00
+- actor: claude-code
+  id: 01m34wkxg7m10kees4mx66t061
+  text: |-
+    ### commit — changed
+    - evidence: f359e22 fix(review): state the @unchecked Sendable invariant on the drain test fixtures
+    - next: review `chw3rc6 HEAD~1..HEAD`
+  timestamp: 2026-09-22T15:44:11.271731+00:00
+- actor: claude-code
+  id: 01m34wqbt2vwkctkksvj6szgra
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (f359e22) — counts: findings 0, confirmed 0, refuted 0; every prior finding is checked
+    - next: done
+  timestamp: 2026-09-22T15:46:04.226548+00:00
+- actor: claude-code
+  id: 01m34wqwyvr7yjn655p5cmrrzh
+  text: |-
+    ### finish iteration 1 — done
+    - implement: changed — 3 files (Sources/FoundationModelsRouter/Session/RoutedSessionActorGeneration.swift, Sources/FoundationModelsRouter/Session/RoutedSession.swift, Tests/FoundationModelsRouterTests/RespondRunPlaneDrainTests.swift); then the 2 review findings worked and flipped to `- [x]`
+    - test: green — `swift test` 1349 + 1 + 83 = 1433 tests in 156 suites passed, 0 failed, 0 skipped; `swift build --package-path IntegrationTests --build-tests` Build complete; `rg backgroundRunDrainRoundLimit` finds nothing
+    - commit: 0424f22, f359e22
+    - review: clean — first pass 2 findings (RespondRunPlaneDrainTests.swift:35, RespondRunPlaneDrainTests.swift:136), both worked; second pass 0 findings; task moved to done
+  timestamp: 2026-09-22T15:46:21.787061+00:00
+position_column: done
+position_ordinal: ffffe180
 title: Delete backgroundRunDrainRoundLimit; the drain runs until no new background work starts
 ---
 ## Decision (from the owner, 2026-09-22)

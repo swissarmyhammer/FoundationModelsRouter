@@ -10,8 +10,9 @@ import Testing
 /// When the model writes a tool call that the parser cannot accept,
 /// `MLXLanguageModel` throws `RejectedToolCallError`. Router tells the model
 /// why the call was rejected and runs the attempt again, so the model can
-/// write the call again. The retries have a bound, so a model that rejects
-/// every time still ends the turn with the rejection error.
+/// write the call again. The retries have no count: they continue until the
+/// model writes a call the parser accepts, the caller cancels the turn, or
+/// the context fills.
 ///
 /// Each test drives the production backend and a real `LanguageModelSession`
 /// over a ``RejectingLanguageModel``, so no GPU is in the loop.
@@ -28,9 +29,10 @@ struct RejectedToolCallRetryTests {
     /// rejected attempt, and the one retry that answers.
     private static let attemptsWithOneRetry = 2
 
-    /// A rejection count no turn can reach, so the model rejects every
-    /// generation call the turn makes.
-    private static let rejectsEveryCall = Int.max
+    /// How many rejected calls the model writes before it writes a valid
+    /// one, in the test that proves the retries continue past the count the
+    /// turn once stopped at.
+    private static let rejectionsBeforeTheAnswer = 5
 
     /// A routed session over a ``RejectingLanguageModel``, with the log its
     /// model writes into and the directory the router cached into.
@@ -84,20 +86,21 @@ struct RejectedToolCallRetryTests {
         #expect(!retried.contains(RejectingLanguageModel.Executor.rejectedRawText))
     }
 
-    @Test("the retries stop at the bound, and the turn then fails with the rejection error")
-    func retriesStopAtTheBound() async throws {
-        let fixture = try await Self.makeFixture(rejectionCount: Self.rejectsEveryCall)
+    @Test("the retries continue until the model writes a valid call: five rejections, then the answer")
+    func retriesContinueUntilTheModelWritesAValidCall() async throws {
+        let fixture = try await Self.makeFixture(rejectionCount: Self.rejectionsBeforeTheAnswer)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        let error = await #expect(throws: RejectedToolCallError.self) {
-            _ = try await fixture.session.respond(to: Self.prompt)
-        }
+        let answer = try await fixture.session.respond(to: Self.prompt)
 
-        #expect(error?.rejection == RejectingLanguageModel.Executor.rejection)
+        #expect(answer == RejectingLanguageModel.Executor.answerText)
         let transcripts = fixture.log.transcriptTexts
-        #expect(transcripts.count == RejectedToolCallRetry.limit + 1)
+        #expect(transcripts.count == Self.rejectionsBeforeTheAnswer + 1)
         let lastRetry = try #require(transcripts.last).joined(separator: "\n")
         #expect(lastRetry.contains(Self.prompt))
+        // The prompt of the last retry carries every earlier tool error.
+        let reason = RejectedToolCall.Reason.invalidArguments.rawValue
+        #expect(lastRetry.components(separatedBy: reason).count - 1 == Self.rejectionsBeforeTheAnswer)
         #expect(!lastRetry.contains(RejectingLanguageModel.Executor.rejectedRawText))
     }
 }
