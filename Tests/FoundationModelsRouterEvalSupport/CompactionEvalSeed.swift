@@ -36,19 +36,19 @@ struct CompactionEvalSeed: Sendable {
     /// The question asked of the resumed, post-compaction session.
     let question: String
 
-    /// The estimated token count of this seed's foldable span — every turn
+    /// The estimated token count of this seed's compactable span — every turn
     /// ``Summarization`` replaces with one summary entry.
     ///
     /// Partitioned through the same ``TranscriptTurns`` split the stage itself
     /// uses, at the stage's own ``Summarization/keepRecentTurns``, so this
-    /// measures what a fold really replaces rather than a model of it.
+    /// measures what a compaction really replaces rather than a model of it.
     ///
     /// Read by two callers that must agree: `CompactionEvalSeedSizingTests`
     /// holds every seed's span above the largest real summary of it, and
     /// ``CompactionEvalFactRetentionReport`` prints the span beside the summary
-    /// a discarded fold produced. A second copy of the partitioning would let
+    /// a discarded compaction produced. A second copy of the partitioning would let
     /// the bound and the evidence measure different spans.
-    var foldableSpanEstimatedTokens: Int {
+    var compactableSpanEstimatedTokens: Int {
         let (_, turns) = TranscriptTurns.split(entries)
         let (old, _) = TranscriptTurns.partition(turns, keepRecentTurns: Summarization().keepRecentTurns)
         return Compactor.estimatedTokenCount(of: Transcript(entries: old.flatMap(\.entries)))
@@ -82,9 +82,9 @@ struct CompactionEvalSeed: Sendable {
     /// ``compactionEvalFillerTurns`` (cycled if a fixture asks for more
     /// filler turns than the pool has).
     ///
-    /// The background turn leads, so the facts are the last thing the folded
+    /// The background turn leads, so the facts are the last thing the compacted
     /// span states and the summary is written with them freshest. Its size is
-    /// what makes the fold worth applying at all — see
+    /// what makes the compaction worth applying at all — see
     /// ``CompactionEvalFixtureSpec/context``.
     ///
     /// Every turn carries its own assistant reply — the background turn takes
@@ -99,7 +99,7 @@ struct CompactionEvalSeed: Sendable {
     /// - Parameter spec: The fixture to build.
     /// - Returns: The assembled seed.
     static func build(from spec: CompactionEvalFixtureSpec) -> CompactionEvalSeed {
-        // The fold keeps this entry, so the resumed session answers the
+        // The compaction keeps this entry, so the resumed session answers the
         // seed's question under it — see ``compactionEvalRecallInstructions``
         // for the measured refusals its register corrects.
         let instructions = Transcript.Entry.instructions(

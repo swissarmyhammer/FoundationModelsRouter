@@ -41,7 +41,7 @@ struct ProtectedToolOutputs {
     /// The id suffix of a `.toolCalls` entry reduced to its protected calls.
     ///
     /// A reduced entry has content its original does not have, so it takes an
-    /// id of its own. A fold then records it as a new entry, and a restore
+    /// id of its own. A compaction then records it as a new entry, and a restore
     /// rebuilds the reduced entry and not the original one.
     static let reducedToolCallsIdSuffix = "-protected"
 

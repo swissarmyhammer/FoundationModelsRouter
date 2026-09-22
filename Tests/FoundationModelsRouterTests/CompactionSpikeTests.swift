@@ -23,7 +23,7 @@ import Testing
 ///
 /// ```
 /// $ F=".../FoundationModels.swiftmodule/arm64e-apple-macos.swiftinterface"
-/// $ grep -inE "compact|condens|summar|trim|prune|fold|truncat" "$F"
+/// $ grep -inE "compact|condens|summar|trim|prune|compaction|truncat" "$F"
 /// (no matches)
 /// ```
 ///
@@ -31,7 +31,7 @@ import Testing
 /// surface the SDK exposes at all is `LanguageModelSession.contextSize` (a
 /// read-only `Int`) and the `LanguageModelError.contextSizeExceeded` /
 /// deprecated `GenerationError.exceededContextWindowSize` failure cases —
-/// nothing that folds, summarizes, elides, or trims a transcript. There is
+/// nothing that compacts, summarizes, elides, or trims a transcript. There is
 /// nothing native to defer to or build on top of: compaction_plan.md's
 /// from-scratch design (§1) is the only option.
 ///
@@ -47,7 +47,7 @@ import Testing
 /// *same* id an old `.toolOutput` carried, to mark an elision placeholder as
 /// replacing it in place rather than being a new, unrelated entry. This is
 /// exactly what `CompactionSegment` (compaction_plan.md §1.2) depends on: it
-/// references live-window and folded entries *by id*.
+/// references live-window and compacted entries *by id*.
 ///
 /// What this hermetic suite proves is the disk half of that dependency: once
 /// synthesized, an id survives ``TranscriptEntryMapper/event(from:)`` →
@@ -64,7 +64,7 @@ import Testing
 struct CompactionSpikeTests {
     // MARK: - Fixtures: synthesized entries no real model turn ever produced
 
-    /// The id an "old" `.toolOutput` entry carried before compaction folded
+    /// The id an "old" `.toolOutput` entry carried before compaction compacted
     /// it — reused, deliberately, by ``makeElisionPlaceholder()`` below.
     private static let oldToolOutputId = "tooloutput-old-1"
 
@@ -104,7 +104,7 @@ struct CompactionSpikeTests {
     /// The synthesized elision-placeholder entry a `ToolOutputElision` stage
     /// (compaction_plan.md §1.3) would produce: a *new* `.toolOutput` value
     /// that reuses ``oldToolOutputId`` — the id of the real tool output it
-    /// replaces — so it marks itself as an in-place fold rather than an
+    /// replaces — so it marks itself as an in-place compaction rather than an
     /// unrelated new entry, with the payload itself shrunk to a one-line
     /// placeholder naming the tool.
     private static func makeElisionPlaceholder() -> Transcript.Entry {

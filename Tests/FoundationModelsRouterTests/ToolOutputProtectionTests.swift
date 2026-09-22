@@ -120,17 +120,17 @@ struct ToolOutputProtectionTests {
         let transcript = try Fixtures.transcript()
         let summarizer = RecordingSummarizer(summary: Self.summaryText)
 
-        let folded = try #require(
+        let compacted = try #require(
             try await Summarization().apply(
                 transcript, prompt: .default, tokensBefore: Compactor.estimatedTokenCount(of: transcript),
                 priorStagesApplied: [], summarizer: summarizer, protection: Fixtures.rule))
 
-        let result = Array(folded.transcript)
+        let result = Array(compacted.transcript)
         let expectedPrefix = [
             TranscriptFixtures.makeInstructions(), try Fixtures.skillCallsEntry(), Fixtures.skillOutputEntry
         ]
         #expect(Array(result.prefix(expectedPrefix.count)) == expectedPrefix)
-        #expect(result[expectedPrefix.count].id == folded.summaryEntryId)
+        #expect(result[expectedPrefix.count].id == compacted.summaryEntryId)
         #expect(Fixtures.outputText(in: result, id: Fixtures.searchCallId) == nil)
     }
 
@@ -149,42 +149,42 @@ struct ToolOutputProtectionTests {
         #expect(prompts.contains { $0.contains(Fixtures.searchOutput) })
     }
 
-    @Test("a Summarization fold names the kept protected entries in its live window, and folds the rest")
+    @Test("a Summarization compaction names the kept protected entries in its live window, and compacts the rest")
     func summarizationCheckpointNamesTheKeptEntries() async throws {
         let transcript = try Fixtures.transcript()
 
-        let folded = try #require(
+        let compacted = try #require(
             try await Summarization().apply(
                 transcript, prompt: .default, tokensBefore: Compactor.estimatedTokenCount(of: transcript),
                 priorStagesApplied: [], summarizer: RecordingSummarizer(summary: Self.summaryText),
                 protection: Fixtures.rule))
 
-        let summaryEntry = try #require(Array(folded.transcript).first { $0.id == folded.summaryEntryId })
+        let summaryEntry = try #require(Array(compacted.transcript).first { $0.id == compacted.summaryEntryId })
         let content = try #require(try Self.checkpointContent(of: summaryEntry))
-        #expect(content.liveWindowEntryIds == Array(folded.transcript).map(\.id))
-        #expect(!content.foldedEntryIds.contains(Fixtures.skillCallId))
-        #expect(content.foldedEntryIds.contains(Fixtures.searchCallId))
+        #expect(content.liveWindowEntryIds == Array(compacted.transcript).map(\.id))
+        #expect(!content.compactedEntryIds.contains(Fixtures.skillCallId))
+        #expect(content.compactedEntryIds.contains(Fixtures.searchCallId))
     }
 
-    @Test("Summarization with no rule folds the skill output into the summary, the behavior before the rule existed")
-    func summarizationWithoutARuleFoldsTheSkillOutput() async throws {
+    @Test("Summarization with no rule compacts the skill output into the summary, the behavior before the rule existed")
+    func summarizationWithoutARuleCompactsTheSkillOutput() async throws {
         let transcript = try Fixtures.transcript()
         let summarizer = RecordingSummarizer(summary: Self.summaryText)
 
-        let folded = try #require(
+        let compacted = try #require(
             try await Summarization().apply(
                 transcript, prompt: .default, tokensBefore: Compactor.estimatedTokenCount(of: transcript),
                 priorStagesApplied: [], summarizer: summarizer))
 
-        let result = Array(folded.transcript)
-        let expectedPrefixIds = [TranscriptFixtures.makeInstructions().id, folded.summaryEntryId]
+        let result = Array(compacted.transcript)
+        let expectedPrefixIds = [TranscriptFixtures.makeInstructions().id, compacted.summaryEntryId]
         #expect(result.prefix(expectedPrefixIds.count).map(\.id) == expectedPrefixIds)
         #expect(Fixtures.outputText(in: result, id: Fixtures.skillCallId) == nil)
         let prompts = await summarizer.prompts
         #expect(prompts.contains { $0.contains(Fixtures.skillBody) })
     }
 
-    /// The fold manifest a boundary entry carries.
+    /// The compaction manifest a boundary entry carries.
     ///
     /// - Parameter entry: The boundary entry.
     /// - Returns: The manifest, or `nil` when `entry` carries none.
@@ -207,41 +207,41 @@ struct ToolOutputProtectionTests {
         let before = Compactor.estimatedTokenCount(of: transcript)
         let budget = TokenBudget(limit: before, target: Self.nearlyWholeTarget)
 
-        let (folded, result) = try await Compactor.compact(transcript, budget: budget, protection: Fixtures.rule)
+        let (compacted, result) = try await Compactor.compact(transcript, budget: budget, protection: Fixtures.rule)
 
         #expect(!result.stagesApplied.isEmpty)
-        #expect(Fixtures.outputText(in: Array(folded), id: Fixtures.skillCallId) == Fixtures.skillBody)
+        #expect(Fixtures.outputText(in: Array(compacted), id: Fixtures.skillCallId) == Fixtures.skillBody)
         #expect(result.protectedTokens == Self.protectedOutputTokens)
     }
 
-    @Test("the Compactor completes a fold whose protected content alone is over the target, and reports it")
-    func compactorCompletesAFoldOverTargetBecauseOfProtectedContent() async throws {
+    @Test("the Compactor completes a compaction whose protected content alone is over the target, and reports it")
+    func compactorCompletesACompactionOverTargetBecauseOfProtectedContent() async throws {
         let transcript = try Fixtures.transcript()
         let budget = Self.budgetUnderTheRecencyWindow(of: transcript)
 
-        let (folded, result) = try await Compactor.compact(transcript, budget: budget, protection: Fixtures.rule)
+        let (compacted, result) = try await Compactor.compact(transcript, budget: budget, protection: Fixtures.rule)
 
         #expect(result.stagesApplied == [ToolOutputElision.stageName, TurnTruncation.stageName])
         #expect(result.tokensAfter < result.tokensBefore)
         #expect(result.tokensAfter > budget.targetTokens)
         #expect(result.protectedTokens == Self.protectedOutputTokens)
-        #expect(Fixtures.outputText(in: Array(folded), id: Fixtures.skillCallId) == Fixtures.skillBody)
-        #expect(Fixtures.outputText(in: Array(folded), id: Fixtures.searchCallId) == nil)
+        #expect(Fixtures.outputText(in: Array(compacted), id: Fixtures.skillCallId) == Fixtures.skillBody)
+        #expect(Fixtures.outputText(in: Array(compacted), id: Fixtures.searchCallId) == nil)
     }
 
-    @Test("with no rule, a fold that cannot reach its target still returns the transcript unchanged")
+    @Test("with no rule, a compaction that cannot reach its target still returns the transcript unchanged")
     func compactorWithoutARuleKeepsTheShortfallExit() async throws {
         let transcript = try Fixtures.transcript()
 
-        let (folded, result) = try await Compactor.compact(
+        let (compacted, result) = try await Compactor.compact(
             transcript, budget: Self.budgetUnderTheRecencyWindow(of: transcript))
 
         #expect(result.stagesApplied.isEmpty)
-        #expect(folded == transcript)
+        #expect(compacted == transcript)
         #expect(result.protectedTokens == 0)
     }
 
-    /// The target fraction a budget states when the fold must shrink the
+    /// The target fraction a budget states when the compaction must shrink the
     /// transcript only a little: the deterministic stages always land under it.
     private static let nearlyWholeTarget = 0.9
 
@@ -253,11 +253,11 @@ struct ToolOutputProtectionTests {
     /// `transcript`, so no deterministic stage can reach it, and the protected
     /// output alone is over it.
     ///
-    /// - Parameter transcript: The transcript to fold.
+    /// - Parameter transcript: The transcript to compact.
     /// - Returns: The budget.
     private static func budgetUnderTheRecencyWindow(of transcript: Transcript) -> TokenBudget {
         let before = Compactor.estimatedTokenCount(of: transcript)
-        let targetTokens = recencyWindowOnlyEstimate(Array(transcript)) / foldTargetMidpointDivisor
+        let targetTokens = recencyWindowOnlyEstimate(Array(transcript)) / compactionTargetMidpointDivisor
         return TokenBudget(limit: before, target: Double(targetTokens) / Double(before))
     }
 }

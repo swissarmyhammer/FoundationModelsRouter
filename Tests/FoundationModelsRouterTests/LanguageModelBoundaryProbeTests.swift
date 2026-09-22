@@ -72,7 +72,7 @@
             /// so the SDK's executor cache never conflates one test's
             /// recorder with another's.
             struct Configuration: Sendable, Hashable {
-                /// The canned response text this executor will emit; folded
+                /// The canned response text this executor will emit; merged
                 /// into the cache key so executors with different canned
                 /// text are never conflated.
                 let cannedResponseText: String
@@ -192,7 +192,7 @@
             struct Configuration: Sendable, Hashable {
                 /// The wrapped model this configuration delegates to; its
                 /// `cannedResponseText` and `transcripts` recorder identity
-                /// are folded into `==`/`hash(into:)` below so two
+                /// are merged into `==`/`hash(into:)` below so two
                 /// configurations wrapping different stub models never
                 /// collide in the SDK's executor cache.
                 let wrapped: ProbeStubModel

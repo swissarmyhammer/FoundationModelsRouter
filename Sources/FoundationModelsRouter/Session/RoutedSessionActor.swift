@@ -279,7 +279,7 @@ actor RoutedSessionActor: RoutedSession {
     nonisolated let workingDirectory: URL
 
     /// The backend every generation and fork runs through. Never vended to
-    /// callers. ``compact(prompt:budget:)`` replaces it after a fold.
+    /// callers. ``compact(prompt:budget:)`` replaces it after a compaction.
     var backend: any LanguageModelSessionBackend
 
     /// See ``RoutedSession/transcript``. Reads under ``turnLock``, except from
@@ -442,8 +442,8 @@ actor RoutedSessionActor: RoutedSession {
 
     /// The positional diff baseline against the current ``backend`` transcript:
     /// how many entries are already persisted or inherited. `0` for a root, the
-    /// parent's entry count at fork time for a fork. A fold rewinds it to the
-    /// folded window's count, so it is not the session's position in its own
+    /// parent's entry count at fork time for a fork. A compaction rewinds it to the
+    /// compacted window's count, so it is not the session's position in its own
     /// recorded history. That coordinate is ``historyOrdinal``.
     var persistedEntryCount: Int
 
@@ -477,17 +477,17 @@ actor RoutedSessionActor: RoutedSession {
     var usageState: ContextUsageState
 
     /// The auto-compaction opt-in, or `nil` for manual-only compaction. When
-    /// set, a turn folds automatically at ``TokenBudget/triggerTokens``, and a
+    /// set, a turn compacts automatically at ``TokenBudget/triggerTokens``, and a
     /// turn that overflows mid-generation is compacted harder and retried
     /// once. A fork carries it forward.
     nonisolated let autoCompactionBudget: TokenBudget?
 
-    /// The compaction prompt auto-compaction's own folds send to the
+    /// The compaction prompt auto-compaction's own compactions send to the
     /// summarizer, when ``autoCompactionBudget`` is set. Ignored otherwise.
     nonisolated let autoCompactionPrompt: CompactionPrompt
 
-    /// The model-assisted compaction stage every fold on this session uses,
-    /// the caller-driven and the automatic fold alike. A fork carries it
+    /// The model-assisted compaction stage every compaction on this session uses,
+    /// the caller-driven and the automatic compaction alike. A fork carries it
     /// forward.
     nonisolated let summarization: Summarization
 
@@ -497,7 +497,7 @@ actor RoutedSessionActor: RoutedSession {
     /// A fork carries it forward.
     nonisolated let discoveryPriming: DiscoveryPriming?
 
-    /// The host rule whose protected tool outputs every fold on this session
+    /// The host rule whose protected tool outputs every compaction on this session
     /// keeps word for word, or `nil` to protect nothing. A fork carries it
     /// forward. The sidecar never records it, because it is a closure; a
     /// restore takes it from the host again. See ``ToolOutputProtection``.

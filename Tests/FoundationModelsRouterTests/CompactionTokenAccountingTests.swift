@@ -21,10 +21,10 @@ import Testing
 /// That mattered because the estimate is compared *absolutely* against
 /// real-token quantities in two places: ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:protection:)``
 /// checks it against ``TokenBudget/targetTokens``, and `RoutedSessionActor`'s
-/// fold writes ``CompactionResult/tokensAfter`` straight into
+/// compaction writes ``CompactionResult/tokensAfter`` straight into
 /// ``RoutedSession/contextFill``'s numerator, where every other writer puts
 /// real tokenizer counts from `LanguageModelSession.usage`. Two units for one
-/// number made a fold *raise* measured fill.
+/// number made a compaction *raise* measured fill.
 @Suite("Compaction token accounting: the transcript estimate counts content, not the JSON envelope")
 struct CompactionTokenAccountingTests {
     /// A `.prompt` entry carrying exactly `text`, with ids of the caller's
@@ -93,14 +93,14 @@ struct CompactionTokenAccountingTests {
 
     // MARK: - A compaction boundary's bookkeeping is not content
 
-    @Test("a fold's own CompactionSegment adds nothing to the estimate, however many entry ids its manifest carries")
+    @Test("a compaction's own CompactionSegment adds nothing to the estimate, however many entry ids its manifest carries")
     func compactionSegmentManifestIsNotContent() throws {
         // A boundary entry's model-visible part is its `.text` segments; the
         // `CompactionSegment` beside them is bookkeeping the backend's
         // transcript rendering skips outright, so it must not be measured as
         // if a tokenizer would see it. The manifest is not a rounding error:
-        // it names every entry in the live window *and* every entry the fold
-        // dropped, so it grows with the transcript being folded.
+        // it names every entry in the live window *and* every entry the compaction
+        // dropped, so it grows with the transcript being compacted.
         let summaryText = "The archive project's vault code is CRIMSON-77; three of six outposts are indexed."
         func boundaryEntry(includingCompactionSegment: Bool) -> Transcript.Entry {
             var segments: [Transcript.Segment] = [
@@ -111,7 +111,7 @@ struct CompactionTokenAccountingTests {
                     CompactionSegment(
                         content: CompactionSegment.Content(
                             liveWindowEntryIds: (0..<10).map { _ in UUID().uuidString },
-                            foldedEntryIds: (0..<8).map { _ in UUID().uuidString },
+                            compactedEntryIds: (0..<8).map { _ in UUID().uuidString },
                             tokensBefore: 2074,
                             tokensAfter: 1843,
                             stagesApplied: ["ToolOutputElision", "TurnTruncation", "Summarization"],

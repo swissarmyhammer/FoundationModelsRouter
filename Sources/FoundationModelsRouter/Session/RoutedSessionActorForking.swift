@@ -184,9 +184,9 @@ extension RoutedSessionActor {
         // The cut in append-only history coordinates, captured in the same
         // synchronous window as `entryCountAtFork` so the two describe one
         // moment: this session's position in its own recorded history —
-        // unlike the positional backend count above, a fold never rewinds it,
-        // so a fork taken after a fold restores the fold's live window rather
-        // than the discarded pre-fold span (see ``historyOrdinal`` and
+        // unlike the positional backend count above, a compaction never rewinds it,
+        // so a fork taken after a compaction restores the compaction's live window rather
+        // than the discarded pre-compaction span (see ``historyOrdinal`` and
         // ``SessionSidecar/forkedAtHistoryOrdinal``).
         let historyOrdinalAtFork = historyOrdinal
         let forkedBackend = backend.makeFork(tools: childTools)
@@ -251,7 +251,7 @@ extension RoutedSessionActor {
             // opt-in at fork time.
             autoCompactionBudget: autoCompactionBudget,
             autoCompactionPrompt: autoCompactionPrompt,
-            // A fold on a fork condenses exactly like a fold on its parent:
+            // A compaction on a fork condenses exactly like a compaction on its parent:
             // same recency window, same chunk ceiling, same compression ratio.
             summarization: summarization,
             // A fork carries no spawn context, the same rule as its sidecar
@@ -262,7 +262,7 @@ extension RoutedSessionActor {
             // auto-compaction opt-in does: a fork continues its parent's
             // conversation, so it primes its turns exactly like its parent.
             discoveryPriming: discoveryPriming,
-            // A fold on a fork keeps what a fold on its parent keeps: the
+            // A compaction on a fork keeps what a compaction on its parent keeps: the
             // same host rule protects the same tool outputs.
             toolOutputProtection: toolOutputProtection,
             // The parent's own tracer: a fork continues its parent's

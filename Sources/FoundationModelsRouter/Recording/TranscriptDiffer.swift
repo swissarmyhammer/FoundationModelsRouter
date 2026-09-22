@@ -50,7 +50,7 @@ enum TranscriptDiffer {
     }
 
     /// Returns the ordered partial events for every entry in `current` whose
-    /// `Transcript.Entry.id` is not in `lastSeen`. A compaction fold makes
+    /// `Transcript.Entry.id` is not in `lastSeen`. A compaction makes
     /// `current` shorter than `lastSeen`, so only entry identity can say
     /// what is new.
     ///

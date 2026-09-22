@@ -13,7 +13,7 @@ import FoundationModelsRouterTestSupport
 /// target has no `RoutedSession`/`RoutedSessionActor` in play — the eval
 /// drives the bare-session recipe (compaction_plan.md §1.5) directly.
 ///
-/// An `actor` rather than a `struct` so it can record its own calls: one fold
+/// An `actor` rather than a `struct` so it can record its own calls: one compaction
 /// makes more than one summarizer call when ``Summarization`` chunks a long
 /// span into several map calls plus a reduce call, and
 /// ``CompactionEvalSampleDiagnostic/summarizerCalls`` reports every one of them
@@ -88,7 +88,7 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
     /// including the ones still running.
     ///
     /// Counted apart from ``diagnostics``, which holds only the samples that
-    /// finished BOTH their fold and their answering turn. A sample the time
+    /// finished BOTH their compaction and their answering turn. A sample the time
     /// limit cut short is counted here and recorded nowhere else, which is what
     /// lets its progress lines state where in the tier it stood.
     private var startedSampleCount = 0
@@ -148,7 +148,7 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
         // Decoding is pinned to greedy. The provider default samples at
         // temperature 0.6 from MLX's process-global PRNG, which seeds itself
         // from the clock, so two runs of identical code drew different answers:
-        // the runs of 2026-08-17 scored 7 of 7 and 6 of 7 against the same fold
+        // the runs of 2026-08-17 scored 7 of 7 and 6 of 7 against the same compaction
         // code, and the one seed that moved, `env-file` (rewritten as
         // `sesame-allergy` by task ^rdsbf57), answered with its key phrase once
         // and refused once.
@@ -188,25 +188,25 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
     }
 
     /// Runs one sample's real subject work (compaction_plan.md §1.4/§1.5's bare-session
-    /// recipe): folds `entries` with `prompt`/`budget` via
+    /// recipe): compacts `entries` with `prompt`/`budget` via
     /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:protection:)``, resumes a live
-    /// session over the folded transcript, and asks `question`.
+    /// session over the compacted transcript, and asks `question`.
     ///
     /// - Parameters:
-    ///   - entries: The seed transcript's entries to fold.
+    ///   - entries: The seed transcript's entries to compact.
     ///   - prompt: The compaction prompt under test.
-    ///   - budget: The token budget to fold against.
+    ///   - budget: The token budget to compact against.
     ///   - question: The question to ask the resumed session.
-    /// - Returns: The resumed session's answer plus the fold's report.
+    /// - Returns: The resumed session's answer plus the compaction's report.
     /// - Throws: Whatever ``container()`` throws while loading the resident
     ///   model, or whatever ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:protection:)``
     ///   or the resumed session's `respond(to:maxTokens:)` throws while
-    ///   folding `entries` or answering `question`.
+    ///   compacting `entries` or answering `question`.
     ///
     /// Also appends this sample's ``CompactionEvalSampleDiagnostic`` to
     /// ``recordedDiagnostics()``. The evaluation's own outcome type carries no
-    /// summary text, so without this the gated run cannot tell a fact the fold
-    /// dropped from a fact the fold preserved into an answer that ignored it.
+    /// summary text, so without this the gated run cannot tell a fact the compaction
+    /// dropped from a fact the compaction preserved into an answer that ignored it.
     ///
     /// A diagnostic is appended only once BOTH real model calls have returned,
     /// so a sample the suite time limit cut short leaves no record at all. The
@@ -229,39 +229,39 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
         let sampleStartedAt = Date()
 
         CompactionEvalProgressLog.emit(
-            CompactionEvalProgressLog.makeStepStartedLine(.fold, sample: label, elapsedSeconds: nil))
+            CompactionEvalProgressLog.makeStepStartedLine(.compaction, sample: label, elapsedSeconds: nil))
         let summarizer = BlankSlateSummarizer(loaded: loaded)
         // The summarization cuts `reasoningTokenHeadroom` to the shared eval
         // bound, because the resident model writes no `<think>` block and the
         // default headroom of 8192 is free generation room for it — see
         // `compactionEvalReasoningTokenHeadroom` for the measured runaway
-        // folds behind the cut. Every other summarization value stays at its
-        // production default, so the fold under test is the production fold.
-        let (folded, result) = try await Compactor.compact(
+        // compacts behind the cut. Every other summarization value stays at its
+        // production default, so the compaction under test is the production compaction.
+        let (compacted, result) = try await Compactor.compact(
             Transcript(entries: entries),
             prompt: prompt,
             budget: budget,
             summarizer: summarizer,
             summarization: Summarization(reasoningTokenHeadroom: compactionEvalReasoningTokenHeadroom)
         )
-        let foldReturnedAt = Date()
+        let compactionReturnedAt = Date()
         let summarizerCalls = await summarizer.calls
-        let foldSeconds = foldReturnedAt.timeIntervalSince(sampleStartedAt)
+        let compactionSeconds = compactionReturnedAt.timeIntervalSince(sampleStartedAt)
         CompactionEvalProgressLog.emit(
             CompactionEvalProgressLog.makeStepReturnedLine(
-                .fold,
+                .compaction,
                 sample: label,
-                elapsedSeconds: foldSeconds,
-                stepSeconds: foldSeconds,
-                detail: CompactionEvalProgressLog.makeFoldDetail(
+                elapsedSeconds: compactionSeconds,
+                stepSeconds: compactionSeconds,
+                detail: CompactionEvalProgressLog.makeCompactionDetail(
                     stagesApplied: result.stagesApplied, summarizerCalls: summarizerCalls)
             ))
 
         CompactionEvalProgressLog.emit(
             CompactionEvalProgressLog.makeStepStartedLine(
-                .answer, sample: label, elapsedSeconds: foldSeconds))
+                .answer, sample: label, elapsedSeconds: compactionSeconds))
         let answer = try await loaded.container
-            .makeSession(transcript: folded, samplingMode: loaded.samplingMode)
+            .makeSession(transcript: compacted, samplingMode: loaded.samplingMode)
             .respond(to: question, maxTokens: GatedRealModelBudget.responseTokenCeiling)
         let answerReturnedAt = Date()
         CompactionEvalProgressLog.emit(
@@ -269,7 +269,7 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
                 .answer,
                 sample: label,
                 elapsedSeconds: answerReturnedAt.timeIntervalSince(sampleStartedAt),
-                stepSeconds: answerReturnedAt.timeIntervalSince(foldReturnedAt),
+                stepSeconds: answerReturnedAt.timeIntervalSince(compactionReturnedAt),
                 detail: CompactionEvalProgressLog.makeAnswerDetail(answer: answer)
             ))
 

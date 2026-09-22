@@ -6,7 +6,7 @@ import Foundation
 /// The recording lives in this target's `Fixtures/CompactionRecording/`
 /// directory and rides in this target's resource bundle, because two suites
 /// in two different test targets read it: the gated
-/// `RecordedTranscriptCompactionIntegrationTests` folds it against a real
+/// `RecordedTranscriptCompactionIntegrationTests` compacts it against a real
 /// model, and the hermetic `RecordedFixtureRedactionTests` scans its bytes
 /// on every plain `swift test` (task ^cvsh3m9). Each `.xctest` bundles its
 /// own resources, so hosting the files in either test target would hide
@@ -18,8 +18,8 @@ import Foundation
 /// again.
 public enum CompactionRecordingFixture {
     /// The recording's path inside this target's resource bundle — one place,
-    /// because the folding suite and the redaction scan must read the SAME
-    /// directory or the scan proves nothing about what the fold consumed.
+    /// because the compaction suite and the redaction scan must read the SAME
+    /// directory or the scan proves nothing about what the compaction consumed.
     public static let resourcePath = "Fixtures/CompactionRecording"
 
     /// The recording's root directory on disk, or `nil` when the resource

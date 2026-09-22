@@ -1,5 +1,5 @@
 /// The instructions given to the ``Summarization`` compaction stage, with a
-/// `name` so recorded folds can be attributed to the prompt that produced
+/// `name` so recorded compactions can be attributed to the prompt that produced
 /// them. Consumers pass their own value to specialize summarization.
 public struct CompactionPrompt: Sendable, Equatable, Codable {
     /// This prompt's name, recorded in ``CompactionSegment/Content/promptName``.
@@ -13,7 +13,7 @@ public struct CompactionPrompt: Sendable, Equatable, Codable {
     /// Creates a compaction prompt.
     ///
     /// - Parameters:
-    ///   - name: This prompt's name, recorded in the fold's ``CompactionSegment``.
+    ///   - name: This prompt's name, recorded in the compaction's ``CompactionSegment``.
     ///   - text: The summarization instructions, sent to the summarizer model verbatim.
     public init(name: String, text: String) {
         self.name = name

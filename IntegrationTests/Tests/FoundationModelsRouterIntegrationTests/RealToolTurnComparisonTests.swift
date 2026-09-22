@@ -218,7 +218,7 @@ struct RealToolTurnComparisonTests {
     /// two tools mounted.
     ///
     /// The profile comes from ``RealModelHarness/make(model:context:container:samplingMode:cacheDir:recordingsDir:routerId:)``,
-    /// which this suite's own hand-built copy was folded onto (task ^zz6kam0).
+    /// which this suite's own hand-built copy was merged onto (task ^zz6kam0).
     /// Two things the copy did differently went with the move. It re-wrapped the
     /// container it was handed to pin greedy decoding; ``loadContainer()`` now
     /// asks ``RealModelContainer/load(ref:context:samplingMode:chatTemplateDate:)``
@@ -362,7 +362,7 @@ struct RealToolTurnComparisonTests {
                 failedIds.append(id)
             case .turnStarted, .toolStatus, .toolInvocation, .toolCallReport, .reasoningDelta, .entryRecorded,
                 .compaction, .discoveryPrimingFailed, .generationStalled, .runSettled, .elicitationRequested,
-                .turnEnded:
+                .generationCall, .turnEnded:
                 break
             }
         }

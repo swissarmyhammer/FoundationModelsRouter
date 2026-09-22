@@ -2,21 +2,21 @@ import Foundation
 
 import FoundationModelsRouter
 
-/// The ceiling one summarizer call of a fold ran under, and what it answered.
+/// The ceiling one summarizer call of a compaction ran under, and what it answered.
 ///
 /// The ceiling bounds the generation; the assembled prompt also states the
 /// call's summary allowance to the model as a word-count target (task
 /// ^xx02yn6) — see ``Summarization`` — and the call reads back whatever the
 /// model writes.
 ///
-/// Recorded because a discarded fold leaves no other trace of its summary.
-/// `Compactor.compact` throws such a fold away and reports the shortfall exit's
+/// Recorded because a discarded compaction leaves no other trace of its summary.
+/// `Compactor.compact` throws such a compaction away and reports the shortfall exit's
 /// `nil` summary, so the size of the summary that lost — the one number that
-/// says whether the fold missed by a few percent or by a multiple — survives
+/// says whether the compaction missed by a few percent or by a multiple — survives
 /// nowhere else. The summarizer holds it at the moment it answers, so it is
 /// kept there.
 struct CompactionEvalSummarizerCall: Sendable {
-    /// The ceiling, in tokens, the fold gave this call.
+    /// The ceiling, in tokens, the compaction gave this call.
     ///
     /// ``Summarization``'s summary allowance plus its
     /// ``Summarization/reasoningTokenHeadroom``, and it bounds the WHOLE
@@ -33,10 +33,10 @@ struct CompactionEvalSummarizerCall: Sendable {
 /// ``CompactionEvalRealSubjectRunner`` as each sample runs.
 ///
 /// ``CompactionEvaluationOutcome`` carries the produced answer but not the
-/// fold's summary text, so a failing `FactRetention` sample cannot be
-/// attributed from it: a fact the fold dropped and a fact the fold preserved
+/// compaction's summary text, so a failing `FactRetention` sample cannot be
+/// attributed from it: a fact the compaction dropped and a fact the compaction preserved
 /// into an answer that ignored it look identical there. This record keeps both
-/// sides of that question — the summary the fold synthesized and the answer
+/// sides of that question — the summary the compaction synthesized and the answer
 /// the resumed session gave — so ``CompactionEvalFactRetentionClass`` can tell
 /// them apart for every sample rather than for a hand-picked few.
 struct CompactionEvalSampleDiagnostic: Sendable {
@@ -45,7 +45,7 @@ struct CompactionEvalSampleDiagnostic: Sendable {
     /// `CompactionEvalFactRetentionReportTests` pins as unique across seeds.
     let question: String
 
-    /// The fold's synthesized summary text (``CompactionResult/summary``), or
+    /// The compaction's synthesized summary text (``CompactionResult/summary``), or
     /// `nil` when no `Summarization` stage ran and so no summary exists.
     let summary: String?
 
@@ -57,17 +57,17 @@ struct CompactionEvalSampleDiagnostic: Sendable {
     /// (``CompactionResult/stagesApplied``).
     let stagesApplied: [String]
 
-    /// Every summarizer call the fold made, in call order — the ceiling each ran
+    /// Every summarizer call the compaction made, in call order — the ceiling each ran
     /// under and what the model answered.
     ///
-    /// The whole list rather than a count, because a discarded fold's summary
+    /// The whole list rather than a count, because a discarded compaction's summary
     /// text survives nowhere else — see ``CompactionEvalSummarizerCall``.
     let summarizerCalls: [CompactionEvalSummarizerCall]
 
-    /// How many round trips to the model the fold's summarizer made. One fold
+    /// How many round trips to the model the compaction's summarizer made. One compaction
     /// makes more than one call when ``Summarization`` chunks a long span into
     /// several map calls plus a reduce call, so this distinguishes a
-    /// single-shot fold from a chunked one.
+    /// single-shot compaction from a chunked one.
     var summarizerCallCount: Int {
         summarizerCalls.count
     }
@@ -75,35 +75,35 @@ struct CompactionEvalSampleDiagnostic: Sendable {
     /// Whether this sample's compaction reached the model-assisted
     /// ``Summarization`` stage — the one stage that leaves a summary a later
     /// question can be answered from.
-    var folded: Bool {
+    var compacted: Bool {
         stagesApplied.contains(Summarization.stageName)
     }
 
-    /// Whether this sample's fold ran and was then thrown away.
+    /// Whether this sample's compaction ran and was then thrown away.
     ///
-    /// `Compactor.compact` refuses a fold whose summary left the transcript no
+    /// `Compactor.compact` refuses a compaction whose summary left the transcript no
     /// smaller than it was, and its shortfall exit reports the same values as a
-    /// fold that never ran at all: no summary, and no stage applied. The two are
+    /// compaction that never ran at all: no summary, and no stage applied. The two are
     /// not the same measurement, and telling them apart is what this reads.
     ///
     /// The summarizer is called from ``Summarization`` and nowhere else, and an
     /// applied `Summarization` always names itself in
     /// ``CompactionResult/stagesApplied``. So a call with no stage to show for it
-    /// is a fold that ran and was discarded, and nothing else can produce that
+    /// is a compaction that ran and was discarded, and nothing else can produce that
     /// pair.
-    var foldDiscarded: Bool {
-        summarizerCallCount > 0 && !folded
+    var compactionDiscarded: Bool {
+        summarizerCallCount > 0 && !compacted
     }
 
-    /// The call whose answer a discarded fold would have stored, or `nil` when
-    /// this sample's fold was not discarded.
+    /// The call whose answer a discarded compaction would have stored, or `nil` when
+    /// this sample's compaction was not discarded.
     ///
-    /// The LAST call, because that is the summary a fold stores: a span inside
+    /// The LAST call, because that is the summary a compaction stores: a span inside
     /// ``Summarization/maxChunkTokens`` takes one call, and a longer one takes
     /// several map calls and then reduce rounds whose final call produces the
     /// single summary the boundary carries.
     var discardedSummary: CompactionEvalSummarizerCall? {
-        guard foldDiscarded else { return nil }
+        guard compactionDiscarded else { return nil }
         return summarizerCalls.last
     }
 }
@@ -123,29 +123,29 @@ enum CompactionEvalFactRetentionClass: String, Sendable, CaseIterable {
     case retained
 
     /// The summary carried the key phrase verbatim and the answer still did
-    /// not — the fold preserved the fact and the *answering* turn lost it.
+    /// not — the compaction preserved the fact and the *answering* turn lost it.
     case answerMissedFactSummaryCarriedIt
 
-    /// A summary exists but does not carry the key phrase — the fold itself
+    /// A summary exists but does not carry the key phrase — the compaction itself
     /// dropped the fact.
     case summaryLostFact
 
-    /// The fold produced no summary at all, so the resumed session was never
+    /// The compaction produced no summary at all, so the resumed session was never
     /// given anything to answer from.
     ///
     /// Covers a missing summary and an empty one alike. The gated run of
-    /// 2026-08-17 recorded `Optional("")` on 19 of 19 seeds — the fold ran, the
+    /// 2026-08-17 recorded `Optional("")` on 19 of 19 seeds — the compaction ran, the
     /// summarizer answered, and the answer held no characters — and a `nil`
     /// test alone filed every one of them under ``summaryLostFact``, which
     /// reads as a summary that forgot the fact. A summary with no text carries
     /// nothing to forget, so it belongs here.
     ///
-    /// Covers a discarded fold too, and for the same reason: `Compactor.compact`
-    /// throws a fold away when its summary left the transcript no smaller, and
+    /// Covers a discarded compaction too, and for the same reason: `Compactor.compact`
+    /// throws a compaction away when its summary left the transcript no smaller, and
     /// the resumed session is then handed the original turns with no summary in
     /// them. What separates the two is legible in the table rather than here —
     /// see ``CompactionEvalFactRetentionReport/discardedSummaryMarker``.
-    case foldProducedNoSummary
+    case compactionProducedNoSummary
 
     /// The recorded sample's question matched no seed, so its key phrase is
     /// unknown and it cannot be classified. Present so every recorded sample
@@ -156,7 +156,7 @@ enum CompactionEvalFactRetentionClass: String, Sendable, CaseIterable {
     /// Classifies one sample from the two texts that decide it.
     ///
     /// - Parameters:
-    ///   - summary: The fold's synthesized summary, or `nil` when the fold
+    ///   - summary: The compaction's synthesized summary, or `nil` when the compaction
     ///     produced none.
     ///   - answer: The resumed session's answer.
     ///   - factKeyPhrase: The seed's short, distinctive key phrase — the same
@@ -169,10 +169,10 @@ enum CompactionEvalFactRetentionClass: String, Sendable, CaseIterable {
         // `FactRetention` evaluator applies, so this case's count and the
         // metric's mean can never disagree.
         if answer.localizedCaseInsensitiveContains(factKeyPhrase) { return .retained }
-        // A summary with no text is a fold that produced none, whether it
-        // arrived as `nil` or as `""` — see `foldProducedNoSummary`.
+        // A summary with no text is a compaction that produced none, whether it
+        // arrived as `nil` or as `""` — see `compactionProducedNoSummary`.
         guard let summary, CompactionEvalFactRetentionReport.carriesText(summary) else {
-            return .foldProducedNoSummary
+            return .compactionProducedNoSummary
         }
         return summary.localizedCaseInsensitiveContains(factKeyPhrase)
             ? .answerMissedFactSummaryCarriedIt
@@ -188,13 +188,13 @@ struct CompactionEvalFactRetentionFinding: Sendable {
     /// matched.
     let seedID: String
 
-    /// The fact planted in the seed's foldable head.
+    /// The fact planted in the seed's compactable head.
     let plantedFact: String
 
     /// The short key phrase `FactRetention` checks for.
     let factKeyPhrase: String
 
-    /// Whether ``factKeyPhrase`` appears verbatim in the fold's summary — the
+    /// Whether ``factKeyPhrase`` appears verbatim in the compaction's summary — the
     /// measurement that separates a compaction defect from an answering one.
     let factInSummary: Bool
 
@@ -204,20 +204,20 @@ struct CompactionEvalFactRetentionFinding: Sendable {
     /// The case this sample landed in.
     let classification: CompactionEvalFactRetentionClass
 
-    /// The span this sample's fold was to replace, in the estimated tokens
+    /// The span this sample's compaction was to replace, in the estimated tokens
     /// `Compactor` measures a transcript in — `0` when the sample matched no
     /// seed, since no span is then known.
     ///
-    /// The other half of a discarded fold's measurement. `Compactor.compact`
-    /// keeps a fold only when it leaves the transcript smaller, so a summary
+    /// The other half of a discarded compaction's measurement. `Compactor.compact`
+    /// keeps a compaction only when it leaves the transcript smaller, so a summary
     /// that lost is only legible beside the span it was meant to replace.
-    let foldableSpanEstimatedTokens: Int
+    let compactableSpanEstimatedTokens: Int
 }
 
 /// Turns the gated run's recorded per-sample evidence into a classified table
 /// and its per-case counts.
 ///
-/// Kept as functions over plain values — rather than folded into
+/// Kept as functions over plain values — rather than compacted into
 /// ``CompactionEvalRealSubjectRunner`` — so the classification the gated run's
 /// attribution rests on is itself covered by hermetic tests that need no
 /// model.
@@ -226,7 +226,7 @@ enum CompactionEvalFactRetentionReport {
     /// sample whose question matched no seed.
     static let unmatchedSeedID = "<unmatched>"
 
-    /// What ``stanza(for:)`` renders in place of a fold that produced no
+    /// What ``stanza(for:)`` renders in place of a compaction that produced no
     /// summary at all.
     static let absentSummaryMarker = "<none>"
 
@@ -237,13 +237,13 @@ enum CompactionEvalFactRetentionReport {
     /// rather than as the measurement it is. A marker states it.
     static let emptySummaryMarker = "<empty>"
 
-    /// What ``stanza(for:)`` renders in place of a fold that ran and was then
-    /// discarded — see ``CompactionEvalSampleDiagnostic/foldDiscarded``.
+    /// What ``stanza(for:)`` renders in place of a compaction that ran and was then
+    /// discarded — see ``CompactionEvalSampleDiagnostic/compactionDiscarded``.
     ///
-    /// `Compactor.compact` reports a discarded fold through the same shortfall
-    /// exit an unfolded transcript takes, so the summary arrives as `nil` and the
+    /// `Compactor.compact` reports a discarded compaction through the same shortfall
+    /// exit an uncompacted transcript takes, so the summary arrives as `nil` and the
     /// table wrote ``absentSummaryMarker`` for it — the same rendering a stage
-    /// that never ran gets. A fold the summarizer really answered, and the
+    /// that never ran gets. A compaction the summarizer really answered, and the
     /// pipeline then threw away, is a different measurement and says so.
     static let discardedSummaryMarker = "<discarded>"
 
@@ -255,7 +255,7 @@ enum CompactionEvalFactRetentionReport {
     /// run from a printer that never states one.
     static let everySeedReachedMarker = "<none>"
 
-    /// How many characters of a discarded fold's summary ``stanza(for:)``
+    /// How many characters of a discarded compaction's summary ``stanza(for:)``
     /// prints before it cuts the text off.
     ///
     /// A discarded summary is bounded only by the ceiling the whole generation
@@ -268,7 +268,7 @@ enum CompactionEvalFactRetentionReport {
     /// not bound this text, and it is meant not to.
     /// ``CompactionEvalRealSubjectRunner``'s summarizer records the answer as
     /// the call returns it, before the stage resolves anything, so a
-    /// discarded fold is judged on what the model wrote.
+    /// discarded compaction is judged on what the model wrote.
     ///
     /// `1000` is nearly twice the largest summary the allowance itself buys
     /// (``Summarization/minimumSummaryTokens`` at
@@ -337,20 +337,20 @@ enum CompactionEvalFactRetentionReport {
         return counts
     }
 
-    /// How many of `findings` had a fold that wrote a summary carrying the
+    /// How many of `findings` had a compaction that wrote a summary carrying the
     /// seed's key phrase.
     ///
     /// The COMPACTION side of what a gated tier measures. `FactRetention` reads
-    /// the answer, so it scores a fold that kept the fact and an answering turn
-    /// that then ignored it exactly as it scores a fold that dropped the fact.
+    /// the answer, so it scores a compaction that kept the fact and an answering turn
+    /// that then ignored it exactly as it scores a compaction that dropped the fact.
     /// This counts the other side: what the summary held, whatever the answer
     /// went on to do with it. The gated run of 2026-08-18 measured 4 of 6 here
     /// against 2 of 6 there, and reported the second alone (task ^xscp198).
     ///
-    /// A sample whose fold produced no summary at all counts against this,
+    /// A sample whose compaction produced no summary at all counts against this,
     /// because a summary that does not exist carries nothing. The table's own
     /// `counts:` line separates that case out — see
-    /// ``CompactionEvalFactRetentionClass/foldProducedNoSummary``.
+    /// ``CompactionEvalFactRetentionClass/compactionProducedNoSummary``.
     ///
     /// - Parameter findings: The classified samples to count.
     /// - Returns: How many of them carried the key phrase in their summary.
@@ -422,7 +422,7 @@ enum CompactionEvalFactRetentionReport {
             + [unreachedLine(of: findings, expecting: seeds)]
     }
 
-    /// Renders the line stating what the FOLDS carried beside what the ANSWERS
+    /// Renders the line stating what the COMPACTIONS carried beside what the ANSWERS
     /// carried.
     ///
     /// The two are different measurements of different steps, and a tier that
@@ -490,7 +490,7 @@ enum CompactionEvalFactRetentionReport {
                 answer: diagnostic.answer,
                 factKeyPhrase: seed.factKeyPhrase
             ),
-            foldableSpanEstimatedTokens: seed.foldableSpanEstimatedTokens
+            compactableSpanEstimatedTokens: seed.compactableSpanEstimatedTokens
         )
     }
 
@@ -509,7 +509,7 @@ enum CompactionEvalFactRetentionReport {
             factInSummary: false,
             diagnostic: diagnostic,
             classification: .unrecognizedSample,
-            foldableSpanEstimatedTokens: 0
+            compactableSpanEstimatedTokens: 0
         )
     }
 
@@ -518,12 +518,12 @@ enum CompactionEvalFactRetentionReport {
     /// - Parameter finding: The classified sample to render.
     /// - Returns: The stanza's lines — the verdict line, then each text the
     ///   verdict was read from, one per line so a multi-line summary stays
-    ///   legible, then the measurement of a discarded fold when there is one.
+    ///   legible, then the measurement of a discarded compaction when there is one.
     private static func stanza(for finding: CompactionEvalFactRetentionFinding) -> [String] {
         [
             "- seed=\(finding.seedID) class=\(finding.classification.rawValue)"
                 + " factInSummary=\(finding.factInSummary)"
-                + " folded=\(finding.diagnostic.folded)"
+                + " compacted=\(finding.diagnostic.compacted)"
                 + " summarizerCalls=\(finding.diagnostic.summarizerCallCount)"
                 + " stages=\(finding.diagnostic.stagesApplied.joined(separator: ","))",
             "  fact=\(finding.plantedFact)",
@@ -534,10 +534,10 @@ enum CompactionEvalFactRetentionReport {
         ] + discardedLines(for: finding)
     }
 
-    /// Renders the lines a discarded fold adds to its stanza, or none at all
-    /// for a sample whose fold was applied or never ran.
+    /// Renders the lines a discarded compaction adds to its stanza, or none at all
+    /// for a sample whose compaction was applied or never ran.
     ///
-    /// ``discardedSummaryMarker`` alone says a fold ran and was thrown away, and
+    /// ``discardedSummaryMarker`` alone says a compaction ran and was thrown away, and
     /// not by how much. These lines say by how much: the size of the summary
     /// that lost, the span it was to replace, and the ceiling the call that
     /// wrote it ran under — the three numbers `Compactor.compact`'s
@@ -550,7 +550,7 @@ enum CompactionEvalFactRetentionReport {
         return [
             "  discarded=\(discarded.answer.utf8.count) bytes"
                 + " summaryTokens=\(Summarization.estimatedTokens(of: discarded.answer))"
-                + " spanTokens=\(finding.foldableSpanEstimatedTokens)"
+                + " spanTokens=\(finding.compactableSpanEstimatedTokens)"
                 + " ceiling=\(discarded.maxTokens)",
             "  discardedText=\(boundedText(of: discarded.answer))",
         ]
@@ -567,18 +567,18 @@ enum CompactionEvalFactRetentionReport {
     }
 
     /// Renders a sample's summary for the table: the text itself, or a marker
-    /// naming what the fold stored instead.
+    /// naming what the compaction stored instead.
     ///
     /// - Parameter diagnostic: The sample's recorded evidence.
-    /// - Returns: The summary text, ``discardedSummaryMarker`` when the fold ran
-    ///   and was thrown away, ``absentSummaryMarker`` when no fold produced one
+    /// - Returns: The summary text, ``discardedSummaryMarker`` when the compaction ran
+    ///   and was thrown away, ``absentSummaryMarker`` when no compaction produced one
     ///   at all, or ``emptySummaryMarker`` when it stored text holding no
     ///   characters.
     private static func renderedSummary(of diagnostic: CompactionEvalSampleDiagnostic) -> String {
         guard let summary = diagnostic.summary else {
-            // Read before the absent case, because a discarded fold reports the
-            // same `nil` summary an unfolded transcript does.
-            return diagnostic.foldDiscarded ? discardedSummaryMarker : absentSummaryMarker
+            // Read before the absent case, because a discarded compaction reports the
+            // same `nil` summary an uncompacted transcript does.
+            return diagnostic.compactionDiscarded ? discardedSummaryMarker : absentSummaryMarker
         }
         return carriesText(summary) ? summary : emptySummaryMarker
     }

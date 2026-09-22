@@ -18,7 +18,7 @@ private let recordedFixtureRedactionTimeLimitMinutes = 1
 /// re-recorded fixture that carries an operator path, a credential shape, or
 /// the `recordingRoot` leak goes red here before it ships. The suite loads no
 /// model, so it lives in this hermetic target and reads the recording through
-/// ``CompactionRecordingFixture`` — the same accessor the gated folding suite
+/// ``CompactionRecordingFixture`` — the same accessor the gated compaction suite
 /// reads (task ^cvsh3m9).
 ///
 /// The scan covers the RECORDED files alone — `session.json` and

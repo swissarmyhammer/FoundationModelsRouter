@@ -21,18 +21,18 @@ enum CompactionContinuityMetric {
     /// whole-task-correct check.
     static let answersCorrect = Metric("AnswersCorrect")
 
-    /// Whether at least one live fold actually ran while driving the task's
-    /// steps (``CompactionContinuityOutcome/foldCount`` `>= 1`) — the
+    /// Whether at least one live compaction actually ran while driving the task's
+    /// steps (``CompactionContinuityOutcome/compactionCount`` `>= 1`) — the
     /// mechanical proof that this dataset's own "sized to be impossible
-    /// without >=1 fold" claim held for this run, not just asserted at
+    /// without >=1 compaction" claim held for this run, not just asserted at
     /// authoring time.
-    static let foldOccurred = Metric("FoldOccurred")
+    static let compactionOccurred = Metric("CompactionOccurred")
 
     /// Whether the produced ``CompactionContinuityOutcome/finalAnswer``
     /// contains **at least one** of the sample's
     /// ``CompactionContinuityOutcome/factKeyPhrases`` — a looser check than
     /// ``answersCorrect``: a task can fail the strict whole-task check while
-    /// still showing partial continuity (one fact survived the fold(s), even
+    /// still showing partial continuity (one fact survived the compaction(s), even
     /// if not both), which this metric surfaces independently.
     static let factsSurvived = Metric("FactsSurvived")
 
@@ -45,7 +45,7 @@ enum CompactionContinuityMetric {
     /// Whether the produced ``CompactionContinuityOutcome/recordedEntryCount``
     /// met or exceeded the sample's
     /// ``CompactionContinuityOutcome/expectedMinimumRecordedEntries`` — proof
-    /// that whatever the live session folded away from its own resumable
+    /// that whatever the live session compacted away from its own resumable
     /// window, the durable recording underneath it still holds the whole
     /// task's history, exactly as compaction_plan.md's checkpointed-window
     /// vs. full-history split promises.
@@ -80,16 +80,16 @@ enum CompactionContinuityEvaluationError: Error {
 ///
 /// `limit` is deliberately far below any real model's working context: the
 /// point of this evaluation is that a *multi-step task* forces at least one
-/// live fold partway through, and a small limit is what makes that happen
+/// live compaction partway through, and a small limit is what makes that happen
 /// within a dozen-odd turns instead of hundreds. Since ``TokenBudget/trigger``
 /// resolves against this `limit` rather than against the session's own resolved
 /// window (see ``TokenBudget/triggerTokens``), the trigger fires at 1638 real
 /// tokens however large the model's window is — which is exactly the property
-/// `CompactionContinuityEvaluationTests.everyTaskIsSizedToForceAFold` sizes the
+/// `CompactionContinuityEvaluationTests.everyTaskIsSizedToForceACompaction` sizes the
 /// fixtures against.
 ///
-/// `target` leaves the folded window at 30% of the limit, well clear of the
-/// four-turn recency window no deterministic stage may touch, so a fold has
+/// `target` leaves the compacted window at 30% of the limit, well clear of the
+/// four-turn recency window no deterministic stage may touch, so a compaction has
 /// somewhere to land.
 let compactionContinuityDefaultBudget = TokenBudget(limit: 2048, trigger: 0.80, target: 0.30)
 
@@ -107,13 +107,13 @@ let compactionContinuityDefaultBudget = TokenBudget(limit: 2048, trigger: 0.80, 
 /// on a plain `swift test` rather than in a gated run.
 let compactionContinuityFastTriggerShareOfContext = 0.02
 
-/// Where the fast tier puts the fold target, as a share of
+/// Where the fast tier puts the compaction target, as a share of
 /// ``CompactionContinuityRealModel/context``.
 ///
 /// It resolves to 492 estimated tokens. Two properties place it:
 ///
 /// - The opening step alone estimates past it, so `Compactor.compact`'s own
-///   entry guard (`tokensBefore > targetTokens`) passes when the fold fires.
+///   entry guard (`tokensBefore > targetTokens`) passes when the compaction fires.
 /// - The deterministic stages can never land it. A fast task holds three
 ///   turns, fewer than ``TurnTruncation``'s default window of four, so
 ///   truncation drops nothing and the pipeline always falls through to the
@@ -122,7 +122,7 @@ let compactionContinuityFastTriggerShareOfContext = 0.02
 ///   window), not an estimate against a size, which is the arithmetic task
 ///   ^wnj3ka3 showed drifting.
 ///
-/// The folded transcript — one summary entry, the readiness turn, and the
+/// The compacted transcript — one summary entry, the readiness turn, and the
 /// header — lands well under this target, so ``CompactionContinuityMetric/budgetHeld``
 /// stays a real measurement rather than a constant failure.
 let compactionContinuityFastTargetShareOfContext = 0.06
@@ -141,20 +141,20 @@ let compactionContinuityFastBudget = TokenBudget(
     target: compactionContinuityFastTargetShareOfContext
 )
 
-/// How many of the newest turns every fast-tier fold leaves untouched.
+/// How many of the newest turns every fast-tier compaction leaves untouched.
 ///
-/// One is what lets a THREE-turn task fold: ``Summarization`` answers `nil`
+/// One is what lets a THREE-turn task compaction: ``Summarization`` answers `nil`
 /// while every turn is inside the recency window, and at the default of four
-/// a fast task would need five turns — five real generations — before a fold
+/// a fast task would need five turns — five real generations — before a compaction
 /// could do anything. One is also the smallest window that is still a window:
-/// the fold replaces the opening turn and keeps the readiness turn verbatim.
+/// the compaction replaces the opening turn and keeps the readiness turn verbatim.
 /// `AutoCompactionTriggerIntegrationTests` uses the same value for the same
 /// reason.
 let compactionContinuityFastKeepRecentTurns = 1
 
 /// The model-assisted stage the fast continuity tier vends its sessions with.
 ///
-/// A session is where this choice belongs, because an automatic fold has no
+/// A session is where this choice belongs, because an automatic compaction has no
 /// caller to pass one to. See ``compactionContinuityFastKeepRecentTurns`` for
 /// the recency window and ``compactionEvalReasoningTokenHeadroom`` for the
 /// generation bound both gated tiers share.
@@ -171,14 +171,14 @@ var compactionContinuityFastSummarization: Summarization {
 }
 
 /// The mean `FactsSurvived` the gated continuity tier must reach: at least
-/// one planted fact in the final answer, after a real fold.
+/// one planted fact in the final answer, after a real compaction.
 ///
 /// The subject's measured baseline, minus one task of margin — the standing
 /// rule every gated eval floor follows. The gated run of 2026-08-21 under
 /// ``CompactionContinuityRealModel`` (Qwen2.5-3B-Instruct), at greedy
 /// decoding, under task ^xx02yn6's `router-default-v3` prompt, over the four
 /// tasks ``compactionContinuityFastTierIDs`` names, measured 4 of 4 tasks
-/// carrying at least one fact end to end, and the four fold summaries carried
+/// carrying at least one fact end to end, and the four compaction summaries carried
 /// both facts verbatim. One task under that is 3 of 4, which is 0.75. Written
 /// as 0.7, which sits under 3/4 and over 2/4, so the tier must keep exactly
 /// those 3: a second lost task moves the mean by a quarter, which no rounding
@@ -199,18 +199,18 @@ var compactionContinuityFastSummarization: Summarization {
 let compactionContinuityFastFactsSurvivedFloor = 0.7
 
 /// The mean `AnswersCorrect` the gated continuity tier must reach: BOTH
-/// planted facts in the final answer, word for word, after a real fold.
+/// planted facts in the final answer, word for word, after a real compaction.
 ///
 /// The subject's measured baseline, minus one task of margin, exactly as
 /// ``compactionContinuityFastFactsSurvivedFloor`` is derived: the gated run
 /// of 2026-08-21 under Qwen2.5-3B-Instruct, over the same four tasks,
 /// measured 3 of 4. The one miss was `migration-script-and-rollback`, whose
-/// fold summary carried both paths verbatim and whose answering turn wrote
+/// compaction summary carried both paths verbatim and whose answering turn wrote
 /// `rollback_2266_07` for `rollback_2026_07` — the answer's loss, not the
-/// fold's. One task under 3 of 4 is 2 of 4, which is 0.5. Written as 0.45,
+/// compaction's. One task under 3 of 4 is 2 of 4, which is 0.5. Written as 0.45,
 /// which sits under 2/4 and over 1/4, so the tier must answer exactly those 2.
 /// The 0.8 bar the 30B tier held is NOT reachable by a small model whose
-/// answering turn drops a digit from an identifier its own fold summary
+/// answering turn drops a digit from an identifier its own compaction summary
 /// carries verbatim, and a bar the subject cannot reach measures the model,
 /// not the compaction prompt. The suite's doc comment states this trade in
 /// full.
@@ -229,23 +229,23 @@ let compactionContinuityFastAnswersCorrectFloor = 0.45
 /// ``budget`` (task 8213x39's auto-compaction opt-in), one step at a time,
 /// then asks a final instruction whose correct completion requires
 /// combining facts planted in earlier steps — answerable only if the
-/// session *remained usable and continuable* across whatever folds its own
+/// session *remained usable and continuable* across whatever compactions its own
 /// budget forced along the way.
 ///
 /// This is a different concern than ``CompactionEvaluation``'s: that
-/// evaluation folds one static, pre-built transcript exactly once and then
-/// asks a single question of the fold's own summary quality (fact
+/// evaluation compacts one static, pre-built transcript exactly once and then
+/// asks a single question of the compaction's own summary quality (fact
 /// retention). This evaluation instead drives a live, multi-turn session
-/// end to end — the dataset is sized so at least one fold is forced
+/// end to end — the dataset is sized so at least one compaction is forced
 /// somewhere in the middle of the task, not staged as the whole point of a
 /// single call — and measures whether the *session itself* stayed
-/// continuable, not just whether one fold's summary read well.
+/// continuable, not just whether one compaction's summary read well.
 ///
 /// ``prompt`` is a stored parameter, not baked into the type, for the exact
 /// same reason ``CompactionEvaluation/prompt`` is: pointing this evaluation
 /// at a different ``CompactionPrompt`` is constructing a different
 /// `CompactionContinuityEvaluation` value from a differently-constructed
-/// session, never a different type — "comparing fold prompts = same
+/// session, never a different type — "comparing compaction prompts = same
 /// Evaluation, differently constructed sessions" (task 4ce0a1k).
 ///
 /// The actual multi-step session-driving work is injected via ``runSubject``
@@ -258,7 +258,7 @@ struct CompactionContinuityEvaluation: Evaluation {
     /// The produced/actual result type the `Evaluation` protocol requires.
     typealias Subject = ModelSubject<CompactionContinuityOutcome>
 
-    /// The compaction prompt every fold this evaluation's sessions perform
+    /// The compaction prompt every compaction this evaluation's sessions perform
     /// sends to their summarizer — recorded into every sample's
     /// `expected.promptName` and every produced outcome's `promptName`
     /// alike. See this type's own doc comment.
@@ -280,7 +280,7 @@ struct CompactionContinuityEvaluation: Evaluation {
             _ prompt: CompactionPrompt,
             _ budget: TokenBudget
         ) async throws -> (
-            finalAnswer: String, foldCount: Int, tokensBefore: Int, tokensAfter: Int, recordedEntryCount: Int,
+            finalAnswer: String, compactionCount: Int, tokensBefore: Int, tokensAfter: Int, recordedEntryCount: Int,
             modelName: String
         )
 
@@ -298,7 +298,7 @@ struct CompactionContinuityEvaluation: Evaluation {
     ///     drives is vended with. Defaults to
     ///     ``compactionContinuityDefaultBudget``, small enough that every
     ///     hand-written task (see ``compactionContinuityTaskSpecs``) forces at
-    ///     least one live fold before its final instruction.
+    ///     least one live compaction before its final instruction.
     ///   - tasks: The task fixtures to draw samples from. Defaults to
     ///     ``compactionContinuitySeeds`` (every hand-written fixture).
     ///   - runSubject: Runs one sample's subject work — see ``runSubject``.
@@ -312,7 +312,7 @@ struct CompactionContinuityEvaluation: Evaluation {
             _ prompt: CompactionPrompt,
             _ budget: TokenBudget
         ) async throws -> (
-            finalAnswer: String, foldCount: Int, tokensBefore: Int, tokensAfter: Int, recordedEntryCount: Int,
+            finalAnswer: String, compactionCount: Int, tokensBefore: Int, tokensAfter: Int, recordedEntryCount: Int,
             modelName: String
         )
     ) {
@@ -346,11 +346,11 @@ struct CompactionContinuityEvaluation: Evaluation {
     /// The `Evaluation` protocol's per-sample subject work: looks the full
     /// task back up by `sample.expected.taskID`, runs ``runSubject`` to
     /// drive its steps and ask its final instruction, then wraps the
-    /// produced answer, fold accounting, and recording completeness in a
+    /// produced answer, compaction accounting, and recording completeness in a
     /// ``Subject``.
     ///
     /// - Parameter sample: The sample to produce a subject result for.
-    /// - Returns: The subject carrying the produced answer, fold counts, and
+    /// - Returns: The subject carrying the produced answer, compaction counts, and
     ///   recorded-entry count.
     /// - Throws: ``CompactionContinuityEvaluationError/missingExpectedValue``
     ///   if `sample` carries no `expected` value, or
@@ -376,7 +376,7 @@ struct CompactionContinuityEvaluation: Evaluation {
                 expectedMinimumRecordedEntries: expected.expectedMinimumRecordedEntries,
                 promptName: prompt.name,
                 finalAnswer: produced.finalAnswer,
-                foldCount: produced.foldCount,
+                compactionCount: produced.compactionCount,
                 tokensBefore: produced.tokensBefore,
                 tokensAfter: produced.tokensAfter,
                 recordedEntryCount: produced.recordedEntryCount,
@@ -405,10 +405,10 @@ struct CompactionContinuityEvaluation: Evaluation {
                 : CompactionContinuityMetric.answersCorrect.failing(rationale: answer)
         }
         Evaluator<Sample> { _, subject in
-            subject.value.foldCount >= 1
-                ? CompactionContinuityMetric.foldOccurred.passing(rationale: "\(subject.value.foldCount) fold(s) ran")
-                : CompactionContinuityMetric.foldOccurred.failing(
-                    rationale: "no fold ran while driving this task's steps")
+            subject.value.compactionCount >= 1
+                ? CompactionContinuityMetric.compactionOccurred.passing(rationale: "\(subject.value.compactionCount) compaction(s) ran")
+                : CompactionContinuityMetric.compactionOccurred.failing(
+                    rationale: "no compaction ran while driving this task's steps")
         }
         Evaluator<Sample> { sample, subject in
             guard let expected = sample.expected else {
@@ -443,7 +443,7 @@ struct CompactionContinuityEvaluation: Evaluation {
         }
     }
 
-    /// Registers all five metrics — `AnswersCorrect`, `FoldOccurred`,
+    /// Registers all five metrics — `AnswersCorrect`, `CompactionOccurred`,
     /// `FactsSurvived`, `BudgetHeld`, `RecordingComplete` — for mean
     /// aggregation, as the `Evaluation` protocol requires.
     ///
@@ -451,7 +451,7 @@ struct CompactionContinuityEvaluation: Evaluation {
     ///   with.
     func aggregateMetrics(using aggregator: inout MetricsAggregator) {
         aggregator.computeMean(of: CompactionContinuityMetric.answersCorrect)
-        aggregator.computeMean(of: CompactionContinuityMetric.foldOccurred)
+        aggregator.computeMean(of: CompactionContinuityMetric.compactionOccurred)
         aggregator.computeMean(of: CompactionContinuityMetric.factsSurvived)
         aggregator.computeMean(of: CompactionContinuityMetric.budgetHeld)
         aggregator.computeMean(of: CompactionContinuityMetric.recordingComplete)

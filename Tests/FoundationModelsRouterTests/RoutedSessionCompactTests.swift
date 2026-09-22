@@ -6,7 +6,7 @@ import Testing
 
 /// Exercises task ffsjqha (compaction epic — compaction_plan.md §1.4,
 /// build-order step 6): ``RoutedSession/compact(prompt:budget:)``, the
-/// session-level entry point that folds a ``RoutedSessionActor``'s live
+/// session-level entry point that compacts a ``RoutedSessionActor``'s live
 /// transcript in place — the actor counterpart to
 /// ``RecordingLanguageModel/noteCompaction(_:)`` for a bare session over the
 /// recording handle. Both are implemented on the same bare primitives
@@ -16,24 +16,24 @@ import Testing
 ///
 /// Everything runs against a stub ``LoadedLLMContainer``/``StubSessionBackend``
 /// and an ``InMemoryRecorder``, so the suite needs no network and no GPU.
-/// Budgets are derived from the real, measured pre-fold byte-size estimate
+/// Budgets are derived from the real, measured pre-compaction byte-size estimate
 /// (via ``Compactor/estimatedTokenCount(of:)``, accessible through
 /// `@testable import`) rather than hand-picked magic numbers, so the tests
 /// stay meaningful regardless of exactly how the mapper serializes an entry.
-@Suite("RoutedSession.compact(prompt:budget:): in-place fold on the actor")
+@Suite("RoutedSession.compact(prompt:budget:): in-place compact on the actor")
 struct RoutedSessionCompactTests {
     // MARK: - Stub container
 
     /// Vends a single, test-retained ``StubSessionBackend`` per session, so a
     /// test can inspect its accumulated entries and derive an exact budget
-    /// forcing (or not forcing) a fold.
+    /// forcing (or not forcing) a compaction.
     private final class ConfiguredLLMContainer: LoadedLLMContainer, @unchecked Sendable {
         let responseText: String
         let usageIncrement: (input: Int, output: Int)?
 
         /// The shared log every backend this container vends records into —
-        /// including the blank-slate clone a fold's summarizer builds through
-        /// `replacingTranscript(_:)`, which is the only place a fold's own
+        /// including the blank-slate clone a compaction's summarizer builds through
+        /// `replacingTranscript(_:)`, which is the only place a compaction's own
         /// calls are observable from outside the session.
         let generationLog = StubGenerationLog()
 
@@ -179,23 +179,23 @@ struct RoutedSessionCompactTests {
     // MARK: - The flash summarizer carries the router's sampling mode
 
     /// `model-pool.md` §2.5 step A: the flash summarizer is the one backend
-    /// a fold builds from a container, so it is where a router's sampling
-    /// mode would be lost. The fold path is the automatic one: a caller-driven
-    /// `compact()` folds on the session's own live backend and builds no
+    /// a compaction builds from a container, so it is where a router's sampling
+    /// mode would be lost. The compaction path is the automatic one: a caller-driven
+    /// `compact()` compacts on the session's own live backend and builds no
     /// backend from a container.
-    @Test("an automatic fold's flash summarizer backend receives the router's sampling mode")
+    @Test("an automatic compaction's flash summarizer backend receives the router's sampling mode")
     @MainActor
-    func autoFoldFlashSummarizerReceivesTheRoutersSamplingMode() async throws {
+    func autoCompactionFlashSummarizerReceivesTheRoutersSamplingMode() async throws {
         let (session, standard, flash) = try await AutoCompactionFixtures.makeTriggeredSession(
             budget: AutoCompactionFixtures.fixedBudget,
             samplingMode: .greedy,
             tempDirPrefix: "RoutedSessionCompactTests")
         // The root session's own backend already carries the mode, and no
-        // fold has asked the flash slot for a backend yet.
+        // compaction has asked the flash slot for a backend yet.
         #expect(standard.receivedSamplingModes == [.greedy])
         #expect(flash.receivedSamplingModes.isEmpty)
 
-        // Measured fill sits at the trigger, so this turn folds before its own
+        // Measured fill sits at the trigger, so this turn compacts before its own
         // work runs, summarizing through the flash slot.
         _ = try await session.respond(to: "turn 6")
 
@@ -223,53 +223,53 @@ struct RoutedSessionCompactTests {
         // More than the default keepRecentTurns (4): with only 4 or fewer
         // turns every turn is inside the untouchable recency window, so
         // neither ToolOutputElision/TurnTruncation nor Summarization has
-        // anything to fold — this drives enough turns that older ones fall
+        // anything to compact — this drives enough turns that older ones fall
         // outside it.
         try await driveTurns(6, on: session)
 
         let backend = try #require(container.lastBackend)
-        let preFoldTokens = Compactor.estimatedTokenCount(of: Transcript(entries: backend.transcriptEntries()))
+        let preCompactionTokens = Compactor.estimatedTokenCount(of: Transcript(entries: backend.transcriptEntries()))
         let recencyOnly = recencyWindowOnlyEstimate(backend.transcriptEntries())
-        let preFoldFill = await session.contextFill
+        let preCompactionFill = await session.contextFill
         // A turn's own usage delta reports the *whole* transcript's size at
         // that point (generation is stateless) — not a cumulative sum across
         // turns — so with a constant 50,000-token delta per turn against a
         // 100,000-token context, fill sits at 0.5 regardless of turn count.
-        #expect(preFoldFill == 0.5)
+        #expect(preCompactionFill == 0.5)
 
         // A budget whose target sits strictly between the recency-window-only
-        // floor and the full pre-fold estimate: low enough to guarantee the
-        // pipeline actually folds something, high enough that the
+        // floor and the full pre-compaction estimate: low enough to guarantee the
+        // pipeline actually compacts something, high enough that the
         // deterministic TurnTruncation stage alone lands under it — a clean
         // shrink that never needs (and isn't skewed by) the model-assisted
         // Summarization stage's own synthesized-entry overhead.
-        let targetTokens = (recencyOnly + preFoldTokens) / 2
-        let budget = TokenBudget(limit: preFoldTokens, target: Double(targetTokens) / Double(preFoldTokens))
+        let targetTokens = (recencyOnly + preCompactionTokens) / 2
+        let budget = TokenBudget(limit: preCompactionTokens, target: Double(targetTokens) / Double(preCompactionTokens))
         let result = try await session.compact(budget: budget)
 
         #expect(!result.stagesApplied.isEmpty)
-        #expect(result.tokensBefore == preFoldTokens)
+        #expect(result.tokensBefore == preCompactionTokens)
         #expect(result.tokensAfter < result.tokensBefore)
-        // A deterministic-only fold writes no summary, so it names no
+        // A deterministic-only compaction writes no summary, so it names no
         // summarizer model — the signal is present exactly when a summary is.
         #expect(result.summarizerModel == nil)
 
-        let postFoldFill = await session.contextFill
-        #expect(postFoldFill < preFoldFill)
-        // The post-fold fill reflects this fold's own shrink ratio applied to
+        let postCompactionFill = await session.contextFill
+        #expect(postCompactionFill < preCompactionFill)
+        // The post-compaction fill reflects this compaction's own shrink ratio applied to
         // the measured usage the session already had — `tokensAfter` is the
         // pipeline's character-ratio estimate, and `contextFill`'s numerator
         // is measured tokens, so the estimate is rescaled onto that scale
-        // before it is reported (see `RoutedSessionActor.foldedUsage`).
-        let expectedPostFoldTokens = (50_000.0 * Double(result.tokensAfter) / Double(preFoldTokens)).rounded()
-        #expect(postFoldFill == expectedPostFoldTokens / 100_000)
+        // before it is reported (see `RoutedSessionActor.compactedUsage`).
+        let expectedPostCompactionTokens = (50_000.0 * Double(result.tokensAfter) / Double(preCompactionTokens)).rounded()
+        #expect(postCompactionFill == expectedPostCompactionTokens / 100_000)
     }
 
-    // MARK: - A fold's reported fill is measured, not estimated
+    // MARK: - A compaction's reported fill is measured, not estimated
 
-    @Test("a fold never raises contextFill, even when the pipeline's own estimate of the folded transcript exceeds the session's measured usage")
+    @Test("a compaction never raises contextFill, even when the pipeline's own estimate of the compacted transcript exceeds the session's measured usage")
     @MainActor
-    func foldReportsShrinkOnTheMeasuredScale() async throws {
+    func compactionReportsShrinkOnTheMeasuredScale() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -277,10 +277,10 @@ struct RoutedSessionCompactTests {
         // A *small* per-turn measured usage against a transcript the
         // character-ratio estimator sizes far higher — the arrangement that
         // exposed the unit mismatch on real hardware, where an over-counting
-        // estimate written into `contextFill`'s numerator made a genuine fold
+        // estimate written into `contextFill`'s numerator made a genuine compaction
         // report a *higher* fill than the measured one it replaced (0.95068
-        // after a fold from 0.89453). The fold's own accounting has to be
-        // denominated in the same tokens the pre-fold fill was, or a caller
+        // after a compaction from 0.89453). The compaction's own accounting has to be
+        // denominated in the same tokens the pre-compaction fill was, or a caller
         // comparing the two compares incommensurable numbers.
         let measuredTokensPerTurn = 200
         let container = ConfiguredLLMContainer(
@@ -292,12 +292,12 @@ struct RoutedSessionCompactTests {
         try await driveTurns(6, on: session)
 
         let backend = try #require(container.lastBackend)
-        let preFoldTokens = Compactor.estimatedTokenCount(of: Transcript(entries: backend.transcriptEntries()))
+        let preCompactionTokens = Compactor.estimatedTokenCount(of: Transcript(entries: backend.transcriptEntries()))
         let recencyOnly = recencyWindowOnlyEstimate(backend.transcriptEntries())
-        let preFoldFill = await session.contextFill
+        let preCompactionFill = await session.contextFill
         // The premise of this test: even the part of the transcript no
         // deterministic stage may touch estimates larger than everything the
-        // session has actually measured, so reporting the fold's own estimate
+        // session has actually measured, so reporting the compaction's own estimate
         // raw could only raise fill.
         #expect(recencyOnly > measuredTokensPerTurn)
 
@@ -305,21 +305,21 @@ struct RoutedSessionCompactTests {
         // `compactShrinksLiveWindowAndReportsAccurateResult` uses — a target
         // TurnTruncation alone lands under, so what this test measures is the
         // unit the shrink is reported in and nothing else.
-        let targetTokens = (recencyOnly + preFoldTokens) / 2
-        let budget = TokenBudget(limit: preFoldTokens, target: Double(targetTokens) / Double(preFoldTokens))
+        let targetTokens = (recencyOnly + preCompactionTokens) / 2
+        let budget = TokenBudget(limit: preCompactionTokens, target: Double(targetTokens) / Double(preCompactionTokens))
         let result = try await session.compact(budget: budget)
         #expect(result.tokensAfter < result.tokensBefore)
 
-        let postFoldFill = await session.contextFill
-        #expect(postFoldFill < preFoldFill)
-        let expectedPostFoldTokens =
-            (Double(measuredTokensPerTurn) * Double(result.tokensAfter) / Double(preFoldTokens)).rounded()
-        #expect(postFoldFill == expectedPostFoldTokens / 100_000)
+        let postCompactionFill = await session.contextFill
+        #expect(postCompactionFill < preCompactionFill)
+        let expectedPostCompactionTokens =
+            (Double(measuredTokensPerTurn) * Double(result.tokensAfter) / Double(preCompactionTokens)).rounded()
+        #expect(postCompactionFill == expectedPostCompactionTokens / 100_000)
     }
 
     // MARK: - Identity + append-only recording
 
-    @Test("compact() preserves session id and recordingDirectory; prior recorded events are untouched and the fold's summary entry is appended")
+    @Test("compact() preserves session id and recordingDirectory; prior recorded events are untouched and the compaction's summary entry is appended")
     @MainActor
     func compactIsAppendOnlyAndPreservesIdentity() async throws {
         let dir = Self.makeTempDir()
@@ -351,7 +351,7 @@ struct RoutedSessionCompactTests {
         #expect(result.summary != nil)
         #expect(result.stagesApplied.contains("Summarization"))
         // A manual compact() always summarizes with the session's own model,
-        // and the result names it — the same signal an automatic fold carries
+        // and the result names it — the same signal an automatic compaction carries
         // (task ^59fd9rt).
         #expect(result.summarizerModel == "org/std-a")
 
@@ -359,7 +359,7 @@ struct RoutedSessionCompactTests {
         #expect(session.id == sessionId)
         #expect(session.recordingDirectory == recordingDirectory)
 
-        // Append-only: requirement 2 — nothing before the fold is touched.
+        // Append-only: requirement 2 — nothing before the compaction is touched.
         let afterEvents = await recorder.events
         #expect(afterEvents.count > beforeEvents.count)
         #expect(Array(afterEvents.prefix(beforeEvents.count)) == beforeEvents)
@@ -377,7 +377,7 @@ struct RoutedSessionCompactTests {
             return
         }
         #expect(compactionSegment.content.stagesApplied.contains("Summarization"))
-        #expect(!compactionSegment.content.foldedEntryIds.isEmpty)
+        #expect(!compactionSegment.content.compactedEntryIds.isEmpty)
     }
 
     // MARK: - Post-compact turns work normally
@@ -397,8 +397,8 @@ struct RoutedSessionCompactTests {
         try await driveTurns(6, on: session)
 
         let backend = try #require(container.lastBackend)
-        let preFoldTokens = Compactor.estimatedTokenCount(of: Transcript(entries: backend.transcriptEntries()))
-        let budget = TokenBudget(limit: preFoldTokens * 2, target: 0.25)
+        let preCompactionTokens = Compactor.estimatedTokenCount(of: Transcript(entries: backend.transcriptEntries()))
+        let budget = TokenBudget(limit: preCompactionTokens * 2, target: 0.25)
         try await session.compact(budget: budget)
 
         let beforeTurnEvents = await recorder.events
@@ -452,7 +452,7 @@ struct RoutedSessionCompactTests {
         #expect(result.stagesApplied.contains("Summarization"))
         #expect(result.summary != nil)
 
-        // The default prompt's name is what gets recorded in the fold's
+        // The default prompt's name is what gets recorded in the compaction's
         // CompactionSegment.
         let events = await recorder2.events
         let appended = try #require(events.last)
@@ -548,7 +548,7 @@ struct RoutedSessionCompactTests {
         }
 
         // Nothing changed: identity, fill, and the recorded transcript are
-        // exactly as they were before the failed fold attempt.
+        // exactly as they were before the failed compaction attempt.
         #expect(session.id == sessionId)
         #expect(session.recordingDirectory == recordingDirectory)
         let afterFill = await session.contextFill
@@ -557,7 +557,7 @@ struct RoutedSessionCompactTests {
         #expect(afterEvents == beforeEvents)
 
         // A subsequent turn still works normally — the session's backend was
-        // never swapped for the (failed) fold attempt's summarizer backend.
+        // never swapped for the (failed) compaction attempt's summarizer backend.
         backend.shouldThrow = false
         let response = try await session.respond(to: "still fine")
         #expect(response == Self.cannedText)
@@ -567,7 +567,7 @@ struct RoutedSessionCompactTests {
 
     @Test("compact() with an already-under-target transcript returns an unchanged result and leaves the session untouched")
     @MainActor
-    func compactWithNothingToFoldReturnsUnchanged() async throws {
+    func compactWithNothingToCompactReturnsUnchanged() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -601,7 +601,7 @@ struct RoutedSessionCompactTests {
     // MARK: - Live completionTokens cross the compaction boundary (task ^6e7h2q6)
 
     /// The last recorded event's rebuilt boundary `.response` — the entry
-    /// every applied fold appends, carrying its ``CompactionSegment``
+    /// every applied compaction appends, carrying its ``CompactionSegment``
     /// checkpoint — or records an issue.
     private static func lastRecordedBoundary(
         in recorder: InMemoryRecorder
@@ -719,12 +719,12 @@ struct RoutedSessionCompactTests {
         #expect(response.segments.count == 2)
     }
 
-    // MARK: - The session's own Summarization reaches its folds
+    // MARK: - The session's own Summarization reaches its compactions
 
-    /// How many turns the two fold-tuning tests below drive before folding —
+    /// How many turns the two compaction-tuning tests below drive before compaction —
     /// more than ``Summarization``'s default `keepRecentTurns` of 4, so the
-    /// default recency window and the narrowed one fold different spans.
-    private static let turnsBeforeTunedFold = 6
+    /// default recency window and the narrowed one compaction different spans.
+    private static let turnsBeforeTunedCompaction = 6
 
     /// The recency window those tests vend their session's ``Summarization``
     /// with: half the stage's own default, so two turns the default window
@@ -733,7 +733,7 @@ struct RoutedSessionCompactTests {
 
     /// A canned response long enough that one turn's own rendered content
     /// exceeds ``Summarization``'s default ``Summarization/maxChunkTokens``.
-    /// Every summarizer call a fold then makes is handed more than a full
+    /// Every summarizer call a compaction then makes is handed more than a full
     /// chunk, so its output ceiling is the stage's own cap — `maxChunkTokens`
     /// times ``Summarization/summaryTokenRatio`` — exactly, rather than a share
     /// of whatever happened to land in that chunk.
@@ -741,14 +741,14 @@ struct RoutedSessionCompactTests {
         repeating: "The quick brown fox jumps over the lazy dog. ", count: 280)
 
     /// Vends a session configured with `summarization` and drives
-    /// ``turnsBeforeTunedFold`` turns on it, so it is ready to fold.
+    /// ``turnsBeforeTunedCompaction`` turns on it, so it is ready to compact.
     ///
     /// - Parameters:
     ///   - responseText: The canned response every driven turn produces.
     ///   - summarization: The model-assisted stage to vend the session with.
     /// - Returns: The session, the container holding its shared generation log,
     ///   and the temp directory the caller is responsible for removing.
-    private static func makeSessionReadyToFold(
+    private static func makeSessionReadyToCompact(
         responseText: String,
         summarization: Summarization
     ) async throws -> (session: RoutedSession, container: ConfiguredLLMContainer, directory: URL) {
@@ -757,85 +757,85 @@ struct RoutedSessionCompactTests {
         let router = Self.makeRouter(container: container, recorder: InMemoryRecorder(), cacheDir: dir)
         let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
         let session = profile.standard.makeSession(summarization: summarization)
-        try await driveTurns(Self.turnsBeforeTunedFold, on: session)
+        try await driveTurns(Self.turnsBeforeTunedCompaction, on: session)
         return (session, container, dir)
     }
 
-    /// Folds `session` against a budget derived from its own transcript that
+    /// Compacts `session` against a budget derived from its own transcript that
     /// sits strictly under the recency-window floor — so no deterministic stage
     /// can land it and the model-assisted ``Summarization`` stage must run —
-    /// and returns the calls that fold made, without the warm-up turns' own.
+    /// and returns the calls that compaction made, without the warm-up turns' own.
     ///
     /// - Parameters:
-    ///   - session: The session to fold.
-    ///   - container: The container holding the shared generation log the fold
+    ///   - session: The session to compact.
+    ///   - container: The container holding the shared generation log the compaction
     ///     records into.
-    /// - Returns: The fold's own summarizer calls, in call order.
-    private static func summarizerCallsOfForcedFold(
+    /// - Returns: The compaction's own summarizer calls, in call order.
+    private static func summarizerCallsOfForcedCompaction(
         _ session: RoutedSession,
         container: ConfiguredLLMContainer
     ) async throws -> [StubGenerationCall] {
         let backend = try #require(container.lastBackend)
         let recencyOnly = recencyWindowOnlyEstimate(backend.transcriptEntries())
         let budget = TokenBudget(limit: recencyOnly * 2, target: 0.25)
-        let callsBeforeFold = container.generationLog.calls.count
+        let callsBeforeCompaction = container.generationLog.calls.count
 
         let result = try await session.compact(budget: budget)
         #expect(result.stagesApplied.contains("Summarization"))
 
-        return Array(container.generationLog.calls.suffix(from: callsBeforeFold))
+        return Array(container.generationLog.calls.suffix(from: callsBeforeCompaction))
     }
 
     @Test(
-        "compact() folds with the Summarization the session was vended with: a narrowed keepRecentTurns puts turns the stage's default window keeps out into the span the summarizer reads"
+        "compact() compacts with the Summarization the session was vended with: a narrowed keepRecentTurns puts turns the stage's default window keeps out into the span the summarizer reads"
     )
     @MainActor
-    func compactFoldsWithTheSessionsOwnKeepRecentTurns() async throws {
-        let narrowed = try await Self.makeSessionReadyToFold(
+    func compactUsesTheSessionsOwnKeepRecentTurns() async throws {
+        let narrowed = try await Self.makeSessionReadyToCompact(
             responseText: Self.cannedText,
             summarization: Summarization(keepRecentTurns: Self.narrowedRecentTurns))
         defer { try? FileManager.default.removeItem(at: narrowed.directory) }
-        let unturned = try await Self.makeSessionReadyToFold(
+        let unturned = try await Self.makeSessionReadyToCompact(
             responseText: Self.cannedText, summarization: Summarization())
         defer { try? FileManager.default.removeItem(at: unturned.directory) }
 
-        let narrowedCalls = try await Self.summarizerCallsOfForcedFold(
+        let narrowedCalls = try await Self.summarizerCallsOfForcedCompaction(
             narrowed.session, container: narrowed.container)
-        let unturnedCalls = try await Self.summarizerCallsOfForcedFold(
+        let unturnedCalls = try await Self.summarizerCallsOfForcedCompaction(
             unturned.session, container: unturned.container)
 
-        // The newest turn only the narrowed window folds: inside the default
-        // window, so a fold running at the stage's defaults never reads it.
-        let narrowedWindowOnly = renderedLineOfNewestFoldedTurn(
-            turnCount: Self.turnsBeforeTunedFold, keepRecentTurns: Self.narrowedRecentTurns)
+        // The newest turn only the narrowed window compactions: inside the default
+        // window, so a compaction running at the stage's defaults never reads it.
+        let narrowedWindowOnly = renderedLineOfNewestCompactedTurn(
+            turnCount: Self.turnsBeforeTunedCompaction, keepRecentTurns: Self.narrowedRecentTurns)
         #expect(narrowedCalls.contains { $0.prompt.contains(narrowedWindowOnly) })
         #expect(!unturnedCalls.contains { $0.prompt.contains(narrowedWindowOnly) })
 
-        // Both folds really did read a span — the newest turn the *default*
-        // window folds is in each — so the assertions above separate two live
-        // folds rather than a fold from a no-op.
-        let foldedEitherWay = renderedLineOfNewestFoldedTurn(
-            turnCount: Self.turnsBeforeTunedFold, keepRecentTurns: Summarization().keepRecentTurns)
-        #expect(narrowedCalls.contains { $0.prompt.contains(foldedEitherWay) })
-        #expect(unturnedCalls.contains { $0.prompt.contains(foldedEitherWay) })
+        // Both compactions really did read a span — the newest turn the *default*
+        // window compacts is in each — so the assertions above separate two live
+        // compactions rather than a compaction from a no-op.
+        let compactedEitherWay = renderedLineOfNewestCompactedTurn(
+            turnCount: Self.turnsBeforeTunedCompaction, keepRecentTurns: Summarization().keepRecentTurns)
+        #expect(narrowedCalls.contains { $0.prompt.contains(compactedEitherWay) })
+        #expect(unturnedCalls.contains { $0.prompt.contains(compactedEitherWay) })
     }
 
     @Test(
-        "compact() folds with the Summarization the session was vended with: a doubled summaryTokenRatio doubles the summary allowance every summarizer call is made under"
+        "compact() compacts with the Summarization the session was vended with: a doubled summaryTokenRatio doubles the summary allowance every summarizer call is made under"
     )
     @MainActor
-    func compactFoldsWithTheSessionsOwnSummaryTokenRatio() async throws {
-        let doubled = try await Self.makeSessionReadyToFold(
+    func compactUsesTheSessionsOwnSummaryTokenRatio() async throws {
+        let doubled = try await Self.makeSessionReadyToCompact(
             responseText: Self.chunkOverflowingText,
             summarization: Summarization(summaryTokenRatio: Summarization().summaryTokenRatio * 2))
         defer { try? FileManager.default.removeItem(at: doubled.directory) }
-        let unturned = try await Self.makeSessionReadyToFold(
+        let unturned = try await Self.makeSessionReadyToCompact(
             responseText: Self.chunkOverflowingText, summarization: Summarization())
         defer { try? FileManager.default.removeItem(at: unturned.directory) }
 
-        let doubledCalls = try await Self.summarizerCallsOfForcedFold(
+        let doubledCalls = try await Self.summarizerCallsOfForcedCompaction(
             doubled.session, container: doubled.container)
-        let unturnedCalls = try await Self.summarizerCallsOfForcedFold(
+        let unturnedCalls = try await Self.summarizerCallsOfForcedCompaction(
             unturned.session, container: unturned.container)
 
         // Each ceiling is a summary allowance plus the reasoning headroom, and
@@ -851,12 +851,12 @@ struct RoutedSessionCompactTests {
         #expect(unturnedAllowance > Summarization.minimumSummaryTokens)
     }
 
-    // MARK: - A deterministic-only fold records its checkpoint (task ^h1008kb)
+    // MARK: - A deterministic-only compaction records its checkpoint (task ^h1008kb)
 
     /// The per-turn measured usage delta the two checkpoint tests below
     /// configure their stub backend with — large against the tiny stub
-    /// transcript's own byte-size estimate, so the fold's measured-scale
-    /// rescale (``RoutedSessionActor``'s `foldedUsage`) is a real conversion
+    /// transcript's own byte-size estimate, so the compaction's measured-scale
+    /// rescale (``RoutedSessionActor``'s `compactedUsage`) is a real conversion
     /// rather than a near-identity.
     private static let measuredTokensPerCheckpointTurn = 50_000
 
@@ -865,10 +865,10 @@ struct RoutedSessionCompactTests {
     private static let checkpointTestContext = 100_000
 
     @Test(
-        "a deterministic-only fold records exactly one new entry carrying a decodable CompactionSegment checkpoint on the measured scale"
+        "a deterministic-only compaction records exactly one new entry carrying a decodable CompactionSegment checkpoint on the measured scale"
     )
     @MainActor
-    func deterministicOnlyFoldRecordsOneCheckpointEntry() async throws {
+    func deterministicOnlyCompactionRecordsOneCheckpointEntry() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -884,12 +884,12 @@ struct RoutedSessionCompactTests {
         try await driveTurns(6, on: session)
 
         let backend = try #require(container.lastBackend)
-        let budget = deterministicFoldBudget(for: backend.transcriptEntries())
+        let budget = deterministicCompactionBudget(for: backend.transcriptEntries())
 
         let beforeEvents = await recorder.events
         let result = try await session.compact(budget: budget)
 
-        // The fold under test really was deterministic-only: no summarizer
+        // The compaction under test really was deterministic-only: no summarizer
         // ran and no summary entry exists for the diff to pick up.
         #expect(result.stagesApplied == [ToolOutputElision.stageName, TurnTruncation.stageName])
         #expect(result.summary == nil)
@@ -899,31 +899,31 @@ struct RoutedSessionCompactTests {
         #expect(afterEvents.count == beforeEvents.count + 1)
         #expect(Array(afterEvents.prefix(beforeEvents.count)) == beforeEvents)
 
-        // That entry carries this fold's decodable CompactionSegment
+        // That entry carries this compaction's decodable CompactionSegment
         // checkpoint, and the checkpoint names its own entry in the live
         // window so a restore keeps the boundary itself.
         let (response, compactionSegment) = try await Self.lastRecordedBoundary(in: recorder)
         #expect(compactionSegment.content.stagesApplied == result.stagesApplied)
-        #expect(!compactionSegment.content.foldedEntryIds.isEmpty)
+        #expect(!compactionSegment.content.compactedEntryIds.isEmpty)
         #expect(compactionSegment.content.liveWindowEntryIds.contains(response.id))
 
         // The checkpoint's token counts are on the measured scale — the same
         // numbers the live session now reports through `contextFill` — so a
-        // restore reads post-fold usage rather than a pre-fold stamp.
+        // restore reads post-compaction usage rather than a pre-compaction stamp.
         let expectedMeasuredTokensAfter = Int(
             (Double(Self.measuredTokensPerCheckpointTurn) * Double(result.tokensAfter)
                 / Double(result.tokensBefore)).rounded())
         #expect(compactionSegment.content.tokensBefore == Self.measuredTokensPerCheckpointTurn)
         #expect(compactionSegment.content.tokensAfter == expectedMeasuredTokensAfter)
-        let postFoldFill = await session.contextFill
-        #expect(postFoldFill == Double(expectedMeasuredTokensAfter) / Double(Self.checkpointTestContext))
+        let postCompactionFill = await session.contextFill
+        #expect(postCompactionFill == Double(expectedMeasuredTokensAfter) / Double(Self.checkpointTestContext))
     }
 
     @Test(
-        "restoring a deterministically folded session seeds the post-fold live window — not the pre-fold history — and restores the post-fold contextFill"
+        "restoring a deterministically compacted session seeds the post-compaction live window — not the pre-compaction history — and restores the post-compaction contextFill"
     )
     @MainActor
-    func restoreAfterDeterministicOnlyFoldYieldsPostFoldWindowAndFill() async throws {
+    func restoreAfterDeterministicOnlyCompactionYieldsPostCompactionWindowAndFill() async throws {
         let cacheDir = Self.makeTempDir()
         let recordingsDir = Self.makeTempDir()
         defer {
@@ -944,14 +944,14 @@ struct RoutedSessionCompactTests {
         try await driveTurns(6, on: session)
 
         let backend = try #require(container.lastBackend)
-        let preFoldEntries = backend.transcriptEntries()
-        let result = try await session.compact(budget: deterministicFoldBudget(for: preFoldEntries))
+        let preCompactionEntries = backend.transcriptEntries()
+        let result = try await session.compact(budget: deterministicCompactionBudget(for: preCompactionEntries))
         #expect(result.summary == nil)
-        let postFoldFill = await session.contextFill
+        let postCompactionFill = await session.contextFill
 
-        // The post-fold live window TurnTruncation left: the header plus the
+        // The post-compaction live window TurnTruncation left: the header plus the
         // newest 4 turns, verbatim.
-        let (header, turns) = TranscriptTurns.split(preFoldEntries)
+        let (header, turns) = TranscriptTurns.split(preCompactionEntries)
         let (_, recent) = TranscriptTurns.partition(turns, keepRecentTurns: 4)
         let expectedWindow = header + recent.flatMap(\.entries)
 
@@ -969,24 +969,24 @@ struct RoutedSessionCompactTests {
         let restored = try await profile2.standard.restoreSessionTree(root: session.id)
         #expect(restored.root.id == session.id)
 
-        // The restored backend was seeded with the post-fold live window plus
-        // the fold's own boundary entry — never the whole pre-fold history.
+        // The restored backend was seeded with the post-compaction live window plus
+        // the compaction's own boundary entry — never the whole pre-compaction history.
         let restoredBackend = try #require(container2.lastBackend)
         let restoredEntries = restoredBackend.transcriptEntries()
         #expect(Array(restoredEntries.dropLast()) == expectedWindow)
-        #expect(restoredEntries.count < preFoldEntries.count)
+        #expect(restoredEntries.count < preCompactionEntries.count)
         guard case .response(let boundary)? = restoredEntries.last,
             case .structure(let segment)? = boundary.segments.last,
             let compactionSegment = try CompactionSegment(structuredSegment: segment)
         else {
-            Issue.record("expected the restored transcript to end in the fold's boundary entry")
+            Issue.record("expected the restored transcript to end in the compaction's boundary entry")
             return
         }
         #expect(compactionSegment.content.stagesApplied == result.stagesApplied)
 
-        // `contextFill` restores to the fold's own post-fold measurement,
-        // not a pre-fold stamp.
+        // `contextFill` restores to the compaction's own post-compaction measurement,
+        // not a pre-compaction stamp.
         let restoredFill = await restored.root.contextFill
-        #expect(restoredFill == postFoldFill)
+        #expect(restoredFill == postCompactionFill)
     }
 }

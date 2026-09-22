@@ -1,8 +1,8 @@
 /// One hand-written multi-step task: a handful of setup steps that each
 /// plant one fact, padded with filler steps, followed by a final instruction
 /// whose correct completion requires combining the planted facts — answerable
-/// only if the session stayed *continuable* across whatever folds its own
-/// small budget forced along the way, not merely if a single fold's summary
+/// only if the session stayed *continuable* across whatever compactions its own
+/// small budget forced along the way, not merely if a single compaction's summary
 /// happened to be good (``CompactionEvaluation``'s own, narrower concern).
 ///
 /// Kept as plain authored data rather than one bespoke step sequence per
@@ -29,15 +29,15 @@ struct CompactionContinuityTaskSpec: Sendable {
     /// How many filler steps pad the task between the setup steps and
     /// ``finalInstruction`` — sized per fixture so the whole task's
     /// cumulative length, against ``CompactionContinuityEvaluation/budget``,
-    /// is impossible to complete without at least one live fold along the
-    /// way (this dataset's own "sized to be impossible without >=1 fold"
+    /// is impossible to complete without at least one live compaction along the
+    /// way (this dataset's own "sized to be impossible without >=1 compaction"
     /// requirement, distinct from ``CompactionEvalFixtureSpec``'s fixed
     /// `recentTurnCount`, which only pads the untouched recency window).
     let fillerStepCount: Int
 
     /// The final step: an instruction whose correct completion requires
     /// every one of ``facts``, asked only after every setup step and every
-    /// filler step, so a session that lost continuity across its own folds
+    /// filler step, so a session that lost continuity across its own compactions
     /// cannot complete it correctly.
     let finalInstruction: String
 
@@ -57,8 +57,8 @@ struct CompactionContinuityTaskSpec: Sendable {
 /// length is the point, not decoration: a step's job here is to *consume
 /// context*, and ten of these have to estimate past
 /// ``compactionContinuityDefaultBudget``'s ``TokenBudget/triggerTokens`` (1638)
-/// on their own for any task built from them to force a live fold.
-/// `CompactionContinuityEvaluationTests.everyTaskIsSizedToForceAFold` asserts
+/// on their own for any task built from them to force a live compaction.
+/// `CompactionContinuityEvaluationTests.everyTaskIsSizedToForceACompaction` asserts
 /// exactly that. The one-line versions these replaced estimated about 14 tokens
 /// each — roughly an eleventh of what the trigger needs — and the sizing test
 /// of the day never noticed, because it counted steps instead of tokens (task
@@ -169,7 +169,7 @@ let compactionContinuityFillerSteps: [String] = [
 /// The smallest filler padding a fixture carries between its setup steps
 /// and its final instruction. Ten steps size a task past
 /// ``compactionContinuityDefaultBudget``'s trigger —
-/// `CompactionContinuityEvaluationTests.everyTaskIsSizedToForceAFold` holds
+/// `CompactionContinuityEvaluationTests.everyTaskIsSizedToForceACompaction` holds
 /// that property by token estimate, never by step count.
 let compactionContinuityShortFillerStepCount = 10
 
@@ -183,7 +183,7 @@ let compactionContinuityMediumFillerStepCount = 11
 let compactionContinuityLongFillerStepCount = 12
 
 /// Every hand-written multi-step task fixture (task 4ce0a1k): each requires
-/// at least one live fold to complete, since ``fillerStepCount`` pads every
+/// at least one live compaction to complete, since ``fillerStepCount`` pads every
 /// task well past ``CompactionContinuityEvaluation``'s own small default
 /// budget before ``finalInstruction`` is ever asked.
 let compactionContinuityTaskSpecs: [CompactionContinuityTaskSpec] = [
@@ -351,7 +351,7 @@ struct CompactionContinuitySeed: Sendable {
     /// `.instructions` entry plus one prompt/response pair per step
     /// (``steps`` plus the final instruction) — checked by
     /// ``CompactionContinuityMetric/recordingComplete`` against whatever the
-    /// real subject's own recording actually persisted, proving the fold(s)
+    /// real subject's own recording actually persisted, proving the compaction(s)
     /// along the way never dropped anything from the durable history (only
     /// ever from the *live*, resumable window — compaction_plan.md's whole
     /// point).
@@ -411,15 +411,15 @@ struct CompactionContinuitySeed: Sendable {
 /// planted facts.
 ///
 /// The length is the point, not the content. The opening step is the whole
-/// span the fast tier's one fold replaces, and a span too small cannot buy a
+/// span the fast tier's one compaction replaces, and a span too small cannot buy a
 /// summary smaller than itself: ``Summarization/minimumSummaryTokens`` gives
 /// every small span the same 128-token allowance, and `Compactor.compact`'s
-/// did-not-shrink guard discards a fold whose summary is not smaller than its
+/// did-not-shrink guard discards a compaction whose summary is not smaller than its
 /// span. `AutoCompactionTriggerIntegrationTests` records the measured
 /// arithmetic: the floor stops binding past 512 estimated tokens, and its own
 /// opening brief is written past that at 639. This paragraph plays the same
 /// role here, and
-/// `CompactionContinuityEvaluationHermeticTests.everyFastTasksOpeningStepOutweighsTheFoldFloor`
+/// `CompactionContinuityEvaluationHermeticTests.everyFastTasksOpeningStepOutweighsTheCompactionFloor`
 /// holds each built opening step past the same bound.
 ///
 /// The content mentions no task's planted facts, so the facts stated before
@@ -491,14 +491,14 @@ let compactionContinuityFastInstructions = """
     refuse to state a fact from this conversation, and never invent a value.
     """
 
-/// The fast tier's second step — the recency window at the moment the fold
+/// The fast tier's second step — the recency window at the moment the compaction
 /// runs.
 ///
 /// Short on purpose. The fast tier's summarization keeps the newest turn
-/// verbatim, so this turn is what the fold leaves untouched, and a short
-/// window is what makes the folded transcript small. It asks for nothing the
+/// verbatim, so this turn is what the compaction leaves untouched, and a short
+/// window is what makes the compacted transcript small. It asks for nothing the
 /// final instruction needs, so the answer to the final instruction can only
-/// come from the fold's own summary.
+/// come from the compaction's own summary.
 let compactionContinuityFastReadinessCheck =
     "Confirm you are ready for the final question, in one short sentence."
 
@@ -511,26 +511,26 @@ let compactionContinuityFastReadinessCheck =
 /// toward ``compactionContinuityDefaultBudget``'s 1638-token trigger, and
 /// every step is a real generation. A synthetic trigger makes that filler
 /// unnecessary: the fast tier's budget puts the trigger far under the opening
-/// step, so the fold fires without any filler at all, and each task costs
+/// step, so the compaction fires without any filler at all, and each task costs
 /// three generations plus one summarizer call instead of thirteen
 /// generations.
 ///
 /// The opening step states BOTH facts and then carries
-/// ``compactionContinuityFastPadding``, so the one fold's span holds the
+/// ``compactionContinuityFastPadding``, so the one compaction's span holds the
 /// facts and is large enough for a real summary to shrink it. The second step
-/// is ``compactionContinuityFastReadinessCheck``, the turn the fold leaves
-/// verbatim. The final instruction is asked over the folded transcript, so a
+/// is ``compactionContinuityFastReadinessCheck``, the turn the compaction leaves
+/// verbatim. The final instruction is asked over the compacted transcript, so a
 /// correct answer proves the summary carried the facts — the same continuity
-/// property the original seeds measure, through one fold instead of whichever
-/// folds thirteen driven steps happened to force.
+/// property the original seeds measure, through one compaction instead of whichever
+/// compactions thirteen driven steps happened to force.
 let compactionContinuityFastSeeds: [CompactionContinuitySeed] = compactionContinuityTaskSpecs.map { spec in
     // The facts open the step as briefing CONTENT, never as an instruction
     // about facts. Measured on 2026-08-19: an opening of "Note these facts
-    // and keep them for later:" made the small model's fold summaries
+    // and keep them for later:" made the small model's compaction summaries
     // restate the request — "the conversation started with a request to note
     // facts" — and drop the values, where `AutoCompactionTriggerIntegrationTests`'
     // plain declarative brief summarizes into a dense factual summary under
-    // the same model and the same fold path.
+    // the same model and the same compaction path.
     let openingStep =
         "Project briefing. Two facts stand at the head of this briefing. "
         + "\(spec.facts.joined(separator: " "))\n\n"

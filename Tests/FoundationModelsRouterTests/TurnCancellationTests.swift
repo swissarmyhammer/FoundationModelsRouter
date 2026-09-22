@@ -36,7 +36,7 @@ import Testing
 /// terminates the stream, the termination handler cancels the turn behind it, and
 /// only then does the stop travel on. That consumer is `@MainActor`, so it runs
 /// when the one main actor every `@MainActor` test in the run shares gives it a
-/// slot. Measured on ``cancelledProactiveFoldReportsNoCompaction(route:)``: the
+/// slot. Measured on ``cancelledProactiveCompactionReportsNoCompaction(route:)``: the
 /// wait takes tens of microseconds run alone and under `--no-parallel`, and about
 /// two seconds in half of the full parallel runs. That number reads the run, not
 /// Router, so a five-second ceiling over it is a coin toss on a busier machine.
@@ -173,7 +173,7 @@ struct TurnCancellationTests {
         }
 
         /// This backend's measured usage — behind a lock for the same reason
-        /// ``transcript`` is, and mutable because a fold fixture starts metering
+        /// ``transcript`` is, and mutable because a compaction fixture starts metering
         /// between two turns.
         private let metering: Mutex<Metering>
 
@@ -193,16 +193,16 @@ struct TurnCancellationTests {
 
         /// The input tokens each completed turn adds to this backend's measured
         /// usage, as of this read — carried over to every backend derived from
-        /// this one, so a fold that swaps the session's backend does not silently
+        /// this one, so a compaction that swaps the session's backend does not silently
         /// stop it measuring.
         var inputTokensPerTurn: Int? { metering.withLock { $0.inputTokensPerTurn } }
 
         /// Starts reporting measured usage: `inputTokensPerTurn` input tokens for
         /// every turn completed from here on.
         ///
-        /// A fold fixture starts metering only for its *last* warm-up turn: a
+        /// A compaction fixture starts metering only for its *last* warm-up turn: a
         /// session measuring usage from its first turn would cross its budget's
-        /// trigger with almost nothing in its transcript, and a fold with no old
+        /// trigger with almost nothing in its transcript, and a compaction with no old
         /// span left to summarize never makes a summarizer call at all.
         ///
         /// - Parameter inputTokensPerTurn: The input tokens each completed turn
@@ -322,9 +322,9 @@ struct TurnCancellationTests {
         }
 
         /// This backend's measured usage, or `nil` until ``startMetering(inputTokensPerTurn:)``
-        /// is called — the default, and what every test here but the fold ones
+        /// is called — the default, and what every test here but the compaction ones
         /// wants: a session with no measured usage has no measured
-        /// ``RoutedSession/contextFill``, so no proactive fold can trigger.
+        /// ``RoutedSession/contextFill``, so no proactive compaction can trigger.
         func usageTokenCounts() -> (input: Int, output: Int)? {
             metering.withLock { state -> (input: Int, output: Int)? in
                 guard state.inputTokensPerTurn != nil else { return nil }
@@ -342,7 +342,7 @@ struct TurnCancellationTests {
         /// ``LanguageModelSessionBackend``'s `makeFork()`-based default, which
         /// keeps this backend's own entries instead.
         ///
-        /// A fold swaps the session's backend for one seeded with the *folded*
+        /// A compaction swaps the session's backend for one seeded with the *compacted*
         /// transcript and sets `persistedEntryCount` from that same transcript, so
         /// a fixture that ignored the replacement would leave the two disagreeing
         /// and have the next turn's diff record entries no real session would. The
@@ -360,7 +360,7 @@ struct TurnCancellationTests {
     ///
     /// Almost every test here observes turns through the shared ``TurnObserver``
     /// and the recorder rather than by reaching for a particular session's
-    /// backend; the exception is ``lastVendedBackend``, which the fold fixture
+    /// backend; the exception is ``lastVendedBackend``, which the compaction fixture
     /// needs (see its doc), so the vended backend is retained behind a lock.
     private final class HookedLLMContainer: LoadedLLMContainer {
         private let hook: TurnHook
@@ -381,7 +381,7 @@ struct TurnCancellationTests {
         ///
         /// The only way to reach it: `RoutedSessionActor.backend` is `private` and
         /// ``RoutedSession`` exposes no accessor for it, and
-        /// ``makeFoldTriggeredSession(_:budget:metersTriggeringFill:)`` has to start metering on the
+        /// ``makeCompactionTriggeredSession(_:budget:metersTriggeringFill:)`` has to start metering on the
         /// session's own backend to move its measured ``RoutedSession/contextFill``.
         var lastVendedBackend: HookedSessionBackend? { lastVended.withLock { $0 } }
 
@@ -486,69 +486,69 @@ struct TurnCancellationTests {
 
     private static let stubDimension = 8
 
-    /// The scale a fold's target size is measured against — ``Compactor`` folds
+    /// The scale a compaction's target size is measured against — ``Compactor`` compacts
     /// down to `limit * target` tokens — set far above anything
     /// ``cancellationSurvivesIntoTheOverflowRetry(route:)`` puts in a transcript,
-    /// so even the *reactive* fold finds nothing to shed and lands as a no-op,
+    /// so even the *reactive* compaction finds nothing to shed and lands as a no-op,
     /// leaving the retry itself as the only thing left to observe.
     ///
     /// Not a stand-in for the session's context window: that is the profile's
     /// resolved ``SlotResolution/contextTokens``, which is what
     /// ``RoutedSession/contextFill`` divides by. A budget's `limit` never enters
     /// a fill measurement, so raising this does not move fill.
-    private static let noOpFoldScale = 100_000
+    private static let noOpCompactionScale = 100_000
 
     /// A `trigger` above `1.0` — a fraction measured fill does not reach — so no
-    /// *proactive* fold ever runs and the reactive compact-and-retry-once path is
-    /// the only fold in play.
+    /// *proactive* compaction ever runs and the reactive compact-and-retry-once path is
+    /// the only compaction in play.
     ///
     /// Belt and braces rather than the operative reason:
     /// ``cancellationSurvivesIntoTheOverflowRetry(route:)`` sends a single
     /// prompt, so nothing has been metered yet when the proactive gate reads
     /// ``RoutedSession/contextFill`` and it sees `0` — under even the `0.80`
-    /// default. Pinning the trigger above `1.0` keeps the proactive fold out of
+    /// default. Pinning the trigger above `1.0` keeps the proactive compaction out of
     /// the way should that test ever grow a turn that does meter usage.
     private static let unreachableFillTrigger = 2.0
 
-    /// The fraction of ``noOpFoldScale`` a fold aims to come down to, spelled out
-    /// rather than left to the `0.50` default so the fold's target size is
+    /// The fraction of ``noOpCompactionScale`` a compaction aims to come down to, spelled out
+    /// rather than left to the `0.50` default so the compaction's target size is
     /// visible at the call site.
     ///
     /// Inert either way: at this scale the target — and the halved one the
-    /// overflow retry folds harder to — stays far above the transcript.
-    private static let inertFoldTarget = 0.25
+    /// overflow retry compacts harder to — stays far above the transcript.
+    private static let inertCompactionTarget = 0.25
 
     /// The auto-compaction opt-in ``cancellationSurvivesIntoTheOverflowRetry(route:)``
     /// vends its session with: enough to turn on the reactive
     /// compact-and-retry-once recovery, and nothing else.
     private static let unreachableTriggerBudget = TokenBudget(
-        limit: noOpFoldScale,
+        limit: noOpCompactionScale,
         trigger: unreachableFillTrigger,
-        target: inertFoldTarget
+        target: inertCompactionTarget
     )
 
-    // MARK: - Fold fixtures
+    // MARK: - Compaction fixtures
 
-    /// The compaction prompt a fold test vends its session with, so the mid-turn
-    /// hook can tell a fold's own **summarizer** call from an ordinary turn: the
+    /// The compaction prompt a compaction test vends its session with, so the mid-turn
+    /// hook can tell a compaction's own **summarizer** call from an ordinary turn: the
     /// prompt ``Summarization`` sends is this text followed by the rendered span
-    /// being condensed, so a prefix match on it fires for exactly the fold's model
+    /// being condensed, so a prefix match on it fires for exactly the compaction's model
     /// calls and for nothing else (see ``isSummarizerCall``).
-    private static let foldSummarizerPrompt = CompactionPrompt(
-        name: "turn-cancellation-fold-suspend",
-        text: "SUSPEND-INSIDE-THE-FOLD"
+    private static let compactionSummarizerPrompt = CompactionPrompt(
+        name: "turn-cancellation-compaction-suspend",
+        text: "SUSPEND-INSIDE-THE-COMPACTION"
     )
 
-    /// Whether the model call carrying `prompt` is a fold's own summarizer call.
+    /// Whether the model call carrying `prompt` is a compaction's own summarizer call.
     private static let isSummarizerCall: @Sendable (String) -> Bool = {
-        $0.hasPrefix(foldSummarizerPrompt.text)
+        $0.hasPrefix(compactionSummarizerPrompt.text)
     }
 
-    /// Matches a fold's **first** summarizer call and no later one — what every test
-    /// that suspends inside a fold suspends on.
+    /// Matches a compaction's **first** summarizer call and no later one — what every test
+    /// that suspends inside a compaction suspends on.
     ///
-    /// Single-shot deliberately. A fold test suspends in that first call and cancels
-    /// there; a regression that then let the fold degrade to another tier would suspend
+    /// Single-shot deliberately. A compaction test suspends in that first call and cancels
+    /// there; a regression that then let the compaction degrade to another tier would suspend
     /// a *second* call on a semaphore nothing is left to signal, hanging the suite
     /// instead of failing the assertion that caught it. Letting later calls run
     /// straight through turns that same regression into a fast, ordinary failure —
@@ -569,50 +569,50 @@ struct TurnCancellationTests {
 
     /// How many of the newest turns every compaction stage leaves untouched —
     /// ``ToolOutputElision``/``TurnTruncation``/``Summarization``'s shared
-    /// `keepRecentTurns` default, which a fold test's warm-up must exceed for a
-    /// fold to have any old span left to summarize.
-    private static let foldRecencyWindowTurns = 4
+    /// `keepRecentTurns` default, which a compaction test's warm-up must exceed for a
+    /// compact to have any old span left to summarize.
+    private static let compactionRecencyWindowTurns = 4
 
-    /// How many warm-up turns ``makeFoldTriggeredSession(_:budget:metersTriggeringFill:)`` drives
-    /// before the turn that folds — past ``foldRecencyWindowTurns``, so the fold
+    /// How many warm-up turns ``makeCompactionTriggeredSession(_:budget:metersTriggeringFill:)`` drives
+    /// before the turn that compacts — past ``compactionRecencyWindowTurns``, so the compaction
     /// has an old span to condense and therefore a real summarizer call to make.
-    private static let foldWarmUpTurnCount = 6
+    private static let compactionWarmUpTurnCount = 6
 
-    /// The measured fill a fold test's budget folds at — ``TokenBudget``'s own
+    /// The measured fill a compaction test's budget compacts at — ``TokenBudget``'s own
     /// default trigger, spelled out because these budgets are built by
-    /// ``foldBudget(targetTokens:)`` rather than by ``TokenBudget/init(limit:trigger:target:hardCeiling:toolOutputLimit:)``.
-    private static let foldFillTrigger = 0.8
+    /// ``compactionBudget(targetTokens:)`` rather than by ``TokenBudget/init(limit:trigger:target:hardCeiling:toolOutputLimit:)``.
+    private static let compactionFillTrigger = 0.8
 
     /// The share of the session's own resolved context window the last warm-up
-    /// turn measures, above ``foldFillTrigger`` so the *next* turn folds.
-    private static let foldTriggeringFillFraction = 0.9
+    /// turn measures, above ``compactionFillTrigger`` so the *next* turn compacts.
+    private static let compactionTriggeringFillFraction = 0.9
 
-    /// The fraction of a fold budget's `limit` its target sits at — an arbitrary
-    /// choice ``foldBudget(targetTokens:)`` inverts, present only so a wanted
+    /// The fraction of a compaction budget's `limit` its target sits at — an arbitrary
+    /// choice ``compactionBudget(targetTokens:)`` inverts, present only so a wanted
     /// target size can be stated directly instead of back-computed at each call
     /// site.
-    private static let foldTargetFraction = 0.25
+    private static let compactionTargetFraction = 0.25
 
-    /// A budget that folds to `targetTokens`, stated as the size it lands on
+    /// A budget that compacts to `targetTokens`, stated as the size it lands on
     /// rather than as ``TokenBudget``'s own `limit`/`target` pair —
-    /// ``Compactor`` folds to `limit * target`, so this inverts that.
+    /// ``Compactor`` compacts to `limit * target`, so this inverts that.
     ///
-    /// - Parameter targetTokens: The estimated token size the fold should aim for.
-    /// - Returns: A budget with that target size and ``foldFillTrigger``'s trigger.
-    private static func foldBudget(targetTokens: Int) -> TokenBudget {
+    /// - Parameter targetTokens: The estimated token size the compaction should aim for.
+    /// - Returns: A budget with that target size and ``compactionFillTrigger``'s trigger.
+    private static func compactionBudget(targetTokens: Int) -> TokenBudget {
         TokenBudget(
-            limit: Int(Double(targetTokens) / foldTargetFraction),
-            trigger: foldFillTrigger,
-            target: foldTargetFraction
+            limit: Int(Double(targetTokens) / compactionTargetFraction),
+            trigger: compactionFillTrigger,
+            target: compactionTargetFraction
         )
     }
 
-    /// The prompt ``cancellingTheReactiveFoldStopsTheRetry()`` drives its turn with,
+    /// The prompt ``cancellingTheReactiveCompactionStopsTheRetry()`` drives its turn with,
     /// named because its mid-turn hook has to tell that turn's own model call (which
-    /// must overflow) from the fold's summarizer call (which must suspend).
-    private static let overflowingFoldPrompt = "overflows-then-folds"
+    /// must overflow) from the compaction's summarizer call (which must suspend).
+    private static let overflowingCompactionPrompt = "overflows-then-compacts"
 
-    /// The prompt ``makeFoldTriggeredSession(_:budget:metersTriggeringFill:)``'s
+    /// The prompt ``makeCompactionTriggeredSession(_:budget:metersTriggeringFill:)``'s
     /// warm-up turn `index` sends.
     private static func warmUpPrompt(_ index: Int) -> String { "warm-\(index)" }
 
@@ -621,7 +621,7 @@ struct TurnCancellationTests {
     /// carrying the turn's own prompt and one `.response` carrying `"ok-"` plus
     /// it, so both budgets below can be sized up front from this alone.
     private static func warmUpEntries() -> [Transcript.Entry] {
-        (0..<foldWarmUpTurnCount).flatMap { index -> [Transcript.Entry] in
+        (0..<compactionWarmUpTurnCount).flatMap { index -> [Transcript.Entry] in
             let prompt = warmUpPrompt(index)
             return [
                 .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))])),
@@ -637,56 +637,56 @@ struct TurnCancellationTests {
     /// older turns outright and leaves this untouched.
     private static func warmUpRecencyWindowEstimate() -> Int {
         let (header, turns) = TranscriptTurns.split(warmUpEntries())
-        let (_, recent) = TranscriptTurns.partition(turns, keepRecentTurns: foldRecencyWindowTurns)
+        let (_, recent) = TranscriptTurns.partition(turns, keepRecentTurns: compactionRecencyWindowTurns)
         return Compactor.estimatedTokenCount(of: Transcript(entries: header + recent.flatMap(\.entries)))
     }
 
     /// A budget the deterministic stages **cannot** satisfy: its target is half the
     /// warm-up transcript's recency-window floor, so ``ToolOutputElision`` (nothing
     /// to elide — these turns make no tool calls) and ``TurnTruncation`` (which
-    /// bottoms out at that floor) both leave it over target, and the fold goes on
+    /// bottoms out at that floor) both leave it over target, and the compaction goes on
     /// to call the summarizer. That call is the model-assisted stage these tests
     /// cancel inside.
-    private static var summarizingFoldBudget: TokenBudget {
-        foldBudget(targetTokens: warmUpRecencyWindowEstimate() / 2)
+    private static var summarizingCompactionBudget: TokenBudget {
+        compactionBudget(targetTokens: warmUpRecencyWindowEstimate() / 2)
     }
 
     /// A budget the deterministic stages **can** satisfy: its target sits midway
     /// between the recency-window floor ``TurnTruncation`` lands on and the whole
-    /// warm-up transcript, so the fold finishes deterministically and never makes a
+    /// warm-up transcript, so the compaction finishes deterministically and never makes a
     /// model call at all.
-    private static var deterministicFoldBudget: TokenBudget {
+    private static var deterministicCompactionBudget: TokenBudget {
         let whole = Compactor.estimatedTokenCount(of: Transcript(entries: warmUpEntries()))
-        return foldBudget(targetTokens: (warmUpRecencyWindowEstimate() + whole) / 2)
+        return compactionBudget(targetTokens: (warmUpRecencyWindowEstimate() + whole) / 2)
     }
 
     /// A session whose measured ``RoutedSession/contextFill`` has already cleared
-    /// `budget`'s trigger, holding ``foldWarmUpTurnCount`` turns of real content —
-    /// so the *next* turn on it folds proactively, before running any model work of
+    /// `budget`'s trigger, holding ``compactionWarmUpTurnCount`` turns of real content —
+    /// so the *next* turn on it compacts proactively, before running any model work of
     /// its own.
     ///
     /// - Parameters:
     ///   - fixture: The fixture to vend the session from.
     ///   - budget: The auto-compaction opt-in to vend it with, sized by
-    ///     ``summarizingFoldBudget`` or ``deterministicFoldBudget``.
+    ///     ``summarizingCompactionBudget`` or ``deterministicCompactionBudget``.
     ///   - metersTriggeringFill: Whether the last warm-up turn measures enough usage
     ///     to clear `budget`'s trigger. `true` (the default) for a test about the
-    ///     *proactive* fold; `false` for one about the **reactive**
-    ///     compact-and-retry-once fold, where a proactive fold firing first would
-    ///     fold the transcript out from under it — with no measured usage, fill stays
+    ///     *proactive* compaction; `false` for one about the **reactive**
+    ///     compact-and-retry-once compact, where a proactive compaction firing first would
+    ///     compact the transcript out from under it — with no measured usage, fill stays
     ///     at `0` and the proactive gate never fires.
     /// - Returns: The session, warmed up, and over its trigger unless metering was
     ///   declined.
-    private static func makeFoldTriggeredSession(
+    private static func makeCompactionTriggeredSession(
         _ fixture: Fixture,
         budget: TokenBudget,
         metersTriggeringFill: Bool = true
     ) async throws -> any RoutedSession {
-        let session = fixture.model.makeSession(budget: budget, compactionPrompt: foldSummarizerPrompt)
+        let session = fixture.model.makeSession(budget: budget, compactionPrompt: compactionSummarizerPrompt)
         let backend = try #require(fixture.container.lastVendedBackend)
         let contextTokens = try #require(session as? RoutedSessionActor).contextTokens
 
-        for index in 0..<(foldWarmUpTurnCount - 1) {
+        for index in 0..<(compactionWarmUpTurnCount - 1) {
             _ = try await session.respond(to: warmUpPrompt(index))
         }
         // Only the last warm-up turn measures, and its delta between the snapshots
@@ -694,9 +694,9 @@ struct TurnCancellationTests {
         // ``HookedSessionBackend/startMetering(inputTokensPerTurn:)`` for why not
         // from the first turn.
         if metersTriggeringFill {
-            backend.startMetering(inputTokensPerTurn: Int(Double(contextTokens) * foldTriggeringFillFraction))
+            backend.startMetering(inputTokensPerTurn: Int(Double(contextTokens) * compactionTriggeringFillFraction))
         }
-        _ = try await session.respond(to: warmUpPrompt(foldWarmUpTurnCount - 1))
+        _ = try await session.respond(to: warmUpPrompt(compactionWarmUpTurnCount - 1))
 
         #expect((await session.contextFill >= budget.trigger) == metersTriggeringFill)
         return session
@@ -843,7 +843,7 @@ struct TurnCancellationTests {
     ///     suspend. Every call it rejects runs straight through, so one hook serves a
     ///     whole test: an ordinary turn's prompt (see
     ///     ``suspendInsideCancellationAwareTool(_:prompt:insideTool:humanWait:)``) or
-    ///     a fold's own summarizer call (see ``isSummarizerCall``).
+    ///     a compaction's own summarizer call (see ``isSummarizerCall``).
     ///   - insideTool: Signalled once the turn is provably suspended inside the
     ///     tool call, so a test cancels at a known point rather than racing to
     ///     get there.
@@ -902,7 +902,7 @@ struct TurnCancellationTests {
     ///
     /// The common case, and a thin spelling of
     /// ``suspendInsideCancellationAwareTool(_:suspendingOn:insideTool:humanWait:)`` — a
-    /// fold test suspends on that one's predicate instead, since a summarizer call is
+    /// compaction test suspends on that one's predicate instead, since a summarizer call is
     /// identified by its *prefix*.
     ///
     /// - Parameters:
@@ -1409,7 +1409,7 @@ struct TurnCancellationTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
-        // A budget makes this session recover from context overflow by folding
+        // A budget makes this session recover from context overflow by compaction
         // harder and retrying once — and that retry is the window where a turn
         // holds the turn lock with no model call outstanding, so a cancellation
         // arriving in it has no task to cancel and must be remembered instead.
@@ -1477,24 +1477,24 @@ struct TurnCancellationTests {
         #expect(await session.pendingPrompts().isEmpty)
     }
 
-    // MARK: - A stop lands during a compaction fold too
+    // MARK: - A stop lands during a compaction too
 
     @Test(
-        "cancelling a turn suspended inside its proactive fold's summarizer call stops the fold instead of waiting it out",
+        "cancelling a turn suspended inside its proactive compaction's summarizer call stops the compaction instead of waiting it out",
         arguments: CancellationRoute.allCases)
     @MainActor
-    func cancellingAProactiveFoldStopsIt(route: CancellationRoute) async throws {
+    func cancellingAProactiveCompactionStopsIt(route: CancellationRoute) async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
-        let session = try await Self.makeFoldTriggeredSession(fixture, budget: Self.summarizingFoldBudget)
+        let session = try await Self.makeCompactionTriggeredSession(fixture, budget: Self.summarizingCompactionBudget)
 
         let insideSummarizer = AsyncSemaphore(value: 0)
         let sawCancellation = Self.suspendInsideCancellationAwareTool(
             fixture, suspendingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
 
-        let turnTask = Task { try await session.respond(to: "folds-first") }
+        let turnTask = Task { try await session.respond(to: "compacts-first") }
         await insideSummarizer.wait()
 
         switch route {
@@ -1504,7 +1504,7 @@ struct TurnCancellationTests {
             turnTask.cancel()
         }
 
-        // A fold's summarizer call is a model call like any other, so both routes
+        // A compaction's summarizer call is a model call like any other, so both routes
         // reach the work running inside it and the turn unwinds with the same
         // `CancellationError` a cancelled generation gives.
         try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
@@ -1514,13 +1514,13 @@ struct TurnCancellationTests {
         // model work than the call it landed in. Deliberately not read as a guard on
         // the tier-degrading rule itself — `runCancellableModelCall`'s pre-flight
         // check refuses a later tier's call before the hook is ever reached, so this
-        // count stays `1` either way. `cancelledProactiveFoldReportsNoCompaction` is
+        // count stays `1` either way. `cancelledProactiveCompactionReportsNoCompaction` is
         // what pins the rule.
         #expect(await fixture.observer.entered.filter(Self.isSummarizerCall).count == 1)
 
-        // And the turn the fold was folding for never ran: with nothing under way
-        // once the fold is gone, its own model call is never made.
-        #expect(await fixture.observer.entered.contains("folds-first") == false)
+        // And the turn the compaction was running for never ran: with nothing under way
+        // once the compaction is gone, its own model call is never made.
+        #expect(await fixture.observer.entered.contains("compacts-first") == false)
     }
 
     @Test("a summarizer that raises CancellationError with no stop outstanding is an ordinary failure, and still degrades")
@@ -1530,12 +1530,12 @@ struct TurnCancellationTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
-        let session = try await Self.makeFoldTriggeredSession(fixture, budget: Self.summarizingFoldBudget)
+        let session = try await Self.makeCompactionTriggeredSession(fixture, budget: Self.summarizingCompactionBudget)
 
         // `LanguageModelSessionBackend` is a public protocol, and a conformer is free
         // to surface `CancellationError` from internals of its own — a timeout, a
         // task group it manages — with nothing cancelled on this side at all. That is
-        // an ordinary summarizer failure, so the fold must degrade to the next tier
+        // an ordinary summarizer failure, so the compaction must degrade to the next tier
         // exactly as it does for any other one, rather than reading the error's
         // *type* as a stop and killing a turn nobody asked to stop.
         let summarizerCalls = Mutex(0)
@@ -1549,9 +1549,9 @@ struct TurnCancellationTests {
             throw CancellationError()
         }
 
-        // No cancel anywhere in this test, so this turn cannot suspend: it either folds
+        // No cancel anywhere in this test, so this turn cannot suspend: it either compacts
         // and answers, or fails.
-        #expect(try await session.respond(to: "folds-first") == "ok-folds-first")
+        #expect(try await session.respond(to: "compacts-first") == "ok-compacts-first")
 
         // Two summarizer calls: the flash tier's failure, then the own-model tier
         // that actually produced the summary.
@@ -1565,16 +1565,16 @@ struct TurnCancellationTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
-        let session = try await Self.makeFoldTriggeredSession(fixture, budget: Self.summarizingFoldBudget)
+        let session = try await Self.makeCompactionTriggeredSession(fixture, budget: Self.summarizingCompactionBudget)
 
         // The race this pins is the inverse of
         // ``summarizerCancellationErrorWithNoStopOutstandingStillDegrades()``: there a
         // cancellation-shaped error arrives with no stop outstanding, here a plainly
         // unrelated fault arrives with one. The stop wins — the caller is told its turn
-        // was cancelled rather than handed a fold failure it never asked about, and the
-        // fold is still not degraded to the next tier. What becomes of the discarded
+        // was cancelled rather than handed a compaction failure it never asked about, and the
+        // compaction is still not degraded to the next tier. What becomes of the discarded
         // fault is a log line rather than a rethrow, which is the one part of this no
-        // test can observe (see ``RoutedSessionActor``'s abandoned-fold report).
+        // test can observe (see ``RoutedSessionActor``'s abandoned-compaction report).
         let insideSummarizer = AsyncSemaphore(value: 0)
         let release = AsyncSemaphore(value: 0)
         let suspendsOn = Self.firstSummarizerCall()
@@ -1586,12 +1586,12 @@ struct TurnCancellationTests {
         }
 
         // Streamed, because the *only* observable difference between abandoning this
-        // fold and degrading it to the deterministic-only tier is the
+        // compaction and degrading it to the deterministic-only tier is the
         // ``SessionEvent/compaction(_:)`` that tier's empty result would deliver — see
         // the assertion below.
         let delivered = DeliveredEvents()
         let turnTask = Task {
-            for try await event in await session.streamEvents(to: "folds-first") {
+            for try await event in await session.streamEvents(to: "compacts-first") {
                 await delivered.append(event)
             }
         }
@@ -1604,19 +1604,19 @@ struct TurnCancellationTests {
         await #expect(throws: CancellationError.self) {
             try await turnTask.value
         }
-        // Not degraded: a fault is no licence to answer the stop by folding anyway.
+        // Not degraded: a fault is no licence to answer the stop by compaction anyway.
         // This is the assertion that pins the rule — the summarizer-call count below
         // cannot, because a degraded tier's call is refused by
         // `runCancellableModelCall`'s pre-flight check before the hook is ever
         // reached, so it stays `1` either way (the same caveat
-        // ``cancellingAProactiveFoldStopsIt(route:)`` records).
+        // ``cancellingAProactiveCompactionStopsIt(route:)`` records).
         let compactions = await delivered.events.compactMap { event -> CompactionResult? in
             guard case .compaction(let result) = event else { return nil }
             return result
         }
         #expect(compactions.isEmpty)
         #expect(await fixture.observer.entered.filter(Self.isSummarizerCall).count == 1)
-        #expect(await fixture.observer.entered.contains("folds-first") == false)
+        #expect(await fixture.observer.entered.contains("compacts-first") == false)
 
         // And this path gave its gates back too, fault and stop together.
         fixture.hook.midTurn = nil
@@ -1632,20 +1632,20 @@ struct TurnCancellationTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
-        // Warmed up for its transcript alone here: a manual fold needs no trigger,
+        // Warmed up for its transcript alone here: a manual compaction needs no trigger,
         // just enough old content for the model-assisted stage to have work to do.
-        let session = try await Self.makeFoldTriggeredSession(fixture, budget: Self.summarizingFoldBudget)
+        let session = try await Self.makeCompactionTriggeredSession(fixture, budget: Self.summarizingCompactionBudget)
 
         let insideSummarizer = AsyncSemaphore(value: 0)
         let sawCancellation = Self.suspendInsideCancellationAwareTool(
             fixture, suspendingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
 
         let compactTask = Task {
-            try await session.compact(prompt: Self.foldSummarizerPrompt, budget: Self.summarizingFoldBudget)
+            try await session.compact(prompt: Self.compactionSummarizerPrompt, budget: Self.summarizingCompactionBudget)
         }
         await insideSummarizer.wait()
 
-        // A manual fold is not a "turn" a caller ever asked to generate, but it holds
+        // A manual compaction is not a "turn" a caller ever asked to generate, but it holds
         // the turn lock and runs real model work, so a stop reaches it on exactly the
         // same terms — a caller no longer has to own an enclosing `Task` to get out.
         //
@@ -1671,15 +1671,15 @@ struct TurnCancellationTests {
     }
 
     @Test(
-        "a turn cancelled inside its own proactive fold re-queues the outbox events it had drained",
+        "a turn cancelled inside its own proactive compaction re-queues the outbox events it had drained",
         arguments: CancellationRoute.allCases)
     @MainActor
-    func cancelledProactiveFoldRequeuesItsDrainedEvents(route: CancellationRoute) async throws {
+    func cancelledProactiveCompactionRequeuesItsDrainedEvents(route: CancellationRoute) async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
-        let session = try await Self.makeFoldTriggeredSession(fixture, budget: Self.summarizingFoldBudget)
+        let session = try await Self.makeCompactionTriggeredSession(fixture, budget: Self.summarizingCompactionBudget)
 
         // Staged after the warm-up, so this turn is the one that drains it.
         let posted = OperationEvent(
@@ -1690,7 +1690,7 @@ struct TurnCancellationTests {
         let sawCancellation = Self.suspendInsideCancellationAwareTool(
             fixture, suspendingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
 
-        let turnTask = Task { try await session.respond(to: "folds-first") }
+        let turnTask = Task { try await session.respond(to: "compacts-first") }
         await insideSummarizer.wait()
         // Both routes, because losing a drained outbox is a silent data-loss bug
         // rather than a visible failure: on the caller-cancels route the re-queue
@@ -1704,24 +1704,24 @@ struct TurnCancellationTests {
         }
         try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
 
-        // The fold threw before the turn ever reached the model, so nothing this
+        // The compaction threw before the turn ever reached the model, so nothing this
         // turn drained was delivered — and the drain must not have destroyed it.
-        // The re-queue for this window is the whole reason the fold could not
+        // The re-queue for this window is the whole reason the compaction could not
         // simply be made to throw.
         let pending = await session.outbox.pending()
         #expect(pending.events.map(\.event) == [posted])
     }
 
     @Test(
-        "a turn cancelled inside its own proactive fold reports no compaction, because none happened",
+        "a turn cancelled inside its own proactive compaction reports no compaction, because none happened",
         arguments: CancellationRoute.allCases)
     @MainActor
-    func cancelledProactiveFoldReportsNoCompaction(route: CancellationRoute) async throws {
+    func cancelledProactiveCompactionReportsNoCompaction(route: CancellationRoute) async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
-        let session = try await Self.makeFoldTriggeredSession(fixture, budget: Self.summarizingFoldBudget)
+        let session = try await Self.makeCompactionTriggeredSession(fixture, budget: Self.summarizingCompactionBudget)
 
         let insideSummarizer = AsyncSemaphore(value: 0)
         let sawCancellation = Self.suspendInsideCancellationAwareTool(
@@ -1733,12 +1733,12 @@ struct TurnCancellationTests {
         // consumer that asked for this turn's events.
         let delivered = DeliveredEvents()
         let turnTask = Task {
-            for try await event in await session.streamEvents(to: "folds-first") {
+            for try await event in await session.streamEvents(to: "compacts-first") {
                 await delivered.append(event)
             }
         }
         await insideSummarizer.wait()
-        // Both routes, because the rule this pins — a cancelled fold is abandoned
+        // Both routes, because the rule this pins — a cancelled compaction is abandoned
         // rather than degraded — is decided by a predicate that asks each route
         // separately, so its holding for one says nothing about the other.
         //
@@ -1757,11 +1757,11 @@ struct TurnCancellationTests {
             // Cancelling the consumer terminates the stream, which cancels the task
             // the turn itself runs in — the abandoned-stream shape
             // ``abandoningAStreamRecordsTheTurnAsCancelled()`` pins from the other
-            // side. What this route can therefore show is that the fold let go and
+            // side. What this route can therefore show is that the compaction let go and
             // the consumer came back at all, not an error it could never observe.
             //
             // The slowest crossing this suite makes, and the one this suite's own
-            // doc takes its measurement from: the stop reaches the fold only once
+            // doc takes its measurement from: the stop reaches the compaction only once
             // the cancelled consumer runs again on the shared main actor. Waited
             // on, never timed (task ^bqj719z).
             turnTask.cancel()
@@ -1771,12 +1771,12 @@ struct TurnCancellationTests {
             _ = try? await turnTask.value
         }
 
-        // A cancelled fold is abandoned outright, not degraded down to the
+        // A cancelled compaction is abandoned outright, not degraded down to the
         // deterministic-only tier the way a broken summarizer is: so the consumer is
-        // never told a fold happened, and every `.compaction` this session reports
+        // never told a compaction happened, and every `.compaction` this session reports
         // describes work it really did. Pinned by the router-API route — on the
         // caller-cancels one it holds trivially, since a consumer that cancelled itself
-        // receives nothing further whatever the fold went on to do.
+        // receives nothing further whatever the compaction went on to do.
         let compactions = await delivered.events.compactMap { event -> CompactionResult? in
             guard case .compaction(let result) = event else { return nil }
             return result
@@ -1784,7 +1784,7 @@ struct TurnCancellationTests {
         #expect(compactions.isEmpty)
 
         // What the caller-cancels route pins instead, and the reason it is worth
-        // running: a streamed turn cut short inside its fold is recorded like every
+        // running: a streamed turn cut short inside its compaction is recorded like every
         // other one — a lone bodyless close — even though on that route the recording
         // runs inside an already-cancelled task. Spun for rather than read straight,
         // because a cancelled consumer returns before the producer behind it has
@@ -1798,15 +1798,15 @@ struct TurnCancellationTests {
     }
 
     @Test(
-        "a turn cancelled inside its own proactive fold leaves the transcript exactly as it was, plus one close",
+        "a turn cancelled inside its own proactive compaction leaves the transcript exactly as it was, plus one close",
         arguments: CancellationRoute.allCases)
     @MainActor
-    func cancelledProactiveFoldLeavesTheTranscriptUntouched(route: CancellationRoute) async throws {
+    func cancelledProactiveCompactionLeavesTheTranscriptUntouched(route: CancellationRoute) async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
-        let session = try await Self.makeFoldTriggeredSession(fixture, budget: Self.summarizingFoldBudget)
+        let session = try await Self.makeCompactionTriggeredSession(fixture, budget: Self.summarizingCompactionBudget)
 
         let fillBefore = await session.contextFill
         let recordedBefore = await fixture.recorder.events.count
@@ -1815,7 +1815,7 @@ struct TurnCancellationTests {
         let sawCancellation = Self.suspendInsideCancellationAwareTool(
             fixture, suspendingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
 
-        let turnTask = Task { try await session.respond(to: "folds-first") }
+        let turnTask = Task { try await session.respond(to: "compacts-first") }
         await insideSummarizer.wait()
         // Both routes, because of the recording assertions below: on the
         // caller-cancels route the cut-short turn's own recording runs inside an
@@ -1829,58 +1829,58 @@ struct TurnCancellationTests {
         }
         try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
 
-        // Never a half-applied fold: a fold records its new entries, swaps
-        // `backend`, and reports its own post-fold size as this session's fill —
-        // all of it only once the summarizer has returned. An abandoned fold does
+        // Never a half-applied compaction: a compaction records its new entries, swaps
+        // `backend`, and reports its own post-compaction size as this session's fill —
+        // all of it only once the summarizer has returned. An abandoned compaction does
         // none of it, so measured fill is byte-identical to what it was before.
         #expect(await session.contextFill == fillBefore)
 
         // Recorded like every other failed turn, and no differently for having
-        // been cut short in a fold: exactly one close, bodyless, with no `.prompt`
+        // been cut short in a compaction: exactly one close, bodyless, with no `.prompt`
         // of its own because the model was never called.
         let recorded = await fixture.recorder.events
         #expect(recorded.count == recordedBefore + 1)
         #expect(recorded.last?.kind == .response)
         #expect(recorded.last?.text == nil)
 
-        // The session keeps working, and the abandoned fold left the transcript it
-        // was folding alone: the *next* turn folds for real, and its fold measures
-        // exactly the untouched warm-up transcript. Had the cancelled fold swapped
-        // `backend` for a folded one, this would measure the smaller, folded size —
+        // The session keeps working, and the abandoned compaction left the transcript it
+        // was compacting alone: the *next* turn compacts for real, and its compaction measures
+        // exactly the untouched warm-up transcript. Had the cancelled compaction swapped
+        // `backend` for a compacted one, this would measure the smaller, compacted size —
         // which is what makes this an assertion about `backend` itself and not only
-        // about the ordering inside `fold`. The hook is cleared first, or that next
-        // fold would suspend in the summarizer all over again.
+        // about the ordering inside `compaction`. The hook is cleared first, or that next
+        // compaction would suspend in the summarizer all over again.
         fixture.hook.midTurn = nil
         let followUp = try #require(await Self.followUpTurnEvents(on: session, observer: fixture.observer))
         let untouchedSize = Compactor.estimatedTokenCount(of: Transcript(entries: Self.warmUpEntries()))
-        let folds = followUp.compactMap { event -> CompactionResult? in
+        let compactions = followUp.compactMap { event -> CompactionResult? in
             guard case .compaction(let result) = event else { return nil }
             return result
         }
-        #expect(folds.map(\.tokensBefore) == [untouchedSize])
+        #expect(compactions.map(\.tokensBefore) == [untouchedSize])
     }
 
-    @Test("cancelling a turn inside its reactive compact-and-retry-once fold stops the retry, leaving one close")
+    @Test("cancelling a turn inside its reactive compact-and-retry-once compaction stops the retry, leaving one close")
     @MainActor
-    func cancellingTheReactiveFoldStopsTheRetry() async throws {
+    func cancellingTheReactiveCompactionStopsTheRetry() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
-        // Unmetered, so the proactive gate never fires and the only fold in play is
+        // Unmetered, so the proactive gate never fires and the only compaction in play is
         // the one this turn's own context overflow triggers.
-        let session = try await Self.makeFoldTriggeredSession(
-            fixture, budget: Self.summarizingFoldBudget, metersTriggeringFill: false)
+        let session = try await Self.makeCompactionTriggeredSession(
+            fixture, budget: Self.summarizingCompactionBudget, metersTriggeringFill: false)
 
         let recordedBefore = await fixture.recorder.events.count
         let insideSummarizer = AsyncSemaphore(value: 0)
         let sawCancellation = Self.suspendInsideCancellationAwareTool(
             fixture, suspendingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
         // Composed on top of the summarizer suspension rather than replacing it: this turn
-        // has to overflow *and then* suspend inside the fold that overflow triggers.
+        // has to overflow *and then* suspend inside the compaction that overflow triggers.
         let suspendInSummarizer = fixture.hook.midTurn
         fixture.hook.midTurn = { prompt in
-            guard prompt.hasSuffix(Self.overflowingFoldPrompt) else {
+            guard prompt.hasSuffix(Self.overflowingCompactionPrompt) else {
                 try await suspendInSummarizer?(prompt)
                 return
             }
@@ -1888,7 +1888,7 @@ struct TurnCancellationTests {
                 .init(contextSize: 100, tokenCount: 150, debugDescription: "stub context overflow"))
         }
 
-        let turnTask = Task { try await session.respond(to: Self.overflowingFoldPrompt) }
+        let turnTask = Task { try await session.respond(to: Self.overflowingCompactionPrompt) }
         await insideSummarizer.wait()
         #expect(await session.cancelCurrentTurn() == .requested)
         try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
@@ -1896,31 +1896,31 @@ struct TurnCancellationTests {
         // The retry never ran: the model saw this turn exactly once, and what the
         // caller gets is the cancellation rather than the overflow it was recovering
         // from.
-        #expect(await fixture.observer.entered.filter { $0.hasSuffix(Self.overflowingFoldPrompt) }.count == 1)
+        #expect(await fixture.observer.entered.filter { $0.hasSuffix(Self.overflowingCompactionPrompt) }.count == 1)
 
-        // One close, not two: the failed attempt's own, recorded before the fold
+        // One close, not two: the failed attempt's own, recorded before the compaction
         // started. The retry that would have written the second never happened, and
-        // the cancelled fold adds none of its own.
+        // the cancelled compaction adds none of its own.
         let recorded = await fixture.recorder.events
         #expect(recorded.count == recordedBefore + 2)
         #expect(Array(recorded.map(\.kind).suffix(2)) == [.prompt, .response])
         #expect(recorded.last?.text == nil)
     }
 
-    @Test("a deterministic-only fold with no cancellation outstanding folds and runs its turn exactly as before")
+    @Test("a deterministic-only compaction with no cancellation outstanding compacts and runs its turn exactly as before")
     @MainActor
-    func deterministicOnlyFoldIsUnaffected() async throws {
+    func deterministicOnlyCompactionIsUnaffected() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
-        let session = try await Self.makeFoldTriggeredSession(fixture, budget: Self.deterministicFoldBudget)
+        let session = try await Self.makeCompactionTriggeredSession(fixture, budget: Self.deterministicCompactionBudget)
 
-        // No hook installed, and none needed: this fold makes no model call at all,
-        // which is exactly what must stay true — a cheap fold gained no cancellation
+        // No hook installed, and none needed: this compaction makes no model call at all,
+        // which is exactly what must stay true — a cheap compaction gained no cancellation
         // check of its own.
         var collected: [SessionEvent] = []
-        for try await event in await session.streamEvents(to: "folds-deterministically") {
+        for try await event in await session.streamEvents(to: "compacts-deterministically") {
             collected.append(event)
         }
         let events = eventsAfterTurnFrame(collected)
@@ -1933,12 +1933,12 @@ struct TurnCancellationTests {
         #expect(result.summary == nil)
         #expect(await fixture.observer.entered.contains(where: Self.isSummarizerCall) == false)
 
-        // And the turn's own work ran normally straight after the fold.
+        // And the turn's own work ran normally straight after the compaction.
         let streamedText = events.compactMap { event -> String? in
             guard case .textDelta(let text) = event else { return nil }
             return text
         }.joined()
-        #expect(streamedText == "ok-folds-deterministically")
+        #expect(streamedText == "ok-compacts-deterministically")
     }
 }
 

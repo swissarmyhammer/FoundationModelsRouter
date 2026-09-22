@@ -6,14 +6,14 @@ import FoundationModelsRouter
 /// session per call over a resident model, and a record of every call made.
 ///
 /// The blank slate matters for the same reason it does in production
-/// (`RoutedSessionActorCompaction.swift`'s own summarizer): a fold's summarizer
+/// (`RoutedSessionActorCompaction.swift`'s own summarizer): a compaction's summarizer
 /// call must not be added to an already-full transcript, must not write the
-/// fold's own prompt into the real history, and must not leak one chunk into
+/// compaction's own prompt into the real history, and must not leak one chunk into
 /// the next.
 ///
 /// The record is what lets a suite assert the summarizer ran at all, which is
 /// one of the facts these suites exist to prove. It keeps the generation ceiling
-/// of each call rather than a bare count, so the count and the ceiling the fold
+/// of each call rather than a bare count, so the count and the ceiling the compaction
 /// arithmetic produced are one measurement rather than two.
 public actor CountingBlankSlateSummarizer: CompactionSummarizer {
     /// The loaded real model each call opens its own session over, with the
@@ -23,7 +23,7 @@ public actor CountingBlankSlateSummarizer: CompactionSummarizer {
     /// One completed summarizer call.
     ///
     /// `Sendable` is declared rather than inferred: a public struct gets no
-    /// implicit conformance, and ``CompactionFold/run(_:summarization:container:label:)``
+    /// implicit conformance, and ``TranscriptCompaction/run(_:summarization:container:label:)``
     /// reads ``CountingBlankSlateSummarizer/calls`` across the actor boundary.
     public struct Call: Sendable {
         /// The generation ceiling ``Summarization`` computed for this call.
@@ -34,10 +34,10 @@ public actor CountingBlankSlateSummarizer: CompactionSummarizer {
     }
 
     /// Every call made, in call order — so `calls.count` is the number of
-    /// generations this fold cost.
+    /// generations this compaction cost.
     ///
     /// The ANSWER is kept beside the ceiling, and not only the ceiling, because
-    /// a fold that gets discarded returns no summary at all: the size the model
+    /// a compaction that gets discarded returns no summary at all: the size the model
     /// really wrote is then readable nowhere else. That size is the one number
     /// that separates "the summarizer misbehaved" from "the guard is wrong",
     /// and `^azd033m` needed it.
@@ -69,24 +69,24 @@ public actor CountingBlankSlateSummarizer: CompactionSummarizer {
     }
 }
 
-/// What one folded run produced — everything the fast compaction suites read,
+/// What one compacted run produced — everything the fast compaction suites read,
 /// measured once so no suite has to restate the wiring.
 ///
 /// `Sendable` is declared rather than inferred, for the reason
 /// ``CountingBlankSlateSummarizer/Call`` declares it: a public struct gets no
 /// implicit conformance, and a suite reads this value back across an `await`.
-public struct CompactionFoldOutcome: Sendable {
-    /// The transcript that was folded.
+public struct TranscriptCompactionOutcome: Sendable {
+    /// The transcript that was compacted.
     public let transcript: Transcript
 
-    /// The stage the fold ran with.
+    /// The stage the compaction ran with.
     public let summarization: Summarization
 
     /// What ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:protection:)``
     /// reported.
     public let result: CompactionResult
 
-    /// Every summarizer call the fold made, in call order.
+    /// Every summarizer call the compaction made, in call order.
     public let calls: [CountingBlankSlateSummarizer.Call]
 
     /// The generation ceiling of each call, in call order.
@@ -95,15 +95,15 @@ public struct CompactionFoldOutcome: Sendable {
     /// The estimated size of each call's ANSWER, before the cut, in call order.
     public var answerTokens: [Int] { calls.map { Compactor.estimatedTokenCount(of: $0.answer) } }
 
-    /// The estimated size of the span the fold replaced, in the tokens
+    /// The estimated size of the span the compaction replaced, in the tokens
     /// ``Compactor``'s did-not-shrink guard measures.
     public var spanTokens: Int {
-        CompactionFold.foldedSpanTokens(
+        TranscriptCompaction.compactedSpanTokens(
             of: transcript, keepRecentTurns: summarization.keepRecentTurns)
     }
 }
 
-/// The one way a fast compaction suite folds a transcript it already holds
+/// The one way a fast compaction suite compacts a transcript it already holds
 /// against a model it has already loaded.
 ///
 /// Two suites wrote this same body before this type — ``CompactionSmokeIntegrationTests``
@@ -114,9 +114,9 @@ public struct CompactionFoldOutcome: Sendable {
 ///
 /// It deliberately loads nothing and evicts nothing. A caller owns the model's
 /// lifetime, because a caller is the only thing that knows whether it is going
-/// to fold once or twice.
-public enum CompactionFold {
-    /// The scale ``budget(forcingSummarizationOf:)`` states its fold target
+/// to compact once or twice.
+public enum TranscriptCompaction {
+    /// The scale ``budget(forcingSummarizationOf:)`` states its compaction target
     /// against.
     ///
     /// ``TokenBudget`` takes its target as a FRACTION of a limit, and a caller
@@ -126,7 +126,7 @@ public enum CompactionFold {
     /// ``Compactor`` compares against ``TokenBudget/targetTokens`` alone.
     private static let budgetLimit = 1_000_000
 
-    /// Where the fold target sits, as a share of what the deterministic stages
+    /// Where the compaction target sits, as a share of what the deterministic stages
     /// can reach on their own.
     ///
     /// The target has one job: be low enough that ``ToolOutputElision`` and
@@ -135,7 +135,7 @@ public enum CompactionFold {
     /// unreachable by construction, whatever the transcript grows or shrinks to
     /// — which is why the target is derived from the transcript rather than
     /// written down beside it.
-    private static let foldTargetShareOfDeterministicFloor = 0.5
+    private static let compactionTargetShareOfDeterministicFloor = 0.5
 
     /// The budget that forces `transcript` all the way through the
     /// model-assisted stage.
@@ -144,42 +144,42 @@ public enum CompactionFold {
     /// that changes size carries its own budget with it.
     ///
     /// - Parameter transcript: The transcript the budget is measured against.
-    /// - Returns: The budget to fold with.
+    /// - Returns: The budget to compact with.
     public static func budget(forcingSummarizationOf transcript: Transcript) -> TokenBudget {
         let deterministicFloor = Compactor.estimatedTokenCount(
             of: TurnTruncation().apply(ToolOutputElision().apply(transcript)))
-        let targetTokens = Int(Double(deterministicFloor) * foldTargetShareOfDeterministicFloor)
+        let targetTokens = Int(Double(deterministicFloor) * compactionTargetShareOfDeterministicFloor)
         return TokenBudget(limit: budgetLimit, target: Double(targetTokens) / Double(budgetLimit))
     }
 
-    /// The estimated token count of the span `transcript`'s fold replaces — the
+    /// The estimated token count of the span `transcript`'s compaction replaces — the
     /// turns outside the recency window, partitioned exactly as
     /// ``Summarization`` partitions them.
     ///
     /// - Parameters:
-    ///   - transcript: The transcript about to be folded.
-    ///   - keepRecentTurns: The recency window the fold leaves untouched.
-    /// - Returns: The folded span's size, in the estimated tokens
+    ///   - transcript: The transcript about to be compacted.
+    ///   - keepRecentTurns: The recency window the compaction leaves untouched.
+    /// - Returns: The compacted span's size, in the estimated tokens
     ///   ``Compactor``'s did-not-shrink guard measures.
-    public static func foldedSpanTokens(of transcript: Transcript, keepRecentTurns: Int) -> Int {
+    public static func compactedSpanTokens(of transcript: Transcript, keepRecentTurns: Int) -> Int {
         let (_, turns) = TranscriptTurns.split(Array(transcript))
         let (old, _) = TranscriptTurns.partition(turns, keepRecentTurns: keepRecentTurns)
         return Compactor.estimatedTokenCount(of: Transcript(entries: old.flatMap(\.entries)))
     }
 
-    /// Folds `transcript` once against `container`, and puts the run's own
+    /// Compacts `transcript` once against `container`, and puts the run's own
     /// numbers on the record before any assertion reads them — so a red run
     /// states what it went red on rather than only which assertion failed.
     ///
     /// - Parameters:
-    ///   - transcript: The transcript to fold.
-    ///   - summarization: The model-assisted stage to fold with.
+    ///   - transcript: The transcript to compact.
+    ///   - summarization: The model-assisted stage to compact with.
     ///   - container: The loaded real model every summarizer call generates
     ///     over, with the decoding strategy the suite pinned.
     ///   - label: The tag every printed line of this run carries, so a suite
-    ///     that folds twice can tell its two runs apart in the output.
+    ///     that compacts twice can tell its two runs apart in the output.
     /// - Returns: Everything the run measured.
-    /// - Throws: Whatever the fold throws.
+    /// - Throws: Whatever the compaction throws.
     // Only the suites in the IntegrationTests package call this.
     // Periphery reads only this package's index, thus it finds no caller.
     // periphery:ignore
@@ -188,7 +188,7 @@ public enum CompactionFold {
         summarization: Summarization,
         container: RealModelContainer,
         label: String
-    ) async throws -> CompactionFoldOutcome {
+    ) async throws -> TranscriptCompactionOutcome {
         let summarizer = CountingBlankSlateSummarizer(container: container)
         let (_, result) = try await Compactor.compact(
             transcript,
@@ -196,7 +196,7 @@ public enum CompactionFold {
             summarizer: summarizer,
             summarization: summarization
         )
-        let outcome = CompactionFoldOutcome(
+        let outcome = TranscriptCompactionOutcome(
             transcript: transcript,
             summarization: summarization,
             result: result,

@@ -8,7 +8,7 @@ import Testing
 
 // MARK: - Model
 
-/// The real `mlx-community` model this suite folds against, and deliberately
+/// The real `mlx-community` model this suite compacts against, and deliberately
 /// NOT ``RealModels/standard``.
 ///
 /// ``RealModels/standard`` is `Muse-Glimmer-30B-mxfp4`, 17 GB of weights. Its
@@ -29,7 +29,7 @@ private let compactionSmokeModel: ModelRef = "mlx-community/Llama-3.2-1B-Instruc
 /// The working context this suite loads ``compactionSmokeModel`` at.
 ///
 /// Deliberately smaller than ``RealModels/context`` (8192). The largest call
-/// this suite makes is one summarizer call: the compaction prompt, the folded
+/// this suite makes is one summarizer call: the compaction prompt, the compacted
 /// span, and the generation ceiling below. That fits well inside this window,
 /// and a smaller window costs less to allocate.
 private let compactionSmokeContext = 4096
@@ -38,18 +38,18 @@ private let compactionSmokeContext = 4096
 ///
 /// Pinned to argmax, for the reason ``CompactionRoundTripIntegrationTests``
 /// pins it: the provider default samples from MLX's process-global PRNG, which
-/// seeds itself from the clock, so the summary — and therefore the fold
+/// seeds itself from the clock, so the summary — and therefore the compaction
 /// arithmetic this suite asserts on — would differ on every run of identical
 /// code. Argmax decoding consumes no randomness, which is what lets a red run
 /// here be attributed to the change under test, and it is why the three runs
-/// tabulated on the suite below reported identical fold numbers.
+/// tabulated on the suite below reported identical compaction numbers.
 private let compactionSmokeSamplingMode: GenerationOptions.SamplingMode = .greedy
 
 /// The calendar date this suite pins into ``compactionSmokeModel``'s prompt.
 ///
 /// Greedy decoding above pins the SAMPLING. It does not pin the PROMPT, and the
 /// Llama 3.2 chat template writes `Today Date: <today>` into the system header
-/// of every summarizer call. So this suite's fold arithmetic was a new sample on
+/// of every summarizer call. So this suite's compaction arithmetic was a new sample on
 /// every calendar day, and task ^erv2vxz measured exactly that:
 /// `answerTokens=[703, 789]` on 01 Sep 2026, then `[703, 836]` on 02 Sep 2026,
 /// from one binary with only `TZ` changed.
@@ -68,33 +68,33 @@ private let compactionSmokeChatTemplateDate = RealModelContainer.chatTemplateFal
 ///
 /// It proves the PATH WORKS. Five facts, and no more:
 ///
-/// 1. The summarizer was called — within the fold's own call budget of one
+/// 1. The summarizer was called — within the compaction's own call budget of one
 ///    map call plus at most one recovery re-ask on this fixture, which is
 ///    also this suite's generation budget.
 /// 2. It answered with text that is not empty (`^bgxtdk3` stored an empty
 ///    summary on 19 of 19 gated seeds).
 /// 3. The summary is smaller than the span it replaced, in the estimated
 ///    tokens ``Compactor``'s did-not-shrink guard itself measures.
-/// 4. The fold was APPLIED — ``CompactionResult/stagesApplied`` ends with
+/// 4. The compaction was APPLIED — ``CompactionResult/stagesApplied`` ends with
 ///    ``Summarization/stageName``, rather than the shortfall exit that
-///    discarded 7 of 7 gated folds in `^fm5ddk9`.
+///    discarded 7 of 7 gated compactions in `^fm5ddk9`.
 /// 5. ``CompactionResult/tokensAfter`` is under
 ///    ``CompactionResult/tokensBefore``.
 ///
 /// It proves one more, added by `^azd033m`: a fact stated at the very END of
-/// the folded span is still in the summary the fold stores. That is one fact,
+/// the compacted span is still in the summary the compaction stores. That is one fact,
 /// on one fixture, against one small model, and it is deliberately narrow — it
-/// is a REGRESSION check on the way this fold was measured losing facts, not a
-/// recall score. A fold loses the END of a span first, whichever way it loses
+/// is a REGRESSION check on the way this compaction was measured losing facts, not a
+/// recall score. A compaction loses the END of a span first, whichever way it loses
 /// it — the model writes about a span in the order the span states it — so
-/// nothing but a planted late fact catches the loss. Whether a fold keeps the facts a resumed
+/// nothing but a planted late fact catches the loss. Whether a compaction keeps the facts a resumed
 /// session needs IN GENERAL is still what
 /// `FoundationModelsRouterEvalIntegrationTests` measures, over a hand-written
 /// dataset. That tier stays where it is. This suite was written when that tier
 /// drove the 30B model and answered one bit for 28 minutes; the tier drives a
 /// small canary under a two-minute limit now (task ^k0d30s4), and this suite
 /// still earns its place, because a broken summarizer, an empty answer, a
-/// discarded fold, and now a fold that dropped the fact it existed to carry are
+/// discarded compaction, and now a compaction that dropped the fact it existed to carry are
 /// all things a few seconds of real model can rule out.
 ///
 /// ## How it stays fast
@@ -123,16 +123,16 @@ private let compactionSmokeChatTemplateDate = RealModelContainer.chatTemplateFal
 /// | 2 | 4.0 s | 1.9 s | 10.4 s |
 /// | 3 | 4.1 s | 2.0 s | 10.2 s |
 ///
-/// All three reported identical fold numbers, which is
+/// All three reported identical compaction numbers, which is
 /// ``compactionSmokeSamplingMode`` doing its job. Those three runs predate the
-/// planted fact, so the fixture is a little larger now and the suite folds it
-/// twice, once per test; the same box then reported 4.1 s per fold and 6.3 s
-/// for the pair, of which 2.0 s is each fold's model load.
+/// planted fact, so the fixture is a little larger now and the suite compacts it
+/// twice, once per test; the same box then reported 4.1 s per compaction and 6.3 s
+/// for the pair, of which 2.0 s is each compaction's model load.
 ///
-/// The fold numbers moved twice on `^azd033m`, and both rows are worth
+/// The compaction numbers moved twice on `^azd033m`, and both rows are worth
 /// keeping because they are what a per-call cut cost:
 ///
-/// | the fold | answer | stored summary | transcript |
+/// | the compaction | answer | stored summary | transcript |
 /// |---|---|---|---|
 /// | cut at `summaryTokenRatio` of the content | 330 | 160 | 713 -> 230 |
 /// | cut at 0.8 of it (the old retention ratio) | 330 | 330 | 713 -> 400 |
@@ -142,16 +142,16 @@ private let compactionSmokeChatTemplateDate = RealModelContainer.chatTemplateFal
 /// discarded half of what the model wrote — including the fact planted at the
 /// end of the span, which is why the second test below exists. Task ^xx02yn6
 /// then removed the per-call ratio cut entirely: the stored summary is now
-/// bounded once, against the folded span's own content bytes — an answer
+/// bounded once, against the compacted span's own content bytes — an answer
 /// inside that bound is stored word for word, and an answer past it earns
 /// one condense re-ask before any cut.
 ///
 /// Task ^49dy082 then measured this test red on 6 of 6 runs, and the cut was
-/// not the cause: the fold made ONE call, and it stored that answer word for
+/// not the cause: the compaction made ONE call, and it stored that answer word for
 /// word. The answer itself was the loss. Under greedy decoding the model
 /// degenerated into a repetition loop, and the loop copied a quoted example
 /// out of the compaction prompt — 60 copies of one line, no fact of the span,
-/// and a summary the fold reported as a success. Two changes answer it, and
+/// and a summary the compaction reported as a success. Two changes answer it, and
 /// both are needed: `CompactionPrompt.default` quotes no example fact any
 /// more, and ``Summarization`` re-asks once when an answer repeats one line
 /// over and over. The 10 runs of 2026-08-31 then measured this fixture taking
@@ -162,7 +162,7 @@ private let compactionSmokeChatTemplateDate = RealModelContainer.chatTemplateFal
 /// Every number above was measured with the calendar date the run's own clock
 /// stamped, so each row is one day's sample. Task ^f0k3aah closed that hole
 /// with ``compactionSmokeChatTemplateDate``, and the measurement that shows
-/// why is this suite's fold under three stamped dates, one binary, nothing
+/// why is this suite's compaction under three stamped dates, one binary, nothing
 /// else changed:
 ///
 /// | the date the template stamped | answerTokens | stored summary |
@@ -174,16 +174,16 @@ private let compactionSmokeChatTemplateDate = RealModelContainer.chatTemplateFal
 ///
 /// The first two rows are the rows task ^erv2vxz measured by moving `TZ`, and
 /// this run reproduced both from the stamped date alone. The last row is what
-/// the suite folds now, and it folded exactly that under `TZ=Pacific/Kiritimati`
+/// the suite compacts now, and it compacted exactly that under `TZ=Pacific/Kiritimati`
 /// (02 Sep 2026), under `TZ=Pacific/Midway` and under `TZ=UTC`. The clock no
-/// longer reaches this fold.
+/// longer reaches this compaction.
 ///
-/// Task ^3dy1ry9 then measured that pinned fold red on 3 of 3 runs, at
+/// Task ^3dy1ry9 then measured that pinned compaction red on 3 of 3 runs, at
 /// `answerTokens=[689, 768]` and a stored summary of 39: the re-asked answer
 /// copied both prompts word for word under section 2, so the last-resort cut
 /// stored section 1 alone, and the planted fact went with section 2. The
-/// fixture's one scripted reply was the cause, and ``foldedTurnReplies``
-/// states the mechanism and the change. The fold measured on 2026-09-02
+/// fixture's one scripted reply was the cause, and ``compactedTurnReplies``
+/// states the mechanism and the change. The compaction measured on 2026-09-02
 /// under those replies: `ceilings=[628, 628] answerTokens=[746, 775]
 /// spanTokens=709 summaryTokens=652`, the planted fact stated in sections 2
 /// and 3 of the stored summary, and no cut.
@@ -200,16 +200,16 @@ private let compactionSmokeChatTemplateDate = RealModelContainer.chatTemplateFal
 /// states in place of a bound of its own, and which states the whole run
 /// table. An earlier run of 2026-08-20 measured the two tests at 60.1 seconds
 /// for the pair, with 7.3-second model loads, under task ^xx02yn6's two-call
-/// folds. The three runs of 2026-08-20 that measured the whole target reported
-/// 14.6, then 15.2, then 18.6 seconds for the fold, and 18.8, then 19.3, then
+/// compactions. The three runs of 2026-08-20 that measured the whole target reported
+/// 14.6, then 15.2, then 18.6 seconds for the compaction, and 18.8, then 19.3, then
 /// 14.5 seconds for the planted-fact test.
 @Suite(
-    "Real-model smoke test: the compaction fold works end to end (task ^w1cz46m)",
+    "Real-model smoke test: the compaction works end to end (task ^w1cz46m)",
     .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
 struct CompactionSmokeIntegrationTests {
-    // MARK: - Fold tuning
+    // MARK: - Compaction tuning
 
     /// The tokens every summarizer call of this suite is given on top of its
     /// summary allowance, and deliberately not ``Summarization``'s own default
@@ -223,7 +223,7 @@ struct CompactionSmokeIntegrationTests {
     ///
     /// Cutting it does two things this suite wants. It bounds the worst-case
     /// generation, which is the one unbounded cost in the run. And it makes the
-    /// fold arithmetic hold BY CONSTRUCTION rather than by the model's good
+    /// compaction arithmetic hold BY CONSTRUCTION rather than by the model's good
     /// behaviour: the ceiling is a hard stop on the whole generation, so the
     /// largest summary this suite can be handed is `summaryAllowance + this`,
     /// whatever the model chooses to write.
@@ -232,18 +232,18 @@ struct CompactionSmokeIntegrationTests {
     /// worst case is the case: the runs of 2026-08-31 under task ^49dy082
     /// measured this model generating to its map-call ceiling and looping
     /// there, so the stage made its repetition re-ask and stored the re-asked
-    /// answer. That answer sat inside the folded span's own byte budget — the
+    /// answer. That answer sat inside the compacted span's own byte budget — the
     /// one bound ``Summarization`` holds a final summary to since task
     /// ^xx02yn6 — so no condense call followed it. The first test below pins
-    /// that call count, and the run's own printed fold line carries each
+    /// that call count, and the run's own printed compaction line carries each
     /// call's ceiling.
     ///
     /// Not zero, so a summary has a little room to finish its last sentence
     /// inside the ceiling rather than always ending at it.
     private static let reasoningTokenHeadroom = 128
 
-    /// The tag every printed line of this suite's fold carries.
-    private static let foldLabel = "compactionSmoke"
+    /// The tag every printed line of this suite's compaction carries.
+    private static let compactionLabel = "compactionSmoke"
 
     // MARK: - The fixture
 
@@ -255,17 +255,17 @@ struct CompactionSmokeIntegrationTests {
     ///
     /// Short on purpose. The fixture's size has to sit in the PROMPTS, because
     /// this suite builds the transcript itself rather than generating it: a
-    /// long scripted reply would inflate the folded span without making the
-    /// fixture any more like a real conversation. The two folded turns do not
-    /// carry it. ``foldedTurnReplies`` states why.
+    /// long scripted reply would inflate the compacted span without making the
+    /// fixture any more like a real conversation. The two compacted turns do not
+    /// carry it. ``compactedTurnReplies`` states why.
     private static let scriptedReply = "Acknowledged."
 
-    /// The reply text of each FOLDED turn, in turn order: one distinct
+    /// The reply text of each COMPACTED turn, in turn order: one distinct
     /// restatement of the prompt it answers, in the voice of the terse
     /// assistant ``instructions`` names.
     ///
     /// Distinct, and not ``scriptedReply``, because task ^3dy1ry9 measured
-    /// what one identical reply on both folded turns costs. The rendered span
+    /// what one identical reply on both compacted turns costs. The rendered span
     /// then reads `Assistant: Acknowledged.` twice, and
     /// ``compactionSmokeModel`` writes that line back after almost every
     /// bullet of its map answer: 25 of its 47 content lines repeated an
@@ -281,17 +281,17 @@ struct CompactionSmokeIntegrationTests {
     /// than a copy: 775 estimated tokens, with ``plantedFactValue`` stated in
     /// sections 2 and 3. Section 1 and section 2 together are about 1850
     /// bytes against a 2832-byte budget, so the fact fits with about 980
-    /// bytes to spare. The fold measured on 2026-09-02 stored that answer with
+    /// bytes to spare. The compaction measured on 2026-09-02 stored that answer with
     /// its repeated lines dropped, 652 estimated tokens, and made no cut.
-    private static let foldedTurnReplies: [String] = [
+    private static let compactedTurnReplies: [String] = [
         "Noted: the replacement streams each file, commits in bounded batches, keeps a rejects file beside the index, "
             + "and reads batch size from a setting.",
         "Clear: both paths run for one release, stations cut over oldest first after seven clean reports, "
             + "and the old index stays until the release after.",
     ]
 
-    /// The distinctive value planted at the very END of the folded span, and
-    /// the one thing ``aPlantedFactLateInTheSpanSurvivesTheFold`` reads the
+    /// The distinctive value planted at the very END of the compacted span, and
+    /// the one thing ``aPlantedFactLateInTheSpanSurvivesTheCompaction`` reads the
     /// summary for.
     ///
     /// A coined proper noun rather than a phrase, because the assertion has to
@@ -304,11 +304,11 @@ struct CompactionSmokeIntegrationTests {
     /// cut-over is authorised by exactly one release ticket" — and dropped the
     /// identifier, exactly as it dropped every other value in the span. A 1B
     /// model paraphrases values and copies names, so an identifier would have
-    /// made this test measure the model's weakness rather than the fold's.
+    /// made this test measure the model's weakness rather than the compaction's.
     private static let plantedFactValue = "Kestrel"
 
     /// The sentence carrying ``plantedFactValue``, appended as the last thing
-    /// the folded span says.
+    /// the compacted span says.
     ///
     /// Its position is the whole point. A cut that keeps a PREFIX of the
     /// model's answer drops what the model wrote LAST, and a model writes
@@ -322,21 +322,21 @@ struct CompactionSmokeIntegrationTests {
     /// The scripted prompts, oldest first — the fixture's whole size budget.
     ///
     /// The shape is deliberate and the arithmetic is what makes this suite
-    /// fast and its fold certain.
+    /// fast and its compaction certain.
     ///
-    /// The first two turns are long, and they are the FOLDED SPAN:
+    /// The first two turns are long, and they are the COMPACTED SPAN:
     /// ``Summarization/keepRecentTurns`` defaults to 4, so with six turns the
-    /// oldest two are what the fold replaces. They are sized to two properties
+    /// oldest two are what the compaction replaces. They are sized to two properties
     /// at once.
     ///
     /// - Under ``Summarization/maxChunkTokens`` (2000 estimated tokens), so the
-    ///   span is ONE chunk and the fold costs one MAP generation — plus at
+    ///   span is ONE chunk and the compaction costs one MAP generation — plus at
     ///   most the one condense re-ask task ^xx02yn6's recovery ladder allows.
     ///   The test asserts that count, so the fixture cannot grow past it in
     ///   silence.
-    /// - Large enough that the fold cannot fail to shrink the transcript.
+    /// - Large enough that the compaction cannot fail to shrink the transcript.
     ///   Since task ^xx02yn6 ``Summarization`` bounds the FINAL summary
-    ///   against the folded span's own content bytes — one condense re-ask,
+    ///   against the compacted span's own content bytes — one condense re-ask,
     ///   then the last-resort cut — so a span this size cannot buy a summary
     ///   that fails ``Compactor``'s did-not-shrink guard. `^fm5ddk9` measured
     ///   the 30B model writing summaries 1.30x to 2.07x the size of the spans
@@ -345,11 +345,11 @@ struct CompactionSmokeIntegrationTests {
     ///   size.
     ///
     /// The second turn ends with ``plantedFact``, which is the whole fixture
-    /// for ``aPlantedFactLateInTheSpanSurvivesTheFold``.
+    /// for ``aPlantedFactLateInTheSpanSurvivesTheCompaction``.
     ///
     /// The last four turns are short. They are the recency window, which no
     /// stage may touch, and their only job is to exist — the deterministic
-    /// floor the fold target is derived from is the header plus this window.
+    /// floor the compaction target is derived from is the header plus this window.
     private static let scriptedPrompts: [String] = [
         """
         Project brief. We are replacing the ingest path for the station archive. The present path reads each
@@ -390,7 +390,7 @@ struct CompactionSmokeIntegrationTests {
     /// Builds the fixture transcript: the header, then one turn per entry of
     /// ``scriptedPrompts``, each a `.prompt` and a `.response`.
     ///
-    /// - Returns: The transcript to fold.
+    /// - Returns: The transcript to compact.
     private static func makeTranscript() -> Transcript {
         var entries: [Transcript.Entry] = [
             .instructions(
@@ -427,34 +427,34 @@ struct CompactionSmokeIntegrationTests {
     }
 
     /// The reply the turn at `index` of ``scriptedPrompts`` carries: its own
-    /// entry of ``foldedTurnReplies`` for a folded turn, and ``scriptedReply``
+    /// entry of ``compactedTurnReplies`` for a compacted turn, and ``scriptedReply``
     /// for a turn of the recency window.
     ///
     /// - Parameter index: The turn's position in ``scriptedPrompts``.
     /// - Returns: The reply text.
     private static func reply(forTurn index: Int) -> String {
-        index < foldedTurnReplies.count ? foldedTurnReplies[index] : scriptedReply
+        index < compactedTurnReplies.count ? compactedTurnReplies[index] : scriptedReply
     }
 
-    // MARK: - One folded run
+    // MARK: - One compacted run
 
-    /// Loads the smoke model, folds the fixture once through ``CompactionFold``,
+    /// Loads the smoke model, compacts the fixture once through ``TranscriptCompaction``,
     /// evicts the model, and puts this suite's own wall clock on the record — so
     /// a red run states what it went red on rather than only which assertion
     /// failed.
     ///
-    /// Everything after the load is ``CompactionFold``'s, which prints the fold
+    /// Everything after the load is ``TranscriptCompaction``'s, which prints the compaction
     /// numbers themselves. This function owns the model's lifetime because it is
     /// the only thing that knows this suite loads once per test.
     ///
     /// - Returns: Everything the run measured.
-    /// - Throws: Whatever the load or the fold throws.
-    private static func foldTheFixture() async throws -> CompactionFoldOutcome {
+    /// - Throws: Whatever the load or the compaction throws.
+    private static func compactTheFixture() async throws -> TranscriptCompactionOutcome {
         let startedAt = Date()
         var modelLoadSeconds = 0.0
         defer {
             print(
-                "[\(foldLabel)] wallClockSeconds=\(String(format: "%.1f", Date().timeIntervalSince(startedAt))) "
+                "[\(compactionLabel)] wallClockSeconds=\(String(format: "%.1f", Date().timeIntervalSince(startedAt))) "
                     + "modelLoadSeconds=\(String(format: "%.1f", modelLoadSeconds))"
             )
         }
@@ -468,11 +468,11 @@ struct CompactionSmokeIntegrationTests {
         )
         modelLoadSeconds = Date().timeIntervalSince(loadStartedAt)
 
-        let outcome = try await CompactionFold.run(
+        let outcome = try await TranscriptCompaction.run(
             makeTranscript(),
             summarization: Summarization(reasoningTokenHeadroom: reasoningTokenHeadroom),
             container: loaded,
-            label: foldLabel
+            label: compactionLabel
         )
         await loaded.container.model.evict()
         return outcome
@@ -481,24 +481,24 @@ struct CompactionSmokeIntegrationTests {
     // MARK: - The tests
 
     @Test(
-        "one fold against a real model: the summarizer answers within the fold's call budget, and the fold is applied rather than discarded"
+        "one compaction against a real model: the summarizer answers within the compaction's call budget, and the compaction is applied rather than discarded"
     )
-    func theFoldWorksAgainstARealModel() async throws {
-        let outcome = try await Self.foldTheFixture()
+    func theCompactionWorksAgainstARealModel() async throws {
+        let outcome = try await Self.compactTheFixture()
         let result = outcome.result
         let ceilings = outcome.ceilings
         let spanTokens = outcome.spanTokens
 
-        // 1. The summarizer ran, and within the fold's own call budget on this
+        // 1. The summarizer ran, and within the compaction's own call budget on this
         //    fixture: ONE map call, plus at most ONE recovery re-ask. The
         //    ladder has two recovery rungs — the repetition re-ask (task
         //    ^49dy082) when the answer repeats one line over and over, then
         //    the condense re-ask (task ^xx02yn6) when the answer overruns the
-        //    folded span's byte budget. The 10 runs of 2026-08-31 measured
+        //    compacted span's byte budget. The 10 runs of 2026-08-31 measured
         //    this model taking the first rung and not the second: the map
         //    answer looped, the repetition re-ask answered 517 tokens, and
-        //    517 tokens sit inside the span budget. The fold of 2026-09-02,
-        //    under `foldedTurnReplies`, took the same rung: the re-ask
+        //    517 tokens sit inside the span budget. The compaction of 2026-09-02,
+        //    under `compactedTurnReplies`, took the same rung: the re-ask
         //    answered 775 tokens, and that answer fit the span budget once
         //    its repeated lines were dropped. A THIRD call would mean
         //    the fixture outgrew `Summarization.maxChunkTokens` and bought a
@@ -513,7 +513,7 @@ struct CompactionSmokeIntegrationTests {
         // 2. It answered with text. `^bgxtdk3` was an empty summary on 19 of 19
         //    gated seeds, and an empty summary erases the span it replaced.
         let summary = try #require(
-            result.summary, "the fold was discarded, so there is no summary to read — see stages above")
+            result.summary, "the compaction was discarded, so there is no summary to read — see stages above")
         #expect(
             !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             "the summarizer answered with no text"
@@ -528,13 +528,13 @@ struct CompactionSmokeIntegrationTests {
             "the summary estimates \(summaryTokens) tokens against the \(spanTokens)-token span it replaced"
         )
 
-        // 4. The fold was APPLIED. An empty `stagesApplied` is `Compactor`'s
+        // 4. The compaction was APPLIED. An empty `stagesApplied` is `Compactor`'s
         //    shortfall exit, which returns the ORIGINAL transcript — the exit
         //    7 of 7 gated seeds took in `^fm5ddk9` while still reporting a
         //    summarizer call.
         #expect(
             result.stagesApplied.last == Summarization.stageName,
-            "expected the fold to be applied, got stages \(result.stagesApplied)"
+            "expected the compaction to be applied, got stages \(result.stagesApplied)"
         )
 
         // 5. The returned result shrank.
@@ -544,11 +544,11 @@ struct CompactionSmokeIntegrationTests {
         )
     }
 
-    @Test("a fact planted at the very end of the folded span is still in the summary the fold stores")
-    func aPlantedFactLateInTheSpanSurvivesTheFold() async throws {
-        // The property a fold exists for. Shrinking a transcript is the cost a
-        // fold pays; carrying the facts forward is what it is paid FOR, and a
-        // fold that shrank the transcript and dropped the fact has not worked.
+    @Test("a fact planted at the very end of the compacted span is still in the summary the compaction stores")
+    func aPlantedFactLateInTheSpanSurvivesTheCompaction() async throws {
+        // The property a compaction exists for. Shrinking a transcript is the cost a
+        // compaction pays; carrying the facts forward is what it is paid FOR, and a
+        // compaction that shrank the transcript and dropped the fact has not worked.
         //
         // Two mechanisms have been measured taking that fact, and both take
         // it from the END of the span, which is where `plantedFact` stands.
@@ -557,34 +557,34 @@ struct CompactionSmokeIntegrationTests {
         // answer kept a PREFIX of it, so it was content-blind: it kept what
         // the model said first and dropped what it said last. On this fixture
         // it cut a 330-token answer to 160 tokens, and the model had named the
-        // fact twice; the fold stored neither mention.
+        // fact twice; the compaction stored neither mention.
         //
         // `^49dy082` measured the second, on 6 of 6 runs, after task ^xx02yn6
         // had already replaced that cut. No cut fired at all. The model
         // degenerated into a repetition loop and spent its whole generation
         // before it reached the end of the span, so the answer named no fact
-        // the span stated, and the fold stored the loop.
+        // the span stated, and the compaction stored the loop.
         //
         // `^3dy1ry9` measured a third, on 3 of 3 runs, and the fixture was
-        // the cause, not the fold. The map answer echoed the one scripted
+        // the cause, not the compaction. The map answer echoed the one scripted
         // reply after almost every bullet, so it was re-asked, and the re-ask
         // copied the span word for word under section 2. No two whole
         // sections of that answer could fit the span's own byte budget, so
-        // the section-aligned cut stored section 1 alone. `foldedTurnReplies`
+        // the section-aligned cut stored section 1 alone. `compactedTurnReplies`
         // records the mechanism and the change.
-        let outcome = try await Self.foldTheFixture()
+        let outcome = try await Self.compactTheFixture()
         let summary = try #require(
-            outcome.result.summary, "the fold was discarded, so there is no summary to read")
+            outcome.result.summary, "the compaction was discarded, so there is no summary to read")
 
         #expect(
             summary.contains(Self.plantedFactValue),
             """
-            the fold dropped \(Self.plantedFactValue), stated last in the span it replaced.
+            the compaction dropped \(Self.plantedFactValue), stated last in the span it replaced.
             answer \(outcome.answerTokens) estimated tokens, stored summary \
             \(Compactor.estimatedTokenCount(of: summary)), span \(outcome.spanTokens).
             the answer the model gave was:
             \(outcome.calls.map(\.answer).joined(separator: "\n---\n"))
-            the summary the fold stored was:
+            the summary the compaction stored was:
             \(summary)
             """
         )

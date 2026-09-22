@@ -146,8 +146,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - workingDirectory: A working directory override, or `nil`.
     ///   - tools: The tools the model can call. Defaults to none.
     ///   - budget: The auto-compaction opt-in. Defaults to `nil`.
-    ///   - compactionPrompt: The prompt each compaction fold sends to the summarizer.
-    ///   - summarization: The model-assisted compaction stage each fold runs.
+    ///   - compactionPrompt: The prompt each compaction sends to the summarizer.
+    ///   - summarization: The model-assisted compaction stage each compaction runs.
     ///   - agentSpawn: The parent session and tool call this session was spawned from.
     ///   - discoveryPriming: The pre-discovery seeding opt-in. Defaults to `nil`.
     /// - Returns: A new guided ``RoutedSession``.

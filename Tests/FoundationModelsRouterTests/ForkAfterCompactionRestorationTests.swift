@@ -5,17 +5,17 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises task ^6z1msg1: a fork's cut point is recorded in append-only
-/// history coordinates, so a fork taken after its parent folded restores the
-/// fold's live window plus the fork's own entries — never the pre-fold span
-/// the fold discarded.
+/// history coordinates, so a fork taken after its parent compacted restores the
+/// compaction's live window plus the fork's own entries — never the pre-compaction span
+/// the compaction discarded.
 ///
-/// Compaction is append-only: a fold appends one boundary entry carrying its
+/// Compaction is append-only: a compaction appends one boundary entry carrying its
 /// ``CompactionSegment`` checkpoint and rewinds only the *backend*'s
 /// positional diff baseline, never the session's position in its own
 /// recorded history. A fork's cut must therefore be recorded in the recorded
 /// history's own coordinates. Before this task, `fork()` recorded the
-/// post-fold backend entry count instead, so a restored fork rebuilt the
-/// oldest pre-fold entries and cut off the checkpoint.
+/// post-compaction backend entry count instead, so a restored fork rebuilt the
+/// oldest pre-compaction entries and cut off the checkpoint.
 ///
 /// Everything runs against stubs — a ``StubSessionBackend``-backed container
 /// and a ``JSONLRecorder`` in a temp directory — mirroring
@@ -29,7 +29,7 @@ struct ForkAfterCompactionRestorationTests {
     /// Vends a test-retained ``StubSessionBackend`` per session — fresh
     /// (`makeSession(instructions:)`) and restore-seeded
     /// (`makeSession(transcript:)`) alike — so a test can read the live
-    /// entries a session accumulated and derive an exact fold-forcing budget.
+    /// entries a session accumulated and derive an exact compaction-forcing budget.
     private final class RetainingLLMContainer: LoadedLLMContainer, @unchecked Sendable {
         /// The canned text every backend this container vends responds with.
         let responseText: String
@@ -59,8 +59,8 @@ struct ForkAfterCompactionRestorationTests {
 
     /// A long-ish canned response, repeated across every turn, so six turns'
     /// worth of transcript carries a real byte-size estimate and the
-    /// deterministic-fold budget derivation has room to sit strictly between
-    /// the recency-window floor and the full pre-fold estimate.
+    /// deterministic-compaction budget derivation has room to sit strictly between
+    /// the recency-window floor and the full pre-compaction estimate.
     private static let cannedText = String(
         repeating: "The quick brown fox jumps over the lazy dog. ", count: 12)
 
@@ -109,11 +109,11 @@ struct ForkAfterCompactionRestorationTests {
         try tree.events(forSession: sessionId).compactMap { $0.entry?.entryId }
     }
 
-    // MARK: - Live fold, then fork, then restore
+    // MARK: - Live compaction, then fork, then restore
 
-    @Test("a fork taken after its parent folded restores the fold's live window plus its own entries, never the pre-fold span")
+    @Test("a fork taken after its parent compacted restores the compaction's live window plus its own entries, never the pre-compaction span")
     @MainActor
-    func restoredForkAfterParentFoldMatchesItsLiveTranscript() async throws {
+    func restoredForkAfterParentCompactionMatchesItsLiveTranscript() async throws {
         let cacheDir = RouterTestFixtures.makeTempDir(prefix: "ForkAfterCompactionRestorationTests")
         let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "ForkAfterCompactionRestorationTests")
         defer {
@@ -128,37 +128,37 @@ struct ForkAfterCompactionRestorationTests {
         let profile1 = try await router1.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
 
-        // Parent records N turns, then folds deterministically: the derived
+        // Parent records N turns, then compacts deterministically: the derived
         // budget's target sits where TurnTruncation alone lands under it.
         let root = profile1.standard.makeSession()
         try await driveTurns(6, on: root)
         let rootBackend = try #require(container.lastBackend)
-        let result = try await root.compact(budget: deterministicFoldBudget(for: rootBackend.transcriptEntries()))
+        let result = try await root.compact(budget: deterministicCompactionBudget(for: rootBackend.transcriptEntries()))
         #expect(!result.stagesApplied.isEmpty)
 
         let fork = try await root.fork(workingDirectory: nil)
 
         // The fork's cut in history coordinates: how many entry-kind events
         // the parent's recorded history holds at fork time — the raw,
-        // unfolded count, boundary entry included.
+        // uncompacted count, boundary entry included.
         let routerDirectory = RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
         let entryEventCountAtFork = try TranscriptTree.load(under: routerDirectory)
             .effectiveEntryEvents(forSession: root.id).count
 
         // Both continue after the fork: the parent's later turns must never
         // leak into the fork's restored conversation.
-        _ = try await fork.respond(to: "fork continues after the fold")
+        _ = try await fork.respond(to: "fork continues after the compaction")
         _ = try await root.respond(to: "root continues after the fork")
 
         let tree = try TranscriptTree.load(under: routerDirectory)
 
-        // The fold's checkpoint governs the fork's restore: it sits inside
+        // The compaction's checkpoint governs the fork's restore: it sits inside
         // the fork's inherited span, before the cut.
         let checkpoint = try #require(
             TranscriptTree.newestCompactionCheckpoint(in: tree.effectiveEntryEvents(forSession: fork.id)))
 
         // Entry-for-entry equality with the fork's live transcript: the live
-        // fork was seeded from the parent's post-fold window (exactly the
+        // fork was seeded from the parent's post-compaction window (exactly the
         // checkpoint's own live-window ids, boundary included) and then
         // appended its own turn's entries (exactly what its own file records).
         let forkOwnIds = try Self.ownRecordedEntryIds(in: tree, sessionId: fork.id)
@@ -166,11 +166,11 @@ struct ForkAfterCompactionRestorationTests {
         let restoredForkIds = try tree.effectiveTranscript(forSession: fork.id).map(\.id)
         #expect(restoredForkIds == checkpoint.content.liveWindowEntryIds + forkOwnIds)
 
-        // No resurrected pre-fold span: nothing the fold discarded comes back.
-        #expect(Set(checkpoint.content.foldedEntryIds).isDisjoint(with: restoredForkIds))
+        // No resurrected pre-compaction span: nothing the compaction discarded comes back.
+        #expect(Set(checkpoint.content.compactedEntryIds).isDisjoint(with: restoredForkIds))
 
         // The fork's sidecar records the cut in history coordinates alongside
-        // the legacy positional baseline (which stays the post-fold backend
+        // the legacy positional baseline (which stays the post-compaction backend
         // count, for readers that predate the new field).
         let sidecar = try Self.sidecarJSON(
             at: Self.forkSidecarURL(routerDirectory: routerDirectory, rootId: root.id, forkId: fork.id))
@@ -206,14 +206,14 @@ struct ForkAfterCompactionRestorationTests {
         let profile1 = try await router1.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
 
-        // A root that folds and then keeps going, so its recorded history
+        // A root that compacts and then keeps going, so its recorded history
         // carries a checkpoint with entries after it.
         let root = profile1.standard.makeSession()
         try await driveTurns(6, on: root)
         let rootBackend = try #require(container.lastBackend)
-        let result = try await root.compact(budget: deterministicFoldBudget(for: rootBackend.transcriptEntries()))
+        let result = try await root.compact(budget: deterministicCompactionBudget(for: rootBackend.transcriptEntries()))
         #expect(!result.stagesApplied.isEmpty)
-        _ = try await root.respond(to: "root turn after the fold")
+        _ = try await root.respond(to: "root turn after the compaction")
 
         // Fresh process: restore the compacted root, then fork it.
         let router2 = Self.makeRouter(
@@ -241,7 +241,7 @@ struct ForkAfterCompactionRestorationTests {
         #expect(!forkOwnIds.isEmpty)
         let restoredForkIds = try tree.effectiveTranscript(forSession: fork.id).map(\.id)
         #expect(restoredForkIds == restoredRootIds + forkOwnIds)
-        #expect(Set(checkpoint.content.foldedEntryIds).isDisjoint(with: restoredForkIds))
+        #expect(Set(checkpoint.content.compactedEntryIds).isDisjoint(with: restoredForkIds))
 
         // And the grown tree still restores end-to-end.
         let router3 = Self.makeRouter(
@@ -272,7 +272,7 @@ struct ForkAfterCompactionRestorationTests {
         let profile1 = try await router1.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
 
-        // An unfolded parent: for a recording with no fold before the fork,
+        // An uncompacted parent: for a recording with no compaction before the fork,
         // the legacy positional count and the history-coordinate cut agree,
         // which is exactly why old recordings keep restoring correctly.
         let root = profile1.standard.makeSession()

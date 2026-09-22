@@ -18,7 +18,7 @@ enum CompactionEvalMetric {
     /// by the gated `@Test`.
     static let factRetention = Metric("FactRetention")
 
-    /// The mechanical metric checking whether the fold's produced
+    /// The mechanical metric checking whether the compaction's produced
     /// `tokensAfter` stayed at or under the sample's
     /// ``CompactionEvaluationOutcome/targetTokens`` — pass/fail per sample,
     /// aggregated as a mean by ``CompactionEvaluation/aggregateMetrics(using:)``.
@@ -33,7 +33,7 @@ enum CompactionEvalMetric {
         4.0: "Excellent — precise and complete",
     ]
 
-    /// The judged dimension scoring whether the fold's summary states only
+    /// The judged dimension scoring whether the compaction's summary states only
     /// facts present in the original conversation — one of the two
     /// `ModelJudgeEvaluator` dimensions ``CompactionEvaluation/evaluators``
     /// registers.
@@ -44,7 +44,7 @@ enum CompactionEvalMetric {
     )
 
     /// The judged dimension scoring whether next steps and constraints
-    /// survive the fold well enough to resume work — the other
+    /// survive the compaction well enough to resume work — the other
     /// `ModelJudgeEvaluator` dimension ``CompactionEvaluation/evaluators``
     /// registers.
     static let continuability = ScoreDimension(
@@ -76,7 +76,7 @@ enum CompactionEvaluationError: Error {
     case unexpectedContainerType
 }
 
-/// The token budget every ``CompactionEvaluation`` folds against unless a
+/// The token budget every ``CompactionEvaluation`` compacts against unless a
 /// caller passes its own.
 ///
 /// `limit` is small because the hand-written seeds are small — around 420-520
@@ -98,14 +98,14 @@ enum CompactionEvaluationError: Error {
 /// were envelope padding rather than content.
 ///
 /// `trigger` plays no part here — this evaluation calls `Compactor` directly
-/// rather than driving a session that could fold on its own — and is left at
+/// rather than driving a session that could compact on its own — and is left at
 /// ``TokenBudget``'s own default.
 let compactionEvalDefaultBudget = TokenBudget(limit: 400, trigger: 0.80, target: 0.10)
 
 /// The compaction-quality evaluation (compaction_plan.md §5): plants a fact in
-/// a seed transcript's foldable head, folds it with ``prompt``/``budget``,
+/// a seed transcript's compactable head, compacts it with ``prompt``/``budget``,
 /// resumes a session over the result, and asks the seed's question —
-/// answerable only from the folded content.
+/// answerable only from the compacted content.
 ///
 /// ``prompt`` is a stored parameter, not baked into the type, so pointing this
 /// evaluation at a different ``CompactionPrompt`` (the segment records the
@@ -122,7 +122,7 @@ let compactionEvalDefaultBudget = TokenBudget(limit: 400, trigger: 0.80, target:
 /// - The gated `@Test` wires in a closure that drives a real resident MLX
 ///   model through the exact bare-session recipe compaction_plan.md §1.5
 ///   describes: ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:protection:)`` over the
-///   seed's entries, then a live session resumed over the folded transcript.
+///   seed's entries, then a live session resumed over the compacted transcript.
 struct CompactionEvaluation: Evaluation {
     /// The expected/ground-truth sample type the `Evaluation` protocol
     /// requires — Apple's own `ModelSample` wrapping
@@ -140,7 +140,7 @@ struct CompactionEvaluation: Evaluation {
     /// them.
     let prompt: CompactionPrompt
 
-    /// The token budget every sample folds against.
+    /// The token budget every sample compacts against.
     let budget: TokenBudget
 
     /// Runs one sample's actual subject work: compacts `entries` with
@@ -182,7 +182,7 @@ struct CompactionEvaluation: Evaluation {
     /// - Parameters:
     ///   - prompt: The compaction prompt under test. Defaults to
     ///     ``CompactionPrompt/default``.
-    ///   - budget: The token budget every sample folds against. Defaults to
+    ///   - budget: The token budget every sample compacts against. Defaults to
     ///     ``compactionEvalDefaultBudget``, whose `target` is small enough that
     ///     the untouched recency window alone still exceeds it — guaranteeing
     ///     the pipeline falls through to the model-assisted `Summarization`
@@ -217,7 +217,7 @@ struct CompactionEvaluation: Evaluation {
     /// The `Evaluation` protocol's sample loader: one ``Sample`` per seed in
     /// ``seedsByID``, each pairing the seed's question with a
     /// ``CompactionEvaluationOutcome`` ground truth — the planted fact, its
-    /// key phrase, the fold's target token count, and this evaluation's
+    /// key phrase, the compaction's target token count, and this evaluation's
     /// ``prompt`` name.
     var dataset: ArrayLoader<Sample> {
         let targetTokens = Int((Double(budget.limit) * budget.target).rounded())
@@ -295,7 +295,7 @@ struct CompactionEvaluation: Evaluation {
             // unconditionally regardless of whether compaction actually
             // preserved the fact (see `factKeyPhrase`'s own doc comment).
             return subject.value.answer.localizedCaseInsensitiveContains(expected.factKeyPhrase)
-                ? CompactionEvalMetric.factRetention.passing(rationale: "fact survived the fold")
+                ? CompactionEvalMetric.factRetention.passing(rationale: "fact survived the compaction")
                 : CompactionEvalMetric.factRetention.failing(rationale: subject.value.answer)
         }
         Evaluator<Sample> { sample, subject in

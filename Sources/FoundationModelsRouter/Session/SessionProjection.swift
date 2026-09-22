@@ -40,7 +40,7 @@ public final class SessionProjection {
         case generating
         /// A tool call this turn requested is in flight, or its result just landed.
         case runningTool
-        /// A mid-turn auto-compaction fold is running.
+        /// A mid-turn auto-compaction is running.
         case compacting
     }
 
@@ -60,7 +60,7 @@ public final class SessionProjection {
             case reasoning(String)
             /// A tool invocation and its live lifecycle.
             case toolCall(ToolCallEntry)
-            /// A mid-turn auto-compaction fold's result.
+            /// A mid-turn auto-compaction's result.
             case compaction(CompactionResult)
         }
 
@@ -131,8 +131,8 @@ public final class SessionProjection {
             // `.response` transcript entry, so a faithful mirror keeps it and
             // closes it: the next fragment opens a new entry beside it rather
             // than growing the old one into a sentence the model never wrote.
-            // The rule itself lives in the shared ``ResponseTextFold``.
-            responseTextFold.reset()
+            // The rule itself lives in the shared ``ResponseTextReducer``.
+            responseTextReducer.reset()
             markOpenTextRowSuperseded()
         case .reasoningDelta(let fragment):
             phase = .generating
@@ -223,7 +223,7 @@ public final class SessionProjection {
     /// Appends `fragment` to the last open ``TranscriptEntry/Kind/text(_:)``
     /// entry, or starts a new one after a ``SessionEvent/textReset``.
     private func appendTextFragment(_ fragment: String) {
-        let startsNewEntry = responseTextFold.append(fragment)
+        let startsNewEntry = responseTextReducer.append(fragment)
         appendFragment(
             fragment,
             matching: { kind in
@@ -233,8 +233,8 @@ public final class SessionProjection {
             makeKind: TranscriptEntry.Kind.text)
     }
 
-    /// The ``ResponseTextFold`` that applies the ``SessionEvent/textReset`` rule.
-    private var responseTextFold = ResponseTextFold()
+    /// The ``ResponseTextReducer`` that applies the ``SessionEvent/textReset`` rule.
+    private var responseTextReducer = ResponseTextReducer()
 
     /// Appends `fragment` to the last open ``TranscriptEntry/Kind/reasoning(_:)``
     /// entry, or starts a new one.
@@ -366,7 +366,7 @@ public final class SessionProjection {
             guard let sourceEntryId = row.sourceEntryId else { continue }
             recordEntryOrdinal(sourceEntryId)
         }
-        responseTextFold = ResponseTextFold()
+        responseTextReducer = ResponseTextReducer()
         openInvocationCorrelationIDs.removeAll()
         provisionalEntryCount = 0
         currentTurn = nil

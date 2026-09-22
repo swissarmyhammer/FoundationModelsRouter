@@ -5,7 +5,7 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises task 8213x39 (auto-compaction opt-in): ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:)``'s
-/// `budget`/`compactionPrompt` parameters, the proactive fold
+/// `budget`/`compactionPrompt` parameters, the proactive compaction
 /// ``RoutedSessionActor/runTurn(grammar:turnId:promptId:pendingEvents:ownPrompt:onEvent:_:)``
 /// runs before a turn once measured fill reaches the budget's trigger, the
 /// reactive compact-and-retry-once recovery
@@ -62,7 +62,7 @@ struct AutoCompactionTests {
     /// ``AutoCompactionFixtures/turnCount``.
     private static let turnCount = AutoCompactionFixtures.turnCount
 
-    /// The budget every fold this suite drives runs against. See
+    /// The budget every compaction this suite drives runs against. See
     /// ``AutoCompactionFixtures/fixedBudget``.
     private static let fixedBudget = AutoCompactionFixtures.fixedBudget
 
@@ -76,9 +76,9 @@ struct AutoCompactionTests {
     ///   - tools: The tools to vend the session with — see task 4ce0a1k's own
     ///     tools-plus-budget composition tests below. Defaults to none,
     ///     unchanged from every pre-existing test in this suite.
-    ///   - summarization: The model-assisted stage every fold on the vended
+    ///   - summarization: The model-assisted stage every compaction on the vended
     ///     session runs with. Defaults to `Summarization()` — every default —
-    ///     which is what every test in this suite but the fold-tuning one
+    ///     which is what every test in this suite but the compaction-tuning one
     ///     below wants.
     /// - Returns: The session plus its `standard`/`flash` containers, so a
     ///   test can configure `shouldThrow` on either before driving the
@@ -95,7 +95,7 @@ struct AutoCompactionTests {
 
     /// Derives a working context tight enough that the reactive retry's own
     /// hardcoded `target: 0.35` sits strictly between `seedEntries`'
-    /// recency-window-only estimate and its full pre-fold estimate —
+    /// recency-window-only estimate and its full pre-compaction estimate —
     /// guaranteeing `TurnTruncation` alone lands under target (no need for
     /// the model-assisted `Summarization` stage, which the reactive tests'
     /// own stub backends cannot service). Copied from
@@ -105,22 +105,22 @@ struct AutoCompactionTests {
         let (header, turns) = TranscriptTurns.split(seedEntries)
         let (_, recent) = TranscriptTurns.partition(turns, keepRecentTurns: 4)
         let recencyOnlyEstimate = Compactor.estimatedTokenCount(of: Transcript(entries: header + recent.flatMap(\.entries)))
-        let preFoldEstimate = Compactor.estimatedTokenCount(of: Transcript(entries: seedEntries))
-        let midTarget = (recencyOnlyEstimate + preFoldEstimate) / 2
+        let preCompactionEstimate = Compactor.estimatedTokenCount(of: Transcript(entries: seedEntries))
+        let midTarget = (recencyOnlyEstimate + preCompactionEstimate) / 2
         return Int(Double(midTarget) / 0.35)
     }
 
-    // MARK: - Proactive fold, preferring flash
+    // MARK: - Proactive compaction, preferring flash
 
     @Test(
-        "a session vended with a budget proactively folds before a turn once measured fill reaches the trigger, summarizing with the profile's flash slot"
+        "a session vended with a budget proactively compacts before a turn once measured fill reaches the trigger, summarizing with the profile's flash slot"
     )
     @MainActor
-    func proactiveFoldPrefersFlashSummarizer() async throws {
+    func proactiveCompactionPrefersFlashSummarizer() async throws {
         let (session, _, _) = try await Self.makeTriggeredSession(budget: Self.fixedBudget)
 
         // contextFill is 0.9 (>= the 0.8 trigger) after the warm-up turns —
-        // the very next turn should fold automatically, before its own work
+        // the very next turn should compact automatically, before its own work
         // runs, with no caller-side compact() call anywhere in this test.
         #expect(await session.contextFill == 0.9)
 
@@ -149,7 +149,7 @@ struct AutoCompactionTests {
         "when the flash summarizer fails, auto-compaction falls back to the session's own model"
     )
     @MainActor
-    func proactiveFoldFallsBackToOwnModelWhenFlashFails() async throws {
+    func proactiveCompactionFallsBackToOwnModelWhenFlashFails() async throws {
         let (session, standard, flash) = try await Self.makeTriggeredSession(budget: Self.fixedBudget)
         flash.shouldThrow = true
         // The session's own live backend (driving the warm-up turns above)
@@ -165,7 +165,7 @@ struct AutoCompactionTests {
         #expect(result.stagesApplied.contains("Summarization"))
         // The summary text is the session's own canned response, not flash's —
         // proof the own-model tier, not flash, produced it. Stored word for
-        // word: the canned answer fits the folded span's byte budget, so the
+        // word: the canned answer fits the compacted span's byte budget, so the
         // stage stores it exactly as the model wrote it (task ^xx02yn6).
         let summary = try #require(result.summary)
         #expect(summary == Self.cannedText)
@@ -192,7 +192,7 @@ struct AutoCompactionTests {
 
     // MARK: - Fork inherits the opt-in
 
-    @Test("a fork inherits its parent's auto-compaction budget and folds on its own first turn if inherited fill is already at trigger")
+    @Test("a fork inherits its parent's auto-compaction budget and compacts on its own first turn if inherited fill is already at trigger")
     @MainActor
     func forkInheritsAutoCompactionBudget() async throws {
         let (session, _, _) = try await Self.makeTriggeredSession(budget: Self.fixedBudget)
@@ -200,7 +200,7 @@ struct AutoCompactionTests {
 
         let forked = try await session.fork(workingDirectory: nil)
         // The fork inherits the parent's measured fill as of fork time
-        // (already at/above trigger), so its very first turn should fold
+        // (already at/above trigger), so its very first turn should compact
         // proactively before running, with no warm-up of its own.
         #expect(await forked.contextFill == 0.9)
 
@@ -231,7 +231,7 @@ struct AutoCompactionTests {
         let replaceSpy: ReplaceSpy
         /// Shared across every clone this backend produces (``makeFork()``,
         /// ``replacingTranscript(_:)``) — unlike a plain instance counter,
-        /// which would reset to a misleadingly-fresh `0` on the very fold
+        /// which would reset to a misleadingly-fresh `0` on the very compaction
         /// that swaps in the retry's own backend instance, this keeps one
         /// running count across the whole logical turn regardless of how
         /// many physical backend objects served it.
@@ -306,7 +306,7 @@ struct AutoCompactionTests {
     /// Counts how many times a ``ScriptedOverflowBackend``'s
     /// ``ScriptedOverflowBackend/replacingTranscript(_:)`` was called — the
     /// only way to observe, from outside the session, that the reactive
-    /// retry's own fold actually performed a genuine fold. Mirrors
+    /// retry's own compaction actually performed a genuine compaction. Mirrors
     /// `ExamplesTests.ReplaceSpy`.
     private final class ReplaceSpy: @unchecked Sendable {
         private(set) var replaceCount = 0
@@ -317,7 +317,7 @@ struct AutoCompactionTests {
     /// ``ScriptedOverflowBackend`` and every clone it produces — see that
     /// type's own ``ScriptedOverflowBackend/callLog`` doc comment for why a
     /// plain per-instance counter cannot answer "how many physical attempts
-    /// did this logical turn take" once a fold swaps in a new instance
+    /// did this logical turn take" once a compaction swaps in a new instance
     /// mid-turn.
     private final class CallLog: @unchecked Sendable {
         private(set) var count = 0
@@ -355,7 +355,7 @@ struct AutoCompactionTests {
     }
 
     @Test(
-        "a session with a budget recovers automatically from LanguageModelError.contextSizeExceeded: fold harder, retry once, no caller-side catch needed"
+        "a session with a budget recovers automatically from LanguageModelError.contextSizeExceeded: compact harder, retry once, no caller-side catch needed"
     )
     @MainActor
     func reactiveRetryRecoversFromContextOverflowAutomatically() async throws {
@@ -375,7 +375,7 @@ struct AutoCompactionTests {
         // path this test targets from the proactive one. `target: 0.35`'s
         // own `limit` is derived from the seeded transcript's own estimated
         // size (mirrors `ExamplesTests.reactiveCompactionRecoversFromContextOverflow()`),
-        // guaranteeing the lowered-target retry fold actually drops
+        // guaranteeing the lowered-target retry compaction actually drops
         // something real (`TurnTruncation` alone lands under it) rather
         // than no-op'ing on an already-under-target transcript.
         let session = profile.standard.makeSession(budget: TokenBudget(limit: Self.reactiveRetryContextTokens(seedEntries), target: 0.35))
@@ -389,7 +389,7 @@ struct AutoCompactionTests {
         // The backend was called twice: the overflowing first attempt, then
         // the retry — never a third time.
         #expect(standardContainer.callLog.count == 2)
-        // The reactive fold genuinely swapped the backend (a real fold, not
+        // The reactive compaction genuinely swapped the backend (a real compaction, not
         // a no-op) before the retry ran.
         #expect(standardContainer.replaceSpy.replaceCount == 1)
     }
@@ -429,16 +429,16 @@ struct AutoCompactionTests {
     // MARK: - Hard ceiling: deterministic fail-fast before a doomed generate (task g2hcm36)
 
     @Test(
-        "a session whose budget sets a hard ceiling fails fast with ContextBudgetError before the doomed generate call even runs, then recovers via the same fold-harder-and-retry-once path as a context overflow, reporting live per-attempt contextFill"
+        "a session whose budget sets a hard ceiling fails fast with ContextBudgetError before the doomed generate call even runs, then recovers via the same compact-harder-and-retry-once path as a context overflow, reporting live per-attempt contextFill"
     )
     @MainActor
     func hardCeilingFailsFastThenRecoversWithLivePerAttemptFill() async throws {
         // `trigger: 2.0` never fires proactively (fill tops out at 0.9 across
         // this suite) — isolating the hard-ceiling pre-check in
-        // `runTurnAttempt` from the trigger-driven proactive fold in `runTurn`.
+        // `runTurnAttempt` from the trigger-driven proactive compaction in `runTurn`.
         // Built by overriding ``fixedBudget`` rather than restating its
         // numbers: the recovery this test asserts depends on the retry's own
-        // fold *actually shrinking* the transcript, which is exactly what
+        // compaction *actually shrinking* the transcript, which is exactly what
         // `fixedBudget`'s derived below-the-recency-floor target guarantees.
         var hardCeilingBudget = Self.fixedBudget
         hardCeilingBudget.trigger = 2.0
@@ -473,7 +473,7 @@ struct AutoCompactionTests {
         #expect(result.stagesApplied.contains("Summarization"))
 
         // The blocked attempt's own generate call never ran: no textDelta
-        // appears before the fold.
+        // appears before the compaction.
         #expect(!events[0..<2].contains { if case .textDelta = $0 { return true }; return false })
         #expect(events.contains(.textDelta(Self.cannedText)))
 
@@ -492,19 +492,19 @@ struct AutoCompactionTests {
     }
 
     @Test(
-        "a hard ceiling still not met after the one retry (an unfoldable transcript: the fold was a genuine no-op) surfaces ContextBudgetError.hardCeilingExceeded, never looping"
+        "a hard ceiling still not met after the one retry (an uncompactable transcript: the compaction was a genuine no-op) surfaces ContextBudgetError.hardCeilingExceeded, never looping"
     )
     @MainActor
     func hardCeilingStillExceededAfterRetrySurfacesError() async throws {
         // `limit: 100_000` matches the session's own resolved `contextTokens`
         // (`makeTriggeredSession`'s `router.resolve(profile: RouterTestFixtures.profile(context: 100_000)...)`),
         // and `target: 0.9` sits far above the tiny warm-up transcript's real
-        // size, so every fold this budget drives — including the reactive
-        // retry's own lowered-target fold — is a genuine no-op (nothing to
+        // size, so every compaction this budget drives — including the reactive
+        // retry's own lowered-target compaction — is a genuine no-op (nothing to
         // shrink): `contextFill` never actually moves once measured. That
         // deterministically guarantees the retry's own pre-check sees the
         // exact same fill that tripped the first attempt, rather than
-        // depending on precise fold-sizing math to land above some
+        // depending on precise compaction-sizing math to land above some
         // threshold. `hardCeiling: 0.85` reuses the same window as
         // `hardCeilingFailsFastThenRecoversWithLivePerAttemptFill` — above
         // every warm-up turn's own pre-turn fill (≤ 0.75) but at/below the
@@ -532,8 +532,8 @@ struct AutoCompactionTests {
         #expect(ceiling == 0.85)
 
         let compactionEvents = collected.filter { if case .compaction = $0 { return true }; return false }
-        // Exactly one fold ever ran (the one retry) before giving up — a
-        // second fold would mean looping.
+        // Exactly one compaction ever ran (the one retry) before giving up — a
+        // second compaction would mean looping.
         #expect(compactionEvents.count == 1)
         guard case .compaction(let result) = compactionEvents.first else {
             Issue.record("expected a .compaction event")
@@ -563,7 +563,7 @@ struct AutoCompactionTests {
     }
 
     @Test(
-        "a session vended with both tools and a budget threads the tools to the session's own tool list and still proactively folds exactly like one with no tools"
+        "a session vended with both tools and a budget threads the tools to the session's own tool list and still proactively compacts exactly like one with no tools"
     )
     @MainActor
     func toolsAndBudgetComposeWithoutInterference() async throws {
@@ -585,7 +585,7 @@ struct AutoCompactionTests {
 
         // contextFill is 0.9 (>= the 0.8 trigger) after the warm-up turns —
         // identical to the no-tools case above; the presence of tools must
-        // not change fold-triggering behavior at all.
+        // not change compaction-triggering behavior at all.
         #expect(await session.contextFill == 0.9)
 
         let events = eventsAfterTurnFrame(try await collectEvents(session, prompt: "turn 6"))
@@ -598,44 +598,44 @@ struct AutoCompactionTests {
         #expect(events.contains(.textDelta(Self.cannedText)))
     }
 
-    // MARK: - The session's own Summarization reaches the automatic fold
+    // MARK: - The session's own Summarization reaches the automatic compaction
 
-    /// The recency window the fold-tuning test below vends its session's
+    /// The recency window the compaction-tuning test below vends its session's
     /// ``Summarization`` with: half the stage's own default, so two turns the
     /// default window would have kept land in the span flash actually reads.
     private static let narrowedRecentTurns = Summarization().keepRecentTurns / 2
 
     @Test(
-        "an automatic fold summarizes with the Summarization the session was vended with, not the stage's defaults: a narrowed keepRecentTurns puts turns the default window keeps out into the span flash reads"
+        "an automatic compaction summarizes with the Summarization the session was vended with, not the stage's defaults: a narrowed keepRecentTurns puts turns the default window keeps out into the span flash reads"
     )
     @MainActor
-    func autoFoldSummarizesWithTheSessionsOwnKeepRecentTurns() async throws {
+    func autoCompactionSummarizesWithTheSessionsOwnKeepRecentTurns() async throws {
         let (narrowedSession, _, narrowedFlash) = try await Self.makeTriggeredSession(
             budget: Self.fixedBudget,
             summarization: Summarization(keepRecentTurns: Self.narrowedRecentTurns))
         let (unturnedSession, _, unturnedFlash) = try await Self.makeTriggeredSession(budget: Self.fixedBudget)
 
-        // No caller-side compact() in either arm: the triggering turn folds on
-        // its own, which is the fold this test exists for — it is the one no
+        // No caller-side compact() in either arm: the triggering turn compacts on
+        // its own, which is the compaction this test exists for — it is the one no
         // caller could pass a Summarization to.
         let narrowedEvents = try await collectEvents(narrowedSession, prompt: "turn \(Self.turnCount)")
         let unturnedEvents = try await collectEvents(unturnedSession, prompt: "turn \(Self.turnCount)")
         #expect(narrowedEvents.contains { if case .compaction = $0 { return true }; return false })
         #expect(unturnedEvents.contains { if case .compaction = $0 { return true }; return false })
 
-        // The newest turn only the narrowed window folds: inside the default
-        // window, so a fold running at the stage's defaults never reads it.
-        let narrowedWindowOnly = renderedLineOfNewestFoldedTurn(
+        // The newest turn only the narrowed window compactions: inside the default
+        // window, so a compaction running at the stage's defaults never reads it.
+        let narrowedWindowOnly = renderedLineOfNewestCompactedTurn(
             turnCount: Self.turnCount, keepRecentTurns: Self.narrowedRecentTurns)
         #expect(narrowedFlash.generationLog.calls.contains { $0.prompt.contains(narrowedWindowOnly) })
         #expect(!unturnedFlash.generationLog.calls.contains { $0.prompt.contains(narrowedWindowOnly) })
 
-        // Both folds really did read a span — the newest turn the *default*
-        // window folds is in each — so the assertions above separate two live
-        // folds rather than a fold from a no-op.
-        let foldedEitherWay = renderedLineOfNewestFoldedTurn(
+        // Both compactions really did read a span — the newest turn the *default*
+        // window compacts is in each — so the assertions above separate two live
+        // compactions rather than a compaction from a no-op.
+        let compactedEitherWay = renderedLineOfNewestCompactedTurn(
             turnCount: Self.turnCount, keepRecentTurns: Summarization().keepRecentTurns)
-        #expect(narrowedFlash.generationLog.calls.contains { $0.prompt.contains(foldedEitherWay) })
-        #expect(unturnedFlash.generationLog.calls.contains { $0.prompt.contains(foldedEitherWay) })
+        #expect(narrowedFlash.generationLog.calls.contains { $0.prompt.contains(compactedEitherWay) })
+        #expect(unturnedFlash.generationLog.calls.contains { $0.prompt.contains(compactedEitherWay) })
     }
 }

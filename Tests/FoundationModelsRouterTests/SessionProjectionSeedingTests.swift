@@ -26,11 +26,11 @@ struct SessionProjectionSeedingTests {
     /// stay distinguishable by content.
     private static let secondStepName = "TWO"
 
-    /// The pre-fold token count the compaction fixtures record.
-    private static let foldTokensBefore = 1000
+    /// The pre-compaction token count the compaction fixtures record.
+    private static let compactionTokensBefore = 1000
 
-    /// The post-fold token count the compaction fixtures record.
-    private static let foldTokensAfter = 400
+    /// The post-compaction token count the compaction fixtures record.
+    private static let compactionTokensAfter = 400
 
     /// The shared boundary-entry fixture with this suite's token counts
     /// applied — see ``TranscriptFixtures/makeCompactionEntry(entryId:segmentId:summaryText:tokensBefore:tokensAfter:)``.
@@ -39,7 +39,7 @@ struct SessionProjectionSeedingTests {
     ///   - entryId: The boundary entry's own `Transcript.Entry.id`.
     ///   - segmentId: The persisted ``CompactionSegment/id``.
     ///   - summaryText: The model-visible summary text; empty for a
-    ///     deterministic-only fold.
+    ///     deterministic-only compaction.
     /// - Returns: The boundary entry.
     private static func makeBoundaryEntry(
         entryId: String, segmentId: String, summaryText: String
@@ -48,8 +48,8 @@ struct SessionProjectionSeedingTests {
             entryId: entryId,
             segmentId: segmentId,
             summaryText: summaryText,
-            tokensBefore: foldTokensBefore,
-            tokensAfter: foldTokensAfter)
+            tokensBefore: compactionTokensBefore,
+            tokensAfter: compactionTokensAfter)
     }
 
     // MARK: - The pure grouping
@@ -249,24 +249,24 @@ struct SessionProjectionSeedingTests {
     func compactionBoundaryBecomesACompactionRow() {
         let entries = [
             Self.makeBoundaryEntry(
-                entryId: "boundary-1", segmentId: "segment-1", summaryText: "folded summary")
+                entryId: "boundary-1", segmentId: "segment-1", summaryText: "compacted summary")
         ]
 
         let rows = SessionProjection.transcriptRows(from: entries)
 
         let expected = CompactionResult(
             id: "segment-1",
-            summary: "folded summary",
+            summary: "compacted summary",
             summaryEntryId: "boundary-1",
-            tokensBefore: Self.foldTokensBefore,
-            tokensAfter: Self.foldTokensAfter,
+            tokensBefore: Self.compactionTokensBefore,
+            tokensAfter: Self.compactionTokensAfter,
             stagesApplied: ["Summarization"])
         #expect(rows.map(\.id) == ["segment-1"])
         #expect(rows.map(\.sourceEntryId) == ["boundary-1"])
         #expect(rows.map(\.kind) == [.compaction(expected)])
     }
 
-    @Test("a deterministic fold's boundary (empty summary text) yields a .compaction row with no summary and no join id")
+    @Test("a deterministic compaction's boundary (empty summary text) yields a .compaction row with no summary and no join id")
     func deterministicBoundaryRowCarriesNoSummary() {
         let entries = [
             Self.makeBoundaryEntry(entryId: "boundary-1", segmentId: "segment-1", summaryText: "")

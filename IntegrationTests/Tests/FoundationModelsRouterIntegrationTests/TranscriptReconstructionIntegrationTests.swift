@@ -25,7 +25,7 @@ private let transcriptReconstructionTinyModel: ModelRef = RealModels.standard
 /// into a durable `recordingsDir` so the on-disk transcript can be reloaded
 /// through a fresh ``TranscriptTree``. The profile under that session comes
 /// from ``RealModelHarness``, which every real-model suite of this target
-/// shares; this suite's own copy of that build was folded onto it (task
+/// shares; this suite's own copy of that build was merged onto it (task
 /// ^zz6kam0).
 ///
 /// The three runs of 2026-08-20 measured this suite's one test at 19.7, then

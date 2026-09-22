@@ -17,7 +17,7 @@ private let compactionSpikeTinyModel: ModelRef = RealModels.standard
 /// answers the one question the hermetic suite cannot: whether a live
 /// `LanguageModelSession(transcript:)` — the exact API
 /// ``RoutedSession/compact(prompt:budget:)`` (compaction_plan.md §1.4) will
-/// rebuild the inner session over after a fold — tolerates and completes a
+/// rebuild the inner session over after a compaction — tolerates and completes a
 /// turn over a transcript containing entries no real turn ever produced: a
 /// synthesized summary `.response` entry and a synthesized elision-placeholder
 /// `.toolOutput` entry reusing an old entry's id.
@@ -48,7 +48,7 @@ struct CompactionSpikeIntegrationTests {
     /// an elision-placeholder `.toolOutput` entry that reuses the old tool
     /// output's id (rather than being a new, unrelated entry), and a
     /// synthesized summary `.response` entry no real turn produced — the exact
-    /// shape a `ToolOutputElision` + `Summarization` fold
+    /// shape a `ToolOutputElision` + `Summarization` compaction
     /// (compaction_plan.md §1.3) would leave behind.
     private static func makeSynthesizedTranscript() throws -> Transcript {
         let instructions = Transcript.Instructions(

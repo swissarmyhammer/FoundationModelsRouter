@@ -15,7 +15,7 @@ import Testing
 private let compactionEvalSubsetRunner = CompactionEvalRealSubjectRunner(
     seeds: compactionEvalRepresentativeSeeds)
 
-/// The tier's evaluation: the runner's own seeds folded with the router's
+/// The tier's evaluation: the runner's own seeds compacted with the router's
 /// default compaction prompt against a budget whose target is small enough to
 /// force the model-assisted `Summarization` stage (see
 /// ``CompactionEvaluation/init(prompt:budget:seeds:includesJudgedDimensions:runSubject:)``'s
@@ -80,7 +80,7 @@ private func compactionEvalFactRetentionBar(floor: Double, measured: Int, of tot
 /// Prints the tier's per-sample evidence, then asserts the two bars its samples
 /// are held to.
 ///
-/// Two assertions rather than one, because the tier spans two steps. The FOLD
+/// Two assertions rather than one, because the tier spans two steps. The COMPACTION
 /// has to write a summary carrying the planted fact, and the resumed session has
 /// then to ANSWER with it. Each is held to its own measured floor —
 /// ``compactionEvalSummaryFactRetentionFloor`` and
@@ -97,7 +97,7 @@ private func compactionEvalFactRetentionBar(floor: Double, measured: Int, of tot
 private func expectFactRetention(of runner: CompactionEvalRealSubjectRunner) async {
     // Printed before the assertions so a run that misses a bar still
     // leaves the evidence behind: a mean alone cannot say whether a
-    // failing sample lost its fact in the fold or in the answering turn,
+    // failing sample lost its fact in the compaction or in the answering turn,
     // and this table classifies every sample on exactly that question.
     let seeds = runner.seeds
     let findings = CompactionEvalFactRetentionReport.findings(
@@ -111,14 +111,14 @@ private func expectFactRetention(of runner: CompactionEvalRealSubjectRunner) asy
     let measured = findings.count
 
     // The COMPACTION side, asserted first because it is the necessary
-    // condition: a tier whose folds dropped the fact can never answer with it.
+    // condition: a tier whose compactions dropped the fact can never answer with it.
     let summaryCarried = CompactionEvalFactRetentionReport.summaryFactRetentionCount(of: findings)
     let summaryBar = compactionEvalFactRetentionBar(
         floor: compactionEvalSummaryFactRetentionFloor, measured: measured, of: seeds.count)
     #expect(
         CompactionEvalFactRetentionReport.share(of: summaryCarried, over: measured)
             >= compactionEvalSummaryFactRetentionFloor,
-        "\(summaryCarried) of \(measured) folds wrote a summary carrying the fact, and \(summaryBar)"
+        "\(summaryCarried) of \(measured) compactions wrote a summary carrying the fact, and \(summaryBar)"
     )
 
     // The end-to-end bar, read off the framework's own metric rather than off
@@ -135,7 +135,7 @@ private func expectFactRetention(of runner: CompactionEvalRealSubjectRunner) asy
 }
 
 /// The real-model fact-retention eval (compaction_plan.md §5's
-/// `@Test(.evaluates(...))` sketch): folds each seed of
+/// `@Test(.evaluates(...))` sketch): compacts each seed of
 /// ``compactionEvalRepresentativeSeeds`` with the router's default compaction
 /// prompt, resumes a session over each result, asks its question, and asserts
 /// the summary and answer fact-retention shares against
@@ -155,12 +155,12 @@ private func expectFactRetention(of runner: CompactionEvalRealSubjectRunner) asy
 ///
 /// ## What it NO LONGER proves (task ^k0d30s4)
 ///
-/// A second tier folded 24 hand-written fixtures until 2026-08-21, and this one
-/// folded seven of them. 24 seeds cost more than six minutes at the canary's own
+/// A second tier compacted 24 hand-written fixtures until 2026-08-21, and this one
+/// compacted seven of them. 24 seeds cost more than six minutes at the canary's own
 /// measured rate, so that tier could not hold the two-minute budget for every
 /// integration test, and the answer was to make the test smaller: the tier went,
-/// and the seventeen fixtures no other tier folded went with it. So no gated run
-/// measures the fold against a fixture outside these seven any more. What the
+/// and the seventeen fixtures no other tier compacted went with it. So no gated run
+/// measures the compaction against a fixture outside these seven any more. What the
 /// seven still span is stated by ``compactionEvalRepresentativeSubsetIDs`` and
 /// held mechanically by `CompactionEvalRepresentativeSubsetTests`, and
 /// ``compactionEvalSubsetTimeLimitMinutes`` carries the measurement behind the
@@ -183,7 +183,7 @@ private func expectFactRetention(of runner: CompactionEvalRealSubjectRunner) asy
 )
 struct CompactionEvaluationIntegrationTests {
     @Test(
-        "Compaction retains pre-fold facts",
+        "Compaction retains pre-compaction facts",
         .evaluates(
             compactionEvalSubsetEvaluation,
             info: ["promptName": CompactionPrompt.default.name]

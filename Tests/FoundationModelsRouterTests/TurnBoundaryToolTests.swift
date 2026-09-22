@@ -8,7 +8,7 @@ import Testing
 /// eventplan.md § "Consolidation of the siblings" gives MultiTool's contract —
 /// "The surface never changes in place. A change means rebuild and swap. ...
 /// MultiTool swaps it in atomically at the next turn boundary — the same
-/// boundary where the outbox folds in events." Router owns that boundary, and
+/// boundary where the outbox merges in events." Router owns that boundary, and
 /// this hook is how a mounted tool observes it.
 ///
 /// Everything runs against stubs — no MLX, no network, no GPU. The probe tool

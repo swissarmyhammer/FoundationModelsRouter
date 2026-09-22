@@ -36,7 +36,7 @@ struct ToolTracingTests {
     private static let secondStepName = "TWO"
 
     /// The context limit the capped fixture's budget declares. Large enough that
-    /// a scripted turn never reaches the fold trigger, so the capped run opens
+    /// a scripted turn never reaches the compaction trigger, so the capped run opens
     /// no compaction of its own.
     private static let cappedBudgetLimit = 4_096
 

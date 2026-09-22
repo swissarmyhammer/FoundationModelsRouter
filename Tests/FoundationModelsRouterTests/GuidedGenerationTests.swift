@@ -418,7 +418,7 @@ struct GuidedGenerationTests {
     /// the test's only read of `lastBackend` immediately follows on that same
     /// task with no suspension in between — so there is no concurrent access
     /// to reason about. `flashContainer`'s `makeSession(instructions:)` may be
-    /// invoked again later, from inside `RoutedSessionActor`'s isolated fold
+    /// invoked again later, from inside `RoutedSessionActor`'s isolated compaction
     /// code when it builds the flash summarizer backend, but this test never
     /// reads `flashContainer.lastBackend`, so that later write is never raced
     /// against a read.
@@ -480,7 +480,7 @@ struct GuidedGenerationTests {
         repeating: "The quick brown fox jumps over the lazy dog. ", count: 12)
 
     /// How many warm-up turns the guided trigger test drives — past
-    /// `TurnTruncation`'s default 4-turn recency window, so folding has real
+    /// `TurnTruncation`'s default 4-turn recency window, so compaction has real
     /// old-span content to work with. Mirrors `AutoCompactionTests.turnCount`.
     private static let autoCompactionTurnCount = 6
 
@@ -505,7 +505,7 @@ struct GuidedGenerationTests {
     private static let autoCompactionContextTokens = 100_000
 
     /// A budget whose target sits strictly below the warm-up transcript's own
-    /// recency-window floor — forcing the triggering fold to need the
+    /// recency-window floor — forcing the triggering compaction to need the
     /// model-assisted ``Summarization`` stage. Mirrors `AutoCompactionTests.fixedBudget`.
     private static let autoCompactionFixedBudget: TokenBudget = {
         let recencyOnly = recencyWindowOnlyEstimate(autoCompactionWarmUpEntries())
@@ -559,9 +559,9 @@ struct GuidedGenerationTests {
         }
         #expect(await session.contextFill == 0.9)
 
-        // The next turn should fold automatically, before its own work runs,
+        // The next turn should compact automatically, before its own work runs,
         // with no caller-side `compact()` call anywhere in this test — the
-        // same proof `AutoCompactionTests.proactiveFoldPrefersFlashSummarizer()`
+        // same proof `AutoCompactionTests.proactiveCompactionPrefersFlashSummarizer()`
         // gives for the unguided path, now for a session vended through
         // `makeGuidedSession`.
         let events = eventsAfterTurnFrame(try await collect(session.streamEvents(to: "turn 6", maxTokens: nil)))

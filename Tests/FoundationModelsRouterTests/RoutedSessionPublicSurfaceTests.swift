@@ -52,7 +52,7 @@ struct RoutedSessionPublicSurfaceTests {
 
     // MARK: - compact()
 
-    @Test("compact() runs the fold pipeline against this session's own working context")
+    @Test("compact() runs the compaction pipeline against this session's own working context")
     func compactWithNoArgumentsMeasuresTheLiveTranscript() async throws {
         let fixture = try await Self.makeQueueFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -62,7 +62,7 @@ struct RoutedSessionPublicSurfaceTests {
 
         // The default budget is the session's resolved working context, which
         // one scripted turn comes nowhere near: the pipeline measured a real
-        // transcript and correctly folded nothing.
+        // transcript and correctly compacted nothing.
         #expect(result.tokensBefore > 0)
         #expect(result.tokensAfter == result.tokensBefore)
         #expect(result.stagesApplied.isEmpty)
@@ -71,15 +71,15 @@ struct RoutedSessionPublicSurfaceTests {
 
     // MARK: - compact(budget:)
 
-    @Test("compact(budget:) folds the transcript against the budget it is given")
-    func compactWithBudgetFoldsAgainstThatBudget() async throws {
+    @Test("compact(budget:) compacts the transcript against the budget it is given")
+    func compactWithBudgetCompactsAgainstThatBudget() async throws {
         let (session, _, _) = try await AutoCompactionFixtures.makeTriggeredSession(
             budget: nil, tempDirPrefix: Self.tempDirPrefix)
 
         let result = try await session.compact(budget: AutoCompactionFixtures.fixedBudget)
 
         // The fixture's budget targets less than the recency window alone
-        // holds, so the fold cannot land on the deterministic stages: it runs
+        // holds, so the compaction cannot land on the deterministic stages: it runs
         // the model-assisted stage and really shrinks the transcript.
         #expect(result.stagesApplied.contains("Summarization"))
         #expect(result.tokensAfter < result.tokensBefore)

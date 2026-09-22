@@ -92,7 +92,7 @@ enum TranscriptFixtures {
     /// construction generates its own segment id).
     ///
     /// The segment content carries fixed fixture values — `[entryId]` as the
-    /// live window, one folded entry id, `["Summarization"]` as the applied
+    /// live window, one compacted entry id, `["Summarization"]` as the applied
     /// stages, and the `"default"` prompt name — so tests that only assert on
     /// ids, summary text, and token counts share one construction.
     ///
@@ -100,9 +100,9 @@ enum TranscriptFixtures {
     ///   - entryId: The boundary entry's own `Transcript.Entry.id`.
     ///   - segmentId: The persisted ``CompactionSegment/id``.
     ///   - summaryText: The model-visible summary text; empty for a
-    ///     deterministic-only fold.
-    ///   - tokensBefore: The pre-fold token count the segment records.
-    ///   - tokensAfter: The post-fold token count the segment records.
+    ///     deterministic-only compaction.
+    ///   - tokensBefore: The pre-compaction token count the segment records.
+    ///   - tokensAfter: The post-compaction token count the segment records.
     /// - Returns: The boundary entry.
     static func makeCompactionEntry(
         entryId: String,
@@ -120,7 +120,7 @@ enum TranscriptFixtures {
                         id: segmentId,
                         content: CompactionSegment.Content(
                             liveWindowEntryIds: [entryId],
-                            foldedEntryIds: ["folded-1"],
+                            compactedEntryIds: ["compacted-1"],
                             tokensBefore: tokensBefore,
                             tokensAfter: tokensAfter,
                             stagesApplied: ["Summarization"],

@@ -842,7 +842,7 @@ struct TranscriptReconstructionTests {
 
     /// Fabricates a single session whose transcript carries one compaction
     /// checkpoint: a header instructions entry, an old prompt/response pair
-    /// (folded away), a recent prompt/response pair (kept), the checkpoint
+    /// (compacted away), a recent prompt/response pair (kept), the checkpoint
     /// itself, and one post-compaction prompt/response pair.
     ///
     /// - Returns: The tree, the session id, and every fabricated event in
@@ -878,7 +878,7 @@ struct TranscriptReconstructionTests {
                 summaryText: "summary of old turns",
                 content: CompactionSegment.Content(
                     liveWindowEntryIds: ["instr-1", "checkpoint-1", "recent-prompt-1", "recent-response-1"],
-                    foldedEntryIds: ["old-prompt-1", "old-response-1"],
+                    compactedEntryIds: ["old-prompt-1", "old-response-1"],
                     tokensBefore: 1_000,
                     tokensAfter: 200,
                     stagesApplied: ["ToolOutputElision", "Summarization"],
@@ -898,7 +898,7 @@ struct TranscriptReconstructionTests {
         return (tree, sessionId, events)
     }
 
-    @Test("restore view (default): the newest checkpoint's ordered live-window entries, plus everything recorded after it — never the folded-away entries")
+    @Test("restore view (default): the newest checkpoint's ordered live-window entries, plus everything recorded after it — never the compacted-away entries")
     func restoreViewAppliesNewestCheckpoint() throws {
         let (tree, sessionId, _) = try Self.makeSingleCheckpointFixture()
 
@@ -913,12 +913,12 @@ struct TranscriptReconstructionTests {
         let explicitRestore = try tree.effectiveTranscript(forSession: sessionId, view: .restore)
         #expect(Array(explicitRestore).map(\.id) == Array(reconstructed).map(\.id))
 
-        // The folded-away entries never appear.
+        // The compacted-away entries never appear.
         #expect(!Array(reconstructed).map(\.id).contains("old-prompt-1"))
         #expect(!Array(reconstructed).map(\.id).contains("old-response-1"))
     }
 
-    @Test("fullHistory view: every recorded entry, in seq order, with the compaction entry present as a fold marker rather than duplicating what it replaced")
+    @Test("fullHistory view: every recorded entry, in seq order, with the compaction entry present as a compaction marker rather than duplicating what it replaced")
     func fullHistoryViewRetainsEveryEvent() throws {
         let (tree, sessionId, events) = try Self.makeSingleCheckpointFixture()
 
@@ -926,19 +926,19 @@ struct TranscriptReconstructionTests {
         let fullHistoryIds = Array(fullHistory).map(\.id)
         #expect(fullHistoryIds == events.map { $0.entry!.entryId })
 
-        // Every entry — including the folded-away ones and the checkpoint
+        // Every entry — including the compacted-away ones and the checkpoint
         // itself — appears exactly once: the checkpoint is a marker among
         // what it replaced, never a duplicate rendering of it. Explicit
         // per-id counts (not just the overall id-list equality above) so
-        // this would fail if a future fold-marker rendering re-embedded the
-        // folded entries' content alongside the checkpoint.
+        // this would fail if a future compaction-marker rendering re-embedded the
+        // compacted entries' content alongside the checkpoint.
         for id in fullHistoryIds {
             #expect(fullHistoryIds.filter { $0 == id }.count == 1)
         }
 
         // The contrast that actually proves "fullHistory ignores the
         // checkpoint": the restore view for the *same* fixture is strictly
-        // smaller (folded entries excluded), while fullHistory keeps every
+        // smaller (compacted entries excluded), while fullHistory keeps every
         // entry the session ever recorded, checkpoint included.
         let restoreView = try tree.effectiveTranscript(forSession: sessionId)
         #expect(fullHistory.count == events.count)
@@ -965,10 +965,10 @@ struct TranscriptReconstructionTests {
                 entryId: "old-response-1", text: "old response"),
             TranscriptFixtures.compactionCheckpointEvent(
                 seq: 3, sessionId: sessionId, routerId: routerId, entryId: "checkpoint-1",
-                summaryText: "first fold",
+                summaryText: "first compaction",
                 content: CompactionSegment.Content(
                     liveWindowEntryIds: ["instr-1", "checkpoint-1"],
-                    foldedEntryIds: ["old-prompt-1", "old-response-1"],
+                    compactedEntryIds: ["old-prompt-1", "old-response-1"],
                     tokensBefore: 1_000,
                     tokensAfter: 300,
                     stagesApplied: ["Summarization"],
@@ -983,12 +983,12 @@ struct TranscriptReconstructionTests {
                 entryId: "mid-response-1", text: "mid response"),
             TranscriptFixtures.compactionCheckpointEvent(
                 seq: 6, sessionId: sessionId, routerId: routerId, entryId: "checkpoint-2",
-                summaryText: "second fold",
+                summaryText: "second compaction",
                 content: CompactionSegment.Content(
-                    // The second fold's live window folds the *first*
+                    // The second compaction's live window compacts the *first*
                     // checkpoint away too, along with the turn after it.
                     liveWindowEntryIds: ["instr-1", "checkpoint-2"],
-                    foldedEntryIds: ["checkpoint-1", "mid-prompt-1", "mid-response-1"],
+                    compactedEntryIds: ["checkpoint-1", "mid-prompt-1", "mid-response-1"],
                     tokensBefore: 900,
                     tokensAfter: 150,
                     stagesApplied: ["Summarization"],
@@ -1052,10 +1052,10 @@ struct TranscriptReconstructionTests {
 
         let checkpointEvent = try TranscriptFixtures.compactionCheckpointEvent(
             seq: 0, sessionId: sessionId, routerId: routerId, entryId: "checkpoint-1",
-            summaryText: "fold",
+            summaryText: "compaction",
             content: CompactionSegment.Content(
                 liveWindowEntryIds: ["checkpoint-1", "ghost-entry"],
-                foldedEntryIds: [],
+                compactedEntryIds: [],
                 tokensBefore: 100,
                 tokensAfter: 50,
                 stagesApplied: ["Summarization"],
@@ -1094,7 +1094,7 @@ struct TranscriptReconstructionTests {
             seq: 2, sessionId: sessionId, routerId: routerId, entryId: "checkpoint-1",
             content: CompactionSegment.Content(
                 liveWindowEntryIds: ["dup-1", "checkpoint-1"],
-                foldedEntryIds: [],
+                compactedEntryIds: [],
                 tokensBefore: 100,
                 tokensAfter: 50,
                 stagesApplied: ["Summarization"],

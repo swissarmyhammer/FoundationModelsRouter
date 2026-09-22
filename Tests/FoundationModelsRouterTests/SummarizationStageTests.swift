@@ -143,30 +143,30 @@ struct SummarizationStageTests {
             Summarization.characters(forEstimatedTokens: capTokens))
     }
 
-    /// The byte budget the fold's FINAL summary must fit for the boundary
-    /// entry to shrink the transcript (task ^xx02yn6): the folded span's own
+    /// The byte budget the compaction's FINAL summary must fit for the boundary
+    /// entry to shrink the transcript (task ^xx02yn6): the compacted span's own
     /// content bytes, minus the shrink margin one estimated token costs, minus
     /// the pending-runs rendering the boundary entry carries beside the
     /// summary. Restated here rather than read off the stage, so these tests
     /// pin the arithmetic instead of comparing it against itself.
     ///
     /// - Parameters:
-    ///   - oldTurns: The folded span's turns, each as its own entries.
+    ///   - oldTurns: The compacted span's turns, each as its own entries.
     ///   - renderingBytes: The pending-runs rendering's UTF-8 size — `0`, the
-    ///     default, when the fold tracks no runs.
+    ///     default, when the compaction tracks no runs.
     /// - Returns: The expected budget, in UTF-8 bytes.
     private static func expectedSummaryByteBudget(
-        foldingOld oldTurns: [[Transcript.Entry]],
+        compactingOld oldTurns: [[Transcript.Entry]],
         renderingBytes: Int = 0
     ) -> Int {
         let shrinkMarginBytes = 4
         return spanContentBytes(of: oldTurns) - shrinkMarginBytes - renderingBytes
     }
 
-    /// The content bytes of a folded span's turns — the same measure
+    /// The content bytes of a compacted span's turns — the same measure
     /// `Compactor`'s did-not-shrink guard sums over the span's entries.
     ///
-    /// - Parameter oldTurns: The folded span's turns, each as its own entries.
+    /// - Parameter oldTurns: The compacted span's turns, each as its own entries.
     /// - Returns: The span's content size, in UTF-8 bytes.
     private static func spanContentBytes(of oldTurns: [[Transcript.Entry]]) -> Int {
         oldTurns.flatMap { $0 }.reduce(0) { $0 + Compactor.contentByteCount(of: $1) }
@@ -185,61 +185,61 @@ struct SummarizationStageTests {
         return max(1, Int(Double(bytes) / bytesPerWord))
     }
 
-    /// Folds `turns` with `stage` and `prompt`, and returns the assembled
-    /// prompt of every summarizer call the fold made, in call order.
+    /// Compacts `turns` with `stage` and `prompt`, and returns the assembled
+    /// prompt of every summarizer call the compaction made, in call order.
     ///
     /// The turns come in rather than being built here because a caller sizing
     /// `stage.maxChunkTokens` against one turn has to measure that turn before
-    /// the fold runs.
+    /// the compaction runs.
     ///
     /// - Parameters:
-    ///   - turns: The turns to fold, each as its own entries.
-    ///   - stage: The stage to fold with.
-    ///   - prompt: The compaction prompt to fold with.
+    ///   - turns: The turns to compact, each as its own entries.
+    ///   - stage: The stage to compact with.
+    ///   - prompt: The compaction prompt to compact with.
     ///   - responses: What the scripted summarizer answers, one per call.
     /// - Returns: The assembled prompts, in call order.
-    /// - Throws: Whatever the fold throws.
+    /// - Throws: Whatever the compaction throws.
     private static func assembledPrompts(
-        folding turns: [[Transcript.Entry]],
+        compacting turns: [[Transcript.Entry]],
         with stage: Summarization,
         prompt: CompactionPrompt,
         answering responses: [String]
     ) async throws -> [String] {
-        try await foldOutcome(folding: turns, with: stage, prompt: prompt, answering: responses).prompts
+        try await compactionOutcome(compacting: turns, with: stage, prompt: prompt, answering: responses).prompts
     }
 
-    /// Folds `turns` with `stage` and `prompt`, and returns both what the fold
+    /// Compacts `turns` with `stage` and `prompt`, and returns both what the compaction
     /// stored and the assembled prompt of every summarizer call it made.
     ///
-    /// What a fold STORES is not what its summarizer ANSWERED — the stage cuts
+    /// What a compaction STORES is not what its summarizer ANSWERED — the stage cuts
     /// an answer down to the share of its content that call may retain — so a test about that
-    /// bound has to read the fold's own result rather than the scripted answer
+    /// bound has to read the compaction's own result rather than the scripted answer
     /// it started from.
     ///
     /// - Parameters:
-    ///   - turns: The turns to fold, each as its own entries.
-    ///   - stage: The stage to fold with.
-    ///   - prompt: The compaction prompt to fold with.
+    ///   - turns: The turns to compact, each as its own entries.
+    ///   - stage: The stage to compact with.
+    ///   - prompt: The compaction prompt to compact with.
     ///   - responses: What the scripted summarizer answers, one per call.
-    /// - Returns: What the fold stored, the assembled prompts in call order,
+    /// - Returns: What the compaction stored, the assembled prompts in call order,
     ///   and the ceiling each call was given.
-    /// - Throws: Whatever the fold throws.
-    private static func foldOutcome(
-        folding turns: [[Transcript.Entry]],
+    /// - Throws: Whatever the compaction throws.
+    private static func compactionOutcome(
+        compacting turns: [[Transcript.Entry]],
         with stage: Summarization,
         prompt: CompactionPrompt,
         answering responses: [String]
-    ) async throws -> (folded: Summarization.Folded?, prompts: [String], ceilings: [Int]) {
+    ) async throws -> (compacted: Summarization.Compacted?, prompts: [String], ceilings: [Int]) {
         let transcript = Transcript(entries: [TranscriptFixtures.makeInstructions()] + turns.flatMap { $0 })
         let summarizer = ScriptedSummarizer(responses: responses)
-        let folded = try await stage.apply(
+        let compacted = try await stage.apply(
             transcript,
             prompt: prompt,
             tokensBefore: Compactor.estimatedTokenCount(of: transcript),
             priorStagesApplied: [],
             summarizer: summarizer
         )
-        return (folded, summarizer.receivedPrompts, summarizer.receivedMaxTokens)
+        return (compacted, summarizer.receivedPrompts, summarizer.receivedMaxTokens)
     }
 
     /// The content a summarizer call was asked to condense, recovered from the
@@ -287,7 +287,7 @@ struct SummarizationStageTests {
         #expect(text.contains("No praise, no padding, no meta-commentary. Omit a section only if truly\nempty."))
     }
 
-    @Test("CompactionPrompt.default gives a bare stated fact its own section, so a fold cannot record that a fact was stated without stating what it was")
+    @Test("CompactionPrompt.default gives a bare stated fact its own section, so a compaction cannot record that a fact was stated without stating what it was")
     func defaultPromptKeepsBareStatedFacts() {
         // Pins the defect the gated eval measured on the `printer-and-supply-closet`
         // fixture, one of the seventeen task ^k0d30s4 deleted with the
@@ -329,7 +329,7 @@ struct SummarizationStageTests {
         // Task ^49dy082 measured the defect against the real 1B model. The
         // instructions illustrated the verbatim-value demand with a quoted
         // fact, and the model wrote that fact — a value the conversation never
-        // stated — sixty times in place of a summary of the span. The fold
+        // stated — sixty times in place of a summary of the span. The compaction
         // stored it, so the span's every real fact was lost.
         let text = CompactionPrompt.default.text
         // The instructions quote nothing, so they carry nothing shaped like a
@@ -350,19 +350,19 @@ struct SummarizationStageTests {
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
         let tokensBefore = Compactor.estimatedTokenCount(of: transcript)
 
-        let summarizer = ScriptedSummarizer(responses: ["the folded turns discussed a search query and its result"])
+        let summarizer = ScriptedSummarizer(responses: ["the compacted turns discussed a search query and its result"])
         let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: 1_000_000)
 
-        let folded = try await stage.apply(
+        let compacted = try await stage.apply(
             transcript,
             prompt: .default,
             tokensBefore: tokensBefore,
             priorStagesApplied: ["ToolOutputElision", "TurnTruncation"],
             summarizer: summarizer
         )
-        let unwrapped = try #require(folded)
+        let unwrapped = try #require(compacted)
 
-        #expect(unwrapped.summary == "the folded turns discussed a search query and its result")
+        #expect(unwrapped.summary == "the compacted turns discussed a search query and its result")
 
         let entries = Array(unwrapped.transcript)
         // header (instructions) + synthesized summary entry + 4-turn recency window.
@@ -384,7 +384,7 @@ struct SummarizationStageTests {
             return
         }
         // Turns 1 and 2 are old (turns 3...6 are the 4-turn recency window).
-        #expect(segment.content.foldedEntryIds == turns[0].map(\.id) + turns[1].map(\.id))
+        #expect(segment.content.compactedEntryIds == turns[0].map(\.id) + turns[1].map(\.id))
         #expect(segment.content.liveWindowEntryIds.first == instructions.id)
         #expect(segment.content.liveWindowEntryIds.contains(response.id))
         let expectedRecentTail = turns.suffix(4).flatMap { $0 }
@@ -406,7 +406,7 @@ struct SummarizationStageTests {
 
     // MARK: - Prompt assembly: default and custom prompt text sent verbatim
 
-    @Test("the default prompt's text is sent to the summarizer verbatim, alongside the rendered folded span")
+    @Test("the default prompt's text is sent to the summarizer verbatim, alongside the rendered compacted span")
     func defaultPromptAssembledVerbatim() async throws {
         let instructions = TranscriptFixtures.makeInstructions()
         let turns = try (1...5).map { try TranscriptFixtures.makeTurn(index: $0, promptText: "distinctive-question-\($0)") }
@@ -442,14 +442,14 @@ struct SummarizationStageTests {
         let summarizer = ScriptedSummarizer(responses: ["custom summary"])
         let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: 1_000_000)
 
-        let folded = try await stage.apply(
+        let compacted = try await stage.apply(
             transcript,
             prompt: customPrompt,
             tokensBefore: Compactor.estimatedTokenCount(of: transcript),
             priorStagesApplied: [],
             summarizer: summarizer
         )
-        let unwrapped = try #require(folded)
+        let unwrapped = try #require(compacted)
 
         let sentPrompt = try #require(summarizer.receivedPrompts.first)
         #expect(sentPrompt.contains(customPrompt.text))
@@ -465,13 +465,13 @@ struct SummarizationStageTests {
         #expect(compaction.content.promptName == "my-custom-prompt-v7")
     }
 
-    // MARK: - Segment flattening: the text a fold reads out of an entry
+    // MARK: - Segment flattening: the text a compaction reads out of an entry
 
     @Test("flattening an entry's segments joins every text segment in order with a newline and drops the segments that carry no text")
     func flatteningJoinsTextSegmentsAndDropsTheRest() throws {
         // `Summarization.text(of:)` is what turns an entry into the line a
         // summarizer reads, and the compaction eval dataset reads its seed
-        // transcripts through the same function so it measures the text a fold
+        // transcripts through the same function so it measures the text a compaction
         // really shows the model. Two callers make the contract worth stating
         // outright rather than inferring it from an assembled prompt.
         let structureContent = try GeneratedContent(json: #"{"tempF":72}"#)
@@ -486,7 +486,7 @@ struct SummarizationStageTests {
 
     // MARK: - Map-reduce chunking
 
-    @Test("a folded span exceeding maxChunkTokens is split into multiple chunks, each summarized, then the chunk summaries are re-summarized into one final summary")
+    @Test("a compacted span exceeding maxChunkTokens is split into multiple chunks, each summarized, then the chunk summaries are re-summarized into one final summary")
     func longSpanMapReducesAcrossChunks() async throws {
         let instructions = TranscriptFixtures.makeInstructions()
         let turns = try (1...6).map { try TranscriptFixtures.makeTurn(index: $0, toolOutputText: "result-\($0)") }
@@ -500,14 +500,14 @@ struct SummarizationStageTests {
         let summarizer = ScriptedSummarizer(responses: ["chunk-summary-A", "chunk-summary-B", "final-combined-summary"])
         let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: oneTurnTokens)
 
-        let folded = try await stage.apply(
+        let compacted = try await stage.apply(
             transcript,
             prompt: .default,
             tokensBefore: Compactor.estimatedTokenCount(of: transcript),
             priorStagesApplied: [],
             summarizer: summarizer
         )
-        let unwrapped = try #require(folded)
+        let unwrapped = try #require(compacted)
 
         // 2 map calls (one per chunk) + 1 reduce call over their summaries.
         #expect(summarizer.receivedPrompts.count == 3)
@@ -559,14 +559,14 @@ struct SummarizationStageTests {
         let summarizer = ScriptedSummarizer(responses: responses)
         let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: maxChunkTokens)
 
-        let folded = try await stage.apply(
+        let compacted = try await stage.apply(
             transcript,
             prompt: .default,
             tokensBefore: Compactor.estimatedTokenCount(of: transcript),
             priorStagesApplied: [],
             summarizer: summarizer
         )
-        let unwrapped = try #require(folded)
+        let unwrapped = try #require(compacted)
 
         // 6 map calls + one reduce call per predicted group + 1 final reduce
         // call. The old (buggy) flat-reduce implementation would have made
@@ -620,14 +620,14 @@ struct SummarizationStageTests {
         let summarizer = ScriptedSummarizer(responses: responses)
         let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: maxChunkTokens)
 
-        let folded = try await stage.apply(
+        let compacted = try await stage.apply(
             transcript,
             prompt: .default,
             tokensBefore: Compactor.estimatedTokenCount(of: transcript),
             priorStagesApplied: [],
             summarizer: summarizer
         )
-        let unwrapped = try #require(folded)
+        let unwrapped = try #require(compacted)
 
         // 3 map calls + exactly 1 flat-fallback reduce call — proves the
         // no-progress guard terminated immediately rather than recursing.
@@ -635,7 +635,7 @@ struct SummarizationStageTests {
         #expect(unwrapped.summary == "flat-fallback-summary")
     }
 
-    @Test("a short folded span within maxChunkTokens needs no chunking: exactly one summarizer call")
+    @Test("a short compacted span within maxChunkTokens needs no chunking: exactly one summarizer call")
     func shortSpanNeedsNoChunking() async throws {
         let instructions = TranscriptFixtures.makeInstructions()
         let turns = try TranscriptFixtures.makeTurns(5)
@@ -644,14 +644,14 @@ struct SummarizationStageTests {
         let summarizer = ScriptedSummarizer(responses: ["single-call-summary"])
         let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: 1_000_000)
 
-        let folded = try await stage.apply(
+        let compacted = try await stage.apply(
             transcript,
             prompt: .default,
             tokensBefore: Compactor.estimatedTokenCount(of: transcript),
             priorStagesApplied: [],
             summarizer: summarizer
         )
-        let unwrapped = try #require(folded)
+        let unwrapped = try #require(compacted)
 
         #expect(summarizer.receivedPrompts.count == 1)
         #expect(unwrapped.summary == "single-call-summary")
@@ -672,7 +672,7 @@ struct SummarizationStageTests {
 
         let summarizer = ScriptedSummarizer(responses: ["summary"])
         // One old turn, well within maxChunkTokens: exactly one call, whose
-        // ceiling is the whole fold's.
+        // ceiling is the whole compaction's.
         let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: 1_000_000)
 
         _ = try await stage.apply(
@@ -694,7 +694,7 @@ struct SummarizationStageTests {
                     maxChunkTokens: stage.maxChunkTokens,
                     headroom: stage.reasoningTokenHeadroom))
         // The point of the bound: a summary can never come back the size of
-        // the span it replaces, which is what made a fold save almost nothing.
+        // the span it replaces, which is what made a compaction save almost nothing.
         // The bound is on the summary allowance, read back off the ceiling the
         // call was given — the reasoning headroom beside it is never summary
         // text, so it cannot make a summary longer.
@@ -728,7 +728,7 @@ struct SummarizationStageTests {
     // MARK: - The final summary is bounded against the span, and the budget is stated to the model
 
     /// One sentence a scripted summarizer answers with, repeated to build an
-    /// answer that overruns the span byte budget its fold earns.
+    /// answer that overruns the span byte budget its compaction earns.
     ///
     /// It ends in a period and a space, so a cut at a sentence boundary has
     /// somewhere to land.
@@ -739,7 +739,7 @@ struct SummarizationStageTests {
     /// — far past the span byte budget every small fixture span here earns.
     private static let summarySentenceRepeats = 12
 
-    /// The tool-output text that makes a folded span's byte budget larger
+    /// The tool-output text that makes a compacted span's byte budget larger
     /// than an answer of ``underSpanBudgetAnswerRepeats`` sentences, while
     /// that answer still overruns the compression allowance the call
     /// generated under — the band the old ratio cut took and the span bound
@@ -772,7 +772,7 @@ struct SummarizationStageTests {
     /// - Parameter index: The section's number.
     /// - Returns: The section, one line.
     private static func sectionedAnswerSection(index: Int) -> String {
-        "\(index). Topic \(index) — the fold keeps the facts of kind \(index) here. "
+        "\(index). Topic \(index) — the compaction keeps the facts of kind \(index) here. "
             + "The section states them in full sentences. Each fact keeps its stated value. It stays whole."
     }
 
@@ -799,7 +799,7 @@ struct SummarizationStageTests {
         // no model has a say in it.
         let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: Self.wholeSpanChunkTokens)
         let prompts = try await Self.assembledPrompts(
-            folding: try TranscriptFixtures.makeTurns(5),
+            compacting: try TranscriptFixtures.makeTurns(5),
             with: stage,
             prompt: .default,
             answering: ["summary"]
@@ -808,7 +808,7 @@ struct SummarizationStageTests {
         let assembled = try #require(prompts.first)
         let condensed = try Self.condensedContent(of: assembled)
         // The stated budget is a share of the CONTENT the call condenses —
-        // near the span byte budget the fold enforces — never the compression
+        // near the span byte budget the compaction enforces — never the compression
         // allowance. The instrumented Qwen probes of 2026-08-20 measured why:
         // an allowance-derived 85-word target against an eight-section
         // verbatim-fact demand is unsatisfiable, and the thinking model spent
@@ -848,7 +848,7 @@ struct SummarizationStageTests {
         let turns = try TranscriptFixtures.makeTurns(5, toolOutputText: Self.largeSpanToolOutput)
         let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: Self.wholeSpanChunkTokens)
         let answer = String(repeating: Self.summarySentence, count: Self.underSpanBudgetAnswerRepeats)
-        let outcome = try await Self.foldOutcome(folding: turns, with: stage, prompt: .default, answering: [answer])
+        let outcome = try await Self.compactionOutcome(compacting: turns, with: stage, prompt: .default, answering: [answer])
 
         let assembled = try #require(outcome.prompts.first)
         let condensed = try Self.condensedContent(of: assembled)
@@ -868,7 +868,7 @@ struct SummarizationStageTests {
 
     @Test("an answer that fits the span byte budget is stored word for word, however far over the compression target it is")
     func anAnswerInsideTheSpanBudgetIsStoredUnchanged() async throws {
-        // The invariant a fold needs is "the boundary entry is smaller than
+        // The invariant a compaction needs is "the boundary entry is smaller than
         // the span it replaces" — `Compactor.compact`'s did-not-shrink guard.
         // The old ratio cut rejected answers that invariant accepts: the
         // 2-seed Qwen probe of 2026-08-20 (task ^xx02yn6) measured both raw
@@ -878,9 +878,9 @@ struct SummarizationStageTests {
         let turns = try TranscriptFixtures.makeTurns(5, toolOutputText: Self.largeSpanToolOutput)
         let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: Self.wholeSpanChunkTokens)
         let answer = String(repeating: Self.summarySentence, count: Self.underSpanBudgetAnswerRepeats)
-        let outcome = try await Self.foldOutcome(folding: turns, with: stage, prompt: .default, answering: [answer])
+        let outcome = try await Self.compactionOutcome(compacting: turns, with: stage, prompt: .default, answering: [answer])
 
-        let budget = Self.expectedSummaryByteBudget(foldingOld: Array(turns.prefix(1)))
+        let budget = Self.expectedSummaryByteBudget(compactingOld: Array(turns.prefix(1)))
         #expect(answer.utf8.count <= budget)  // sanity: the answer fits the span budget
         // Sanity: the answer overruns a quarter of the call's content — the
         // old compression-ratio bound — so the old ratio cut would have fired
@@ -891,9 +891,9 @@ struct SummarizationStageTests {
         #expect(Summarization.estimatedTokens(of: answer) > quarterOfContent)
 
         #expect(outcome.prompts.count == 1)  // no condense pass for an answer that fits
-        let folded = try #require(outcome.folded)
-        #expect(folded.summary == answer)
-        #expect(folded.summaryCut == false)
+        let compacted = try #require(outcome.compacted)
+        #expect(compacted.summary == answer)
+        #expect(compacted.summaryCut == false)
     }
 
     @Test("an answer over the span byte budget gets one condense call, and a condensed answer that fits is stored with no cut")
@@ -905,10 +905,10 @@ struct SummarizationStageTests {
         let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: Self.wholeSpanChunkTokens)
         let oversized = String(repeating: Self.summarySentence, count: Self.summarySentenceRepeats)
         let condensedAnswer = "The service reads its configuration from environment variables."
-        let outcome = try await Self.foldOutcome(
-            folding: turns, with: stage, prompt: .default, answering: [oversized, condensedAnswer])
+        let outcome = try await Self.compactionOutcome(
+            compacting: turns, with: stage, prompt: .default, answering: [oversized, condensedAnswer])
 
-        let budget = Self.expectedSummaryByteBudget(foldingOld: Array(turns.prefix(1)))
+        let budget = Self.expectedSummaryByteBudget(compactingOld: Array(turns.prefix(1)))
         #expect(oversized.utf8.count > budget)  // sanity: the first answer overruns
         #expect(condensedAnswer.utf8.count <= budget)  // sanity: the condensed answer fits
 
@@ -918,38 +918,38 @@ struct SummarizationStageTests {
         #expect(condensePrompt.contains("Rewrite it"))
         #expect(condensePrompt.contains("about \(Self.expectedBudgetWords(forBytes: budget)) words"))
 
-        let folded = try #require(outcome.folded)
-        #expect(folded.summary == condensedAnswer)
-        #expect(folded.summaryCut == false)
+        let compacted = try #require(outcome.compacted)
+        #expect(compacted.summary == condensedAnswer)
+        #expect(compacted.summaryCut == false)
     }
 
-    @Test("when the condense pass still overruns, the last-resort cut fires on a sentence boundary and the fold records the cut")
+    @Test("when the condense pass still overruns, the last-resort cut fires on a sentence boundary and the compaction records the cut")
     func aStillOversizedCondenseAnswerIsCutAndTheCutIsRecorded() async throws {
         // The cut is the last resort, and it is recorded when it fires — so a
-        // report can say which folds lost text by position rather than by the
+        // report can say which compactions lost text by position rather than by the
         // model's own choice.
         let turns = try TranscriptFixtures.makeTurns(5, toolOutputText: Self.condensableSpanToolOutput)
         let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: Self.wholeSpanChunkTokens)
         let oversized = String(repeating: Self.summarySentence, count: Self.summarySentenceRepeats)
         let stillOversized = String(repeating: Self.summarySentence, count: Self.summarySentenceRepeats - 2)
-        let outcome = try await Self.foldOutcome(
-            folding: turns, with: stage, prompt: .default, answering: [oversized, stillOversized])
+        let outcome = try await Self.compactionOutcome(
+            compacting: turns, with: stage, prompt: .default, answering: [oversized, stillOversized])
 
-        let budget = Self.expectedSummaryByteBudget(foldingOld: Array(turns.prefix(1)))
+        let budget = Self.expectedSummaryByteBudget(compactingOld: Array(turns.prefix(1)))
         #expect(stillOversized.utf8.count > budget)  // sanity: the condense pass still overruns
 
         #expect(outcome.prompts.count == 2)  // exactly one condense pass, never a second
-        let folded = try #require(outcome.folded)
-        #expect(folded.summaryCut)
-        #expect(folded.summary.utf8.count <= budget)
+        let compacted = try #require(outcome.compacted)
+        #expect(compacted.summaryCut)
+        #expect(compacted.summary.utf8.count <= budget)
         // The cut takes the smaller candidate — the condensed answer — and
         // lands on a sentence boundary, because a summary is what a resumed
         // session reads.
-        #expect(stillOversized.hasPrefix(folded.summary))
-        #expect(folded.summary.hasSuffix("."))
+        #expect(stillOversized.hasPrefix(compacted.summary))
+        #expect(compacted.summary.hasSuffix("."))
     }
 
-    /// The tool-output text that sizes a span so a fold under the stage's own
+    /// The tool-output text that sizes a span so a compaction under the stage's own
     /// ``Summarization/maxChunkTokens`` gives its condense re-ask MORE room
     /// than its map call had.
     ///
@@ -957,7 +957,7 @@ struct SummarizationStageTests {
     /// of its own content, while the condense re-ask is asked for the whole
     /// span byte budget, capped at what a full `maxChunkTokens` of content
     /// earns. A span this size makes that cap the binding one, so the two
-    /// allowances part company — the shape the real-model fold of 2026-09-01
+    /// allowances part company — the shape the real-model compaction of 2026-09-01
     /// measured at a ceiling of 628 against one of 617.
     private static let cappedAllowanceSpanToolOutput = String(repeating: summarySentence, count: 30)
 
@@ -998,19 +998,19 @@ struct SummarizationStageTests {
         // A model writes up to its ceiling. A condense call given MORE room
         // than the answer it must shorten is therefore free to answer with more
         // text than it was given, which is no condensation at all. The
-        // 2026-09-01 real-model fold measured exactly that: a ceiling of 628
+        // 2026-09-01 real-model compaction measured exactly that: a ceiling of 628
         // against an input written under 617, and 3238 bytes out of 3153 in.
         // The stage's own `maxChunkTokens` bounds the condense allowance here,
-        // rather than the 1,000,000 the other tests fold under, because that
+        // rather than the 1,000,000 the other tests compact under, because that
         // cap is what parts the two allowances.
         let turns = try TranscriptFixtures.makeTurns(5, toolOutputText: Self.cappedAllowanceSpanToolOutput)
         let stage = Summarization(keepRecentTurns: 4)
         let oversized = String(repeating: Self.summarySentence, count: Self.cappedAllowanceAnswerRepeats)
         let condensedAnswer = "The service reads its configuration from environment variables."
-        let outcome = try await Self.foldOutcome(
-            folding: turns, with: stage, prompt: .default, answering: [oversized, condensedAnswer])
+        let outcome = try await Self.compactionOutcome(
+            compacting: turns, with: stage, prompt: .default, answering: [oversized, condensedAnswer])
 
-        let budget = Self.expectedSummaryByteBudget(foldingOld: Array(turns.prefix(1)))
+        let budget = Self.expectedSummaryByteBudget(compactingOld: Array(turns.prefix(1)))
         #expect(oversized.utf8.count > budget)  // sanity: the map answer overruns, so the condense rung fires
 
         #expect(outcome.ceilings.count == 2)
@@ -1030,10 +1030,10 @@ struct SummarizationStageTests {
         let turns = try TranscriptFixtures.makeTurns(5, toolOutputText: Self.twiceStatedAnswerSpanToolOutput)
         let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: Self.wholeSpanChunkTokens)
         let scripted = Self.answerStatingEachLineTwice()
-        let outcome = try await Self.foldOutcome(
-            folding: turns, with: stage, prompt: .default, answering: [scripted.answer])
+        let outcome = try await Self.compactionOutcome(
+            compacting: turns, with: stage, prompt: .default, answering: [scripted.answer])
 
-        let budget = Self.expectedSummaryByteBudget(foldingOld: Array(turns.prefix(1)))
+        let budget = Self.expectedSummaryByteBudget(compactingOld: Array(turns.prefix(1)))
         // Sanity: the answer as written really overruns the budget, and its
         // distinct lines really fit it, so the free repair is what decides.
         #expect(
@@ -1044,57 +1044,57 @@ struct SummarizationStageTests {
             "the distinct lines hold \(scripted.distinct.utf8.count) bytes against a \(budget)-byte budget")
 
         #expect(outcome.prompts.count == 1)
-        let folded = try #require(outcome.folded)
-        #expect(folded.summary == scripted.distinct)
-        #expect(folded.summaryCut == false)
+        let compacted = try #require(outcome.compacted)
+        #expect(compacted.summary == scripted.distinct)
+        #expect(compacted.summaryCut == false)
     }
 
-    @Test("a fold that already re-asked about a repetition loop does not also re-ask to condense")
-    func aFoldSpendsOneRecoveryGenerationAndNoMore() async throws {
-        // The ladder has two recovery rungs, and a fold spends ONE generation
+    @Test("a compaction that already re-asked about a repetition loop does not also re-ask to condense")
+    func aCompactionSpendsOneRecoveryGenerationAndNoMore() async throws {
+        // The ladder has two recovery rungs, and a compaction spends ONE generation
         // across both of them. The re-asked answer already carries the
         // strongest correction the stage states; asking a third time about the
         // same material buys a generation and no information. The 2026-09-01
-        // fold measured the third call answering with a repetition loop LONGER
-        // than the text it had to shorten, which the fold then discarded.
+        // compaction measured the third call answering with a repetition loop LONGER
+        // than the text it had to shorten, which the compaction then discarded.
         let turns = try TranscriptFixtures.makeTurns(5, toolOutputText: Self.condensableSpanToolOutput)
         let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: Self.wholeSpanChunkTokens)
         let oversized = String(repeating: Self.summarySentence, count: Self.summarySentenceRepeats)
-        let outcome = try await Self.foldOutcome(
-            folding: turns,
+        let outcome = try await Self.compactionOutcome(
+            compacting: turns,
             with: stage,
             prompt: .default,
             answering: [Self.loopedAnswer(markedBy: { _ in "- " }), oversized]
         )
 
-        let budget = Self.expectedSummaryByteBudget(foldingOld: Array(turns.prefix(1)))
+        let budget = Self.expectedSummaryByteBudget(compactingOld: Array(turns.prefix(1)))
         #expect(oversized.utf8.count > budget)  // sanity: the re-asked answer overruns
 
         #expect(outcome.prompts.count == 2)
         #expect(try #require(outcome.prompts.last).contains(Summarization.repetitionRetryDirective))
-        let folded = try #require(outcome.folded)
-        #expect(folded.summaryCut)
-        #expect(oversized.hasPrefix(folded.summary))
+        let compacted = try #require(outcome.compacted)
+        #expect(compacted.summaryCut)
+        #expect(oversized.hasPrefix(compacted.summary))
     }
 
     @Test("a condense answer that repeats one line over and over is discarded, and the summary already in hand is kept")
     func aRepetitiveCondenseAnswerIsDiscarded() async throws {
         // Every other rung tests its answer for a repetition loop. This one
-        // must too: a loop states almost nothing, so a fold that stored it
+        // must too: a loop states almost nothing, so a compaction that stored it
         // would trade a real summary for a line written over and over.
         let turns = try TranscriptFixtures.makeTurns(5, toolOutputText: Self.condensableSpanToolOutput)
         let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: Self.wholeSpanChunkTokens)
         let oversized = String(repeating: Self.summarySentence, count: Self.summarySentenceRepeats)
         let looped = Self.loopedAnswer(markedBy: { _ in "- " })
-        let outcome = try await Self.foldOutcome(
-            folding: turns, with: stage, prompt: .default, answering: [oversized, looped])
+        let outcome = try await Self.compactionOutcome(
+            compacting: turns, with: stage, prompt: .default, answering: [oversized, looped])
 
         #expect(looped.utf8.count < oversized.utf8.count)  // sanity: the loop is the smaller candidate
 
         #expect(outcome.prompts.count == 2)
-        let folded = try #require(outcome.folded)
-        #expect(!folded.summary.contains(Self.loopedAnswerLine))
-        #expect(oversized.hasPrefix(folded.summary))
+        let compacted = try #require(outcome.compacted)
+        #expect(!compacted.summary.contains(Self.loopedAnswerLine))
+        #expect(oversized.hasPrefix(compacted.summary))
     }
 
     @Test(
@@ -1110,10 +1110,10 @@ struct SummarizationStageTests {
         let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: Self.wholeSpanChunkTokens)
         let sections = (1...Self.sectionedAnswerSectionCount).map { Self.sectionedAnswerSection(index: $0) }
         let answer = sections.joined(separator: "\n")
-        let outcome = try await Self.foldOutcome(
-            folding: turns, with: stage, prompt: .default, answering: [answer, answer])
+        let outcome = try await Self.compactionOutcome(
+            compacting: turns, with: stage, prompt: .default, answering: [answer, answer])
 
-        let budget = Self.expectedSummaryByteBudget(foldingOld: Array(turns.prefix(1)))
+        let budget = Self.expectedSummaryByteBudget(compactingOld: Array(turns.prefix(1)))
         let kept = sections.prefix(Self.keptSectionCount).joined(separator: "\n")
         let oneSectionMore = sections.prefix(Self.keptSectionCount + 1).joined(separator: "\n")
         // Sanity: the kept sections really fit the budget, and one more really
@@ -1121,9 +1121,9 @@ struct SummarizationStageTests {
         #expect(kept.utf8.count <= budget)
         #expect(oneSectionMore.utf8.count > budget)
 
-        let folded = try #require(outcome.folded)
-        #expect(folded.summary == kept)
-        #expect(folded.summaryCut)
+        let compacted = try #require(outcome.compacted)
+        #expect(compacted.summary == kept)
+        #expect(compacted.summaryCut)
     }
 
     @Test("when the sections a cut keeps run up to the last header, the cut keeps what fits of the final section rather than dropping it")
@@ -1132,30 +1132,30 @@ struct SummarizationStageTests {
         // section a LATER section follows — the `^51e9dyq` defect. There is no
         // later section to protect when the overrun sits in the final one, so
         // aligning there drops a whole section to shed a few bytes. The
-        // real-model fold of 2026-09-01 measured that trade: 906 bytes shed to
+        // real-model compaction of 2026-09-01 measured that trade: 906 bytes shed to
         // stay inside a budget the text overran by 41, and the fact stated last
         // in the span went with them.
         let turns = try TranscriptFixtures.makeTurns(5, toolOutputText: Self.sectionedCutSpanToolOutput)
         let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: Self.wholeSpanChunkTokens)
         let sections = (1...(Self.keptSectionCount + 1)).map { Self.sectionedAnswerSection(index: $0) }
         let answer = sections.joined(separator: "\n")
-        let outcome = try await Self.foldOutcome(
-            folding: turns, with: stage, prompt: .default, answering: [answer, answer])
+        let outcome = try await Self.compactionOutcome(
+            compacting: turns, with: stage, prompt: .default, answering: [answer, answer])
 
-        let budget = Self.expectedSummaryByteBudget(foldingOld: Array(turns.prefix(1)))
+        let budget = Self.expectedSummaryByteBudget(compactingOld: Array(turns.prefix(1)))
         let whole = sections.prefix(Self.keptSectionCount).joined(separator: "\n")
         // Sanity: the whole sections really fit, and the final section really
         // does not, so the cut point inside that final section is observable.
         #expect(whole.utf8.count <= budget)
         #expect(answer.utf8.count > budget)
 
-        let folded = try #require(outcome.folded)
-        #expect(folded.summaryCut)
-        #expect(folded.summary.utf8.count <= budget)
-        #expect(answer.hasPrefix(folded.summary))
+        let compacted = try #require(outcome.compacted)
+        #expect(compacted.summaryCut)
+        #expect(compacted.summary.utf8.count <= budget)
+        #expect(answer.hasPrefix(compacted.summary))
         #expect(
-            folded.summary.utf8.count > whole.utf8.count,
-            "the cut stored \(folded.summary.utf8.count) bytes against \(whole.utf8.count) of whole sections"
+            compacted.summary.utf8.count > whole.utf8.count,
+            "the cut stored \(compacted.summary.utf8.count) bytes against \(whole.utf8.count) of whole sections"
         )
     }
 
@@ -1170,17 +1170,17 @@ struct SummarizationStageTests {
             "1. Intent — " + String(repeating: Self.summarySentence, count: Self.summarySentenceRepeats)
         let answer = firstSection + "\n2. Next steps — none."
         let turns = try TranscriptFixtures.makeTurns(5, toolOutputText: Self.condensableSpanToolOutput)
-        let outcome = try await Self.foldOutcome(
-            folding: turns, with: stage, prompt: .default, answering: [answer, answer])
+        let outcome = try await Self.compactionOutcome(
+            compacting: turns, with: stage, prompt: .default, answering: [answer, answer])
 
-        let budget = Self.expectedSummaryByteBudget(foldingOld: Array(turns.prefix(1)))
+        let budget = Self.expectedSummaryByteBudget(compactingOld: Array(turns.prefix(1)))
         #expect(firstSection.utf8.count > budget)  // sanity: not even one whole section fits
 
-        let folded = try #require(outcome.folded)
-        #expect(folded.summaryCut)
-        #expect(answer.hasPrefix(folded.summary))
-        #expect(folded.summary.hasSuffix("."))
-        #expect(folded.summary.utf8.count <= budget)
+        let compacted = try #require(outcome.compacted)
+        #expect(compacted.summaryCut)
+        #expect(answer.hasPrefix(compacted.summary))
+        #expect(compacted.summary.hasSuffix("."))
+        #expect(compacted.summary.utf8.count <= budget)
     }
 
     @Test("a short answer is stored word for word, with no condense pass and no cut")
@@ -1189,17 +1189,17 @@ struct SummarizationStageTests {
         // the span budget gets it stored exactly as it wrote it.
         let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: Self.wholeSpanChunkTokens)
         let answer = "The batch size is a setting rather than a constant."
-        let outcome = try await Self.foldOutcome(
-            folding: try TranscriptFixtures.makeTurns(5, toolOutputText: Self.condensableSpanToolOutput),
+        let outcome = try await Self.compactionOutcome(
+            compacting: try TranscriptFixtures.makeTurns(5, toolOutputText: Self.condensableSpanToolOutput),
             with: stage,
             prompt: .default,
             answering: [answer]
         )
 
         #expect(outcome.prompts.count == 1)
-        let folded = try #require(outcome.folded)
-        #expect(folded.summary == answer)
-        #expect(folded.summaryCut == false)
+        let compacted = try #require(outcome.compacted)
+        #expect(compacted.summary == answer)
+        #expect(compacted.summaryCut == false)
     }
 
     @Test("an answer with no sentence boundary is cut at a word boundary rather than through a word")
@@ -1211,18 +1211,18 @@ struct SummarizationStageTests {
         let wordRepeats = 60
         let answer = String(repeating: word, count: wordRepeats)
         let turns = try TranscriptFixtures.makeTurns(5)
-        let outcome = try await Self.foldOutcome(
-            folding: turns, with: stage, prompt: .default, answering: [answer, answer])
+        let outcome = try await Self.compactionOutcome(
+            compacting: turns, with: stage, prompt: .default, answering: [answer, answer])
 
-        let budget = Self.expectedSummaryByteBudget(foldingOld: Array(turns.prefix(1)))
-        let folded = try #require(outcome.folded)
-        #expect(folded.summaryCut)
-        #expect(folded.summary.utf8.count <= budget)
-        #expect(answer.hasPrefix(folded.summary))
-        #expect(folded.summary.hasSuffix(word.trimmingCharacters(in: .whitespaces)))
+        let budget = Self.expectedSummaryByteBudget(compactingOld: Array(turns.prefix(1)))
+        let compacted = try #require(outcome.compacted)
+        #expect(compacted.summaryCut)
+        #expect(compacted.summary.utf8.count <= budget)
+        #expect(answer.hasPrefix(compacted.summary))
+        #expect(compacted.summary.hasSuffix(word.trimmingCharacters(in: .whitespaces)))
     }
 
-    @Test("an answer the cut finds no boundary in still carries text, so a fold never stores nothing")
+    @Test("an answer the cut finds no boundary in still carries text, so a compaction never stores nothing")
     func theCutNeverStoresAnEmptySummary() async throws {
         // An empty summary erases the span it replaced — the defect `^bgxtdk3`
         // measured on 19 of 19 gated seeds. A bound that could produce one
@@ -1232,16 +1232,16 @@ struct SummarizationStageTests {
         let unbrokenRunLength = 900
         let answer = String(repeating: "x", count: unbrokenRunLength)
         let turns = try TranscriptFixtures.makeTurns(5)
-        let outcome = try await Self.foldOutcome(
-            folding: turns, with: stage, prompt: .default, answering: [answer, answer])
+        let outcome = try await Self.compactionOutcome(
+            compacting: turns, with: stage, prompt: .default, answering: [answer, answer])
 
-        let budget = Self.expectedSummaryByteBudget(foldingOld: Array(turns.prefix(1)))
-        let folded = try #require(outcome.folded)
-        #expect(!folded.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        #expect(folded.summary.utf8.count <= budget)
+        let budget = Self.expectedSummaryByteBudget(compactingOld: Array(turns.prefix(1)))
+        let compacted = try #require(outcome.compacted)
+        #expect(!compacted.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        #expect(compacted.summary.utf8.count <= budget)
     }
 
-    @Test("a chunked fold hands each map call's answer to the reduce round whole — no per-call cut")
+    @Test("a chunked compaction hands each map call's answer to the reduce round whole — no per-call cut")
     func mapCallAnswersReachTheReduceRoundUncut() async throws {
         // The per-call ratio cut is the arithmetic task ^xx02yn6 removed: it
         // trimmed answers by position that the shrink invariant would accept.
@@ -1255,12 +1255,12 @@ struct SummarizationStageTests {
         let mapAnswerA = "A: " + String(repeating: Self.summarySentence, count: Self.summarySentenceRepeats)
         let mapAnswerB = "B: " + String(repeating: Self.summarySentence, count: Self.summarySentenceRepeats)
         let finalAnswer = "final-combined-summary"
-        let outcome = try await Self.foldOutcome(
-            folding: turns, with: stage, prompt: .default, answering: [mapAnswerA, mapAnswerB, finalAnswer])
+        let outcome = try await Self.compactionOutcome(
+            compacting: turns, with: stage, prompt: .default, answering: [mapAnswerA, mapAnswerB, finalAnswer])
 
         // Sanity: the final answer fits the span budget, so no condense pass
         // follows the reduce round and the call count stays observable.
-        let budget = Self.expectedSummaryByteBudget(foldingOld: Array(turns.prefix(2)))
+        let budget = Self.expectedSummaryByteBudget(compactingOld: Array(turns.prefix(2)))
         #expect(finalAnswer.utf8.count <= budget)
 
         // 2 map calls + 1 reduce call, and the reduce call reads both map
@@ -1270,11 +1270,11 @@ struct SummarizationStageTests {
         let reducePrompt = outcome.prompts[2]
         #expect(reducePrompt.contains(mapAnswerA))
         #expect(reducePrompt.contains(mapAnswerB))
-        #expect(try #require(outcome.folded).summary == finalAnswer)
+        #expect(try #require(outcome.compacted).summary == finalAnswer)
     }
 
-    @Test("every call a chunked fold makes is bounded by its own content, the reduce round over the chunk summaries included")
-    func everyCallOfAChunkedFoldIsBounded() async throws {
+    @Test("every call a chunked compaction makes is bounded by its own content, the reduce round over the chunk summaries included")
+    func everyCallOfAChunkedCompactionIsBounded() async throws {
         let instructions = TranscriptFixtures.makeInstructions()
         let turns = try (1...6).map { try TranscriptFixtures.makeTurn(index: $0, toolOutputText: "result-\($0)") }
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
@@ -1335,12 +1335,12 @@ struct SummarizationStageTests {
         // call's answer down to its own allowance. A chunk of `maxChunkTokens`
         // therefore yields a summary of `ratio * maxChunkTokens`, and
         // `chunkStrings` can pair two of those under `maxChunkTokens` for any
-        // ratio at or below a half — so at the default 0.25 a fold cannot reach
+        // ratio at or below a half — so at the default 0.25 a compaction cannot reach
         // the no-progress fallback through a chunk this size at all. (It still
         // reaches it through a chunk SMALLER than
         // `Summarization.minimumSummaryTokens`, where the allowance floor
         // exceeds the chunk ceiling — the shape
-        // `reduceFallsBackToFlatCallWhenNoGroupingProgressIsPossible` folds.)
+        // `reduceFallsBackToFlatCallWhenNoGroupingProgressIsPossible` compacts.)
         // The ratio is what this test needs to be doing the work, since the
         // bound it asserts is the cap rather than the floor.
         let pairingDefeatingRatio = 0.6
@@ -1422,7 +1422,7 @@ struct SummarizationStageTests {
         #expect(ceiling - stage.reasoningTokenHeadroom < unbounded)
     }
 
-    // MARK: - A repetition loop in a summarizer's answer is never stored as the fold's memory
+    // MARK: - A repetition loop in a summarizer's answer is never stored as the compaction's memory
 
     /// The one line a degenerate answer writes over and over.
     ///
@@ -1462,11 +1462,11 @@ struct SummarizationStageTests {
         return ([loopedAnswerOpening] + copies).joined(separator: "\n")
     }
 
-    /// The stage and turns every repetition test folds with: a span whose byte
+    /// The stage and turns every repetition test compacts with: a span whose byte
     /// budget is far wider than any answer below, so the size ladder never
     /// fires and the call count measures the repetition re-ask alone.
     ///
-    /// - Returns: The turns to fold, and the stage to fold them with.
+    /// - Returns: The turns to compact, and the stage to compact them with.
     /// - Throws: Whatever the fixture build throws.
     private static func repetitionFixture() throws -> (turns: [[Transcript.Entry]], stage: Summarization) {
         (
@@ -1475,15 +1475,15 @@ struct SummarizationStageTests {
         )
     }
 
-    @Test("a summarizer answer that repeats one line earns one re-ask, and the re-asked answer is what the fold stores")
+    @Test("a summarizer answer that repeats one line earns one re-ask, and the re-asked answer is what the compaction stores")
     func aLoopedAnswerEarnsOneReAsk() async throws {
-        // The property this guards: a fold is paid to carry facts forward, and
+        // The property this guards: a compaction is paid to carry facts forward, and
         // an answer that writes one line over and over carries none. The stage
         // used to store it, because it checked only that the answer was not
         // empty and not too large.
         let fixture = try Self.repetitionFixture()
-        let outcome = try await Self.foldOutcome(
-            folding: fixture.turns,
+        let outcome = try await Self.compactionOutcome(
+            compacting: fixture.turns,
             with: fixture.stage,
             prompt: .default,
             answering: [Self.loopedAnswer(markedBy: { _ in "- " }), Self.unrepetitiveAnswer]
@@ -1496,8 +1496,8 @@ struct SummarizationStageTests {
         // question rather than editing its own broken answer.
         #expect(try Self.condensedContent(of: reAsk) == Self.condensedContent(of: try #require(outcome.prompts.first)))
 
-        let folded = try #require(outcome.folded)
-        #expect(folded.summary == Self.unrepetitiveAnswer)
+        let compacted = try #require(outcome.compacted)
+        #expect(compacted.summary == Self.unrepetitiveAnswer)
     }
 
     @Test("a repetition loop that renumbers each copy is still caught, because a list marker is not content")
@@ -1506,46 +1506,46 @@ struct SummarizationStageTests {
         // …", so no two lines were byte-identical. Comparing the lines under
         // their list markers is what sees one line written eleven times.
         let fixture = try Self.repetitionFixture()
-        let outcome = try await Self.foldOutcome(
-            folding: fixture.turns,
+        let outcome = try await Self.compactionOutcome(
+            compacting: fixture.turns,
             with: fixture.stage,
             prompt: .default,
             answering: [Self.loopedAnswer(markedBy: { "\($0). " }), Self.unrepetitiveAnswer]
         )
 
         #expect(outcome.prompts.count == 2)
-        #expect(try #require(outcome.folded).summary == Self.unrepetitiveAnswer)
+        #expect(try #require(outcome.compacted).summary == Self.unrepetitiveAnswer)
     }
 
-    @Test("when the re-ask loops as well, the fold stores the first answer with its repeated lines removed")
+    @Test("when the re-ask loops as well, the compaction stores the first answer with its repeated lines removed")
     func aSecondLoopedAnswerIsStoredWithoutItsRepeats() async throws {
-        // The stage never asks a third time — the fold's call budget is one
+        // The stage never asks a third time — the compaction's call budget is one
         // map call and at most one recovery call for each rung of the ladder.
         // What it stores instead carries every line the model actually wrote,
         // once, so the repeats occupy none of the stored summary's budget.
         let fixture = try Self.repetitionFixture()
         let looped = Self.loopedAnswer(markedBy: { _ in "- " })
-        let outcome = try await Self.foldOutcome(
-            folding: fixture.turns,
+        let outcome = try await Self.compactionOutcome(
+            compacting: fixture.turns,
             with: fixture.stage,
             prompt: .default,
             answering: [looped, Self.loopedAnswer(markedBy: { "\($0). " })]
         )
 
         #expect(outcome.prompts.count == 2)
-        let folded = try #require(outcome.folded)
-        #expect(folded.summary == "\(Self.loopedAnswerOpening)\n- \(Self.loopedAnswerLine)")
-        #expect(looped.utf8.count > folded.summary.utf8.count)
+        let compacted = try #require(outcome.compacted)
+        #expect(compacted.summary == "\(Self.loopedAnswerOpening)\n- \(Self.loopedAnswerLine)")
+        #expect(looped.utf8.count > compacted.summary.utf8.count)
     }
 
     @Test("an answer that repeats no line is stored as it stands, and costs no second call")
     func anUnrepetitiveAnswerIsNotReAsked() async throws {
         let fixture = try Self.repetitionFixture()
-        let outcome = try await Self.foldOutcome(
-            folding: fixture.turns, with: fixture.stage, prompt: .default, answering: [Self.unrepetitiveAnswer])
+        let outcome = try await Self.compactionOutcome(
+            compacting: fixture.turns, with: fixture.stage, prompt: .default, answering: [Self.unrepetitiveAnswer])
 
         #expect(outcome.prompts.count == 1)
-        #expect(try #require(outcome.folded).summary == Self.unrepetitiveAnswer)
+        #expect(try #require(outcome.compacted).summary == Self.unrepetitiveAnswer)
     }
 
     @Test("a short answer that says the same thing twice is not a loop, so it costs no re-ask")
@@ -1555,11 +1555,11 @@ struct SummarizationStageTests {
         // nothing.
         let fixture = try Self.repetitionFixture()
         let terse = "\(Self.loopedAnswerLine)\n\(Self.loopedAnswerLine)"
-        let outcome = try await Self.foldOutcome(
-            folding: fixture.turns, with: fixture.stage, prompt: .default, answering: [terse])
+        let outcome = try await Self.compactionOutcome(
+            compacting: fixture.turns, with: fixture.stage, prompt: .default, answering: [terse])
 
         #expect(outcome.prompts.count == 1)
-        #expect(try #require(outcome.folded).summary == terse)
+        #expect(try #require(outcome.compacted).summary == terse)
     }
 
     // MARK: - Reasoning headroom: a call's ceiling holds the think block as well as the answer
@@ -1629,10 +1629,10 @@ struct SummarizationStageTests {
         #expect(Summarization().reasoningTokenHeadroom >= GatedRealModelBudget.responseTokenCeiling)
     }
 
-    // MARK: - Nothing to fold: Summarization is a no-op (Compactor's fallback path)
+    // MARK: - Nothing to compact: Summarization is a no-op (Compactor's fallback path)
 
-    @Test("when every turn is inside the recency window, there is no old span to fold: Summarization returns nil")
-    func nothingToFoldReturnsNil() async throws {
+    @Test("when every turn is inside the recency window, there is no old span to compact: Summarization returns nil")
+    func nothingToCompactReturnsNil() async throws {
         let instructions = TranscriptFixtures.makeInstructions()
         let turns = try TranscriptFixtures.makeTurns(2)
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
@@ -1640,7 +1640,7 @@ struct SummarizationStageTests {
         let summarizer = ScriptedSummarizer(responses: [])
         let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: 1_000_000)
 
-        let folded = try await stage.apply(
+        let compacted = try await stage.apply(
             transcript,
             prompt: .default,
             tokensBefore: Compactor.estimatedTokenCount(of: transcript),
@@ -1648,7 +1648,7 @@ struct SummarizationStageTests {
             summarizer: summarizer
         )
 
-        #expect(folded == nil)
+        #expect(compacted == nil)
         #expect(summarizer.receivedPrompts.isEmpty)
     }
 
@@ -1673,9 +1673,9 @@ struct SummarizationStageTests {
         }
     }
 
-    // MARK: - An empty summarizer answer is a fold failure
+    // MARK: - An empty summarizer answer is a compaction failure
 
-    @Test("a summarizer answer with no text is reported as a fold failure, never stored as the fold's summary")
+    @Test("a summarizer answer with no text is reported as a compaction failure, never stored as the compaction's summary")
     func emptySummarizerAnswerIsReported() async throws {
         let instructions = TranscriptFixtures.makeInstructions()
         let turns = try TranscriptFixtures.makeTurns(6)
@@ -1715,7 +1715,7 @@ struct SummarizationStageTests {
         }
     }
 
-    @Test("an empty answer from the reduce round is reported too, so every call of a chunked fold is checked")
+    @Test("an empty answer from the reduce round is reported too, so every call of a chunked compaction is checked")
     func emptyReduceRoundAnswerIsReported() async throws {
         let instructions = TranscriptFixtures.makeInstructions()
         let turns = try (1...6).map { try TranscriptFixtures.makeTurn(index: $0, toolOutputText: "result-\($0)") }
@@ -1741,24 +1741,24 @@ struct SummarizationStageTests {
 
     // MARK: - Compactor-level integration: Summarization wired in as the final stage
 
-    /// How many turns ``makeModelAssistedFoldFixture()`` builds.
-    private static let foldFixtureTurnCount = 6
+    /// How many turns ``makeModelAssistedCompactionFixture()`` builds.
+    private static let compactionFixtureTurnCount = 6
 
     /// How many times each of a fixture turn's three text fields repeats its
     /// content phrase — large enough that one turn on its own exceeds
     /// ``Summarization/maxChunkTokens``'s default, so the default chunking
     /// gives each old turn a summarizer call of its own.
-    private static let foldFixtureRepeatsPerTurn = 400
+    private static let compactionFixtureRepeatsPerTurn = 400
 
-    /// The context-window size ``makeModelAssistedFoldFixture()``'s budget is
+    /// The context-window size ``makeModelAssistedCompactionFixture()``'s budget is
     /// stated against — far larger than the fixture, so the target fraction
     /// alone decides what the pipeline has to do.
-    private static let foldFixtureBudgetLimit = 1_000_000
+    private static let compactionFixtureBudgetLimit = 1_000_000
 
-    /// The fraction of ``foldFixtureBudgetLimit`` a fold is triggered at —
+    /// The fraction of ``compactionFixtureBudgetLimit`` a compaction is triggered at —
     /// irrelevant to these tests, which call `compact` directly rather than
     /// wait for a trigger, but a ``TokenBudget`` requires one.
-    private static let foldFixtureTrigger = 0.80
+    private static let compactionFixtureTrigger = 0.80
 
     /// A ``Summarization/maxChunkTokens`` wide enough to hold any fixture span
     /// here in a single summarizer call — the non-default setting a test uses
@@ -1771,39 +1771,39 @@ struct SummarizationStageTests {
     /// the pipeline always falls through to ``Summarization``.
     ///
     /// Each turn's text names its own index, so a test can tell from a
-    /// summarizer's assembled prompt which turns the fold condensed.
+    /// summarizer's assembled prompt which turns the compaction condensed.
     ///
     /// - Returns: The turns in order, the transcript over them, and the budget
-    ///   to fold it against.
-    private static func makeModelAssistedFoldFixture() throws -> (
+    ///   to compact it against.
+    private static func makeModelAssistedCompactionFixture() throws -> (
         turns: [[Transcript.Entry]], transcript: Transcript, budget: TokenBudget
     ) {
-        try makeSizedFoldFixture(phrase: "large content", repeatsPerText: foldFixtureRepeatsPerTurn)
+        try makeSizedCompactionFixture(phrase: "large content", repeatsPerText: compactionFixtureRepeatsPerTurn)
     }
 
-    /// The one construction every sized fold fixture here shares: a header,
-    /// ``foldFixtureTurnCount`` turns whose three text fields each repeat
+    /// The one construction every sized compaction fixture here shares: a header,
+    /// ``compactionFixtureTurnCount`` turns whose three text fields each repeat
     /// `"<phrase> turn-<index> "` `repeatsPerText` times, and the usual
-    /// fold-forcing budget. The phrase names the fixture in a summarizer's
+    /// compaction-forcing budget. The phrase names the fixture in a summarizer's
     /// assembled prompt, and the repeat count sets the span's size.
     ///
     /// - Parameters:
     ///   - phrase: The text each turn's fields open with.
     ///   - repeatsPerText: How many times each field repeats its phrase.
     /// - Returns: The turns in order, the transcript over them, and the budget
-    ///   to fold it against.
+    ///   to compact it against.
     /// - Throws: Whatever the fixture construction throws.
-    private static func makeSizedFoldFixture(phrase: String, repeatsPerText: Int) throws -> (
+    private static func makeSizedCompactionFixture(phrase: String, repeatsPerText: Int) throws -> (
         turns: [[Transcript.Entry]], transcript: Transcript, budget: TokenBudget
     ) {
         let instructions = TranscriptFixtures.makeInstructions()
-        let turns = try (1...foldFixtureTurnCount).map { index -> [Transcript.Entry] in
+        let turns = try (1...compactionFixtureTurnCount).map { index -> [Transcript.Entry] in
             let text = String(repeating: "\(phrase) turn-\(index) ", count: repeatsPerText)
             return try TranscriptFixtures.makeTurn(
                 index: index, promptText: text, toolOutputText: text, responseText: text)
         }
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
-        return (turns, transcript, makeFoldForcingBudget(for: transcript))
+        return (turns, transcript, makeCompactionForcingBudget(for: transcript))
     }
 
     /// The small-span fixture the last-resort cut is exercised over through
@@ -1812,19 +1812,19 @@ struct SummarizationStageTests {
     ///
     /// Small on purpose: the span's byte budget sits far under every scripted
     /// answer, and under the ``Summarization/minimumSummaryTokens`` floor's
-    /// own size, so a fold of this span can only shrink through the recovery
+    /// own size, so a compaction of this span can only shrink through the recovery
     /// ladder — and the ladder's last step, the cut, is what the tests over
     /// this fixture observe.
     ///
     /// - Returns: The turns in order, the transcript over them, and the budget
-    ///   to fold it against.
+    ///   to compact it against.
     /// - Throws: Whatever the fixture construction throws.
-    private static func makeSmallSpanFoldFixture() throws -> (
+    private static func makeSmallSpanCompactionFixture() throws -> (
         turns: [[Transcript.Entry]], transcript: Transcript, budget: TokenBudget
     ) {
-        let turns = try TranscriptFixtures.makeTurns(foldFixtureTurnCount)
+        let turns = try TranscriptFixtures.makeTurns(compactionFixtureTurnCount)
         let transcript = Transcript(entries: [TranscriptFixtures.makeInstructions()] + turns.flatMap { $0 })
-        return (turns, transcript, makeFoldForcingBudget(for: transcript))
+        return (turns, transcript, makeCompactionForcingBudget(for: transcript))
     }
 
     /// The budget that forces `transcript` all the way through to
@@ -1833,36 +1833,36 @@ struct SummarizationStageTests {
     /// under.
     ///
     /// - Parameter transcript: The transcript the target is measured against.
-    /// - Returns: The budget to fold it with.
-    private static func makeFoldForcingBudget(for transcript: Transcript) -> TokenBudget {
+    /// - Returns: The budget to compact it with.
+    private static func makeCompactionForcingBudget(for transcript: Transcript) -> TokenBudget {
         let afterBoth = Compactor.estimatedTokenCount(of: TurnTruncation().apply(ToolOutputElision().apply(transcript)))
         let targetShareOfDeterministicFloor = 2
         return TokenBudget(
-            limit: foldFixtureBudgetLimit,
-            trigger: foldFixtureTrigger,
-            target: Double(afterBoth / targetShareOfDeterministicFloor) / Double(foldFixtureBudgetLimit)
+            limit: compactionFixtureBudgetLimit,
+            trigger: compactionFixtureTrigger,
+            target: Double(afterBoth / targetShareOfDeterministicFloor) / Double(compactionFixtureBudgetLimit)
         )
     }
 
-    // MARK: - Background-runs fold fixtures (task ^64f3hnv)
+    // MARK: - Background-runs compaction fixtures (task ^64f3hnv)
 
     /// How many runs ``makeBackgroundRuns()`` tracks — the shape task ^64f3hnv
     /// measured: ten runs with an eight-byte op and no progress render 973
-    /// bytes, a cost the fold pays per run rather than per span byte.
+    /// bytes, a cost the compaction pays per run rather than per span byte.
     private static let backgroundRunCount = 10
 
-    /// How many times each text field of a ``makeBackgroundRunsFoldFixture()``
-    /// turn repeats its phrase — sized so the folded span comes to roughly 580
+    /// How many times each text field of a ``makeBackgroundRunsCompactionFixture()``
+    /// turn repeats its phrase — sized so the compacted span comes to roughly 580
     /// estimated tokens: large enough that the retention bound sits under the
     /// span, and small enough that the ten background runs' rendering eats the
     /// whole margin between the two.
     private static let backgroundRunsFixtureRepeatsPerText = 20
 
     /// How many times each text field of an
-    /// ``makeOverwhelmedSpanFoldFixture()`` turn repeats its phrase — sized so
+    /// ``makeOverwhelmedSpanCompactionFixture()`` turn repeats its phrase — sized so
     /// the span's content bytes stay UNDER the background runs' rendering plus the
     /// shrink margin, which drives the span byte budget to zero or below: the
-    /// geometry where no summary of any length can make the fold shrink, and
+    /// geometry where no summary of any length can make the compaction shrink, and
     /// only the did-not-shrink guard can answer.
     private static let overwhelmedSpanRepeatsPerText = 8
 
@@ -1886,38 +1886,38 @@ struct SummarizationStageTests {
         }
     }
 
-    /// The fixture `aFoldWithBackgroundRunsOverAModestSpanIsStillApplied` folds: a
-    /// header, six MODEST turns, and the usual fold-forcing budget. Modest is
+    /// The fixture `aCompactionWithBackgroundRunsOverAModestSpanIsStillApplied` compactions: a
+    /// header, six MODEST turns, and the usual compaction-forcing budget. Modest is
     /// the point — the span is small enough that the background runs' rendering
     /// spends the whole retention margin, and large enough that a summary cut
     /// down for that rendering still shrinks the transcript.
     ///
     /// - Returns: The turns in order, the transcript over them, and the budget
-    ///   to fold it against.
+    ///   to compact it against.
     /// - Throws: Whatever the fixture construction throws.
-    private static func makeBackgroundRunsFoldFixture() throws -> (
+    private static func makeBackgroundRunsCompactionFixture() throws -> (
         turns: [[Transcript.Entry]], transcript: Transcript, budget: TokenBudget
     ) {
-        try makeSizedFoldFixture(phrase: "modest span", repeatsPerText: backgroundRunsFixtureRepeatsPerText)
+        try makeSizedCompactionFixture(phrase: "modest span", repeatsPerText: backgroundRunsFixtureRepeatsPerText)
     }
 
     /// The fixture whose span the background runs' rendering overwhelms: small
     /// enough that the rendering alone reaches the retention bound, and still
     /// larger than the rendering — so a cut that (wrongly) emptied the summary
-    /// would make the fold shrink and be applied carrying no text at all.
+    /// would make the compaction shrink and be applied carrying no text at all.
     ///
     /// - Returns: The turns in order, the transcript over them, and the budget
-    ///   to fold it against.
+    ///   to compact it against.
     /// - Throws: Whatever the fixture construction throws.
-    private static func makeOverwhelmedSpanFoldFixture() throws -> (
+    private static func makeOverwhelmedSpanCompactionFixture() throws -> (
         turns: [[Transcript.Entry]], transcript: Transcript, budget: TokenBudget
     ) {
-        try makeSizedFoldFixture(phrase: "tiny span", repeatsPerText: overwhelmedSpanRepeatsPerText)
+        try makeSizedCompactionFixture(phrase: "tiny span", repeatsPerText: overwhelmedSpanRepeatsPerText)
     }
 
     @Test("Compactor.compact wires Summarization in as the final stage when the deterministic stages alone aren't enough")
     func compactorWiresInSummarizationAsFinalStage() async throws {
-        let (turns, transcript, budget) = try Self.makeModelAssistedFoldFixture()
+        let (turns, transcript, budget) = try Self.makeModelAssistedCompactionFixture()
         let tokensBefore = Compactor.estimatedTokenCount(of: transcript)
 
         // The two old turns' content comfortably exceeds Summarization's
@@ -1965,19 +1965,19 @@ struct SummarizationStageTests {
     }
 
     @Test(
-        "a fold of a span smaller than every answer is still applied: the last-resort cut bounds the summary under the span, and the result records the cut"
+        "a compaction of a span smaller than every answer is still applied: the last-resort cut bounds the summary under the span, and the result records the cut"
     )
     func compactReportsTheLastResortCut() async throws {
-        // The trim fires only when the fold would otherwise fail to shrink,
+        // The trim fires only when the compaction would otherwise fail to shrink,
         // and the report records when it fires (task ^xx02yn6). A span this
         // small earns a byte budget far under every candidate answer, so the
         // recovery ladder runs to its last step and `CompactionResult` says
         // so.
-        let (turns, transcript, budget) = try Self.makeSmallSpanFoldFixture()
+        let (turns, transcript, budget) = try Self.makeSmallSpanCompactionFixture()
         let tokensBefore = Compactor.estimatedTokenCount(of: transcript)
-        let oldTurns = Array(turns.prefix(Self.foldFixtureTurnCount - Summarization().keepRecentTurns))
+        let oldTurns = Array(turns.prefix(Self.compactionFixtureTurnCount - Summarization().keepRecentTurns))
         let summarizer = OversizedSummarizer(summary: String(repeating: "verbose summary ", count: tokensBefore))
-        let spanBudget = Self.expectedSummaryByteBudget(foldingOld: oldTurns)
+        let spanBudget = Self.expectedSummaryByteBudget(compactingOld: oldTurns)
         #expect(summarizer.summary.utf8.count > spanBudget)  // sanity: every answer overruns
 
         let (_, result) = try await Compactor.compact(transcript, budget: budget, summarizer: summarizer)
@@ -1999,16 +1999,16 @@ struct SummarizationStageTests {
     }
 
     @Test(
-        "a fold whose summarizer ignored every ceiling is applied rather than discarded, because the recovery ladder brought the summary under the span"
+        "a compaction whose summarizer ignored every ceiling is applied rather than discarded, because the recovery ladder brought the summary under the span"
     )
-    func aFoldWhoseSummaryOverranItsAllowanceIsStillApplied() async throws {
+    func aCompactionWhoseSummaryOverranItsAllowanceIsStillApplied() async throws {
         // This is what enforcing the bound in code buys. `^fm5ddk9` measured 7
         // of 7 gated seeds answering 1.30x to 2.07x the size of the span they
-        // were condensing, so `Compactor` discarded 7 of 7 folds and the eval
+        // were condensing, so `Compactor` discarded 7 of 7 compactions and the eval
         // measured nothing about compaction at all. An answer of that shape now
-        // folds, and the guard below it is untouched — it stays the backstop
-        // for the fold no cut can save.
-        let (_, transcript, budget) = try Self.makeModelAssistedFoldFixture()
+        // compacts, and the guard below it is untouched — it stays the backstop
+        // for the compaction no cut can save.
+        let (_, transcript, budget) = try Self.makeModelAssistedCompactionFixture()
         let tokensBefore = Compactor.estimatedTokenCount(of: transcript)
         let summarizer = OversizedSummarizer(summary: String(repeating: "verbose summary ", count: tokensBefore))
         // sanity: the raw answer really would have grown the transcript
@@ -2024,22 +2024,22 @@ struct SummarizationStageTests {
     }
 
     @Test(
-        "a fold over a modest span with background runs is applied: the cut leaves room for the pending-runs rendering the boundary entry carries"
+        "a compaction over a modest span with background runs is applied: the cut leaves room for the pending-runs rendering the boundary entry carries"
     )
-    func aFoldWithBackgroundRunsOverAModestSpanIsStillApplied() async throws {
+    func aCompactionWithBackgroundRunsOverAModestSpanIsStillApplied() async throws {
         // The shape task ^64f3hnv measured. The per-call cut bounds the summary
         // TEXT, the did-not-shrink guard measures the whole replacement ENTRY,
         // and the boundary entry carries the pending-runs rendering as a second
         // .text segment. On a modest span the rendering alone used to spend the
-        // retention margin, so the fold was discarded whatever the summary said
+        // retention margin, so the compaction was discarded whatever the summary said
         // — and a session that tracks background runs is the case the rendering
         // exists for. The cut now charges the rendering against the bound.
-        let (turns, transcript, budget) = try Self.makeBackgroundRunsFoldFixture()
+        let (turns, transcript, budget) = try Self.makeBackgroundRunsCompactionFixture()
         let tokensBefore = Compactor.estimatedTokenCount(of: transcript)
         let pendingRuns = Self.makeBackgroundRuns()
         let rendering = CompactionSegment.renderedPendingRuns(pendingRuns)
         let renderingTokens = Summarization.estimatedTokens(of: rendering)
-        let spanEntries = turns.prefix(Self.foldFixtureTurnCount - Summarization().keepRecentTurns).flatMap { $0 }
+        let spanEntries = turns.prefix(Self.compactionFixtureTurnCount - Summarization().keepRecentTurns).flatMap { $0 }
         let spanTokens = Compactor.estimatedTokenCount(of: Transcript(entries: spanEntries))
 
         let answer = String(repeating: "verbose summary ", count: Self.backgroundRunsAnswerRepeats)
@@ -2050,10 +2050,10 @@ struct SummarizationStageTests {
         // The scenario really is the defect's shape, in the guard's own
         // units: the rendering leaves room under the span byte budget, and
         // every candidate answer overruns what is left, so only the recovery
-        // ladder's cut can save the fold.
+        // ladder's cut can save the compaction.
         let spanBytes = Self.spanContentBytes(of: [spanEntries])
         let spanBudget = Self.expectedSummaryByteBudget(
-            foldingOld: [spanEntries], renderingBytes: rendering.utf8.count)
+            compactingOld: [spanEntries], renderingBytes: rendering.utf8.count)
         #expect(spanBudget > 0)
         #expect(answer.utf8.count > spanBudget)
         #expect(renderingTokens < spanTokens)
@@ -2064,13 +2064,13 @@ struct SummarizationStageTests {
         #expect(result.tokensAfter < tokensBefore)
         #expect(result.summaryCut)
 
-        // What the fold stored is a prefix of the answer, and the stored
+        // What the compaction stored is a prefix of the answer, and the stored
         // summary plus the rendering stay under the span.
         let summary = try #require(result.summary)
         #expect(answer.hasPrefix(summary))
         #expect(summary.utf8.count + rendering.utf8.count < spanBytes)
 
-        // Control: the same fold with no background runs is applied too, so the
+        // Control: the same compaction with no background runs is applied too, so the
         // pending-runs rendering is the one variable in this scenario.
         let controlSummarizer = ScriptedSummarizer(responses: [answer, answer])
         let (_, control) = try await Compactor.compact(transcript, budget: budget, summarizer: controlSummarizer)
@@ -2079,21 +2079,21 @@ struct SummarizationStageTests {
     }
 
     @Test(
-        "a fold whose background runs' rendering alone spends the span byte budget is discarded whole — never applied with an emptied summary"
+        "a compaction whose background runs' rendering alone spends the span byte budget is discarded whole — never applied with an emptied summary"
     )
-    func aFoldWhosePendingRunsRenderingAloneReachesTheBoundIsDiscarded() async throws {
+    func aCompactionWhosePendingRunsRenderingAloneReachesTheBoundIsDiscarded() async throws {
         // Below this bound no summary of any length can pay for the rendering,
-        // so the safe answer is the guard's: discard the fold and return the
+        // so the safe answer is the guard's: discard the compaction and return the
         // original transcript. The dangerous wrong answer is a cut that empties
         // the summary to make the arithmetic work — the rendering is smaller
         // than the span, so an emptied entry WOULD shrink the transcript, and
-        // the fold would be applied carrying no summary text at all.
-        let (turns, transcript, budget) = try Self.makeOverwhelmedSpanFoldFixture()
+        // the compaction would be applied carrying no summary text at all.
+        let (turns, transcript, budget) = try Self.makeOverwhelmedSpanCompactionFixture()
         let tokensBefore = Compactor.estimatedTokenCount(of: transcript)
         let pendingRuns = Self.makeBackgroundRuns()
         let rendering = CompactionSegment.renderedPendingRuns(pendingRuns)
         let renderingTokens = Summarization.estimatedTokens(of: rendering)
-        let spanEntries = turns.prefix(Self.foldFixtureTurnCount - Summarization().keepRecentTurns).flatMap { $0 }
+        let spanEntries = turns.prefix(Self.compactionFixtureTurnCount - Summarization().keepRecentTurns).flatMap { $0 }
         let spanTokens = Compactor.estimatedTokenCount(of: Transcript(entries: spanEntries))
 
         let answer = String(repeating: "verbose summary ", count: Self.backgroundRunsAnswerRepeats)
@@ -2102,10 +2102,10 @@ struct SummarizationStageTests {
             transcript, budget: budget, summarizer: summarizer, pendingRuns: pendingRuns)
 
         // The geometry: the rendering alone drives the span byte budget to
-        // zero or below, so no summary of any length can make the fold
+        // zero or below, so no summary of any length can make the compaction
         // shrink, and no condense pass is worth a generation.
         let spanBudget = Self.expectedSummaryByteBudget(
-            foldingOld: [spanEntries], renderingBytes: rendering.utf8.count)
+            compactingOld: [spanEntries], renderingBytes: rendering.utf8.count)
         #expect(spanBudget <= 0)
         #expect(renderingTokens > 0)
         #expect(spanTokens > 0)
@@ -2114,7 +2114,7 @@ struct SummarizationStageTests {
         // condense pass, because no rewrite of any length could fit it.
         #expect(summarizer.receivedPrompts.count == 1)
 
-        // Discarded whole, exactly like every other fold that cannot shrink.
+        // Discarded whole, exactly like every other compaction that cannot shrink.
         #expect(resultTranscript == transcript)
         #expect(result.stagesApplied.isEmpty)
         #expect(result.summary == nil)
@@ -2122,11 +2122,11 @@ struct SummarizationStageTests {
         #expect(result.tokensAfter == tokensBefore)
     }
 
-    @Test("Compactor.compact reports an empty summary rather than apply a fold whose boundary would carry no text")
+    @Test("Compactor.compact reports an empty summary rather than apply a compaction whose boundary would carry no text")
     func compactorReportsAnEmptySummaryRatherThanApplyIt() async throws {
-        // The same fixture `compactorWiresInSummarizationAsFinalStage` folds,
+        // The same fixture `compactorWiresInSummarizationAsFinalStage` compacts,
         // differing only in what the summarizer answers: nothing at all.
-        let (_, transcript, budget) = try Self.makeModelAssistedFoldFixture()
+        let (_, transcript, budget) = try Self.makeModelAssistedCompactionFixture()
         let summarizer = ScriptedSummarizer(responses: [""])
 
         await #expect(throws: SummarizationError.emptySummary) {
@@ -2157,7 +2157,7 @@ struct SummarizationStageTests {
 
     @Test("a non-default summaryTokenRatio set through Compactor.compact reaches the ceiling the summarizer call is given")
     func compactCarriesSummaryTokenRatioIntoTheSummarizerCall() async throws {
-        let (_, transcript, budget) = try Self.makeModelAssistedFoldFixture()
+        let (_, transcript, budget) = try Self.makeModelAssistedCompactionFixture()
         let summarizer = ScriptedSummarizer(responses: [])
         let defaults = Summarization()
         let ratio = 0.5
@@ -2195,9 +2195,9 @@ struct SummarizationStageTests {
                     headroom: defaults.reasoningTokenHeadroom))
     }
 
-    @Test("a non-default maxChunkTokens set through Compactor.compact reaches the fold's map-reduce chunking")
+    @Test("a non-default maxChunkTokens set through Compactor.compact reaches the compaction's map-reduce chunking")
     func compactCarriesMaxChunkTokensIntoTheChunking() async throws {
-        let (_, transcript, budget) = try Self.makeModelAssistedFoldFixture()
+        let (_, transcript, budget) = try Self.makeModelAssistedCompactionFixture()
         let summarizer = ScriptedSummarizer(responses: ["one-shot summary"])
 
         let (_, result) = try await Compactor.compact(
@@ -2218,9 +2218,9 @@ struct SummarizationStageTests {
         #expect(result.summary == "one-shot summary")
     }
 
-    @Test("a non-default keepRecentTurns set through Compactor.compact reaches the fold's recency window")
-    func compactCarriesKeepRecentTurnsIntoTheFold() async throws {
-        let (turns, transcript, budget) = try Self.makeModelAssistedFoldFixture()
+    @Test("a non-default keepRecentTurns set through Compactor.compact reaches the compaction's recency window")
+    func compactCarriesKeepRecentTurnsIntoTheCompaction() async throws {
+        let (turns, transcript, budget) = try Self.makeModelAssistedCompactionFixture()
         let summarizer = ScriptedSummarizer(responses: [])
         let keepRecentTurns = 2
 
@@ -2231,8 +2231,8 @@ struct SummarizationStageTests {
             summarization: Summarization(keepRecentTurns: keepRecentTurns)
         )
 
-        // The default 4 keeps turns 3...6 and folds turns 1 and 2. A window of
-        // 2 keeps only turns 5 and 6, so the tail the fold left untouched is
+        // The default 4 keeps turns 3...6 and compacts turns 1 and 2. A window of
+        // 2 keeps only turns 5 and 6, so the tail the compaction left untouched is
         // shorter and turns 3 and 4 are inside the span the summarizer read.
         let expectedRecentTail = turns.suffix(keepRecentTurns).flatMap { $0 }
         let entries = Array(resultTranscript)

@@ -250,7 +250,7 @@ struct MergedAndRedactionTests {
     func redactHookIsAppliedVerbatim() async throws {
         // The `redact` hook is caller-supplied, so its matching semantics are the
         // caller's concern. A hook targeting lowercase "secret" leaves other
-        // spellings untouched — the gate does not case-fold on the caller's behalf.
+        // spellings untouched — the gate does not normalize case on the caller's behalf.
         let inner: InMemoryRecorder = .inMemory
         let caseSensitive: @Sendable (String) -> String = { $0.replacingOccurrences(of: "secret", with: "***") }
         let recorder: any TranscriptRecorder = GatingRecorder(level: .full, redact: caseSensitive, wrapping: inner)

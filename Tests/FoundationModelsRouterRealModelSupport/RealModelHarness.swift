@@ -7,7 +7,7 @@ import Testing
 /// model it has already loaded.
 ///
 /// A gated suite cannot call `Router.resolve(_:reporting:)`. That call downloads
-/// the `.flash` and the `.embedding` slots as well, and a suite that folds one
+/// the `.flash` and the `.embedding` slots as well, and a suite that compacts one
 /// transcript does not need either model. So each suite builds the profile by
 /// hand over the one container it loaded, and vends its sessions from that.
 ///
@@ -138,7 +138,7 @@ public enum RealModelHarness {
 
     /// Builds a real ``LanguageModelProfile`` over `container`.
     ///
-    /// The `.standard` and the `.flash` slots both wrap `container`, so a fold
+    /// The `.standard` and the `.flash` slots both wrap `container`, so a compaction
     /// that prefers the flash tier generates over the same resident model. Both
     /// slots also share one ``ResidentModelGates`` set, as they would from a
     /// pool entry: two sets would let two generations run inside the one

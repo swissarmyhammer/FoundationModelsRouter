@@ -116,7 +116,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     recorded tool name with no supplied instance is reported in
     ///     ``RestoredSession/configurationReport``.
     ///   - toolOutputProtection: The host rule whose protected tool outputs
-    ///     every fold on the restored session keeps word for word, or `nil`
+    ///     every compaction on the restored session keeps word for word, or `nil`
     ///     (the default) to protect nothing. The recording does not hold the
     ///     rule, because it is a closure, so a host gives it again here, as
     ///     it gives the tools. See ``ToolOutputProtection``.

@@ -147,16 +147,16 @@ enum GatedSuiteSerialGate {
 /// | 19.2 | 20.0 | 21.6 | 29.2 | 25.2 | 23.5 | 17.2 | 24.9 | 21.5 | 22.6 | 22.8 | 18.9 | 21.1 | transcriptEntries().count equals session.transcript.count |
 /// | 19.5 | 17.2 | 20.3 | 23.4 | 18.8 | 24.4 | 24.7 | 18.6 | 20.3 | 21.5 | 22.0 | 17.9 | 20.6 | recorded entry kinds match the real session.transcript kinds |
 /// | 16.6 | 21.0 | 19.3 | 20.2 | 21.2 | 19.4 | 23.4 | 19.8 | 19.9 | 19.6 | 16.6 | 17.8 | 20.6 | recorded tokensIn/tokensOut on the turn's response event |
-/// | 14.6 | 15.2 | 18.6 | 18.6 | 18.7 | 18.0 | 17.8 | 17.6 | 23.5 | 22.0 | 17.1 | 13.6 | 22.4 | one fold against a real model |
+/// | 14.6 | 15.2 | 18.6 | 18.6 | 18.7 | 18.0 | 17.8 | 17.6 | 23.5 | 22.0 | 17.1 | 13.6 | 22.4 | one compaction against a real model |
 /// | 16.0 | 20.4 | 17.9 | 25.1 | 25.3 | 20.9 | 21.5 | 22.5 | 21.2 | 17.6 | 18.0 | 17.9 | 20.4 | a fork taken after one turn begins holding exactly that turn's entries |
 /// | 19.1 | 16.6 | 17.5 | 18.0 | 19.1 | 18.9 | 16.7 | 23.1 | 17.0 | 14.5 | 14.2 | 10.7 | 12.1 | turn 2 tends to be faster than turn 1 |
-/// | 541.6 | 17.4 | 17.3 | 25.4 | 21.6 | 20.8 | 21.1 | 21.0 | 23.2 | 20.9 | 20.7 | 17.1 | 20.7 | contextFill climbs, compact() folds at the 0.80 trigger |
+/// | 541.6 | 17.4 | 17.3 | 25.4 | 21.6 | 20.8 | 21.1 | 21.0 | 23.2 | 20.9 | 20.7 | 17.1 | 20.7 | contextFill climbs, compact() compacts at the 0.80 trigger |
 /// | 19.7 | 24.1 | 17.1 | 25.6 | 24.9 | 15.8 | 18.2 | 22.7 | 16.6 | 17.7 | 22.8 | 14.3 | 19.1 | reconstructed Transcript entry kinds and count match |
 /// | 17.5 | 9.4 | 17.0 | 18.6 | 13.3 | 14.8 | 4.9 | 21.0 | 18.2 | 34.0 | 25.4 | 17.1 | 19.1 | a live LanguageModelSession rebuilt over a transcript |
-/// | 18.8 | 19.3 | 14.5 | 23.8 | 24.4 | 23.2 | 23.1 | 22.8 | 18.4 | 17.1 | 22.1 | 17.4 | 17.4 | a fact planted at the very end of the folded span |
-/// | 12.1 | 11.7 | 12.2 | 15.1 | 15.7 | 15.0 | 14.6 | 14.3 | 14.6 | 14.1 | 14.4 | 11.6 | 14.2 | one fold of the recorded transcript against a real model |
+/// | 18.8 | 19.3 | 14.5 | 23.8 | 24.4 | 23.2 | 23.1 | 22.8 | 18.4 | 17.1 | 22.1 | 17.4 | 17.4 | a fact planted at the very end of the compacted span |
+/// | 12.1 | 11.7 | 12.2 | 15.1 | 15.7 | 15.0 | 14.6 | 14.3 | 14.6 | 14.1 | 14.4 | 11.6 | 14.2 | one compaction of the recorded transcript against a real model |
 /// | 5.8 | 5.7 | 5.7 | 6.1 | 6.2 | 6.0 | 6.2 | 6.1 | 6.0 | 6.3 | 6.2 | 5.6 | 6.2 | a generation cancelled mid-decode unwinds as CancellationError |
-/// | 5.2 | 5.1 | 5.1 | 7.5 | 5.7 | 5.5 | 5.4 | 5.9 | 5.8 | 5.8 | 5.8 | 4.8 | 5.8 | a session vended with a synthetic trigger folds inside its own turn |
+/// | 5.2 | 5.1 | 5.1 | 7.5 | 5.7 | 5.5 | 5.4 | 5.9 | 5.8 | 5.8 | 5.8 | 4.8 | 5.8 | a session vended with a synthetic trigger compacts inside its own turn |
 /// | 2.1 | 2.3 | 2.1 | 2.5 | 2.5 | 1.9 | 2.0 | 2.1 | 2.1 | 2.2 | 1.9 | 1.8 | 2.0 | system-model path: whether the ToolContext bound around respond() arrives |
 /// | 0.012 | 0.011 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | the recorded transcript still carries the entry kinds real traffic has |
 /// | 0.001 | 0.001 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | a GPU-device MLXArray evaluation completes |

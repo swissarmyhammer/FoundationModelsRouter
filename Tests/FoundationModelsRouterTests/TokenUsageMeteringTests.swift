@@ -351,7 +351,7 @@ struct TokenUsageMeteringTests {
         let rootId = root.id
 
         // A failed turn after the successful one: `shouldThrow` makes the
-        // backend throw before `recordResponse()` folds `usageIncrement`
+        // backend throw before `recordResponse()` adds `usageIncrement`
         // into its cumulative total (see `StubSessionBackend.respond(to:
         // maxTokens:)`), so the delta the router synthesizes for the
         // resulting bodyless close is a meaningless (0, 0) — restored fill

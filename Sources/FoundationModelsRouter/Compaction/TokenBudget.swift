@@ -1,6 +1,6 @@
 import Foundation
 
-/// The token thresholds that control when and how far a session folds its
+/// The token thresholds that control when and how far a session compacts its
 /// transcript. Every threshold is a fraction of `limit`, not of the
 /// session's window.
 public struct TokenBudget: Sendable, Equatable, Codable {
@@ -10,7 +10,7 @@ public struct TokenBudget: Sendable, Equatable, Codable {
     /// The fraction of ``limit`` at which a session compacts.
     public var trigger: Double
 
-    /// The fraction of ``limit`` a fold compacts down to.
+    /// The fraction of ``limit`` a compaction brings the transcript down to.
     public var target: Double
 
     /// The optional hard ceiling, as a fraction of ``limit``. When usage is at
@@ -67,7 +67,7 @@ public struct TokenBudget: Sendable, Equatable, Codable {
 
 /// A budget failure a session throws before a generate call when measured
 /// usage is at or above ``TokenBudget/ceilingTokens``. Auto-compaction
-/// treats it like `LanguageModelError.contextSizeExceeded`: it folds and
+/// treats it like `LanguageModelError.contextSizeExceeded`: it compacts and
 /// retries once.
 enum ContextBudgetError: Error, Equatable, LocalizedError {
     /// Measured usage (`fill`, as a fraction of ``TokenBudget/limit``) was at

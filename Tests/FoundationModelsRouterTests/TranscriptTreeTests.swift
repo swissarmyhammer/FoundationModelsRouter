@@ -627,7 +627,7 @@ struct TranscriptTreeTests {
 
         // The bytes decode fine and name a newer version: that is not
         // corruption, so the load must surface the version refusal typed,
-        // never folded into `sidecarUnreadable`.
+        // never merged into `sidecarUnreadable`.
         #expect(
             throws: RecordingSchemaVersionError.recordingFromNewerRouter(
                 directory: rootDirectory,

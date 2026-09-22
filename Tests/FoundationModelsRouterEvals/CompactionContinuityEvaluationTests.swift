@@ -28,8 +28,8 @@ struct CompactionContinuityEvaluationHermeticTests {
     }
 
     @Test("every hand-written task is sized so its filler steps alone exceed the default budget's trigger threshold")
-    func everyTaskIsSizedToForceAFold() async throws {
-        // The mechanical proof of "sized to be impossible without >=1 fold"
+    func everyTaskIsSizedToForceACompaction() async throws {
+        // The mechanical proof of "sized to be impossible without >=1 compaction"
         // (task 4ce0a1k), measured in the same tokens the live trigger is
         // measured in: every fixture's filler steps, on their own, estimate to
         // more than `compactionContinuityDefaultBudget.triggerTokens`. A live
@@ -54,31 +54,31 @@ struct CompactionContinuityEvaluationHermeticTests {
         }
     }
 
-    @Test("every FAST task's opening step outweighs the fold floor and the fold target")
-    func everyFastTasksOpeningStepOutweighsTheFoldFloor() {
-        // The fast tier's one fold replaces the opening turn, and two sizes
-        // decide whether that fold really happens (task ^k0d30s4):
+    @Test("every FAST task's opening step outweighs the compaction floor and the compaction target")
+    func everyFastTasksOpeningStepOutweighsTheCompactionFloor() {
+        // The fast tier's one compaction replaces the opening turn, and two sizes
+        // decide whether that compaction really happens (task ^k0d30s4):
         //
         // - `Compactor.compact`'s entry guard needs the transcript to estimate
         //   past `targetTokens`, and the opening step's prompt alone is the
         //   conservative bound for that — the live transcript also carries the
         //   readiness turn, every reply, and the instructions header.
-        // - The did-not-shrink guard discards a fold whose summary is not
+        // - The did-not-shrink guard discards a compaction whose summary is not
         //   smaller than its span. `AutoCompactionTriggerIntegrationTests`
         //   records the measured arithmetic: the 128-token summary floor stops
         //   binding past 512 estimated tokens, and its own opening brief is
         //   written past that at 639. 560 keeps the same margin over 512.
-        let foldFloorTokens = 560
+        let compactionFloorTokens = 560
         let targetTokens = compactionContinuityFastBudget.targetTokens
         for seed in compactionContinuityFastSeeds {
             let openingTokens = Compactor.estimatedTokenCount(of: seed.steps[0])
             #expect(
-                openingTokens >= foldFloorTokens,
-                "task \(seed.id)'s opening step estimates \(openingTokens) tokens, under the fold floor's \(foldFloorTokens)"
+                openingTokens >= compactionFloorTokens,
+                "task \(seed.id)'s opening step estimates \(openingTokens) tokens, under the compaction floor's \(compactionFloorTokens)"
             )
             #expect(
                 openingTokens > targetTokens,
-                "task \(seed.id)'s opening step estimates \(openingTokens) tokens, not past the fold target's \(targetTokens)"
+                "task \(seed.id)'s opening step estimates \(openingTokens) tokens, not past the compaction target's \(targetTokens)"
             )
         }
     }
@@ -101,7 +101,7 @@ struct CompactionContinuityEvaluationHermeticTests {
         }
     }
 
-    @Test("every FAST task holds fewer turns than TurnTruncation's window, so only the model-assisted stage can fold it")
+    @Test("every FAST task holds fewer turns than TurnTruncation's window, so only the model-assisted stage can compact it")
     func everyFastTaskHoldsFewerTurnsThanTheTruncationWindow() {
         // The structural guarantee behind
         // `compactionContinuityFastTargetShareOfContext`: with fewer turns
@@ -149,7 +149,7 @@ struct CompactionContinuityEvaluationHermeticTests {
         let subject = try await evaluation.subject(from: sample)
 
         #expect(subject.value.finalAnswer == "the fake final answer")
-        #expect(subject.value.foldCount == 2)
+        #expect(subject.value.compactionCount == 2)
         #expect(subject.value.tokensBefore == 500)
         #expect(subject.value.tokensAfter == 50)
         #expect(subject.value.recordedEntryCount == 12)
@@ -349,17 +349,17 @@ struct CompactionContinuityEvalProgressLogTests {
         #expect(first.contains("step=1/\(Self.taskStepCount)"))
     }
 
-    @Test("a driven step's returned line states its reply size and whether it folded")
-    func drivenStepReturnedLineStatesItsReplyAndItsFolds() {
+    @Test("a driven step's returned line states its reply size and whether it compacted")
+    func drivenStepReturnedLineStatesItsReplyAndItsCompactions() {
         let reply = "Understood."
-        let foldedDetail = CompactionEvalProgressLog.makeDrivenStepDetail(reply: reply, foldCount: 1)
-        let unfoldedDetail = CompactionEvalProgressLog.makeDrivenStepDetail(reply: reply, foldCount: 0)
+        let compactedDetail = CompactionEvalProgressLog.makeDrivenStepDetail(reply: reply, compactionCount: 1)
+        let uncompactedDetail = CompactionEvalProgressLog.makeDrivenStepDetail(reply: reply, compactionCount: 0)
 
-        #expect(foldedDetail.contains("replyBytes=\(reply.utf8.count)"))
-        // The fold count is what this tier exists to watch: the trail must say
-        // which step folded, not merely that some step did.
-        #expect(foldedDetail.contains("folds=1"))
-        #expect(unfoldedDetail.contains("folds=0"))
+        #expect(compactedDetail.contains("replyBytes=\(reply.utf8.count)"))
+        // The compaction count is what this tier exists to watch: the trail must say
+        // which step compacted, not merely that some step did.
+        #expect(compactedDetail.contains("compactions=1"))
+        #expect(uncompactedDetail.contains("compactions=0"))
     }
 
     @Test("the final instruction is a step of its own, with its own duration")
@@ -369,7 +369,7 @@ struct CompactionContinuityEvalProgressLogTests {
             sample: Self.label,
             elapsedSeconds: Self.elapsedSeconds,
             stepSeconds: Self.stepSeconds,
-            detail: CompactionEvalProgressLog.makeDrivenStepDetail(reply: "CRIMSON-77 at Delta-9.", foldCount: 0)
+            detail: CompactionEvalProgressLog.makeDrivenStepDetail(reply: "CRIMSON-77 at Delta-9.", compactionCount: 0)
         )
 
         #expect(
@@ -383,7 +383,7 @@ struct CompactionContinuityEvalProgressLogTests {
     @Test("both gated tiers share one line prefix and one seconds rendering, so one grep reads either")
     func bothTiersShareOnePrefixAndOneSecondsRendering() {
         let factRetentionLine = CompactionEvalProgressLog.makeStepReturnedLine(
-            .fold,
+            .compaction,
             sample: CompactionEvalSampleLabel(
                 ordinal: 1, total: 1, fixture: .seed, fixtureID: "probe-seed"),
             elapsedSeconds: Self.elapsedSeconds,

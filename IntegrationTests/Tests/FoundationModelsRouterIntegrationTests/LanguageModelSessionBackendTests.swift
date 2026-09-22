@@ -400,7 +400,7 @@ struct LanguageModelSessionBackendIntegrationTests {
     /// Builds a ``ChokepointHarness`` over a freshly loaded model.
     ///
     /// The profile comes from ``RealModelHarness/make(model:context:container:samplingMode:cacheDir:recordingsDir:routerId:)``,
-    /// which this harness's own hand-built copy was folded onto (task
+    /// which this harness's own hand-built copy was merged onto (task
     /// ^zz6kam0). One `JSONLRecorder` still reaches the router and every handle
     /// alike — `Router.recorder` is actor-isolated, and one sink keeps every
     /// append off that hop — and each handle still carries the root-plus-writer

@@ -23,10 +23,10 @@ public struct SessionConfiguration: Sendable {
     /// The auto-compaction opt-in, or `nil` (the default) for manual-only compaction.
     public var budget: TokenBudget?
 
-    /// The compaction prompt automatic folds send to the summarizer, when ``budget`` is set.
+    /// The compaction prompt automatic compactions send to the summarizer, when ``budget`` is set.
     public var compactionPrompt: CompactionPrompt
 
-    /// The model-assisted compaction stage every fold on the vended session runs.
+    /// The model-assisted compaction stage every compaction on the vended session runs.
     public var summarization: Summarization
 
     /// The parent session/tool-call the session was spawned from, or `nil`.
@@ -39,7 +39,7 @@ public struct SessionConfiguration: Sendable {
     /// or `nil` for an unconstrained session.
     public var grammar: Grammar?
 
-    /// The host rule whose protected tool outputs every fold on the vended
+    /// The host rule whose protected tool outputs every compaction on the vended
     /// session keeps word for word, or `nil` (the default) to protect nothing.
     ///
     /// A closure, so ``persistable`` does not hold it and the sidecar does not
@@ -114,7 +114,7 @@ public struct SessionConfiguration: Sendable {
         /// The auto-compaction opt-in, or `nil`.
         let budget: TokenBudget?
 
-        /// The compaction prompt for automatic folds.
+        /// The compaction prompt for automatic compactions.
         let compactionPrompt: CompactionPrompt
 
         /// The model-assisted compaction stage.

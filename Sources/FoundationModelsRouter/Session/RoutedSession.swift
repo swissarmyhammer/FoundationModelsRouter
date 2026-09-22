@@ -81,24 +81,24 @@ public protocol RoutedSession: Actor {
     /// wait; it sees the history as it stands mid-turn.
     var transcript: Transcript { get async }
 
-    /// Folds this session's transcript in place: same ``id``, same
+    /// Compacts this session's transcript in place: same ``id``, same
     /// ``recordingDirectory``, shorter live window.
     ///
     /// The deterministic compaction stages run first, then the model-assisted
     /// ``Summarization`` stage only if the transcript is still over target,
     /// with the configuration this session was vended with
-    /// (``RoutedSessionActor/summarization``). A fold that changes anything
+    /// (``RoutedSessionActor/summarization``). A compaction that changes anything
     /// appends the summary entry to `transcript.jsonl` and reseeds the backend.
     /// A transcript already under target stays as it is.
     ///
-    /// A fold holds the turn lock, so ``cancelCurrentTurn()`` can cancel it.
+    /// A compaction holds the turn lock, so ``cancelCurrentTurn()`` can cancel it.
     /// To recover from `LanguageModelError.contextSizeExceeded`, compact with
     /// a lower target and retry once.
     ///
-    /// - Parameter budget: The token budget to fold against, or `nil` for this
+    /// - Parameter budget: The token budget to compact against, or `nil` for this
     ///   session's resolved working context.
-    /// - Throws: The summarizer's error. A caller-driven fold does not degrade:
-    ///   unlike the automatic fold, which falls back to the deterministic-only
+    /// - Throws: The summarizer's error. A caller-driven compaction does not degrade:
+    ///   unlike the automatic compaction, which falls back to the deterministic-only
     ///   pipeline and never throws, a summarizer failure here reaches the caller.
     ///   Also `CancellationError` when cancelled, or
     ///   ``SessionReentryError/sameSessionTurnInFlight(sessionID:)`` when called
@@ -109,7 +109,7 @@ public protocol RoutedSession: Actor {
     /// Generates a complete text response to a prompt, recording the call.
     ///
     /// This call drains both planes before it answers. The content plane is
-    /// folded into each turn's prompt as a preamble. The run plane is drained
+    /// compacted into each turn's prompt as a preamble. The run plane is drained
     /// after this call's own turn: every background run is awaited to
     /// settlement, and a further turn delivers the results to the model, for at
     /// most ``RoutedSessionActor/backgroundRunDrainRoundLimit`` further turns.
@@ -177,8 +177,8 @@ public protocol RoutedSession: Actor {
     /// tool call and tool status events, ``SessionEvent/reasoningDelta(_:)``,
     /// and ``SessionEvent/entryRecorded(id:kind:)`` per recorded entry; finally
     /// ``SessionEvent/turnEnded(_:)``. ``SessionEvent/compaction(_:)`` comes
-    /// before the turn's events for a proactive fold, and after the failed
-    /// attempt's ``SessionEvent/turnEnded(_:)`` for a reactive fold.
+    /// before the turn's events for a proactive compaction, and after the failed
+    /// attempt's ``SessionEvent/turnEnded(_:)`` for a reactive compaction.
     /// ``SessionEvent/generationStalled(_:)`` is emitted on each interval
     /// without a fragment.
     ///
@@ -238,7 +238,7 @@ public protocol RoutedSession: Actor {
     /// follows the attach-or-requeue rule. The gates stay balanced, including
     /// for a turn suspended in ``awaitingUser(_:)``.
     ///
-    /// Only the turn in flight is affected. A fold's model-assisted stage is
+    /// Only the turn in flight is affected. A compaction's model-assisted stage is
     /// cancelled where it stands; its deterministic stages are not interrupted.
     /// A ``respond(to:maxTokens:)`` draining the run plane stops draining and
     /// returns its last turn's answer; the runs it waited on stay running.
@@ -370,7 +370,7 @@ extension RoutedSession {
 
     /// See ``compact(prompt:budget:)``, with `prompt` at ``CompactionPrompt/default``.
     ///
-    /// - Parameter budget: The token budget to fold against, or `nil` for this
+    /// - Parameter budget: The token budget to compact against, or `nil` for this
     ///   session's resolved working context.
     @discardableResult
     public func compact(budget: TokenBudget?) async throws -> CompactionResult {

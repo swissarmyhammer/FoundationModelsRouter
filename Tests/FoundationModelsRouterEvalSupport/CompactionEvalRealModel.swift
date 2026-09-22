@@ -28,9 +28,9 @@ import FoundationModelsRouter
 ///
 /// ## What the tier proves, and what it does not
 ///
-/// The tier still measures the real thing it always measured: a real fold
+/// The tier still measures the real thing it always measured: a real compaction
 /// through `Compactor`, a real summarizer generation, and a real answering
-/// turn over the folded transcript, scored mechanically. What it does NOT
+/// turn over the compacted transcript, scored mechanically. What it does NOT
 /// prove is how the 27B standard model performs the same work. A fact the
 /// 3B model retains says nothing about the 27B, and a fact it loses may
 /// still survive under the larger model. That trade is task `^k0d30s4`'s
@@ -53,7 +53,7 @@ enum CompactionEvalRealModel {
     /// The maximum context window, in tokens, to load ``ref`` with — passed
     /// straight through to ``LiveModelLoader/loadLLM(ref:slot:context:reporting:)``.
     ///
-    /// Unchanged by the model swaps. Every seed transcript, every fold prompt
+    /// Unchanged by the model swaps. Every seed transcript, every compaction prompt
     /// chunk (bounded by ``Summarization/maxChunkTokens``), and every resumed
     /// answering turn fits this window.
     // Only `CompactionEvalRealSubjectRunner`, in the IntegrationTests

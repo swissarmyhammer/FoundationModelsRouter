@@ -65,7 +65,7 @@ enum RecordingScript {
     ///
     /// The conversation is a synthetic engineering discussion — an
     /// ingest-path replacement for a "station archive" and its migration
-    /// plan — written for this fixture. The two long turns put the folded
+    /// plan — written for this fixture. The two long turns put the compacted
     /// span past the point where `Summarization.minimumSummaryTokens` stops
     /// binding; the short turns are the recency window; and the questions
     /// give the model reasons to call its tools.

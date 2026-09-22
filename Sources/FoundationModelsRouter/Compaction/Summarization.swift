@@ -21,12 +21,12 @@ enum SummarizationError: Error, Equatable, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .emptySummary:
-            return "the summarizer returned no text, so the fold has no summary to store"
+            return "the summarizer returned no text, so the compaction has no summary to store"
         }
     }
 }
 
-/// The model-assisted compaction stage. It renders the folded span to text,
+/// The model-assisted compaction stage. It renders the compacted span to text,
 /// summarizes it with a ``CompactionPrompt`` through a ``CompactionSummarizer``,
 /// and synthesizes the summary entry: a `.response` that carries the summary
 /// text and its ``CompactionSegment``. It is async, so it does not conform to
@@ -40,7 +40,7 @@ public struct Summarization: Sendable, Equatable, Codable {
     public var keepRecentTurns: Int
 
     /// The estimated-token ceiling of one summarizer call's content. Above it
-    /// the folded span is split into chunks that are summarized separately
+    /// the compacted span is split into chunks that are summarized separately
     /// (map) and then combined (reduce). A single item is never split.
     public var maxChunkTokens: Int
 
@@ -56,7 +56,7 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// The floor, in tokens, of every call's summary allowance.
     public static let minimumSummaryTokens = 128
 
-    /// The bytes the whole boundary text must stay under the folded span's
+    /// The bytes the whole boundary text must stay under the compacted span's
     /// content bytes so that the estimated token count drops by at least one.
     static let shrinkMarginBytes = Int(Compactor.charsPerTokenEstimate)
 
@@ -72,7 +72,7 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// written, before the answer counts as a repetition loop.
     ///
     /// A loop writes one line over and over, so nearly every line of it
-    /// repeats: the real-model fold measured on 2026-08-31 wrote 50 copies of
+    /// repeats: the real-model compaction measured on 2026-08-31 wrote 50 copies of
     /// one line out of 54, a share of 0.93. An answer that carries real
     /// content repeats a line only by accident. Half stands far above the one
     /// and far below the other.
@@ -117,9 +117,9 @@ public struct Summarization: Sendable, Equatable, Codable {
         self.reasoningTokenHeadroom = reasoningTokenHeadroom
     }
 
-    /// The result of one fold: the folded transcript and the summary text.
-    struct Folded: Sendable, Equatable {
-        /// The folded transcript: the header, the protected pairs of the old
+    /// The result of one compaction: the compacted transcript and the summary text.
+    struct Compacted: Sendable, Equatable {
+        /// The compacted transcript: the header, the protected pairs of the old
         /// span, the summary entry, then the untouched recency window.
         let transcript: Transcript
 
@@ -134,12 +134,12 @@ public struct Summarization: Sendable, Equatable, Codable {
     }
 
     /// One summarizer answer, with what the call that wrote it was allowed and
-    /// what the fold has already spent on it.
+    /// what the compaction has already spent on it.
     ///
     /// The recovery ladder reads both fields. A condense re-ask is never sized
     /// above ``ceiling``. It is never made once ``reAsked`` records an earlier
     /// ask about this answer's material. The flag bounds the ladder for one
-    /// answer. It does not bound a whole multi-chunk fold, where each chunk
+    /// answer. It does not bound a whole multi-chunk compaction, where each chunk
     /// carries an answer of its own.
     private struct Answer {
         /// The text the model answered with.
@@ -148,14 +148,14 @@ public struct Summarization: Sendable, Equatable, Codable {
         /// The generation ceiling the call that wrote ``text`` ran under.
         let ceiling: Int
 
-        /// Whether the fold already spent a recovery re-ask to obtain ``text``.
+        /// Whether the compaction already spent a recovery re-ask to obtain ``text``.
         let reAsked: Bool
     }
 
     /// The blank line that joins two summaries into one call's content.
     private static let summarySeparator = "\n\n"
 
-    /// Folds the old span of `transcript` (everything but the header and the
+    /// Compacts the old span of `transcript` (everything but the header and the
     /// newest ``keepRecentTurns`` turns) into one summary entry.
     ///
     /// The protected tool outputs of the old span are never summarized. Each
@@ -164,15 +164,15 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// ahead of the summary entry.
     ///
     /// - Parameters:
-    ///   - transcript: The original transcript to fold.
+    ///   - transcript: The original transcript to compact.
     ///   - prompt: The compaction prompt sent to `summarizer` before the content of every call.
     ///   - tokensBefore: The pipeline's measured size before any stage ran.
     ///   - priorStagesApplied: The stages applied before this one; ``stageName`` is appended.
     ///   - summarizer: The model called to condense text.
     ///   - pendingRuns: The summaries of the runs still running, in tracking order. Their rendering is charged against the span byte budget.
     ///   - protection: The host rule whose protected tool outputs stay word for
-    ///     word, or `nil` (the default) to fold the whole old span.
-    /// - Returns: The fold, or `nil` when there is no old span to fold.
+    ///     word, or `nil` (the default) to compact the whole old span.
+    /// - Returns: The compaction, or `nil` when there is no old span to compact.
     /// - Throws: Whatever `summarizer.summarize(_:maxTokens:)` throws, or
     ///   ``SummarizationError/emptySummary`` when a call returns no text.
     func apply(
@@ -183,7 +183,7 @@ public struct Summarization: Sendable, Equatable, Codable {
         summarizer: any CompactionSummarizer,
         pendingRuns: [CompactionSegment.PendingRunSummary] = [],
         protection: ToolOutputProtection? = nil
-    ) async throws -> Folded? {
+    ) async throws -> Compacted? {
         let (header, turns) = TranscriptTurns.split(Array(transcript))
         let (old, recent) = TranscriptTurns.partition(turns, keepRecentTurns: keepRecentTurns)
         guard !old.isEmpty else { return nil }
@@ -203,21 +203,21 @@ public struct Summarization: Sendable, Equatable, Codable {
 
         let entryId = "compaction-summary-\(UUID().uuidString)"
         let keptEntryIds = Set(kept.map(\.id))
-        let foldedEntryIds = old.flatMap(\.entries).map(\.id).filter { !keptEntryIds.contains($0) }
+        let compactedEntryIds = old.flatMap(\.entries).map(\.id).filter { !keptEntryIds.contains($0) }
         let liveHeader = header + kept
         let recentEntries = recent.flatMap(\.entries)
         let stagesApplied = priorStagesApplied + [Self.stageName]
         let liveWindowEntryIds = liveHeader.map(\.id) + [entryId] + recentEntries.map(\.id)
 
         // The entry construction itself is shared with the deterministic-only
-        // fold path — see ``CompactionSegment/boundaryEntry(id:summaryText:content:)``.
+        // compaction path — see ``CompactionSegment/boundaryEntry(id:summaryText:content:)``.
         func makeSummaryEntry(tokensAfter: Int) -> Transcript.Entry {
             CompactionSegment.boundaryEntry(
                 id: entryId,
                 summaryText: summaryText,
                 content: CompactionSegment.Content(
                     liveWindowEntryIds: liveWindowEntryIds,
-                    foldedEntryIds: foldedEntryIds,
+                    compactedEntryIds: compactedEntryIds,
                     tokensBefore: tokensBefore,
                     tokensAfter: tokensAfter,
                     stagesApplied: stagesApplied,
@@ -236,7 +236,7 @@ public struct Summarization: Sendable, Equatable, Codable {
         let finalTranscript = Transcript(
             entries: liveHeader + [makeSummaryEntry(tokensAfter: tokensAfter)] + recentEntries)
 
-        return Folded(
+        return Compacted(
             transcript: finalTranscript, summary: summaryText, summaryEntryId: entryId,
             summaryCut: summaryCut)
     }
@@ -258,7 +258,7 @@ public struct Summarization: Sendable, Equatable, Codable {
     }
 
     /// Resolves a summary that may overrun `budgetBytes` into the text the
-    /// fold stores. A summary inside the budget is stored as is.
+    /// compaction stores. A summary inside the budget is stored as is.
     ///
     /// An oversized summary walks a ladder, cheapest rung first. The free rung
     /// drops the lines the answer repeated, because a line the answer had
@@ -270,16 +270,16 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// wrote its input. ``cut(_:toCharacters:)`` is the last rung.
     ///
     /// ONE answer earns ONE recovery generation, whichever rung spends it. The
-    /// bound holds for one answer, not for a whole fold. A multi-chunk fold
+    /// bound holds for one answer, not for a whole compaction. A multi-chunk compaction
     /// summarizes each chunk on its own, and each chunk's answer carries its
     /// own budget of one. When `answer` is itself a re-asked answer, the ladder
     /// skips the condense rung and walks the free rungs only. The stage has
-    /// already asked again about this same material. The 2026-09-01 fold
+    /// already asked again about this same material. The 2026-09-01 compaction
     /// measured that second ask. It answered with a repetition loop LONGER than
     /// the text it had to shorten.
     ///
     /// - Parameters:
-    ///   - answer: The answer the fold has in hand, and what it cost.
+    ///   - answer: The answer the compaction has in hand, and what it cost.
     ///   - budgetBytes: The bytes the stored summary may occupy. Zero or below
     ///     skips the re-ask, because no rewrite of any length would fit.
     ///   - summarizer: The model to ask again.
@@ -313,7 +313,7 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// The call is never sized above `inputCeiling`, the ceiling the call that
     /// wrote `summary` ran under. A model writes up to its ceiling, so a
     /// condense call given MORE room than the answer it must shorten is free to
-    /// answer with more text than it was given. The fold measured on 2026-09-01
+    /// answer with more text than it was given. The compaction measured on 2026-09-01
     /// did exactly that: a ceiling of 628 against an input written under 617,
     /// and 3238 bytes out of 3153 bytes in.
     ///
@@ -384,7 +384,7 @@ public struct Summarization: Sendable, Equatable, Codable {
         }
 
         var chunkSummaries: [Answer] = []
-        // Serial deliberately: a fold's cancellability depends on it, and on more
+        // Serial deliberately: a compaction's cancellability depends on it, and on more
         // than this file — see ``summarizeOnce(_:prompt:summarizer:)``.
         for chunk in chunks {
             chunkSummaries.append(try await summarizeOnce(Self.render(chunk), prompt: prompt, summarizer: summarizer))
@@ -437,12 +437,12 @@ public struct Summarization: Sendable, Equatable, Codable {
 
     /// Makes one summarizer call: `prompt`'s instructions, the stated word
     /// budget, the framing that names `content` as the conversation, then
-    /// `content` itself. Every map and reduce call of a fold goes through
+    /// `content` itself. Every map and reduce call of a compaction goes through
     /// here, and so does the repetition re-ask each of them may earn.
     ///
-    /// The calls one fold makes must stay serial. A session registers each
+    /// The calls one compaction makes must stay serial. A session registers each
     /// call as the turn's one in-flight model call, so that a client stop can
-    /// interrupt the fold. Concurrent calls would escape that stop.
+    /// interrupt the compaction. Concurrent calls would escape that stop.
     ///
     /// - Returns: The summarizer's answer, with the ceiling it ran under and
     ///   whether a recovery re-ask paid for it. An answer that repeated one line
@@ -614,7 +614,7 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// A section-aligned cut that runs up to the LAST section header is the one
     /// exception. Everything it drops then belongs to one section, and no later
     /// section can be truncated, so dropping that section whole buys nothing
-    /// and costs every fact the model stated in it. The real-model fold of
+    /// and costs every fact the model stated in it. The real-model compaction of
     /// 2026-09-01 measured that cost: the alignment shed 906 bytes to stay
     /// inside a budget the text overran by 41, and the fact stated last in the
     /// span went with them. The boundary cut is taken there instead, and only

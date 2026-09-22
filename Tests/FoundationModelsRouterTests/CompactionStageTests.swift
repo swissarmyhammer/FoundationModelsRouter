@@ -167,7 +167,7 @@ struct CompactionStageTests {
         #expect(truncated.contains(turns[1][2]))
     }
 
-    @Test("a transcript with only instructions has no turns to fold; both stages no-op")
+    @Test("a transcript with only instructions has no turns to compact; both stages no-op")
     func onlyInstructionsIsNoOp() throws {
         let instructions = TranscriptFixtures.makeInstructions()
         let transcript = Transcript(entries: [instructions])
@@ -186,7 +186,7 @@ struct CompactionStageTests {
         #expect(TurnTruncation(keepRecentTurns: 4).apply(transcript) == transcript)
     }
 
-    @Test("keepRecentTurns of 0 or fewer protects nothing: every turn is eligible for folding")
+    @Test("keepRecentTurns of 0 or fewer protects nothing: every turn is eligible for compaction")
     func nonPositiveKeepRecentTurnsProtectsNoTurns() throws {
         let instructions = TranscriptFixtures.makeInstructions()
         let bigOutput = String(repeating: "v", count: 500)

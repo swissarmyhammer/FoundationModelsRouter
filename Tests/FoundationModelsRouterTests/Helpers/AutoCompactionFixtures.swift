@@ -6,12 +6,12 @@ import Tracing
 @testable import FoundationModelsRouter
 
 /// Vends a single, test-retained ``StubSessionBackend`` per session, with a
-/// container-level ``shouldThrow`` a test can flip before a fold to make every
+/// container-level ``shouldThrow`` a test can flip before a compaction to make every
 /// backend this container vends from then on fail its summarizer call.
 ///
 /// Flipping ``shouldThrow`` reaches only the backends vended *after* the flip,
 /// because ``StubSessionBackend`` copies the flag it was built with. That is
-/// what makes the flash tier fail on its own: an automatic fold builds the
+/// what makes the flash tier fail on its own: an automatic compaction builds the
 /// flash summarizer through `makeSession(instructions:)`, so the flip reaches
 /// it. To make a session's *own* model fail, flip ``lastBackend``'s own flag
 /// instead — the own-model tier builds its summarizer from the live backend
@@ -28,9 +28,9 @@ final class ConfiguredLLMContainer: LoadedLLMContainer, @unchecked Sendable {
     var shouldThrow: Bool
 
     /// The shared log every backend this container vends records into —
-    /// including the blank-slate clone a fold's summarizer builds through
+    /// including the blank-slate clone a compaction's summarizer builds through
     /// `replacingTranscript(_:)`. On the `flash` container this holds an
-    /// automatic fold's own summarizer calls and nothing else, since a
+    /// automatic compaction's own summarizer calls and nothing else, since a
     /// warm-up turn never reaches the flash slot.
     let generationLog = StubGenerationLog()
 
@@ -152,12 +152,12 @@ struct PerSlotModelLoader: ModelLoader {
     func preload(container: any LoadedModelContainer) async throws {}
 }
 
-/// The shared warm-up every auto-compaction suite folds against: a session
+/// The shared warm-up every auto-compaction suite compacts against: a session
 /// whose measured fill has already reached its budget's trigger, over a
 /// two-slot profile whose `standard` and `flash` containers a test can
 /// configure independently.
 ///
-/// One home for the fixture, so the suites that drive an automatic fold —
+/// One home for the fixture, so the suites that drive an automatic compaction —
 /// `AutoCompactionTests` and `CompactionTracingTests` — warm up exactly the
 /// same way and their budgets keep meaning the same thing.
 enum AutoCompactionFixtures {
@@ -167,14 +167,14 @@ enum AutoCompactionFixtures {
     ///
     /// The length is load-bearing for
     /// `AutoCompactionTests.hardCeilingFailsFastThenRecoversWithLivePerAttemptFill()`,
-    /// which needs the retry's fold to shrink the transcript by enough that
+    /// which needs the retry's compaction to shrink the transcript by enough that
     /// the retry's own pre-check clears a ceiling the blocked attempt tripped.
-    /// A fold replaces the old span with one synthesized summary entry, and
+    /// A compaction replaces the old span with one synthesized summary entry, and
     /// that entry costs its summary text plus its `CompactionSegment`'s own
-    /// live-window/folded entry-id manifest — a fixed cost of roughly 175
+    /// live-window/compacted entry-id manifest — a fixed cost of roughly 175
     /// estimated tokens with these fixtures' UUID entry ids. At 12 repetitions
-    /// the whole warm-up transcript estimated 819 tokens and a fold left 776:
-    /// the manifest ate two thirds of the old span it replaced, so the fold
+    /// the whole warm-up transcript estimated 819 tokens and a compaction left 776:
+    /// the manifest ate two thirds of the old span it replaced, so the compaction
     /// was a 5% shrink and no ceiling could sit between it and the blocked
     /// attempt's own fill.
     static let cannedText = String(
@@ -182,7 +182,7 @@ enum AutoCompactionFixtures {
 
     /// The number of times ``cannedText`` repeats its sentence.
     ///
-    /// Keep this count large. Each fold must make the transcript much smaller
+    /// Keep this count large. Each compaction must make the transcript much smaller
     /// than the cost of the summary entry's own manifest. The documentation of
     /// ``cannedText`` gives the measurements that set this number.
     private static let cannedTextRepeatCount = 60
@@ -190,7 +190,7 @@ enum AutoCompactionFixtures {
     /// How many warm-up turns
     /// ``makeTriggeredSession(budget:tools:summarization:tracer:samplingMode:tempDirPrefix:)``
     /// drives — past ``TurnTruncation``'s default 4-turn recency window, so
-    /// folding has real old-span content to work with.
+    /// compaction has real old-span content to work with.
     static let turnCount = 6
 
     /// The working context every session this fixture vends resolves at — the
@@ -213,7 +213,7 @@ enum AutoCompactionFixtures {
 
     /// The divisor that puts ``fixedBudget``'s target at half the warm-up
     /// transcript's own recency-window floor — strictly below the floor, so
-    /// every fold this budget drives needs the model-assisted
+    /// every compaction this budget drives needs the model-assisted
     /// ``Summarization`` stage and really calls a summarizer.
     private static let belowRecencyFloorDivisor = 2
 
@@ -224,7 +224,7 @@ enum AutoCompactionFixtures {
     private static let fixedBudgetTriggerFraction = 0.8
 
     /// A budget whose target sits strictly below the warm-up transcript's own
-    /// recency-window floor — forcing every fold it drives to need the
+    /// recency-window floor — forcing every compaction it drives to need the
     /// model-assisted ``Summarization`` stage (and so to actually call a
     /// summarizer), the same ratio
     /// `RoutedSessionCompactTests.compactIsAppendOnlyAndPreservesIdentity()`
@@ -267,17 +267,17 @@ enum AutoCompactionFixtures {
     /// turn — mirrors `ExamplesTests.proactiveCompactionBetweenTurns()`'s
     /// own escalating-usage pattern. By the time this returns, the session's
     /// measured `contextFill` is `0.9`, its backend holds ``turnCount``
-    /// turns of real content, and no fold has happened yet — a caller then
+    /// turns of real content, and no compaction has happened yet — a caller then
     /// drives one more turn (typically via `streamEvents`) to observe the
-    /// proactive auto-fold this triggers, or calls
-    /// ``RoutedSession/compact(prompt:budget:)`` to drive a fold of its own.
+    /// proactive auto-compaction this triggers, or calls
+    /// ``RoutedSession/compact(prompt:budget:)`` to drive a compaction of its own.
     ///
     /// - Parameters:
     ///   - budget: The auto-compaction opt-in to vend the session with, or
     ///     `nil` to opt out (the regression case, and the way a caller-driven
-    ///     fold is left as the only fold that runs).
+    ///     compaction is left as the only compaction that runs).
     ///   - tools: The tools to vend the session with. Defaults to none.
-    ///   - summarization: The model-assisted stage every fold on the vended
+    ///   - summarization: The model-assisted stage every compaction on the vended
     ///     session runs with. Defaults to `Summarization()` — every default.
     ///   - tracer: The tracer every handle of the resolved profile carries, or
     ///     `nil` (the default) to read `InstrumentationSystem.tracer` at call
@@ -287,7 +287,7 @@ enum AutoCompactionFixtures {
     ///   - tempDirPrefix: The calling suite's name, so a leaked temp directory
     ///     is attributable.
     /// - Returns: The session plus its `standard`/`flash` containers, so a
-    ///   test can configure either before driving the fold.
+    ///   test can configure either before driving the compaction.
     /// - Throws: Whatever profile resolution or a warm-up turn throws.
     static func makeTriggeredSession(
         budget: TokenBudget?,

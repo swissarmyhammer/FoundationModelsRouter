@@ -9,7 +9,7 @@ import FoundationModelsRouter
 /// their time in differently-shaped calls, and both vocabularies live here so
 /// one `grep` reads either trail.
 ///
-/// ``fold`` and ``answer`` are the fact-retention tier's pair: a sample there
+/// ``compaction`` and ``answer`` are the fact-retention tier's pair: a sample there
 /// pays for exactly two generations, and they are the only two places it can
 /// spend half an hour. ``step`` and ``finalInstruction`` are the continuity
 /// tier's: a sample there drives a LIST of steps through one live session before
@@ -18,7 +18,7 @@ import FoundationModelsRouter
 enum CompactionEvalProgressStep: String, Sendable, CaseIterable {
     /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:protection:)``
     /// over the seed's entries, summarizer call included.
-    case fold
+    case compaction
 
     /// The resumed session's answer to the seed's question.
     case answer
@@ -106,7 +106,7 @@ extension CompactionEvalSampleLabel {
 /// The tiers cost half an hour each and printed nothing until they ended, so a
 /// run that hit its own time limit reported one bit: "not finished". The gated
 /// run of 2026-08-18 measured 0 of 7 seeds that way (task ^h2xxsse), and no
-/// reading of its output could say whether the model load, one fold, or one
+/// reading of its output could say whether the model load, one compaction, or one
 /// answering turn had taken the time — three explanations that each cost
 /// another half-hour run to tell apart.
 ///
@@ -173,7 +173,7 @@ enum CompactionEvalProgressLog {
     /// Renders the line stating that one sample has entered a step.
     ///
     /// It carries no duration for the step, because the step has not finished.
-    /// This is the line a hung fold or a hung answering turn leaves behind as
+    /// This is the line a hung compaction or a hung answering turn leaves behind as
     /// the last word of a run.
     ///
     /// - Parameters:
@@ -215,7 +215,7 @@ enum CompactionEvalProgressLog {
     ///   - sample: The sample leaving it.
     ///   - elapsedSeconds: How long the sample has run so far.
     ///   - stepSeconds: How long this step alone took.
-    ///   - detail: What the step produced — ``makeFoldDetail(stagesApplied:summarizerCalls:)``
+    ///   - detail: What the step produced — ``makeCompactionDetail(stagesApplied:summarizerCalls:)``
     ///     or ``makeAnswerDetail(answer:)``.
     /// - Returns: The line.
     static func makeStepReturnedLine(
@@ -231,26 +231,26 @@ enum CompactionEvalProgressLog {
             + " \(detail)"
     }
 
-    /// Renders what a fold produced, for the fold's own returned line.
+    /// Renders what a compaction produced, for the compaction's own returned line.
     ///
-    /// The three facts that separate the shapes a fold can take while it is
-    /// still the only thing that ran: the stages it applied (empty for a fold
+    /// The three facts that separate the shapes a compaction can take while it is
+    /// still the only thing that ran: the stages it applied (empty for a compaction
     /// `Compactor.compact` discarded), how many round trips its summarizer
     /// made, and how large the summarizer's last answer was. The full
-    /// measurement of a discarded fold stays in the table — see
+    /// measurement of a discarded compaction stays in the table — see
     /// ``CompactionEvalFactRetentionReport/discardedSummaryMarker``.
     ///
     /// - Parameters:
-    ///   - stagesApplied: The fold's ``CompactionResult/stagesApplied``.
-    ///   - summarizerCalls: Every summarizer call the fold made, in call order.
+    ///   - stagesApplied: The compaction's ``CompactionResult/stagesApplied``.
+    ///   - summarizerCalls: Every summarizer call the compaction made, in call order.
     /// - Returns: The detail text.
-    static func makeFoldDetail(
+    static func makeCompactionDetail(
         stagesApplied: [String],
         summarizerCalls: [CompactionEvalSummarizerCall]
     ) -> String {
         // The LAST call, for the same reason
         // `CompactionEvalSampleDiagnostic.discardedSummary` reads it: a chunked
-        // fold's final reduce call is the one answer the boundary carries.
+        // compaction's final reduce call is the one answer the boundary carries.
         let summarizerBytes = summarizerCalls.last?.answer.utf8.count ?? 0
         return "stages=\(stagesApplied.joined(separator: ","))"
             + " summarizerCalls=\(summarizerCalls.count)"
@@ -286,19 +286,19 @@ enum CompactionEvalProgressLog {
     /// step's own returned line.
     ///
     /// The two facts that separate the shapes a continuity step can take: how
-    /// large its reply was, and whether the session's own budget folded while it
-    /// ran. The fold count is the one this tier exists to watch — a task is
-    /// sized so at least one fold fires somewhere in the middle, and this states
+    /// large its reply was, and whether the session's own budget compacted while it
+    /// ran. The compaction count is the one this tier exists to watch — a task is
+    /// sized so at least one compaction fires somewhere in the middle, and this states
     /// which step it fired on rather than leaving the whole task's count to be
     /// read at the end.
     ///
     /// - Parameters:
     ///   - reply: What the session answered this step with.
-    ///   - foldCount: How many ``SessionEvent/compaction(_:)`` events this step
+    ///   - compactionCount: How many ``SessionEvent/compaction(_:)`` events this step
     ///     drove.
     /// - Returns: The detail text.
-    static func makeDrivenStepDetail(reply: String, foldCount: Int) -> String {
-        "replyBytes=\(reply.utf8.count) folds=\(foldCount)"
+    static func makeDrivenStepDetail(reply: String, compactionCount: Int) -> String {
+        "replyBytes=\(reply.utf8.count) compactions=\(compactionCount)"
     }
 
     /// Prints one progress line where a person watching the run sees it.

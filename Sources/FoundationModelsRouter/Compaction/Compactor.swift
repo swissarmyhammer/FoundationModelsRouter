@@ -4,10 +4,10 @@ import FoundationModels
 /// What one compaction pipeline run did: the transcript size before and
 /// after, the stages that ran, and the synthesized summary text.
 public struct CompactionResult: Sendable, Equatable {
-    /// This fold's own identity, a generated ``ULID`` string.
+    /// This compaction's own identity, a generated ``ULID`` string.
     public let id: String
 
-    /// The synthesized fold summary, or `nil` when no ``Summarization`` ran.
+    /// The synthesized compaction summary, or `nil` when no ``Summarization`` ran.
     public let summary: String?
 
     /// The summary entry's `Transcript.Entry.id`, or `nil`. Present exactly
@@ -31,11 +31,11 @@ public struct CompactionResult: Sendable, Equatable {
     public let summaryCut: Bool
 
     /// The estimated size, in tokens, of the protected tool outputs the
-    /// folded transcript keeps word for word (see ``ToolOutputProtection``).
+    /// compacted transcript keeps word for word (see ``ToolOutputProtection``).
     /// `0` when the session has no rule, or when the rule protects nothing.
     ///
     /// Protected outputs count against the budget like other entries. When
-    /// they keep the fold over ``TokenBudget/targetTokens``, the fold still
+    /// they keep the compaction over ``TokenBudget/targetTokens``, the compaction still
     /// completes with the other entries, and ``tokensAfter`` is over the
     /// target. This value tells the host why.
     public let protectedTokens: Int
@@ -43,16 +43,16 @@ public struct CompactionResult: Sendable, Equatable {
     /// Creates a compaction result.
     ///
     /// - Parameters:
-    ///   - id: This fold's identity. Defaults to a freshly generated ``ULID`` string.
-    ///   - summary: The synthesized fold summary, or `nil`.
+    ///   - id: This compaction's identity. Defaults to a freshly generated ``ULID`` string.
+    ///   - summary: The synthesized compaction summary, or `nil`.
     ///   - summaryEntryId: The summary entry's `Transcript.Entry.id`, or `nil`. Defaults to `nil`.
     ///   - summarizerModel: The ``ModelRef`` string of the summary's writer, or `nil`. Defaults to `nil`.
     ///   - summaryCut: Whether the last-resort cut removed text from `summary`. Defaults to `false`.
-    ///   - tokensBefore: The estimated pre-fold size, in tokens.
-    ///   - tokensAfter: The estimated post-fold size, in tokens.
+    ///   - tokensBefore: The estimated pre-compaction size, in tokens.
+    ///   - tokensAfter: The estimated post-compaction size, in tokens.
     ///   - stagesApplied: The stages that ran, in order.
     ///   - protectedTokens: The estimated size of the protected tool outputs the
-    ///     folded transcript keeps. Defaults to `0`.
+    ///     compacted transcript keeps. Defaults to `0`.
     public init(
         id: String = ULID.generate().description,
         summary: String?,
@@ -96,8 +96,8 @@ public struct CompactionResult: Sendable, Equatable {
     }
 }
 
-/// The logger a fold reports to when its protected tool outputs keep it over
-/// its target (see ``Compactor/foldKeptOverTarget(_:stagesApplied:tokensBefore:targetTokens:protection:)``).
+/// The logger a compaction reports to when its protected tool outputs keep it over
+/// its target (see ``Compactor/compactionKeptOverTarget(_:stagesApplied:tokensBefore:targetTokens:protection:)``).
 private let compactorLogger = makeModuleLogger(category: "Compaction")
 
 /// The compaction pipeline. It runs the deterministic stages in order until
@@ -118,29 +118,29 @@ package enum Compactor {
     /// a transcript's content bytes.
     package static let charsPerTokenEstimate: Double = 4.0
 
-    /// Runs the pipeline over `transcript` and folds it down to at most
+    /// Runs the pipeline over `transcript` and compacts it down to at most
     /// `budget.target` of `budget.limit`. The pipeline stops at the first
     /// stage that lands under target. When no stage is enough, the original
     /// transcript is returned unchanged with an empty
     /// ``CompactionResult/stagesApplied``.
     ///
-    /// The one exception is a fold that its protected tool outputs keep over
-    /// target: the protected outputs alone are over the target, or the fold
-    /// would land under it without them. That fold still completes with the
+    /// The one exception is a compaction that its protected tool outputs keep over
+    /// target: the protected outputs alone are over the target, or the compaction
+    /// would land under it without them. That compaction still completes with the
     /// other entries, because no stage may remove a protected output, and its
     /// ``CompactionResult/protectedTokens`` states why it is over target. The
     /// pipeline runs each stage once, and it never loops.
     ///
     /// - Parameters:
-    ///   - transcript: The transcript to fold.
+    ///   - transcript: The transcript to compact.
     ///   - prompt: The compaction prompt ``Summarization`` sends to `summarizer`.
-    ///   - budget: The token budget to fold against.
+    ///   - budget: The token budget to compact against.
     ///   - summarizer: The model ``Summarization`` calls, or `nil` for the model-free pipeline.
     ///   - summarization: The model-assisted stage and its tuning.
     ///   - pendingRuns: The run-plane summaries of the runs still running, in tracking order.
     ///   - protection: The host rule whose protected tool outputs every stage
     ///     keeps word for word, or `nil` (the default) to protect nothing.
-    /// - Returns: The folded transcript and a report of what happened.
+    /// - Returns: The compacted transcript and a report of what happened.
     /// - Throws: What `summarizer.summarize(_:maxTokens:)` throws, or
     ///   ``SummarizationError/emptySummary`` when the summary holds no text.
     package static func compact(
@@ -191,7 +191,7 @@ package enum Compactor {
         // `current` at this point (TurnTruncation already dropped the old
         // turns' content from it).
         if let summarizer,
-            let folded = try await summarization.apply(
+            let compacted = try await summarization.apply(
                 transcript,
                 prompt: prompt,
                 tokensBefore: tokensBefore,
@@ -201,36 +201,36 @@ package enum Compactor {
                 protection: protection
             )
         {
-            // A fold is applied only when it actually shrank the transcript.
+            // A compaction is applied only when it actually shrank the transcript.
             // Summarizing replaces a span of real conversation with a lossy
             // paraphrase, so a summary that came back as long as the span it
             // replaces (a model that ran on past its output ceiling, or a
             // span too small to compress) buys nothing and costs the original
             // text — and, worse, the caller would swap its backend for a
-            // *larger* transcript and record a checkpoint saying so. A fold
+            // *larger* transcript and record a checkpoint saying so. A compaction
             // that fails to shrink therefore falls through to the same
             // shortfall exit the oversized-tail case takes below.
-            let tokensAfter = estimatedTokenCount(of: folded.transcript)
+            let tokensAfter = estimatedTokenCount(of: compacted.transcript)
             if tokensAfter < tokensBefore {
                 return (
-                    folded.transcript,
+                    compacted.transcript,
                     CompactionResult(
-                        summary: folded.summary,
-                        summaryEntryId: folded.summaryEntryId,
-                        summaryCut: folded.summaryCut,
+                        summary: compacted.summary,
+                        summaryEntryId: compacted.summaryEntryId,
+                        summaryCut: compacted.summaryCut,
                         tokensBefore: tokensBefore,
                         tokensAfter: tokensAfter,
                         stagesApplied: stagesApplied + [Summarization.stageName],
-                        protectedTokens: protectedTokenCount(of: folded.transcript, protection: protection)
+                        protectedTokens: protectedTokenCount(of: compacted.transcript, protection: protection)
                     )
                 )
             }
         }
 
-        // A deterministic fold that only its protected tool outputs keep over
+        // A deterministic compaction that only its protected tool outputs keep over
         // target completes: no stage may remove them, so returning the
-        // original would give up the whole fold for content that must stay.
-        if let kept = foldKeptOverTarget(
+        // original would give up the whole compaction for content that must stay.
+        if let kept = compactionKeptOverTarget(
             current, stagesApplied: stagesApplied, tokensBefore: tokensBefore, targetTokens: targetTokens,
             protection: protection)
         {
@@ -239,8 +239,8 @@ package enum Compactor {
 
         // Shortfall: every available stage ran and none of them left a
         // transcript worth returning — either the oversized tail (the recency
-        // window alone is too big, and nothing may touch it) or a fold that
-        // did not shrink the transcript. `current`, and the discarded fold,
+        // window alone is too big, and nothing may touch it) or a compaction that
+        // did not shrink the transcript. `current`, and the discarded compaction,
         // may be smaller than `transcript`, but the function returns the
         // *original* transcript unchanged, so `tokensAfter` must report
         // `tokensBefore` — the size of what is actually being returned — not
@@ -248,42 +248,42 @@ package enum Compactor {
         return (transcript, shortfallResult)
     }
 
-    /// Returns `folded` as a completed fold when its protected tool outputs
+    /// Returns `compacted` as a completed compaction when its protected tool outputs
     /// are what keep it over `targetTokens`, and logs that it ends over its
     /// target. Otherwise returns `nil`.
     ///
-    /// The protected outputs keep the fold over target when they alone are
-    /// over the target, or when the fold would land under the target without
-    /// them. The fold must also have shrunk the transcript.
+    /// The protected outputs keep the compaction over target when they alone are
+    /// over the target, or when the compaction would land under the target without
+    /// them. The compaction must also have shrunk the transcript.
     ///
     /// - Parameters:
-    ///   - folded: The transcript the deterministic stages produced.
+    ///   - compacted: The transcript the deterministic stages produced.
     ///   - stagesApplied: The stages that produced it, in order.
-    ///   - tokensBefore: The estimated size of the transcript before the fold.
+    ///   - tokensBefore: The estimated size of the transcript before the compaction.
     ///   - targetTokens: The budget's target, in tokens.
     ///   - protection: The host rule, or `nil`.
-    /// - Returns: The completed fold and its report, or `nil`.
-    private static func foldKeptOverTarget(
-        _ folded: Transcript,
+    /// - Returns: The completed compaction and its report, or `nil`.
+    private static func compactionKeptOverTarget(
+        _ compacted: Transcript,
         stagesApplied: [String],
         tokensBefore: Int,
         targetTokens: Int,
         protection: ToolOutputProtection?
     ) -> (transcript: Transcript, result: CompactionResult)? {
-        let protectedTokens = protectedTokenCount(of: folded, protection: protection)
-        let tokensAfter = estimatedTokenCount(of: folded)
+        let protectedTokens = protectedTokenCount(of: compacted, protection: protection)
+        let tokensAfter = estimatedTokenCount(of: compacted)
         guard protectedTokens > 0, tokensAfter < tokensBefore,
             protectedTokens > targetTokens || tokensAfter - protectedTokens <= targetTokens
         else { return nil }
         compactorLogger.warning(
             """
-            a fold ends over its target of \(targetTokens, privacy: .public) tokens at \
+            a compaction ends over its target of \(targetTokens, privacy: .public) tokens at \
             \(tokensAfter, privacy: .public) tokens, because it keeps \(protectedTokens, privacy: .public) \
             tokens of protected tool output
             """
         )
         return (
-            folded,
+            compacted,
             CompactionResult(
                 summary: nil, tokensBefore: tokensBefore, tokensAfter: tokensAfter, stagesApplied: stagesApplied,
                 protectedTokens: protectedTokens)

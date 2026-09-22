@@ -1,8 +1,8 @@
-# Plan: Compaction — folding long transcripts inside FoundationModelsRouter
+# Plan: Compaction — compacting long transcripts inside FoundationModelsRouter
 
 Give any `RoutedSession` — and any bare `LanguageModelSession` over a
 `RecordingLanguageModel` handle — a context-window lifecycle: measure how full
-the transcript is, and when it approaches the resolved context size, fold the
+the transcript is, and when it approaches the resolved context size, compact the
 older conversation into a summary so the session keeps going instead of dying
 with `exceededContextWindowSize`. On-device models run at host-budget-fitted
 contexts (8k–32k is normal), so agentic sessions hit the ceiling routinely.
@@ -23,7 +23,7 @@ Hard requirements:
    browsable forever.
 3. **The compaction entry is a restore checkpoint.** When a session is
    restored from disk, reconstruction treats the newest compaction entry as
-   the fold point: the restored live window is the checkpoint's window plus
+   the compaction point: the restored live window is the checkpoint's window plus
    everything after it — never the full pre-compaction history.
 4. **Compaction never changes the session id.** Same `RoutedSession.id`, same
    transcript directory, same `sessions.jsonl` identity, before and after.
@@ -42,19 +42,19 @@ the result. `RoutedSessionActor` **owns** its backend, so `compact()` is an
 isolated actor method that swaps the inner session in place: same actor, same
 nonisolated `id: ULID`, same recorder — requirement 4 by construction.
 
-### 1.2 `CompactionSegment` — the fold lives in the transcript
+### 1.2 `CompactionSegment` — the compaction lives in the transcript
 
 The synthesized summary entry carries two segments: a text segment the model
 reads as prior context, and a **`CompactionSegment: PersistableCustomSegment`**
-whose `Codable` content is the fold metadata:
+whose `Codable` content is the compaction metadata:
 
 - the ordered **live-window entry ids** (Apple's `Transcript.Entry.id`s that
   constitute the compacted window),
-- the folded entry ids (what the window replaced),
+- the compacted entry ids (what the window replaced),
 - tokens before/after, the stages applied, and the prompt used (name only).
 
 Because Router's on-disk format mirrors native entries 1:1 — including
-`.custom` segments via `SegmentPayload.custom` — recording the fold requires
+`.custom` segments via `SegmentPayload.custom` — recording the compaction requires
 **zero schema work**: the summary entry appends to the same `transcript.jsonl`
 like any other entry. Router registers `CompactionSegment` in its own
 `CustomSegmentRegistry` by default, so round-trip needs no consumer setup.
@@ -72,7 +72,7 @@ transcript is under target:
 2. **`TurnTruncation(keepRecentTurns: 4)`** — drop the oldest complete turns,
    never splitting a turn or orphaning a tool pair. Alone, this is the
    model-free fallback.
-3. **`Summarization`** — render the folded span to text, summarize it with the
+3. **`Summarization`** — render the compacted span to text, summarize it with the
    compaction prompt (§2), synthesize the summary entry with its
    `CompactionSegment`. Long spans summarize in chunks, then summarize the
    summaries (map-reduce), so the summarizer never overflows its own context.
@@ -93,7 +93,7 @@ public protocol RoutedSession {
     /// profile's resolved working context.
     var contextFill: Double { get async }
 
-    /// Folds this session's transcript in place: same id, same recording,
+    /// Compacts this session's transcript in place: same id, same recording,
     /// shorter live window. Returns what happened.
     @discardableResult
     func compact(prompt: CompactionPrompt = .default,
@@ -130,15 +130,15 @@ have one resident.
 **Summary quality hazard (task ^59fd9rt).** The flash override is a routing
 choice, not a quality check. Auto-compaction prefers the `flash` slot as its
 summarizer, and a model that is too small to summarize can hold that slot.
-Each fold it writes passes every mechanical check — `stagesApplied` is
+Each compaction it writes passes every mechanical check — `stagesApplied` is
 non-empty, the transcript shrinks, the checkpoint records — while the summary
-text is garbage, and a session that resumes from that fold reads garbage in
+text is garbage, and a session that resumes from that compaction reads garbage in
 place of its history. Measured on 2026-08-19: with
-`mlx-community/SmolLM-135M-Instruct-4bit` in `flash`, every fold summary
+`mlx-community/SmolLM-135M-Instruct-4bit` in `flash`, every compaction summary
 degenerated into hallucinated repetition loops, under greedy and sampled
 decoding alike, whatever model held `standard`. A profile that opts into
 auto-compaction with a `budget:` must put a model that can summarize into its
-`flash` slot. The signal: every fold's `CompactionResult.summarizerModel`
+`flash` slot. The signal: every compaction's `CompactionResult.summarizerModel`
 names the model that wrote the summary, so a consumer of the
 `.compaction(_:)` event can judge each summary against its writer. See
 `RoutedSessionActor.performAutoCompaction(prompt:budget:)` for the code-level
@@ -197,8 +197,8 @@ the `tokensIn`/`tokensOut` fields of `.response`-kind events.
 
 The only other unmeasured moments: a brand-new session before its first turn
 (instructions only — fill ≈ 0), and the *prospective* check that a planned
-fold will land under target, where the pipeline uses a character-ratio
-estimate calibrated by the measured pre-fold count — safe because the next
+compaction will land under target, where the pipeline uses a character-ratio
+estimate calibrated by the measured pre-compaction count — safe because the next
 real turn re-measures exactly.
 
 **The bare-session path** (a caller not using `RoutedSession` — e.g. the ACP
@@ -225,7 +225,7 @@ with a lowered target, retry once) is the documented recovery path.
 
 §1.4/§1.5 above document the proactive/reactive *pattern* as something a
 caller drives by hand. `FoundationModelsAgentHarness`'s plan §5 asked for a
-loop that owns that policy itself — check fill at each turn, fold
+loop that owns that policy itself — check fill at each turn, compact
 automatically, retry once on overflow — so an agent loop never has to
 remember to call `compact()`. At the 2026-07-23 collapse (plan.md's
 "Guiding principle: constructor-fed, zero configuration"), that policy
@@ -242,11 +242,11 @@ let session = profile.standard.makeSession(
 
 When `budget` is set, every turn (`respond`/`streamResponse`/
 `streamEvents`) checks measured `contextFill` against `budget.trigger`
-**before** submitting its generate call and folds proactively if it is
+**before** submitting its generate call and compacts proactively if it is
 already over; if the call still fails with
 `LanguageModelError.contextSizeExceeded` (or the mid-turn
 `ContextBudgetError.hardCeilingExceeded` from §1.7 below), the session
-folds with a lowered target and **retries exactly once** before surfacing
+compacts with a lowered target and **retries exactly once** before surfacing
 the error — never looping. The retry re-runs the turn's own tool calls, so
 non-idempotent side effects can happen twice; the recorded transcript
 keeps both attempts, exactly as compaction_plan.md §1.7 called out. A session
@@ -268,7 +268,7 @@ otherwise have to maintain:
    submits measures fill first; the mid-turn events on `streamEvents`
    report it live, and `TokenBudget.hardCeiling`, when set, fails the call
    fast with `ContextBudgetError.hardCeilingExceeded` instead of submitting
-   a doomed generate — deterministic, and folded into the same
+   a doomed generate — deterministic, and compacted into the same
    retry-once recovery as a real `contextSizeExceeded`.
 2. **Tool outputs**, not prompts, are what blow a turn's window mid-turn.
    `TokenBudget.toolOutputLimit`, when set, caps any single tool's own
@@ -279,8 +279,8 @@ otherwise have to maintain:
    replaces the harness's own external `ObservedTool` capping job with a
    seam Router's own tool-instancing pipeline already owns.
 
-Fold-below-the-session — rewriting the transcript forwarded to the model so
-it sees a folded window while the session keeps its full one — remains the
+Compact-below-the-session — rewriting the transcript forwarded to the model so
+it sees a compacted window while the session keeps its full one — remains the
 parked research question compaction_plan.md §1.7 recorded: still not attempted,
 because the session's and model's views of history would diverge.
 
@@ -340,7 +340,7 @@ into the summary, and never write a line you have already written.
 fact the user simply told the assistant — a location, a code, a name, a number
 is not a constraint, a decision, a file, an error, or a next step. Measured on
 the gated `CompactionEvaluation` run of 2026-08-09, the seven-section form
-folded "the office printer's spare toner cartridges are kept in the third-floor
+compacted "the office printer's spare toner cartridges are kept in the third-floor
 supply closet" into `1. Intent — Inform the assistant about the location of
 spare toner cartridges.` with `2. Constraints & decisions — None.`: it recorded
 THAT a fact was communicated and discarded WHAT it was, and no answering turn
@@ -356,7 +356,7 @@ each request.
 supersedes `router-default-v3`, which illustrated the verbatim-value demand
 and the stated-facts section with quoted example facts. Task `^49dy082`
 measured what those examples cost: the real 1B model copied one of them into
-its answer sixty times, so the answer held no fact of the span, and the fold
+its answer sixty times, so the answer held no fact of the span, and the compaction
 stored it. The closing paragraph now states the rule outright as well — the
 instructions carry no facts, no phrase of them belongs in a summary, and no
 line is written twice. `router-default-v2` before it stated no size and
@@ -379,13 +379,13 @@ might add "always list test commands"); the prompt's `name` is recorded in the
   entry recorded after it. `restoreSessionTree` therefore hands back a
   session that is compacted and under budget. A `fullHistory` option keeps
   every entry in `seq` order for browsers, rendering the compaction entry as
-  a fold marker rather than duplicating the summary against what it replaced.
+  a compaction marker rather than duplicating the summary against what it replaced.
   Repeated compactions nest naturally: only the newest checkpoint governs
   restore; earlier ones are historical markers.
 - **Identity** (requirement 4): same `sessionId` on every event, same
   directory, same sidecar. `SessionSidecar` gains an optional compaction
-  count so browsers can badge folded sessions.
-- The differ baseline reset (`noteCompaction`) keeps post-fold turns recording
+  count so browsers can badge compacted sessions.
+- The differ baseline reset (`noteCompaction`) keeps post-compaction turns recording
   as ordinary appends — no divergence, no double-recording (retained tail
   entries keep their entry ids, so they are recognized as already recorded).
 
@@ -399,7 +399,7 @@ A small executable beside `MultiModelGeneration` proving the loop end to end:
 3. At the 0.80 trigger, call `session.compact()` — print the
    `CompactionResult` (tokens before/after, stages) and the summary text.
 4. Continue the conversation; show the model still answers questions about
-   pre-fold facts (from the summary) and that `session.id` is unchanged.
+   pre-compaction facts (from the summary) and that `session.id` is unchanged.
 5. Restore the session from disk with `restoreSessionTree`; show the restored
    transcript is the checkpointed live window, then print the `fullHistory`
    view to show nothing was lost.
@@ -423,12 +423,12 @@ their own targets in the nested `IntegrationTests/` package
 - **Evals — Apple's Evaluations framework (WWDC26)**, in a gated
   `FoundationModelsRouterEvals` target. Compaction quality is exactly the
   probabilistic property unit tests cannot pin down: *does the model still
-  know what happened before the fold?*
+  know what happened before the compaction?*
 
   `CompactionEvaluation` plants facts in the head of long seed transcripts
   ("the API key lives in `.env.example`", "we chose tabs over spaces"),
   compacts with the prompt under test, then asks questions answerable only
-  from folded content:
+  from compacted content:
 
   ```swift
   import Evaluations
@@ -447,7 +447,7 @@ their own targets in the nested `IntegrationTests/` package
           let retention = Metric("FactRetention")
           Evaluator { sample, subject in           // quantitative: mechanical
               subject.value.answer.contains(sample.expected.fact)
-                  ? retention.passing(rationale: "fact survived the fold")
+                  ? retention.passing(rationale: "fact survived the compaction")
                   : retention.failing(rationale: subject.value.answer)
           }
           let budget = Metric("UnderTarget")
@@ -464,7 +464,7 @@ their own targets in the nested `IntegrationTests/` package
       }
   }
 
-  @Test("Compaction retains pre-fold facts", .evaluates(evaluation, info: info))
+  @Test("Compaction retains pre-compaction facts", .evaluates(evaluation, info: info))
   func evaluateCompaction() async throws {
       let result = EvaluationContext.current.result
       #expect(result.aggregateValue(.mean(of: factRetention)) >= 0.9)
@@ -487,12 +487,12 @@ their own targets in the nested `IntegrationTests/` package
    macOS 27 SDK's `FoundationModels.framework` public interface
    (`.../FoundationModels.swiftmodule/arm64e-apple-macos.swiftinterface`) for
    any compaction/condensing primitive:
-   `grep -inE "compact|condens|summar|trim|prune|fold|truncat" "$F"` — zero
+   `grep -inE "compact|condens|summar|trim|prune|compaction|truncat" "$F"` — zero
    matches anywhere in the framework. The only context-window-related surface
    the SDK exposes at all is `LanguageModelSession.contextSize` (a read-only
    `Int`) and the `LanguageModelError.contextSizeExceeded` / deprecated
    `GenerationError.exceededContextWindowSize` failure cases — nothing that
-   folds, summarizes, elides, or trims a transcript. There is nothing native
+   compacts, summarizes, elides, or trims a transcript. There is nothing native
    to defer to or build on top of: this plan's from-scratch design (§1) is
    the only option.
 
@@ -506,7 +506,7 @@ their own targets in the nested `IntegrationTests/` package
    summary entry, or, deliberately, the *same* id an old `.toolOutput`
    carried, to mark an elision placeholder as replacing it in place rather
    than being an unrelated new entry — exactly what `CompactionSegment`
-   (§1.2) depends on, since it references live-window and folded entries *by
+   (§1.2) depends on, since it references live-window and compacted entries *by
    id*. `Tests/FoundationModelsRouterTests/CompactionSpikeTests.swift` proves
    the disk half of that dependency: a synthesized summary `.response` entry
    and a synthesized elision-placeholder `.toolOutput` entry (reusing an old
@@ -578,7 +578,7 @@ their own targets in the nested `IntegrationTests/` package
   actor; id unchanged by construction) and `Compactor` + `noteCompaction` for
   bare sessions over the handle (a caller not using `RoutedSession`, e.g. the
   ACP bridge). The routed path is implemented on the bare primitives.
-- **The fold lives in the transcript** — `CompactionSegment` makes compaction
+- **The compaction lives in the transcript** — `CompactionSegment` makes compaction
   self-describing; the recording mirror persists it with zero schema work,
   and restore reads the checkpoint from data the transcript itself carries.
 - **Append-only history, checkpointed restore** — full history is never
@@ -589,4 +589,4 @@ their own targets in the nested `IntegrationTests/` package
   fallback when no summarizer is available.
 - **Prompt is data, recorded by name** — passed-in `CompactionPrompt` with a
   research-backed default; the segment records which prompt produced each
-  fold so evals can compare prompts across recorded sessions.
+  compaction so evals can compare prompts across recorded sessions.

@@ -5,7 +5,7 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises task ^810gdjj: restore fidelity for rich content, repeated
-/// folds, and driven forks — always-run, no GPU, no gated suites.
+/// compactions, and driven forks — always-run, no GPU, no gated suites.
 ///
 /// Three gaps close here, each against a real `Router` recording through a
 /// `JSONLRecorder` into a temp directory:
@@ -17,21 +17,21 @@ import Testing
 ///    must equal the live transcript's record-time canonical form entry for
 ///    entry (see ``canonicalized(_:)`` for the one live-only facet no
 ///    persisted form can keep). The transcript carries all six entry kinds.
-/// 2. **Multi-fold restore.** A live session folds twice through the
+/// 2. **Multi-compaction restore.** A live session compacts twice through the
 ///    model-assisted `Summarization` stage (the stub backend is the scripted
 ///    summarizer), and the restored transcript must equal the live
-///    post-second-fold transcript — both through ``TranscriptTree`` and
+///    post-second-compaction transcript — both through ``TranscriptTree`` and
 ///    through a fresh-process `restoreSessionTree(root:)`.
 /// 3. **Driven restored forks.** A restored fork answers a new turn with
 ///    content that exists only in an entry it inherited from its parent, so
 ///    semantic continuity is proven without the integration gate.
 ///
-/// The warm-up turns and the fold-budget floor come from the shared fold
-/// fixtures in `Helpers/CompactionFoldFixtures.swift` — ``driveTurns(_:on:)``
+/// The warm-up turns and the compaction-budget floor come from the shared compaction
+/// fixtures in `Helpers/CompactionFixtures.swift` — ``driveTurns(_:on:)``
 /// and ``recencyWindowOnlyEstimate(_:)`` — and the recording root comes from
 /// ``RouterTestFixtures/routerDirectory(routerId:recordingsDir:)``, so the
-/// path rule and the fold math live in exactly one place each.
-@Suite("Restore fidelity: rich content, multi-fold, driven forks (task ^810gdjj)")
+/// path rule and the compaction math live in exactly one place each.
+@Suite("Restore fidelity: rich content, multi-compaction, driven forks (task ^810gdjj)")
 struct RestoreFidelityTests {
     // MARK: - Fixtures
 
@@ -40,15 +40,15 @@ struct RestoreFidelityTests {
 
     /// A long-ish canned response, repeated across every stub turn, so six
     /// turns' worth of transcript carries a real byte-size estimate for the
-    /// fold-budget derivation — the same shape
+    /// compaction-budget derivation — the same shape
     /// `ForkAfterCompactionRestorationTests` uses.
     private static let cannedText = String(
         repeating: "The quick brown fox jumps over the lazy dog. ", count: 12)
 
-    /// How many warm-up turns each fold needs: more than
+    /// How many warm-up turns each compaction needs: more than
     /// ``defaultKeepRecentTurns``, so turns older than the untouchable
-    /// recency window exist for the fold to work on.
-    private static let foldWarmupTurnCount = 6
+    /// recency window exist for the compaction to work on.
+    private static let compactionWarmupTurnCount = 6
 
     /// The factor a summarization-forcing budget's `limit` scales the
     /// recency-window-only estimate by, mirroring
@@ -68,9 +68,9 @@ struct RestoreFidelityTests {
 
     /// A budget that forces the model-assisted `Summarization` stage:
     /// its target sits strictly under `entries`' recency-window-only floor,
-    /// which no deterministic stage can fold below.
+    /// which no deterministic stage can compact below.
     ///
-    /// - Parameter entries: The live transcript entries about to be folded.
+    /// - Parameter entries: The live transcript entries about to be compacted.
     /// - Returns: The budget to pass to `compact(budget:)`.
     private static func summarizationForcingBudget(for entries: [Transcript.Entry]) -> TokenBudget {
         TokenBudget(
@@ -80,9 +80,9 @@ struct RestoreFidelityTests {
     }
 
     /// A ``LoadedLLMContainer`` vending ``StubSessionBackend``s that record
-    /// themselves — and every clone a fold creates — into one shared
-    /// ``StubBackendRegistry``, so a test can reach the live post-fold
-    /// backend a fold's `replacingTranscript(_:)` swap installs.
+    /// themselves — and every clone a compaction creates — into one shared
+    /// ``StubBackendRegistry``, so a test can reach the live post-compaction
+    /// backend a compaction's `replacingTranscript(_:)` swap installs.
     private struct RegisteringStubContainer: LoadedLLMContainer {
         /// The canned text every backend this container vends responds with.
         let responseText: String
@@ -221,11 +221,11 @@ struct RestoreFidelityTests {
         #expect(Array(reconstructed) == (try Self.canonicalized(live)))
     }
 
-    // MARK: - 2. Fold a live session twice, then restore
+    // MARK: - 2. Compact a live session twice, then restore
 
-    @Test("a session folded twice through the scripted summarizer restores equal to the live post-second-fold transcript")
+    @Test("a session compacted twice through the scripted summarizer restores equal to the live post-second-compaction transcript")
     @MainActor
-    func doubleFoldedSessionRestoresEqualToLiveTranscript() async throws {
+    func doubleCompactedSessionRestoresEqualToLiveTranscript() async throws {
         let cacheDir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
         let recordingsDir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
         defer {
@@ -245,35 +245,35 @@ struct RestoreFidelityTests {
         let profile1 = try await router1.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
 
-        // First fold: warm up past the recency window, then force the
+        // First compaction: warm up past the recency window, then force the
         // model-assisted Summarization stage — the stub backend's canned
         // response is the scripted summary.
         let root = profile1.standard.makeSession()
-        try await driveTurns(Self.foldWarmupTurnCount, on: root)
-        let firstFoldBackend = try #require(registry.created.last)
+        try await driveTurns(Self.compactionWarmupTurnCount, on: root)
+        let firstCompactionBackend = try #require(registry.created.last)
         let firstResult = try await root.compact(
-            budget: Self.summarizationForcingBudget(for: firstFoldBackend.transcriptEntries()))
+            budget: Self.summarizationForcingBudget(for: firstCompactionBackend.transcriptEntries()))
         #expect(firstResult.stagesApplied.contains("Summarization"))
 
-        // Second fold: more turns on the already-folded session, then fold
+        // Second compaction: more turns on the already-compacted session, then compact
         // again — the fixed checkpoint semantics (^h1008kb, ^6z1msg1) must
-        // hold across repeated live folds, not just one.
-        try await driveTurns(Self.foldWarmupTurnCount, on: root)
-        let secondFoldBackend = try #require(registry.created.last)
+        // hold across repeated live compactions, not just one.
+        try await driveTurns(Self.compactionWarmupTurnCount, on: root)
+        let secondCompactionBackend = try #require(registry.created.last)
         let secondResult = try await root.compact(
-            budget: Self.summarizationForcingBudget(for: secondFoldBackend.transcriptEntries()))
+            budget: Self.summarizationForcingBudget(for: secondCompactionBackend.transcriptEntries()))
         #expect(secondResult.stagesApplied.contains("Summarization"))
 
-        // One post-fold turn, so the restore must stitch the second
+        // One post-compaction turn, so the restore must stitch the second
         // checkpoint's live window together with entries recorded after it.
-        _ = try await root.respond(to: "turn after the second fold")
+        _ = try await root.respond(to: "turn after the second compaction")
 
-        // The live post-second-fold transcript: the swap clone the second
-        // fold installed is the last backend the registry saw, and the
-        // post-fold turn appended into it in place.
+        // The live post-second-compaction transcript: the swap clone the second
+        // compaction installed is the last backend the registry saw, and the
+        // post-compaction turn appended into it in place.
         let liveBackend = try #require(registry.created.last)
         let live = liveBackend.transcriptEntries()
-        #expect(liveBackend !== firstFoldBackend)
+        #expect(liveBackend !== firstCompactionBackend)
 
         // Restore path 1: the reconstructed transcript equals the live one,
         // entry for entry.

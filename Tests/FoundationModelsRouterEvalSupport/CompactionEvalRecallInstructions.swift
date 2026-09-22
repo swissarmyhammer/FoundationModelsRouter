@@ -1,5 +1,5 @@
 /// The system instructions every ``CompactionEvalSeed`` transcript opens
-/// with. The fold keeps the `.instructions` entry, so the resumed session
+/// with. The compaction keeps the `.instructions` entry, so the resumed session
 /// answers each seed's question under this header.
 ///
 /// The wording is the helpful persona, plus a statement that a summary may
@@ -8,7 +8,7 @@
 /// `mlx-community/Llama-3.2-1B-Instruct-4bit` under greedy decoding, over the
 /// 24 seeds of the whole-dataset tier of the day (task ^e814b60, gated runs of
 /// 2026-08-19). Task ^k0d30s4 has since deleted that tier and cut the dataset
-/// to the seven seeds the one remaining tier folds.
+/// to the seven seeds the one remaining tier compacts.
 /// That 1B model was ``CompactionEvalRealModel`` on the day of the
 /// measurement; task ^m03heaa has since moved this eval to Qwen2.5-3B, so the
 /// counts below are the 1B's and this header has not been re-measured against

@@ -103,7 +103,7 @@ struct ScriptedTurnSizingTests {
         // The upper bound of the same band. The gated loop stops at the first
         // turn that crosses the trigger, so it normally never submits the last
         // turn — but a run that needs every turn must still fit the window, or
-        // that turn fails instead of folding. Bounding the whole fixture
+        // that turn fails instead of compaction. Bounding the whole fixture
         // subsumes the crossing-prefix bound this replaces, because a prefix is
         // never larger than the whole.
         #expect(
@@ -112,10 +112,10 @@ struct ScriptedTurnSizingTests {
         )
     }
 
-    // MARK: - The fold reaches the model-assisted stage by construction (task f80n046)
+    // MARK: - The compaction reaches the model-assisted stage by construction (task f80n046)
 
-    @Test("no window of consecutive scripted turns fits under the fold target, so the deterministic stages alone can never land it")
-    func recencyWindowCannotFitUnderTheFoldTarget() throws {
+    @Test("no window of consecutive scripted turns fits under the compaction target, so the deterministic stages alone can never land it")
+    func recencyWindowCannotFitUnderTheCompactionTarget() throws {
         // `TurnTruncation` keeps the newest `keepRecentTurns` turns verbatim
         // and `ToolOutputElision` touches nothing here (these turns call no
         // tools), so the deterministic pipeline's floor is that window. When
@@ -127,7 +127,7 @@ struct ScriptedTurnSizingTests {
         // run needed to cross the trigger, so every consecutive window is
         // checked rather than only the last. Prompt text alone: the window also
         // carries the replies and the header, which only add.
-        let targetTokens = CompactionRoundTripFixture.foldBudget.targetTokens
+        let targetTokens = CompactionRoundTripFixture.compactionBudget.targetTokens
         let keepRecentTurns = Self.keepRecentTurns
         let turns = CompactionRoundTripFixture.scriptedTurns
         #expect(turns.count > keepRecentTurns)
@@ -136,12 +136,12 @@ struct ScriptedTurnSizingTests {
             let windowTokens = Compactor.estimatedTokenCount(of: window.joined())
             #expect(
                 windowTokens > targetTokens,
-                "turns \(start)..<\(start + keepRecentTurns) estimate \(windowTokens) prompt tokens, which does not exceed the fold target's \(targetTokens)"
+                "turns \(start)..<\(start + keepRecentTurns) estimate \(windowTokens) prompt tokens, which does not exceed the compaction target's \(targetTokens)"
             )
         }
     }
 
-    @Test("the first turns cannot cross the trigger before some turn falls outside the recency window, so a fold always has an old span to summarize")
+    @Test("the first turns cannot cross the trigger before some turn falls outside the recency window, so a compaction always has an old span to summarize")
     func triggerIsNotReachedBeforeAnOldSpanExists() throws {
         // The other half of the same property: `Summarization` returns `nil`
         // — and the pipeline reports the oversized-tail shortfall with an
@@ -160,7 +160,7 @@ struct ScriptedTurnSizingTests {
         let worstCase = promptTokens + replyTokens + headerTokens
         #expect(
             worstCase < Self.triggerTokens,
-            "the first \(keepRecentTurns) turns reach \(worstCase) tokens at their largest, at or over the trigger's \(Self.triggerTokens) — the fold could find no turn outside the recency window to summarize"
+            "the first \(keepRecentTurns) turns reach \(worstCase) tokens at their largest, at or over the trigger's \(Self.triggerTokens) — the compaction could find no turn outside the recency window to summarize"
         )
     }
 }

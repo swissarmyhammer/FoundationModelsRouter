@@ -44,7 +44,7 @@ struct SessionEventStreamTests {
         /// instead of yielding ``responseChunks``.
         var shouldThrow = false
 
-        /// The per-turn token counts folded into ``cumulativeUsage`` on every
+        /// The per-turn token counts added into ``cumulativeUsage`` on every
         /// call, or `nil` to report no usage at all — mirrors
         /// ``StubSessionBackend/usageIncrement``.
         var usageIncrement: (input: Int, output: Int)?
@@ -97,7 +97,7 @@ struct SessionEventStreamTests {
             return cumulativeUsage
         }
 
-        /// Folds ``usageIncrement`` (when set) into ``cumulativeUsage`` — the
+        /// Adds ``usageIncrement`` (when set) into ``cumulativeUsage`` — the
         /// same "delta between two snapshots" mechanism ``StubSessionBackend/recordResponse()``
         /// uses, called only on a call known to succeed.
         private func recordUsage() {

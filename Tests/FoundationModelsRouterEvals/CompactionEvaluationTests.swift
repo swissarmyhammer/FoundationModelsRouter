@@ -19,7 +19,7 @@ struct CompactionEvaluationHermeticTests {
         // The wiring property, and not the dataset's SIZE. This asked for at
         // least 20 samples while compaction_plan.md §5 asked the dataset for 20
         // to 30 fixtures; task ^k0d30s4 cut it to the seven the one gated tier
-        // folds, so a floor of 20 measured a requirement that no longer stands.
+        // compacts, so a floor of 20 measured a requirement that no longer stands.
         // What the stream still owes is every fixture, under its own id:
         // `CompactionEvalRepresentativeSubsetTests` states how many there are
         // and what they carry between them.
@@ -96,22 +96,22 @@ struct CompactionEvaluationHermeticTests {
             func summarize(_ prompt: String, maxTokens: Int) async throws -> String { "fake summary" }
         }
 
-        try await Self.expectEverySeedFoldsThroughSummarization(
+        try await Self.expectEverySeedCompactsThroughSummarization(
             with: FakeSummarizer(), answering: "a trivial summary")
     }
 
-    @Test("every seed's fold is applied, not discarded, against a summarizer answering at a real summary's length")
-    func everySeedFoldSurvivesARealisticSummary() async throws {
+    @Test("every seed's compaction is applied, not discarded, against a summarizer answering at a real summary's length")
+    func everySeedCompactionSurvivesARealisticSummary() async throws {
         // The assertion above proves the budget carries every seed INTO
-        // `Summarization`. It cannot prove the fold that stage produced was
-        // kept, because its summarizer answers in two words: a fold that
+        // `Summarization`. It cannot prove the compaction that stage produced was
+        // kept, because its summarizer answers in two words: a compaction that
         // replaces a whole span with 12 bytes shrinks any transcript.
         //
-        // `Compactor.compact` discards a fold that left the transcript no
+        // `Compactor.compact` discards a compaction that left the transcript no
         // smaller, and against a real model that is what these seeds used to
         // get: the gated run of 2026-08-17 reported `summarizerCalls=1` with an
         // empty stage list on 8 of the 9 samples that completed. The stage ran,
-        // the summarizer answered, and the pipeline threw the fold away, so the
+        // the summarizer answered, and the pipeline threw the compaction away, so the
         // resumed session answered from the original turns and the dataset
         // measured nothing about compaction at all.
         //
@@ -120,30 +120,30 @@ struct CompactionEvaluationHermeticTests {
         // writes instead, since nothing states that allowance to it, which is
         // the defect `^fm5ddk9` measured — and this is the assertion that fails
         // the moment a seed
-        // stops folding — under a plain `swift test`, rather than 400 seconds
+        // stops compacting — under a plain `swift test`, rather than 400 seconds
         // into a gated run. `CompactionEvalSeedSizingTests` states the
         // arithmetic behind it.
         let summarization = Summarization()
-        try await Self.expectEverySeedFoldsThroughSummarization(
+        try await Self.expectEverySeedCompactsThroughSummarization(
             with: RealisticSummaryLengthSummarizer(
                 reasoningTokenHeadroom: summarization.reasoningTokenHeadroom),
             answering: "a summary of the length the allowance buys"
         )
     }
 
-    /// Folds every seed with `summarizer` against ``compactionEvalDefaultBudget``
+    /// Compacts every seed with `summarizer` against ``compactionEvalDefaultBudget``
     /// and requires the whole pipeline to have run and been APPLIED.
     ///
     /// The budget is read from the same constant the evaluation itself defaults
     /// to, never restated as a literal: a copy would let the two drift, and
-    /// these assertions exist to fail when that value stops forcing the fold.
+    /// these assertions exist to fail when that value stops forcing the compaction.
     ///
     /// - Parameters:
-    ///   - summarizer: The summarizer the fold calls.
+    ///   - summarizer: The summarizer the compaction calls.
     ///   - description: How the summarizer answers, named in the failure message
     ///     so a red run says which of the two callers below found the seed.
-    /// - Throws: Whatever the fold throws.
-    private static func expectEverySeedFoldsThroughSummarization(
+    /// - Throws: Whatever the compaction throws.
+    private static func expectEverySeedCompactsThroughSummarization(
         with summarizer: any CompactionSummarizer,
         answering description: String
     ) async throws {
@@ -158,7 +158,7 @@ struct CompactionEvaluationHermeticTests {
                 result.stagesApplied == [
                     ToolOutputElision.stageName, TurnTruncation.stageName, Summarization.stageName,
                 ],
-                "seed \(seed.id) did not fold through Summarization against \(description): stagesApplied was \(result.stagesApplied)"
+                "seed \(seed.id) did not compact through Summarization against \(description): stagesApplied was \(result.stagesApplied)"
             )
         }
     }
@@ -220,7 +220,7 @@ struct CompactionEvaluationHermeticTests {
         // phrase, and the classification calls the sample `retained` when the
         // summary holds it. A seed whose background prose also stated the phrase
         // would let a summary of that background satisfy both without the
-        // planted fact ever surviving the fold — the dataset would then measure
+        // planted fact ever surviving the compaction — the dataset would then measure
         // its own filler rather than compaction.
         //
         // Counted without regard to case, because that is how the metric and the
@@ -236,7 +236,7 @@ struct CompactionEvaluationHermeticTests {
 
     @Test("every seed opens with the measured recall instructions, so the resumed session answers instead of refusing")
     func everySeedOpensWithTheRecallInstructions() {
-        // The fold keeps the `.instructions` entry, so the resumed session
+        // The compaction keeps the `.instructions` entry, so the resumed session
         // answers the seed's question under this header. The gated runs of
         // 2026-08-19 (task ^e814b60) measured three other registers against
         // it: the bare helpful persona refused facts its own summary stated,
@@ -259,7 +259,7 @@ struct CompactionEvaluationHermeticTests {
     /// Every assistant reply in `seed`'s built transcript, in order — the text
     /// content of each `.response` entry.
     ///
-    /// Flattened by ``Summarization/text(of:)``, the production function a fold
+    /// Flattened by ``Summarization/text(of:)``, the production function a compaction
     /// itself reads an entry's segments with, so what this measures is the text
     /// a summarizer really sees rather than a test's own idea of it.
     ///
@@ -273,7 +273,7 @@ struct CompactionEvaluationHermeticTests {
     }
 
     /// Every prompt and reply of `seed`'s built transcript, joined — the text a
-    /// summarizer reading the folded span is shown.
+    /// summarizer reading the compacted span is shown.
     ///
     /// The tool-traffic entries a fixture may carry hold fixed strings
     /// (`recordFact`, `noted`, `recorded`) that no fixture's own content ever
@@ -324,12 +324,12 @@ struct CompactionEvaluationHermeticTests {
 // MARK: - Hermetic fact-retention classification
 
 /// Hermetic proof that ``CompactionEvalFactRetentionReport`` attributes a
-/// failing `FactRetention` sample to the right side of the fold.
+/// failing `FactRetention` sample to the right side of the compaction.
 ///
 /// The gated eval's mean is one number over the whole dataset, so a run that
 /// misses the bar says nothing about *where* each failing sample lost its
 /// fact. These tests pin the three distinguishable places apart — the answer
-/// lost a fact the summary carried, the fold itself dropped it, or no summary
+/// lost a fact the summary carried, the compaction itself dropped it, or no summary
 /// was produced at all — so the gated run's attribution is a measurement over
 /// every sample rather than an argument from a few of them.
 @Suite("CompactionEvaluation fact-retention classification")
@@ -379,12 +379,12 @@ struct CompactionEvalFactRetentionReportTests {
 
     /// Builds a recorded sample against ``seed``'s question.
     ///
-    /// The recorded call answers exactly `summary`, which is what a fold that
+    /// The recorded call answers exactly `summary`, which is what a compaction that
     /// was applied really records: the stored summary is the summarizer's own
     /// last answer.
     ///
     /// - Parameters:
-    ///   - summary: The fold's summary text, or `nil` for a fold that produced
+    ///   - summary: The compaction's summary text, or `nil` for a compaction that produced
     ///     none.
     ///   - answer: The resumed session's answer.
     ///   - question: The question recorded for the sample. Defaults to
@@ -424,8 +424,8 @@ struct CompactionEvalFactRetentionReportTests {
         #expect(classification == .answerMissedFactSummaryCarriedIt)
     }
 
-    @Test("a summary that dropped the key phrase is a fold failure")
-    func summaryWithoutKeyPhraseIsAFoldFailure() {
+    @Test("a summary that dropped the key phrase is a compaction failure")
+    func summaryWithoutKeyPhraseIsACompactionFailure() {
         let classification = CompactionEvalFactRetentionClass.classify(
             summary: "2. Constraints & decisions — the team discussed a vault.",
             answer: "I do not have that information.",
@@ -434,20 +434,20 @@ struct CompactionEvalFactRetentionReportTests {
         #expect(classification == .summaryLostFact)
     }
 
-    @Test("a fold that produced no summary is its own class")
+    @Test("a compaction that produced no summary is its own class")
     func absentSummaryIsItsOwnClass() {
         let classification = CompactionEvalFactRetentionClass.classify(
             summary: nil,
             answer: "I do not have that information.",
             factKeyPhrase: Self.seed.factKeyPhrase
         )
-        #expect(classification == .foldProducedNoSummary)
+        #expect(classification == .compactionProducedNoSummary)
     }
 
-    @Test("a summary with no text is a fold failure, not a summary that lost the fact")
-    func emptySummaryIsAFoldFailure() {
+    @Test("a summary with no text is a compaction failure, not a summary that lost the fact")
+    func emptySummaryIsACompactionFailure() {
         // The gated run of 2026-08-17 recorded `Optional("")` on 19 of 19 seeds:
-        // the fold ran, the summarizer answered, and the answer held no
+        // the compaction ran, the summarizer answered, and the answer held no
         // characters. A `nil` guard alone filed every one of them under
         // `summaryLostFact`, which reads as a summary that forgot the fact.
         let classification = CompactionEvalFactRetentionClass.classify(
@@ -455,20 +455,20 @@ struct CompactionEvalFactRetentionReportTests {
             answer: "I do not have that information.",
             factKeyPhrase: Self.seed.factKeyPhrase
         )
-        #expect(classification == .foldProducedNoSummary)
+        #expect(classification == .compactionProducedNoSummary)
     }
 
-    @Test("a summary of whitespace alone is a fold failure too: it carries no summary either")
-    func whitespaceOnlySummaryIsAFoldFailure() {
+    @Test("a summary of whitespace alone is a compaction failure too: it carries no summary either")
+    func whitespaceOnlySummaryIsACompactionFailure() {
         let classification = CompactionEvalFactRetentionClass.classify(
             summary: "  \n\t  ",
             answer: "I do not have that information.",
             factKeyPhrase: Self.seed.factKeyPhrase
         )
-        #expect(classification == .foldProducedNoSummary)
+        #expect(classification == .compactionProducedNoSummary)
     }
 
-    @Test("the rendered table names an empty summary, so a fold that stored no text is legible in the log")
+    @Test("the rendered table names an empty summary, so a compaction that stored no text is legible in the log")
     func renderedTableNamesAnEmptySummary() {
         // The printer wrote `summary=` with nothing after it, which reads as a
         // truncated line rather than as the measurement it is.
@@ -479,16 +479,16 @@ struct CompactionEvalFactRetentionReportTests {
         let table = CompactionEvalFactRetentionReport.lines(of: findings, expecting: [Self.seed])
             .joined(separator: "\n")
         #expect(table.contains("summary=<empty>"))
-        #expect(table.contains(CompactionEvalFactRetentionClass.foldProducedNoSummary.rawValue))
+        #expect(table.contains(CompactionEvalFactRetentionClass.compactionProducedNoSummary.rawValue))
     }
 
-    @Test("the rendered table names a discarded fold, so a fold that ran and was thrown away is legible as one")
-    func renderedTableNamesADiscardedFold() {
-        // `Compactor.compact` reports a fold it discarded through the same
-        // shortfall exit an unfolded transcript takes: no summary, no stage
-        // applied. The table wrote `<none>` for it, which is what a fold that
+    @Test("the rendered table names a discarded compaction, so a compaction that ran and was thrown away is legible as one")
+    func renderedTableNamesADiscardedCompaction() {
+        // `Compactor.compact` reports a compaction it discarded through the same
+        // shortfall exit an uncompacted transcript takes: no summary, no stage
+        // applied. The table wrote `<none>` for it, which is what a compaction that
         // never ran gets, so the gated run of 2026-08-17 printed 8 samples whose
-        // summarizer had answered and whose fold had been thrown away as though
+        // summarizer had answered and whose compaction had been thrown away as though
         // no stage had ever run.
         let discarded = CompactionEvalSampleDiagnostic(
             question: Self.seed.question,
@@ -497,17 +497,17 @@ struct CompactionEvalFactRetentionReportTests {
             stagesApplied: [],
             summarizerCalls: [Self.makeSummarizerCall(answering: "a summary the pipeline threw away")]
         )
-        #expect(discarded.foldDiscarded)
+        #expect(discarded.compactionDiscarded)
         let table = Self.renderedTable(for: discarded)
         #expect(table.contains("summary=\(CompactionEvalFactRetentionReport.discardedSummaryMarker)"))
         #expect(!table.contains("summary=\(CompactionEvalFactRetentionReport.absentSummaryMarker)"))
     }
 
-    @Test("a fold that never ran still renders as absent, so the discarded marker names only a discarded fold")
-    func renderedTableStillNamesAFoldThatNeverRan() {
+    @Test("a compaction that never ran still renders as absent, so the discarded marker names only a discarded compaction")
+    func renderedTableStillNamesACompactionThatNeverRan() {
         // The other half of the same property. The deterministic stages landed
         // this transcript under target on their own, so no summarizer was ever
-        // called and there is no fold to have discarded.
+        // called and there is no compaction to have discarded.
         let neverRan = CompactionEvalSampleDiagnostic(
             question: Self.seed.question,
             summary: nil,
@@ -515,7 +515,7 @@ struct CompactionEvalFactRetentionReportTests {
             stagesApplied: [ToolOutputElision.stageName],
             summarizerCalls: []
         )
-        #expect(!neverRan.foldDiscarded)
+        #expect(!neverRan.compactionDiscarded)
         let table = Self.renderedTable(for: neverRan)
         #expect(table.contains("summary=\(CompactionEvalFactRetentionReport.absentSummaryMarker)"))
         #expect(!table.contains("summary=\(CompactionEvalFactRetentionReport.discardedSummaryMarker)"))
@@ -524,17 +524,17 @@ struct CompactionEvalFactRetentionReportTests {
         #expect(!table.contains("  discarded="))
     }
 
-    @Test("a discarded fold states how large the summary that lost was, beside the span it was to replace")
+    @Test("a discarded compaction states how large the summary that lost was, beside the span it was to replace")
     func renderedTableStatesTheDiscardedSummarysSize() throws {
-        // `<discarded>` alone says a fold ran and was thrown away. It does not
+        // `<discarded>` alone says a compaction ran and was thrown away. It does not
         // say by how much, and on the shortfall path `CompactionResult.summary`
         // is `nil`, so the size of the summary that lost was recorded nowhere at
         // all: the gated run of 2026-08-17 printed `summary=<discarded>` on 7 of
-        // 7 seeds and left the next run unable to tell a fold that missed by a
+        // 7 seeds and left the next run unable to tell a compaction that missed by a
         // few percent from one that missed by a multiple.
         //
         // Read against a real dataset seed rather than the empty probe seeds
-        // above, so the span the line states is a span a fold really replaces.
+        // above, so the span the line states is a span a compaction really replaces.
         let seed = try #require(compactionEvalSeeds.first)
         let answer = String(repeating: "The conversation stated a constraint. ", count: 200)
         let discarded = CompactionEvalSampleDiagnostic(
@@ -552,7 +552,7 @@ struct CompactionEvalFactRetentionReportTests {
 
         #expect(table.contains("discarded=\(answer.utf8.count) bytes"))
         #expect(table.contains("summaryTokens=\(Summarization.estimatedTokens(of: answer))"))
-        #expect(table.contains("spanTokens=\(seed.foldableSpanEstimatedTokens)"))
+        #expect(table.contains("spanTokens=\(seed.compactableSpanEstimatedTokens)"))
         #expect(table.contains("ceiling=\(compactionEvalSummarizerCeiling)"))
         // The text itself, bounded: enough of it to read what the model wrote,
         // and never the whole of a summary that ran to thousands of bytes.
@@ -622,7 +622,7 @@ struct CompactionEvalFactRetentionReportTests {
         #expect(counts[.retained] == 1)
         #expect(counts[.answerMissedFactSummaryCarriedIt] == 1)
         #expect(counts[.summaryLostFact] == 1)
-        #expect(counts[.foldProducedNoSummary] == 1)
+        #expect(counts[.compactionProducedNoSummary] == 1)
         #expect(counts[.unrecognizedSample] == 0)
         #expect(counts.values.reduce(0, +) == findings.count)
     }
@@ -641,21 +641,21 @@ struct CompactionEvalFactRetentionReportTests {
         #expect(table.contains("The vault code is CRIMSON-77."))
         #expect(table.contains("answer=Noted."))
         #expect(table.contains("factInSummary=true"))
-        #expect(table.contains("folded=true"))
+        #expect(table.contains("compacted=true"))
         #expect(table.contains(CompactionEvalFactRetentionClass.answerMissedFactSummaryCarriedIt.rawValue))
     }
 
-    @Test("a stage list without Summarization records the sample as unfolded")
-    func stagesWithoutSummarizationAreNotFolded() {
-        let unfolded = CompactionEvalSampleDiagnostic(
+    @Test("a stage list without Summarization records the sample as uncompacted")
+    func stagesWithoutSummarizationAreNotCompacted() {
+        let uncompacted = CompactionEvalSampleDiagnostic(
             question: Self.seed.question,
             summary: nil,
             answer: "Noted.",
             stagesApplied: ["ToolOutputElision", "TurnTruncation"],
             summarizerCalls: []
         )
-        #expect(unfolded.folded == false)
-        #expect(Self.makeDiagnostic(summary: "s", answer: "a").folded == true)
+        #expect(uncompacted.compacted == false)
+        #expect(Self.makeDiagnostic(summary: "s", answer: "a").compacted == true)
     }
 
     @Test("every seed's question is unique, so a recorded sample joins back to exactly one seed")
@@ -731,8 +731,8 @@ struct CompactionEvalFactRetentionReportTests {
                 == [Self.unreachedSeed.id])
     }
 
-    @Test("the table states what the folds carried beside what the answers carried")
-    func tableStatesTheFoldShareBesideTheAnswerShare() {
+    @Test("the table states what the compactions carried beside what the answers carried")
+    func tableStatesTheCompactionShareBesideTheAnswerShare() {
         // The two are different measurements, and the tier used to report the
         // second alone. The gated run of 2026-08-18 measured 4 of 6 summaries
         // carrying the fact against 2 of 6 answers, and one mean hid that
@@ -751,8 +751,8 @@ struct CompactionEvalFactRetentionReportTests {
         #expect(table.contains("retention: summary=2 of 2 answer=1 of 2"))
     }
 
-    @Test("a fold that produced no summary counts against the fold share, because it carries nothing")
-    func foldThatProducedNoSummaryCountsAgainstTheFoldShare() {
+    @Test("a compaction that produced no summary counts against the compaction share, because it carries nothing")
+    func compactionThatProducedNoSummaryCountsAgainstTheCompactionShare() {
         let findings = CompactionEvalFactRetentionReport.findings(
             for: [Self.makeDiagnostic(summary: nil, answer: "I do not have that information.")],
             seeds: [Self.seed]
@@ -778,13 +778,13 @@ struct CompactionEvalFactRetentionReportTests {
 /// Hermetic proof that a gated tier leaves a live trail naming where a run
 /// stopped (task ^h2xxsse).
 ///
-/// ``CompactionEvalRealSubjectRunner`` records a sample only once its fold AND
+/// ``CompactionEvalRealSubjectRunner`` records a sample only once its compaction AND
 /// its answering turn have both finished, and ``expectFactRetention(of:)``
 /// prints its table once at the very end. So a run the suite time limit cut
 /// short reported one bit — "not finished". The gated run of 2026-08-18 hit the
 /// subset tier's own 1800-second limit with 0 of 7 seeds measured, against two
 /// earlier runs of the same tier that measured 7 of 7 in 1644.7 s and 1685.9 s,
-/// and nothing it printed could say whether the model load, one fold, or one
+/// and nothing it printed could say whether the model load, one compaction, or one
 /// answering turn had spent the time.
 ///
 /// These tests pin the lines that answer that question: the model load stated
@@ -874,9 +874,9 @@ struct CompactionEvalProgressLogTests {
     @Test("a started line names the step it entered and states no duration for it")
     func startedLineNamesTheStepAndStatesNoDuration() {
         let line = CompactionEvalProgressLog.makeStepStartedLine(
-            .fold, sample: Self.label, elapsedSeconds: Self.elapsedSeconds)
+            .compaction, sample: Self.label, elapsedSeconds: Self.elapsedSeconds)
 
-        #expect(line.contains("\(CompactionEvalProgressStep.fold.rawValue) \(CompactionEvalProgressLog.startedMarker)"))
+        #expect(line.contains("\(CompactionEvalProgressStep.compaction.rawValue) \(CompactionEvalProgressLog.startedMarker)"))
         #expect(line.contains("elapsed=\(CompactionEvalProgressLog.makeSecondsText(Self.elapsedSeconds))"))
         // The step has not finished, so it has no duration of its own yet.
         #expect(!line.contains("took="))
@@ -901,7 +901,7 @@ struct CompactionEvalProgressLogTests {
     @Test("a sample is named by its seed and by its position in the tier")
     func sampleIsNamedByItsSeedAndItsPositionInTheTier() {
         let line = CompactionEvalProgressLog.makeStepStartedLine(
-            .fold, sample: Self.label, elapsedSeconds: nil)
+            .compaction, sample: Self.label, elapsedSeconds: nil)
 
         #expect(line.contains("sample=\(Self.sampleOrdinal)/\(Self.tierSeedCount)"))
         #expect(line.contains("seed=\(Self.sampleSeedID)"))
@@ -910,7 +910,7 @@ struct CompactionEvalProgressLogTests {
     @Test("a sample's first step states no elapsed clause, rather than a zero that reads as a measurement")
     func firstStepOfASampleStatesNoElapsedClause() {
         let first = CompactionEvalProgressLog.makeStepStartedLine(
-            .fold, sample: Self.label, elapsedSeconds: nil)
+            .compaction, sample: Self.label, elapsedSeconds: nil)
         let later = CompactionEvalProgressLog.makeStepStartedLine(
             .answer, sample: Self.label, elapsedSeconds: Self.elapsedSeconds)
 
@@ -959,10 +959,10 @@ struct CompactionEvalProgressLogTests {
         }
     }
 
-    @Test("a fold's returned line states what its summarizer produced")
-    func foldReturnedLineStatesWhatTheSummarizerProduced() {
+    @Test("a compaction's returned line states what its summarizer produced")
+    func compactionReturnedLineStatesWhatTheSummarizerProduced() {
         let summary = "2. Stated facts — the staging database listens on port 6543."
-        let detail = CompactionEvalProgressLog.makeFoldDetail(
+        let detail = CompactionEvalProgressLog.makeCompactionDetail(
             stagesApplied: [Summarization.stageName],
             summarizerCalls: [
                 CompactionEvalSummarizerCall(maxTokens: compactionEvalSummarizerCeiling, answer: summary)
@@ -974,9 +974,9 @@ struct CompactionEvalProgressLogTests {
         #expect(detail.contains("summarizerBytes=\(summary.utf8.count)"))
     }
 
-    @Test("a fold that called no summarizer states zero bytes rather than nothing")
-    func foldThatCalledNoSummarizerStatesZeroBytes() {
-        let detail = CompactionEvalProgressLog.makeFoldDetail(
+    @Test("a compaction that called no summarizer states zero bytes rather than nothing")
+    func compactionThatCalledNoSummarizerStatesZeroBytes() {
+        let detail = CompactionEvalProgressLog.makeCompactionDetail(
             stagesApplied: [ToolOutputElision.stageName], summarizerCalls: [])
 
         #expect(detail.contains("summarizerCalls=0"))
@@ -1001,13 +1001,13 @@ struct CompactionEvalProgressLogTests {
 
 // MARK: - Ungated seed sizing
 
-/// Ungated proof that every seed's foldable span is large enough for a real
+/// Ungated proof that every seed's compactable span is large enough for a real
 /// summary of it to be smaller (task ^vjf3mdm).
 ///
-/// `CompactionEvaluationHermeticTests/everySeedFoldSurvivesARealisticSummary` is
-/// the mechanical gate — it folds every seed and requires the fold to be applied.
+/// `CompactionEvaluationHermeticTests/everySeedCompactionSurvivesARealisticSummary` is
+/// the mechanical gate — it compacts every seed and requires the compaction to be applied.
 /// This suite states the arithmetic that gate rests on, so a seed that drifts
-/// fails with a number rather than with "the fold was discarded".
+/// fails with a number rather than with "the compaction was discarded".
 ///
 /// Both bounds are stated in the tokens a live run really counts, never in the
 /// character-ratio estimate alone. That distinction is what
@@ -1017,10 +1017,10 @@ struct CompactionEvalProgressLogTests {
 /// ``compactionEvalMeasuredBytesPerToken``.
 @Suite("CompactionEvaluation seed sizing (ungated)")
 struct CompactionEvalSeedSizingTests {
-    /// How much larger a seed's foldable span must be than the largest summary a
+    /// How much larger a seed's compactable span must be than the largest summary a
     /// real summarizer writes for it.
     ///
-    /// `1.5` says the fold has to save at least a third of the span it replaces.
+    /// `1.5` says the compaction has to save at least a third of the span it replaces.
     /// The slack is not decoration: the worst case below is computed at
     /// ``compactionEvalMeasuredBytesPerToken``, measured over this dataset's own
     /// prose, and a summary written in a wordier register costs more bytes for
@@ -1033,7 +1033,7 @@ struct CompactionEvalSeedSizingTests {
     /// size — one that keeps to the allowance its own call earned — in the
     /// estimated tokens ``Compactor`` measures a transcript in.
     ///
-    /// "Well-behaved" is the qualifier, and since task ^xx02yn6 the fold asks
+    /// "Well-behaved" is the qualifier, and since task ^xx02yn6 the compaction asks
     /// for exactly this: the assembled prompt states the call's allowance as
     /// a word-count target. A model can still overrun what it was asked —
     /// the gated run of 2026-08-17, when nothing was stated, measured
@@ -1042,11 +1042,11 @@ struct CompactionEvalSeedSizingTests {
     /// to its target WRITES.
     ///
     /// A stored summary past this bound is no longer trimmed by any per-call
-    /// ratio: `Summarization` holds the FINAL summary to the folded span's
+    /// ratio: `Summarization` holds the FINAL summary to the compacted span's
     /// own byte budget (shrink invariant), condensing once and cutting only
     /// as the last resort, and `Compactor.compact`'s did-not-shrink guard
     /// judges whatever remains. A seed sized by this arithmetic keeps its
-    /// fold clear of that whole ladder.
+    /// compaction clear of that whole ladder.
     ///
     /// Every seed's span earns the FLOOR of the summary allowance,
     /// ``Summarization/minimumSummaryTokens``, because the other branch —
@@ -1056,7 +1056,7 @@ struct CompactionEvalSeedSizingTests {
     /// measured rate, is `0.25 * 4.79 / 4.0` — under a third of the span it
     /// condensed — so a summary that large shrinks the transcript by
     /// construction, whatever the span. The floor is the only branch that can
-    /// leave a fold no smaller than what it replaced, so the floor is what this
+    /// leave a compaction no smaller than what it replaced, so the floor is what this
     /// asserts against.
     private static var worstCaseSummaryEstimatedTokens: Int {
         Int(
@@ -1065,30 +1065,30 @@ struct CompactionEvalSeedSizingTests {
                 .rounded(.up))
     }
 
-    @Test("every seed's foldable span outweighs the largest real summary of it, so the fold is worth applying")
-    func everySeedsFoldableSpanOutweighsARealSummary() {
+    @Test("every seed's compactable span outweighs the largest real summary of it, so the compaction is worth applying")
+    func everySeedsCompactableSpanOutweighsARealSummary() {
         // The lower bound of the band. Before task ^vjf3mdm a seed's whole span
         // was one fact sentence and its acknowledgement — a few hundred bytes,
         // against a 128-token floor that is 614 bytes at
-        // `compactionEvalMeasuredBytesPerToken`. The fold cost more than it
+        // `compactionEvalMeasuredBytesPerToken`. The compaction cost more than it
         // saved, and `Compactor.compact` was right to throw it away.
         let worstCase = Self.worstCaseSummaryEstimatedTokens
         let required = Int((Double(worstCase) * Self.summaryShrinkClearance).rounded(.up))
         for seed in compactionEvalSeeds {
-            let span = seed.foldableSpanEstimatedTokens
+            let span = seed.compactableSpanEstimatedTokens
             #expect(
                 span >= required,
-                "seed \(seed.id)'s foldable span estimates \(span) tokens, under the \(required) it needs to clear a real \(worstCase)-token summary by \(Self.summaryShrinkClearance)"
+                "seed \(seed.id)'s compactable span estimates \(span) tokens, under the \(required) it needs to clear a real \(worstCase)-token summary by \(Self.summaryShrinkClearance)"
             )
         }
     }
 
-    @Test("every seed's foldable span still fits one summarizer call, so a fold makes exactly one round trip")
-    func everySeedsFoldableSpanFitsOneSummarizerCall() {
+    @Test("every seed's compactable span still fits one summarizer call, so a compaction makes exactly one round trip")
+    func everySeedsCompactableSpanFitsOneSummarizerCall() {
         // The upper bound of the same band. `Summarization` splits a span past
         // `maxChunkTokens` into several map calls plus a reduce call, so a seed
         // that grew past it would multiply the gated eval's model calls — already
-        // over its time limit, task ^fz49qds — and fold in a shape this dataset
+        // over its time limit, task ^fz49qds — and compact in a shape this dataset
         // does not measure.
         //
         // Read against the span's own estimate. Rendering the span for the
@@ -1096,10 +1096,10 @@ struct CompactionEvalSeedSizingTests {
         // margin here is wide enough that no per-entry label can close it.
         let maxChunkTokens = Summarization().maxChunkTokens
         for seed in compactionEvalSeeds {
-            let span = seed.foldableSpanEstimatedTokens
+            let span = seed.compactableSpanEstimatedTokens
             #expect(
                 span <= maxChunkTokens,
-                "seed \(seed.id)'s foldable span estimates \(span) tokens, over the \(maxChunkTokens) one summarizer call condenses"
+                "seed \(seed.id)'s compactable span estimates \(span) tokens, over the \(maxChunkTokens) one summarizer call condenses"
             )
         }
     }
@@ -1119,7 +1119,7 @@ struct CompactionEvalSeedSizingTests {
 ///
 /// Each bar below is ABSOLUTE — what these seven must carry, stated here — and
 /// deliberately not read back off ``compactionEvalFixtureSpecs``. Three of them
-/// were read off the dataset while a second gated tier folded a wider one, and
+/// were read off the dataset while a second gated tier compacted a wider one, and
 /// task ^k0d30s4 cut the dataset to exactly the seeds this tier measures. A bar
 /// read off the dataset now compares the dataset with itself and passes
 /// whatever the dataset holds, so the bars that could go trivial are stated as
@@ -1221,7 +1221,7 @@ struct CompactionEvalRepresentativeSubsetTests {
         )
     }
 
-    @Test("the subset carries a one-, a two- and a three-fact head, so a multi-fact fold is measured")
+    @Test("the subset carries a one-, a two- and a three-fact head, so a multi-fact compaction is measured")
     func subsetCarriesEveryRequiredHeadSize() {
         let subsetCounts = Set(Self.subsetSpecs.map(\.facts.count))
         #expect(
@@ -1238,13 +1238,13 @@ struct CompactionEvalRepresentativeSubsetTests {
         #expect(deliveries == [true, false], "the gated subset carries deliveries \(deliveries)")
     }
 
-    @Test("the subset's recency window varies, so the fold is measured at more than one window size")
+    @Test("the subset's recency window varies, so the compaction is measured at more than one window size")
     func subsetVariesTheRecentTurnCount() {
         // The recency window is what `Summarization` keeps verbatim, so it
-        // decides how much of the transcript the fold leaves alone — and how
+        // decides how much of the transcript the compaction leaves alone — and how
         // far the probed fact sits behind the window the answering turn can
         // still read. Seven seeds that all kept the same number of turns would
-        // measure the fold at one window size and read as coverage.
+        // measure the compaction at one window size and read as coverage.
         let windows = Set(Self.subsetSpecs.map(\.recentTurnCount))
         #expect(
             windows.count > 1,
@@ -1300,7 +1300,7 @@ struct CompactionEvalRepresentativeSubsetTests {
         )
     }
 
-    @Test("the subset probes a rule on the assistant's own later answers, so a fold that drops a constraint is measured")
+    @Test("the subset probes a rule on the assistant's own later answers, so a compaction that drops a constraint is measured")
     func subsetProbesARuleOnLaterAnswers() {
         // An identifier can only be carried word for word, so a seed that probes
         // one measures whether the summary COPIED the fact. A rule the user set

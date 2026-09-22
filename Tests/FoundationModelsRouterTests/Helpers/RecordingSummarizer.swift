@@ -5,7 +5,7 @@ import Foundation
 /// A ``CompactionSummarizer`` that records each prompt it gets and answers
 /// every call with one fixed summary.
 ///
-/// A test reads ``prompts`` to learn which text a fold sent to the
+/// A test reads ``prompts`` to learn which text a compaction sent to the
 /// summarizer, and which text it did not send.
 actor RecordingSummarizer: CompactionSummarizer {
     /// The fixed text every call answers with.
@@ -24,8 +24,8 @@ actor RecordingSummarizer: CompactionSummarizer {
     /// Records `prompt` and answers with ``summary``.
     ///
     /// - Parameters:
-    ///   - prompt: The prompt the fold sent.
-    ///   - maxTokens: The ceiling the fold put on the answer. Not read.
+    ///   - prompt: The prompt the compaction sent.
+    ///   - maxTokens: The ceiling the compaction put on the answer. Not read.
     /// - Returns: ``summary``.
     func summarize(_ prompt: String, maxTokens: Int) async throws -> String {
         prompts.append(prompt)

@@ -89,7 +89,7 @@ extension RoutedSessionActor {
         await recordSessionMetaIfNeeded()
 
         // Drain-on-turn: everything staged in `outbox` since the last turn is
-        // folded into *this* turn's prompt, here inside the turn lock so a
+        // compacted into *this* turn's prompt, here inside the turn lock so a
         // drain never interleaves with a concurrent turn. This caller supplies
         // its own prompt directly, so only events are drained — never the
         // queued-prompt FIFO (see `SessionOutbox.drainPendingEvents()`, as
@@ -155,7 +155,7 @@ extension RoutedSessionActor {
     ///   - onEvent: A sink for this turn's ``SessionEvent``s, or `nil`.
     ///   - body: The model work to run.
     /// - Returns: The response text `body` produced.
-    /// - Throws: Whatever `body` throws, or `CancellationError` from the fold.
+    /// - Throws: Whatever `body` throws, or `CancellationError` from the compaction.
     ///   `withSpan` records the error on the span and raises it again.
     private func runTurn(
         grammar: Grammar?,
@@ -201,7 +201,7 @@ extension RoutedSessionActor {
     /// Runs one turn's model work and recording. The caller must hold both turn gates.
     ///
     /// When ``autoCompactionBudget`` is set and measured usage has reached
-    /// ``TokenBudget/triggerTokens``, the turn folds first. A fold that throws
+    /// ``TokenBudget/triggerTokens``, the turn compacts first. A compaction that throws
     /// is recorded as a failed turn.
     ///
     /// - Parameters:
@@ -214,7 +214,7 @@ extension RoutedSessionActor {
     ///   - onEvent: A sink for this turn's ``SessionEvent``s, or `nil`.
     ///   - body: The model work to run.
     /// - Returns: The response text `body` produced.
-    /// - Throws: Whatever `body` throws, or `CancellationError` from the fold.
+    /// - Throws: Whatever `body` throws, or `CancellationError` from the compaction.
     private func runTurnWork(
         grammar: Grammar?,
         turnId: TurnID,
@@ -226,7 +226,7 @@ extension RoutedSessionActor {
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
         // The correlation frame, opened before anything this turn does — the
-        // proactive fold below included — so every event a consumer sees after
+        // proactive compaction below included — so every event a consumer sees after
         // it belongs to this turn. See ``SessionEvent/turnStarted(_:)``.
         let emit = turnEventSink(onEvent)
 
@@ -255,14 +255,14 @@ extension RoutedSessionActor {
                 let result = try await performAutoCompaction(prompt: autoCompactionPrompt, budget: budget)
                 emit(.compaction(result))
             } catch {
-                // A fold can now throw — a stop landing inside its summarizer call
+                // A compaction can now throw — a stop landing inside its summarizer call
                 // unwinds it (see ``CancellableCompactionSummarizer``) — and this
                 // turn has not reached `runTurnAttempt`, where a failed turn's
                 // recording and the outbox's attach-or-requeue rule both live. So
-                // the fold's failure path has to run them here, or the events this
+                // the compaction's failure path has to run them here, or the events this
                 // turn already *destructively* drained would be destroyed and the
                 // turn would leave no trace at all. Neither is a formality: an
-                // abandoned fold leaves `backend` exactly as it was, so the diff
+                // abandoned compaction leaves `backend` exactly as it was, so the diff
                 // finds no `.prompt` partial to attach those events to and
                 // re-queues them, and the synthetic close is the trace.
                 await recordFailedTurn(
@@ -317,7 +317,7 @@ extension RoutedSessionActor {
     /// A failed attempt is recorded, and then
     /// ``recoverFailedAttempt(from:grammar:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetriesLeft:_:)``
     /// runs the attempt again when a recovery applies: a rejected tool call
-    /// goes back to the model, and a recoverable context overflow folds to a
+    /// goes back to the model, and a recoverable context overflow compacts to a
     /// lower target and retries once when `allowOverflowRetry` is set.
     ///
     /// - Parameters:
@@ -326,7 +326,7 @@ extension RoutedSessionActor {
     ///   - ownPrompt: This attempt's own prompt text.
     ///   - responseTokenCeiling: The token ceiling `body` gives the backend, or `nil`.
     ///   - onEvent: A sink for this turn's ``SessionEvent``s, or `nil`.
-    ///   - allowOverflowRetry: Whether a recoverable context overflow folds and retries once.
+    ///   - allowOverflowRetry: Whether a recoverable context overflow compacts and retries once.
     ///   - rejectedCallRetriesLeft: How many more times a rejected tool call can run the attempt again.
     ///   - body: The model work to run.
     /// - Returns: The response text `body` produced.
@@ -352,14 +352,14 @@ extension RoutedSessionActor {
             // when the budget opts into ``TokenBudget/hardCeiling``, measured
             // usage is checked *before* `body` ever submits this attempt's
             // generate call — deterministic, so a transcript already too
-            // large to fit (typically because the proactive fold above
+            // large to fit (typically because the proactive compaction above
             // couldn't bring it down far enough) fails fast rather than
             // wasting a real generation call on a doomed submission. Thrown
             // from inside this `do` block, exactly like a guided turn's
             // pre-flight grammar-validation failure, so it is recorded as any
             // other failed attempt below (zero-delta usage, since `backend`
             // is never touched) and, via ``isRecoverableContextOverflow(_:)``,
-            // recovered by the same fold-harder-and-retry-once path as
+            // recovered by the same compact-harder-and-retry-once path as
             // `LanguageModelError.contextSizeExceeded`.
             //
             // Compared in tokens against ``TokenBudget/ceilingTokens``, never
@@ -409,7 +409,7 @@ extension RoutedSessionActor {
     ///   error that says which call was rejected and why, so the model can
     ///   write the call again. The
     ///   retries stop at ``RejectedToolCallRetry/limit``.
-    /// - A recoverable context overflow folds to a lower target and retries
+    /// - A recoverable context overflow compacts to a lower target and retries
     ///   once, when `allowOverflowRetry` is set.
     ///
     /// The caller has already recorded the failed attempt, so the retry
@@ -421,7 +421,7 @@ extension RoutedSessionActor {
     ///   - ownPrompt: The prompt text of the failed attempt.
     ///   - responseTokenCeiling: The token ceiling `body` gives the backend, or `nil`.
     ///   - onEvent: A sink for this turn's ``SessionEvent``s, or `nil`.
-    ///   - allowOverflowRetry: Whether a recoverable context overflow folds and retries once.
+    ///   - allowOverflowRetry: Whether a recoverable context overflow compacts and retries once.
     ///   - rejectedCallRetriesLeft: How many more times a rejected tool call can run the attempt again.
     ///   - body: The model work to run.
     /// - Returns: The response text of the retry.
@@ -531,7 +531,7 @@ extension RoutedSessionActor {
     /// Cancelling ``inFlightModelCall`` unwinds `body` and every in-band tool call
     /// under it. A background run keeps running in the session's ``mailbox``. The
     /// turn's recording runs after this returns or throws and is never cancelled.
-    /// ``CancellableCompactionSummarizer`` also routes a fold's summarizer call through here.
+    /// ``CancellableCompactionSummarizer`` also routes a compaction's summarizer call through here.
     ///
     /// - Parameters:
     ///   - composedPrompt: This attempt's composed prompt, handed to `body`.
@@ -544,7 +544,7 @@ extension RoutedSessionActor {
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
         // A cancellation that landed while this turn held no model call — inside a
-        // fold's deterministic stages, between two of its summarizer calls, or
+        // compaction's deterministic stages, between two of its summarizer calls, or
         // between a failed attempt and this retry — had no task to cancel, so it is
         // honored here instead of being dropped, and the model (with every tool call
         // it would make) is never re-entered on behalf of a turn already cancelled.
@@ -656,11 +656,11 @@ extension RoutedSessionActor {
     /// The divisor ``loweredRetryTarget(from:)`` applies to a budget's configured target.
     private static let retryTargetHalvingDivisor: Double = 2
 
-    /// The fold target the overflow-recovery retry compacts to: strictly lower
+    /// The compaction target the overflow-recovery retry compacts to: strictly lower
     /// than the budget's configured target, with no absolute floor.
     ///
     /// - Parameter target: The budget's own configured target.
-    /// - Returns: The lowered target the retry's fold uses.
+    /// - Returns: The lowered target the retry's compaction uses.
     private static func loweredRetryTarget(from target: Double) -> Double {
         target / retryTargetHalvingDivisor
     }

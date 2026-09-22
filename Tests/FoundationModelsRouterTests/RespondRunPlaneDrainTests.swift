@@ -124,7 +124,7 @@ struct RespondRunPlaneDrainTests {
 
     // MARK: - Constants
 
-    /// The two background results the drain has to fold into the answer — one
+    /// The two background results the drain has to merge into the answer — one
     /// per mounted tool, so a drain that settles only the first run is a wrong
     /// answer rather than a lucky one.
     private static let firstToolOutput = "background result: the first job finished"
@@ -268,7 +268,7 @@ struct RespondRunPlaneDrainTests {
     // MARK: - respond(to:) drains before it returns
 
     @Test(
-        "respond(to:) waits for every run its turn backgrounded, folds their results into the same call, and returns with nothing left tracked"
+        "respond(to:) waits for every run its turn backgrounded, merges their results into the same call, and returns with nothing left tracked"
     )
     @MainActor
     func respondDrainsEveryBackgroundRunBeforeReturning() async throws {

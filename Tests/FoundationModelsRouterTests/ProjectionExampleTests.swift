@@ -57,12 +57,12 @@ struct ProjectionExampleTests {
     private enum ProjectionExampleHarness {
         /// The text fragments the scripted model produces, in order.
         ///
-        /// More than one fragment, because the projection must fold a run of
+        /// More than one fragment, because the projection must merge a run of
         /// ``SessionEvent/textDelta(_:)`` events into one transcript row. A
         /// single fragment would not show that.
         static let answerFragments = ["Refunds post ", "in 5 to 7 days."]
 
-        /// The whole answer, which is what the projection must fold the
+        /// The whole answer, which is what the projection must merge the
         /// fragments back into.
         static var answer: String { answerFragments.joined() }
 
@@ -214,9 +214,9 @@ struct ProjectionExampleTests {
         try await projection.apply(
             eventsFrom: session.streamEvents(to: "When does my refund post?"))
 
-        // The projection folded the run of text fragments into one row. The
+        // The projection merged the run of text fragments into one row. The
         // model produced two fragments, and the row carries them joined, so
-        // this measures the fold rather than the script: a projection that
+        // this measures the merge rather than the script: a projection that
         // opened a row for each fragment, or that dropped one, fails here.
         // `transcript` is `Identifiable`, so a view puts it straight into a
         // `List` or a `ForEach`.

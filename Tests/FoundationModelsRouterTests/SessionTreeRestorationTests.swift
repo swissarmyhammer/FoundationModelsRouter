@@ -600,7 +600,7 @@ struct SessionTreeRestorationTests {
         _ = try await root.respond(to: "turn 1")
         _ = try await root.respond(to: "turn 2")
 
-        // Learn the real, SDK-assigned entry ids for turn 1 (to be folded
+        // Learn the real, SDK-assigned entry ids for turn 1 (to be compacted
         // away) and turn 2 (the surviving tail), then fabricate and append a
         // compaction checkpoint referencing them directly onto the session's
         // own transcript.jsonl — the exact shape `RoutedSession.compact(prompt:budget:)`
@@ -623,7 +623,7 @@ struct SessionTreeRestorationTests {
             entryId: "checkpoint-1",
             content: CompactionSegment.Content(
                 liveWindowEntryIds: ["checkpoint-1", turn2PromptId, turn2ResponseId],
-                foldedEntryIds: [turn1PromptId, turn1ResponseId],
+                compactedEntryIds: [turn1PromptId, turn1ResponseId],
                 tokensBefore: 1_000,
                 tokensAfter: 321,
                 stagesApplied: ["Summarization"],
@@ -651,7 +651,7 @@ struct SessionTreeRestorationTests {
 
         // Under budget: the checkpoint is the newest thing (no turn ran
         // after it before restore), so restored fill reports its own
-        // `tokensAfter` — never the full pre-fold size.
+        // `tokensAfter` — never the full pre-compaction size.
         let fill = await restored.root.contextFill
         #expect(fill == Double(321) / Double(sessionContext))
     }
@@ -669,7 +669,7 @@ struct SessionTreeRestorationTests {
             entryId: "checkpoint-1",
             content: CompactionSegment.Content(
                 liveWindowEntryIds: ["checkpoint-1"],
-                foldedEntryIds: [],
+                compactedEntryIds: [],
                 tokensBefore: 1_000,
                 tokensAfter: 300,
                 stagesApplied: ["Summarization"],
@@ -696,7 +696,7 @@ struct SessionTreeRestorationTests {
             entryId: "checkpoint-1",
             content: CompactionSegment.Content(
                 liveWindowEntryIds: ["checkpoint-1"],
-                foldedEntryIds: [],
+                compactedEntryIds: [],
                 tokensBefore: 1_000,
                 tokensAfter: 300,
                 stagesApplied: ["Summarization"],
@@ -741,7 +741,7 @@ struct SessionTreeRestorationTests {
             entryId: "checkpoint-1",
             content: CompactionSegment.Content(
                 liveWindowEntryIds: ["checkpoint-1"],
-                foldedEntryIds: ["pre-response-1"],
+                compactedEntryIds: ["pre-response-1"],
                 tokensBefore: 1_000,
                 tokensAfter: 300,
                 stagesApplied: ["Summarization"],
@@ -770,7 +770,7 @@ struct SessionTreeRestorationTests {
         let routerId = ULID.generate()
         let content = CompactionSegment.Content(
             liveWindowEntryIds: ["checkpoint-1"],
-            foldedEntryIds: [],
+            compactedEntryIds: [],
             tokensBefore: 1_000,
             tokensAfter: 300,
             stagesApplied: ["Summarization"],

@@ -2,12 +2,12 @@ import FoundationModelsRouter
 
 /// The scripted fixture ``CompactionRoundTripIntegrationTests`` drives and
 /// `ScriptedTurnSizingTests` bounds: the working context, the reply ceiling,
-/// the system instructions, the fold budget, and the scripted turns.
+/// the system instructions, the compaction budget, and the scripted turns.
 ///
 /// One type carries all five because they are one measurement, not five
 /// settings: the turns are sized against the context's 0.80 trigger, the
 /// sizing suite multiplies the reply ceiling into its worst case, and the
-/// fold budget decides which pipeline stage the live run must reach. The
+/// compaction budget decides which pipeline stage the live run must reach. The
 /// gated suite lives in the real-model integration target and the sizing
 /// suite lives in the hermetic unit target, so the fixture lives here, in
 /// the plain support target both of them read (task ^cvsh3m9) — a change to
@@ -49,7 +49,7 @@ public enum CompactionRoundTripFixture {
     public static let instructions =
         "You are a terse assistant. Follow each instruction exactly and keep replies to one sentence."
 
-    /// The budget the round trip folds against.
+    /// The budget the round trip compacts against.
     ///
     /// Deliberately not the default (`target` 0.50). A 0.50 target of this
     /// fixture's 2048-token working context is 1024 estimated tokens, and the
@@ -66,26 +66,26 @@ public enum CompactionRoundTripFixture {
     ///
     /// A 0.25 target is 512 tokens, which the recency window's own prompt text
     /// exceeds on its own by a wide margin whichever four turns it happens to
-    /// be — `ScriptedTurnSizingTests/recencyWindowCannotFitUnderTheFoldTarget()`
+    /// be — `ScriptedTurnSizingTests/recencyWindowCannotFitUnderTheCompactionTarget()`
     /// pins that mechanically — so the deterministic stages cannot land under
     /// it and the model-assisted stage always runs. It changes nothing about
-    /// *what* is folded: the old/recent split is `keepRecentTurns`' business,
-    /// not the target's, so the folded span, the summary, and the restored
-    /// window are exactly what a default-budget fold would produce on the run
+    /// *what* is compacted: the old/recent split is `keepRecentTurns`' business,
+    /// not the target's, so the compacted span, the summary, and the restored
+    /// window are exactly what a default-budget compaction would produce on the run
     /// where it happened to reach stage 3.
-    public static let foldBudget = TokenBudget(limit: context, target: foldTargetShare)
+    public static let compactionBudget = TokenBudget(limit: context, target: compactionTargetShare)
 
-    /// The share of ``context`` the fold must come down to — the `target` of
-    /// ``foldBudget``, named here so the doc comment above has one value to
+    /// The share of ``context`` the compaction must come down to — the `target` of
+    /// ``compactionBudget``, named here so the doc comment above has one value to
     /// reason about. See that comment for why 0.25 rather than the 0.50
     /// default.
-    private static let foldTargetShare = 0.25
+    private static let compactionTargetShare = 0.25
 
     /// Long, distinct scripted documents fed into the session one per turn —
     /// enough cumulative text, against ``context``'s small 2048-token budget,
     /// to cross the 0.80 compaction trigger within a handful of turns. The
     /// first plants a fact only recoverable, after compaction, from the
-    /// fold's summary — mirroring `Examples/CompactionDemo`'s own fixtures.
+    /// compaction's summary — mirroring `Examples/CompactionDemo`'s own fixtures.
     ///
     /// Each turn is a long paragraph, and the length is load-bearing rather
     /// than decorative: crossing the trigger takes 1638 measured tokens

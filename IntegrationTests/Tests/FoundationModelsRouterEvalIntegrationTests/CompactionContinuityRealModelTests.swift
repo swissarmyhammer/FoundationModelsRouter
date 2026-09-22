@@ -33,17 +33,17 @@ private let compactionContinuityEvalRealEvaluation = CompactionContinuityEvaluat
 /// The real-model continuity eval (tasks 4ce0a1k, ^k0d30s4 and ^mx4jqrn):
 /// drives the fast seed of every task ``compactionContinuityFastTierIDs``
 /// names through a real, auto-compacting session and asserts mean
-/// `FoldOccurred`, `FactsSurvived`, and `AnswersCorrect` across those tasks
+/// `CompactionOccurred`, `FactsSurvived`, and `AnswersCorrect` across those tasks
 /// meet their measured floors.
 ///
 /// ## What this tier proves
 ///
 /// For every one of the four tasks the tier names: a real session vended with
-/// a budget folds ITSELF inside a turn (no caller asks), the fold's summary is
+/// a budget compacts ITSELF inside a turn (no caller asks), the compaction's summary is
 /// written by a real model, and the final instruction is answered over the
-/// folded transcript. `FoldOccurred` counts APPLIED folds only, so a green
-/// run states that a real fold changed every task's transcript, and the two
-/// fact floors state that planted facts traveled through the fold and back
+/// compacted transcript. `CompactionOccurred` counts APPLIED compactions only, so a green
+/// run states that a real compaction changed every task's transcript, and the two
+/// fact floors state that planted facts traveled through the compaction and back
 /// out of a real answering turn at the small model's measured rates.
 ///
 /// ## What it NO LONGER proves (tasks ^k0d30s4 and ^mx4jqrn)
@@ -70,12 +70,12 @@ private let compactionContinuityEvalRealEvaluation = CompactionContinuityEvaluat
 ///   and for why the 0.8 bar cannot be held against this subject. The bars
 ///   are regression floors: a compaction-prompt change that loses facts from
 ///   the summaries crashes them.
-/// - **Continuity across MANY folds of a long conversation.** Each fast task
-///   folds once, at the final turn, over a span that holds both facts. A
-///   thirteen-step task could fold several times, wherever its growth crossed
+/// - **Continuity across MANY compactions of a long conversation.** Each fast task
+///   compacts once, at the final turn, over a span that holds both facts. A
+///   thirteen-step task could compact several times, wherever its growth crossed
 ///   the trigger.
 /// - **The real trigger's placement.** The synthetic trigger proves the
-///   wiring fires; whether 0.80 of a real window is the right moment to fold
+///   wiring fires; whether 0.80 of a real window is the right moment to compact
 ///   is not measured here, exactly as `AutoCompactionTriggerIntegrationTests`
 ///   records for itself.
 ///
@@ -110,7 +110,7 @@ struct CompactionContinuityEvaluationIntegrationTests {
     )
     func evaluateContinuity() async throws {
         let result = EvaluationContext.current.result
-        let foldOccurred = result.aggregateValue(.mean(of: CompactionContinuityMetric.foldOccurred))
+        let compactionOccurred = result.aggregateValue(.mean(of: CompactionContinuityMetric.compactionOccurred))
         let factsSurvived = result.aggregateValue(.mean(of: CompactionContinuityMetric.factsSurvived))
         let answersCorrect = result.aggregateValue(.mean(of: CompactionContinuityMetric.answersCorrect))
         // Printed before the assertions, so a run that clears its floors still
@@ -119,12 +119,12 @@ struct CompactionContinuityEvaluationIntegrationTests {
         print(
             "\(CompactionEvalProgressLog.linePrefix) continuity measured"
                 + " tasks=\(compactionContinuityFastTierSeeds.count)"
-                + " foldOccurred=\(foldOccurred) factsSurvived=\(factsSurvived) answersCorrect=\(answersCorrect)")
-        // Every fast task is built so its one fold is APPLIED — the runner
-        // counts no discarded fold — so this is the mechanical proof that a
-        // real fold ran for this actual run, not merely an authoring-time
+                + " compactionOccurred=\(compactionOccurred) factsSurvived=\(factsSurvived) answersCorrect=\(answersCorrect)")
+        // Every fast task is built so its one compaction is APPLIED — the runner
+        // counts no discarded compaction — so this is the mechanical proof that a
+        // real compaction ran for this actual run, not merely an authoring-time
         // claim.
-        #expect(foldOccurred == 1.0)
+        #expect(compactionOccurred == 1.0)
         #expect(factsSurvived >= compactionContinuityFastFactsSurvivedFloor)
         #expect(answersCorrect >= compactionContinuityFastAnswersCorrectFloor)
     }

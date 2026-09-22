@@ -7,12 +7,12 @@ only compaction, in three steps a person reads off the terminal:
    `RoutedSession` whose `TokenBudget` puts the compaction trigger at a
    synthetic, low fraction of the working context. After each turn the demo
    prints measured usage against the trigger, and once usage crosses it, the
-   demo says why the next turn will fold.
-2. That next turn folds the transcript before it generates — no caller ever
-   invokes `session.compact()` — and the fold's checkpoint event
+   demo says why the next turn will compact.
+2. That next turn compacts the transcript before it generates — no caller ever
+   invokes `session.compact()` — and the compaction's checkpoint event
    (`SessionEvent.compaction`) prints the moment it arrives.
-3. The compacted summary the fold wrote — the text the model now reads in
-   place of the folded turns — prints last.
+3. The compacted summary the compaction wrote — the text the model now reads in
+   place of the compacted turns — prints last.
 
 The session model is small (`mlx-community/Llama-3.2-1B-Instruct-4bit`, the
 same one the compaction smoke tests drive), the summary is written by the

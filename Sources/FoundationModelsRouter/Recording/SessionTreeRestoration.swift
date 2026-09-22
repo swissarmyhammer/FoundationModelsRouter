@@ -199,7 +199,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     with no supplied instance is reported in
     ///     ``RestoredSessionTree/configurationReport``.
     ///   - toolOutputProtection: The host rule whose protected tool outputs
-    ///     every fold on every restored node keeps word for word, or `nil`
+    ///     every compaction on every restored node keeps word for word, or `nil`
     ///     (the default) to protect nothing. No recording holds it, because it
     ///     is a closure; the host gives it here, as it gives the tools.
     /// - Returns: The restored tree, rooted at the session named by `rootId`.
@@ -456,7 +456,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 // The restored session's position in its own append-only
                 // recorded history: the raw effective entry-event count —
                 // NOT `seedTranscript.count`, which the checkpoint filter may
-                // have shrunk to the fold's live window (see
+                // have shrunk to the compaction's live window (see
                 // ``RoutedSessionActor/historyOrdinal``).
                 historyOrdinal: effectiveEvents.count,
                 // Restored, not new: this node's sidecar is the write-once one
@@ -580,7 +580,7 @@ extension TranscriptTree {
         var newestNonTerminalByRun: [RunKey: OperationEvent] = [:]
         var orphanCandidateOrder: [RunKey] = []
 
-        /// Folds one journaled event into the scan.
+        /// Applies one journaled event to the scan.
         mutating func observe(_ event: OperationEvent) {
             let run = RunKey(tool: event.tool, correlationID: event.correlationID)
             switch event.kind {

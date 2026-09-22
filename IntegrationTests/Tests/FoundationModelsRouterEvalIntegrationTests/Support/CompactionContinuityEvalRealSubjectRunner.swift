@@ -13,7 +13,7 @@ import FoundationModelsRouterTestSupport
 /// session surface (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:)``,
 /// ``RoutedSession/streamEvents(to:maxTokens:)``, and its durable recording)
 /// to drive a genuinely multi-step, auto-compacting conversation, not just
-/// one fold-then-ask call.
+/// one compact-then-ask call.
 ///
 /// Builds a fresh ``LanguageModelProfile``/``Router`` per call over the one
 /// cached, already-loaded ``MLXFoundationModelsContainer``, so every sample gets
@@ -65,7 +65,7 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
     ///
     /// A parameter rather than the production default, because the fast tier
     /// needs ``compactionContinuityFastSummarization``'s one-turn recency
-    /// window for a three-turn task to fold at all — see that constant.
+    /// window for a three-turn task to compact at all — see that constant.
     private nonisolated let summarization: Summarization
 
     /// The system instructions every session this runner vends is created
@@ -149,11 +149,11 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
     /// Runs one sample's real subject work (task 4ce0a1k): opens a fresh
     /// session over the resident model vended with `prompt`/`budget`, drives
     /// every one of `steps` through it in order, then asks
-    /// `finalInstruction` — counting every APPLIED fold this drives (a
+    /// `finalInstruction` — counting every APPLIED compaction this drives (a
     /// ``SessionEvent/compaction(_:)`` whose `stagesApplied` is not empty),
     /// wherever in the sequence it lands, and reading the session's own
     /// durable recording afterward to report how many entries it actually
-    /// persisted. A discarded fold — one of `Compactor`'s shortfall exits —
+    /// persisted. A discarded compaction — one of `Compactor`'s shortfall exits —
     /// changed nothing, so it is not counted; see the event handling below.
     ///
     /// Every one of those generations states itself on a
@@ -168,7 +168,7 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
     ///   - finalInstruction: The final step, whose reply is `finalAnswer`.
     ///   - prompt: The compaction prompt to vend the session with.
     ///   - budget: The auto-compaction budget to vend the session with.
-    /// - Returns: The final answer, the total fold count and last fold's
+    /// - Returns: The final answer, the total compaction count and last compaction's
     ///   token counts (zero if none ran), the durable recording's own
     ///   persisted entry count, and the resolved model's name.
     /// - Throws: Whatever ``container()`` throws while loading the resident
@@ -179,7 +179,7 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
         prompt: CompactionPrompt,
         budget: TokenBudget
     ) async throws -> (
-        finalAnswer: String, foldCount: Int, tokensBefore: Int, tokensAfter: Int, recordedEntryCount: Int,
+        finalAnswer: String, compactionCount: Int, tokensBefore: Int, tokensAfter: Int, recordedEntryCount: Int,
         modelName: String
     ) {
         // One sample at a time, whatever shape the framework dispatches —
@@ -199,7 +199,7 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
         }
 
         // `RealModelHarness.make` is the one real-profile build every
-        // real-model suite uses; this runner's own hand-built copy was folded
+        // real-model suite uses; this runner's own hand-built copy was compacted
         // onto it (task ^bh97dp7). The harness stamps its own
         // `definitionName`, which replaced this runner's old
         // "compaction-continuity-eval" literal: nothing reads the field — no
@@ -226,13 +226,13 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
         // this actor-isolated method's own local `var`s trips Swift 6's
         // stricter concurrency checking ("sending risks causing data
         // races") even though every call here is fully sequential — so each
-        // step's own fold accounting is returned and folded into the
+        // step's own compaction accounting is returned and compacted into the
         // running totals by the caller instead.
         func driveStep(
             _ session: RoutedSession, _ text: String
-        ) async throws -> (reply: String, foldCount: Int, tokensBefore: Int, tokensAfter: Int) {
+        ) async throws -> (reply: String, compactionCount: Int, tokensBefore: Int, tokensAfter: Int) {
             var reply = ""
-            var stepFoldCount = 0
+            var stepCompactionCount = 0
             var stepTokensBefore = 0
             var stepTokensAfter = 0
             let stream = await session.streamEvents(to: text, maxTokens: GatedRealModelBudget.responseTokenCeiling)
@@ -241,38 +241,38 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
                 case .textDelta(let fragment):
                     reply += fragment
                 case .compaction(let result):
-                    // Only an APPLIED fold counts. `Compactor` reports its
+                    // Only an APPLIED compaction counts. `Compactor` reports its
                     // shortfall exits with an empty `stagesApplied` and the
                     // original transcript, and a session still emits the
-                    // event for one. Counting those would let `FoldOccurred`
-                    // pass on a fold that changed nothing, which is a test
+                    // event for one. Counting those would let `CompactionOccurred`
+                    // pass on a compaction that changed nothing, which is a test
                     // that measures nothing (task ^k0d30s4).
                     // `AutoCompactionTriggerIntegrationTests` applies the
                     // same filter for the same reason.
                     guard !result.stagesApplied.isEmpty else { break }
                     // The summary text, on the trail. A red run cannot tell a
-                    // fact the fold dropped from a fact the answering turn
+                    // fact the compaction dropped from a fact the answering turn
                     // ignored without it — the debugging of 2026-08-19 read
                     // exactly this line to find that 9 of 10 summaries
                     // carried both facts verbatim while the answers did not.
-                    print("\(CompactionEvalProgressLog.linePrefix) fold summary:\n\(result.summary ?? "<none>")")
-                    stepFoldCount += 1
+                    print("\(CompactionEvalProgressLog.linePrefix) compaction summary:\n\(result.summary ?? "<none>")")
+                    stepCompactionCount += 1
                     stepTokensBefore = result.tokensBefore
                     stepTokensAfter = result.tokensAfter
                 default:
                     break
                 }
             }
-            return (reply, stepFoldCount, stepTokensBefore, stepTokensAfter)
+            return (reply, stepCompactionCount, stepTokensBefore, stepTokensAfter)
         }
 
-        var foldCount = 0
+        var compactionCount = 0
         var lastTokensBefore = 0
         var lastTokensAfter = 0
 
-        func accumulate(_ stepResult: (reply: String, foldCount: Int, tokensBefore: Int, tokensAfter: Int)) {
-            foldCount += stepResult.foldCount
-            if stepResult.foldCount > 0 {
+        func accumulate(_ stepResult: (reply: String, compactionCount: Int, tokensBefore: Int, tokensAfter: Int)) {
+            compactionCount += stepResult.compactionCount
+            if stepResult.compactionCount > 0 {
                 lastTokensBefore = stepResult.tokensBefore
                 lastTokensAfter = stepResult.tokensAfter
             }
@@ -306,7 +306,7 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
                     elapsedSeconds: stepReturnedAt.timeIntervalSince(sampleStartedAt),
                     stepSeconds: stepReturnedAt.timeIntervalSince(stepStartedAt),
                     detail: CompactionEvalProgressLog.makeDrivenStepDetail(
-                        reply: stepResult.reply, foldCount: stepResult.foldCount)
+                        reply: stepResult.reply, compactionCount: stepResult.compactionCount)
                 ))
         }
 
@@ -320,10 +320,10 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
         let finalStepResult = try await driveStep(session, finalInstruction)
         accumulate(finalStepResult)
         let finalAnswer = finalStepResult.reply
-        // The answer text, on the trail beside the fold summary above, for the
+        // The answer text, on the trail beside the compaction summary above, for the
         // same reason: the metrics score the answer, and a red run has to show
         // what the answering turn wrote before anyone can say whether the
-        // fold or the answer lost the fact. The framework's own per-sample
+        // compaction or the answer lost the fact. The framework's own per-sample
         // record is written nowhere unless an attachments path is configured.
         print("\(CompactionEvalProgressLog.linePrefix) final answer:\n\(finalAnswer)")
         let finalReturnedAt = Date()
@@ -334,7 +334,7 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
                 elapsedSeconds: finalReturnedAt.timeIntervalSince(sampleStartedAt),
                 stepSeconds: finalReturnedAt.timeIntervalSince(finalStartedAt),
                 detail: CompactionEvalProgressLog.makeDrivenStepDetail(
-                    reply: finalAnswer, foldCount: finalStepResult.foldCount)
+                    reply: finalAnswer, compactionCount: finalStepResult.compactionCount)
             ))
 
         let routerDirectory = recordingsDir.appendingPathComponent(profile.standard.routerId.description, isDirectory: true)
@@ -343,7 +343,7 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
 
         return (
             finalAnswer: finalAnswer,
-            foldCount: foldCount,
+            compactionCount: compactionCount,
             tokensBefore: lastTokensBefore,
             tokensAfter: lastTokensAfter,
             recordedEntryCount: fullHistory.count,

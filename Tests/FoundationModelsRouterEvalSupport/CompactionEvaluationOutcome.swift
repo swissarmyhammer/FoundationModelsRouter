@@ -23,7 +23,7 @@ struct CompactionEvaluationOutcome: Codable, Sendable {
     /// doc comment).
     var seedID: String
 
-    /// Ground truth: the fact planted in the seed's foldable head, kept for
+    /// Ground truth: the fact planted in the seed's compactable head, kept for
     /// rationale/display purposes (e.g. a failing `FactRetention` metric's
     /// rationale).
     var plantedFact: String
@@ -40,20 +40,20 @@ struct CompactionEvaluationOutcome: Codable, Sendable {
     /// itself uses.
     var targetTokens: Int
 
-    /// Ground truth: the ``CompactionPrompt/name`` this run folded with —
+    /// Ground truth: the ``CompactionPrompt/name`` this run compacted with —
     /// stamped from ``CompactionEvaluation/prompt`` on every sample, so a
-    /// fold's produced outcome is always attributable to the exact prompt
+    /// compaction's produced outcome is always attributable to the exact prompt
     /// that produced it (compaction_plan.md §5's hill-climbing loop).
     var promptName: String
 
     /// Produced: the resumed session's answer to the sample's question.
     var answer: String = ""
 
-    /// Produced: the fold's estimated pre-compaction size, in tokens
+    /// Produced: the compaction's estimated pre-compaction size, in tokens
     /// (``CompactionResult/tokensBefore``).
     var tokensBefore: Int = 0
 
-    /// Produced: the fold's estimated post-compaction size, in tokens
+    /// Produced: the compaction's estimated post-compaction size, in tokens
     /// (``CompactionResult/tokensAfter``).
     var tokensAfter: Int = 0
 

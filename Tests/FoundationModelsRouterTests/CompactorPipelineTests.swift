@@ -114,7 +114,7 @@ struct CompactorPipelineTests {
         let bigText = String(repeating: "big ", count: 2000)
         // Only 2 turns — fewer than the default keepRecentTurns (4), so every
         // turn is inside the untouchable recency window: neither stage can
-        // fold anything away, however oversized the transcript is.
+        // compact anything away, however oversized the transcript is.
         let turns = try (1...2).map {
             try TranscriptFixtures.makeTurn(index: $0, promptText: bigText, toolOutputText: bigText, responseText: bigText)
         }
@@ -135,12 +135,12 @@ struct CompactorPipelineTests {
     }
 
     @Test(
-        "oversized tail with non-empty old turns: tokensAfter reflects the unchanged returned transcript, not the discarded fully-folded attempt"
+        "oversized tail with non-empty old turns: tokensAfter reflects the unchanged returned transcript, not the discarded fully-compacted attempt"
     )
     func oversizedTailWithOldTurnsReportsTokensAfterForTheReturnedTranscript() async throws {
         let instructions = TranscriptFixtures.makeInstructions()
         let bigText = String(repeating: "big content ", count: 400)
-        // 6 turns: turns 1-2 are old (foldable away), turns 3-6 are the
+        // 6 turns: turns 1-2 are old (compactable away), turns 3-6 are the
         // recency window — but even that reduced recency window alone is
         // still huge enough to exceed target, so this is a genuine
         // oversized-tail case where `current` (the fully-elided-and-truncated
@@ -153,7 +153,7 @@ struct CompactorPipelineTests {
 
         let tokensBefore = Compactor.estimatedTokenCount(of: transcript)
         let afterBoth = Compactor.estimatedTokenCount(of: TurnTruncation().apply(ToolOutputElision().apply(transcript)))
-        #expect(afterBoth < tokensBefore)  // sanity: folding away old turns does shrink the discarded attempt
+        #expect(afterBoth < tokensBefore)  // sanity: compacting away old turns does shrink the discarded attempt
 
         // Target below even the best the deterministic stages can achieve.
         let budget = Self.makeBudget(targetTokens: afterBoth / 2)

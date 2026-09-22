@@ -24,7 +24,7 @@ import Tracing
 /// and sizes are safe; content is not.
 ///
 /// The rule is proved, not merely stated: `SpanContentSafetyTests` drives a
-/// turn, a tool call, a fold and an embed against an `InMemoryTracer`, reads
+/// turn, a tool call, a compaction and an embed against an `InMemoryTracer`, reads
 /// every attribute value of every recorded span, and fails on any value that
 /// carries the fixture's own content. Each new span the router learns to open
 /// is held to that one test.
@@ -48,7 +48,7 @@ enum RouterTracing {
         /// One tool call inside a turn.
         static let tool = prefix + "tool"
 
-        /// One fold of a session's transcript, driven by a caller or by the
+        /// One compaction of a session's transcript, driven by a caller or by the
         /// auto-compaction budget.
         static let compact = prefix + "compact"
 
@@ -168,20 +168,20 @@ enum RouterTracing {
         /// How many tokens came out of the model call.
         static let tokensOut = "tokens.out"
 
-        /// The transcript's estimated size, in tokens, before a fold ran.
+        /// The transcript's estimated size, in tokens, before a compaction ran.
         static let tokensBefore = "tokens.before"
 
-        /// The transcript's estimated size, in tokens, after a fold ran.
+        /// The transcript's estimated size, in tokens, after a compaction ran.
         static let tokensAfter = "tokens.after"
 
-        /// What asked for the fold. See ``RouterTracing/CompactionTrigger``.
+        /// What asked for the compaction. See ``RouterTracing/CompactionTrigger``.
         static let compactionTrigger = "compaction.trigger"
 
-        /// The summarizer tier that wrote the fold's applied summary: `flash`
+        /// The summarizer tier that wrote the compaction's applied summary: `flash`
         /// for the profile's flash slot, `own-model` for the session's own
         /// model, or `deterministic` when no summarizer wrote one at all.
         ///
-        /// The automatic fold degrades from tier to tier without throwing, so
+        /// The automatic compaction degrades from tier to tier without throwing, so
         /// this key, and never an error record, is what says a degrade
         /// happened.
         static let compactionTier = "compaction.tier"
@@ -236,18 +236,18 @@ enum RouterTracing {
     }
 
     /// The value ``AttributeKey/compactionTrigger`` carries: what asked for a
-    /// fold.
+    /// compaction.
     ///
-    /// Both fold paths run the same mechanics and open the same span, so the
+    /// Both compaction paths run the same mechanics and open the same span, so the
     /// span alone cannot say which of the two opened it. This attribute says
-    /// so, and it lets a query separate the folds a caller drove from the
-    /// folds the auto-compaction budget drove.
+    /// so, and it lets a query separate the compactions a caller drove from the
+    /// compactions the auto-compaction budget drove.
     enum CompactionTrigger: String {
         /// ``RoutedSession/compact(prompt:budget:)``.
         case caller
 
-        /// The auto-compaction budget: the proactive fold before a turn, and
-        /// the reactive fold after a context overflow.
+        /// The auto-compaction budget: the proactive compaction before a turn, and
+        /// the reactive compaction after a context overflow.
         case auto
     }
 

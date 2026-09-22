@@ -95,7 +95,7 @@ struct RecordingHandleIntegrationTests {
     /// A real `FoundationModels.Tool` conformer — mirrors ``EchoTool`` in
     /// `Tests/FoundationModelsRouterTests/RecordingLanguageModelTests.swift`
     /// — so the SDK's own machinery invokes it once it observes a `.toolCalls`
-    /// entry naming it and folds the result back in as `.toolOutput`.
+    /// entry naming it and merges the result back in as `.toolOutput`.
     private struct EchoTool: FoundationModels.Tool {
         let name = "echo"
         let description = "Echoes the given text back verbatim."
@@ -146,7 +146,7 @@ struct RecordingHandleIntegrationTests {
     ///
     /// The profile comes from ``RealModelHarness/make(model:context:container:samplingMode:cacheDir:recordingsDir:routerId:)``,
     /// the one real-profile build every real-model suite of this target uses.
-    /// This suite's own hand-built copy said the same thing and was folded onto
+    /// This suite's own hand-built copy said the same thing and was merged onto
     /// it (task ^zz6kam0): the same `JSONLRecorder` for the router and every
     /// handle, the same root-plus-writer ``DurableRecording`` pair `Router`
     /// builds — which is what `TranscriptTree.load` below reads — one gate set

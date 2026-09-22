@@ -51,7 +51,7 @@ public enum SessionEvent: Sendable, Equatable {
     /// `id` is the `Transcript.Entry.id`, never a `Transcript.ToolCall.id`.
     case entryRecorded(id: String, kind: RecordedEntryKind)
 
-    /// An auto-compaction fold completed against this session, mid-turn.
+    /// An auto-compaction completed against this session, mid-turn.
     case compaction(CompactionResult)
 
     /// This turn's ``DiscoveryPriming`` could not seed, so the turn generated unseeded.

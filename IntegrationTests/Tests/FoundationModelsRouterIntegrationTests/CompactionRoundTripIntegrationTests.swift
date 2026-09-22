@@ -6,7 +6,7 @@ import Testing
 @testable import FoundationModelsRouter
 @testable import FoundationModelsRouterRealModelSupport
 
-/// The real `mlx-community` model this round trip folds against, and
+/// The real `mlx-community` model this round trip compacts against, and
 /// deliberately NOT ``RealModels/standard``.
 ///
 /// ``RealModels/standard`` is `Muse-Glimmer-30B-mxfp4`, 17 GB of weights. Its
@@ -20,7 +20,7 @@ import Testing
 /// gated fact-retention eval already measures this exact property against: see
 /// `CompactionEvalRealModel` for the trial order task ^m03heaa ran and for the
 /// 6 of 7 summaries of that tier, and 23 of 24 of the whole-dataset tier task
-/// ^k0d30s4 has since deleted, that this model carried through a fold on
+/// ^k0d30s4 has since deleted, that this model carried through a compaction on
 /// 2026-08-20. Step 3 below is one instance of that
 /// same property, so the subject the evals measured it on is the subject to
 /// measure it on here.
@@ -38,10 +38,10 @@ private let compactionRoundTripModel: ModelRef = "mlx-community/Qwen2.5-3B-Instr
 /// That default is sized for a model that writes a `<think>` block before its
 /// answer. ``compactionRoundTripModel`` writes none, so almost all of that
 /// headroom is a ceiling no generation reaches — and reaching for it is what a
-/// fold pays for when the model runs on. The gated eval subset measured what
-/// that freedom costs: two of seven folds generated to the ceiling, 20485 and
+/// compaction pays for when the model runs on. The gated eval subset measured what
+/// that freedom costs: two of seven compactions generated to the ceiling, 20485 and
 /// 16060 bytes of summary answer, at 28.5 seconds each, where the five bounded
-/// folds cost 2.5 to 7.4 seconds.
+/// compactions cost 2.5 to 7.4 seconds.
 ///
 /// The same value the three compaction smoke suites and every gated eval tier
 /// cut this to, for the same measured reason. Not zero, so a summary has a
@@ -57,12 +57,12 @@ private let compactionRoundTripReasoningTokenHeadroom = 128
 ///
 /// 1. `contextFill` climbs across scripted turns that grow the transcript.
 /// 2. Compacting once the 0.80 trigger is reached — against
-///    ``CompactionRoundTripFixture/foldBudget``, which forces the whole
+///    ``CompactionRoundTripFixture/compactionBudget``, which forces the whole
 ///    pipeline through its model-assisted stage — shrinks `contextFill` and
 ///    never changes the session's identity (id, recording directory, router
 ///    id).
 /// 3. A turn after compaction succeeds and recalls a fact planted only in
-///    the folded span — proof the summary, not just the mechanism, worked.
+///    the compacted span — proof the summary, not just the mechanism, worked.
 /// 4. Restoring from disk (a fresh `Router`/`LanguageModelProfile`,
 ///    simulating a new process — the same technique
 ///    ``SessionTreeRestorationIntegrationTests`` uses) yields the
@@ -84,14 +84,14 @@ private let compactionRoundTripReasoningTokenHeadroom = 128
 ///   the 30B, and a fact this subject lost might survive under the larger one.
 ///   `CompactionEvalRealModel` records the same trade for the eval tiers, and
 ///   the measured baseline this subject is held to there.
-/// - **What a fold costs when the summarizer may run on.** The headroom cut
+/// - **What a compaction costs when the summarizer may run on.** The headroom cut
 ///   makes the largest summary this loop can be handed `summaryAllowance` plus
 ///   ``compactionRoundTripReasoningTokenHeadroom``, whatever the model chooses
-///   to write. A fold that generated to the production default's 8192 tokens is
+///   to write. A compaction that generated to the production default's 8192 tokens is
 ///   no longer measured here.
 ///
 /// Everything else is untouched. The fixture, the working context, the reply
-/// ceiling, the 0.80 trigger, the fold budget, the stage list, the identity
+/// ceiling, the 0.80 trigger, the compaction budget, the stage list, the identity
 /// checks, the restore and the further turn are all exactly what they were, so
 /// each of the five steps still asserts what it always asserted.
 ///
@@ -105,7 +105,7 @@ private let compactionRoundTripReasoningTokenHeadroom = 128
 /// surface without paying for two extra downloads.
 ///
 /// Every fixture dimension this loop drives — the working context, the reply
-/// ceiling, the instructions, the fold budget, and the scripted turns — lives
+/// ceiling, the instructions, the compaction budget, and the scripted turns — lives
 /// in ``CompactionRoundTripFixture``, in the plain support target, so the
 /// hermetic `ScriptedTurnSizingTests` in the unit target bounds the SAME
 /// values this gated run submits (task ^cvsh3m9). `Self.samplingMode` is the
@@ -123,7 +123,7 @@ private let compactionRoundTripReasoningTokenHeadroom = 128
     // The whole target's budget. The 40 minutes this stated before were the
     // 30B model's cost with an unbounded summarizer ceiling: the run of
     // 2026-08-17 measured 425 seconds, task ^xx02yn6's condense re-ask can
-    // double the fold's model work, and the run of 2026-08-20 measured 541.6.
+    // double the compaction's model work, and the run of 2026-08-20 measured 541.6.
     // The two changes at the top of this file are what removed that cost.
     .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
@@ -133,14 +133,14 @@ struct CompactionRoundTripIntegrationTests {
     ///
     /// Argmax. The provider default samples at temperature `0.6` from MLX's
     /// process-global PRNG, which seeds itself from the clock, so this suite's
-    /// own scripted replies — and therefore its transcript sizes, its fold, and
+    /// own scripted replies — and therefore its transcript sizes, its compaction, and
     /// its recall answer — differed on every run of identical code (task
     /// f80n046). Argmax decoding consumes no randomness at all, which is what
     /// lets a red run here be attributed to the change under test.
     private static let samplingMode: GenerationOptions.SamplingMode = .greedy
 
     @Test(
-        "contextFill climbs, compact() folds at the 0.80 trigger preserving identity, a post-compact turn recalls the folded fact, restore yields the checkpointed window, and a further turn succeeds"
+        "contextFill climbs, compact() compacts at the 0.80 trigger preserving identity, a post-compact turn recalls the compacted fact, restore yields the checkpointed window, and a further turn succeeds"
     )
     func compactionRoundTrip() async throws {
         let cacheDir = FileManager.default.temporaryDirectory
@@ -172,7 +172,7 @@ struct CompactionRoundTripIntegrationTests {
         let routerId = profile.standard.routerId
 
         // The stage is session-scoped rather than per-call, so the explicit
-        // `compact(budget:)` at step 2 folds with the ceiling stated here.
+        // `compact(budget:)` at step 2 compactions with the ceiling stated here.
         let session = profile.standard.makeSession(
             instructions: CompactionRoundTripFixture.instructions,
             summarization: Summarization(
@@ -197,13 +197,13 @@ struct CompactionRoundTripIntegrationTests {
         #expect(fillBeforeCompaction >= 0.80)
 
         // 2. Compact at the trigger: shrinks fill, preserves identity.
-        let result = try await session.compact(budget: CompactionRoundTripFixture.foldBudget)
-        // Every stage, in order — not merely "something ran". A fold that
+        let result = try await session.compact(budget: CompactionRoundTripFixture.compactionBudget)
+        // Every stage, in order — not merely "something ran". A compaction that
         // stops after the deterministic stages records a checkpoint too
         // (task ^h1008kb), but this test is about the model-assisted round
         // trip — a real summary whose quality step 3 measures by recall —
-        // so `stagesApplied` non-empty cannot tell that fold from this
-        // one. `CompactionRoundTripFixture.foldBudget` is what makes the
+        // so `stagesApplied` non-empty cannot tell that compaction from this
+        // one. `CompactionRoundTripFixture.compactionBudget` is what makes the
         // full pipeline a property here rather than a coincidence.
         #expect(
             result.stagesApplied == [
@@ -213,14 +213,14 @@ struct CompactionRoundTripIntegrationTests {
         )
         #expect(result.summary != nil)
         #expect(result.tokensAfter < result.tokensBefore)
-        // The margin, on the record. This suite is the only place a fold's
+        // The margin, on the record. This suite is the only place a compaction's
         // saving is measured against a real model, and the bare inequality
-        // above hides how much of one it is — a fold that saved a handful
-        // of tokens passes it exactly as a fold that halved the transcript
+        // above hides how much of one it is — a compaction that saved a handful
+        // of tokens passes it exactly as a compaction that halved the transcript
         // does (task zche4zy, where an unbounded summary left the saving
         // near zero). Reported against the fixture's 0.25 target, not the
         // production default of 0.50 — see
-        // `CompactionRoundTripFixture.foldBudget`.
+        // `CompactionRoundTripFixture.compactionBudget`.
         print(
             "[compactionRoundTrip] tokensBefore=\(result.tokensBefore) tokensAfter=\(result.tokensAfter) "
                 + "saved=\(result.tokensBefore - result.tokensAfter)"
@@ -231,7 +231,7 @@ struct CompactionRoundTripIntegrationTests {
         #expect(session.recordingDirectory == recordingDirectoryBefore)
         #expect(session.routerId == routerId)
 
-        // 3. A turn after compaction succeeds and recalls the folded
+        // 3. A turn after compaction succeeds and recalls the compacted
         //    fact — proof the summary, not just the mechanism, worked.
         let recall = try await session.respond(
             to: "Without re-reading anything, what is the exact vault code from the project brief?",

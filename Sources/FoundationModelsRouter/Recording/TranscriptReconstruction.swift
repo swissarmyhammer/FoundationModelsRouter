@@ -59,7 +59,7 @@ package enum TranscriptReconstructionView: Sendable, Equatable {
     case restore
 
     /// Every recorded entry, in `seq` order. The compaction entry appears as
-    /// a fold marker among the entries it replaced.
+    /// a compaction marker among the entries it replaced.
     case fullHistory
 }
 
@@ -70,7 +70,7 @@ extension TranscriptTree {
         let index: Int
         /// The checkpoint event itself.
         let event: TranscriptEvent
-        /// The fold metadata it carries.
+        /// The compaction metadata it carries.
         let content: CompactionSegment.Content
     }
 

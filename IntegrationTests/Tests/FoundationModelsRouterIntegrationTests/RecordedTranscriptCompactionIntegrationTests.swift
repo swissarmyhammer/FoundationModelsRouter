@@ -9,12 +9,12 @@ import Testing
 // MARK: - Model
 
 /// The real `mlx-community` model this suite SUMMARIZES with, and deliberately
-/// not the model that WROTE the recording it folds.
+/// not the model that WROTE the recording it compacts.
 ///
 /// Those are two different models on purpose, and the split is the point of
 /// this suite. The recording is real traffic from
 /// ``RealModels/standard`` — 18 GB of weights, the model this target's slow
-/// gated suites drive — and it is already on disk, so folding it costs nothing
+/// gated suites drive — and it is already on disk, so compacting it costs nothing
 /// to produce. The summarizer is the 680 MB model the other two fast suites
 /// name, for the reasons ``CompactionSmokeIntegrationTests`` records against
 /// its own constant: it is a real instruct model, it follows the compaction
@@ -25,7 +25,7 @@ private let recordedTranscriptCompactionModel: ModelRef = "mlx-community/Llama-3
 /// at.
 ///
 /// Deliberately smaller than ``RealModels/context`` (8192). The largest call
-/// this suite makes is one summarizer call over one chunk of the folded span,
+/// this suite makes is one summarizer call over one chunk of the compacted span,
 /// which ``Summarization/maxChunkTokens`` already bounds at 2000 estimated
 /// tokens, and a smaller window costs less to allocate.
 private let recordedTranscriptCompactionContext = 4096
@@ -34,7 +34,7 @@ private let recordedTranscriptCompactionContext = 4096
 ///
 /// Pinned to argmax, for the reason both neighbouring suites pin it: the
 /// provider default samples from MLX's process-global PRNG, which seeds itself
-/// from the clock, so the summary — and therefore the fold arithmetic this
+/// from the clock, so the summary — and therefore the compaction arithmetic this
 /// suite asserts on — would differ on every run of identical code. Argmax
 /// decoding consumes no randomness, which is what lets a red run here be
 /// attributed to the change under test.
@@ -46,7 +46,7 @@ private let recordedTranscriptCompactionSamplingMode: GenerationOptions.Sampling
 /// The decoding above pins the SAMPLING. It does not pin the PROMPT. The
 /// Llama 3.2 chat template writes `Today Date: <today>` into the system header
 /// of every summarizer call, and it reads that date off the clock. So this
-/// suite's fold arithmetic was a new sample on every calendar day. Task
+/// suite's compaction arithmetic was a new sample on every calendar day. Task
 /// ^xfj1am4 measured that here, from one binary with only `TZ` changed:
 ///
 /// | the date the clock stamped | summarizer calls | answerTokens |
@@ -63,27 +63,27 @@ private let recordedTranscriptCompactionChatTemplateDate =
 
 // MARK: - Suite
 
-/// The fast answer to one question: does the compaction fold work against a
+/// The fast answer to one question: does the compaction work against a
 /// transcript that came off a RECORDING, rather than one built in Swift?
 ///
 /// ## What this suite proves
 ///
 /// Three facts, and no more.
 ///
-/// 1. **A recording boots a fold.** A `transcript.jsonl` and its `session.json`
+/// 1. **A recording boots a compaction.** A `transcript.jsonl` and its `session.json`
 ///    on disk become a real `FoundationModels.Transcript` through
 ///    ``TranscriptTree/load(under:)`` and
 ///    ``TranscriptTree/effectiveTranscript(forSession:view:)``, and
-///    ``Compactor`` folds that transcript. No session is opened and no turn is
-///    driven; the only generations the suite makes are the fold's own
+///    ``Compactor`` compacts that transcript. No session is opened and no turn is
+///    driven; the only generations the suite makes are the compaction's own
 ///    summarizer calls.
 /// 2. **The recording still has the shape real traffic has.** The reconstructed
 ///    transcript carries an instructions header, prompts, responses, reasoning
 ///    entries, tool calls and tool outputs. This suite asserts each of those
 ///    kinds is present, so a fixture that silently lost one goes red here
-///    rather than quietly folding something simpler than it claims to.
+///    rather than quietly compacting something simpler than it claims to.
 /// 3. **The MAP-REDUCE path runs.** This one was not designed in; the recording
-///    brought it. The folded span measures 2366 estimated tokens, past
+///    brought it. The compacted span measures 2366 estimated tokens, past
 ///    ``Summarization/maxChunkTokens`` (2000), so the stage chunks the span,
 ///    summarizes each chunk, and re-summarizes the results — three summarizer
 ///    calls rather than one. ``CompactionSmokeIntegrationTests`` sizes its own
@@ -95,7 +95,7 @@ private let recordedTranscriptCompactionChatTemplateDate =
 ///
 /// ## What this suite does NOT prove
 ///
-/// **It does not measure summary quality.** Whether a fold keeps the facts a
+/// **It does not measure summary quality.** Whether a compaction keeps the facts a
 /// resumed session needs is what `FoundationModelsRouterEvalIntegrationTests`
 /// measures, over a hand-written dataset. That tier drove the 30B model in tens
 /// of minutes when this sentence was written; it drives a small canary under a
@@ -106,12 +106,12 @@ private let recordedTranscriptCompactionChatTemplateDate =
 /// accepting version 2 would fail here, which is worth something; a reader that
 /// gained version 3 is not exercised at all.
 ///
-/// **It does not prove a fold works at every transcript size.** One recording,
-/// one model, one fold.
+/// **It does not prove a compaction works at every transcript size.** One recording,
+/// one model, one compaction.
 ///
 /// **It does not prove the automatic path fires.** This suite calls
 /// ``Compactor`` directly. ``AutoCompactionTriggerIntegrationTests`` is where a
-/// session folds itself.
+/// session compacts itself.
 ///
 /// ## Why the transcript is recorded rather than built in Swift
 ///
@@ -148,7 +148,7 @@ private let recordedTranscriptCompactionChatTemplateDate =
 /// | 2 | 10.1 s | 1.8 s | 15.8 s |
 /// | 3 | 10.3 s | 1.9 s | 15.8 s |
 ///
-/// All three reported identical fold numbers, which is
+/// All three reported identical compaction numbers, which is
 /// ``recordedTranscriptCompactionSamplingMode`` doing its job:
 ///
 /// | what the run measured | value |
@@ -157,16 +157,16 @@ private let recordedTranscriptCompactionChatTemplateDate =
 /// | reconstructed transcript entries | 30 |
 /// | entry kinds present | instructions, prompt, response, reasoning, toolCalls, toolOutput |
 /// | the whole transcript, in estimated tokens | 4297 |
-/// | the folded span | 2366 |
+/// | the compacted span | 2366 |
 /// | summarizer calls | 3, at ceilings 377, 475 and 378 |
 /// | what the model answered, per call | 500, 552 and 442 estimated tokens |
 /// | the stored summary | 442 |
-/// | stages the fold applied | elision, truncation, summarization |
-/// | the fold's transcript, before and after | 4297 -> 2372 |
+/// | stages the compaction applied | elision, truncation, summarization |
+/// | the compaction's transcript, before and after | 4297 -> 2372 |
 ///
 /// It is slower than its two neighbours — 10 s against their 4 s and 5 s — and
 /// the three summarizer calls are the whole difference. That is the cost of
-/// folding real traffic rather than a span sized to one chunk, and it is still
+/// compacting real traffic rather than a span sized to one chunk, and it is still
 /// seconds.
 ///
 /// ### The numbers this suite reports now (task ^xfj1am4)
@@ -182,23 +182,23 @@ private let recordedTranscriptCompactionChatTemplateDate =
 /// | what the run measured | value |
 /// |---|---|
 /// | the whole transcript, in estimated tokens | 4297 |
-/// | the folded span | 2366 |
+/// | the compacted span | 2366 |
 /// | summarizer calls | 4, each at a ceiling of 628 |
 /// | what the model answered, per call | 793, 679, 708 and 661 estimated tokens |
 /// | the stored summary | 661 |
-/// | stages the fold applied | elision, truncation, summarization |
-/// | the fold's transcript, before and after | 4297 -> 2592 |
-/// | the fold's wall clock | 19.1 s, of which 1.8 s the model load |
+/// | stages the compaction applied | elision, truncation, summarization |
+/// | the compaction's transcript, before and after | 4297 -> 2592 |
+/// | the compaction's wall clock | 19.1 s, of which 1.8 s the model load |
 ///
 /// The suite reported exactly that row under `TZ=Pacific/Midway`
 /// (01 Sep 2026) and under `TZ=Pacific/Kiritimati` (02 Sep 2026), from one
-/// binary with nothing else changed. The clock no longer reaches this fold.
+/// binary with nothing else changed. The clock no longer reaches this compaction.
 ///
 /// These numbers WILL move again, because the prompt moves whenever the
 /// compaction prompt or the recovery ladder changes. That is expected, and it
 /// is not a regression.
 ///
-/// The three runs of 2026-08-20 measured the fold at 12.1, then 11.7, then
+/// The three runs of 2026-08-20 measured the compaction at 12.1, then 11.7, then
 /// 12.2 seconds, and the entry-kind check at 0.012, then 0.011, then 0.0
 /// seconds, against ``integrationTestBudgetMinutes``, which is now the limit
 /// and which states the whole run table. This suite carried
@@ -213,24 +213,24 @@ private let recordedTranscriptCompactionChatTemplateDate =
 /// question — does compaction work at all against a real model — in seconds.
 ///
 @Suite(
-    "Real-model smoke test: a recorded transcript boots the compaction fold (task ^pfdrppj)",
+    "Real-model smoke test: a recorded transcript boots the compaction (task ^pfdrppj)",
     .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
 struct RecordedTranscriptCompactionIntegrationTests {
     // MARK: - The recording
 
-    /// The model-assisted stage this suite folds with.
+    /// The model-assisted stage this suite compacts with.
     ///
     /// ``Summarization/keepRecentTurns`` stays at its own default of 4, because
     /// the recorded conversation is long enough that four recent turns still
-    /// leave a span to fold. Nothing here is sized against the recording; this
+    /// leave a span to compact. Nothing here is sized against the recording; this
     /// is the production default, unchanged.
     ///
     /// ``Summarization/reasoningTokenHeadroom`` is cut to
     /// ``reasoningTokenHeadroom`` for the reason both neighbouring suites cut
     /// it.
-    private static var foldSummarization: Summarization {
+    private static var compactionSummarization: Summarization {
         Summarization(reasoningTokenHeadroom: reasoningTokenHeadroom)
     }
 
@@ -245,8 +245,8 @@ struct RecordedTranscriptCompactionIntegrationTests {
     /// is the summarizer generation.
     private static let reasoningTokenHeadroom = 128
 
-    /// The tag every printed line of this suite's fold carries.
-    private static let foldLabel = "recordedTranscriptCompaction"
+    /// The tag every printed line of this suite's compaction carries.
+    private static let compactionLabel = "recordedTranscriptCompaction"
 
     // MARK: - Reading the recording
 
@@ -291,7 +291,7 @@ struct RecordedTranscriptCompactionIntegrationTests {
         let (transcript, sessionId) = try Self.recordedTranscript()
         let kinds = TranscriptEntryKinds.names(of: transcript)
         print(
-            "[\(Self.foldLabel)] session=\(sessionId) entries=\(Array(transcript).count) "
+            "[\(Self.compactionLabel)] session=\(sessionId) entries=\(Array(transcript).count) "
                 + "kinds=\(kinds) "
                 + "transcriptTokens=\(Compactor.estimatedTokenCount(of: transcript))"
         )
@@ -309,14 +309,14 @@ struct RecordedTranscriptCompactionIntegrationTests {
     }
 
     @Test(
-        "one fold of the recorded transcript against a real model: the summarizer runs, answers with text, and the fold is applied rather than discarded"
+        "one compaction of the recorded transcript against a real model: the summarizer runs, answers with text, and the compaction is applied rather than discarded"
     )
-    func theRecordedTranscriptFolds() async throws {
+    func theRecordedTranscriptCompacts() async throws {
         let startedAt = Date()
         var modelLoadSeconds = 0.0
         defer {
             print(
-                "[\(Self.foldLabel)] wallClockSeconds=\(String(format: "%.1f", Date().timeIntervalSince(startedAt))) "
+                "[\(Self.compactionLabel)] wallClockSeconds=\(String(format: "%.1f", Date().timeIntervalSince(startedAt))) "
                     + "modelLoadSeconds=\(String(format: "%.1f", modelLoadSeconds))"
             )
         }
@@ -332,11 +332,11 @@ struct RecordedTranscriptCompactionIntegrationTests {
         )
         modelLoadSeconds = Date().timeIntervalSince(loadStartedAt)
 
-        let outcome = try await CompactionFold.run(
+        let outcome = try await TranscriptCompaction.run(
             transcript,
-            summarization: Self.foldSummarization,
+            summarization: Self.compactionSummarization,
             container: loaded,
-            label: Self.foldLabel
+            label: Self.compactionLabel
         )
         await loaded.container.model.evict()
 
@@ -349,14 +349,14 @@ struct RecordedTranscriptCompactionIntegrationTests {
         //    Swift should restate a size the recording already fixes.
         #expect(
             !outcome.ceilings.isEmpty,
-            "the summarizer was never called, so no fold was attempted"
+            "the summarizer was never called, so no compaction was attempted"
         )
 
         // 2. It answered with text. `^bgxtdk3` was an empty summary on 19 of 19
         //    gated seeds, and an empty summary erases the span it replaced.
         let summary = try #require(
             result.summary,
-            "the fold was discarded, so there is no summary to read — see stages above")
+            "the compaction was discarded, so there is no summary to read — see stages above")
         #expect(
             !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             "the summarizer answered with no text"
@@ -371,13 +371,13 @@ struct RecordedTranscriptCompactionIntegrationTests {
             "the summary estimates \(summaryTokens) tokens against the \(outcome.spanTokens)-token span it replaced"
         )
 
-        // 4. The fold was APPLIED. An empty `stagesApplied` is `Compactor`'s
+        // 4. The compaction was APPLIED. An empty `stagesApplied` is `Compactor`'s
         //    shortfall exit, which returns the ORIGINAL transcript — the exit 7
         //    of 7 gated seeds took in `^fm5ddk9` while still reporting a
         //    summarizer call.
         #expect(
             result.stagesApplied.last == Summarization.stageName,
-            "expected the fold to be applied, got stages \(result.stagesApplied)"
+            "expected the compaction to be applied, got stages \(result.stagesApplied)"
         )
 
         // 5. The returned result shrank.

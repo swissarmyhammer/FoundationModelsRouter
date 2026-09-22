@@ -176,7 +176,7 @@ package struct TranscriptTree: Sendable {
             decoded = try SessionSidecar.read(in: directory)
         } catch let error as RecordingSchemaVersionError {
             // Not corruption: the bytes decoded fine and name a schema version
-            // newer than this reader knows. Rethrown typed rather than folded
+            // newer than this reader knows. Rethrown typed rather than merged
             // into `sidecarUnreadable`, so a caller can tell "written by a
             // newer router" apart from "damaged on disk".
             throw error
@@ -192,7 +192,7 @@ package struct TranscriptTree: Sendable {
         // compaction count (never persisted back to the write-once
         // `session.json` — see ``SessionSidecar/compactionCount``'s own doc
         // comment), so a browser reading ``SessionNode/sidecar`` can badge a
-        // folded session with no second pass over its transcript.
+        // compacted session with no second pass over its transcript.
         let ownEvents = try decodeEvents(in: directory, forSession: id)
         let compactionCount = compactionCheckpoints(in: ownEvents).count
         return RawNode(
@@ -284,7 +284,7 @@ package struct TranscriptTree: Sendable {
         // The cut point in the recorded history's own append-only
         // coordinates. A recording made before `forkedAtHistoryOrdinal`
         // existed falls back to the legacy `forkedAtEntryCount`: that count
-        // was captured before any post-fork fold could rewind it, so on such
+        // was captured before any post-fork compaction could rewind it, so on such
         // a recording it names the same position in these coordinates.
         guard let cut = node.sidecar.forkedAtHistoryOrdinal ?? node.sidecar.forkedAtEntryCount else {
             throw TranscriptTreeError.forkCutPointMissing(session: node.id, directory: node.directory)

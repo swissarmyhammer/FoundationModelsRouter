@@ -6,7 +6,7 @@ import FoundationModelsRouter
 /// The dearest of the samples the gated subset run of 2026-08-20 timed apart,
 /// in seconds.
 ///
-/// One sample's own work — its fold and its answering turn together — read off
+/// One sample's own work — its compaction and its answering turn together — read off
 /// that sample's own progress lines. Never a run's wall clock divided by a
 /// sample count: `^9cw5g6n` forbids that division, and this trail makes it
 /// unnecessary, because the run drove its samples one at a time and printed
@@ -17,7 +17,7 @@ import FoundationModelsRouter
 /// bounded by ``compactionEvalReasoningTokenHeadroom``, under task ^xx02yn6's
 /// span-budget trim and its `router-default-v3` prompt, at greedy decoding.
 /// The seven samples cost 5.4, 4.7, 12.1, 3.2, 5.1, 15.9 and 15.9 seconds.
-/// Four of the seven folds made one summarizer call and three made two,
+/// Four of the seven compactions made one summarizer call and three made two,
 /// because the redesigned stage re-asks: an answer past the span byte budget
 /// earns one condense call before the last-resort cut. The rate rose from the
 /// 7.2-second dearest sample the 1B canary measured over the same recipe on
@@ -26,30 +26,30 @@ import FoundationModelsRouter
 /// sample over the same recipe, which is the rate the two-minute budget
 /// removed.
 ///
-/// Every one of those seven samples APPLIED its fold, and that is half of the
-/// cost each figure holds: the answering turn then reads the folded
-/// transcript. Task ^azd033m made the fold apply. Before that change a fold
-/// was discarded, and a discarded fold costs one summarizer call and nothing
-/// after it, so a rate measured over discarded folds under-states this one —
+/// Every one of those seven samples APPLIED its compaction, and that is half of the
+/// cost each figure holds: the answering turn then reads the compacted
+/// transcript. Task ^azd033m made the compaction apply. Before that change a compaction
+/// was discarded, and a discarded compaction costs one summarizer call and nothing
+/// after it, so a rate measured over discarded compactions under-states this one —
 /// which is why the 7-sample run of 2026-08-17 is not comparable with any
 /// figure above. The run of 2026-08-20 filed six of its seven samples as
 /// `retained` and one as `summaryLostFact`, and none as
-/// ``CompactionEvalFactRetentionClass/foldProducedNoSummary``, which is how
-/// its own trail shows that each fold applied. Two ungated tests keep the
+/// ``CompactionEvalFactRetentionClass/compactionProducedNoSummary``, which is how
+/// its own trail shows that each compaction applied. Two ungated tests keep the
 /// property true without a gated run:
-/// `CompactionEvaluationHermeticTests/everySeedFoldSurvivesARealisticSummary`
-/// folds every seed against a summarizer that answers at a real summary's
+/// `CompactionEvaluationHermeticTests/everySeedCompactionSurvivesARealisticSummary`
+/// compacts every seed against a summarizer that answers at a real summary's
 /// length, and
-/// `CompactionEvalSeedSizingTests/everySeedsFoldableSpanOutweighsARealSummary`
-/// holds every seed's foldable span above the largest summary such a
-/// summarizer writes for it. So `Compactor.compact` cannot throw a fold away
+/// `CompactionEvalSeedSizingTests/everySeedsCompactableSpanOutweighsARealSummary`
+/// holds every seed's compactable span above the largest summary such a
+/// summarizer writes for it. So `Compactor.compact` cannot throw a compaction away
 /// on its did-not-shrink guard (task ^6ssbakk).
 ///
 /// The DEAREST sizes a limit, not the mean, because the spread between
 /// samples is what a limit has to survive (task ^6ssbakk).
 ///
 /// This rate sizes THIS tier and no other, and that is not a formality. A
-/// second gated tier folded all 24 fixtures the dataset then held, until task
+/// second gated tier compacted all 24 fixtures the dataset then held, until task
 /// ^k0d30s4 cut the dataset to these seven, and the two runs of 2026-08-20
 /// measured seeds BOTH tiers held at two different rates.
 /// `three-facts-support-escalation` cost 15.9 seconds as sample 7 of the
@@ -171,7 +171,7 @@ let compactionEvalSubsetTimeLimitMinutes = 2
 // MARK: - Measured tier bars
 
 /// The mean SUMMARY fact retention a gated tier's samples must reach: the
-/// share of folds whose summary carries the planted key phrase.
+/// share of compactions whose summary carries the planted key phrase.
 ///
 /// ## The canary's measured baseline, minus one sample of margin
 ///
@@ -224,12 +224,12 @@ let compactionEvalSubsetTimeLimitMinutes = 2
 /// pins ``FoundationModels/GenerationOptions/SamplingMode/greedy``: argmax
 /// decoding consumes no randomness, so a run's score is a fact about the
 /// prompt and the fixtures, and a drop under this floor is a regression in
-/// the fold rather than a draw.
+/// the compaction rather than a draw.
 let compactionEvalSummaryFactRetentionFloor = 0.71
 
 /// The mean end-to-end `FactRetention` a gated tier's samples must reach: the
 /// share of ANSWERS carrying the planted key phrase after the resumed session
-/// reads the folded transcript.
+/// reads the compacted transcript.
 ///
 /// Never above ``compactionEvalSummaryFactRetentionFloor``, and that order
 /// is structural: an answer can only carry a fact its own transcript holds,
@@ -295,7 +295,7 @@ func compactionEvalFactRetentionRequiredSamples(of sampleCount: Int, floor: Doub
 /// (``CompactionEvalRealModel/ref`` and
 /// ``CompactionContinuityRealModel/ref``).
 ///
-/// The fold arithmetic spans two currencies, and this is the rate between them.
+/// The compaction arithmetic spans two currencies, and this is the rate between them.
 /// ``Summarization`` sizes a summarizer call's answer in REAL tokens
 /// (``Summarization/minimumSummaryTokens``, ``Summarization/summaryTokenRatio``),
 /// while ``Compactor`` measures a transcript in ESTIMATED ones — UTF-8 bytes
@@ -341,11 +341,11 @@ func compactionEvalFactRetentionRequiredSamples(of sampleCount: Int, floor: Doub
 /// Every use of this constant converts a real-token allowance into the bytes
 /// a real summary occupies, so the largest rate over-states every such
 /// summary and each gate it feeds stays strict: the hermetic shrink gate
-/// folds against a summary bigger than the model writes, and the seed sizing
+/// compacts against a summary bigger than the model writes, and the seed sizing
 /// outweighs a worst case bigger than the real one.
 let compactionEvalMeasuredBytesPerToken = 4.79
 
-/// The ceiling one summarizer call of an eval-sized fold is given at the
+/// The ceiling one summarizer call of an eval-sized compaction is given at the
 /// PRODUCTION defaults: ``Summarization/minimumSummaryTokens`` — the FLOOR
 /// of the summary allowance, which task ^xx02yn6 derives from the stated
 /// size budget for larger spans — plus
@@ -370,19 +370,19 @@ let compactionEvalSummarizerCeiling =
 /// Qwen2.5 instruct model since task ^mx4jqrn, for the same reason among
 /// others. So the default hands each of them thousands of tokens of
 /// free generation. The gated subset run of 2026-08-19 measured what that
-/// freedom costs: two of seven folds generated to the ceiling — 20485 and
+/// freedom costs: two of seven compactions generated to the ceiling — 20485 and
 /// 16060 bytes of summary answer — at 28.5 seconds each, where the five
-/// bounded folds cost 2.5 to 7.4 seconds. The three fast compaction smoke
+/// bounded compactions cost 2.5 to 7.4 seconds. The three fast compaction smoke
 /// suites cut the same value for the same measured reason. Every gated eval
 /// tier reads this one constant, so they cannot drift.
 let compactionEvalReasoningTokenHeadroom = 128
 
 /// A summarizer whose answer is the length a real one writes.
 ///
-/// A stub answering `"fake summary"` shrinks a fold whatever the seed holds, so
+/// A stub answering `"fake summary"` shrinks a compaction whatever the seed holds, so
 /// it proves the pipeline REACHED ``Summarization`` and nothing about whether
-/// the fold survived `Compactor.compact`'s did-not-shrink guard. The gated run
-/// of 2026-08-17 discarded 8 of the 9 folds the stub suite reported as reaching
+/// the compaction survived `Compactor.compact`'s did-not-shrink guard. The gated run
+/// of 2026-08-17 discarded 8 of the 9 compactions the stub suite reported as reaching
 /// the stage (task ^vjf3mdm).
 ///
 /// `maxTokens` bounds the whole generation — the reasoning and the answer
@@ -412,7 +412,7 @@ let compactionEvalReasoningTokenHeadroom = 128
 ///   ``Summarization/reasoningTokenHeadroom`` to it and hands the sum down
 ///   as `maxTokens`. That is a ceiling on the GENERATION, in real tokens,
 ///   and it covers the reasoning and the answer together.
-/// - The span byte budget bounds the FINAL summary the fold stores, in the
+/// - The span byte budget bounds the FINAL summary the compaction stores, in the
 ///   UTF-8 content bytes `Compactor` measures: an answer past it earns one
 ///   condense re-ask, then the last-resort cut — except when the cut would
 ///   leave no text at all, where `Summarization` hands the answer back whole
@@ -430,13 +430,13 @@ let compactionEvalReasoningTokenHeadroom = 128
 /// the stage had already condensed or cut. That budget is
 /// ``Summarization/statedBudgetShareOfContent`` of the span's own content, so a
 /// 614-byte answer overruns it only when the content is under 819 bytes, and
-/// `CompactionEvalSeedSizingTests/everySeedsFoldableSpanOutweighsARealSummary`
+/// `CompactionEvalSeedSizingTests/everySeedsCompactableSpanOutweighsARealSummary`
 /// already requires every seed's span to estimate 231 tokens — 924 bytes at
 /// `Compactor.charsPerTokenEstimate` — or more.
 struct RealisticSummaryLengthSummarizer: CompactionSummarizer {
     /// The headroom the stage under test adds on top of the summary allowance.
     ///
-    /// Read from the same ``Summarization`` value the fold is given rather than
+    /// Read from the same ``Summarization`` value the compaction is given rather than
     /// restated, so this summarizer cannot drift away from the stage calling it.
     let reasoningTokenHeadroom: Int
 

@@ -47,12 +47,12 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - recordingRoot: A per-session recording root, or `nil` for the router-level root.
     ///   - tools: The tools the model can call. Each is wrapped by ``makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)``.
     ///   - budget: The auto-compaction opt-in, or `nil` for manual compaction only.
-    ///   - compactionPrompt: The prompt automatic folds send to the summarizer.
-    ///   - summarization: The model-assisted compaction stage every fold runs.
+    ///   - compactionPrompt: The prompt automatic compactions send to the summarizer.
+    ///   - summarization: The model-assisted compaction stage every compaction runs.
     ///   - agentSpawn: The parent session and tool call this session was spawned from, or `nil`.
     ///   - discoveryPriming: The pre-discovery seeding opt-in, or `nil` to leave it off.
     ///   - toolOutputProtection: The host rule whose protected tool outputs
-    ///     every fold keeps word for word, or `nil` to protect nothing.
+    ///     every compaction keeps word for word, or `nil` to protect nothing.
     /// - Returns: A new ``RoutedSession`` over this model.
     public func makeSession(
         instructions: String? = nil,
@@ -370,11 +370,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         let tree = try TranscriptTree.load(under: routerDirectory)
         let restoredTranscript = try tree.effectiveTranscript(forSession: sessionId)
         // The resume cut in the resumed session's recorded history's own
-        // append-only coordinates: its raw effective entry-event count, fold
+        // append-only coordinates: its raw effective entry-event count, compaction
         // boundaries included. `restoredTranscript.count` cannot serve as
         // the cut — it counts the checkpoint-filtered restore view, which a
-        // fold makes SMALLER than the raw count, and a reader applying it as
-        // a raw prefix would select the oldest pre-fold span (the defect
+        // compaction makes SMALLER than the raw count, and a reader applying it as
+        // a raw prefix would select the oldest pre-compaction span (the defect
         // task ^6z1msg1 removed for actor forks).
         let historyOrdinalAtResume = try tree.effectiveEntryEvents(forSession: sessionId).count
 

@@ -42,20 +42,20 @@ package enum TranscriptTurns {
         return (header, turns)
     }
 
-    /// Partitions `turns` into the "old" turns eligible for folding and the
+    /// Partitions `turns` into the "old" turns eligible for compaction and the
     /// "recent" tail that must survive verbatim: the newest `keepRecentTurns`
     /// turns, or every turn when there are fewer than `keepRecentTurns` —
     /// never splitting a turn between the two groups.
     ///
     /// `keepRecentTurns <= 0` protects nothing: every turn is eligible for
-    /// folding (`old: turns, recent: []`) — the "keep the newest zero turns"
+    /// compaction (`old: turns, recent: []`) — the "keep the newest zero turns"
     /// reading, and the maximally aggressive setting a caller can ask for.
     ///
     /// - Parameters:
     ///   - turns: The transcript's turns, in original order.
     ///   - keepRecentTurns: How many of the newest turns are the untouchable
     ///     recency window.
-    /// - Returns: The old (foldable) turns and the recent (untouchable) tail.
+    /// - Returns: The old (compactable) turns and the recent (untouchable) tail.
     package static func partition(
         _ turns: [TranscriptTurn],
         keepRecentTurns: Int

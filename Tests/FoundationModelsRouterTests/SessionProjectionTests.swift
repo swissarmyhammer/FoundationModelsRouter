@@ -210,7 +210,7 @@ struct SessionProjectionTests {
     @MainActor
     func compactionEventAppendsResultAndSetsPhase() {
         let projection = SessionProjection()
-        let result = CompactionResult(summary: "folded", tokensBefore: 1000, tokensAfter: 400, stagesApplied: ["ToolOutputElision"])
+        let result = CompactionResult(summary: "compacted", tokensBefore: 1000, tokensAfter: 400, stagesApplied: ["ToolOutputElision"])
         projection.apply(.compaction(result))
 
         #expect(projection.phase == .compacting)
@@ -359,7 +359,7 @@ struct SessionProjectionTests {
     @MainActor
     func twoProjectionsGivenTheSameEventsProduceEqualRowIds() {
         let compaction = CompactionResult(
-            summary: "folded", summaryEntryId: "compaction-summary-1", tokensBefore: 1000, tokensAfter: 400,
+            summary: "compacted", summaryEntryId: "compaction-summary-1", tokensBefore: 1000, tokensAfter: 400,
             stagesApplied: ["Summarization"])
         let events: [SessionEvent] = [
             .reasoningDelta("thinking"),
@@ -386,14 +386,14 @@ struct SessionProjectionTests {
     @MainActor
     func compactionRowIsKeyedByTheResultId() {
         let projection = SessionProjection()
-        let folded = CompactionResult(
-            summary: "folded", summaryEntryId: "compaction-summary-1", tokensBefore: 1000, tokensAfter: 400,
+        let compacted = CompactionResult(
+            summary: "compacted", summaryEntryId: "compaction-summary-1", tokensBefore: 1000, tokensAfter: 400,
             stagesApplied: ["Summarization"])
-        let unfolded = CompactionResult(summary: nil, tokensBefore: 500, tokensAfter: 500, stagesApplied: [])
-        projection.apply(.compaction(folded))
-        projection.apply(.compaction(unfolded))
+        let uncompacted = CompactionResult(summary: nil, tokensBefore: 500, tokensAfter: 500, stagesApplied: [])
+        projection.apply(.compaction(compacted))
+        projection.apply(.compaction(uncompacted))
 
-        #expect(projection.transcript.map(\.id) == [folded.id, unfolded.id])
+        #expect(projection.transcript.map(\.id) == [compacted.id, uncompacted.id])
         #expect(projection.transcript.map(\.sourceEntryId) == ["compaction-summary-1", nil])
     }
 

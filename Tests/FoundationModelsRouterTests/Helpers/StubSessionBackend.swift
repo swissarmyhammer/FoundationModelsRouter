@@ -42,12 +42,12 @@ struct StubGenerationCall: Sendable, Equatable {
 /// produces (``StubSessionBackend/makeFork(tools:)``,
 /// ``StubSessionBackend/replacingTranscript(_:)``).
 ///
-/// A fold's summarizer never calls the backend a container handed the session:
+/// A compaction's summarizer never calls the backend a container handed the session:
 /// `BackendCompactionSummarizer` builds a fresh, blank-slate backend for each
 /// call via `replacingTranscript(_:)`, so a per-instance history such as
-/// ``StubSessionBackend/receivedPrompts`` cannot see the calls a fold made. A
+/// ``StubSessionBackend/receivedPrompts`` cannot see the calls a compaction made. A
 /// log passed in at construction and carried across every clone can, which is
-/// what lets a test read the prompt and the output ceiling a session's fold
+/// what lets a test read the prompt and the output ceiling a session's compaction
 /// actually handed its summarizer.
 ///
 /// `@unchecked Sendable` invariant: ``record(prompt:maxTokens:)`` runs only
@@ -73,11 +73,11 @@ final class StubGenerationLog: @unchecked Sendable {
 /// ``StubSessionBackend/makeFork(tools:)`` and
 /// ``StubSessionBackend/replacingTranscript(_:)``.
 ///
-/// A fold swaps a session's backend through `replacingTranscript(_:)`
-/// directly on the backend (see `RoutedSessionActor`'s fold), so a container
+/// A compaction swaps a session's backend through `replacingTranscript(_:)`
+/// directly on the backend (see `RoutedSessionActor`'s compaction), so a container
 /// that only retains what *it* vended cannot see the session's live
-/// post-fold backend. Backends registered here can: the fold's swap clone is
-/// the last backend the fold creates, so ``created``'s last element after a
+/// post-compaction backend. Backends registered here can: the compaction's swap clone is
+/// the last backend the compaction creates, so ``created``'s last element after a
 /// `compact()` returns is the session's live backend.
 ///
 /// `@unchecked Sendable` invariant: ``record(_:)`` runs either from direct
@@ -217,7 +217,7 @@ final class StubSessionBackend: LanguageModelSessionBackend {
     ///
     /// Set this before driving a turn to give a test canned, configurable
     /// counts; ``recordCall(prompt:maxTokens:preflight:)`` is what actually
-    /// folds it into the running total on each successful call, the way a
+    /// compacts it into the running total on each successful call, the way a
     /// real `LanguageModelSession.usage` grows across turns.
     var usageIncrement: (input: Int, output: Int)? {
         get { state.withLock { $0.usageIncrement } }
@@ -409,7 +409,7 @@ final class StubSessionBackend: LanguageModelSessionBackend {
     /// In order: bumps ``callCount``, appends the prompt to
     /// ``receivedPrompts``, ``generationLog`` and ``entries``; runs
     /// `preflight`; throws ``StubError/boom`` when ``shouldThrow`` is set;
-    /// then appends a `.response` entry carrying ``responseText`` and folds
+    /// then appends a `.response` entry carrying ``responseText`` and compacts
     /// ``usageIncrement`` (when set) into the running total, so the two
     /// snapshots ``RoutedSessionActor``'s chokepoint takes around a turn
     /// differ by exactly one turn's worth of usage. A call that throws

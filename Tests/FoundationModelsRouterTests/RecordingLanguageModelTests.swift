@@ -58,7 +58,7 @@ struct RecordingLanguageModelTests {
     /// transcript has not yet gained a `.toolOutput` entry, then
     /// ``cannedResponseText`` once one has — mirroring how a real model's
     /// executor is invoked twice per tool-using turn (once to request the
-    /// call, once more with the tool's output folded into the transcript).
+    /// call, once more with the tool's output merged into the transcript).
     ///
     /// When ``observer``/``releaseGate`` are set, every call suspends on the
     /// release gate after recording entry into ``observer`` — the seam
@@ -196,7 +196,7 @@ struct RecordingLanguageModelTests {
     /// A real `FoundationModels.Tool` conformer the tool-using-turn test
     /// registers on the session, so the SDK's own machinery — not this
     /// suite — invokes it once it observes the stub model's `.toolCalls`
-    /// event and folds the result back in as a `.toolOutput` entry.
+    /// event and merges the result back in as a `.toolOutput` entry.
     private struct EchoTool: Tool {
         let name = "echo"
         let description = "Echoes text back"

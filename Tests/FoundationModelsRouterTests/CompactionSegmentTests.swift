@@ -6,7 +6,7 @@ import Testing
 
 /// Exercises task vchknhc (compaction epic — compaction_plan.md §1.2,
 /// build-order step 2): ``CompactionSegment``, the ``PersistableStructuredSegment``
-/// carrying one compaction's fold metadata.
+/// carrying one compaction's metadata.
 ///
 /// Everything runs hermetically — stub `LoadedLLMContainer`s and backends, a
 /// `JSONLRecorder` writing into a temp directory — so the suite needs no
@@ -33,7 +33,7 @@ struct CompactionSegmentTests {
 
     private static func makeContent(
         liveWindowEntryIds: [String] = ["summary-1", "tail-prompt-1", "tail-response-1"],
-        foldedEntryIds: [String] = ["old-instr-1", "old-prompt-1", "old-response-1"],
+        compactedEntryIds: [String] = ["old-instr-1", "old-prompt-1", "old-response-1"],
         tokensBefore: Int = 12_000,
         tokensAfter: Int = 3_000,
         stagesApplied: [String] = ["ToolOutputElision", "TurnTruncation", "Summarization"],
@@ -42,7 +42,7 @@ struct CompactionSegmentTests {
     ) -> CompactionSegment.Content {
         CompactionSegment.Content(
             liveWindowEntryIds: liveWindowEntryIds,
-            foldedEntryIds: foldedEntryIds,
+            compactedEntryIds: compactedEntryIds,
             tokensBefore: tokensBefore,
             tokensAfter: tokensAfter,
             stagesApplied: stagesApplied,
@@ -53,14 +53,14 @@ struct CompactionSegmentTests {
 
     // MARK: - Codable round trip (no mocks, no registry involved)
 
-    @Test("CompactionSegment.Content encodes and decodes losslessly, preserving every fold-metadata field")
+    @Test("CompactionSegment.Content encodes and decodes losslessly, preserving every compaction-metadata field")
     func contentRoundTripsThroughCodable() throws {
         let original = Self.makeContent()
         let data = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(CompactionSegment.Content.self, from: data)
         #expect(decoded == original)
         #expect(decoded.liveWindowEntryIds == original.liveWindowEntryIds)
-        #expect(decoded.foldedEntryIds == original.foldedEntryIds)
+        #expect(decoded.compactedEntryIds == original.compactedEntryIds)
         #expect(decoded.tokensBefore == original.tokensBefore)
         #expect(decoded.tokensAfter == original.tokensAfter)
         #expect(decoded.stagesApplied == original.stagesApplied)
@@ -102,7 +102,7 @@ struct CompactionSegmentTests {
             """
             {
                 "liveWindowEntryIds": ["summary-1", "tail-prompt-1"],
-                "foldedEntryIds": ["old-prompt-1", "old-response-1"],
+                "compactedEntryIds": ["old-prompt-1", "old-response-1"],
                 "tokensBefore": 12000,
                 "tokensAfter": 3000,
                 "stagesApplied": ["ToolOutputElision", "TurnTruncation", "Summarization"],
@@ -112,11 +112,54 @@ struct CompactionSegmentTests {
         let decoded = try JSONDecoder().decode(CompactionSegment.Content.self, from: legacyJSON)
         #expect(decoded.pendingRuns == nil)
         #expect(decoded.liveWindowEntryIds == ["summary-1", "tail-prompt-1"])
-        #expect(decoded.foldedEntryIds == ["old-prompt-1", "old-response-1"])
+        #expect(decoded.compactedEntryIds == ["old-prompt-1", "old-response-1"])
         #expect(decoded.tokensBefore == 12_000)
         #expect(decoded.tokensAfter == 3_000)
         #expect(decoded.stagesApplied == ["ToolOutputElision", "TurnTruncation", "Summarization"])
         #expect(decoded.promptName == "default")
+    }
+
+    /// The body JSON of a checkpoint recorded before the rename. It holds the
+    /// compacted entry ids under the legacy key `foldedEntryIds`.
+    private static let legacyKeyCheckpointJSON = """
+        {
+            "liveWindowEntryIds": ["summary-1", "tail-prompt-1"],
+            "foldedEntryIds": ["old-prompt-1", "old-response-1"],
+            "tokensBefore": 12000,
+            "tokensAfter": 3000,
+            "stagesApplied": ["ToolOutputElision", "TurnTruncation", "Summarization"],
+            "promptName": "default"
+        }
+        """
+
+    @Test("a checkpoint recorded under the legacy entry-id key decodes, and restores through the persisted schema name")
+    func checkpointWithLegacyKeyDecodesAndRestores() throws {
+        let decoded = try JSONDecoder().decode(
+            CompactionSegment.Content.self, from: Data(Self.legacyKeyCheckpointJSON.utf8))
+        #expect(decoded.compactedEntryIds == ["old-prompt-1", "old-response-1"])
+        #expect(decoded.liveWindowEntryIds == ["summary-1", "tail-prompt-1"])
+        #expect(decoded.tokensBefore == 12_000)
+        #expect(decoded.tokensAfter == 3_000)
+
+        // The same path a recorded checkpoint takes on restore: the persisted
+        // schema name and body JSON, with no caller configuration.
+        let restored = try #require(
+            try CompactionSegment(
+                schemaName: CompactionSegment.schemaName,
+                contentJSON: Self.legacyKeyCheckpointJSON,
+                id: "compaction-legacy-1"
+            )
+        )
+        #expect(restored.id == "compaction-legacy-1")
+        #expect(restored.content == decoded)
+    }
+
+    @Test("CompactionSegment.Content writes compactedEntryIds and never the legacy key")
+    func contentWritesTheCurrentKeyOnly() throws {
+        let data = try JSONEncoder().encode(Self.makeContent())
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["compactedEntryIds"] as? [String] == ["old-instr-1", "old-prompt-1", "old-response-1"])
+        #expect(object["foldedEntryIds"] == nil)
     }
 
     @Test("CompactionSegment is Sendable, matching its all-let storage and its already-Sendable nested types")
@@ -226,13 +269,13 @@ struct CompactionSegmentTests {
     }
 
     /// The synthesized transcript a `Summarization` stage would produce: the
-    /// original instructions, a folded old turn compaction subsequently
+    /// original instructions, a compacted old turn compaction subsequently
     /// replaces, and a synthesized summary `.response` entry carrying both a
     /// text segment and its ``CompactionSegment``.
     private static func makeSynthesizedTranscript() -> [Transcript.Entry] {
         let content = Self.makeContent(
             liveWindowEntryIds: ["instr-1", "summary-1"],
-            foldedEntryIds: ["old-prompt-1", "old-response-1"]
+            compactedEntryIds: ["old-prompt-1", "old-response-1"]
         )
         return [
             .instructions(
@@ -246,7 +289,7 @@ struct CompactionSegmentTests {
                 Transcript.Response(
                     id: "summary-1",
                     segments: [
-                        .text(Transcript.TextSegment(id: "summary-text-1", content: "Summary: prior turns folded.")),
+                        .text(Transcript.TextSegment(id: "summary-text-1", content: "Summary: prior turns compacted.")),
                         CompactionSegment(id: "compaction-1", content: content).transcriptSegment,
                     ]
                 )
@@ -399,7 +442,7 @@ struct CompactionSegmentTests {
             Issue.record("expected the reconstructed summary entry to carry a .structure CompactionSegment")
             return
         }
-        #expect(compaction.content.foldedEntryIds == ["old-prompt-1", "old-response-1"])
+        #expect(compaction.content.compactedEntryIds == ["old-prompt-1", "old-response-1"])
         #expect(compaction.content.liveWindowEntryIds == ["instr-1", "summary-1"])
         #expect(compaction.content.pendingRuns == [Self.fixturePendingRun])
     }

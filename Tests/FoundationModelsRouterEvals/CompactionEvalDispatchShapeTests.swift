@@ -14,7 +14,7 @@ import Testing
 /// takes no concurrency limit (see the installed `Evaluations.framework`
 /// interface), so the shape belongs to the framework, and the only honest way
 /// to state it is to measure it — a trail's `elapsed=` values prove nothing
-/// about it (the field was a literal zero at every fold start until task
+/// about it (the field was a literal zero at every compaction start until task
 /// ^h2xxsse removed it), and only the ORDER of a trail's lines does.
 ///
 /// This suite measures the shape with no model at all: a fake subject that

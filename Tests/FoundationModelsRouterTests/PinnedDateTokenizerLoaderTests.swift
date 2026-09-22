@@ -10,7 +10,7 @@ import Testing
 /// template writes `Today Date: <today>` into every system header, and it takes
 /// that date from `strftime_now`, which `swift-jinja` answers from `Date()`.
 /// Greedy decoding pins the sampling; it does not pin the prompt. So identical
-/// code folds a transcript differently on two calendar days.
+/// code compacts a transcript differently on two calendar days.
 ///
 /// The template reads its own `date_string` variable first, and only calls
 /// `strftime_now` when nothing defines it. So a caller that states

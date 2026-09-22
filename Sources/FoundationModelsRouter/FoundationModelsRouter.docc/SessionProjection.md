@@ -71,7 +71,7 @@ array straight into a `List` or a `ForEach`. A row carries one of four kinds:
 - `reasoning` — the reasoning trace of the model.
 - `toolCall` — one ``ToolCallEntry``, with its live
   ``ToolCallStatus``.
-- `compaction` — the result of a fold that ran in the middle of a turn.
+- `compaction` — the result of a compaction that ran in the middle of a turn.
 
 A row starts with a provisional id. When the session records the matching
 transcript entry, the row adopts the durable id of that entry and reports it as
@@ -91,7 +91,7 @@ session is doing:
 - ``SessionProjection/Phase/idle`` — no turn is under observation.
 - ``SessionProjection/Phase/generating`` — the model is producing text.
 - ``SessionProjection/Phase/runningTool`` — a tool call is in flight.
-- ``SessionProjection/Phase/compacting`` — a fold is running.
+- ``SessionProjection/Phase/compacting`` — a compaction is running.
 
 The phase returns to ``SessionProjection/Phase/idle`` when the turn ends, and
 also when the stream finishes or throws.

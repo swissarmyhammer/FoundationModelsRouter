@@ -6,8 +6,8 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Task ^1s8p8qt: the turn-outcome API owns the event fold, so a caller gets
-/// the reply text plus tools, folds, and usage from one call instead of
+/// Task ^1s8p8qt: the turn-outcome API owns the event reduction, so a caller gets
+/// the reply text plus tools, compactions, and usage from one call instead of
 /// re-implementing the ``SessionEvent`` switch — including the subtle
 /// ``SessionEvent/textReset`` accumulation rule.
 ///
@@ -16,7 +16,7 @@ import Testing
 /// the turn emits a real ``SessionEvent/textReset`` and the reply invariant
 /// (`TurnOutcome.reply` equals `respond(to:)`'s return, character for
 /// character) is only reachable by actually applying the rule.
-@Suite("TurnOutcome: one call drives a turn and owns the event fold")
+@Suite("TurnOutcome: one call drives a turn and owns the event reduction")
 struct TurnOutcomeTests {
     // MARK: - The scripted scenario
 
@@ -114,7 +114,7 @@ struct TurnOutcomeTests {
 
         // The callback saw the raw stream: every fragment the model produced,
         // superseded narration included, plus the reset itself — nothing was
-        // pre-folded on the way to the observer.
+        // pre-reduced on the way to the observer.
         let events = observed.withLock { $0 }
         let rawText = events.compactMap { event -> String? in
             guard case .textDelta(let fragment) = event else { return nil }
@@ -161,14 +161,14 @@ struct TurnOutcomeTests {
         let callIds = Set(outcome.toolCalls.map(\.id))
         #expect(outcome.toolInvocations.allSatisfy { !callIds.contains($0.correlationID) })
 
-        // No budget was set on this session, so the turn folded nothing.
+        // No budget was set on this session, so the turn compacted nothing.
         #expect(outcome.compactions.isEmpty)
     }
 
     // MARK: - The shared reducer (acceptance)
 
     /// The synthetic event shape of one narrated tool-using turn: a superseded
-    /// draft, a reset, then the answer — the sequence both reducers must fold
+    /// draft, a reset, then the answer — the sequence both reducers must reduce
     /// the same way.
     private static var narratedTurnEvents: [SessionEvent] {
         [
@@ -186,10 +186,10 @@ struct TurnOutcomeTests {
     @MainActor
     func projectionAndOutcomeAgreeOnTheReplyText() {
         let projection = SessionProjection()
-        var fold = TurnOutcomeFold()
+        var reducer = TurnOutcomeReducer()
         for event in Self.narratedTurnEvents {
             projection.apply(event)
-            fold.apply(event)
+            reducer.apply(event)
         }
 
         // The projection keeps the superseded draft as its own closed row —
@@ -201,83 +201,83 @@ struct TurnOutcomeTests {
         }
         #expect(textRows == ["Looking those up. ", "The answer is 4."])
 
-        // The outcome's reply is that same last row: both consumers fold
-        // their text through ``ResponseTextFold``, so they cannot drift.
-        #expect(fold.outcome.reply == textRows.last)
+        // The outcome's reply is that same last row: both consumers reduce
+        // their text through ``ResponseTextReducer``, so they cannot drift.
+        #expect(reducer.outcome.reply == textRows.last)
     }
 
-    @Test("the reset rule lives in ResponseTextFold: a reset clears the reply and the next fragment starts a new response")
-    func responseTextFoldAppliesTheResetRule() {
-        var fold = ResponseTextFold()
+    @Test("the reset rule lives in ResponseTextReducer: a reset clears the reply and the next fragment starts a new response")
+    func responseTextReducerAppliesTheResetRule() {
+        var reducer = ResponseTextReducer()
 
         // `append` is mutating, so each call is hoisted out of `#expect`.
-        let firstBeganNew = fold.append("Draft ")
-        let secondBeganNew = fold.append("one.")
+        let firstBeganNew = reducer.append("Draft ")
+        let secondBeganNew = reducer.append("one.")
         #expect(!firstBeganNew)
         #expect(!secondBeganNew)
-        #expect(fold.reply == "Draft one.")
+        #expect(reducer.reply == "Draft one.")
 
-        fold.reset()
-        #expect(fold.reply.isEmpty)
+        reducer.reset()
+        #expect(reducer.reply.isEmpty)
 
-        let afterResetBeganNew = fold.append("Final.")
-        let continuationBeganNew = fold.append(" Done.")
+        let afterResetBeganNew = reducer.append("Final.")
+        let continuationBeganNew = reducer.append(" Done.")
         #expect(afterResetBeganNew)
         #expect(!continuationBeganNew)
-        #expect(fold.reply == "Final. Done.")
+        #expect(reducer.reply == "Final. Done.")
     }
 
-    // MARK: - The fold's non-text accumulation
+    // MARK: - The reducer's non-text accumulation
 
-    @Test("the fold keeps the last usage, every compaction, and replaces an open invocation record with its close")
-    func foldKeepsUsageCompactionsAndClosedInvocations() {
-        var fold = TurnOutcomeFold()
-        let folded = CompactionResult(
-            summary: "folded", tokensBefore: 1000, tokensAfter: 400, stagesApplied: ["ToolOutputElision"])
+    @Test("the reducer keeps the last usage, every compaction, and replaces an open invocation record with its close")
+    func reducerKeepsUsageCompactionsAndClosedInvocations() {
+        var reducer = TurnOutcomeReducer()
+        let compacted = CompactionResult(
+            summary: "compacted", tokensBefore: 1000, tokensAfter: 400, stagesApplied: ["ToolOutputElision"])
         let open = ToolInvocationRecord(
             tool: "search", op: "search", correlationID: "token-1", sessionID: .generate(),
             openedAt: Date(timeIntervalSince1970: 100))
 
-        fold.apply(.turnStarted(TurnStart(turnId: TurnID(1), promptId: nil)))
-        fold.apply(.compaction(folded))
-        fold.apply(.toolInvocation(open))
-        fold.apply(.toolInvocation(open.closed(at: Date(timeIntervalSince1970: 102))))
+        reducer.apply(.turnStarted(TurnStart(turnId: TurnID(1), promptId: nil)))
+        reducer.apply(.compaction(compacted))
+        reducer.apply(.toolInvocation(open))
+        reducer.apply(.toolInvocation(open.closed(at: Date(timeIntervalSince1970: 102))))
         // A retried turn closes two attempts; the outcome keeps the last one.
-        fold.apply(.turnEnded(TokenUsage(tokensIn: 10, tokensOut: 5, contextFill: 0.9)))
-        fold.apply(.turnEnded(TokenUsage(tokensIn: 4, tokensOut: 2, contextFill: 0.4)))
+        reducer.apply(.turnEnded(TokenUsage(tokensIn: 10, tokensOut: 5, contextFill: 0.9)))
+        reducer.apply(.turnEnded(TokenUsage(tokensIn: 4, tokensOut: 2, contextFill: 0.4)))
 
-        let outcome = fold.outcome
+        let outcome = reducer.outcome
         #expect(outcome.usage == TokenUsage(tokensIn: 4, tokensOut: 2, contextFill: 0.4))
         #expect(outcome.contextFill == 0.4)
-        #expect(outcome.compactions == [folded])
+        #expect(outcome.compactions == [compacted])
         #expect(outcome.toolInvocations.count == 1)
         #expect(outcome.toolInvocations.first?.closedAt != nil)
         #expect(outcome.toolInvocations.first?.correlationID == "token-1")
     }
 
-    /// Folds `events` in order and returns the outcome.
+    /// Reduces `events` in order and returns the outcome.
     ///
     /// - Parameter events: The turn's events, in stream order.
-    /// - Returns: The folded ``TurnOutcome``.
+    /// - Returns: The reduced ``TurnOutcome``.
     private static func outcome(of events: [SessionEvent]) -> TurnOutcome {
-        var fold = TurnOutcomeFold()
+        var reducer = TurnOutcomeReducer()
         for event in events {
-            fold.apply(event)
+            reducer.apply(event)
         }
-        return fold.outcome
+        return reducer.outcome
     }
 
-    /// The open record of the one call the live-driver-event tests fold.
+    /// The open record of the one call the live-driver-event tests reduce.
     private static let openRecord = ToolInvocationRecord(
         tool: "search", op: "search", correlationID: "token-1", sessionID: .generate(),
         openedAt: Date(timeIntervalSince1970: 100))
 
-    /// Folds one turn with one call twice — once plain, once with `event`
+    /// Reduces one turn with one call twice — once plain, once with `event`
     /// between the call's close and the turn's end — and asserts the two
     /// outcomes are the same.
     ///
     /// - Parameter event: The event the outcome must not carry.
-    private static func expectFoldIgnores(_ event: SessionEvent) {
+    private static func expectReducerIgnores(_ event: SessionEvent) {
         let open = openRecord
         let turnStarted = SessionEvent.turnStarted(TurnStart(turnId: TurnID(1), promptId: nil))
         let close = SessionEvent.toolInvocation(open.closed(at: Date(timeIntervalSince1970: 102)))
@@ -287,25 +287,25 @@ struct TurnOutcomeTests {
 
         let outcomeWithEvent = outcome(of: turnWithEvent)
 
-        // The fold saw the call: the comparison below is not between two empty outcomes.
+        // The reducer saw the call: the comparison below is not between two empty outcomes.
         #expect(outcomeWithEvent.toolInvocations.count == 1)
         #expect(outcomeWithEvent == outcome(of: plainTurn))
     }
 
-    @Test("the fold does not carry a toolCallReport: the outcome is the same with and without one")
-    func foldDoesNotCarryAToolCallReport() {
+    @Test("the reducer does not carry a toolCallReport: the outcome is the same with and without one")
+    func reducerDoesNotCarryAToolCallReport() {
         let open = Self.openRecord
-        Self.expectFoldIgnores(
+        Self.expectReducerIgnores(
             .toolCallReport(
                 ToolCallReport(
                     tool: open.tool, op: open.op, correlationID: open.correlationID, sessionID: open.sessionID,
                     attachments: [MountFixtures.firstAttachment])))
     }
 
-    @Test("the fold does not carry an elicitationRequested: the outcome is the same with and without one")
-    func foldDoesNotCarryAnElicitationRequested() {
+    @Test("the reducer does not carry an elicitationRequested: the outcome is the same with and without one")
+    func reducerDoesNotCarryAnElicitationRequested() {
         let open = Self.openRecord
-        Self.expectFoldIgnores(
+        Self.expectReducerIgnores(
             .elicitationRequested(
                 OperationEvent(
                     tool: open.tool, op: open.op, correlationID: open.correlationID, kind: .elicitation, detail: "",

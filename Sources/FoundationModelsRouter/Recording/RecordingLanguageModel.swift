@@ -48,13 +48,13 @@ struct RecordingLanguageModel: LanguageModel, Sendable {
         await state.sync(transcript, usage: usage)
     }
 
-    /// Folds this handle's recording forward across a compaction. It appends
+    /// Carries this handle's recording forward across a compaction. It appends
     /// the entries of `compacted` that are not yet recorded, identified by
     /// `Transcript.Entry.id`, and resets the diff baseline to `compacted`.
     /// The call is idempotent.
     ///
     /// After this call, rebuild the `LanguageModelSession` over this handle
-    /// with `transcript: compacted`. For a deterministic-only fold, use
+    /// with `transcript: compacted`. For a deterministic-only compaction, use
     /// ``noteCompaction(_:result:)`` so the checkpoint reaches disk.
     ///
     /// - Parameter compacted: The transcript compaction produced.
@@ -62,9 +62,9 @@ struct RecordingLanguageModel: LanguageModel, Sendable {
         _ = await state.noteCompaction(compacted)
     }
 
-    /// Folds this handle's recording forward across a compaction, like
+    /// Carries this handle's recording forward across a compaction, like
     /// ``noteCompaction(_:)``. When `result` reports a deterministic-only
-    /// fold (no summary entry, at least one stage applied), one boundary
+    /// compaction (no summary entry, at least one stage applied), one boundary
     /// entry is synthesized and recorded so the ``CompactionSegment``
     /// checkpoint reaches disk.
     ///
@@ -73,7 +73,7 @@ struct RecordingLanguageModel: LanguageModel, Sendable {
     ///
     /// - Parameters:
     ///   - compacted: The transcript compaction produced.
-    ///   - result: The report of what the fold did.
+    ///   - result: The report of what the compaction did.
     /// - Returns: The transcript to seed the rebuilt session with.
     func noteCompaction(_ compacted: Transcript, result: CompactionResult) async -> Transcript {
         await state.noteCompaction(compacted, result: result)
@@ -250,13 +250,13 @@ actor RecordingLanguageModelState {
         generationGate.signal()
     }
 
-    /// Folds this handle's recording forward across a compaction. It records
-    /// the fold's new entries by `Transcript.Entry.id` and resets
+    /// Carries this handle's recording forward across a compaction. It records
+    /// the compaction's new entries by `Transcript.Entry.id` and resets
     /// ``lastSeen`` to what it recorded.
     ///
     /// - Parameters:
     ///   - compacted: The transcript compaction produced.
-    ///   - result: The report of what the fold did, or `nil` to record
+    ///   - result: The report of what the compaction did, or `nil` to record
     ///     `compacted` as-is with no boundary synthesis.
     /// - Returns: The transcript recorded and set as the new ``lastSeen``.
     ///   The caller seeds the rebuilt session with it.
@@ -269,13 +269,13 @@ actor RecordingLanguageModelState {
     }
 
     /// Returns `compacted` plus one synthesized deterministic boundary entry
-    /// when `result` reports an applied fold with no summary entry, or
+    /// when `result` reports an applied compaction with no summary entry, or
     /// `compacted` unchanged otherwise. Must run inside the generation gate
     /// because it reads ``lastSeen``.
     ///
     /// - Parameters:
     ///   - compacted: The transcript compaction produced.
-    ///   - result: The report of what the fold did, or `nil`.
+    ///   - result: The report of what the compaction did, or `nil`.
     /// - Returns: The transcript to record and reset ``lastSeen`` to.
     private func appliedTranscript(for compacted: Transcript, result: CompactionResult?) -> Transcript {
         guard let result, result.summaryEntryId == nil, !result.stagesApplied.isEmpty else {
@@ -283,7 +283,7 @@ actor RecordingLanguageModelState {
         }
         return CompactionSegment.appendingDeterministicBoundary(
             to: compacted,
-            preFoldEntryIds: lastSeen.map(\.id),
+            preCompactionEntryIds: lastSeen.map(\.id),
             tokensBefore: result.tokensBefore,
             tokensAfter: result.tokensAfter,
             stagesApplied: result.stagesApplied,
@@ -434,7 +434,7 @@ actor RecordingLanguageModelState {
             // time — `nil` for a fresh handle, which has no parent to cut.
             // Without it, a reader falls back to `forkedAtEntryCount`, which
             // a compacted resume makes smaller than the raw event count, and
-            // the cut selects the oldest pre-fold span (task ^bw2gts3; the
+            // the cut selects the oldest pre-compaction span (task ^bw2gts3; the
             // actor fork path fixed the same defect in task ^6z1msg1).
             forkedAtHistoryOrdinal: forkedAtHistoryOrdinal,
             // This handle never exposes a working-directory override — the

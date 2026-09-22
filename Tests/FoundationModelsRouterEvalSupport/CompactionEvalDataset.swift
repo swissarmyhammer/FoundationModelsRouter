@@ -1,6 +1,6 @@
 import FoundationModels
 
-/// The kind of thing a fixture's probed fact is, which decides what a fold
+/// The kind of thing a fixture's probed fact is, which decides what a compaction
 /// that loses it costs.
 ///
 /// The dataset held 24 fixtures until task ^k0d30s4 cut it to seven, and the
@@ -11,13 +11,13 @@ import FoundationModels
 /// the kind a value `CompactionEvalRepresentativeSubsetTests` can hold.
 enum CompactionEvalProbedFactKind: Sendable {
     /// A value a summary can only carry word for word — an identifier, a
-    /// slug, a number or a duration. A fold that loses one gives a wrong
+    /// slug, a number or a duration. A compaction that loses one gives a wrong
     /// answer, and the metric measures whether the summary COPIED the fact.
     case verbatimValue
 
     /// A rule the user places on the assistant's own later answers — a
     /// constraint every later answer must obey, stated as a fact about the
-    /// user as a person. A fold that loses one does harm, not a miss. Its
+    /// user as a person. A compaction that loses one does harm, not a miss. Its
     /// probed phrase is an ordinary English word, so a summary that dropped
     /// the fact can still answer with a plausible wrong one, and the metric
     /// measures whether the model KEPT the fact.
@@ -40,21 +40,21 @@ struct CompactionEvalFixtureSpec: Sendable {
     let id: String
 
     /// Background prose on this fixture's own subject, stated as the first
-    /// turn of the foldable head, ahead of every fact turn.
+    /// turn of the compactable head, ahead of every fact turn.
     ///
-    /// The fold has to be worth applying, and that is arithmetic rather than
-    /// taste. `Compactor.compact` discards a fold whose summary entry is no
+    /// The compaction has to be worth applying, and that is arithmetic rather than
+    /// taste. `Compactor.compact` discards a compaction whose summary entry is no
     /// smaller than the span it replaces, and
     /// ``Summarization/minimumSummaryTokens`` gives every span this small the
     /// same summary allowance — a floor of 128 tokens, which is 614 bytes of
     /// prose at ``compactionEvalMeasuredBytesPerToken``. A head of one fact
-    /// sentence plus its acknowledgement is a few hundred bytes, so the fold
+    /// sentence plus its acknowledgement is a few hundred bytes, so the compaction
     /// cost more than it saved and the gated run of 2026-08-17 discarded 8 of
     /// 9 of them. This paragraph is what carries the head past that floor;
     /// `CompactionEvalSeedSizingTests` holds every fixture to it mechanically.
     ///
     /// Written per fixture rather than shared, and about this fixture's own
-    /// subject, so no two seeds fold the same span. It never states
+    /// subject, so no two seeds compact the same span. It never states
     /// ``factKeyPhrase`` — a key phrase the background carried would let a
     /// summary answer the question without the planted fact ever surviving,
     /// which is the opposite of what this dataset measures.
@@ -62,7 +62,7 @@ struct CompactionEvalFixtureSpec: Sendable {
     /// pins that.
     let context: String
 
-    /// The facts stated, in order, in the transcript's foldable head — one
+    /// The facts stated, in order, in the transcript's compactable head — one
     /// dedicated turn per fact. Every fixture states at least one; several
     /// state two or three, exercising "multiple planted facts in the head".
     let facts: [String]
@@ -209,7 +209,7 @@ let compactionEvalContextAcknowledgement = "Noted — I have the background in m
 /// hold that task's two-minute budget for every integration test, and the user
 /// answered it by making the TEST smaller rather than by keeping a tier no
 /// everyday command runs: the seventeen fixtures no gated tier would have
-/// folded went with it.
+/// compacted went with it.
 ///
 /// So the dataset and the gated tier now hold the same seeds. What the seven
 /// must carry between them is held by
@@ -416,7 +416,7 @@ let compactionEvalSeeds: [CompactionEvalSeed] = compactionEvalFixtureSpecs.map(C
 
 /// The fixtures the one gated real-model tier measures.
 ///
-/// Every seed costs two real generations, one summarizer call inside the fold
+/// Every seed costs two real generations, one summarizer call inside the compaction
 /// and one answering turn on the resumed session, so a tier is priced in seeds:
 /// ``compactionEvalSubsetTimeLimitMinutes`` derives its wall clock from this
 /// count. Seven is what fits task ^k0d30s4's two-minute budget for every
@@ -427,7 +427,7 @@ let compactionEvalSeeds: [CompactionEvalSeed] = compactionEvalFixtureSpecs.map(C
 /// seeds unreached, and ``CompactionEvalFactRetentionReport`` says which.
 ///
 /// Chosen for coverage. Four things vary across them — how many facts the
-/// foldable head states, which of them the question probes, whether the probed
+/// compactable head states, which of them the question probes, whether the probed
 /// fact arrives as tool traffic or as a plain reply, and how many filler turns
 /// pad the untouchable recency window. Each member is here for a property it
 /// carries, and together they span all four:
@@ -481,7 +481,7 @@ let compactionEvalRepresentativeSubsetIDs: [String] = [
 /// ``compactionEvalFixtureSpecs`` states them.
 ///
 /// Filtered out of ``compactionEvalSeeds`` rather than built from a second list
-/// of specs, so a seed the gated tier folds is the same seed every hermetic test
+/// of specs, so a seed the gated tier compacts is the same seed every hermetic test
 /// of this dataset reads, under one fixture id.
 let compactionEvalRepresentativeSeeds: [CompactionEvalSeed] = compactionEvalSeeds.filter {
     compactionEvalRepresentativeSubsetIDs.contains($0.id)

@@ -6,25 +6,25 @@ import Testing
 
 /// Exercises task k36zy10 (compaction epic — compaction_plan.md §1.5, §3,
 /// build-order step 6): ``RecordingLanguageModel/noteCompaction(_:)``, the
-/// bare-session entry point that folds a fresh (post-compaction) transcript
+/// bare-session entry point that compacts a fresh (post-compaction) transcript
 /// into a handle's recording — the counterpart to `RoutedSession.compact()`
 /// for a caller driving a bare `LanguageModelSession` directly over the
 /// recording handle (external consumers).
 ///
 /// Unlike ``RecordingLanguageModel/sync(_:usage:)``'s differ, which is
-/// count-based (only ever grows), a fold's compacted transcript is typically
+/// count-based (only ever grows), a compaction's compacted transcript is typically
 /// *shorter* than what came before it and reorders entries relative to the
-/// pre-fold history: the synthesized summary entry replaces a folded span,
+/// pre-compaction history: the synthesized summary entry replaces a compacted span,
 /// and only the recent tail survives with its original ids. `noteCompaction`
 /// therefore diffs by `Transcript.Entry.id` set membership rather than by
 /// position — appending only entries never before recorded — and resets the
-/// differ baseline to the compacted transcript so post-fold turns record as
+/// differ baseline to the compacted transcript so post-compaction turns record as
 /// ordinary (count-based) appends again.
 ///
 /// Everything runs against a stub `LanguageModel` conformer wrapping a stub
 /// ``LoadedLLMContainer`` and an ``InMemoryRecorder``, so the suite needs no
 /// network and no GPU.
-@Suite("noteCompaction: append-only fold recording on the RecordingLanguageModel handle")
+@Suite("noteCompaction: append-only compaction recording on the RecordingLanguageModel handle")
 struct NoteCompactionTests {
     // MARK: - Stub underlying LanguageModel
 
@@ -179,14 +179,14 @@ struct NoteCompactionTests {
 
     /// Builds a synthesized summary `.response` entry carrying a text segment
     /// and a ``CompactionSegment`` — the shape a `Summarization` stage
-    /// produces (compaction_plan.md §1.2), folding `foldedEntryIds` away and
+    /// produces (compaction_plan.md §1.2), compacting `compactedEntryIds` away and
     /// retaining `liveWindowEntryIds` (this summary's own id plus whatever
     /// tail survived) as the new live window.
     private static func makeSummaryEntry(
         id: String,
         liveWindowEntryIds: [String],
-        foldedEntryIds: [String],
-        summaryText: String = "Summary: prior turns folded."
+        compactedEntryIds: [String],
+        summaryText: String = "Summary: prior turns compacted."
     ) -> Transcript.Entry {
         .response(
             Transcript.Response(
@@ -197,7 +197,7 @@ struct NoteCompactionTests {
                         id: "\(id)-segment",
                         content: CompactionSegment.Content(
                             liveWindowEntryIds: liveWindowEntryIds,
-                            foldedEntryIds: foldedEntryIds,
+                            compactedEntryIds: compactedEntryIds,
                             tokensBefore: 12_000,
                             tokensAfter: 3_000,
                             stagesApplied: ["TurnTruncation", "Summarization"],
@@ -212,8 +212,8 @@ struct NoteCompactionTests {
     // MARK: - Driven-turn fixture
 
     /// One handle, driven through `turnCount` turns (prompts `"turn 0"`,
-    /// `"turn 1"`, …), each synced at turn end — the pre-fold history every
-    /// test in this suite folds. `entries` is the resulting transcript:
+    /// `"turn 1"`, …), each synced at turn end — the pre-compaction history every
+    /// test in this suite compacts. `entries` is the resulting transcript:
     /// instructions, then one prompt/response pair per turn.
     private struct Fixture {
         let handle: RecordingLanguageModel
@@ -256,15 +256,15 @@ struct NoteCompactionTests {
         #expect(beforeEvents.map(\.kind) == [.session, .instructions, .prompt, .response, .prompt, .response])
 
         let instructions = fixture.entries[0]
-        let foldedPrompt1 = fixture.entries[1]
-        let foldedResponse1 = fixture.entries[2]
+        let compactedPrompt1 = fixture.entries[1]
+        let compactedResponse1 = fixture.entries[2]
         let tailPrompt2 = fixture.entries[3]
         let tailResponse2 = fixture.entries[4]
 
         let summary = Self.makeSummaryEntry(
             id: "summary-1",
             liveWindowEntryIds: [instructions.id, "summary-1", tailPrompt2.id, tailResponse2.id],
-            foldedEntryIds: [foldedPrompt1.id, foldedResponse1.id]
+            compactedEntryIds: [compactedPrompt1.id, compactedResponse1.id]
         )
         let compacted = Transcript(entries: [instructions, summary, tailPrompt2, tailResponse2])
 
@@ -276,7 +276,7 @@ struct NoteCompactionTests {
 
         let appended = try #require(afterEvents.last)
         #expect(appended.kind == .response)
-        #expect(appended.text == "Summary: prior turns folded.")
+        #expect(appended.text == "Summary: prior turns compacted.")
         #expect(appended.sessionId == fixture.handle.state.sessionId)
 
         // The appended entry round-trips a CompactionSegment through the mapper.
@@ -288,17 +288,17 @@ struct NoteCompactionTests {
             Issue.record("expected the appended entry to carry a .structure CompactionSegment")
             return
         }
-        #expect(compactionSegment.content.foldedEntryIds == [foldedPrompt1.id, foldedResponse1.id])
+        #expect(compactionSegment.content.compactedEntryIds == [compactedPrompt1.id, compactedResponse1.id])
         #expect(
             compactionSegment.content.liveWindowEntryIds
                 == [instructions.id, "summary-1", tailPrompt2.id, tailResponse2.id])
     }
 
-    // MARK: - Pre-fold events untouched
+    // MARK: - Pre-compaction events untouched
 
-    @Test("pre-fold events remain byte-identical in the recorder after noteCompaction")
+    @Test("pre-compaction events remain byte-identical in the recorder after noteCompaction")
     @MainActor
-    func preFoldEventsRemainIntact() async throws {
+    func preCompactionEventsRemainIntact() async throws {
         let fixture = try await Self.makeFixture(turnCount: 2)
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
 
@@ -310,7 +310,7 @@ struct NoteCompactionTests {
         let summary = Self.makeSummaryEntry(
             id: "summary-1",
             liveWindowEntryIds: [instructions.id, "summary-1", tailPrompt2.id, tailResponse2.id],
-            foldedEntryIds: [fixture.entries[1].id, fixture.entries[2].id]
+            compactedEntryIds: [fixture.entries[1].id, fixture.entries[2].id]
         )
         let compacted = Transcript(entries: [instructions, summary, tailPrompt2, tailResponse2])
 
@@ -320,16 +320,16 @@ struct NoteCompactionTests {
         for (index, before) in beforeEvents.enumerated() {
             #expect(afterEvents[index] == before)
         }
-        // Session id identical on every pre-fold event, unchanged by the fold.
+        // Session id identical on every pre-compaction event, unchanged by the compaction.
         #expect(beforeEvents.allSatisfy { $0.sessionId == fixture.handle.state.sessionId })
         #expect(afterEvents.prefix(beforeEvents.count).allSatisfy { $0.sessionId == fixture.handle.state.sessionId })
     }
 
-    // MARK: - Baseline reset: post-fold turns record as ordinary appends
+    // MARK: - Baseline reset: post-compaction turns record as ordinary appends
 
     @Test("after noteCompaction, a follow-up turn over the same handle records as an ordinary append with no duplicates")
     @MainActor
-    func followUpTurnAfterFoldRecordsAsOrdinaryAppend() async throws {
+    func followUpTurnAfterCompactionRecordsAsOrdinaryAppend() async throws {
         let fixture = try await Self.makeFixture(turnCount: 2)
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
 
@@ -339,33 +339,33 @@ struct NoteCompactionTests {
         let summary = Self.makeSummaryEntry(
             id: "summary-1",
             liveWindowEntryIds: [instructions.id, "summary-1", tailPrompt2.id, tailResponse2.id],
-            foldedEntryIds: [fixture.entries[1].id, fixture.entries[2].id]
+            compactedEntryIds: [fixture.entries[1].id, fixture.entries[2].id]
         )
         let compacted = Transcript(entries: [instructions, summary, tailPrompt2, tailResponse2])
         await fixture.handle.noteCompaction(compacted)
 
-        let afterFoldEvents = await fixture.recorder.events
+        let afterCompactionEvents = await fixture.recorder.events
 
         // The caller contract: rebuild the session over the SAME handle with
         // the compacted transcript.
-        let postFoldSession = LanguageModelSession(model: fixture.handle, tools: [], transcript: compacted)
-        _ = try await postFoldSession.respond(to: "third")
-        await fixture.handle.sync(postFoldSession.transcript)
+        let postCompactionSession = LanguageModelSession(model: fixture.handle, tools: [], transcript: compacted)
+        _ = try await postCompactionSession.respond(to: "third")
+        await fixture.handle.sync(postCompactionSession.transcript)
 
         let finalEvents = await fixture.recorder.events
-        #expect(Array(finalEvents.prefix(afterFoldEvents.count)) == afterFoldEvents)
+        #expect(Array(finalEvents.prefix(afterCompactionEvents.count)) == afterCompactionEvents)
 
-        let newEvents = Array(finalEvents.suffix(from: afterFoldEvents.count))
+        let newEvents = Array(finalEvents.suffix(from: afterCompactionEvents.count))
         #expect(newEvents.map(\.kind) == [.prompt, .response])
         #expect(newEvents.allSatisfy { $0.sessionId == fixture.handle.state.sessionId })
 
-        // Nothing pre-fold or retained-tail was duplicated: exactly 4
-        // .response-kind events total (turn1, turn2, the fold's own summary
-        // response, and the post-fold turn) — never re-recording the tail.
+        // Nothing pre-compaction or retained-tail was duplicated: exactly 4
+        // .response-kind events total (turn1, turn2, the compaction's own summary
+        // response, and the post-compaction turn) — never re-recording the tail.
         let responseCount = finalEvents.filter { $0.kind == .response }.count
         #expect(responseCount == 4)
         // Same session id, same ULID, on every event across the whole
-        // pre-fold/fold/post-fold history (requirement 4).
+        // pre-compaction/compaction/post-compaction history (requirement 4).
         #expect(finalEvents.allSatisfy { $0.sessionId == fixture.handle.state.sessionId })
     }
 
@@ -383,22 +383,22 @@ struct NoteCompactionTests {
         let summary = Self.makeSummaryEntry(
             id: "summary-1",
             liveWindowEntryIds: [instructions.id, "summary-1", tailPrompt2.id, tailResponse2.id],
-            foldedEntryIds: [fixture.entries[1].id, fixture.entries[2].id]
+            compactedEntryIds: [fixture.entries[1].id, fixture.entries[2].id]
         )
         let compacted = Transcript(entries: [instructions, summary, tailPrompt2, tailResponse2])
 
         await fixture.handle.noteCompaction(compacted)
-        let afterFirstFold = await fixture.recorder.events
+        let afterFirstCompaction = await fixture.recorder.events
 
         await fixture.handle.noteCompaction(compacted)
-        let afterSecondFold = await fixture.recorder.events
+        let afterSecondCompaction = await fixture.recorder.events
 
-        #expect(afterSecondFold == afterFirstFold)
+        #expect(afterSecondCompaction == afterFirstCompaction)
     }
 
-    @Test("a second, later compaction folds only its own new span — nested compactions never re-record an earlier fold's summary")
+    @Test("a second, later compaction compacts only its own new span — nested compactions never re-record an earlier compaction's summary")
     @MainActor
-    func secondLaterCompactionFoldsOnlyNewSpan() async throws {
+    func secondLaterCompactionCoversOnlyNewSpan() async throws {
         let fixture = try await Self.makeFixture(turnCount: 2)
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
 
@@ -408,19 +408,19 @@ struct NoteCompactionTests {
         let firstSummary = Self.makeSummaryEntry(
             id: "summary-1",
             liveWindowEntryIds: [instructions.id, "summary-1", tailPrompt2.id, tailResponse2.id],
-            foldedEntryIds: [fixture.entries[1].id, fixture.entries[2].id]
+            compactedEntryIds: [fixture.entries[1].id, fixture.entries[2].id]
         )
         let firstCompacted = Transcript(entries: [instructions, firstSummary, tailPrompt2, tailResponse2])
         await fixture.handle.noteCompaction(firstCompacted)
 
-        // Drive one more turn over the folded handle.
+        // Drive one more turn over the compacted handle.
         let session2 = LanguageModelSession(model: fixture.handle, tools: [], transcript: firstCompacted)
         _ = try await session2.respond(to: "third")
         await fixture.handle.sync(session2.transcript)
 
-        let beforeSecondFold = await fixture.recorder.events
+        let beforeSecondCompaction = await fixture.recorder.events
 
-        // Fold again: this time only the ORIGINAL fold's summary is folded
+        // Compact again: this time only the ORIGINAL compaction's summary is compacted
         // away, retaining the third turn's prompt/response as the new tail.
         let entriesAfterSecondTurn = Array(session2.transcript)
         let thirdPrompt = entriesAfterSecondTurn[2]
@@ -428,54 +428,54 @@ struct NoteCompactionTests {
         let secondSummary = Self.makeSummaryEntry(
             id: "summary-2",
             liveWindowEntryIds: [instructions.id, "summary-2", thirdPrompt.id, thirdResponse.id],
-            foldedEntryIds: ["summary-1"],
-            summaryText: "Summary: everything through turn 2 folded again."
+            compactedEntryIds: ["summary-1"],
+            summaryText: "Summary: everything through turn 2 compacted again."
         )
         let secondCompacted = Transcript(entries: [instructions, secondSummary, thirdPrompt, thirdResponse])
         await fixture.handle.noteCompaction(secondCompacted)
 
-        let afterSecondFold = await fixture.recorder.events
-        #expect(afterSecondFold.count == beforeSecondFold.count + 1)
-        #expect(Array(afterSecondFold.prefix(beforeSecondFold.count)) == beforeSecondFold)
+        let afterSecondCompaction = await fixture.recorder.events
+        #expect(afterSecondCompaction.count == beforeSecondCompaction.count + 1)
+        #expect(Array(afterSecondCompaction.prefix(beforeSecondCompaction.count)) == beforeSecondCompaction)
 
-        let appended = try #require(afterSecondFold.last)
+        let appended = try #require(afterSecondCompaction.last)
         #expect(appended.kind == .response)
-        #expect(appended.text == "Summary: everything through turn 2 folded again.")
+        #expect(appended.text == "Summary: everything through turn 2 compacted again.")
     }
 
-    // MARK: - Deterministic-only folds (task ^dcgkd66)
+    // MARK: - Deterministic-only compactions (task ^dcgkd66)
 
     /// Enough driven turns that ``TurnTruncation`` (default recency window
-    /// `defaultKeepRecentTurns`) has old turns to fold away.
-    private static let deterministicFoldTurnCount = 6
+    /// `defaultKeepRecentTurns`) has old turns to compact away.
+    private static let deterministicCompactionTurnCount = 6
 
-    /// Scales a pre-fold estimate up to a `TokenBudget` limit whose target
+    /// Scales a pre-compaction estimate up to a `TokenBudget` limit whose target
     /// sits far above the estimate, so ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:protection:)``
     /// applies no stage and returns the transcript unchanged.
     private static let noOpBudgetLimitMultiplier = 4
 
-    @Test("a deterministic-only fold noted with its result records exactly one boundary entry carrying a decodable CompactionSegment checkpoint")
+    @Test("a deterministic-only compaction noted with its result records exactly one boundary entry carrying a decodable CompactionSegment checkpoint")
     @MainActor
-    func deterministicOnlyFoldRecordsOneDecodableCheckpoint() async throws {
-        let fixture = try await Self.makeFixture(turnCount: Self.deterministicFoldTurnCount)
+    func deterministicOnlyCompactionRecordsOneDecodableCheckpoint() async throws {
+        let fixture = try await Self.makeFixture(turnCount: Self.deterministicCompactionTurnCount)
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
 
         let beforeEvents = await fixture.recorder.events
 
-        // A real deterministic-only fold: no summarizer, and a budget whose
+        // A real deterministic-only compaction: no summarizer, and a budget whose
         // target the deterministic stages alone land under.
-        let (folded, result) = try await Compactor.compact(
+        let (compacted, result) = try await Compactor.compact(
             Transcript(entries: fixture.entries),
-            budget: deterministicFoldBudget(for: fixture.entries)
+            budget: deterministicCompactionBudget(for: fixture.entries)
         )
         #expect(result.summaryEntryId == nil)
         #expect(!result.stagesApplied.isEmpty)
-        // The fold added no new entry ids of its own — exactly the gap this
+        // The compaction added no new entry ids of its own — exactly the gap this
         // overload closes: an id-diff alone would record nothing.
-        let preFoldIds = Set(fixture.entries.map(\.id))
-        #expect(folded.allSatisfy { preFoldIds.contains($0.id) })
+        let preCompactionIds = Set(fixture.entries.map(\.id))
+        #expect(compacted.allSatisfy { preCompactionIds.contains($0.id) })
 
-        let applied = await fixture.handle.noteCompaction(folded, result: result)
+        let applied = await fixture.handle.noteCompaction(compacted, result: result)
 
         // Exactly one new recorded event: the synthesized boundary.
         let afterEvents = await fixture.recorder.events
@@ -495,21 +495,21 @@ struct NoteCompactionTests {
         #expect(checkpoint.content.promptName.isEmpty)
         #expect(checkpoint.content.pendingRuns == nil)
 
-        // The returned transcript is the folded window plus the boundary, in
+        // The returned transcript is the compacted window plus the boundary, in
         // that order — the boundary names itself last in its own live window.
-        #expect(applied.count == folded.count + 1)
-        #expect(Array(applied.prefix(folded.count)).map(\.id) == folded.map(\.id))
+        #expect(applied.count == compacted.count + 1)
+        #expect(Array(applied.prefix(compacted.count)).map(\.id) == compacted.map(\.id))
         let boundaryId = try #require(applied.last?.id)
-        #expect(checkpoint.content.liveWindowEntryIds == folded.map(\.id) + [boundaryId])
-        // The folded ids name exactly the pre-fold entries the window dropped.
+        #expect(checkpoint.content.liveWindowEntryIds == compacted.map(\.id) + [boundaryId])
+        // The compacted ids name exactly the pre-compaction entries the window dropped.
         let liveIds = Set(checkpoint.content.liveWindowEntryIds)
-        #expect(checkpoint.content.foldedEntryIds == fixture.entries.map(\.id).filter { !liveIds.contains($0) })
-        #expect(!checkpoint.content.foldedEntryIds.isEmpty)
+        #expect(checkpoint.content.compactedEntryIds == fixture.entries.map(\.id).filter { !liveIds.contains($0) })
+        #expect(!checkpoint.content.compactedEntryIds.isEmpty)
     }
 
-    @Test("a no-op fold result records nothing and returns the transcript unchanged")
+    @Test("a no-op compaction result records nothing and returns the transcript unchanged")
     @MainActor
-    func noOpFoldResultRecordsNothing() async throws {
+    func noOpCompactionResultRecordsNothing() async throws {
         let fixture = try await Self.makeFixture(turnCount: 2)
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
 
@@ -517,16 +517,16 @@ struct NoteCompactionTests {
 
         // A budget the transcript is already under: the pipeline returns the
         // transcript unchanged and reports no stage applied.
-        let preFoldTokens = Compactor.estimatedTokenCount(of: Transcript(entries: fixture.entries))
-        let (folded, result) = try await Compactor.compact(
+        let preCompactionTokens = Compactor.estimatedTokenCount(of: Transcript(entries: fixture.entries))
+        let (compacted, result) = try await Compactor.compact(
             Transcript(entries: fixture.entries),
-            budget: TokenBudget(limit: preFoldTokens * Self.noOpBudgetLimitMultiplier)
+            budget: TokenBudget(limit: preCompactionTokens * Self.noOpBudgetLimitMultiplier)
         )
         #expect(result.stagesApplied.isEmpty)
 
-        let applied = await fixture.handle.noteCompaction(folded, result: result)
+        let applied = await fixture.handle.noteCompaction(compacted, result: result)
 
-        // Every entry was already recorded and no fold applied: nothing new
+        // Every entry was already recorded and no compaction applied: nothing new
         // is recorded, and no boundary is synthesized.
         let afterEvents = await fixture.recorder.events
         #expect(afterEvents == beforeEvents)

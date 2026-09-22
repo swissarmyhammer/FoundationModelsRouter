@@ -184,8 +184,8 @@ let package = Package(
         ),
         // Test-only support for the suites that drive a REAL model (task
         // ^cvsh3m9): the load/profile harness (`RealModelContainer`,
-        // `RealModelHarness`), the model roster (`RealModels`), the fold
-        // wiring (`CompactionFold`), the round-trip script
+        // `RealModelHarness`), the model roster (`RealModels`), the compaction
+        // wiring (`TranscriptCompaction`), the round-trip script
         // (`CompactionRoundTripFixture`) and the checked-in recording
         // (`CompactionRecordingFixture`). A plain `.target` for the same
         // reason `\(packageName)TestSupport` is one: the real-model test
@@ -196,7 +196,7 @@ let package = Package(
         // where `@testable import` cannot resolve. The router symbols this
         // target needs beyond the public surface are `package`, which stops
         // at this package's own boundary. Its own `package` API
-        // (`RealModelContainer.load`, `CompactionFold.run`) carries the
+        // (`RealModelContainer.load`, `TranscriptCompaction.run`) carries the
         // router's `package` type `MLXFoundationModelsContainer` in its
         // signatures, so it cannot widen to `public`; the nested package's
         // test targets reach it through `@testable import` instead. Like its
@@ -206,7 +206,7 @@ let package = Package(
         // `LiveModelLoader` through the `MLXHuggingFace` macros.
         //
         // `Fixtures` is the checked-in recording
-        // `RecordedTranscriptCompactionIntegrationTests` folds and
+        // `RecordedTranscriptCompactionIntegrationTests` compacts and
         // `RecordedFixtureRedactionTests` scans (tasks ^pfdrppj, ^4bb3mjv).
         // It lives here so both of those suites — one gated (in the nested
         // `IntegrationTests/` package), one hermetic — read ONE copy through
@@ -243,7 +243,7 @@ let package = Package(
         // vended with sample tools (`SampleTools.swift`) and a tiny
         // auto-compaction `TokenBudget` (task 8213x39), drive scripted turns
         // — fixture reads and explicit tool calls — while `contextFill`
-        // climbs, let the budget fold automatically at the 0.80 trigger, keep
+        // climbs, let the budget compact automatically at the 0.80 trigger, keep
         // talking to the same session, then restore it from disk. `Fixtures`
         // is excluded alongside `README.md` — the demo reads those files from
         // disk at run time (relative to its own source file) rather than
@@ -277,9 +277,9 @@ let package = Package(
         ),
         // The compaction evals' machinery (compaction_plan.md §5):
         // `CompactionEvaluation` plants facts in the head of hand-written seed
-        // transcripts, folds with the `CompactionPrompt` under test, resumes a
+        // transcripts, compacts with the `CompactionPrompt` under test, resumes a
         // session over the result, and asks a question answerable only from the
-        // folded content — plus the datasets, the fact-retention report, the
+        // compacted content — plus the datasets, the fact-retention report, the
         // progress log and the measured tier limits.
         //
         // A plain `.target` rather than part of either eval test target —

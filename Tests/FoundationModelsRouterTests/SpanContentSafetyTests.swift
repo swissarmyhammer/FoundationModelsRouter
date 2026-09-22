@@ -15,7 +15,7 @@ import Testing
 /// down.
 ///
 /// The suite drives one session through the work that produces content: a
-/// scripted turn, a tool call inside it, further turns and a fold over what
+/// scripted turn, a tool call inside it, further turns and a compaction over what
 /// they accumulated, and an embed. It then reads *every* attribute of *every*
 /// recorded span, and fails on any value that carries the fixture's own
 /// content. Nothing here names a span, so a card that teaches the router to
@@ -23,7 +23,7 @@ import Testing
 /// this file.
 ///
 /// Card ^zgwmhd0 wrote the suite while the embed span was the only span the
-/// router opened. The five cards it unblocks add the turn, tool, fold, resolve
+/// router opened. The five cards it unblocks add the turn, tool, compaction, resolve
 /// and session spans, and each of them widens what this one test measures.
 @Suite("No span carries the caller's content")
 struct SpanContentSafetyTests {
@@ -71,15 +71,15 @@ struct SpanContentSafetyTests {
         let toolOutput = ScriptedToolFixture.marker(for: ScriptedToolFixture.firstStepName)
         #expect(answer.contains(toolOutput))
 
-        // Enough further turns to push the tool turn out of the un-foldable
-        // recency window, so the fold below has something it may fold.
+        // Enough further turns to push the tool turn out of the un-compactable
+        // recency window, so the compaction below has something it may compact.
         try await driveTurns(defaultKeepRecentTurns, on: fixture.session)
 
-        // A fold over what those turns accumulated. The budget is derived from
-        // the measured pre-fold size, and the shrink says the fold really ran.
-        let fold = try await fixture.session.compact(
-            budget: deterministicFoldBudget(for: fixture.transcriptEntries()))
-        #expect(fold.tokensAfter < fold.tokensBefore)
+        // A compaction over what those turns accumulated. The budget is derived from
+        // the measured pre-compaction size, and the shrink says the compaction really ran.
+        let compaction = try await fixture.session.compact(
+            budget: deterministicCompactionBudget(for: fixture.transcriptEntries()))
+        #expect(compaction.tokensAfter < compaction.tokensBefore)
 
         // One embed, over the same profile.
         _ = try await fixture.profile.embedding.embed(texts: [Self.embedInput])

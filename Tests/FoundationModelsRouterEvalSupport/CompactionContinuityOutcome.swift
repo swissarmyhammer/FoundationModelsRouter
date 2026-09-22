@@ -8,7 +8,7 @@
 ///   fields are their zero values and are never read from this side.
 /// - As a subject's `value` (``CompactionContinuityEvaluation/subject(from:)``'s
 ///   return): every field is populated — the ground truth carried forward
-///   plus what the subject actually produced (``finalAnswer``, ``foldCount``,
+///   plus what the subject actually produced (``finalAnswer``, ``compactionCount``,
 ///   ``tokensBefore``, ``tokensAfter``, ``recordedEntryCount``, ``modelName``).
 ///
 /// Evaluators (``CompactionContinuityEvaluation/evaluators``) read the
@@ -41,7 +41,7 @@ struct CompactionContinuityOutcome: Codable, Sendable {
     /// ``CompactionContinuitySeed/expectedMinimumRecordedEntries``.
     var expectedMinimumRecordedEntries: Int
 
-    /// Ground truth: the ``CompactionPrompt/name`` this run folded with —
+    /// Ground truth: the ``CompactionPrompt/name`` this run compacted with —
     /// stamped from ``CompactionContinuityEvaluation/prompt`` on every
     /// sample, so a run's produced outcome is always attributable to the
     /// exact prompt that produced it (compaction_plan.md §5's hill-climbing
@@ -52,19 +52,19 @@ struct CompactionContinuityOutcome: Codable, Sendable {
     /// instruction.
     var finalAnswer: String = ""
 
-    /// Produced: how many live folds actually ran while driving the task's
-    /// steps — checked by ``CompactionContinuityMetric/foldOccurred``. Task
-    /// 4ce0a1k's own "sized to be impossible without >=1 fold" requirement
+    /// Produced: how many live compactions actually ran while driving the task's
+    /// steps — checked by ``CompactionContinuityMetric/compactionOccurred``. Task
+    /// 4ce0a1k's own "sized to be impossible without >=1 compaction" requirement
     /// is a claim about the dataset; this is the runtime proof it held for
     /// this particular run.
-    var foldCount: Int = 0
+    var compactionCount: Int = 0
 
-    /// Produced: the last fold's estimated pre-compaction size, in tokens,
-    /// or `0` if ``foldCount`` is `0`.
+    /// Produced: the last compaction's estimated pre-compaction size, in tokens,
+    /// or `0` if ``compactionCount`` is `0`.
     var tokensBefore: Int = 0
 
-    /// Produced: the last fold's estimated post-compaction size, in tokens,
-    /// or `0` if ``foldCount`` is `0`.
+    /// Produced: the last compaction's estimated post-compaction size, in tokens,
+    /// or `0` if ``compactionCount`` is `0`.
     var tokensAfter: Int = 0
 
     /// Produced: the number of transcript entries the subject's own durable
@@ -73,7 +73,7 @@ struct CompactionContinuityOutcome: Codable, Sendable {
     /// ``CompactionContinuityMetric/recordingComplete``.
     var recordedEntryCount: Int = 0
 
-    /// Produced: the resolved model that actually drove this task — "fold
+    /// Produced: the resolved model that actually drove this task — "compaction
     /// counts + tokensBefore/After ride along keyed by resolved model" (task
     /// 4ce0a1k), so results are always attributable to which model produced
     /// them, not just which prompt.

@@ -9,9 +9,9 @@
 ///
 /// Two consumers share it: ``SessionProjection`` asks ``append(_:)`` whether a
 /// fragment begins a new response, which is what splits the superseded text
-/// into its own transcript row; ``TurnOutcomeFold`` reads ``reply`` as the
+/// into its own transcript row; ``TurnOutcomeReducer`` reads ``reply`` as the
 /// turn's final answer. Neither re-implements the rule.
-struct ResponseTextFold: Sendable, Equatable {
+struct ResponseTextReducer: Sendable, Equatable {
     /// The current response's accumulated text — the reply the reset rule
     /// leaves standing, empty immediately after a ``reset()``.
     private(set) var reply = ""

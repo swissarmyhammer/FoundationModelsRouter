@@ -1,6 +1,6 @@
 import Foundation
 
-/// Everything one turn produced, folded from the turn's
+/// Everything one turn produced, reduced from the turn's
 /// ``RoutedSession/streamEvents(to:maxTokens:)`` stream by
 /// ``RoutedSession/respond(to:maxTokens:observing:)``.
 ///
@@ -22,7 +22,7 @@ public struct TurnOutcome: Sendable, Equatable {
         usage?.contextFill
     }
 
-    /// Every ``CompactionResult`` the turn folded, in fold order.
+    /// Every ``CompactionResult`` the turn compacted, in compaction order.
     public let compactions: [CompactionResult]
 
     /// The turn's tool invocations as the post-turn diff derived them, in diff order,
@@ -35,16 +35,16 @@ public struct TurnOutcome: Sendable, Equatable {
 }
 
 /// The internal reducer behind ``TurnOutcome``: applies one ``SessionEvent``
-/// at a time. The response text folds through the shared ``ResponseTextFold``,
+/// at a time. The response text reduces through the shared ``ResponseTextReducer``,
 /// so the ``SessionEvent/textReset`` rule exists exactly once.
-struct TurnOutcomeFold {
+struct TurnOutcomeReducer {
     /// The shared response-text reducer.
-    private var responseTextFold = ResponseTextFold()
+    private var responseTextReducer = ResponseTextReducer()
 
     /// The most recent ``SessionEvent/turnEnded(_:)`` usage, or `nil`.
     private var usage: TokenUsage?
 
-    /// Every ``SessionEvent/compaction(_:)`` result so far, in fold order.
+    /// Every ``SessionEvent/compaction(_:)`` result so far, in compaction order.
     private var compactions: [CompactionResult] = []
 
     /// The diff-derived tool calls so far, in diff order.
@@ -60,9 +60,9 @@ struct TurnOutcomeFold {
     mutating func apply(_ event: SessionEvent) {
         switch event {
         case .textDelta(let fragment):
-            responseTextFold.append(fragment)
+            responseTextReducer.append(fragment)
         case .textReset:
-            responseTextFold.reset()
+            responseTextReducer.reset()
         case .toolCall(let id, let name, let argumentsJSON):
             toolCalls.append(
                 ToolCallEntry(id: id, name: name, argumentsJSON: argumentsJSON, status: .running, summary: nil))
@@ -98,7 +98,7 @@ struct TurnOutcomeFold {
     /// The outcome accumulated so far. It is complete once the turn's stream finished.
     var outcome: TurnOutcome {
         TurnOutcome(
-            reply: responseTextFold.reply,
+            reply: responseTextReducer.reply,
             usage: usage,
             compactions: compactions,
             toolCalls: toolCalls,
@@ -129,13 +129,13 @@ struct TurnOutcomeFold {
 }
 
 extension RoutedSession {
-    /// Runs one turn through ``streamEvents(to:maxTokens:)`` and folds every
+    /// Runs one turn through ``streamEvents(to:maxTokens:)`` and reduces every
     /// event into a ``TurnOutcome``. Cancelling the awaiting task cancels the turn.
     ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` for the resolved context of the model.
-    ///   - observing: A callback that receives each raw ``SessionEvent`` before it is folded, or `nil`.
+    ///   - observing: A callback that receives each raw ``SessionEvent`` before it is reduced, or `nil`.
     /// - Returns: The turn's ``TurnOutcome``.
     /// - Throws: Whatever the turn throws, after `observing` has seen every event.
     public func respond(
@@ -143,11 +143,11 @@ extension RoutedSession {
         maxTokens: Int? = nil,
         observing: (@Sendable (SessionEvent) -> Void)? = nil
     ) async throws -> TurnOutcome {
-        var fold = TurnOutcomeFold()
+        var reducer = TurnOutcomeReducer()
         for try await event in streamEvents(to: prompt, maxTokens: maxTokens) {
             observing?(event)
-            fold.apply(event)
+            reducer.apply(event)
         }
-        return fold.outcome
+        return reducer.outcome
     }
 }
