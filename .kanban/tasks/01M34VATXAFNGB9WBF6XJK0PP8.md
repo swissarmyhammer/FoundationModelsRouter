@@ -86,8 +86,32 @@ comments:
     - evidence: swift test — 1353 tests in 145 suites passed, 1 test in 1 suite passed, 83 tests in 10 suites passed; 0 failed; 2 pre-existing known issues (RealModelHarnessTests.swift, BoundedWaitTests.swift). swift build --build-tests: no compiler warning. swift build --package-path IntegrationTests --build-tests: Build complete.
     - next: commit
   timestamp: 2026-09-22T18:33:41.104907+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m356aeg3azzztah5ekjwx6xg
+  text: |-
+    ### commit — changed
+    - evidence: 4839061 fix(review): make ScriptedSummarizer a plain Sendable class over a Mutex
+    - next: review
+  timestamp: 2026-09-22T18:33:46.755503+00:00
+- actor: claude-code
+  id: 01m356dfjrh4mb7pnzce9y0zp6
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (4839061) — 0 findings, 0 confirmed, 0 refuted. Every prior finding is checked (9 of 9).
+    - next: verify
+  timestamp: 2026-09-22T18:35:26.168447+00:00
+- actor: claude-code
+  id: 01m356dsd4q0spbhx171jyk8pp
+  text: |-
+    ### finish iteration 1 — done
+    - implement: changed — 32b6a63 (earlier agent: TokenCounter, TokenizerTokenCounter, capping in tokens, estimate deleted); then 8 findings of review 12:30 worked (RecordingHandleResumeTests.swift, RoutedSessionCompactTests.swift, SessionRestorationTests.swift, TokenizerTokenCounterTests.swift, ToolOutputProtectionTests.swift, SummarizationStageTests.swift split into SummarizationStageCompactorTests.swift); then 1 finding of review 13:20 worked (ScriptedSummarizer is a plain Sendable class over a Mutex)
+    - test: green — swift test: 1353 tests in 145 suites passed, 1 test in 1 suite passed, 83 tests in 10 suites passed, 0 failed, 2 pre-existing known issues; swift build --build-tests: no compiler warning; swift build --package-path IntegrationTests --build-tests: Build complete
+    - commit: 32b6a63, 90ca217, 4839061
+    - review: clean — review sha HEAD~1..HEAD at 4839061: 0 findings; all 9 prior findings checked. Earlier passes: 12:30 findings at RecordingHandleResumeTests.swift:421, RoutedSessionCompactTests.swift:236, :301, :406, SessionRestorationTests.swift:62, SummarizationStageTests.swift:1, TokenizerTokenCounterTests.swift:32, ToolOutputProtectionTests.swift:253; 13:20 finding at SummarizationStageTests.swift:45
+    - acceptance: rg 'charsPerTokenEstimate|estimatedTokenCount|estimatedTokens\(' Sources finds nothing
+  timestamp: 2026-09-22T18:35:36.228578+00:00
+position_column: done
+position_ordinal: ffffe380
 title: Count tokens with the model's tokenizer; delete charsPerTokenEstimate
 ---
 ## Decision (from the owner, 2026-09-22)
