@@ -17,7 +17,29 @@ comments:
     - Replaced the cut-off test with `drainRunsUntilATurnStartsNoBackgroundWork`: N = 6 (the card's number, named `backgroundingTurnCount`), 7 prompts reach the backend, the answer is the seventh turn's, and the run plane is empty.
     - `swift test --filter RespondRunPlaneDrainTests`: 9 tests in 1 suite passed. `rg backgroundRunDrainRoundLimit` finds nothing.
   timestamp: 2026-09-22T15:37:18.214831+00:00
-position_column: doing
+- actor: claude-code
+  id: 01m34wbgayxfp2jncyj4xhc4pj
+  text: |-
+    ### implement — changed
+    - evidence: 3 files — Sources/FoundationModelsRouter/Session/RoutedSessionActorGeneration.swift, Sources/FoundationModelsRouter/Session/RoutedSession.swift, Tests/FoundationModelsRouterTests/RespondRunPlaneDrainTests.swift
+    - next: test
+
+    ### test — green
+    - evidence: `swift test` — 1349 + 1 + 83 = 1433 tests in 156 suites passed, 0 failed, 0 skipped. The 2 "known issues" are deliberate `withKnownIssue` records in pre-existing tests (RealModelHarness.swift:72, BoundedWait.swift:114). No source warning; the one `warning:` line is SwiftPM's note about the `mlx-swift_Cmlx.bundle` dependency product, present on every build. `swift build --package-path IntegrationTests --build-tests` — Build complete.
+    - next: commit
+
+    ### commit — changed
+    - evidence: 0424f22 refactor(session): delete backgroundRunDrainRoundLimit; the drain runs until no new background work starts
+    - next: review
+  timestamp: 2026-09-22T15:39:35.646465+00:00
+- actor: claude-code
+  id: 01m34wh0kmsb89sdvzftc5necq
+  text: |-
+    ### review — findings
+    - evidence: 2 findings — Tests/FoundationModelsRouterTests/RespondRunPlaneDrainTests.swift:35, Tests/FoundationModelsRouterTests/RespondRunPlaneDrainTests.swift:136 (`review sha HEAD~1..HEAD`, counts: findings 2, confirmed 2, refuted 0)
+    - next: implement — write `// swiftlint:disable:next no_unchecked_sendable` with the synchronization invariant above each `@unchecked Sendable` class
+  timestamp: 2026-09-22T15:42:36.148075+00:00
+position_column: review
 position_ordinal: '80'
 title: Delete backgroundRunDrainRoundLimit; the drain runs until no new background work starts
 ---
@@ -47,3 +69,13 @@ title: Delete backgroundRunDrainRoundLimit; the drain runs until no new backgrou
 
 - `rg 'backgroundRunDrainRoundLimit'` finds nothing.
 - The 7-round test passes. All tests pass. #compaction #limits
+
+## Review Findings (2026-09-22 10:39)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 3 file(s) reviewed, 4 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/RespondRunPlaneDrainTests.swift:35` `code-hygiene/disallowed-constructs-swift` — no_unchecked_sendable: Instead of @unchecked Sendable, write a plain Sendable conformance or a @preconcurrency import. If the type really must be @unchecked Sendable, write // swiftlint:disable:next no_unchecked_sendable above it with the synchronization invariant that makes the type thread-safe.
+- [x] `Tests/FoundationModelsRouterTests/RespondRunPlaneDrainTests.swift:136` `code-hygiene/disallowed-constructs-swift` — no_unchecked_sendable: Instead of @unchecked Sendable, write a plain Sendable conformance or a @preconcurrency import. If the type really must be @unchecked Sendable, write // swiftlint:disable:next no_unchecked_sendable above it with the synchronization invariant that makes the type thread-safe.

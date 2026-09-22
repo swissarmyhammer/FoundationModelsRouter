@@ -31,7 +31,11 @@ struct RespondRunPlaneDrainTests {
     /// the session binds around every model call, which is the same route a
     /// tool of that turn would take.
     ///
-    /// `@unchecked Sendable` on the same terms as ``BackgroundingBackend``.
+    /// `@unchecked Sendable` on the same terms as ``BackgroundingBackend``: the
+    /// owning session drives one backend method at a time (its turn lock
+    /// serializes turns), and a test reads `receivedPrompts` only after the
+    /// driving call returned.
+    // swiftlint:disable:next no_unchecked_sendable  the session's turn lock serializes every backend method, and the test reads the captures only after the driving call returned
     private final class ScriptedBackgroundingBackend: LanguageModelSessionBackend, @unchecked Sendable {
         /// The answer one turn produces, so a test can assert which turn's
         /// answer `respond` returned.
@@ -130,9 +134,14 @@ struct RespondRunPlaneDrainTests {
 
     // MARK: - Containers
 
-    /// Vends one retained ``ScriptedBackgroundingBackend`` per session, under
-    /// the same `@unchecked Sendable` invariant ``BackgroundingLLMContainer``
-    /// documents.
+    /// Vends one retained ``ScriptedBackgroundingBackend`` per session.
+    ///
+    /// `@unchecked Sendable` invariant, the same one ``BackgroundingLLMContainer``
+    /// documents: `lastBackend` is written once, synchronously, inside
+    /// `makeSession(instructions:)` — itself called synchronously from
+    /// `RoutedModel.makeSession` on the vending thread — and read only by the
+    /// `@MainActor` test method after that vend returns.
+    // swiftlint:disable:next no_unchecked_sendable  lastBackend is written once, synchronously, inside the vend, and read only by the @MainActor test after the vend returned
     private final class ScriptedBackgroundingLLMContainer: LoadedLLMContainer, @unchecked Sendable {
         /// The backend the newest `makeSession(instructions:)` call vended, or
         /// `nil` before the first call.
