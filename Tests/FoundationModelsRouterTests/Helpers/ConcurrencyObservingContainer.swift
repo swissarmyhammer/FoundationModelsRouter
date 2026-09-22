@@ -81,6 +81,9 @@ final class ObservingSessionBackend: LanguageModelSessionBackend, @unchecked Sen
 /// ``PlainTranscriptStubContainer``, because a session built from a transcript
 /// must report to the same observer. A plain stub backend reports to nothing.
 struct ObservingLLMContainer: LoadedLLMContainer {
+    /// The scripted counter of this container: one token per `Character`.
+    let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
     /// The observer every backend of this container reports to.
     let observer: ConcurrencyPeakObserver
 

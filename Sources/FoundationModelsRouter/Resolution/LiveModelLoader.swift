@@ -72,6 +72,10 @@ package struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     /// The `LanguageModel` conformance wrapping this slot's resident MLX model.
     let model: MLXLanguageModel
 
+    /// The counter over the loaded model's own tokenizer. See
+    /// ``LoadedLLMContainer/tokenCounter``.
+    package let tokenCounter: any TokenCounter
+
     /// The `FoundationModels.LanguageModel` this container wraps.
     package var languageModel: any FoundationModels.LanguageModel { model }
 
@@ -601,8 +605,12 @@ public struct LiveModelLoader: ModelLoader {
                 )
             }
         )
-        _ = try await CancellableWait.value { try await model.loadContainer() }
-        return MLXFoundationModelsContainer(model: model)
+        let container = try await CancellableWait.value { try await model.loadContainer() }
+        // The tokenizer the model was loaded with counts every token the
+        // router counts before a call (see ``TokenCounter``).
+        let tokenizer = await container.tokenizer
+        return MLXFoundationModelsContainer(
+            model: model, tokenCounter: TokenizerTokenCounter(tokenizer: tokenizer))
     }
 
     /// Downloads and loads an embedding model. One probe embedding finds the

@@ -1,4 +1,5 @@
 import Evaluations
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -30,8 +31,8 @@ struct CompactionContinuityEvaluationHermeticTests {
     @Test("every hand-written task is sized so its filler steps alone exceed the default budget's trigger threshold")
     func everyTaskIsSizedToForceACompaction() async throws {
         // The mechanical proof of "sized to be impossible without >=1 compaction"
-        // (task 4ce0a1k), measured in the same tokens the live trigger is
-        // measured in: every fixture's filler steps, on their own, estimate to
+        // (task 4ce0a1k), counted with the character counter, one token per
+        // character: every fixture's filler steps, on their own, count
         // more than `compactionContinuityDefaultBudget.triggerTokens`. A live
         // session's transcript also carries the setup steps, the final
         // instruction, and every reply, so the real conversation crosses the
@@ -46,10 +47,10 @@ struct CompactionContinuityEvaluationHermeticTests {
         for seed in compactionContinuitySeeds {
             let spec = try #require(compactionContinuityTaskSpecs.first { $0.id == seed.id })
             let fillerSteps = seed.steps.suffix(spec.fillerStepCount)
-            let fillerTokens = Compactor.estimatedTokenCount(of: fillerSteps.joined(separator: "\n"))
+            let fillerTokens = CharacterTokenCounter().count(fillerSteps.joined(separator: "\n"))
             #expect(
                 fillerTokens > triggerTokens,
-                "task \(seed.id)'s \(spec.fillerStepCount) filler steps estimate \(fillerTokens) tokens, which does not exceed the trigger's \(triggerTokens)"
+                "task \(seed.id)'s \(spec.fillerStepCount) filler steps count \(fillerTokens) tokens, which does not exceed the trigger's \(triggerTokens)"
             )
         }
     }
@@ -59,7 +60,7 @@ struct CompactionContinuityEvaluationHermeticTests {
         // The fast tier's one compaction replaces the opening turn, and two sizes
         // decide whether that compaction really happens (task ^k0d30s4):
         //
-        // - `Compactor.compact`'s entry guard needs the transcript to estimate
+        // - `Compactor.compact`'s entry guard needs the transcript to count
         //   past `targetTokens`, and the opening step's prompt alone is the
         //   conservative bound for that — the live transcript also carries the
         //   readiness turn, every reply, and the instructions header.
@@ -71,14 +72,14 @@ struct CompactionContinuityEvaluationHermeticTests {
         let compactionFloorTokens = 560
         let targetTokens = compactionContinuityFastBudget.targetTokens
         for seed in compactionContinuityFastSeeds {
-            let openingTokens = Compactor.estimatedTokenCount(of: seed.steps[0])
+            let openingTokens = CharacterTokenCounter().count(seed.steps[0])
             #expect(
                 openingTokens >= compactionFloorTokens,
-                "task \(seed.id)'s opening step estimates \(openingTokens) tokens, under the compaction floor's \(compactionFloorTokens)"
+                "task \(seed.id)'s opening step counts \(openingTokens) tokens, under the compaction floor's \(compactionFloorTokens)"
             )
             #expect(
                 openingTokens > targetTokens,
-                "task \(seed.id)'s opening step estimates \(openingTokens) tokens, not past the compaction target's \(targetTokens)"
+                "task \(seed.id)'s opening step counts \(openingTokens) tokens, not past the compaction target's \(targetTokens)"
             )
         }
     }

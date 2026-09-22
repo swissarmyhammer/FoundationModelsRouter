@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Synchronization
 import Testing
 
@@ -115,6 +116,9 @@ struct ResolveCancellationTests {
     }
 
     private struct StubLLMContainer: LoadedLLMContainer {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         let canned: String
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {

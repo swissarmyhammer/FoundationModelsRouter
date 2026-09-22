@@ -114,6 +114,9 @@ struct TranscriptFidelityTests {
     /// ``VariableTranscriptBackend``): every access is sequential, driven by
     /// one awaited `@MainActor` test method at a time.
     private final class VariableLLMContainer: LoadedLLMContainer, @unchecked Sendable {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         let backend = VariableTranscriptBackend()
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {

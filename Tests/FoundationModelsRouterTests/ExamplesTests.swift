@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -562,6 +563,9 @@ struct ExamplesTests {
         /// mutate `backend` directly between turns rather than
         /// reconfiguring the container.
         private struct FixedBackendContainer: LoadedLLMContainer {
+            /// The scripted counter of this container: one token per `Character`.
+            let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
             let backend: any LanguageModelSessionBackend
             func makeSession(instructions: String?) -> any LanguageModelSessionBackend { backend }
             func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend { backend }
@@ -824,15 +828,15 @@ struct ExamplesTests {
 
         // Derive a context tight enough that the reactive pattern's own
         // hardcoded 0.35 target sits strictly between the seeded
-        // transcript's real recency-window-only estimate and its full
-        // pre-compaction estimate — guaranteeing TurnTruncation alone lands under
+        // transcript's real recency-window-only character count and its full
+        // pre-compaction count — guaranteeing TurnTruncation alone lands under
         // target (no need for the model-assisted Summarization stage, which
         // this stub cannot service).
         let (header, turns) = TranscriptTurns.split(seedEntries)
         let (_, recent) = TranscriptTurns.partition(turns, keepRecentTurns: 4)
-        let recencyOnlyEstimate = Compactor.estimatedTokenCount(of: Transcript(entries: header + recent.flatMap(\.entries)))
-        let preCompactionEstimate = Compactor.estimatedTokenCount(of: Transcript(entries: seedEntries))
-        let midTarget = (recencyOnlyEstimate + preCompactionEstimate) / 2
+        let recencyOnlyCount = try characterTokenCounter.count(Transcript(entries: header + recent.flatMap(\.entries)))
+        let preCompactionCount = try characterTokenCounter.count(Transcript(entries: seedEntries))
+        let midTarget = (recencyOnlyCount + preCompactionCount) / 2
         let contextTokens = Int(Double(midTarget) / 0.35)
 
         let session = try await CompactionExampleHarness.makeSession(over: backend, context: contextTokens)

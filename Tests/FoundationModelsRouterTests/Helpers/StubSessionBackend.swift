@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Synchronization
 
 @testable import FoundationModelsRouter
@@ -10,7 +11,8 @@ import Synchronization
 /// case shared by most stub containers across this suite. Conforming to this
 /// protocol instead of ``LoadedLLMContainer`` directly gets a container this
 /// implementation for free, so it only has to implement
-/// `makeSession(instructions:)`.
+/// `makeSession(instructions:)`. It also gets the scripted ``tokenCounter``,
+/// a ``CharacterTokenCounter``, for free.
 ///
 /// A handful of containers wire special behavior through
 /// `makeSession(instructions:)` — test-observation tracking, a
@@ -22,6 +24,10 @@ import Synchronization
 protocol PlainTranscriptStubContainer: LoadedLLMContainer {}
 
 extension PlainTranscriptStubContainer {
+    /// The scripted counter of a plain stub container: one token per
+    /// `Character`.
+    var tokenCounter: any TokenCounter { CharacterTokenCounter() }
+
     /// Seeds a plain ``StubSessionBackend`` from `transcript`'s entries.
     func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
         StubSessionBackend(entries: Array(transcript))

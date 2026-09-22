@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -156,7 +157,8 @@ struct ToolFailureDeliveryTests {
     func sessionMountPutsTheDecoratorOutermost(tokenLimit: Int?) throws {
         let mounted = ToolMounting.makeSessionMounted(
             tool: ThrowingMarkerTool(), sessionID: .generate(), mailbox: SessionMailbox(),
-            sink: DiscardingOperationEventSink(), cappedToTokenLimit: tokenLimit)
+            sink: DiscardingOperationEventSink(), cappedToTokenLimit: tokenLimit,
+            tokenCounter: characterTokenCounter)
 
         #expect(mounted is FailureDeliveringTextTool<AmbientToolArguments>)
         let beneath = ToolFailureDelivery.throwingTool(of: mounted)
@@ -168,7 +170,8 @@ struct ToolFailureDeliveryTests {
     func sessionMountedFailureIsAToolResult() async throws {
         let mounted = ToolMounting.makeSessionMounted(
             tool: ThrowingMarkerTool(), sessionID: .generate(), mailbox: SessionMailbox(),
-            sink: DiscardingOperationEventSink(), cappedToTokenLimit: nil)
+            sink: DiscardingOperationEventSink(), cappedToTokenLimit: nil,
+            tokenCounter: characterTokenCounter)
         let tool = try #require(mounted as? FailureDeliveringTextTool<AmbientToolArguments>)
 
         let output = try await tool.call(arguments: Self.arguments)

@@ -1,4 +1,5 @@
 import FoundationModels
+import FoundationModelsRouterTestSupport
 @testable import FoundationModelsRouter
 
 /// A ``LoadedLLMContainer`` that vends the production
@@ -11,6 +12,9 @@ import FoundationModels
 struct LiveBackendContainer<Model: FoundationModels.LanguageModel>: LoadedLLMContainer {
     /// The scripted model every backend of this container runs over.
     let model: Model
+
+    /// The scripted counter of this container: one token per `Character`.
+    let tokenCounter: any TokenCounter = CharacterTokenCounter()
 
     /// Vends a backend over a fresh session carrying `instructions`, with no
     /// tools mounted.

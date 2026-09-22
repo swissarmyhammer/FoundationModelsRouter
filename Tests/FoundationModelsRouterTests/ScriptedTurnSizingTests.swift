@@ -1,4 +1,5 @@
 import FoundationModelsRouterRealModelSupport
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -20,13 +21,20 @@ import Testing
 /// ^cvsh3m9).
 ///
 /// They are stated in the token count a live run MEASURES, not in the
-/// character-ratio estimate. That difference is what this suite missed the
-/// second time: the fixture cleared the trigger by 12 % in estimated tokens,
-/// and the live run still stopped at a `contextFill` of 0.797, because the
-/// estimate counts about 1.23 tokens for each token the model's own tokenizer
-/// counts. See ``realTokensPerEstimatedToken``.
+/// character count of the prompts. That difference is what this suite missed
+/// the second time: the fixture cleared the trigger by 12 % in the
+/// character-ratio estimate the library counted with at that time, and the
+/// live run still stopped at a `contextFill` of 0.797, because that estimate
+/// counted about 1.23 tokens for each token the model's own tokenizer counts.
+/// That estimate is gone. This suite counts the prompts in characters with
+/// ``CharacterTokenCounter`` and converts the count with a ratio it measured
+/// itself. See ``realTokensPerCharacter``.
 @Suite("CompactionRoundTripFixture sizing (ungated)")
 struct ScriptedTurnSizingTests {
+    /// The counter this suite counts the scripted prompts with: one token per
+    /// `Character`, so each count below is a character count.
+    private static let counter = CharacterTokenCounter()
+
     /// The measured usage, in tokens, the gated suite's loop waits to see —
     /// ``CompactionRoundTripFixture/context`` at the default
     /// ``TokenBudget/trigger``, which is the same threshold that suite's
@@ -35,14 +43,21 @@ struct ScriptedTurnSizingTests {
         TokenBudget(limit: CompactionRoundTripFixture.context).triggerTokens
     }
 
-    /// What one estimated token is worth in tokens the model really counts.
-    ///
-    /// ``Compactor/estimatedTokenCount(of:)`` divides UTF-8 bytes by a flat
-    /// 4.0. The gated model's own tokenizer reads the English prose of the
-    /// scripted turns at about 4.9 bytes for each token, so the estimate runs
-    /// high. Measured over the fixture's turns with that tokenizer: 1836
-    /// estimated tokens against 1496 real ones.
-    private static let realTokensPerEstimatedToken = 0.815
+    /// The tokens the gated model's own tokenizer counted for the scripted
+    /// turns on the gated run of task ^wnj3ka3.
+    private static let measuredRealTokens = 1496
+
+    /// The characters the scripted turns held at the time of that
+    /// measurement: the eight turns the fixture had before task ^wnj3ka3
+    /// added two more. ``counter`` counts those eight turns as this many
+    /// tokens.
+    private static let measuredCharacters = 7338
+
+    /// What one character of scripted prose is worth in tokens the model
+    /// really counts: ``measuredRealTokens`` over ``measuredCharacters``,
+    /// about 0.204. The gated model's own tokenizer reads the English prose
+    /// of the scripted turns at about 4.9 characters for each token.
+    private static let realTokensPerCharacter = Double(measuredRealTokens) / Double(measuredCharacters)
 
     /// The tokens a live run measures on top of the scripted prompt text.
     ///
@@ -62,15 +77,24 @@ struct ScriptedTurnSizingTests {
     /// model replies can give back.
     private static let triggerClearance = 1.10
 
+    /// The tokens a live run measures for `characters` of scripted prose,
+    /// converted with ``realTokensPerCharacter``.
+    ///
+    /// - Parameter characters: The character count of the prose.
+    /// - Returns: The tokens the model's own tokenizer reads that prose as.
+    private static func measuredTokens(forCharacters characters: Int) -> Int {
+        Int(Double(characters) * realTokensPerCharacter)
+    }
+
     /// The tokens a live run is expected to measure once every scripted turn
-    /// has run: the prompt text converted out of the estimate, plus the
-    /// overhead every live turn carries.
+    /// has run: the prompt text converted out of its character count, plus
+    /// the overhead every live turn carries.
     ///
     /// The gated loop stops at the first turn that crosses the trigger, so it
     /// normally measures less than this. This is the figure both bounds below
     /// are stated against, because both are about the fixture as a whole.
     private static var predictedLiveTokens: Int {
-        Int(Double(perTurnTokens.reduce(0, +)) * realTokensPerEstimatedToken) + liveOverheadTokens
+        measuredTokens(forCharacters: perTurnCharacters.reduce(0, +)) + liveOverheadTokens
     }
 
     /// How many of the newest turns the deterministic stages must leave
@@ -80,17 +104,17 @@ struct ScriptedTurnSizingTests {
         TurnTruncation().keepRecentTurns
     }
 
-    /// The estimated token count of each scripted turn's prompt text, in order.
-    private static var perTurnTokens: [Int] {
-        CompactionRoundTripFixture.scriptedTurns.map(Compactor.estimatedTokenCount(of:))
+    /// The character count of each scripted turn's prompt text, in order.
+    private static var perTurnCharacters: [Int] {
+        CompactionRoundTripFixture.scriptedTurns.map { counter.count($0) }
     }
 
     @Test("the scripted turns carry the live run past the 0.80 trigger, with margin")
     func scriptedTurnsReachTheTriggerWithMargin() throws {
         // The lower bound of the band the fixture must sit in. Stated in
-        // measured tokens, and with a margin, because the estimate alone
-        // cleared the trigger on a fixture the live run left below it — the
-        // whole defect of task ^wnj3ka3.
+        // measured tokens, and with a margin, because the uncalibrated
+        // estimate of that time cleared the trigger on a fixture the live run
+        // left below it — the whole defect of task ^wnj3ka3.
         let required = Int(Double(Self.triggerTokens) * Self.triggerClearance)
         #expect(
             Self.predictedLiveTokens > required,
@@ -125,18 +149,19 @@ struct ScriptedTurnSizingTests {
         //
         // Which four turns the window holds depends on how many turns the live
         // run needed to cross the trigger, so every consecutive window is
-        // checked rather than only the last. Prompt text alone: the window also
-        // carries the replies and the header, which only add.
+        // checked rather than only the last. Prompt text alone, converted to
+        // the tokens the live run measures: the window also carries the
+        // replies and the header, which only add.
         let targetTokens = CompactionRoundTripFixture.compactionBudget.targetTokens
         let keepRecentTurns = Self.keepRecentTurns
         let turns = CompactionRoundTripFixture.scriptedTurns
         #expect(turns.count > keepRecentTurns)
         for start in 0...(turns.count - keepRecentTurns) {
             let window = turns[start..<(start + keepRecentTurns)]
-            let windowTokens = Compactor.estimatedTokenCount(of: window.joined())
+            let windowTokens = Self.measuredTokens(forCharacters: Self.counter.count(window.joined()))
             #expect(
                 windowTokens > targetTokens,
-                "turns \(start)..<\(start + keepRecentTurns) estimate \(windowTokens) prompt tokens, which does not exceed the compaction target's \(targetTokens)"
+                "turns \(start)..<\(start + keepRecentTurns) predict \(windowTokens) measured prompt tokens, which does not exceed the compaction target's \(targetTokens)"
             )
         }
     }
@@ -151,12 +176,14 @@ struct ScriptedTurnSizingTests {
         //
         // Worst case, and mechanical: every one of those turns' replies runs
         // to the full `replyMaxTokens` ceiling, and the header's instructions
-        // count too.
+        // count too. The prompt text and the header are converted to the
+        // tokens the live run measures; the reply ceiling is already in them.
         let keepRecentTurns = Self.keepRecentTurns
         let firstTurns = CompactionRoundTripFixture.scriptedTurns.prefix(keepRecentTurns)
-        let promptTokens = Compactor.estimatedTokenCount(of: firstTurns.joined())
+        let promptTokens = Self.measuredTokens(forCharacters: Self.counter.count(firstTurns.joined()))
         let replyTokens = keepRecentTurns * CompactionRoundTripFixture.replyMaxTokens
-        let headerTokens = Compactor.estimatedTokenCount(of: CompactionRoundTripFixture.instructions)
+        let headerTokens = Self.measuredTokens(
+            forCharacters: Self.counter.count(CompactionRoundTripFixture.instructions))
         let worstCase = promptTokens + replyTokens + headerTokens
         #expect(
             worstCase < Self.triggerTokens,

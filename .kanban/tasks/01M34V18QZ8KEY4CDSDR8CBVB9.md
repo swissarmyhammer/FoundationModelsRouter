@@ -28,8 +28,31 @@ comments:
     - evidence: `swift test` — 1349 tests in 145 suites passed, plus 1 test and 83 tests in the other targets; 0 failures. The 2 known issues are pre-existing `withKnownIssue` marks in RealModelHarnessTests.swift and BoundedWaitTests.swift, files this task did not touch. `swift build --build-tests`: zero code warnings. `swift build --package-path IntegrationTests --build-tests`: complete. `swift-format lint` under the seven idioms-swift rules: 0 findings on the 4 changed files.
     - next: commit, then review.
   timestamp: 2026-09-22T15:55:48.550882+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m34x9k34cd22m537hbtxf8ec
+  text: |-
+    ### commit — changed
+    - evidence: 3ab5a54 refactor(session): delete RejectedToolCallRetry.limit; a rejected tool call retries until the model writes a valid call. The commit carries the 4 source and test files and the `.kanban/` changes. Not pushed.
+    - next: review `r8cbvb9 HEAD~1..HEAD`.
+  timestamp: 2026-09-22T15:56:01.508501+00:00
+- actor: claude-code
+  id: 01m34xdv530k0ngj3rds2t81x1
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` — 0 findings (7 attempted, 0 confirmed, 0 refuted); 4 source and test files reviewed; the 4 `.kanban/` files are excluded by `.reviewignore`. No prior `## Review Findings` section on the card.
+    - next: the task moves doing -> review -> done.
+  timestamp: 2026-09-22T15:58:20.835781+00:00
+- actor: claude-code
+  id: 01m34xeapn9esz87cen0bv7v1t
+  text: |-
+    ### finish iteration 1 — review clean, task in done
+    - implement: changed — 4 files: Sources/FoundationModelsRouter/Session/RejectedToolCallRetry.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnExecution.swift, Tests/FoundationModelsRouterTests/RejectedToolCallRetryTests.swift, Tests/FoundationModelsRouterTests/AutoCompactionTests.swift; `rg 'rejectedCallRetriesLeft|RejectedToolCallRetry\.limit'` finds nothing
+    - test: green — `swift test`: 1349 tests in 145 suites passed, plus 1 and 83 in the other targets, 0 failures; `swift build --package-path IntegrationTests --build-tests` complete
+    - commit: 3ab5a54
+    - review: clean — `review sha HEAD~1..HEAD`, 0 findings
+  timestamp: 2026-09-22T15:58:36.757893+00:00
+position_column: done
+position_ordinal: ffffe280
 title: Delete RejectedToolCallRetry.limit; a rejected tool call retries until the model writes a valid call
 ---
 ## Decision (from the owner, 2026-09-22)

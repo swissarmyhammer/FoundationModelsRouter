@@ -128,6 +128,18 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
         diagnostics
     }
 
+    /// The counter of the resident model, loading the model on first access.
+    ///
+    /// The gated `@Test` counts the evidence table with it once the run has
+    /// ended, so the span and the summary the table prints are in the tokens
+    /// the compaction itself counted.
+    ///
+    /// - Returns: The loaded container's own counter.
+    /// - Throws: What ``container()`` throws.
+    func tokenCounter() async throws -> any TokenCounter {
+        try await container().container.tokenCounter
+    }
+
     /// The resident container, loading it on first access and caching it for
     /// every later call.
     ///
@@ -189,7 +201,7 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
 
     /// Runs one sample's real subject work (compaction_plan.md §1.4/§1.5's bare-session
     /// recipe): compacts `entries` with `prompt`/`budget` via
-    /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:protection:)``, resumes a live
+    /// ``Compactor/compact(_:prompt:budget:counter:summarizer:summarization:pendingRuns:protection:)``, resumes a live
     /// session over the compacted transcript, and asks `question`.
     ///
     /// - Parameters:
@@ -199,7 +211,7 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
     ///   - question: The question to ask the resumed session.
     /// - Returns: The resumed session's answer plus the compaction's report.
     /// - Throws: Whatever ``container()`` throws while loading the resident
-    ///   model, or whatever ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:protection:)``
+    ///   model, or whatever ``Compactor/compact(_:prompt:budget:counter:summarizer:summarization:pendingRuns:protection:)``
     ///   or the resumed session's `respond(to:maxTokens:)` throws while
     ///   compacting `entries` or answering `question`.
     ///
@@ -241,6 +253,7 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
             Transcript(entries: entries),
             prompt: prompt,
             budget: budget,
+            counter: loaded.container.tokenCounter,
             summarizer: summarizer,
             summarization: Summarization(reasoningTokenHeadroom: compactionEvalReasoningTokenHeadroom)
         )

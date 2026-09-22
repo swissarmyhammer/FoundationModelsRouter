@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -55,6 +56,9 @@ struct SessionTreeRestorationToolWiringTests {
     /// only after that call returns to the same test method, so no two
     /// tasks ever touch the mutable state concurrently.
     private final class ToolCapturingRestoreContainer: LoadedLLMContainer, @unchecked Sendable {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         private(set) var threadedToolsByCall: [[any Tool]] = []
         private(set) var backendsByCall: [StubSessionBackend] = []
 

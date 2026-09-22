@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -74,6 +75,9 @@ struct PooledResidencyTests {
     }
 
     private struct SuspendingLLMContainer: LoadedLLMContainer {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         let observer: ConcurrencyObserver
         let releaseGate: AsyncSemaphore
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {

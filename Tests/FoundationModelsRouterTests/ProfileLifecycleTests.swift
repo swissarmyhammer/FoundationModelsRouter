@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -21,6 +22,9 @@ struct ProfileLifecycleTests {
     /// A stand-in for a loaded LLM container, with no MLX dependency. These
     /// lifecycle tests never generate, so the vended backend always throws.
     private struct StubLLMContainer: LoadedLLMContainer {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
             StubSessionBackend(shouldThrow: true)
         }

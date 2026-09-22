@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -129,6 +130,9 @@ struct SessionOutboxToolWiringTests {
     /// No lock is needed for a field that is never actually accessed from more
     /// than one thread.
     private final class ToolCapturingLLMContainer: LoadedLLMContainer, @unchecked Sendable {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         private(set) var lastTools: [any Tool] = []
 
         /// The ``StubSessionBackend`` most recently vended by
@@ -254,6 +258,9 @@ struct SessionOutboxToolWiringTests {
     /// thread, never concurrently (the same invariant
     /// ``ToolCapturingLLMContainer`` documents).
     private final class ToolInvokingLLMContainer: LoadedLLMContainer, @unchecked Sendable {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         private(set) var lastBackend: ToolInvokingBackend?
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {

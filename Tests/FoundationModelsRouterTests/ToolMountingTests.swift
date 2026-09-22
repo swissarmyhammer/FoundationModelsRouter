@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -26,7 +27,8 @@ struct ToolMountingTests {
     ) -> any Tool {
         ToolFailureDelivery.throwingTool(
             of: ToolMounting.makeSessionMounted(
-                tool: tool, sessionID: sessionID, mailbox: mailbox, sink: sink, cappedToTokenLimit: nil
+                tool: tool, sessionID: sessionID, mailbox: mailbox, sink: sink, cappedToTokenLimit: nil,
+                tokenCounter: characterTokenCounter
             ))
     }
 

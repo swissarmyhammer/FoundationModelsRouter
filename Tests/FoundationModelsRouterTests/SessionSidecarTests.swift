@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -632,6 +633,7 @@ struct SessionSidecarTests {
             persistedEntryCount: 0,
             historyOrdinal: 0,
             sidecarOrigin: .new(under: standard.durableRecording),
+            tokenCounter: CharacterTokenCounter(),
             tracer: standard.tracer
         )
         #expect(session.recordingDirectory == recordingDirectory)

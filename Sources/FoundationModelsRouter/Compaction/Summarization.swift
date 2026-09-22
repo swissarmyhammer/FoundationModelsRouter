@@ -30,8 +30,12 @@ enum SummarizationError: Error, Equatable, LocalizedError {
 /// summarizes it with a ``CompactionPrompt`` through a ``CompactionSummarizer``,
 /// and synthesizes the summary entry: a `.response` that carries the summary
 /// text and its ``CompactionSegment``. It is async, so it does not conform to
-/// ``CompactionStage``; ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:protection:)``
+/// ``CompactionStage``; ``Compactor/compact(_:prompt:budget:counter:summarizer:summarization:pendingRuns:protection:)``
 /// calls it directly, always with the original transcript.
+///
+/// Every size the stage measures is counted in tokens by the ``TokenCounter``
+/// the pipeline passes: the span it replaces, the content of each call, and
+/// the summary it stores.
 public struct Summarization: Sendable, Equatable, Codable {
     /// This stage's name, as recorded in ``CompactionResult/stagesApplied``.
     public static let stageName = "Summarization"
@@ -39,8 +43,8 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// How many of the newest turns stay untouched. Defaults to `4`.
     public var keepRecentTurns: Int
 
-    /// The estimated-token ceiling of one summarizer call's content. Above it
-    /// the compacted span is split into chunks that are summarized separately
+    /// The token ceiling of one summarizer call's content. Above it the
+    /// compacted span is split into chunks that are summarized separately
     /// (map) and then combined (reduce). A single item is never split.
     public var maxChunkTokens: Int
 
@@ -56,9 +60,9 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// The floor, in tokens, of every call's summary allowance.
     public static let minimumSummaryTokens = 128
 
-    /// The bytes the whole boundary text must stay under the compacted span's
-    /// content bytes so that the estimated token count drops by at least one.
-    static let shrinkMarginBytes = Int(Compactor.charsPerTokenEstimate)
+    /// The tokens the stored summary must count under the span it replaces:
+    /// the summary must count at least one token less than the span.
+    static let shrinkMarginTokens = 1
 
     /// The estimated UTF-8 size of one English word with its separator. It
     /// converts a byte budget to the word count stated to the model.
@@ -169,18 +173,21 @@ public struct Summarization: Sendable, Equatable, Codable {
     ///   - tokensBefore: The pipeline's measured size before any stage ran.
     ///   - priorStagesApplied: The stages applied before this one; ``stageName`` is appended.
     ///   - summarizer: The model called to condense text.
-    ///   - pendingRuns: The summaries of the runs still running, in tracking order. Their rendering is charged against the span byte budget.
+    ///   - counter: The counter every size is measured with.
+    ///   - pendingRuns: The summaries of the runs still running, in tracking order. Their rendering is charged against the span token budget.
     ///   - protection: The host rule whose protected tool outputs stay word for
     ///     word, or `nil` (the default) to compact the whole old span.
     /// - Returns: The compaction, or `nil` when there is no old span to compact.
-    /// - Throws: Whatever `summarizer.summarize(_:maxTokens:)` throws, or
-    ///   ``SummarizationError/emptySummary`` when a call returns no text.
+    /// - Throws: Whatever `summarizer.summarize(_:maxTokens:)` throws, what
+    ///   `counter` throws, or ``SummarizationError/emptySummary`` when a call
+    ///   returns no text.
     func apply(
         _ transcript: Transcript,
         prompt: CompactionPrompt,
         tokensBefore: Int,
         priorStagesApplied: [String],
         summarizer: any CompactionSummarizer,
+        counter: any TokenCounter,
         pendingRuns: [CompactionSegment.PendingRunSummary] = [],
         protection: ToolOutputProtection? = nil
     ) async throws -> Compacted? {
@@ -192,14 +199,16 @@ public struct Summarization: Sendable, Equatable, Codable {
         let kept = protectedOld.flatMap(\.keptEntries)
         let answered = try await summarize(
             protectedOld.map { TranscriptTurn(entries: $0.unprotectedEntries) }, prompt: prompt,
-            summarizer: summarizer)
-        let spanBytes = Self.contentByteCount(of: old.flatMap(\.entries)) - Self.contentByteCount(of: kept)
-        let renderingBytes =
-            pendingRuns.isEmpty ? 0 : CompactionSegment.renderedPendingRuns(pendingRuns).utf8.count
-        let budgetBytes = Self.summaryByteBudget(
-            forSpanBytes: spanBytes, pendingRunsRenderingBytes: renderingBytes)
+            summarizer: summarizer, counter: counter)
+        let spanTokens =
+            try counter.count(Transcript(entries: old.flatMap(\.entries)))
+            - counter.count(Transcript(entries: kept))
+        let renderingTokens =
+            pendingRuns.isEmpty ? 0 : counter.count(CompactionSegment.renderedPendingRuns(pendingRuns))
+        let budgetTokens = Self.summaryTokenBudget(
+            forSpanTokens: spanTokens, pendingRunsRenderingTokens: renderingTokens)
         let (summaryText, summaryCut) = try await resolveOversizedSummary(
-            answered, within: budgetBytes, summarizer: summarizer)
+            answered, within: budgetTokens, summarizer: summarizer, counter: counter)
 
         let entryId = "compaction-summary-\(UUID().uuidString)"
         let keptEntryIds = Set(kept.map(\.id))
@@ -232,7 +241,7 @@ public struct Summarization: Sendable, Equatable, Codable {
         // corrected) rather than an approximation that omits the entry's own
         // contribution to the final size.
         let provisional = Transcript(entries: liveHeader + [makeSummaryEntry(tokensAfter: 0)] + recentEntries)
-        let tokensAfter = Compactor.estimatedTokenCount(of: provisional)
+        let tokensAfter = try counter.count(provisional)
         let finalTranscript = Transcript(
             entries: liveHeader + [makeSummaryEntry(tokensAfter: tokensAfter)] + recentEntries)
 
@@ -241,23 +250,14 @@ public struct Summarization: Sendable, Equatable, Codable {
             summaryCut: summaryCut)
     }
 
-    /// The total content byte size of `entries`, measured the way
-    /// ``Compactor/estimatedTokenCount(of:)`` measures a transcript.
-    ///
-    /// - Parameter entries: The entries to measure.
-    /// - Returns: Their content size in bytes.
-    private static func contentByteCount(of entries: [Transcript.Entry]) -> Int {
-        entries.reduce(0) { $0 + Compactor.contentByteCount(of: $1) }
+    /// The tokens the final summary may occupy so that the boundary entry
+    /// shrinks the transcript: `spanTokens` minus ``shrinkMarginTokens`` minus
+    /// `renderingTokens`. The result can be zero or negative.
+    static func summaryTokenBudget(forSpanTokens spanTokens: Int, pendingRunsRenderingTokens renderingTokens: Int) -> Int {
+        spanTokens - shrinkMarginTokens - renderingTokens
     }
 
-    /// The bytes the final summary may occupy so that the boundary entry
-    /// shrinks the transcript: `spanBytes` minus ``shrinkMarginBytes`` minus
-    /// `renderingBytes`. The result can be zero or negative.
-    static func summaryByteBudget(forSpanBytes spanBytes: Int, pendingRunsRenderingBytes renderingBytes: Int) -> Int {
-        spanBytes - shrinkMarginBytes - renderingBytes
-    }
-
-    /// Resolves a summary that may overrun `budgetBytes` into the text the
+    /// Resolves a summary that may overrun `budgetTokens` into the text the
     /// compaction stores. A summary inside the budget is stored as is.
     ///
     /// An oversized summary walks a ladder, cheapest rung first. The free rung
@@ -265,9 +265,9 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// already written states nothing new and must not occupy budget a stated
     /// fact could hold. The paid rung is one condense re-ask, which asks the
     /// model for a much shorter text.
-    /// Once the rung runs, ``condense(_:toBytes:notExceeding:summarizer:)``
+    /// Once the rung runs, ``condense(_:toTokens:notExceeding:summarizer:counter:)``
     /// always makes that call. It never sizes the call above the ceiling that
-    /// wrote its input. ``cut(_:toCharacters:)`` is the last rung.
+    /// wrote its input. ``cut(_:toTokens:counter:)`` is the last rung.
     ///
     /// ONE answer earns ONE recovery generation, whichever rung spends it. The
     /// bound holds for one answer, not for a whole compaction. A multi-chunk compaction
@@ -280,35 +280,43 @@ public struct Summarization: Sendable, Equatable, Codable {
     ///
     /// - Parameters:
     ///   - answer: The answer the compaction has in hand, and what it cost.
-    ///   - budgetBytes: The bytes the stored summary may occupy. Zero or below
+    ///   - budgetTokens: The tokens the stored summary may occupy. Zero or below
     ///     skips the re-ask, because no rewrite of any length would fit.
     ///   - summarizer: The model to ask again.
+    ///   - counter: The counter every size is measured with.
     /// - Returns: The text to store, and whether the cut removed text.
     /// - Throws: Whatever the condense re-ask throws, unmodified.
     private func resolveOversizedSummary(
         _ answer: Answer,
-        within budgetBytes: Int,
-        summarizer: any CompactionSummarizer
+        within budgetTokens: Int,
+        summarizer: any CompactionSummarizer,
+        counter: any TokenCounter
     ) async throws -> (text: String, cut: Bool) {
-        guard answer.text.utf8.count > budgetBytes else { return (answer.text, false) }
+        guard counter.count(answer.text) > budgetTokens else { return (answer.text, false) }
 
         var candidate = Self.withoutRepeatedLines(answer.text)
-        if candidate.utf8.count <= budgetBytes { return (candidate, false) }
+        var candidateTokens = counter.count(candidate)
+        if candidateTokens <= budgetTokens { return (candidate, false) }
 
-        if budgetBytes > 0, !answer.reAsked {
+        if budgetTokens > 0, !answer.reAsked {
             let condensed = try await condense(
-                candidate, toBytes: budgetBytes, notExceeding: answer.ceiling, summarizer: summarizer)
+                candidate, toTokens: budgetTokens, notExceeding: answer.ceiling, summarizer: summarizer,
+                counter: counter)
             if let condensed {
-                if condensed.utf8.count <= budgetBytes { return (condensed, false) }
-                if condensed.utf8.count < candidate.utf8.count { candidate = condensed }
+                let condensedTokens = counter.count(condensed)
+                if condensedTokens <= budgetTokens { return (condensed, false) }
+                if condensedTokens < candidateTokens {
+                    candidate = condensed
+                    candidateTokens = condensedTokens
+                }
             }
         }
-        let stored = Self.cut(candidate, toCharacters: budgetBytes)
-        return (stored, stored.utf8.count < candidate.utf8.count)
+        let stored = Self.cut(candidate, toTokens: budgetTokens, counter: counter)
+        return (stored, counter.count(stored) < candidateTokens)
     }
 
     /// Asks `summarizer` once to condense its own oversized `summary` to fit
-    /// `budgetBytes`, which must be positive.
+    /// `budgetTokens`, which must be positive.
     ///
     /// The call is never sized above `inputCeiling`, the ceiling the call that
     /// wrote `summary` ran under. A model writes up to its ceiling, so a
@@ -319,22 +327,23 @@ public struct Summarization: Sendable, Equatable, Codable {
     ///
     /// - Parameters:
     ///   - summary: The oversized summary to shorten.
-    ///   - budgetBytes: The bytes the stored summary may occupy.
+    ///   - budgetTokens: The tokens the stored summary may occupy.
     ///   - inputCeiling: The ceiling the call that wrote `summary` ran under.
     ///   - summarizer: The model to ask again.
+    ///   - counter: The counter every size is measured with.
     /// - Returns: The condensed answer, or `nil` when the model answered no
     ///   text, or when it answered with a repetition loop. The call itself is
     ///   always made.
     /// - Throws: Whatever `summarizer.summarize(_:maxTokens:)` throws, unmodified.
     private func condense(
         _ summary: String,
-        toBytes budgetBytes: Int,
+        toTokens budgetTokens: Int,
         notExceeding inputCeiling: Int,
-        summarizer: any CompactionSummarizer
+        summarizer: any CompactionSummarizer,
+        counter: any TokenCounter
     ) async throws -> String? {
-        let allowance = min(
-            maximumSummaryTokens,
-            max(Self.minimumSummaryTokens, Int(Double(budgetBytes) / Compactor.charsPerTokenEstimate)))
+        let allowance = min(maximumSummaryTokens, max(Self.minimumSummaryTokens, budgetTokens))
+        let budgetBytes = Self.byteCount(ofFirst: budgetTokens, in: summary, counter: counter)
         let answer = try await summarizer.summarize(
             Self.makeCondensePrompt(summary: summary, budgetBytes: budgetBytes),
             maxTokens: min(outputTokenCeiling(forSummaryAllowance: allowance), inputCeiling)
@@ -368,33 +377,49 @@ public struct Summarization: Sendable, Equatable, Codable {
         max(1, Int(Double(bytes) / summaryBytesPerWordEstimate))
     }
 
+    /// The UTF-8 bytes the first `tokens` tokens of `text` occupy, read from
+    /// the text itself through `counter`. It converts a token budget into the
+    /// bytes the word count stated to the model is derived from.
+    ///
+    /// - Parameters:
+    ///   - tokens: The number of tokens to measure.
+    ///   - text: The text the tokens are read from.
+    ///   - counter: The counter that cuts `text` to `tokens`.
+    /// - Returns: The byte size of that prefix.
+    static func byteCount(ofFirst tokens: Int, in text: String, counter: any TokenCounter) -> Int {
+        counter.prefix(of: text, tokens: tokens).utf8.count
+    }
+
     // MARK: - Map-reduce summarization
 
     /// Summarizes `turns`. A span within ``maxChunkTokens`` takes one call. A
     /// longer span is split into turn-aligned chunks, each summarized (map),
-    /// and the chunk summaries are combined by ``reduce(_:prompt:summarizer:)``.
+    /// and the chunk summaries are combined by ``reduce(_:prompt:summarizer:counter:)``.
     private func summarize(
         _ turns: [TranscriptTurn],
         prompt: CompactionPrompt,
-        summarizer: any CompactionSummarizer
+        summarizer: any CompactionSummarizer,
+        counter: any TokenCounter
     ) async throws -> Answer {
-        let chunks = Self.chunk(turns, maxTokens: maxChunkTokens)
+        let chunks = try Self.chunk(turns, maxTokens: maxChunkTokens, counter: counter)
         guard chunks.count > 1 else {
-            return try await summarizeOnce(Self.render(chunks[0]), prompt: prompt, summarizer: summarizer)
+            return try await summarizeOnce(
+                Self.render(chunks[0]), prompt: prompt, summarizer: summarizer, counter: counter)
         }
 
         var chunkSummaries: [Answer] = []
         // Serial deliberately: a compaction's cancellability depends on it, and on more
-        // than this file — see ``summarizeOnce(_:prompt:summarizer:)``.
+        // than this file — see ``summarizeOnce(_:prompt:summarizer:counter:)``.
         for chunk in chunks {
-            chunkSummaries.append(try await summarizeOnce(Self.render(chunk), prompt: prompt, summarizer: summarizer))
+            chunkSummaries.append(
+                try await summarizeOnce(Self.render(chunk), prompt: prompt, summarizer: summarizer, counter: counter))
         }
-        return try await reduce(chunkSummaries, prompt: prompt, summarizer: summarizer)
+        return try await reduce(chunkSummaries, prompt: prompt, summarizer: summarizer, counter: counter)
     }
 
     /// Combines `summaries` into one final summary. When the joined summaries
     /// exceed ``maxChunkTokens``, they are grouped with
-    /// ``chunkStrings(_:maxTokens:)``, each group is condensed, and the
+    /// ``chunkStrings(_:maxTokens:counter:)``, each group is condensed, and the
     /// function recurses on the smaller set. When grouping makes no progress,
     /// one flat reduce runs instead, so recursion always terminates.
     ///
@@ -402,17 +427,18 @@ public struct Summarization: Sendable, Equatable, Codable {
     private func reduce(
         _ summaries: [Answer],
         prompt: CompactionPrompt,
-        summarizer: any CompactionSummarizer
+        summarizer: any CompactionSummarizer,
+        counter: any TokenCounter
     ) async throws -> Answer {
         guard summaries.count > 1 else { return summaries[0] }
 
         let texts = summaries.map(\.text)
         let joined = texts.joined(separator: Self.summarySeparator)
-        guard Self.estimatedTokens(of: joined) > maxChunkTokens else {
-            return try await summarizeOnce(joined, prompt: prompt, summarizer: summarizer)
+        guard counter.count(joined) > maxChunkTokens else {
+            return try await summarizeOnce(joined, prompt: prompt, summarizer: summarizer, counter: counter)
         }
 
-        let groups = Self.chunkStrings(texts, maxTokens: maxChunkTokens)
+        let groups = Self.chunkStrings(texts, maxTokens: maxChunkTokens, counter: counter)
         guard groups.count < summaries.count else {
             // No progress possible: grouping produced one singleton group per
             // summary, so no two adjacent summaries fit together under
@@ -421,18 +447,19 @@ public struct Summarization: Sendable, Equatable, Codable {
             // left. Over budget on its *input* only: this call's summary
             // allowance is still capped at `maximumSummaryTokens`, so a span
             // shaped this way cannot buy a final summary that grows with it.
-            return try await summarizeOnce(joined, prompt: prompt, summarizer: summarizer)
+            return try await summarizeOnce(joined, prompt: prompt, summarizer: summarizer, counter: counter)
         }
 
         var nextRound: [Answer] = []
         // Serial deliberately, for the reason the map loop in
-        // ``summarize(_:prompt:summarizer:)`` is — see ``summarizeOnce(_:prompt:summarizer:)``.
+        // ``summarize(_:prompt:summarizer:counter:)`` is — see ``summarizeOnce(_:prompt:summarizer:counter:)``.
         for group in groups {
             nextRound.append(
                 try await summarizeOnce(
-                    group.joined(separator: Self.summarySeparator), prompt: prompt, summarizer: summarizer))
+                    group.joined(separator: Self.summarySeparator), prompt: prompt, summarizer: summarizer,
+                    counter: counter))
         }
-        return try await reduce(nextRound, prompt: prompt, summarizer: summarizer)
+        return try await reduce(nextRound, prompt: prompt, summarizer: summarizer, counter: counter)
     }
 
     /// Makes one summarizer call: `prompt`'s instructions, the stated word
@@ -453,10 +480,13 @@ public struct Summarization: Sendable, Equatable, Codable {
     private func summarizeOnce(
         _ content: String,
         prompt: CompactionPrompt,
-        summarizer: any CompactionSummarizer
+        summarizer: any CompactionSummarizer,
+        counter: any TokenCounter
     ) async throws -> Answer {
-        let allowance = summaryTokenAllowance(condensing: content)
-        let budgetWords = Self.summaryBudgetWords(forBytes: statedBudgetBytes(condensing: content))
+        let statedTokens = statedBudgetTokens(condensing: content, counter: counter)
+        let allowance = max(Self.minimumSummaryTokens, statedTokens)
+        let budgetWords = Self.summaryBudgetWords(
+            forBytes: Self.byteCount(ofFirst: statedTokens, in: content, counter: counter))
         // "about N words ... never count": the instrumented Qwen probe of
         // 2026-08-20 captured the thinking model counting its draft word by
         // word against the stated target and spending the whole ceiling on
@@ -492,7 +522,7 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// A second answer that carries real content is the one to carry forward.
     /// When the second answer loops as well, or holds no text, `summary` goes
     /// forward with its repeated lines removed, so the repeats occupy none of
-    /// the stored summary's byte budget. The stage never asks a third time for
+    /// the stored summary's token budget. The stage never asks a third time for
     /// this one answer.
     ///
     /// - Parameters:
@@ -605,11 +635,11 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// The characters that end a sentence.
     private static let sentenceTerminators: Set<Character> = [".", "!", "?"]
 
-    /// Cuts `summary` to at most `limit` UTF-8 bytes. The cut falls, in
-    /// order of preference, on the last whole numbered section
-    /// (``sectionAlignedPrefix(of:withinBytes:)``), the last sentence or line
-    /// end, the last word boundary, or the budget itself. A cut that would
-    /// leave no text returns `summary` unchanged.
+    /// Cuts `summary` to at most `limit` tokens. The cut falls, in order of
+    /// preference, on the last whole numbered section
+    /// (``sectionAlignedPrefix(of:withinTokens:counter:)``), the last sentence
+    /// or line end, the last word boundary, or the budget itself. A cut that
+    /// would leave no text returns `summary` unchanged.
     ///
     /// A section-aligned cut that runs up to the LAST section header is the one
     /// exception. Everything it drops then belongs to one section, and no later
@@ -620,23 +650,27 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// span went with them. The boundary cut is taken there instead, and only
     /// when it stores MORE than the whole sections already in hand.
     ///
+    /// - Parameters:
+    ///   - summary: The text to cut.
+    ///   - limit: The tokens the cut text may occupy.
+    ///   - counter: The counter every size is measured with.
     /// - Returns: `summary` when it already fits, otherwise a prefix of it.
-    private static func cut(_ summary: String, toCharacters limit: Int) -> String {
-        guard summary.utf8.count > limit else { return summary }
+    private static func cut(_ summary: String, toTokens limit: Int, counter: any TokenCounter) -> String {
+        guard counter.count(summary) > limit else { return summary }
 
-        let sections = sectionAlignedPrefix(of: summary, withinBytes: limit)
+        let sections = sectionAlignedPrefix(of: summary, withinTokens: limit, counter: counter)
         if let sections, !sections.endsAtFinalSection { return sections.text }
 
-        let budgeted = UTF8Budget.prefix(of: summary, keepingAtMostBytes: limit)
+        let budgeted = counter.prefix(of: summary, tokens: limit)
         let boundary = boundaryAlignedPrefix(of: budgeted) ?? budgeted
-        if let sections, sections.text.utf8.count >= boundary.utf8.count { return sections.text }
+        if let sections, counter.count(sections.text) >= counter.count(boundary) { return sections.text }
         return boundary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? summary : boundary
     }
 
     /// Returns the longest prefix of `budgeted` that ends at a sentence or line
     /// end, or failing that at a word boundary.
     ///
-    /// - Parameter budgeted: The text already trimmed to the byte budget.
+    /// - Parameter budgeted: The text already cut to the token budget.
     /// - Returns: The prefix, or `nil` when `budgeted` holds no boundary that
     ///   leaves any text behind it.
     private static func boundaryAlignedPrefix(of budgeted: String) -> String? {
@@ -672,16 +706,16 @@ public struct Summarization: Sendable, Equatable, Codable {
     }
 
     /// Returns the longest prefix of `summary` that holds whole numbered
-    /// sections and fits in `limit` bytes, with trailing whitespace dropped,
+    /// sections and fits in `limit` tokens, with trailing whitespace dropped,
     /// and whether the sections it keeps run up to the LAST section header.
     ///
-    /// That flag is what tells ``cut(_:toCharacters:)`` whether the text this
+    /// That flag is what tells ``cut(_:toTokens:counter:)`` whether the text this
     /// prefix drops is one final section or several sections.
     ///
     /// Returns `nil` when `summary` has fewer than two section headers or when
     /// not even the first section fits. The text is never empty.
     private static func sectionAlignedPrefix(
-        of summary: String, withinBytes limit: Int
+        of summary: String, withinTokens limit: Int, counter: any TokenCounter
     ) -> (text: String, endsAtFinalSection: Bool)? {
         let headers = sectionHeaderStarts(in: summary)
         guard headers.count > 1 else { return nil }
@@ -692,9 +726,9 @@ public struct Summarization: Sendable, Equatable, Codable {
             while end > summary.startIndex, summary[summary.index(before: end)].isWhitespace {
                 end = summary.index(before: end)
             }
-            let prefix = summary[..<end]
-            guard prefix.utf8.count <= limit else { break }
-            best = (String(prefix), header == headers.last)
+            let prefix = String(summary[..<end])
+            guard counter.count(prefix) <= limit else { break }
+            best = (prefix, header == headers.last)
         }
         return best
     }
@@ -726,34 +760,24 @@ public struct Summarization: Sendable, Equatable, Codable {
         return afterPeriod < line.endIndex && line[afterPeriod] == " "
     }
 
-    /// Converts `tokens` of the estimate back into characters. The inverse of
-    /// ``estimatedTokens(of:)``.
-    package static func characters(forEstimatedTokens tokens: Int) -> Int {
-        Int(Double(tokens) * Compactor.charsPerTokenEstimate)
-    }
-
     /// The ceiling, in tokens, one summarizer call generates under:
     /// `allowance` plus ``reasoningTokenHeadroom``.
     private func outputTokenCeiling(forSummaryAllowance allowance: Int) -> Int {
         allowance + reasoningTokenHeadroom
     }
 
-    /// The summary allowance for a call that condenses `content`: the stated
-    /// budget in estimated tokens, never below ``minimumSummaryTokens`` and
-    /// never above ``maximumSummaryTokens``.
-    private func summaryTokenAllowance(condensing content: String) -> Int {
-        max(
-            Self.minimumSummaryTokens,
-            Int((Double(statedBudgetBytes(condensing: content)) / Compactor.charsPerTokenEstimate).rounded(.up)))
-    }
-
-    /// The stated budget, in UTF-8 bytes, for a call that condenses
-    /// `content`: ``statedBudgetShareOfContent`` of the content's size, capped
-    /// at what ``maximumSummaryTokens`` occupies in characters.
-    private func statedBudgetBytes(condensing content: String) -> Int {
+    /// The stated budget, in tokens, for a call that condenses `content`:
+    /// ``statedBudgetShareOfContent`` of the content's token count, capped at
+    /// ``maximumSummaryTokens``.
+    ///
+    /// - Parameters:
+    ///   - content: The content of the call.
+    ///   - counter: The counter the content is measured with.
+    /// - Returns: The stated budget, in tokens.
+    private func statedBudgetTokens(condensing content: String, counter: any TokenCounter) -> Int {
         min(
-            Int(Double(content.utf8.count) * Self.statedBudgetShareOfContent),
-            Self.characters(forEstimatedTokens: maximumSummaryTokens))
+            Int(Double(counter.count(content)) * Self.statedBudgetShareOfContent),
+            maximumSummaryTokens)
     }
 
     /// The allowance no single call's summary text may exceed: what a full
@@ -771,34 +795,47 @@ public struct Summarization: Sendable, Equatable, Codable {
     // MARK: - Chunking
 
     /// Splits `turns` into ordered groups that each stay at or under
-    /// `maxTokens` in estimated tokens. A turn is never split; a lone
-    /// oversized turn becomes its own group.
-    static func chunk(_ turns: [TranscriptTurn], maxTokens: Int) -> [[TranscriptTurn]] {
-        binPack(turns, maxTokens: maxTokens) { turn in
-            Compactor.estimatedTokenCount(of: Transcript(entries: turn.entries))
+    /// `maxTokens`. A turn is never split; a lone oversized turn becomes its
+    /// own group.
+    ///
+    /// - Parameters:
+    ///   - turns: The turns to group, in order.
+    ///   - maxTokens: The tokens one group may hold.
+    ///   - counter: The counter each turn is measured with.
+    /// - Returns: The groups, in order.
+    /// - Throws: What `counter` throws.
+    static func chunk(_ turns: [TranscriptTurn], maxTokens: Int, counter: any TokenCounter) throws -> [[TranscriptTurn]] {
+        try binPack(turns, maxTokens: maxTokens) { turn in
+            try counter.count(Transcript(entries: turn.entries))
         }
     }
 
     /// Splits `summaries` into ordered groups that each stay at or under
-    /// `maxTokens` in estimated tokens. A summary is never split.
-    static func chunkStrings(_ summaries: [String], maxTokens: Int) -> [[String]] {
-        binPack(summaries, maxTokens: maxTokens) { estimatedTokens(of: $0) }
+    /// `maxTokens`. A summary is never split.
+    ///
+    /// - Parameters:
+    ///   - summaries: The summaries to group, in order.
+    ///   - maxTokens: The tokens one group may hold.
+    ///   - counter: The counter each summary is measured with.
+    /// - Returns: The groups, in order.
+    static func chunkStrings(_ summaries: [String], maxTokens: Int, counter: any TokenCounter) -> [[String]] {
+        binPack(summaries, maxTokens: maxTokens) { counter.count($0) }
     }
 
     /// Greedily packs `items` into ordered groups. A new group starts when the
     /// next item would push the current group over `maxTokens`. An item is
-    /// never split. `tokens` gives each item's estimated size.
+    /// never split. `tokens` gives each item's size.
     private static func binPack<Item>(
         _ items: [Item],
         maxTokens: Int,
-        tokens: (Item) -> Int
-    ) -> [[Item]] {
+        tokens: (Item) throws -> Int
+    ) rethrows -> [[Item]] {
         var chunks: [[Item]] = []
         var current: [Item] = []
         var currentTokens = 0
 
         for item in items {
-            let itemTokens = tokens(item)
+            let itemTokens = try tokens(item)
             if !current.isEmpty && currentTokens + itemTokens > maxTokens {
                 chunks.append(current)
                 current = []
@@ -811,13 +848,6 @@ public struct Summarization: Sendable, Equatable, Codable {
             chunks.append(current)
         }
         return chunks
-    }
-
-    /// Estimates the size of `text` in tokens from its UTF-8 byte count at
-    /// ``Compactor/charsPerTokenEstimate``. It is `package` so the compaction
-    /// evals can report sizes in the same estimate.
-    package static func estimatedTokens(of text: String) -> Int {
-        Int((Double(text.utf8.count) / Compactor.charsPerTokenEstimate).rounded(.up))
     }
 
     // MARK: - Rendering

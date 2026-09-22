@@ -115,13 +115,3 @@ extension PersistableStructuredSegment {
         }
     }
 }
-
-/// The schema names of the router's own ``PersistableStructuredSegment`` types.
-/// ``SegmentPayload/contentByteCount`` excludes these segments from its size estimate.
-enum RouterSegmentSchemaNames {
-    /// Every schema name the router itself writes.
-    static let all: Set<String> = [
-        CompactionSegment.schemaName,
-        OperationEventSegment.schemaName,
-    ]
-}

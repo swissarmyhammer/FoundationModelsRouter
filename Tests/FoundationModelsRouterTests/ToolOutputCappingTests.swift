@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -36,7 +37,7 @@ struct ToolOutputCappingTests {
         }
     }
 
-    /// A non-`String`-output `Tool` — proves ``ToolOutputCapping/makeWrapped(tool:toTokenLimit:)``
+    /// A non-`String`-output `Tool` — proves ``ToolOutputCapping/makeWrapped(tool:toTokenLimit:counter:)``
     /// passes a tool through unchanged when its `Output` cannot be
     /// generically recovered and re-truncated as text.
     private struct NonStringOutput: PromptRepresentable, Sendable {
@@ -53,115 +54,175 @@ struct ToolOutputCappingTests {
         }
     }
 
-    // MARK: - ToolOutputCapping.capped(text:toTokenLimit:)
+    // MARK: - The counter and the sizes the truncation tests state
 
-    @Test("capped(text:toTokenLimit:) returns text unchanged when its estimated size is under the limit")
+    /// The counter every cap in this suite is measured with: one token per
+    /// `Character`. A tool output of N characters is N tokens, and the kept
+    /// prefix of a cut output is its first `limit` characters.
+    private static let counter = CharacterTokenCounter()
+
+    /// The token limit the truncation tests cap at.
+    private static let truncationLimit = 5
+
+    /// The length, in characters and so in tokens, of the oversized fixtures
+    /// the truncation tests cut: eight times ``truncationLimit``.
+    private static let oversizedTextLength = 40
+
+    /// The length of a fixture that stays under ``truncationLimit``.
+    private static let shortTextLength = 3
+
+    /// How many emoji the multi-byte fixture holds. Each emoji is four UTF-8
+    /// bytes and one `Character`, so the fixture is ten tokens.
+    private static let multiByteFixtureLength = 10
+
+    /// A limit that keeps nothing: zero.
+    private static let emptyingLimit = 0
+
+    /// A limit no fixture in this suite reaches, for the tests that show an
+    /// output under its limit passes untouched.
+    private static let generousLimit = 100
+
+    /// The `toolOutputLimit` the acceptance tests apply: 1,500 tokens, the
+    /// figure the task card states.
+    private static let acceptanceLimit = 1_500
+
+    // MARK: - ToolOutputCapping.capped(text:toTokenLimit:counter:)
+
+    @Test("capped(text:toTokenLimit:counter:) returns text unchanged when its token count is under the limit")
     func cappedLeavesShortTextUnchanged() {
-        // 8 ASCII bytes -> ceil(8/4) = 2 estimated tokens, well under limit 5.
-        let text = "12345678"
-        #expect(ToolOutputCapping.capped(text: text, toTokenLimit: 5) == text)
+        // 3 characters are 3 tokens under this counter, under a limit of 5.
+        let text = String(repeating: "a", count: Self.shortTextLength)
+        #expect(ToolOutputCapping.capped(text: text, toTokenLimit: Self.truncationLimit, counter: Self.counter) == text)
     }
 
-    @Test("capped(text:toTokenLimit:) returns text unchanged when its estimated size exactly equals the limit")
+    @Test("capped(text:toTokenLimit:counter:) returns text unchanged when its token count exactly equals the limit")
     func cappedLeavesExactlyAtLimitTextUnchanged() {
-        // 20 ASCII bytes -> ceil(20/4) = 5 estimated tokens, exactly the limit.
-        let text = String(repeating: "a", count: 20)
-        #expect(ToolOutputCapping.capped(text: text, toTokenLimit: 5) == text)
+        // 5 characters are 5 tokens, exactly the limit.
+        let text = String(repeating: "a", count: Self.truncationLimit)
+        #expect(ToolOutputCapping.capped(text: text, toTokenLimit: Self.truncationLimit, counter: Self.counter) == text)
     }
 
-    @Test("capped(text:toTokenLimit:) truncates oversized text and appends an explicit marker naming kept and original token counts")
+    @Test("capped(text:toTokenLimit:counter:) truncates oversized text and appends an explicit marker naming kept and original token counts")
     func cappedTruncatesOversizedTextWithMarker() {
-        // 40 ASCII bytes -> ceil(40/4) = 10 estimated tokens; limit 5 keeps
-        // floor(5*4) = 20 characters.
-        let text = String(repeating: "b", count: 40)
-        let result = ToolOutputCapping.capped(text: text, toTokenLimit: 5)
+        // 40 characters are 40 tokens. A limit of 5 keeps the first 5
+        // characters, and the marker states 5 of 40.
+        let text = String(repeating: "b", count: Self.oversizedTextLength)
+        let result = ToolOutputCapping.capped(text: text, toTokenLimit: Self.truncationLimit, counter: Self.counter)
 
-        let expectedKept = String(repeating: "b", count: 20)
-        #expect(result == "\(expectedKept)… [truncated: 5 of 10 tokens]")
+        let expectedKept = String(repeating: "b", count: Self.truncationLimit)
+        #expect(Self.counter.count(expectedKept) == Self.truncationLimit)
+        #expect(result == "\(expectedKept)… [truncated: \(Self.truncationLimit) of \(Self.oversizedTextLength) tokens]")
     }
 
-    @Test("capped(text:toTokenLimit:) never grows the returned text beyond the original")
+    @Test("capped(text:toTokenLimit:counter:) never grows the returned text beyond the original plus its marker")
     func cappedNeverGrowsBeyondOriginal() {
-        let text = String(repeating: "c", count: 40)
-        let result = ToolOutputCapping.capped(text: text, toTokenLimit: 5)
-        #expect(result.utf8.count <= text.utf8.count + "… [truncated: 5 of 10 tokens]".utf8.count)
+        let text = String(repeating: "c", count: Self.oversizedTextLength)
+        let marker = "… [truncated: \(Self.truncationLimit) of \(Self.oversizedTextLength) tokens]"
+        let result = ToolOutputCapping.capped(text: text, toTokenLimit: Self.truncationLimit, counter: Self.counter)
+        #expect(Self.counter.count(result) <= Self.counter.count(text) + Self.counter.count(marker))
     }
 
-    @Test("capped(text:toTokenLimit:) truncates multi-byte (non-ASCII) text on the same byte-based unit its own token estimate uses")
-    func cappedTruncatesMultiByteTextConsistentlyWithItsByteEstimate() {
-        // Each "🎉" is 4 UTF-8 bytes; 10 of them is 40 bytes -> ceil(40/4) = 10
-        // estimated tokens, matching the all-ASCII fixtures above exactly in
-        // token terms but only 10 *characters* long — the exact mismatch
-        // that silently defeated a Character-based prefix against a
-        // byte-based total estimate.
-        let text = String(repeating: "🎉", count: 10)
-        let result = ToolOutputCapping.capped(text: text, toTokenLimit: 5)
+    @Test("capped(text:toTokenLimit:counter:) cuts multi-byte (non-ASCII) text on whole characters, the unit its counter counts")
+    func cappedTruncatesMultiByteTextOnWholeCharacters() {
+        // Each "🎉" is 4 UTF-8 bytes and one Character, so ten of them are
+        // ten tokens under this counter. The cut keeps what the counter
+        // decodes back, never a byte count, so it never splits a character.
+        let text = String(repeating: "🎉", count: Self.multiByteFixtureLength)
+        let result = ToolOutputCapping.capped(text: text, toTokenLimit: Self.truncationLimit, counter: Self.counter)
 
-        // limit 5 tokens -> floor(5*4) = 20 kept bytes -> exactly 5 emoji
-        // (4 bytes each), never the whole 10-emoji original.
-        let expectedKept = String(repeating: "🎉", count: 5)
-        #expect(result == "\(expectedKept)… [truncated: 5 of 10 tokens]")
+        // A limit of 5 tokens keeps exactly 5 whole emoji, never the whole
+        // 10-emoji original.
+        let expectedKept = String(repeating: "🎉", count: Self.truncationLimit)
+        let marker = "… [truncated: \(Self.truncationLimit) of \(Self.multiByteFixtureLength) tokens]"
+        #expect(result == "\(expectedKept)\(marker)")
 
         // Truncation must actually have happened: never the whole original
         // text with a marker bolted on top.
-        #expect(result != text + "… [truncated: 5 of 10 tokens]")
+        #expect(result != text + marker)
     }
 
-    @Test("capped(text:toTokenLimit:) returns an empty prefix for a non-positive limit, still marking the truncation")
+    @Test("capped(text:toTokenLimit:counter:) returns an empty prefix for a non-positive limit, still marking the truncation")
     func cappedWithNonPositiveLimitReturnsEmptyPrefix() {
-        let text = String(repeating: "z", count: 40)
-        let result = ToolOutputCapping.capped(text: text, toTokenLimit: 0)
-        #expect(result == "… [truncated: 0 of 10 tokens]")
+        let text = String(repeating: "z", count: Self.oversizedTextLength)
+        let result = ToolOutputCapping.capped(text: text, toTokenLimit: Self.emptyingLimit, counter: Self.counter)
+        #expect(result == "… [truncated: \(Self.emptyingLimit) of \(Self.oversizedTextLength) tokens]")
     }
 
-    // MARK: - ToolOutputCapping.makeWrapped(tool:toTokenLimit:)
+    // MARK: - Acceptance: a toolOutputLimit of 1,500 tokens
 
-    @Test("makeWrapped(tool:toTokenLimit:) wraps a String-output tool in a TokenCappingTool that caps its call() result")
-    func wrappingCapsStringOutputToolCallResult() async throws {
-        let text = String(repeating: "d", count: 40)
-        let tool = StringOutputTool(output: text)
-
-        let wrapped = ToolOutputCapping.makeWrapped(tool: tool, toTokenLimit: 5)
-        guard let capping = wrapped as? TokenCappingTool<FakeToolArguments> else {
-            Issue.record("expected wrapping(tool:toTokenLimit:) to return a TokenCappingTool")
-            return
-        }
+    @Test("a tool output of exactly toolOutputLimit tokens passes uncut")
+    func aToolOutputAtTheLimitPassesUncut() async throws {
+        // The task card's acceptance: a tool output of 1,500 tokens passes a
+        // toolOutputLimit of 1,500 uncut. Under this counter that output is
+        // 1,500 characters.
+        let text = String(repeating: "t", count: Self.acceptanceLimit)
+        #expect(Self.counter.count(text) == Self.acceptanceLimit)
+        let capping = TokenCappingTool(
+            wrapped: StringOutputTool(output: text), limit: Self.acceptanceLimit, counter: Self.counter)
 
         let result = try await capping.call(arguments: FakeToolArguments(value: "x"))
-        #expect(result == "\(String(repeating: "d", count: 20))… [truncated: 5 of 10 tokens]")
+        #expect(result == text)
     }
 
-    @Test("wrapping(tool:toTokenLimit:) leaves a short String-output tool's result untouched")
+    @Test("a tool output one token over toolOutputLimit is cut to the limit, with a marker that states the limit of the original count")
+    func aToolOutputOneTokenOverTheLimitIsCutToTheLimit() async throws {
+        // The task card's acceptance: a tool output of 1,501 tokens is cut to
+        // 1,500 tokens with a marker that states 1,500 of 1,501.
+        let text = String(repeating: "t", count: Self.acceptanceLimit + 1)
+        #expect(Self.counter.count(text) == Self.acceptanceLimit + 1)
+        let capping = TokenCappingTool(
+            wrapped: StringOutputTool(output: text), limit: Self.acceptanceLimit, counter: Self.counter)
+
+        let result = try await capping.call(arguments: FakeToolArguments(value: "x"))
+
+        let marker = "… [truncated: 1500 of 1501 tokens]"
+        #expect(result.hasSuffix(marker))
+        let kept = String(result.dropLast(marker.count))
+        #expect(Self.counter.count(kept) == Self.acceptanceLimit)
+        #expect(kept == String(repeating: "t", count: Self.acceptanceLimit))
+        #expect(result == "\(kept)\(marker)")
+    }
+
+    // MARK: - ToolOutputCapping.makeWrapped(tool:toTokenLimit:counter:)
+
+    @Test("makeWrapped(tool:toTokenLimit:counter:) wraps a String-output tool in a TokenCappingTool that caps its call() result")
+    func wrappingCapsStringOutputToolCallResult() async throws {
+        let text = String(repeating: "d", count: Self.oversizedTextLength)
+        let tool = StringOutputTool(output: text)
+
+        let wrapped = ToolOutputCapping.makeWrapped(tool: tool, toTokenLimit: Self.truncationLimit, counter: Self.counter)
+        let capping = try #require(wrapped as? TokenCappingTool<FakeToolArguments>)
+
+        let result = try await capping.call(arguments: FakeToolArguments(value: "x"))
+        let expectedKept = String(repeating: "d", count: Self.truncationLimit)
+        #expect(result == "\(expectedKept)… [truncated: \(Self.truncationLimit) of \(Self.oversizedTextLength) tokens]")
+    }
+
+    @Test("makeWrapped(tool:toTokenLimit:counter:) leaves a short String-output tool's result untouched")
     func wrappingLeavesShortStringOutputUnchanged() async throws {
         let tool = StringOutputTool(output: "short")
-        let wrapped = ToolOutputCapping.makeWrapped(tool: tool, toTokenLimit: 100)
+        let wrapped = ToolOutputCapping.makeWrapped(tool: tool, toTokenLimit: Self.generousLimit, counter: Self.counter)
 
-        guard let capping = wrapped as? TokenCappingTool<FakeToolArguments> else {
-            Issue.record("expected wrapping(tool:toTokenLimit:) to return a TokenCappingTool")
-            return
-        }
+        let capping = try #require(wrapped as? TokenCappingTool<FakeToolArguments>)
         let result = try await capping.call(arguments: FakeToolArguments(value: "x"))
         #expect(result == "short")
     }
 
-    @Test("wrapping(tool:toTokenLimit:) forwards name/description/parameters/includesSchemaInInstructions to the wrapped tool")
-    func wrappingForwardsToolMetadata() {
+    @Test("makeWrapped(tool:toTokenLimit:counter:) forwards name/description/parameters/includesSchemaInInstructions to the wrapped tool")
+    func wrappingForwardsToolMetadata() throws {
         let tool = StringOutputTool(output: "x")
-        let wrapped = ToolOutputCapping.makeWrapped(tool: tool, toTokenLimit: 5)
+        let wrapped = ToolOutputCapping.makeWrapped(tool: tool, toTokenLimit: Self.truncationLimit, counter: Self.counter)
 
-        guard let capping = wrapped as? TokenCappingTool<FakeToolArguments> else {
-            Issue.record("expected wrapping(tool:toTokenLimit:) to return a TokenCappingTool")
-            return
-        }
+        let capping = try #require(wrapped as? TokenCappingTool<FakeToolArguments>)
         #expect(capping.name == tool.name)
         #expect(capping.description == tool.description)
         #expect(capping.includesSchemaInInstructions == tool.includesSchemaInInstructions)
     }
 
-    @Test("wrapping(tool:toTokenLimit:) passes a non-String-output tool through unchanged")
+    @Test("makeWrapped(tool:toTokenLimit:counter:) passes a non-String-output tool through unchanged")
     func wrappingPassesNonStringOutputToolThroughUnchanged() {
         let tool = NonStringOutputTool()
-        let wrapped = ToolOutputCapping.makeWrapped(tool: tool, toTokenLimit: 5)
+        let wrapped = ToolOutputCapping.makeWrapped(tool: tool, toTokenLimit: Self.truncationLimit, counter: Self.counter)
         #expect(wrapped is NonStringOutputTool)
     }
 
@@ -192,6 +253,9 @@ struct ToolOutputCappingTests {
     /// concurrently. A future test that adds `.compact()` coverage against
     /// this container must revisit this invariant.
     private final class ToolCapturingLLMContainer: LoadedLLMContainer, @unchecked Sendable {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         private(set) var lastTools: [any Tool] = []
         private(set) var lastBackend: StubSessionBackend?
 
@@ -336,7 +400,9 @@ struct ToolOutputCappingTests {
             return
         }
         let result = try await capping.call(arguments: FakeToolArguments(value: "x"))
-        #expect(result == "\(String(repeating: "e", count: 20))… [truncated: 5 of 10 tokens]")
+        // 40 characters are 40 tokens under the container's counter: the
+        // first 5 stay, and the marker states 5 of 40.
+        #expect(result == "\(String(repeating: "e", count: 5))… [truncated: 5 of 40 tokens]")
     }
 
     @Test("makeSession(tools:budget:) with no toolOutputLimit set applies no capping layer — only the mount layer wraps the tool")
@@ -404,7 +470,7 @@ struct ToolOutputCappingTests {
 
         // The call result is capped...
         let result = try await capping.call(arguments: AmbientToolArguments(value: "through-capped-wrapper"))
-        #expect(result == "\(String(repeating: "f", count: 20))… [truncated: 5 of 10 tokens]")
+        #expect(result == "\(String(repeating: "f", count: 5))… [truncated: 5 of 40 tokens]")
 
         // ...and the tool's ambient-context post still reached this
         // session's own outbox through the capped wrapper's inner
@@ -441,7 +507,7 @@ struct ToolOutputCappingTests {
             return
         }
         let result = try await capping.call(arguments: FakeToolArguments(value: "x"))
-        #expect(result == "\(String(repeating: "g", count: 20))… [truncated: 5 of 10 tokens]")
+        #expect(result == "\(String(repeating: "g", count: 5))… [truncated: 5 of 40 tokens]")
     }
 
     @Test("fork() with an inherited budget but no toolOutputLimit set applies no capping layer to the child's tool list — only the mount layer wraps it")

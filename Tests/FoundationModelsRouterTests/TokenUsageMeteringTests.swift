@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -34,6 +35,9 @@ struct TokenUsageMeteringTests {
     /// thread, never concurrently. No lock is needed for a field that is
     /// never actually accessed from more than one thread.
     private final class ConfiguredLLMContainer: LoadedLLMContainer, @unchecked Sendable {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         let text: String
         let usageIncrement: (input: Int, output: Int)?
         private(set) var lastBackend: StubSessionBackend?

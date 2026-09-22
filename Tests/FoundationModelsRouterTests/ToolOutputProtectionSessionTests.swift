@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -26,6 +27,9 @@ struct ToolOutputProtectionSessionTests {
     /// ``seedEntries``, as if it already took the two tool turns. A restored
     /// session starts with the transcript the restore rebuilt.
     private struct SeededLLMContainer: LoadedLLMContainer {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         /// The canned text every backend this container vends responds with.
         private let responseText = "stub answer"
 
@@ -92,8 +96,9 @@ struct ToolOutputProtectionSessionTests {
     ///
     /// - Parameter transcript: The live transcript about to be compacted.
     /// - Returns: The budget.
-    private static func summarizationBudget(for transcript: Transcript) -> TokenBudget {
-        let before = Compactor.estimatedTokenCount(of: transcript)
+    /// - Throws: What ``characterTokenCounter`` throws.
+    private static func summarizationBudget(for transcript: Transcript) throws -> TokenBudget {
+        let before = try characterTokenCounter.count(transcript)
         return TokenBudget(limit: before, target: Double(Self.unreachableTargetTokens) / Double(before))
     }
 

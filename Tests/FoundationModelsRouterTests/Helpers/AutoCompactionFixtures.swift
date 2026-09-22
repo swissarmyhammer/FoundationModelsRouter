@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 import Tracing
 
@@ -21,6 +22,9 @@ import Tracing
 /// between turns from test code, or from inside ``RoutedSessionActor``'s
 /// isolated methods, which serialize every call onto the actor's own executor.
 final class ConfiguredLLMContainer: LoadedLLMContainer, @unchecked Sendable {
+    /// The scripted counter of this container: one token per `Character`.
+    let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
     /// The canned text every backend this container vends answers with.
     let responseText: String
 

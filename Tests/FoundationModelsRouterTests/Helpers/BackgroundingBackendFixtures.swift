@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 
 @testable import FoundationModelsRouter
 
@@ -148,6 +149,9 @@ final class BackgroundingBackend: LanguageModelSessionBackend, @unchecked Sendab
 /// synchronously from `RoutedModel.makeSession` on the vending thread — and
 /// read only by the `@MainActor` test method after that vend returns.
 final class BackgroundingLLMContainer: LoadedLLMContainer, @unchecked Sendable {
+    /// The scripted counter of this container: one token per `Character`.
+    let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
     /// The backend the last vend produced.
     private(set) var lastBackend: BackgroundingBackend?
 

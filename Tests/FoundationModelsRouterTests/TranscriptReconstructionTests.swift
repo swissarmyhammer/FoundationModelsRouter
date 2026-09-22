@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -171,6 +172,9 @@ struct TranscriptReconstructionTests {
     /// A ``LoadedLLMContainer`` that vends ``TrackedStubBackend``s registered
     /// into a shared ``BackendRegistry``.
     private struct TrackedLLMContainer: LoadedLLMContainer {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         let text: String
         let registry: BackendRegistry
 

@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -258,6 +259,9 @@ struct CompactionSegmentTests {
     /// it from a given transcript's entries for `makeSession(transcript:)`
     /// (the reconstruction path a fresh "restart" router drives).
     private struct MutableEntriesLLMContainer: LoadedLLMContainer {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         let backend: MutableEntriesBackend
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend { backend }

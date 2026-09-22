@@ -5,6 +5,11 @@ import Testing
 
 @testable import FoundationModelsRouter
 
+/// The counter every size in this file is measured with: one token per
+/// `Character`. A fixture "of N tokens" is a string of N characters, and a
+/// transcript counts the characters of the content the model reads.
+private let counter = CharacterTokenCounter()
+
 /// Exercises task e3b6d6v (compaction epic — compaction_plan.md §1.3 stage 3,
 /// §1.4, §2, build-order step 5): the model-assisted ``Summarization`` stage
 /// and ``CompactionPrompt/default``.
@@ -93,7 +98,7 @@ struct SummarizationStageTests {
     }
 
     /// The part of that ceiling the summary text itself may occupy: the
-    /// STATED budget's own size in estimated tokens, never below
+    /// STATED budget, in tokens, never below
     /// ``Summarization/minimumSummaryTokens`` — so a call's ceiling always
     /// covers the ask its prompt states, the invariant the 1B re-baseline of
     /// 2026-08-20 measured failing when the allowance was still a quarter of
@@ -112,64 +117,77 @@ struct SummarizationStageTests {
         ratio: Double,
         maxChunkTokens: Int
     ) -> Int {
-        let statedBytes = expectedStatedBudgetBytes(
-            condensing: content, ratio: ratio, maxChunkTokens: maxChunkTokens)
-        return max(
+        max(
             Summarization.minimumSummaryTokens,
-            Int((Double(statedBytes) / Compactor.charsPerTokenEstimate).rounded(.up)))
+            expectedStatedBudgetTokens(condensing: content, ratio: ratio, maxChunkTokens: maxChunkTokens))
     }
 
-    /// The bytes the stated budget should name for a call condensing
-    /// `content`: the stated share of the content, capped at what a full
-    /// `maxChunkTokens` of content earns at `ratio` so the final summary of a
-    /// conversation of any length stays bounded. Restated here rather than
-    /// read off the stage, so these tests pin the arithmetic instead of
+    /// The tokens the stated budget should name for a call condensing
+    /// `content`: the stated share of the content's tokens, capped at what a
+    /// full `maxChunkTokens` of content earns at `ratio` so the final summary
+    /// of a conversation of any length stays bounded. Restated here rather
+    /// than read off the stage, so these tests pin the arithmetic instead of
     /// comparing it against itself.
     ///
     /// - Parameters:
     ///   - content: The content the call was asked to condense.
     ///   - ratio: The stage's ``Summarization/summaryTokenRatio``.
     ///   - maxChunkTokens: The stage's ``Summarization/maxChunkTokens``.
-    /// - Returns: The expected stated budget, in UTF-8 bytes.
-    private static func expectedStatedBudgetBytes(
+    /// - Returns: The expected stated budget, in tokens.
+    private static func expectedStatedBudgetTokens(
         condensing content: String,
         ratio: Double,
         maxChunkTokens: Int
     ) -> Int {
         let statedShare = 0.75
         let capTokens = max(Summarization.minimumSummaryTokens, Int((Double(maxChunkTokens) * ratio).rounded(.up)))
-        return min(
-            Int(Double(content.utf8.count) * statedShare),
-            Summarization.characters(forEstimatedTokens: capTokens))
+        return min(Int(Double(counter.count(content)) * statedShare), capTokens)
     }
 
-    /// The byte budget the compaction's FINAL summary must fit for the boundary
-    /// entry to shrink the transcript (task ^xx02yn6): the compacted span's own
-    /// content bytes, minus the shrink margin one estimated token costs, minus
-    /// the pending-runs rendering the boundary entry carries beside the
-    /// summary. Restated here rather than read off the stage, so these tests
-    /// pin the arithmetic instead of comparing it against itself.
+    /// The UTF-8 bytes the first `tokens` tokens of `text` occupy. The word
+    /// count the stage states to the model comes from these bytes. They are
+    /// read from the text itself, cut by the counter, never from a
+    /// conversion factor.
+    ///
+    /// - Parameters:
+    ///   - tokens: The number of tokens to measure.
+    ///   - text: The text the tokens are read from.
+    /// - Returns: The byte size of that prefix.
+    private static func bytes(ofFirst tokens: Int, in text: String) -> Int {
+        counter.prefix(of: text, tokens: tokens).utf8.count
+    }
+
+    /// The token budget the compaction's FINAL summary must fit for the
+    /// boundary entry to shrink the transcript (task ^xx02yn6): the compacted
+    /// span's own tokens, minus the shrink margin of one token, minus the
+    /// pending-runs rendering the boundary entry carries beside the summary.
+    /// The span is counted the way the stage counts it, and the budget is the
+    /// stage's own function of that count.
     ///
     /// - Parameters:
     ///   - oldTurns: The compacted span's turns, each as its own entries.
-    ///   - renderingBytes: The pending-runs rendering's UTF-8 size — `0`, the
-    ///     default, when the compaction tracks no runs.
-    /// - Returns: The expected budget, in UTF-8 bytes.
-    private static func expectedSummaryByteBudget(
+    ///   - renderingTokens: The pending-runs rendering's token count — `0`,
+    ///     the default, when the compaction tracks no runs.
+    /// - Returns: The expected budget, in tokens.
+    /// - Throws: What the counter throws.
+    private static func expectedSummaryTokenBudget(
         compactingOld oldTurns: [[Transcript.Entry]],
-        renderingBytes: Int = 0
-    ) -> Int {
-        let shrinkMarginBytes = 4
-        return spanContentBytes(of: oldTurns) - shrinkMarginBytes - renderingBytes
+        renderingTokens: Int = 0
+    ) throws -> Int {
+        Summarization.summaryTokenBudget(
+            forSpanTokens: try spanTokens(of: oldTurns), pendingRunsRenderingTokens: renderingTokens)
     }
 
-    /// The content bytes of a compacted span's turns — the same measure
-    /// `Compactor`'s did-not-shrink guard sums over the span's entries.
+    /// The tokens of a compacted span's turns: the count of the span's
+    /// entries as one transcript. The stage subtracts the protected entries
+    /// it keeps; no test here protects a tool output, so nothing is
+    /// subtracted.
     ///
     /// - Parameter oldTurns: The compacted span's turns, each as its own entries.
-    /// - Returns: The span's content size, in UTF-8 bytes.
-    private static func spanContentBytes(of oldTurns: [[Transcript.Entry]]) -> Int {
-        oldTurns.flatMap { $0 }.reduce(0) { $0 + Compactor.contentByteCount(of: $1) }
+    /// - Returns: The span's size, in tokens.
+    /// - Throws: What the counter throws.
+    private static func spanTokens(of oldTurns: [[Transcript.Entry]]) throws -> Int {
+        try counter.count(Transcript(entries: oldTurns.flatMap { $0 }))
     }
 
     /// The word count the stage should state to a call whose summary budget is
@@ -235,9 +253,10 @@ struct SummarizationStageTests {
         let compacted = try await stage.apply(
             transcript,
             prompt: prompt,
-            tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+            tokensBefore: try counter.count(transcript),
             priorStagesApplied: [],
-            summarizer: summarizer
+            summarizer: summarizer,
+            counter: counter
         )
         return (compacted, summarizer.receivedPrompts, summarizer.receivedMaxTokens)
     }
@@ -348,7 +367,7 @@ struct SummarizationStageTests {
         let instructions = TranscriptFixtures.makeInstructions()
         let turns = try (1...6).map { try TranscriptFixtures.makeTurn(index: $0, toolOutputText: "old result \($0)") }
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
-        let tokensBefore = Compactor.estimatedTokenCount(of: transcript)
+        let tokensBefore = try counter.count(transcript)
 
         let summarizer = ScriptedSummarizer(responses: ["the compacted turns discussed a search query and its result"])
         let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: 1_000_000)
@@ -358,7 +377,8 @@ struct SummarizationStageTests {
             prompt: .default,
             tokensBefore: tokensBefore,
             priorStagesApplied: ["ToolOutputElision", "TurnTruncation"],
-            summarizer: summarizer
+            summarizer: summarizer,
+            counter: counter
         )
         let unwrapped = try #require(compacted)
 
@@ -392,11 +412,11 @@ struct SummarizationStageTests {
         #expect(segment.content.tokensBefore == tokensBefore)
         // tokensAfter is measured against a provisional build of the final
         // transcript (see Summarization.apply's own doc comment on the
-        // two-pass build) — off by at most a digit or two of JSON-encoded
-        // integer width from a fresh recount of the actual final transcript,
-        // consistent with this estimate never being exact (compaction_plan.md
-        // §1.5).
-        #expect(abs(segment.content.tokensAfter - Compactor.estimatedTokenCount(of: unwrapped.transcript)) <= 1)
+        // two-pass build). The counter reads the text the model reads, and
+        // the CompactionSegment beside it is not that text, so the number the
+        // segment records is the count of the final transcript itself.
+        let finalCount = try counter.count(unwrapped.transcript)
+        #expect(segment.content.tokensAfter == finalCount)
         #expect(segment.content.stagesApplied == ["ToolOutputElision", "TurnTruncation", "Summarization"])
         #expect(segment.content.promptName == "router-default-v4")
 
@@ -418,9 +438,10 @@ struct SummarizationStageTests {
         _ = try await stage.apply(
             transcript,
             prompt: .default,
-            tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+            tokensBefore: try counter.count(transcript),
             priorStagesApplied: [],
-            summarizer: summarizer
+            summarizer: summarizer,
+            counter: counter
         )
 
         #expect(summarizer.receivedPrompts.count == 1)
@@ -445,9 +466,10 @@ struct SummarizationStageTests {
         let compacted = try await stage.apply(
             transcript,
             prompt: customPrompt,
-            tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+            tokensBefore: try counter.count(transcript),
             priorStagesApplied: [],
-            summarizer: summarizer
+            summarizer: summarizer,
+            counter: counter
         )
         let unwrapped = try #require(compacted)
 
@@ -486,6 +508,17 @@ struct SummarizationStageTests {
 
     // MARK: - Map-reduce chunking
 
+    /// The divisor that sizes one map response of the tree-reduce test
+    /// against `maxChunkTokens`: a sixth of it, plus the response's own
+    /// prefix. Three responses of that size fit one reduce group, and six do
+    /// not, so the reduce step groups them in exactly one round.
+    private static let mapResponseShareOfChunk = 6
+
+    /// How many times `maxChunkTokens` an oversized map response of the
+    /// flat-fallback tests holds: twice, so no two responses fit one reduce
+    /// group and the reduce step can make no grouping progress.
+    private static let oversizedResponseChunkMultiple = 2
+
     @Test("a compacted span exceeding maxChunkTokens is split into multiple chunks, each summarized, then the chunk summaries are re-summarized into one final summary")
     func longSpanMapReducesAcrossChunks() async throws {
         let instructions = TranscriptFixtures.makeInstructions()
@@ -493,9 +526,9 @@ struct SummarizationStageTests {
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
 
         // Old turns are 1 and 2 (turns 3...6 are the keepRecentTurns: 4 window).
-        // A maxChunkTokens equal to one old turn's own estimated size forces
+        // A maxChunkTokens equal to one old turn's own counted size forces
         // each old turn into its own chunk: 2 chunks, not 1.
-        let oneTurnTokens = Compactor.estimatedTokenCount(of: Transcript(entries: turns[0]))
+        let oneTurnTokens = try counter.count(Transcript(entries: turns[0]))
 
         let summarizer = ScriptedSummarizer(responses: ["chunk-summary-A", "chunk-summary-B", "final-combined-summary"])
         let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: oneTurnTokens)
@@ -503,9 +536,10 @@ struct SummarizationStageTests {
         let compacted = try await stage.apply(
             transcript,
             prompt: .default,
-            tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+            tokensBefore: try counter.count(transcript),
             priorStagesApplied: [],
-            summarizer: summarizer
+            summarizer: summarizer,
+            counter: counter
         )
         let unwrapped = try #require(compacted)
 
@@ -537,24 +571,29 @@ struct SummarizationStageTests {
         let turns = try (1...10).map { try TranscriptFixtures.makeTurn(index: $0, toolOutputText: "result-\($0)") }
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
 
-        let maxChunkTokens = Compactor.estimatedTokenCount(of: Transcript(entries: turns[0]))
+        let maxChunkTokens = try counter.count(Transcript(entries: turns[0]))
 
-        // Each map response is sized at roughly maxChunkTokens/4 estimated
-        // tokens — small enough that several fit in one reduce group, but 6
-        // of them combined comfortably exceed maxChunkTokens, forcing the
-        // reduce step to group rather than flat-join everything into a
-        // single over-budget call. The exact grouping is derived below via
-        // `Summarization.chunkStrings` itself (the same function production
-        // code uses) rather than hand-computed, since the "map-N-" prefix
-        // shifts each item's exact byte size slightly.
-        let mapResponseTokens = maxChunkTokens / 4
-        let mapResponses = (1...6).map { "map-\($0)-" + String(repeating: "x", count: mapResponseTokens * 4) }
-        let predictedGroups = Summarization.chunkStrings(mapResponses, maxTokens: maxChunkTokens)
+        // Each map response holds a named share of maxChunkTokens: small
+        // enough that several fit in one reduce group, and large enough that
+        // the 6 of them combined exceed maxChunkTokens, so the reduce step
+        // groups rather than flat-joins everything into a single over-budget
+        // call. The "map-N-" prefix adds to each item's size, so the exact
+        // grouping is derived below through `Summarization.chunkStrings`
+        // itself (the same function production code uses) rather than
+        // hand-computed.
+        let mapResponseTokens = maxChunkTokens / Self.mapResponseShareOfChunk
+        let mapResponses = (1...6).map { "map-\($0)-" + String(repeating: "x", count: mapResponseTokens) }
+        let predictedGroups = Summarization.chunkStrings(mapResponses, maxTokens: maxChunkTokens, counter: counter)
         #expect(predictedGroups.count > 1)  // sanity: this scenario truly forces multiple groups
+
+        // Sanity: the first-round answers fit one call together, so the
+        // recursion ends after exactly one more call.
+        let firstRoundAnswers = predictedGroups.indices.map { "round1-group-\($0)" }
+        #expect(counter.count(firstRoundAnswers.joined(separator: "\n\n")) <= maxChunkTokens)
 
         let responses =
             mapResponses  // 6 map calls
-            + predictedGroups.indices.map { "round1-group-\($0)" }  // one reduce call per predicted group
+            + firstRoundAnswers  // one reduce call per predicted group
             + ["final-tree-reduced-summary"]  // 1 final reduce call
         let summarizer = ScriptedSummarizer(responses: responses)
         let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: maxChunkTokens)
@@ -562,9 +601,10 @@ struct SummarizationStageTests {
         let compacted = try await stage.apply(
             transcript,
             prompt: .default,
-            tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+            tokensBefore: try counter.count(transcript),
             priorStagesApplied: [],
-            summarizer: summarizer
+            summarizer: summarizer,
+            counter: counter
         )
         let unwrapped = try #require(compacted)
 
@@ -607,14 +647,14 @@ struct SummarizationStageTests {
         let turns = try (1...7).map { try TranscriptFixtures.makeTurn(index: $0, toolOutputText: "result-\($0)") }
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
 
-        let maxChunkTokens = Compactor.estimatedTokenCount(of: Transcript(entries: turns[0]))
+        let maxChunkTokens = try counter.count(Transcript(entries: turns[0]))
 
         // Each map response is deliberately oversized on its own (twice
         // maxChunkTokens) so the reduce step's chunkStrings groups each one
         // into its own singleton batch — no grouping progress is possible,
         // which must trigger the flat-fallback rather than recursing forever.
-        let oversizedResponse = String(repeating: "y", count: maxChunkTokens * 2 * 4)
-        #expect(Summarization.estimatedTokens(of: oversizedResponse) > maxChunkTokens)
+        let oversizedResponse = String(repeating: "y", count: maxChunkTokens * Self.oversizedResponseChunkMultiple)
+        #expect(counter.count(oversizedResponse) > maxChunkTokens)
 
         let responses = (1...3).map { _ in oversizedResponse } + ["flat-fallback-summary"]
         let summarizer = ScriptedSummarizer(responses: responses)
@@ -623,9 +663,10 @@ struct SummarizationStageTests {
         let compacted = try await stage.apply(
             transcript,
             prompt: .default,
-            tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+            tokensBefore: try counter.count(transcript),
             priorStagesApplied: [],
-            summarizer: summarizer
+            summarizer: summarizer,
+            counter: counter
         )
         let unwrapped = try #require(compacted)
 
@@ -647,9 +688,10 @@ struct SummarizationStageTests {
         let compacted = try await stage.apply(
             transcript,
             prompt: .default,
-            tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+            tokensBefore: try counter.count(transcript),
             priorStagesApplied: [],
-            summarizer: summarizer
+            summarizer: summarizer,
+            counter: counter
         )
         let unwrapped = try #require(compacted)
 
@@ -678,9 +720,10 @@ struct SummarizationStageTests {
         _ = try await stage.apply(
             transcript,
             prompt: .default,
-            tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+            tokensBefore: try counter.count(transcript),
             priorStagesApplied: [],
-            summarizer: summarizer
+            summarizer: summarizer,
+            counter: counter
         )
 
         let ceiling = try #require(summarizer.receivedMaxTokens.first)
@@ -698,7 +741,7 @@ struct SummarizationStageTests {
         // The bound is on the summary allowance, read back off the ceiling the
         // call was given — the reasoning headroom beside it is never summary
         // text, so it cannot make a summary longer.
-        #expect(ceiling - stage.reasoningTokenHeadroom < Summarization.estimatedTokens(of: condensed))
+        #expect(ceiling - stage.reasoningTokenHeadroom < counter.count(condensed))
     }
 
     @Test("a span too small to compress still gets the minimum a usable summary needs, not a truncated fragment")
@@ -713,13 +756,14 @@ struct SummarizationStageTests {
         _ = try await stage.apply(
             transcript,
             prompt: .default,
-            tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+            tokensBefore: try counter.count(transcript),
             priorStagesApplied: [],
-            summarizer: summarizer
+            summarizer: summarizer,
+            counter: counter
         )
 
         let condensed = try Self.condensedContent(of: try #require(summarizer.receivedPrompts.first))
-        let share = Int((Double(Summarization.estimatedTokens(of: condensed)) * stage.summaryTokenRatio).rounded(.up))
+        let share = Int((Double(counter.count(condensed)) * stage.summaryTokenRatio).rounded(.up))
         #expect(share < Summarization.minimumSummaryTokens)  // sanity: this span's share really is below the floor
         #expect(
             summarizer.receivedMaxTokens == [Summarization.minimumSummaryTokens + stage.reasoningTokenHeadroom])
@@ -728,7 +772,7 @@ struct SummarizationStageTests {
     // MARK: - The final summary is bounded against the span, and the budget is stated to the model
 
     /// One sentence a scripted summarizer answers with, repeated to build an
-    /// answer that overruns the span byte budget its compaction earns.
+    /// answer that overruns the span token budget its compaction earns.
     ///
     /// It ends in a period and a space, so a cut at a sentence boundary has
     /// somewhere to land.
@@ -736,10 +780,10 @@ struct SummarizationStageTests {
         "The service reads its whole configuration from environment variables at startup. "
 
     /// How many times ``summarySentence`` repeats to make one over-long answer
-    /// — far past the span byte budget every small fixture span here earns.
+    /// — far past the span token budget every small fixture span here earns.
     private static let summarySentenceRepeats = 12
 
-    /// The tool-output text that makes a compacted span's byte budget larger
+    /// The tool-output text that makes a compacted span's token budget larger
     /// than an answer of ``underSpanBudgetAnswerRepeats`` sentences, while
     /// that answer still overruns the compression allowance the call
     /// generated under — the band the old ratio cut took and the span bound
@@ -747,17 +791,17 @@ struct SummarizationStageTests {
     private static let largeSpanToolOutput = String(repeating: summarySentence, count: 40)
 
     /// How many times ``summarySentence`` repeats to make an answer that sits
-    /// ABOVE the generation allowance and BELOW the span byte budget a
+    /// ABOVE the generation allowance and BELOW the span token budget a
     /// ``largeSpanToolOutput`` span earns.
     private static let underSpanBudgetAnswerRepeats = 20
 
-    /// The tool-output text that gives a small fixture span a byte budget of
-    /// a few hundred bytes — wide enough that a short condensed answer fits
+    /// The tool-output text that gives a small fixture span a token budget of
+    /// a few hundred tokens — wide enough that a short condensed answer fits
     /// it, and narrow enough that a ``summarySentenceRepeats`` answer
     /// overruns it.
     private static let condensableSpanToolOutput = String(repeating: summarySentence, count: 2)
 
-    /// The tool-output text that sizes a span so its byte budget keeps some
+    /// The tool-output text that sizes a span so its token budget keeps some
     /// whole sections of a ``sectionedAnswerSection(index:)`` answer and not
     /// all of them, so the section-aligned cut point is observable.
     private static let sectionedCutSpanToolOutput = String(repeating: summarySentence, count: 6)
@@ -767,7 +811,7 @@ struct SummarizationStageTests {
     /// full sentences.
     ///
     /// Every index the tests use is a single digit, so each section holds the
-    /// same byte count and the section a cut keeps or drops is deterministic.
+    /// same token count and the section a cut keeps or drops is deterministic.
     ///
     /// - Parameter index: The section's number.
     /// - Returns: The section, one line.
@@ -808,15 +852,17 @@ struct SummarizationStageTests {
         let assembled = try #require(prompts.first)
         let condensed = try Self.condensedContent(of: assembled)
         // The stated budget is a share of the CONTENT the call condenses —
-        // near the span byte budget the compaction enforces — never the compression
+        // near the span token budget the compaction enforces — never the compression
         // allowance. The instrumented Qwen probes of 2026-08-20 measured why:
         // an allowance-derived 85-word target against an eight-section
         // verbatim-fact demand is unsatisfiable, and the thinking model spent
         // whole 4224- and 8320-token ceilings drafting and word-counting
         // inside `<think>`, answering EMPTY on 2 of 2 seeds both times.
-        let words = Self.expectedBudgetWords(
-            forBytes: Self.expectedStatedBudgetBytes(
-                condensing: condensed, ratio: stage.summaryTokenRatio, maxChunkTokens: stage.maxChunkTokens))
+        // The word count comes from the bytes of the first stated tokens of
+        // the content itself, never from a conversion factor.
+        let statedTokens = Self.expectedStatedBudgetTokens(
+            condensing: condensed, ratio: stage.summaryTokenRatio, maxChunkTokens: stage.maxChunkTokens)
+        let words = Self.expectedBudgetWords(forBytes: Self.bytes(ofFirst: statedTokens, in: condensed))
         // "about N words ... never count": the same probes captured the model
         // counting its draft word by word against the target, so the line
         // forbids the verification outright as its own rule.
@@ -852,21 +898,20 @@ struct SummarizationStageTests {
 
         let assembled = try #require(outcome.prompts.first)
         let condensed = try Self.condensedContent(of: assembled)
-        let statedBytes = Self.expectedStatedBudgetBytes(
+        let statedTokens = Self.expectedStatedBudgetTokens(
             condensing: condensed, ratio: stage.summaryTokenRatio, maxChunkTokens: stage.maxChunkTokens)
         // Sanity: this span's ask really is above the old quarter-of-content
         // allowance, so the invariant is doing work here.
-        let quarterOfContent = Int((Double(Summarization.estimatedTokens(of: condensed)) * stage.summaryTokenRatio).rounded(.up))
-        let statedTokens = Int((Double(statedBytes) / Compactor.charsPerTokenEstimate).rounded(.up))
+        let quarterOfContent = Int((Double(counter.count(condensed)) * stage.summaryTokenRatio).rounded(.up))
         #expect(statedTokens > quarterOfContent)
 
         // The answer room the ceiling leaves after the reasoning headroom
         // covers the stated ask.
         let ceiling = try #require(outcome.ceilings.first)
-        #expect(Summarization.characters(forEstimatedTokens: ceiling - stage.reasoningTokenHeadroom) >= statedBytes)
+        #expect(ceiling - stage.reasoningTokenHeadroom >= statedTokens)
     }
 
-    @Test("an answer that fits the span byte budget is stored word for word, however far over the compression target it is")
+    @Test("an answer that fits the span token budget is stored word for word, however far over the compression target it is")
     func anAnswerInsideTheSpanBudgetIsStoredUnchanged() async throws {
         // The invariant a compaction needs is "the boundary entry is smaller than
         // the span it replaces" — `Compactor.compact`'s did-not-shrink guard.
@@ -880,15 +925,15 @@ struct SummarizationStageTests {
         let answer = String(repeating: Self.summarySentence, count: Self.underSpanBudgetAnswerRepeats)
         let outcome = try await Self.compactionOutcome(compacting: turns, with: stage, prompt: .default, answering: [answer])
 
-        let budget = Self.expectedSummaryByteBudget(compactingOld: Array(turns.prefix(1)))
-        #expect(answer.utf8.count <= budget)  // sanity: the answer fits the span budget
+        let budget = try Self.expectedSummaryTokenBudget(compactingOld: Array(turns.prefix(1)))
+        #expect(counter.count(answer) <= budget)  // sanity: the answer fits the span budget
         // Sanity: the answer overruns a quarter of the call's content — the
         // old compression-ratio bound — so the old ratio cut would have fired
         // here.
         let condensed = try Self.condensedContent(of: try #require(outcome.prompts.first))
         let quarterOfContent = Int(
-            (Double(Summarization.estimatedTokens(of: condensed)) * stage.summaryTokenRatio).rounded(.up))
-        #expect(Summarization.estimatedTokens(of: answer) > quarterOfContent)
+            (Double(counter.count(condensed)) * stage.summaryTokenRatio).rounded(.up))
+        #expect(counter.count(answer) > quarterOfContent)
 
         #expect(outcome.prompts.count == 1)  // no condense pass for an answer that fits
         let compacted = try #require(outcome.compacted)
@@ -896,7 +941,7 @@ struct SummarizationStageTests {
         #expect(compacted.summaryCut == false)
     }
 
-    @Test("an answer over the span byte budget gets one condense call, and a condensed answer that fits is stored with no cut")
+    @Test("an answer over the span token budget gets one condense call, and a condensed answer that fits is stored with no cut")
     func anOversizedAnswerIsCondensedOnceBeforeAnyCut() async throws {
         // Recovery before destruction (task ^xx02yn6): the model is asked to
         // condense its own summary once, with the tighter budget stated, and
@@ -908,15 +953,18 @@ struct SummarizationStageTests {
         let outcome = try await Self.compactionOutcome(
             compacting: turns, with: stage, prompt: .default, answering: [oversized, condensedAnswer])
 
-        let budget = Self.expectedSummaryByteBudget(compactingOld: Array(turns.prefix(1)))
-        #expect(oversized.utf8.count > budget)  // sanity: the first answer overruns
-        #expect(condensedAnswer.utf8.count <= budget)  // sanity: the condensed answer fits
+        let budget = try Self.expectedSummaryTokenBudget(compactingOld: Array(turns.prefix(1)))
+        #expect(counter.count(oversized) > budget)  // sanity: the first answer overruns
+        #expect(counter.count(condensedAnswer) <= budget)  // sanity: the condensed answer fits
 
         #expect(outcome.prompts.count == 2)
         let condensePrompt = outcome.prompts[1]
         #expect(condensePrompt.contains(oversized))
         #expect(condensePrompt.contains("Rewrite it"))
-        #expect(condensePrompt.contains("about \(Self.expectedBudgetWords(forBytes: budget)) words"))
+        // The re-ask states the budget in words, read off the bytes the first
+        // `budget` tokens of the oversized answer itself occupy.
+        let budgetWords = Self.expectedBudgetWords(forBytes: Self.bytes(ofFirst: budget, in: oversized))
+        #expect(condensePrompt.contains("about \(budgetWords) words"))
 
         let compacted = try #require(outcome.compacted)
         #expect(compacted.summary == condensedAnswer)
@@ -935,13 +983,13 @@ struct SummarizationStageTests {
         let outcome = try await Self.compactionOutcome(
             compacting: turns, with: stage, prompt: .default, answering: [oversized, stillOversized])
 
-        let budget = Self.expectedSummaryByteBudget(compactingOld: Array(turns.prefix(1)))
-        #expect(stillOversized.utf8.count > budget)  // sanity: the condense pass still overruns
+        let budget = try Self.expectedSummaryTokenBudget(compactingOld: Array(turns.prefix(1)))
+        #expect(counter.count(stillOversized) > budget)  // sanity: the condense pass still overruns
 
         #expect(outcome.prompts.count == 2)  // exactly one condense pass, never a second
         let compacted = try #require(outcome.compacted)
         #expect(compacted.summaryCut)
-        #expect(compacted.summary.utf8.count <= budget)
+        #expect(counter.count(compacted.summary) <= budget)
         // The cut takes the smaller candidate — the condensed answer — and
         // lands on a sentence boundary, because a summary is what a resumed
         // session reads.
@@ -955,18 +1003,18 @@ struct SummarizationStageTests {
     ///
     /// The map call is asked for ``Summarization/statedBudgetShareOfContent``
     /// of its own content, while the condense re-ask is asked for the whole
-    /// span byte budget, capped at what a full `maxChunkTokens` of content
+    /// span token budget, capped at what a full `maxChunkTokens` of content
     /// earns. A span this size makes that cap the binding one, so the two
     /// allowances part company — the shape the real-model compaction of 2026-09-01
     /// measured at a ceiling of 628 against one of 617.
     private static let cappedAllowanceSpanToolOutput = String(repeating: summarySentence, count: 30)
 
     /// How many times ``summarySentence`` repeats to make an answer that
-    /// overruns the byte budget a ``cappedAllowanceSpanToolOutput`` span earns.
+    /// overruns the token budget a ``cappedAllowanceSpanToolOutput`` span earns.
     private static let cappedAllowanceAnswerRepeats = 40
 
     /// The tool-output text that sizes a span so an
-    /// ``answerStatingEachLineTwice()`` answer overruns its byte budget while
+    /// ``answerStatingEachLineTwice()`` answer overruns its token budget while
     /// the distinct lines of that answer fit inside it — the band the free
     /// repair decides.
     private static let twiceStatedAnswerSpanToolOutput = String(repeating: summarySentence, count: 4)
@@ -1010,8 +1058,8 @@ struct SummarizationStageTests {
         let outcome = try await Self.compactionOutcome(
             compacting: turns, with: stage, prompt: .default, answering: [oversized, condensedAnswer])
 
-        let budget = Self.expectedSummaryByteBudget(compactingOld: Array(turns.prefix(1)))
-        #expect(oversized.utf8.count > budget)  // sanity: the map answer overruns, so the condense rung fires
+        let budget = try Self.expectedSummaryTokenBudget(compactingOld: Array(turns.prefix(1)))
+        #expect(counter.count(oversized) > budget)  // sanity: the map answer overruns, so the condense rung fires
 
         #expect(outcome.ceilings.count == 2)
         let mapCeiling = try #require(outcome.ceilings.first)
@@ -1033,15 +1081,15 @@ struct SummarizationStageTests {
         let outcome = try await Self.compactionOutcome(
             compacting: turns, with: stage, prompt: .default, answering: [scripted.answer])
 
-        let budget = Self.expectedSummaryByteBudget(compactingOld: Array(turns.prefix(1)))
+        let budget = try Self.expectedSummaryTokenBudget(compactingOld: Array(turns.prefix(1)))
         // Sanity: the answer as written really overruns the budget, and its
         // distinct lines really fit it, so the free repair is what decides.
         #expect(
-            scripted.answer.utf8.count > budget,
-            "the answer holds \(scripted.answer.utf8.count) bytes against a \(budget)-byte budget")
+            counter.count(scripted.answer) > budget,
+            "the answer holds \(counter.count(scripted.answer)) tokens against a \(budget)-token budget")
         #expect(
-            scripted.distinct.utf8.count <= budget,
-            "the distinct lines hold \(scripted.distinct.utf8.count) bytes against a \(budget)-byte budget")
+            counter.count(scripted.distinct) <= budget,
+            "the distinct lines hold \(counter.count(scripted.distinct)) tokens against a \(budget)-token budget")
 
         #expect(outcome.prompts.count == 1)
         let compacted = try #require(outcome.compacted)
@@ -1067,8 +1115,8 @@ struct SummarizationStageTests {
             answering: [Self.loopedAnswer(markedBy: { _ in "- " }), oversized]
         )
 
-        let budget = Self.expectedSummaryByteBudget(compactingOld: Array(turns.prefix(1)))
-        #expect(oversized.utf8.count > budget)  // sanity: the re-asked answer overruns
+        let budget = try Self.expectedSummaryTokenBudget(compactingOld: Array(turns.prefix(1)))
+        #expect(counter.count(oversized) > budget)  // sanity: the re-asked answer overruns
 
         #expect(outcome.prompts.count == 2)
         #expect(try #require(outcome.prompts.last).contains(Summarization.repetitionRetryDirective))
@@ -1089,7 +1137,7 @@ struct SummarizationStageTests {
         let outcome = try await Self.compactionOutcome(
             compacting: turns, with: stage, prompt: .default, answering: [oversized, looped])
 
-        #expect(looped.utf8.count < oversized.utf8.count)  // sanity: the loop is the smaller candidate
+        #expect(counter.count(looped) < counter.count(oversized))  // sanity: the loop is the smaller candidate
 
         #expect(outcome.prompts.count == 2)
         let compacted = try #require(outcome.compacted)
@@ -1113,13 +1161,13 @@ struct SummarizationStageTests {
         let outcome = try await Self.compactionOutcome(
             compacting: turns, with: stage, prompt: .default, answering: [answer, answer])
 
-        let budget = Self.expectedSummaryByteBudget(compactingOld: Array(turns.prefix(1)))
+        let budget = try Self.expectedSummaryTokenBudget(compactingOld: Array(turns.prefix(1)))
         let kept = sections.prefix(Self.keptSectionCount).joined(separator: "\n")
         let oneSectionMore = sections.prefix(Self.keptSectionCount + 1).joined(separator: "\n")
         // Sanity: the kept sections really fit the budget, and one more really
         // does not, so the expected cut point is observable.
-        #expect(kept.utf8.count <= budget)
-        #expect(oneSectionMore.utf8.count > budget)
+        #expect(counter.count(kept) <= budget)
+        #expect(counter.count(oneSectionMore) > budget)
 
         let compacted = try #require(outcome.compacted)
         #expect(compacted.summary == kept)
@@ -1131,7 +1179,7 @@ struct SummarizationStageTests {
         // The section alignment exists so a stored summary never stops inside a
         // section a LATER section follows — the `^51e9dyq` defect. There is no
         // later section to protect when the overrun sits in the final one, so
-        // aligning there drops a whole section to shed a few bytes. The
+        // aligning there drops a whole section to shed a few tokens. The
         // real-model compaction of 2026-09-01 measured that trade: 906 bytes shed to
         // stay inside a budget the text overran by 41, and the fact stated last
         // in the span went with them.
@@ -1142,20 +1190,20 @@ struct SummarizationStageTests {
         let outcome = try await Self.compactionOutcome(
             compacting: turns, with: stage, prompt: .default, answering: [answer, answer])
 
-        let budget = Self.expectedSummaryByteBudget(compactingOld: Array(turns.prefix(1)))
+        let budget = try Self.expectedSummaryTokenBudget(compactingOld: Array(turns.prefix(1)))
         let whole = sections.prefix(Self.keptSectionCount).joined(separator: "\n")
         // Sanity: the whole sections really fit, and the final section really
         // does not, so the cut point inside that final section is observable.
-        #expect(whole.utf8.count <= budget)
-        #expect(answer.utf8.count > budget)
+        #expect(counter.count(whole) <= budget)
+        #expect(counter.count(answer) > budget)
 
         let compacted = try #require(outcome.compacted)
         #expect(compacted.summaryCut)
-        #expect(compacted.summary.utf8.count <= budget)
+        #expect(counter.count(compacted.summary) <= budget)
         #expect(answer.hasPrefix(compacted.summary))
         #expect(
-            compacted.summary.utf8.count > whole.utf8.count,
-            "the cut stored \(compacted.summary.utf8.count) bytes against \(whole.utf8.count) of whole sections"
+            counter.count(compacted.summary) > counter.count(whole),
+            "the cut stored \(counter.count(compacted.summary)) tokens against \(counter.count(whole)) of whole sections"
         )
     }
 
@@ -1164,7 +1212,7 @@ struct SummarizationStageTests {
         // When not even one whole section fits the budget, a section-aligned
         // cut would store nothing — the `^bgxtdk3` defect. The cut falls back
         // to the sentence boundary inside the first section instead, which is
-        // the trade ``Summarization/cut(_:toCharacters:)`` documents.
+        // the trade ``Summarization/cut(_:toTokens:counter:)`` documents.
         let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: Self.wholeSpanChunkTokens)
         let firstSection =
             "1. Intent — " + String(repeating: Self.summarySentence, count: Self.summarySentenceRepeats)
@@ -1173,14 +1221,14 @@ struct SummarizationStageTests {
         let outcome = try await Self.compactionOutcome(
             compacting: turns, with: stage, prompt: .default, answering: [answer, answer])
 
-        let budget = Self.expectedSummaryByteBudget(compactingOld: Array(turns.prefix(1)))
-        #expect(firstSection.utf8.count > budget)  // sanity: not even one whole section fits
+        let budget = try Self.expectedSummaryTokenBudget(compactingOld: Array(turns.prefix(1)))
+        #expect(counter.count(firstSection) > budget)  // sanity: not even one whole section fits
 
         let compacted = try #require(outcome.compacted)
         #expect(compacted.summaryCut)
         #expect(answer.hasPrefix(compacted.summary))
         #expect(compacted.summary.hasSuffix("."))
-        #expect(compacted.summary.utf8.count <= budget)
+        #expect(counter.count(compacted.summary) <= budget)
     }
 
     @Test("a short answer is stored word for word, with no condense pass and no cut")
@@ -1214,10 +1262,10 @@ struct SummarizationStageTests {
         let outcome = try await Self.compactionOutcome(
             compacting: turns, with: stage, prompt: .default, answering: [answer, answer])
 
-        let budget = Self.expectedSummaryByteBudget(compactingOld: Array(turns.prefix(1)))
+        let budget = try Self.expectedSummaryTokenBudget(compactingOld: Array(turns.prefix(1)))
         let compacted = try #require(outcome.compacted)
         #expect(compacted.summaryCut)
-        #expect(compacted.summary.utf8.count <= budget)
+        #expect(counter.count(compacted.summary) <= budget)
         #expect(answer.hasPrefix(compacted.summary))
         #expect(compacted.summary.hasSuffix(word.trimmingCharacters(in: .whitespaces)))
     }
@@ -1235,10 +1283,10 @@ struct SummarizationStageTests {
         let outcome = try await Self.compactionOutcome(
             compacting: turns, with: stage, prompt: .default, answering: [answer, answer])
 
-        let budget = Self.expectedSummaryByteBudget(compactingOld: Array(turns.prefix(1)))
+        let budget = try Self.expectedSummaryTokenBudget(compactingOld: Array(turns.prefix(1)))
         let compacted = try #require(outcome.compacted)
         #expect(!compacted.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        #expect(compacted.summary.utf8.count <= budget)
+        #expect(counter.count(compacted.summary) <= budget)
     }
 
     @Test("a chunked compaction hands each map call's answer to the reduce round whole — no per-call cut")
@@ -1250,7 +1298,7 @@ struct SummarizationStageTests {
         // final summary is bounded against the span, once, where the
         // invariant lives.
         let turns = try (1...6).map { try TranscriptFixtures.makeTurn(index: $0, toolOutputText: "result-\($0)") }
-        let oneTurnTokens = Compactor.estimatedTokenCount(of: Transcript(entries: turns[0]))
+        let oneTurnTokens = try counter.count(Transcript(entries: turns[0]))
         let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: oneTurnTokens)
         let mapAnswerA = "A: " + String(repeating: Self.summarySentence, count: Self.summarySentenceRepeats)
         let mapAnswerB = "B: " + String(repeating: Self.summarySentence, count: Self.summarySentenceRepeats)
@@ -1260,8 +1308,8 @@ struct SummarizationStageTests {
 
         // Sanity: the final answer fits the span budget, so no condense pass
         // follows the reduce round and the call count stays observable.
-        let budget = Self.expectedSummaryByteBudget(compactingOld: Array(turns.prefix(2)))
-        #expect(finalAnswer.utf8.count <= budget)
+        let budget = try Self.expectedSummaryTokenBudget(compactingOld: Array(turns.prefix(2)))
+        #expect(counter.count(finalAnswer) <= budget)
 
         // 2 map calls + 1 reduce call, and the reduce call reads both map
         // answers WHOLE — the old per-call cut would have trimmed each one
@@ -1281,16 +1329,17 @@ struct SummarizationStageTests {
 
         // One old turn per chunk (as `longSpanMapReducesAcrossChunks` sets up):
         // 2 map calls, then 1 reduce call over their summaries.
-        let oneTurnTokens = Compactor.estimatedTokenCount(of: Transcript(entries: turns[0]))
+        let oneTurnTokens = try counter.count(Transcript(entries: turns[0]))
         let summarizer = ScriptedSummarizer(responses: ["chunk-summary-A", "chunk-summary-B", "final-combined-summary"])
         let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: oneTurnTokens)
 
         _ = try await stage.apply(
             transcript,
             prompt: .default,
-            tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+            tokensBefore: try counter.count(transcript),
             priorStagesApplied: [],
-            summarizer: summarizer
+            summarizer: summarizer,
+            counter: counter
         )
 
         #expect(summarizer.receivedMaxTokens.count == 3)
@@ -1322,13 +1371,13 @@ struct SummarizationStageTests {
         }
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
 
-        let maxChunkTokens = Compactor.estimatedTokenCount(of: Transcript(entries: turns[0]))
+        let maxChunkTokens = try counter.count(Transcript(entries: turns[0]))
         // Twice the chunk ceiling each, so `chunkStrings` can pair no two of
         // them and `reduce` takes its no-progress fallback over the whole
         // joined set — the one call that must ingest more than maxChunkTokens.
-        let oversizedSummaryTokens = maxChunkTokens * 2
-        let oversizedResponse = String(
-            repeating: "y", count: Summarization.characters(forEstimatedTokens: oversizedSummaryTokens))
+        // Under this counter a response of N tokens is a string of N characters.
+        let oversizedSummaryTokens = maxChunkTokens * Self.oversizedResponseChunkMultiple
+        let oversizedResponse = String(repeating: "y", count: oversizedSummaryTokens)
         let responses = (1...3).map { _ in oversizedResponse } + ["flat-fallback-summary"]
         let summarizer = ScriptedSummarizer(responses: responses)
         // A ratio above one half, because `summarizeOnce` now cuts every map
@@ -1350,16 +1399,17 @@ struct SummarizationStageTests {
         _ = try await stage.apply(
             transcript,
             prompt: .default,
-            tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+            tokensBefore: try counter.count(transcript),
             priorStagesApplied: [],
-            summarizer: summarizer
+            summarizer: summarizer,
+            counter: counter
         )
 
         // 3 map calls + exactly 1 flat-fallback reduce call.
         #expect(summarizer.receivedMaxTokens.count == 4)
         let condensed = try Self.condensedContent(of: try #require(summarizer.receivedPrompts.last))
         // sanity: the fallback really does ingest more than a chunk's worth.
-        #expect(Summarization.estimatedTokens(of: condensed) > maxChunkTokens)
+        #expect(counter.count(condensed) > maxChunkTokens)
 
         let ceiling = try #require(summarizer.receivedMaxTokens.last)
         #expect(
@@ -1372,7 +1422,7 @@ struct SummarizationStageTests {
         // The ratio alone would let this one call's summary allowance grow with
         // the number of chunk summaries joined into it, which is exactly how the
         // final summary of an arbitrarily long span escaped its bound.
-        let unbounded = Int((Double(Summarization.estimatedTokens(of: condensed)) * stage.summaryTokenRatio).rounded(.up))
+        let unbounded = Int((Double(counter.count(condensed)) * stage.summaryTokenRatio).rounded(.up))
         #expect(ceiling - stage.reasoningTokenHeadroom < unbounded)
     }
 
@@ -1387,10 +1437,10 @@ struct SummarizationStageTests {
         }
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
 
-        // One old turn (5 turns, keepRecentTurns: 4), and `chunk(_:maxTokens:)`
+        // One old turn (5 turns, keepRecentTurns: 4), and `chunk(_:maxTokens:counter:)`
         // never splits a turn — so a chunk ceiling well under that turn's own
         // size still yields a single, oversized chunk and a single map call.
-        let oneTurnTokens = Compactor.estimatedTokenCount(of: Transcript(entries: turns[0]))
+        let oneTurnTokens = try counter.count(Transcript(entries: turns[0]))
         let chunkCeilingDivisor = 8
         let maxChunkTokens = oneTurnTokens / chunkCeilingDivisor
 
@@ -1400,15 +1450,16 @@ struct SummarizationStageTests {
         _ = try await stage.apply(
             transcript,
             prompt: .default,
-            tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+            tokensBefore: try counter.count(transcript),
             priorStagesApplied: [],
-            summarizer: summarizer
+            summarizer: summarizer,
+            counter: counter
         )
 
         #expect(summarizer.receivedMaxTokens.count == 1)
         let condensed = try Self.condensedContent(of: try #require(summarizer.receivedPrompts.first))
         // sanity: the lone turn really is bigger than a chunk may be.
-        #expect(Summarization.estimatedTokens(of: condensed) > maxChunkTokens)
+        #expect(counter.count(condensed) > maxChunkTokens)
 
         let ceiling = try #require(summarizer.receivedMaxTokens.first)
         #expect(
@@ -1418,7 +1469,7 @@ struct SummarizationStageTests {
                     ratio: stage.summaryTokenRatio,
                     maxChunkTokens: stage.maxChunkTokens,
                     headroom: stage.reasoningTokenHeadroom))
-        let unbounded = Int((Double(Summarization.estimatedTokens(of: condensed)) * stage.summaryTokenRatio).rounded(.up))
+        let unbounded = Int((Double(counter.count(condensed)) * stage.summaryTokenRatio).rounded(.up))
         #expect(ceiling - stage.reasoningTokenHeadroom < unbounded)
     }
 
@@ -1462,7 +1513,7 @@ struct SummarizationStageTests {
         return ([loopedAnswerOpening] + copies).joined(separator: "\n")
     }
 
-    /// The stage and turns every repetition test compacts with: a span whose byte
+    /// The stage and turns every repetition test compacts with: a span whose token
     /// budget is far wider than any answer below, so the size ladder never
     /// fires and the call count measures the repetition re-ask alone.
     ///
@@ -1535,7 +1586,7 @@ struct SummarizationStageTests {
         #expect(outcome.prompts.count == 2)
         let compacted = try #require(outcome.compacted)
         #expect(compacted.summary == "\(Self.loopedAnswerOpening)\n- \(Self.loopedAnswerLine)")
-        #expect(looped.utf8.count > compacted.summary.utf8.count)
+        #expect(counter.count(looped) > counter.count(compacted.summary))
     }
 
     @Test("an answer that repeats no line is stored as it stands, and costs no second call")
@@ -1581,9 +1632,10 @@ struct SummarizationStageTests {
         _ = try await stage.apply(
             transcript,
             prompt: .default,
-            tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+            tokensBefore: try counter.count(transcript),
             priorStagesApplied: [],
-            summarizer: summarizer
+            summarizer: summarizer,
+            counter: counter
         )
 
         let ceiling = try #require(summarizer.receivedMaxTokens.first)
@@ -1610,9 +1662,10 @@ struct SummarizationStageTests {
         _ = try await stage.apply(
             transcript,
             prompt: .default,
-            tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+            tokensBefore: try counter.count(transcript),
             priorStagesApplied: [],
-            summarizer: summarizer
+            summarizer: summarizer,
+            counter: counter
         )
 
         // This span is small enough that the floor decides the allowance, so
@@ -1643,9 +1696,10 @@ struct SummarizationStageTests {
         let compacted = try await stage.apply(
             transcript,
             prompt: .default,
-            tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+            tokensBefore: try counter.count(transcript),
             priorStagesApplied: [],
-            summarizer: summarizer
+            summarizer: summarizer,
+            counter: counter
         )
 
         #expect(compacted == nil)
@@ -1666,9 +1720,10 @@ struct SummarizationStageTests {
             _ = try await stage.apply(
                 transcript,
                 prompt: .default,
-                tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+                tokensBefore: try counter.count(transcript),
                 priorStagesApplied: [],
-                summarizer: ThrowingSummarizer()
+                summarizer: ThrowingSummarizer(),
+                counter: counter
             )
         }
     }
@@ -1688,9 +1743,10 @@ struct SummarizationStageTests {
             _ = try await stage.apply(
                 transcript,
                 prompt: .default,
-                tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+                tokensBefore: try counter.count(transcript),
                 priorStagesApplied: [],
-                summarizer: summarizer
+                summarizer: summarizer,
+                counter: counter
             )
         }
     }
@@ -1708,9 +1764,10 @@ struct SummarizationStageTests {
             _ = try await stage.apply(
                 transcript,
                 prompt: .default,
-                tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+                tokensBefore: try counter.count(transcript),
                 priorStagesApplied: [],
-                summarizer: summarizer
+                summarizer: summarizer,
+                counter: counter
             )
         }
     }
@@ -1723,7 +1780,7 @@ struct SummarizationStageTests {
 
         // One old turn per chunk (as `longSpanMapReducesAcrossChunks` sets up):
         // 2 map calls that answer, then 1 reduce call that answers nothing.
-        let oneTurnTokens = Compactor.estimatedTokenCount(of: Transcript(entries: turns[0]))
+        let oneTurnTokens = try counter.count(Transcript(entries: turns[0]))
         let summarizer = ScriptedSummarizer(responses: ["chunk-summary-A", "chunk-summary-B", ""])
         let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: oneTurnTokens)
 
@@ -1731,9 +1788,10 @@ struct SummarizationStageTests {
             _ = try await stage.apply(
                 transcript,
                 prompt: .default,
-                tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+                tokensBefore: try counter.count(transcript),
                 priorStagesApplied: [],
-                summarizer: summarizer
+                summarizer: summarizer,
+                counter: counter
             )
         }
         #expect(summarizer.receivedPrompts.count == 3)
@@ -1803,14 +1861,15 @@ struct SummarizationStageTests {
                 index: index, promptText: text, toolOutputText: text, responseText: text)
         }
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
-        return (turns, transcript, makeCompactionForcingBudget(for: transcript))
+        let budget = try makeCompactionForcingBudget(for: transcript)
+        return (turns, transcript, budget)
     }
 
     /// The small-span fixture the last-resort cut is exercised over through
     /// `Compactor.compact`: a header, six SMALL turns, and the same budget
     /// every fixture here uses.
     ///
-    /// Small on purpose: the span's byte budget sits far under every scripted
+    /// Small on purpose: the span's token budget sits far under every scripted
     /// answer, and under the ``Summarization/minimumSummaryTokens`` floor's
     /// own size, so a compaction of this span can only shrink through the recovery
     /// ladder — and the ladder's last step, the cut, is what the tests over
@@ -1824,7 +1883,8 @@ struct SummarizationStageTests {
     ) {
         let turns = try TranscriptFixtures.makeTurns(compactionFixtureTurnCount)
         let transcript = Transcript(entries: [TranscriptFixtures.makeInstructions()] + turns.flatMap { $0 })
-        return (turns, transcript, makeCompactionForcingBudget(for: transcript))
+        let budget = try makeCompactionForcingBudget(for: transcript)
+        return (turns, transcript, budget)
     }
 
     /// The budget that forces `transcript` all the way through to
@@ -1834,8 +1894,9 @@ struct SummarizationStageTests {
     ///
     /// - Parameter transcript: The transcript the target is measured against.
     /// - Returns: The budget to compact it with.
-    private static func makeCompactionForcingBudget(for transcript: Transcript) -> TokenBudget {
-        let afterBoth = Compactor.estimatedTokenCount(of: TurnTruncation().apply(ToolOutputElision().apply(transcript)))
+    /// - Throws: What the counter throws.
+    private static func makeCompactionForcingBudget(for transcript: Transcript) throws -> TokenBudget {
+        let afterBoth = try counter.count(TurnTruncation().apply(ToolOutputElision().apply(transcript)))
         let targetShareOfDeterministicFloor = 2
         return TokenBudget(
             limit: compactionFixtureBudgetLimit,
@@ -1848,20 +1909,21 @@ struct SummarizationStageTests {
 
     /// How many runs ``makeBackgroundRuns()`` tracks — the shape task ^64f3hnv
     /// measured: ten runs with an eight-byte op and no progress render 973
-    /// bytes, a cost the compaction pays per run rather than per span byte.
+    /// bytes, a cost the compaction pays per run rather than per span token.
     private static let backgroundRunCount = 10
 
     /// How many times each text field of a ``makeBackgroundRunsCompactionFixture()``
-    /// turn repeats its phrase — sized so the compacted span comes to roughly 580
-    /// estimated tokens: large enough that the retention bound sits under the
-    /// span, and small enough that the ten background runs' rendering eats the
-    /// whole margin between the two.
-    private static let backgroundRunsFixtureRepeatsPerText = 20
+    /// turn repeats its phrase — sized so the compacted span comes to about
+    /// 1,180 tokens: under the stage's default ``Summarization/maxChunkTokens``,
+    /// so one call condenses it; larger than the ten background runs'
+    /// rendering; and close enough to it that the rendering eats most of the
+    /// margin between the two.
+    private static let backgroundRunsFixtureRepeatsPerText = 10
 
     /// How many times each text field of an
     /// ``makeOverwhelmedSpanCompactionFixture()`` turn repeats its phrase — sized so
-    /// the span's content bytes stay UNDER the background runs' rendering plus the
-    /// shrink margin, which drives the span byte budget to zero or below: the
+    /// the span's tokens stay UNDER the background runs' rendering plus the
+    /// shrink margin, which drives the span token budget to zero or below: the
     /// geometry where no summary of any length can make the compaction shrink, and
     /// only the did-not-shrink guard can answer.
     private static let overwhelmedSpanRepeatsPerText = 8
@@ -1889,7 +1951,7 @@ struct SummarizationStageTests {
     /// The fixture `aCompactionWithBackgroundRunsOverAModestSpanIsStillApplied` compactions: a
     /// header, six MODEST turns, and the usual compaction-forcing budget. Modest is
     /// the point — the span is small enough that the background runs' rendering
-    /// spends the whole retention margin, and large enough that a summary cut
+    /// spends most of the retention margin, and large enough that a summary cut
     /// down for that rendering still shrinks the transcript.
     ///
     /// - Returns: The turns in order, the transcript over them, and the budget
@@ -1901,10 +1963,10 @@ struct SummarizationStageTests {
         try makeSizedCompactionFixture(phrase: "modest span", repeatsPerText: backgroundRunsFixtureRepeatsPerText)
     }
 
-    /// The fixture whose span the background runs' rendering overwhelms: small
-    /// enough that the rendering alone reaches the retention bound, and still
-    /// larger than the rendering — so a cut that (wrongly) emptied the summary
-    /// would make the compaction shrink and be applied carrying no text at all.
+    /// The fixture whose span the background runs' rendering overwhelms: the
+    /// rendering alone reaches the retention bound, so the span token budget
+    /// is zero or below. A cut that (wrongly) emptied the summary to fit that
+    /// budget would store a boundary entry that carries no text at all.
     ///
     /// - Returns: The turns in order, the transcript over them, and the budget
     ///   to compact it against.
@@ -1918,14 +1980,15 @@ struct SummarizationStageTests {
     @Test("Compactor.compact wires Summarization in as the final stage when the deterministic stages alone aren't enough")
     func compactorWiresInSummarizationAsFinalStage() async throws {
         let (turns, transcript, budget) = try Self.makeModelAssistedCompactionFixture()
-        let tokensBefore = Compactor.estimatedTokenCount(of: transcript)
+        let tokensBefore = try counter.count(transcript)
 
         // The two old turns' content comfortably exceeds Summarization's
         // default maxChunkTokens (2000), so each becomes its own chunk: 2 map
         // calls, then 1 reduce call over their summaries — the reduce call's
         // result is what CompactionResult.summary carries.
         let summarizer = ScriptedSummarizer(responses: ["chunk-summary-1", "chunk-summary-2", "end-to-end summary"])
-        let (resultTranscript, result) = try await Compactor.compact(transcript, budget: budget, summarizer: summarizer)
+        let (resultTranscript, result) = try await Compactor.compact(
+            transcript, budget: budget, counter: counter, summarizer: summarizer)
 
         #expect(result.stagesApplied == ["ToolOutputElision", "TurnTruncation", "Summarization"])
         #expect(result.summary == "end-to-end summary")
@@ -1953,11 +2016,11 @@ struct SummarizationStageTests {
         }
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
 
-        let tokensBefore = Compactor.estimatedTokenCount(of: transcript)
+        let tokensBefore = try counter.count(transcript)
         let limit = 1_000_000
         let budget = TokenBudget(limit: limit, trigger: 0.80, target: Double(tokensBefore / 2) / Double(limit))
 
-        let (resultTranscript, result) = try await Compactor.compact(transcript, budget: budget)
+        let (resultTranscript, result) = try await Compactor.compact(transcript, budget: budget, counter: counter)
 
         #expect(resultTranscript == transcript)
         #expect(result.stagesApplied.isEmpty)
@@ -1970,24 +2033,24 @@ struct SummarizationStageTests {
     func compactReportsTheLastResortCut() async throws {
         // The trim fires only when the compaction would otherwise fail to shrink,
         // and the report records when it fires (task ^xx02yn6). A span this
-        // small earns a byte budget far under every candidate answer, so the
+        // small earns a token budget far under every candidate answer, so the
         // recovery ladder runs to its last step and `CompactionResult` says
         // so.
         let (turns, transcript, budget) = try Self.makeSmallSpanCompactionFixture()
-        let tokensBefore = Compactor.estimatedTokenCount(of: transcript)
+        let tokensBefore = try counter.count(transcript)
         let oldTurns = Array(turns.prefix(Self.compactionFixtureTurnCount - Summarization().keepRecentTurns))
         let summarizer = OversizedSummarizer(summary: String(repeating: "verbose summary ", count: tokensBefore))
-        let spanBudget = Self.expectedSummaryByteBudget(compactingOld: oldTurns)
-        #expect(summarizer.summary.utf8.count > spanBudget)  // sanity: every answer overruns
+        let spanBudget = try Self.expectedSummaryTokenBudget(compactingOld: oldTurns)
+        #expect(counter.count(summarizer.summary) > spanBudget)  // sanity: every answer overruns
 
-        let (_, result) = try await Compactor.compact(transcript, budget: budget, summarizer: summarizer)
+        let (_, result) = try await Compactor.compact(transcript, budget: budget, counter: counter, summarizer: summarizer)
 
         #expect(result.stagesApplied.last == Summarization.stageName)
         #expect(result.tokensAfter < tokensBefore)
         #expect(result.summaryCut)
         let summary = try #require(result.summary)
         #expect(summarizer.summary.hasPrefix(summary))
-        #expect(summary.utf8.count <= spanBudget)
+        #expect(counter.count(summary) <= spanBudget)
     }
 
     @Test("a result that recorded the last-resort cut keeps it through the summarizer-model naming copy")
@@ -2009,12 +2072,12 @@ struct SummarizationStageTests {
         // compacts, and the guard below it is untouched — it stays the backstop
         // for the compaction no cut can save.
         let (_, transcript, budget) = try Self.makeModelAssistedCompactionFixture()
-        let tokensBefore = Compactor.estimatedTokenCount(of: transcript)
+        let tokensBefore = try counter.count(transcript)
         let summarizer = OversizedSummarizer(summary: String(repeating: "verbose summary ", count: tokensBefore))
         // sanity: the raw answer really would have grown the transcript
-        #expect(Summarization.estimatedTokens(of: summarizer.summary) > tokensBefore)
+        #expect(counter.count(summarizer.summary) > tokensBefore)
 
-        let (_, result) = try await Compactor.compact(transcript, budget: budget, summarizer: summarizer)
+        let (_, result) = try await Compactor.compact(transcript, budget: budget, counter: counter, summarizer: summarizer)
 
         #expect(result.stagesApplied == ["ToolOutputElision", "TurnTruncation", "Summarization"])
         #expect(result.tokensAfter < tokensBefore)
@@ -2035,27 +2098,26 @@ struct SummarizationStageTests {
         // — and a session that tracks background runs is the case the rendering
         // exists for. The cut now charges the rendering against the bound.
         let (turns, transcript, budget) = try Self.makeBackgroundRunsCompactionFixture()
-        let tokensBefore = Compactor.estimatedTokenCount(of: transcript)
+        let tokensBefore = try counter.count(transcript)
         let pendingRuns = Self.makeBackgroundRuns()
         let rendering = CompactionSegment.renderedPendingRuns(pendingRuns)
-        let renderingTokens = Summarization.estimatedTokens(of: rendering)
+        let renderingTokens = counter.count(rendering)
         let spanEntries = turns.prefix(Self.compactionFixtureTurnCount - Summarization().keepRecentTurns).flatMap { $0 }
-        let spanTokens = Compactor.estimatedTokenCount(of: Transcript(entries: spanEntries))
+        let spanTokens = try counter.count(Transcript(entries: spanEntries))
 
         let answer = String(repeating: "verbose summary ", count: Self.backgroundRunsAnswerRepeats)
         let summarizer = ScriptedSummarizer(responses: [answer, answer])
         let (_, result) = try await Compactor.compact(
-            transcript, budget: budget, summarizer: summarizer, pendingRuns: pendingRuns)
+            transcript, budget: budget, counter: counter, summarizer: summarizer, pendingRuns: pendingRuns)
 
         // The scenario really is the defect's shape, in the guard's own
-        // units: the rendering leaves room under the span byte budget, and
+        // units: the rendering leaves room under the span token budget, and
         // every candidate answer overruns what is left, so only the recovery
         // ladder's cut can save the compaction.
-        let spanBytes = Self.spanContentBytes(of: [spanEntries])
-        let spanBudget = Self.expectedSummaryByteBudget(
-            compactingOld: [spanEntries], renderingBytes: rendering.utf8.count)
+        let spanBudget = try Self.expectedSummaryTokenBudget(
+            compactingOld: [spanEntries], renderingTokens: renderingTokens)
         #expect(spanBudget > 0)
-        #expect(answer.utf8.count > spanBudget)
+        #expect(counter.count(answer) > spanBudget)
         #expect(renderingTokens < spanTokens)
 
         // Applied, not discarded: the whole entry stays under the span.
@@ -2068,44 +2130,44 @@ struct SummarizationStageTests {
         // summary plus the rendering stay under the span.
         let summary = try #require(result.summary)
         #expect(answer.hasPrefix(summary))
-        #expect(summary.utf8.count + rendering.utf8.count < spanBytes)
+        #expect(counter.count(summary) + renderingTokens < spanTokens)
 
         // Control: the same compaction with no background runs is applied too, so the
         // pending-runs rendering is the one variable in this scenario.
         let controlSummarizer = ScriptedSummarizer(responses: [answer, answer])
-        let (_, control) = try await Compactor.compact(transcript, budget: budget, summarizer: controlSummarizer)
+        let (_, control) = try await Compactor.compact(
+            transcript, budget: budget, counter: counter, summarizer: controlSummarizer)
         #expect(control.stagesApplied.last == Summarization.stageName)
         #expect(control.tokensAfter < tokensBefore)
     }
 
     @Test(
-        "a compaction whose background runs' rendering alone spends the span byte budget is discarded whole — never applied with an emptied summary"
+        "a compaction whose background runs' rendering alone spends the span token budget is discarded whole — never applied with an emptied summary"
     )
     func aCompactionWhosePendingRunsRenderingAloneReachesTheBoundIsDiscarded() async throws {
         // Below this bound no summary of any length can pay for the rendering,
         // so the safe answer is the guard's: discard the compaction and return the
         // original transcript. The dangerous wrong answer is a cut that empties
-        // the summary to make the arithmetic work — the rendering is smaller
-        // than the span, so an emptied entry WOULD shrink the transcript, and
-        // the compaction would be applied carrying no summary text at all.
+        // the summary to make the arithmetic work, so that the compaction would
+        // be applied carrying no summary text at all.
         let (turns, transcript, budget) = try Self.makeOverwhelmedSpanCompactionFixture()
-        let tokensBefore = Compactor.estimatedTokenCount(of: transcript)
+        let tokensBefore = try counter.count(transcript)
         let pendingRuns = Self.makeBackgroundRuns()
         let rendering = CompactionSegment.renderedPendingRuns(pendingRuns)
-        let renderingTokens = Summarization.estimatedTokens(of: rendering)
+        let renderingTokens = counter.count(rendering)
         let spanEntries = turns.prefix(Self.compactionFixtureTurnCount - Summarization().keepRecentTurns).flatMap { $0 }
-        let spanTokens = Compactor.estimatedTokenCount(of: Transcript(entries: spanEntries))
+        let spanTokens = try counter.count(Transcript(entries: spanEntries))
 
         let answer = String(repeating: "verbose summary ", count: Self.backgroundRunsAnswerRepeats)
         let summarizer = ScriptedSummarizer(responses: [answer])
         let (resultTranscript, result) = try await Compactor.compact(
-            transcript, budget: budget, summarizer: summarizer, pendingRuns: pendingRuns)
+            transcript, budget: budget, counter: counter, summarizer: summarizer, pendingRuns: pendingRuns)
 
-        // The geometry: the rendering alone drives the span byte budget to
+        // The geometry: the rendering alone drives the span token budget to
         // zero or below, so no summary of any length can make the compaction
         // shrink, and no condense pass is worth a generation.
-        let spanBudget = Self.expectedSummaryByteBudget(
-            compactingOld: [spanEntries], renderingBytes: rendering.utf8.count)
+        let spanBudget = try Self.expectedSummaryTokenBudget(
+            compactingOld: [spanEntries], renderingTokens: renderingTokens)
         #expect(spanBudget <= 0)
         #expect(renderingTokens > 0)
         #expect(spanTokens > 0)
@@ -2130,7 +2192,7 @@ struct SummarizationStageTests {
         let summarizer = ScriptedSummarizer(responses: [""])
 
         await #expect(throws: SummarizationError.emptySummary) {
-            _ = try await Compactor.compact(transcript, budget: budget, summarizer: summarizer)
+            _ = try await Compactor.compact(transcript, budget: budget, counter: counter, summarizer: summarizer)
         }
     }
 
@@ -2140,12 +2202,13 @@ struct SummarizationStageTests {
         let turns = try (1...6).map { try TranscriptFixtures.makeTurn(index: $0, toolOutputText: "small result") }
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
 
-        let tokensBefore = Compactor.estimatedTokenCount(of: transcript)
+        let tokensBefore = try counter.count(transcript)
         let limit = 1_000_000
         let budget = TokenBudget(limit: limit, trigger: 0.80, target: Double(tokensBefore * 2) / Double(limit))
 
         let summarizer = ScriptedSummarizer(responses: [])
-        let (resultTranscript, result) = try await Compactor.compact(transcript, budget: budget, summarizer: summarizer)
+        let (resultTranscript, result) = try await Compactor.compact(
+            transcript, budget: budget, counter: counter, summarizer: summarizer)
 
         #expect(resultTranscript == transcript)
         #expect(result.stagesApplied.isEmpty)
@@ -2165,6 +2228,7 @@ struct SummarizationStageTests {
         let (_, result) = try await Compactor.compact(
             transcript,
             budget: budget,
+            counter: counter,
             summarizer: summarizer,
             summarization: Summarization(summaryTokenRatio: ratio)
         )
@@ -2203,6 +2267,7 @@ struct SummarizationStageTests {
         let (_, result) = try await Compactor.compact(
             transcript,
             budget: budget,
+            counter: counter,
             summarizer: summarizer,
             summarization: Summarization(maxChunkTokens: Self.wholeSpanChunkTokens)
         )
@@ -2227,6 +2292,7 @@ struct SummarizationStageTests {
         let (resultTranscript, _) = try await Compactor.compact(
             transcript,
             budget: budget,
+            counter: counter,
             summarizer: summarizer,
             summarization: Summarization(keepRecentTurns: keepRecentTurns)
         )

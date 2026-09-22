@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -57,6 +58,9 @@ struct SessionRestorationTests {
     /// call a `@MainActor` test awaits — and read only after that call returns
     /// to the same test method, so no two tasks ever touch it concurrently.
     private final class SeedCapturingContainer: LoadedLLMContainer, @unchecked Sendable {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         /// Whether a vended session's backend opens with an `.instructions`
         /// entry, the way a live `LanguageModelSession` does. `false` stands
         /// for a recording whose transcript holds no such entry at all.

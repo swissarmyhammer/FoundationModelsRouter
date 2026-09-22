@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -27,6 +28,9 @@ struct SessionChokepointTests {
     /// A stand-in for a loaded LLM container that returns canned text (or throws
     /// a configured error), with no MLX dependency.
     private struct CannedLLMContainer: LoadedLLMContainer {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         let text: String
         let shouldThrow: Bool
         var maxTokensSpy: MaxTokensSpy?

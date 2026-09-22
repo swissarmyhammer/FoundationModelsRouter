@@ -80,10 +80,11 @@ enum CompactionEvaluationError: Error {
 /// caller passes its own.
 ///
 /// `limit` is small because the hand-written seeds are small — around 420-520
-/// estimated tokens of content each (``compactionEvalSeeds``) — and `target`
-/// resolves to 40 tokens, strictly below the smallest seed's untouched
-/// recency-window size (63). That is the whole point of the value: it
-/// guarantees ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:protection:)``
+/// tokens of content each (``compactionEvalSeeds``) as first measured — and
+/// `target` resolves to 40 tokens, strictly below the smallest seed's untouched
+/// recency-window size (63 under that same measurement). That is the whole
+/// point of the value: it
+/// guarantees ``Compactor/compact(_:prompt:budget:counter:summarizer:summarization:pendingRuns:protection:)``
 /// can never land under target on the deterministic stages alone, so it always
 /// falls through to the model-assisted `Summarization` stage — the one stage
 /// that leaves a summary entry for ``CompactionEvalMetric/factRetention`` to
@@ -92,8 +93,8 @@ enum CompactionEvaluationError: Error {
 ///
 /// `CompactionEvaluationTests.defaultBudgetForcesSummarizationStage` asserts
 /// that property against every seed, and is what caught this value going stale
-/// once ``Compactor/estimatedTokenCount(of:)-(Transcript)`` stopped counting a
-/// transcript's JSON envelope as if a tokenizer would see it: the old
+/// once the pipeline's transcript count stopped counting a transcript's JSON
+/// envelope as if a tokenizer would see it: the old
 /// `limit: 4000, target: 0.05` resolved to 200 tokens, more than half of which
 /// were envelope padding rather than content.
 ///
@@ -121,7 +122,7 @@ let compactionEvalDefaultBudget = TokenBudget(limit: 400, trigger: 0.80, target:
 ///   (``CompactionEvaluationTests``).
 /// - The gated `@Test` wires in a closure that drives a real resident MLX
 ///   model through the exact bare-session recipe compaction_plan.md §1.5
-///   describes: ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:protection:)`` over the
+///   describes: ``Compactor/compact(_:prompt:budget:counter:summarizer:summarization:pendingRuns:protection:)`` over the
 ///   seed's entries, then a live session resumed over the compacted transcript.
 struct CompactionEvaluation: Evaluation {
     /// The expected/ground-truth sample type the `Evaluation` protocol

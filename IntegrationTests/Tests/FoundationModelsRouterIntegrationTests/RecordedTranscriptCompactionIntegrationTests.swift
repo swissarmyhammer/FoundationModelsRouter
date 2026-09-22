@@ -290,10 +290,15 @@ struct RecordedTranscriptCompactionIntegrationTests {
     func theRecordingCarriesTheShapeRealTrafficHas() throws {
         let (transcript, sessionId) = try Self.recordedTranscript()
         let kinds = TranscriptEntryKinds.names(of: transcript)
+        // This test loads no model, so it has no live counter. The character
+        // counter states the recording's size in characters. The compacting
+        // test below prints the size in the model's own tokens, as
+        // `tokensBefore`.
+        let transcriptCharacters = try CharacterTokenCounter().count(transcript)
         print(
             "[\(Self.compactionLabel)] session=\(sessionId) entries=\(Array(transcript).count) "
                 + "kinds=\(kinds) "
-                + "transcriptTokens=\(Compactor.estimatedTokenCount(of: transcript))"
+                + "transcriptCharacters=\(transcriptCharacters)"
         )
 
         // The entry kinds a transcript written in Swift forgets. `^vjf3mdm` and
@@ -340,6 +345,9 @@ struct RecordedTranscriptCompactionIntegrationTests {
         )
         await loaded.container.model.evict()
 
+        // The loaded model's own counter, the counter the compaction counted
+        // with, so every size this test reads is in one unit.
+        let counter = loaded.container.tokenCounter
         let result = outcome.result
 
         // 1. The summarizer ran. Its call count is the whole generation budget
@@ -365,10 +373,11 @@ struct RecordedTranscriptCompactionIntegrationTests {
         // 3. The summary is smaller than the span it replaced, in the unit
         //    `Compactor`'s did-not-shrink guard measures. `^fm5ddk9` measured
         //    the 30B model at 1.30x to 2.07x here.
-        let summaryTokens = Compactor.estimatedTokenCount(of: summary)
+        let summaryTokens = counter.count(summary)
+        let spanTokens = try outcome.spanTokens(counter: counter)
         #expect(
-            summaryTokens < outcome.spanTokens,
-            "the summary estimates \(summaryTokens) tokens against the \(outcome.spanTokens)-token span it replaced"
+            summaryTokens < spanTokens,
+            "the summary counts \(summaryTokens) tokens against the \(spanTokens)-token span it replaced"
         )
 
         // 4. The compaction was APPLIED. An empty `stagesApplied` is `Compactor`'s

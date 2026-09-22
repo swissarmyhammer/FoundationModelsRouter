@@ -285,66 +285,6 @@ struct GenerationOptionsPayload: Sendable, Codable, Equatable {
     }
 }
 
-// MARK: - Content sizing
-
-/// The total UTF-8 size, in bytes, of every non-`nil` string in `strings`.
-private func utf8ByteCount(of strings: [String?]) -> Int {
-    strings.reduce(0) { $0 + ($1?.utf8.count ?? 0) }
-}
-
-extension TranscriptEntryPayload {
-    /// The total UTF-8 size, in bytes, of the model-visible content of this
-    /// payload. Ids, `"type"` discriminators, JSON punctuation, ``options``,
-    /// and ``responseFormatName`` do not count.
-    var contentByteCount: Int {
-        utf8ByteCount(of: [toolName, responseFormatSchemaJSON])
-            + utf8ByteCount(of: assetIds ?? [])
-            + (signature?.count ?? 0)
-            + (segments ?? []).reduce(0) { $0 + $1.contentByteCount }
-            + (toolDefinitions ?? []).reduce(0) { $0 + $1.contentByteCount }
-            + (toolCalls ?? []).reduce(0) { $0 + $1.contentByteCount }
-    }
-}
-
-extension SegmentPayload {
-    /// The total UTF-8 size, in bytes, of this segment's model-visible
-    /// content. A router manifest segment (``RouterSegmentSchemaNames``) and
-    /// a legacy `.custom` carrier count as zero.
-    var contentByteCount: Int {
-        switch self {
-        case .text(_, let content):
-            return utf8ByteCount(of: [content])
-        case .structure(_, let schemaName, let contentJSON):
-            guard !RouterSegmentSchemaNames.all.contains(schemaName) else { return 0 }
-            return utf8ByteCount(of: [schemaName, contentJSON])
-        case .attachment(_, let label, let url):
-            return utf8ByteCount(of: [label, url])
-        case .custom:
-            return 0
-        // An `.unknown` carrier counts its description: rebuild degrades it
-        // to a `.text` segment holding exactly that string, so it is
-        // model-visible on a reconstructed seed the same way `.text` content
-        // is.
-        case .unknown(_, let description):
-            return utf8ByteCount(of: [description])
-        }
-    }
-}
-
-extension ToolDefinitionPayload {
-    /// The total UTF-8 size, in bytes, of the name, description, and schema.
-    var contentByteCount: Int {
-        utf8ByteCount(of: [name, description, parametersSchemaJSON])
-    }
-}
-
-extension ToolCallPayload {
-    /// The total UTF-8 size, in bytes, of the tool name and arguments.
-    var contentByteCount: Int {
-        utf8ByteCount(of: [toolName, argumentsJSON])
-    }
-}
-
 // MARK: - Gating: full-level redaction
 
 /// ``RecordingLevel/full`` redaction.

@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -29,6 +30,9 @@ struct GuidedGenerationTests {
     /// guided entry point and returns canned constrained text on success — the
     /// GPU-free stand-in for the xgrammar engine.
     private struct GuidedStubContainer: LoadedLLMContainer {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         let canned: String
         var maxTokensSpy: MaxTokensSpy?
 
@@ -424,6 +428,9 @@ struct GuidedGenerationTests {
     /// reads `flashContainer.lastBackend`, so that later write is never raced
     /// against a read.
     private final class AutoCompactionTriggerContainer: LoadedLLMContainer, @unchecked Sendable {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         let responseText: String
         private(set) var lastBackend: StubSessionBackend?
 

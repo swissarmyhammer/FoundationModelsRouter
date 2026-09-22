@@ -1,8 +1,37 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '9780'
+comments:
+- actor: claude-code
+  id: 01m34ywd6y7enw5wvpbz090nt4
+  text: |-
+    ### research — findings
+
+    - The tokenizer is on the MLX `ModelContainer` (`container.tokenizer`, MLXLMCommon `Tokenizer`). `LiveModelLoader.loadLLM` already loads the container; it now keeps the tokenizer and gives `MLXFoundationModelsContainer` a `TokenizerTokenCounter`.
+    - The MLX generation path renders a transcript through `TranscriptConverter` (internal to MLXFoundationModels) and `tokenizer.applyChatTemplate(messages:tools:)`. The router cannot call that converter, so `TranscriptChatMessages` renders the same shape: instructions as the system message, tool definitions as function specifications, tool calls as an assistant message with calls, tool outputs as tool messages by id, and no reasoning entry. A tokenizer with no chat template gets the same plain-text fallback the MLX LLM processor uses.
+    - `LoadedLLMContainer` gets a required `tokenCounter`. The 43 scripted containers in `Tests/` supply `CharacterTokenCounter` (one token per `Character`) from `FoundationModelsRouterTestSupport`. The public-surface test target links the library alone by design, so its container states its own rule in its file.
+    - The overflow retry (^m39wmx1) halves the configured target and divides by no estimate, so this card does not change it. A note on ^m39wmx1 says the session now owns `tokenCounter`.
+    - `UTF8Budget`, `TranscriptEntryPayload.contentByteCount`, `RouterSegmentSchemaNames` and `CompactionTokenAccountingTests` lose their last user with the estimate and are deleted.
+    - `summaryBytesPerWordEstimate` (words stated to the model) stays: the stated byte budget now comes from the bytes of the first N tokens of the text itself (`counter.prefix`), not from a conversion factor.
+  timestamp: 2026-09-22T16:23:46.654599+00:00
+- actor: claude-code
+  id: 01m3504bj7tt2ssrj0sg417gq8
+  text: |-
+    ### implement — changed
+    - evidence: Sources — new Compaction/TokenCounter.swift (protocol: count text, count transcript, prefix), new Resolution/TokenizerTokenCounter.swift (live counter over the MLX tokenizer, chat-template rendering through TranscriptChatMessages, plain-text fallback when the tokenizer has no template); LoadedLLMContainer.tokenCounter (required), MLXFoundationModelsContainer/LiveModelLoader keep the loaded tokenizer, RoutedLLM.tokenCounter (public), RoutedSessionActor.tokenCounter threaded through makeRoutedSessionActor at the vend, fork and restore sites; Compactor.compact(counter:) and Summarization.apply(counter:) count every size in tokens (shrinkMarginTokens = 1, summaryTokenBudget in tokens, cut/condense/chunk in tokens, stated words from the bytes of the first N tokens); ToolOutputCapping.capped(text:toTokenLimit:counter:) encodes, keeps the first limit tokens, decodes, marker states limit of total. Deleted: charsPerTokenEstimate, estimatedTokenCount, estimatedTokens(of:), characters(forEstimatedTokens:), shrinkMarginBytes, contentByteCount, UTF8Budget, RouterSegmentSchemaNames.
+    - evidence: Tests — CharacterTokenCounter (one token per Character) in FoundationModelsRouterTestSupport; 45 scripted containers supply a counter; SummarizationStageTests and ToolOutputCappingTests restated in tokens with the acceptance test (1,500 passes uncut; 1,501 cut to 1,500, marker "1500 of 1501"); new TokenizerTokenCounterTests; CompactionTokenAccountingTests deleted (its subject is gone); ScriptedTurnSizingTests calibrates against 1496 measured tokens over 7338 characters; eval support and real-model support take a counter parameter; IntegrationTests count with the loaded container's counter; RecordCompactionFixture tool counts with profile.standard.tokenCounter.
+    - evidence: rg 'charsPerTokenEstimate|estimatedTokenCount|estimatedTokens\(' Sources finds nothing.
+    - next: test
+  timestamp: 2026-09-22T16:45:35.687086+00:00
+- actor: claude-code
+  id: 01m3504dved0wh25mj5015q9de
+  text: |-
+    ### test — green
+    - evidence: swift test — 1353 tests in 145 suites passed, 1 test in 1 suite passed, 83 tests in 10 suites passed; 0 failed, 0 skipped. The 2 known issues are pre-existing withKnownIssue marks in RealModelHarnessTests.swift and BoundedWaitTests.swift, files this change does not touch. swift build --build-tests: no compiler warning. swift build --package-path IntegrationTests --build-tests: Build complete (real-model suites are gated and left to CI).
+    - next: commit
+  timestamp: 2026-09-22T16:45:38.030104+00:00
+position_column: doing
+position_ordinal: '80'
 title: Count tokens with the model's tokenizer; delete charsPerTokenEstimate
 ---
 ## Decision (from the owner, 2026-09-22)

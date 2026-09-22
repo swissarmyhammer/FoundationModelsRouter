@@ -6,17 +6,23 @@ import Tracing
 /// sees it. Applied at the tool-instancing seam, so no consumer keeps its
 /// own capping wrapper.
 enum ToolOutputCapping {
-    /// Truncates `text` to an estimated `limit` tokens. The size is
-    /// ``Compactor``'s character-ratio estimate, not an exact count.
+    /// Truncates `text` to `limit` tokens, counted by `counter`: the text is
+    /// encoded, the first `limit` tokens are kept, and they are decoded back.
     ///
     /// Never silent: the truncation marker tells a caller that the result was
-    /// capped, and by how much.
-    static func capped(text: String, toTokenLimit limit: Int) -> String {
-        let totalTokens = Compactor.estimatedTokenCount(of: text)
+    /// capped, and states the kept and the original token counts.
+    ///
+    /// - Parameters:
+    ///   - text: The tool output to cap.
+    ///   - limit: The tokens the result may hold.
+    ///   - counter: The session's counter.
+    /// - Returns: `text` when it holds at most `limit` tokens, else the kept
+    ///   prefix with the marker.
+    static func capped(text: String, toTokenLimit limit: Int, counter: any TokenCounter) -> String {
+        let totalTokens = counter.count(text)
         guard totalTokens > limit else { return text }
 
-        let keepBytes = max(0, Int((Double(limit) * Compactor.charsPerTokenEstimate).rounded(.down)))
-        let kept = UTF8Budget.prefix(of: text, keepingAtMostBytes: keepBytes)
+        let kept = counter.prefix(of: text, tokens: limit)
         return "\(kept)… [truncated: \(limit) of \(totalTokens) tokens]"
     }
 
@@ -30,20 +36,32 @@ enum ToolOutputCapping {
     /// because `FoundationModels.Prompt` — what every other
     /// `PromptRepresentable` ultimately becomes — exposes no generic way to
     /// recover and re-truncate its textual content.
-    static func makeWrapped(tool: any Tool, toTokenLimit limit: Int) -> any Tool {
+    ///
+    /// - Parameters:
+    ///   - tool: The tool to wrap.
+    ///   - limit: The tokens each call's result may hold.
+    ///   - counter: The session's counter.
+    /// - Returns: The capping wrapper, or `tool` unchanged.
+    static func makeWrapped(tool: any Tool, toTokenLimit limit: Int, counter: any TokenCounter) -> any Tool {
         func open<T: Tool>(_ tool: T) -> any Tool {
             guard let stringTool = tool as? any Tool<T.Arguments, String> else { return tool }
-            return TokenCappingTool(wrapped: stringTool, limit: limit)
+            return TokenCappingTool(wrapped: stringTool, limit: limit, counter: counter)
         }
         return open(tool)
     }
 
-    /// Applies ``makeWrapped(tool:toTokenLimit:)`` only when a limit is
+    /// Applies ``makeWrapped(tool:toTokenLimit:counter:)`` only when a limit is
     /// configured. Both of Router's tool-instancing seams need this
     /// guard-and-wrap, so neither restates it.
-    static func optionallyCapped(tool: any Tool, toTokenLimit limit: Int?) -> any Tool {
+    ///
+    /// - Parameters:
+    ///   - tool: The tool to wrap.
+    ///   - limit: The tokens each call's result may hold, or `nil` for no cap.
+    ///   - counter: The session's counter.
+    /// - Returns: The capping wrapper, or `tool` unchanged.
+    static func optionallyCapped(tool: any Tool, toTokenLimit limit: Int?, counter: any TokenCounter) -> any Tool {
         guard let limit else { return tool }
-        return makeWrapped(tool: tool, toTokenLimit: limit)
+        return makeWrapped(tool: tool, toTokenLimit: limit, counter: counter)
     }
 }
 
@@ -64,7 +82,11 @@ struct TokenCappingTool<
 >: Tool, TurnBoundaryTool, ToolDecorator {
     let wrapped: any Tool<Arguments, String>
 
+    /// The tokens each call's result may hold.
     let limit: Int
+
+    /// The counter that counts the result, the owning session's own.
+    let counter: any TokenCounter
 
     var name: String { wrapped.name }
     var description: String { wrapped.description }
@@ -89,12 +111,12 @@ struct TokenCappingTool<
     func call(arguments: Arguments) async throws -> String {
         let output = try await wrapped.call(arguments: arguments)
         guard let envelope = PendingRunEnvelope.decoded(fromRendered: output) else {
-            return ToolOutputCapping.capped(text: output, toTokenLimit: limit)
+            return ToolOutputCapping.capped(text: output, toTokenLimit: limit, counter: counter)
         }
         guard let detail = envelope.detail else {
             return output
         }
-        let cappedDetail = ToolOutputCapping.capped(text: detail, toTokenLimit: limit)
+        let cappedDetail = ToolOutputCapping.capped(text: detail, toTokenLimit: limit, counter: counter)
         return envelope.replacing(detail: cappedDetail).rendered
     }
 }
@@ -124,12 +146,13 @@ extension ToolMounting {
     ///
     /// Every argument must be the owning session's own: `sessionID` is stamped
     /// into each background run's ``ToolContext``, `mailbox` tracks the
-    /// background runs, and `sink` is the session's outbox, which receives
-    /// their events.
+    /// background runs, `sink` is the session's outbox, which receives
+    /// their events, and `tokenCounter` counts each capped result the way the
+    /// session's model counts it.
     ///
     /// ``RoutedSessionActor/fork(workingDirectory:)`` forks each tool first and
     /// hands the forked copy here;
-    /// ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)``
+    /// ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:)``
     /// is the root and restore site.
     ///
     /// - Parameter tracer: The owning session's tracer, which the mounted
@@ -142,6 +165,7 @@ extension ToolMounting {
         mailbox: SessionMailbox,
         sink: any OperationEventSink,
         cappedToTokenLimit tokenLimit: Int?,
+        tokenCounter: any TokenCounter,
         tracer: (any Tracer)? = nil
     ) -> any Tool {
         let mounted = makeWrapped(
@@ -152,7 +176,7 @@ extension ToolMounting {
             configuration: .synchronous,
             tracer: tracer
         )
-        let capped = ToolOutputCapping.optionallyCapped(tool: mounted, toTokenLimit: tokenLimit)
+        let capped = ToolOutputCapping.optionallyCapped(tool: mounted, toTokenLimit: tokenLimit, counter: tokenCounter)
         return ToolFailureDelivery.makeWrapped(tool: capped)
     }
 }

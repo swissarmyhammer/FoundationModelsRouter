@@ -470,6 +470,10 @@ struct LanguageModelSessionBackendIntegrationTests {
             // as `makeSession` names it: this session writes its own sidecar,
             // and so does any fork taken from it.
             sidecarOrigin: .new(under: standard.durableRecording),
+            // The container's own counter, exactly as `makeSession` hands it
+            // on: every count the session makes before a call comes from the
+            // tokenizer of its model.
+            tokenCounter: standard.container.tokenCounter,
             // The handle's own tracer, exactly as `makeSession` hands it on: a
             // session reports to the same backend as the handle it came off.
             tracer: standard.tracer

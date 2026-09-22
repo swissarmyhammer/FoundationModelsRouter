@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -95,18 +96,20 @@ struct AutoCompactionTests {
 
     /// Derives a working context tight enough that the reactive retry's own
     /// hardcoded `target: 0.35` sits strictly between `seedEntries`'
-    /// recency-window-only estimate and its full pre-compaction estimate —
+    /// recency-window-only character count and its full pre-compaction count —
     /// guaranteeing `TurnTruncation` alone lands under target (no need for
     /// the model-assisted `Summarization` stage, which the reactive tests'
     /// own stub backends cannot service). Copied from
     /// `ExamplesTests.reactiveCompactionRecoversFromContextOverflow()`'s own
     /// derivation.
-    private static func reactiveRetryContextTokens(_ seedEntries: [Transcript.Entry]) -> Int {
+    ///
+    /// - Throws: What ``characterTokenCounter`` throws.
+    private static func reactiveRetryContextTokens(_ seedEntries: [Transcript.Entry]) throws -> Int {
         let (header, turns) = TranscriptTurns.split(seedEntries)
         let (_, recent) = TranscriptTurns.partition(turns, keepRecentTurns: 4)
-        let recencyOnlyEstimate = Compactor.estimatedTokenCount(of: Transcript(entries: header + recent.flatMap(\.entries)))
-        let preCompactionEstimate = Compactor.estimatedTokenCount(of: Transcript(entries: seedEntries))
-        let midTarget = (recencyOnlyEstimate + preCompactionEstimate) / 2
+        let recencyOnlyCount = try characterTokenCounter.count(Transcript(entries: header + recent.flatMap(\.entries)))
+        let preCompactionCount = try characterTokenCounter.count(Transcript(entries: seedEntries))
+        let midTarget = (recencyOnlyCount + preCompactionCount) / 2
         return Int(Double(midTarget) / 0.35)
     }
 
@@ -165,7 +168,7 @@ struct AutoCompactionTests {
         #expect(result.stagesApplied.contains("Summarization"))
         // The summary text is the session's own canned response, not flash's —
         // proof the own-model tier, not flash, produced it. Stored word for
-        // word: the canned answer fits the compacted span's byte budget, so the
+        // word: the canned answer fits the compacted span's token budget, so the
         // stage stores it exactly as the model wrote it (task ^xx02yn6).
         let summary = try #require(result.summary)
         #expect(summary == Self.cannedText)
@@ -326,6 +329,9 @@ struct AutoCompactionTests {
 
     /// A container vending a single, test-retained ``ScriptedOverflowBackend``.
     private final class OverflowLLMContainer: LoadedLLMContainer, @unchecked Sendable {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         let responseText: String
         let seedEntries: [Transcript.Entry]
         let overflowsRemaining: Int
@@ -373,12 +379,13 @@ struct AutoCompactionTests {
         // unmeasured — `usageTokenCounts()` always `nil` — so fill stays at
         // its unmeasured/zero starting point) — isolating the *reactive*
         // path this test targets from the proactive one. `target: 0.35`'s
-        // own `limit` is derived from the seeded transcript's own estimated
+        // own `limit` is derived from the seeded transcript's own counted
         // size (mirrors `ExamplesTests.reactiveCompactionRecoversFromContextOverflow()`),
         // guaranteeing the lowered-target retry compaction actually drops
         // something real (`TurnTruncation` alone lands under it) rather
         // than no-op'ing on an already-under-target transcript.
-        let session = profile.standard.makeSession(budget: TokenBudget(limit: Self.reactiveRetryContextTokens(seedEntries), target: 0.35))
+        let session = try profile.standard.makeSession(
+            budget: TokenBudget(limit: Self.reactiveRetryContextTokens(seedEntries), target: 0.35))
 
         // No `do`/`catch` here at all — unlike `ExamplesTests.respondWithReactiveCompaction`,
         // which the caller must wrap manually, this session recovers on its

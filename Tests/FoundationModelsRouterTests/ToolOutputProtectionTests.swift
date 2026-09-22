@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -122,8 +123,9 @@ struct ToolOutputProtectionTests {
 
         let compacted = try #require(
             try await Summarization().apply(
-                transcript, prompt: .default, tokensBefore: Compactor.estimatedTokenCount(of: transcript),
-                priorStagesApplied: [], summarizer: summarizer, protection: Fixtures.rule))
+                transcript, prompt: .default, tokensBefore: characterTokenCounter.count(transcript),
+                priorStagesApplied: [], summarizer: summarizer, counter: characterTokenCounter,
+                protection: Fixtures.rule))
 
         let result = Array(compacted.transcript)
         let expectedPrefix = [
@@ -140,8 +142,9 @@ struct ToolOutputProtectionTests {
         let summarizer = RecordingSummarizer(summary: Self.summaryText)
 
         _ = try await Summarization().apply(
-            transcript, prompt: .default, tokensBefore: Compactor.estimatedTokenCount(of: transcript),
-            priorStagesApplied: [], summarizer: summarizer, protection: Fixtures.rule)
+            transcript, prompt: .default, tokensBefore: characterTokenCounter.count(transcript),
+            priorStagesApplied: [], summarizer: summarizer, counter: characterTokenCounter,
+            protection: Fixtures.rule)
 
         let prompts = await summarizer.prompts
         #expect(!prompts.isEmpty)
@@ -155,9 +158,9 @@ struct ToolOutputProtectionTests {
 
         let compacted = try #require(
             try await Summarization().apply(
-                transcript, prompt: .default, tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+                transcript, prompt: .default, tokensBefore: characterTokenCounter.count(transcript),
                 priorStagesApplied: [], summarizer: RecordingSummarizer(summary: Self.summaryText),
-                protection: Fixtures.rule))
+                counter: characterTokenCounter, protection: Fixtures.rule))
 
         let summaryEntry = try #require(Array(compacted.transcript).first { $0.id == compacted.summaryEntryId })
         let content = try #require(try Self.checkpointContent(of: summaryEntry))
@@ -173,8 +176,8 @@ struct ToolOutputProtectionTests {
 
         let compacted = try #require(
             try await Summarization().apply(
-                transcript, prompt: .default, tokensBefore: Compactor.estimatedTokenCount(of: transcript),
-                priorStagesApplied: [], summarizer: summarizer))
+                transcript, prompt: .default, tokensBefore: characterTokenCounter.count(transcript),
+                priorStagesApplied: [], summarizer: summarizer, counter: characterTokenCounter))
 
         let result = Array(compacted.transcript)
         let expectedPrefixIds = [TranscriptFixtures.makeInstructions().id, compacted.summaryEntryId]
@@ -204,10 +207,11 @@ struct ToolOutputProtectionTests {
     @Test("the Compactor keeps a protected output through its deterministic stages and reports its size")
     func compactorKeepsTheProtectedOutput() async throws {
         let transcript = try Fixtures.transcript()
-        let before = Compactor.estimatedTokenCount(of: transcript)
+        let before = try characterTokenCounter.count(transcript)
         let budget = TokenBudget(limit: before, target: Self.nearlyWholeTarget)
 
-        let (compacted, result) = try await Compactor.compact(transcript, budget: budget, protection: Fixtures.rule)
+        let (compacted, result) = try await Compactor.compact(
+            transcript, budget: budget, counter: characterTokenCounter, protection: Fixtures.rule)
 
         #expect(!result.stagesApplied.isEmpty)
         #expect(Fixtures.outputText(in: Array(compacted), id: Fixtures.skillCallId) == Fixtures.skillBody)
@@ -217,9 +221,10 @@ struct ToolOutputProtectionTests {
     @Test("the Compactor completes a compaction whose protected content alone is over the target, and reports it")
     func compactorCompletesACompactionOverTargetBecauseOfProtectedContent() async throws {
         let transcript = try Fixtures.transcript()
-        let budget = Self.budgetUnderTheRecencyWindow(of: transcript)
+        let budget = try Self.budgetUnderTheRecencyWindow(of: transcript)
 
-        let (compacted, result) = try await Compactor.compact(transcript, budget: budget, protection: Fixtures.rule)
+        let (compacted, result) = try await Compactor.compact(
+            transcript, budget: budget, counter: characterTokenCounter, protection: Fixtures.rule)
 
         #expect(result.stagesApplied == [ToolOutputElision.stageName, TurnTruncation.stageName])
         #expect(result.tokensAfter < result.tokensBefore)
@@ -234,7 +239,7 @@ struct ToolOutputProtectionTests {
         let transcript = try Fixtures.transcript()
 
         let (compacted, result) = try await Compactor.compact(
-            transcript, budget: Self.budgetUnderTheRecencyWindow(of: transcript))
+            transcript, budget: Self.budgetUnderTheRecencyWindow(of: transcript), counter: characterTokenCounter)
 
         #expect(result.stagesApplied.isEmpty)
         #expect(compacted == transcript)
@@ -245,9 +250,8 @@ struct ToolOutputProtectionTests {
     /// transcript only a little: the deterministic stages always land under it.
     private static let nearlyWholeTarget = 0.9
 
-    /// The estimated size of the protected tool output the fixture holds.
-    private static let protectedOutputTokens = Compactor.estimatedTokenCount(
-        of: Transcript(entries: [Fixtures.skillOutputEntry]))
+    /// The size, in characters, of the protected tool output the fixture holds.
+    private static let protectedOutputTokens = characterCount(of: [Fixtures.skillOutputEntry])
 
     /// A budget whose target is half the header and recency window of
     /// `transcript`, so no deterministic stage can reach it, and the protected
@@ -255,8 +259,9 @@ struct ToolOutputProtectionTests {
     ///
     /// - Parameter transcript: The transcript to compact.
     /// - Returns: The budget.
-    private static func budgetUnderTheRecencyWindow(of transcript: Transcript) -> TokenBudget {
-        let before = Compactor.estimatedTokenCount(of: transcript)
+    /// - Throws: What ``characterTokenCounter`` throws.
+    private static func budgetUnderTheRecencyWindow(of transcript: Transcript) throws -> TokenBudget {
+        let before = try characterTokenCounter.count(transcript)
         let targetTokens = recencyWindowOnlyEstimate(Array(transcript)) / compactionTargetMidpointDivisor
         return TokenBudget(limit: before, target: Double(targetTokens) / Double(before))
     }

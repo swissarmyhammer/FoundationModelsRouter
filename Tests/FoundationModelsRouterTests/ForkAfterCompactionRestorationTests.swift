@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -31,6 +32,9 @@ struct ForkAfterCompactionRestorationTests {
     /// (`makeSession(transcript:)`) alike — so a test can read the live
     /// entries a session accumulated and derive an exact compaction-forcing budget.
     private final class RetainingLLMContainer: LoadedLLMContainer, @unchecked Sendable {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         /// The canned text every backend this container vends responds with.
         let responseText: String
 

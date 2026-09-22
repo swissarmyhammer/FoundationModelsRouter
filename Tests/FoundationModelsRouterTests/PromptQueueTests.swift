@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -85,6 +86,9 @@ struct PromptQueueTests {
     /// Always vends the same ``GatedStubBackend`` instance, so a test can
     /// hold a reference to its semaphores while the session drives it.
     private final class GatedLLMContainer: LoadedLLMContainer {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         let backend: GatedStubBackend
         init(backend: GatedStubBackend) {
             self.backend = backend

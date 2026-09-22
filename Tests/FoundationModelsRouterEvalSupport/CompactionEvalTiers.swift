@@ -18,7 +18,7 @@ import FoundationModelsRouter
 /// span-budget trim and its `router-default-v3` prompt, at greedy decoding.
 /// The seven samples cost 5.4, 4.7, 12.1, 3.2, 5.1, 15.9 and 15.9 seconds.
 /// Four of the seven compactions made one summarizer call and three made two,
-/// because the redesigned stage re-asks: an answer past the span byte budget
+/// because the redesigned stage re-asks: an answer past the span budget
 /// earns one condense call before the last-resort cut. The rate rose from the
 /// 7.2-second dearest sample the 1B canary measured over the same recipe on
 /// the same day, which is what a model of three times the parameters costs to
@@ -164,7 +164,7 @@ func compactionEvalDerivedTimeLimitMinutes(
 /// ``FoundationModels/GenerationOptions/SamplingMode/greedy``, so two runs of
 /// identical code generate the same answers at the same lengths (task
 /// ^xscp198). A run that ends on the limit names the seeds it never reached —
-/// see ``CompactionEvalFactRetentionReport/lines(of:expecting:)`` — so an
+/// see ``CompactionEvalFactRetentionReport/lines(of:expecting:counter:)`` — so an
 /// overrun reads as an overrun rather than as a smaller clean sheet.
 let compactionEvalSubsetTimeLimitMinutes = 2
 
@@ -295,14 +295,14 @@ func compactionEvalFactRetentionRequiredSamples(of sampleCount: Int, floor: Doub
 /// (``CompactionEvalRealModel/ref`` and
 /// ``CompactionContinuityRealModel/ref``).
 ///
-/// The compaction arithmetic spans two currencies, and this is the rate between them.
-/// ``Summarization`` sizes a summarizer call's answer in REAL tokens
+/// The fixtures are sized in the tokens the model really counts, and this is
+/// the rate between those tokens and the bytes of prose a fixture holds.
+/// ``Summarization`` sizes a summarizer call's answer in tokens
 /// (``Summarization/minimumSummaryTokens``, ``Summarization/summaryTokenRatio``),
-/// while ``Compactor`` measures a transcript in ESTIMATED ones — UTF-8 bytes
-/// over a flat ``Compactor/charsPerTokenEstimate`` of 4.0. A fixture sized in
-/// the estimate alone is exactly how `CompactionRoundTripIntegrationTests` ended
-/// up below its own trigger (task ^wnj3ka3), so this dataset is sized in the
-/// tokens the model really counts.
+/// and a fixture is written as bytes of prose. A fixture sized by a character
+/// count in place of a tokenizer is exactly how
+/// `CompactionRoundTripIntegrationTests` ended up below its own trigger (task
+/// ^wnj3ka3), so this dataset is sized in the tokens the model really counts.
 ///
 /// The corpus is this dataset's whole prose — every fixture's
 /// ``CompactionEvalFixtureSpec/context`` and facts, every acknowledgement, and
@@ -397,7 +397,7 @@ let compactionEvalReasoningTokenHeadroom = 128
 /// of 7 seeds at a ceiling of 4224 tokens against an allowance of 128, and
 /// every one answered with 374 to 698 real tokens — 2.9x to 5.5x the
 /// allowance. So this summarizer stands for the good case. The generation
-/// ceiling and the span byte budget ``Summarization`` applies in code are what
+/// ceiling and the span budget ``Summarization`` applies in code are what
 /// hold the bad one, and `Compactor.compact`'s did-not-shrink guard still
 /// catches what gets past both.
 ///
@@ -412,27 +412,24 @@ let compactionEvalReasoningTokenHeadroom = 128
 ///   ``Summarization/reasoningTokenHeadroom`` to it and hands the sum down
 ///   as `maxTokens`. That is a ceiling on the GENERATION, in real tokens,
 ///   and it covers the reasoning and the answer together.
-/// - The span byte budget bounds the FINAL summary the compaction stores, in the
-///   UTF-8 content bytes `Compactor` measures: an answer past it earns one
+/// - The span budget bounds the FINAL summary the compaction stores, in the
+///   tokens the compaction's counter measures: an answer past it earns one
 ///   condense re-ask, then the last-resort cut — except when the cut would
 ///   leave no text at all, where `Summarization` hands the answer back whole
 ///   rather than erase the span, and the did-not-shrink guard judges it.
 ///
-/// This summarizer answers a little over the allowance converted at
-/// `Compactor.charsPerTokenEstimate` on purpose. 128 tokens at that flat rate of
-/// 4.0 bytes is 512 bytes. This answers the allowance in REAL tokens at
-/// ``compactionEvalMeasuredBytesPerToken`` instead — 614 bytes. So a seed
-/// that clears this gate clears a summary 20% larger than the flat estimate
-/// predicts.
+/// This summarizer answers the whole allowance in the bytes a real model's
+/// tokens occupy: 128 tokens at ``compactionEvalMeasuredBytesPerToken`` is
+/// 614 bytes. So a seed that clears this gate clears a summary of the size a
+/// real model writes for that allowance, and not a smaller one.
 ///
-/// The span byte budget does not bind on that answer for any seed, so this
+/// The span budget does not bind on that answer for any seed, so this
 /// gate measures a seed against the summary as written and never against one
 /// the stage had already condensed or cut. That budget is
 /// ``Summarization/statedBudgetShareOfContent`` of the span's own content, so a
 /// 614-byte answer overruns it only when the content is under 819 bytes, and
 /// `CompactionEvalSeedSizingTests/everySeedsCompactableSpanOutweighsARealSummary`
-/// already requires every seed's span to estimate 231 tokens — 924 bytes at
-/// `Compactor.charsPerTokenEstimate` — or more.
+/// already requires every seed's span to hold 921 characters or more.
 struct RealisticSummaryLengthSummarizer: CompactionSummarizer {
     /// The headroom the stage under test adds on top of the summary allowance.
     ///

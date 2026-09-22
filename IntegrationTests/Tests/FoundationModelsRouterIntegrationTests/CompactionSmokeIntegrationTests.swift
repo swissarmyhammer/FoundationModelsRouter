@@ -104,7 +104,7 @@ private let compactionSmokeChatTemplateDate = RealModelContainer.chatTemplateFal
 ///
 /// - ``compactionSmokeModel`` rather than the 18 GB ``RealModels/standard``.
 /// - One fixture, not a dataset.
-/// - At most TWO generations: ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:protection:)``
+/// - At most TWO generations: ``Compactor/compact(_:prompt:budget:counter:summarizer:summarization:pendingRuns:protection:)``
 ///   and nothing after it — the map call, plus the one recovery re-ask this
 ///   fixture is measured taking. No resumed session and no answering
 ///   turn — that is another generation, and "works at all" does not need one.
@@ -272,9 +272,10 @@ struct CompactionSmokeIntegrationTests {
     /// earlier line, so ``Summarization`` judged the answer a repetition loop
     /// and made its re-ask. The re-ask then copied both prompts word for word
     /// under section 2. A copy of the span can never fit the stored summary's
-    /// byte budget, because that budget is the span's own content bytes less
-    /// `Summarization.shrinkMarginBytes`. The last-resort cut kept section 1
-    /// alone, and the planted fact went with section 2, on 3 of 3 runs.
+    /// token budget, because that budget is the span's own tokens less
+    /// `Summarization.shrinkMarginTokens`, which is one token. The last-resort
+    /// cut kept section 1 alone, and the planted fact went with section 2, on
+    /// 3 of 3 runs.
     ///
     /// With these replies the map answer still echoes both replies once per
     /// section and is still re-asked, but the re-ask writes a summary rather
@@ -447,9 +448,13 @@ struct CompactionSmokeIntegrationTests {
     /// numbers themselves. This function owns the model's lifetime because it is
     /// the only thing that knows this suite loads once per test.
     ///
-    /// - Returns: Everything the run measured.
+    /// - Returns: Everything the run measured, and the loaded model's own
+    ///   counter, the counter the compaction counted with, so a test reads
+    ///   every size in the unit the did-not-shrink guard measured.
     /// - Throws: Whatever the load or the compaction throws.
-    private static func compactTheFixture() async throws -> TranscriptCompactionOutcome {
+    private static func compactTheFixture() async throws -> (
+        outcome: TranscriptCompactionOutcome, counter: any TokenCounter
+    ) {
         let startedAt = Date()
         var modelLoadSeconds = 0.0
         defer {
@@ -475,7 +480,7 @@ struct CompactionSmokeIntegrationTests {
             label: compactionLabel
         )
         await loaded.container.model.evict()
-        return outcome
+        return (outcome, loaded.container.tokenCounter)
     }
 
     // MARK: - The tests
@@ -484,10 +489,10 @@ struct CompactionSmokeIntegrationTests {
         "one compaction against a real model: the summarizer answers within the compaction's call budget, and the compaction is applied rather than discarded"
     )
     func theCompactionWorksAgainstARealModel() async throws {
-        let outcome = try await Self.compactTheFixture()
+        let (outcome, counter) = try await Self.compactTheFixture()
         let result = outcome.result
         let ceilings = outcome.ceilings
-        let spanTokens = outcome.spanTokens
+        let spanTokens = try outcome.spanTokens(counter: counter)
 
         // 1. The summarizer ran, and within the compaction's own call budget on this
         //    fixture: ONE map call, plus at most ONE recovery re-ask. The
@@ -522,10 +527,10 @@ struct CompactionSmokeIntegrationTests {
         // 3. The summary is smaller than the span it replaced, in the unit
         //    `Compactor`'s did-not-shrink guard measures. `^fm5ddk9` measured
         //    the 30B model at 1.30x to 2.07x here.
-        let summaryTokens = Compactor.estimatedTokenCount(of: summary)
+        let summaryTokens = counter.count(summary)
         #expect(
             summaryTokens < spanTokens,
-            "the summary estimates \(summaryTokens) tokens against the \(spanTokens)-token span it replaced"
+            "the summary counts \(summaryTokens) tokens against the \(spanTokens)-token span it replaced"
         )
 
         // 4. The compaction was APPLIED. An empty `stagesApplied` is `Compactor`'s
@@ -572,16 +577,17 @@ struct CompactionSmokeIntegrationTests {
         // sections of that answer could fit the span's own byte budget, so
         // the section-aligned cut stored section 1 alone. `compactedTurnReplies`
         // records the mechanism and the change.
-        let outcome = try await Self.compactTheFixture()
+        let (outcome, counter) = try await Self.compactTheFixture()
         let summary = try #require(
             outcome.result.summary, "the compaction was discarded, so there is no summary to read")
+        let spanTokens = try outcome.spanTokens(counter: counter)
 
         #expect(
             summary.contains(Self.plantedFactValue),
             """
             the compaction dropped \(Self.plantedFactValue), stated last in the span it replaced.
-            answer \(outcome.answerTokens) estimated tokens, stored summary \
-            \(Compactor.estimatedTokenCount(of: summary)), span \(outcome.spanTokens).
+            answer \(outcome.answerTokens(counter: counter)) tokens, stored summary \
+            \(counter.count(summary)), span \(spanTokens).
             the answer the model gave was:
             \(outcome.calls.map(\.answer).joined(separator: "\n---\n"))
             the summary the compaction stored was:

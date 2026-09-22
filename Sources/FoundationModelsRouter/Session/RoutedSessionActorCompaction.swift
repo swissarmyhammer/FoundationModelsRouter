@@ -255,8 +255,8 @@ extension RoutedSessionActor {
 
     /// The compaction mechanics ``compact(prompt:budget:)`` and
     /// ``performAutoCompaction(prompt:budget:)`` share. Runs
-    /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:protection:)``
-    /// over ``backend``'s transcript. When a stage applied, records the compaction's
+    /// ``Compactor/compact(_:prompt:budget:counter:summarizer:summarization:pendingRuns:protection:)``
+    /// over ``backend``'s transcript, counted by this session's ``tokenCounter``. When a stage applied, records the compaction's
     /// new entries by id, appends one boundary entry, and replaces ``backend``
     /// with one seeded from the compacted transcript. Otherwise leaves the
     /// session unchanged. The caller must hold both gates.
@@ -298,6 +298,9 @@ extension RoutedSessionActor {
             Transcript(entries: entries),
             prompt: prompt,
             budget: resolvedBudget,
+            // This session's own counter, so every size the pipeline compares
+            // against the budget is the count of the model's tokenizer.
+            counter: tokenCounter,
             // Wrapped, never handed over bare: a compaction's summarizer call is a model
             // call this session's turn owns, and must be cancellable as one (see
             // ``CancellableCompactionSummarizer``). A `nil` summarizer stays `nil`,
@@ -437,7 +440,7 @@ extension RoutedSessionActor {
             preCompactionEntryIds: preCompactionEntries.map(\.id),
             // Measured pre-compaction usage when the session has one — the same
             // calibration `compactedUsage(tokensBefore:tokensAfter:)` reads —
-            // else the pipeline's estimate, the best available number.
+            // else the pipeline's own count.
             tokensBefore: usageState.measuredTokens ?? result.tokensBefore,
             tokensAfter: measuredTokensAfter,
             stagesApplied: result.stagesApplied,
@@ -446,14 +449,16 @@ extension RoutedSessionActor {
     }
 
     /// A compaction's post-compaction size on the measured scale ``usageState`` uses.
-    /// ``CompactionResult/tokensAfter`` is an estimate; this rescales it by the
-    /// ratio of the pre-compaction measurement to the pre-compaction estimate. Returns
-    /// `tokensAfter` unchanged when there is no measurement to calibrate
-    /// against.
+    /// ``CompactionResult/tokensAfter`` is the count of the session's
+    /// ``tokenCounter`` over the rendered transcript; the engine's measured
+    /// usage can differ from it by what the engine renders around the
+    /// transcript. This rescales the count by the ratio of the pre-compaction
+    /// measurement to the pre-compaction count. Returns `tokensAfter`
+    /// unchanged when there is no measurement to calibrate against.
     ///
     /// - Parameters:
-    ///   - tokensBefore: The pipeline's estimate of the transcript it compacted.
-    ///   - tokensAfter: The pipeline's estimate of the transcript it produced.
+    ///   - tokensBefore: The pipeline's count of the transcript it compacted.
+    ///   - tokensAfter: The pipeline's count of the transcript it produced.
     /// - Returns: `tokensAfter` on the measured scale.
     private func compactedUsage(tokensBefore: Int, tokensAfter: Int) -> Int {
         guard let measuredBefore = usageState.measuredTokens, measuredBefore > 0, tokensBefore > 0 else {

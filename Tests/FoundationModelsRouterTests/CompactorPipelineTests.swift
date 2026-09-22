@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -8,11 +9,10 @@ import Testing
 /// ``Compactor``'s pipeline orchestration — stage ordering, early stop once a
 /// stage lands under target, and the oversized-tail shortfall report.
 ///
-/// Targets below are derived from actual estimates
-/// (``Compactor/estimatedTokenCount(of:)``) rather than hand-computed
+/// Targets below are derived from real counts of ``characterTokenCounter``,
+/// the counter every compaction here runs with, rather than hand-computed
 /// constants, so these tests assert the *mechanism* (before > target > after)
-/// rather than pinning brittle numbers to the character-ratio heuristic's
-/// exact JSON-encoding overhead.
+/// rather than pinning brittle numbers to the exact size of each entry.
 @Suite("Compactor pipeline: stage ordering, early stop, oversized-tail shortfall")
 struct CompactorPipelineTests {
     // MARK: - Fixtures
@@ -36,10 +36,10 @@ struct CompactorPipelineTests {
         let turns = try (1...6).map { try TranscriptFixtures.makeTurn(index: $0, toolOutputText: "small result") }
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
 
-        let tokensBefore = Compactor.estimatedTokenCount(of: transcript)
+        let tokensBefore = try characterTokenCounter.count(transcript)
         let budget = Self.makeBudget(targetTokens: tokensBefore * 2)
 
-        let (resultTranscript, result) = try await Compactor.compact(transcript, budget: budget)
+        let (resultTranscript, result) = try await Compactor.compact(transcript, budget: budget, counter: characterTokenCounter)
 
         #expect(resultTranscript == transcript)
         #expect(result.stagesApplied.isEmpty)
@@ -57,13 +57,13 @@ struct CompactorPipelineTests {
         let turns = try (1...6).map { try TranscriptFixtures.makeTurn(index: $0, toolOutputText: bigOutput) }
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
 
-        let tokensBefore = Compactor.estimatedTokenCount(of: transcript)
-        let afterElision = Compactor.estimatedTokenCount(of: ToolOutputElision().apply(transcript))
+        let tokensBefore = try characterTokenCounter.count(transcript)
+        let afterElision = try characterTokenCounter.count(ToolOutputElision().apply(transcript))
         #expect(afterElision < tokensBefore)  // sanity: elision actually helps here
 
         let budget = Self.makeBudget(targetTokens: (tokensBefore + afterElision) / 2)
 
-        let (resultTranscript, result) = try await Compactor.compact(transcript, budget: budget)
+        let (resultTranscript, result) = try await Compactor.compact(transcript, budget: budget, counter: characterTokenCounter)
 
         #expect(result.stagesApplied == ["ToolOutputElision"])
         #expect(result.tokensBefore == tokensBefore)
@@ -87,14 +87,14 @@ struct CompactorPipelineTests {
         }
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
 
-        let tokensBefore = Compactor.estimatedTokenCount(of: transcript)
-        let afterElision = Compactor.estimatedTokenCount(of: ToolOutputElision().apply(transcript))
-        let afterBoth = Compactor.estimatedTokenCount(of: TurnTruncation().apply(ToolOutputElision().apply(transcript)))
+        let tokensBefore = try characterTokenCounter.count(transcript)
+        let afterElision = try characterTokenCounter.count(ToolOutputElision().apply(transcript))
+        let afterBoth = try characterTokenCounter.count(TurnTruncation().apply(ToolOutputElision().apply(transcript)))
         #expect(afterBoth < afterElision)  // sanity: truncation is still needed after elision
 
         let budget = Self.makeBudget(targetTokens: (afterElision + afterBoth) / 2)
 
-        let (resultTranscript, result) = try await Compactor.compact(transcript, budget: budget)
+        let (resultTranscript, result) = try await Compactor.compact(transcript, budget: budget, counter: characterTokenCounter)
 
         #expect(result.stagesApplied == ["ToolOutputElision", "TurnTruncation"])
         #expect(result.tokensBefore == tokensBefore)
@@ -120,10 +120,10 @@ struct CompactorPipelineTests {
         }
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
 
-        let tokensBefore = Compactor.estimatedTokenCount(of: transcript)
+        let tokensBefore = try characterTokenCounter.count(transcript)
         let budget = Self.makeBudget(targetTokens: tokensBefore / 2)
 
-        let (resultTranscript, result) = try await Compactor.compact(transcript, budget: budget)
+        let (resultTranscript, result) = try await Compactor.compact(transcript, budget: budget, counter: characterTokenCounter)
 
         #expect(resultTranscript == transcript)
         #expect(result.stagesApplied.isEmpty)
@@ -151,14 +151,14 @@ struct CompactorPipelineTests {
         }
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
 
-        let tokensBefore = Compactor.estimatedTokenCount(of: transcript)
-        let afterBoth = Compactor.estimatedTokenCount(of: TurnTruncation().apply(ToolOutputElision().apply(transcript)))
+        let tokensBefore = try characterTokenCounter.count(transcript)
+        let afterBoth = try characterTokenCounter.count(TurnTruncation().apply(ToolOutputElision().apply(transcript)))
         #expect(afterBoth < tokensBefore)  // sanity: compacting away old turns does shrink the discarded attempt
 
         // Target below even the best the deterministic stages can achieve.
         let budget = Self.makeBudget(targetTokens: afterBoth / 2)
 
-        let (resultTranscript, result) = try await Compactor.compact(transcript, budget: budget)
+        let (resultTranscript, result) = try await Compactor.compact(transcript, budget: budget, counter: characterTokenCounter)
 
         #expect(resultTranscript == transcript)
         #expect(result.stagesApplied.isEmpty)

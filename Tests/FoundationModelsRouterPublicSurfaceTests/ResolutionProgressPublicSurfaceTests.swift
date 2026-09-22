@@ -128,6 +128,63 @@ struct ResolutionProgressPublicSurfaceTests {
         }
     }
 
+    /// The ``TokenCounter`` of ``ResolveOnlyContainer``: one token per word.
+    ///
+    /// This target imports the library alone, so it cannot use the shared
+    /// scripted counter of the test-support target. A word is one run of
+    /// characters between whitespace. A transcript counts the words of the
+    /// `.text` segments of every entry the model reads, and the name of every
+    /// tool call. A reasoning entry is not replayed to the model, so it counts
+    /// nothing. `prefix(of:tokens:)` keeps the first `limit` words, joined
+    /// with one space.
+    private struct WordTokenCounter: TokenCounter {
+        func count(_ text: String) -> Int {
+            Self.words(of: text).count
+        }
+
+        func count(_ transcript: Transcript) throws -> Int {
+            transcript.reduce(0) { $0 + count(Self.text(of: $1)) }
+        }
+
+        func prefix(of text: String, tokens limit: Int) -> String {
+            Self.words(of: text).prefix(Swift.max(limit, 0)).joined(separator: " ")
+        }
+
+        /// The runs of characters between whitespace in `text`.
+        private static func words(of text: String) -> [Substring] {
+            text.split(whereSeparator: \.isWhitespace)
+        }
+
+        /// The text the model reads of `entry`, or the empty string for an
+        /// entry the model does not read again.
+        private static func text(of entry: Transcript.Entry) -> String {
+            switch entry {
+            case .instructions(let instructions):
+                return text(of: instructions.segments)
+            case .prompt(let prompt):
+                return text(of: prompt.segments)
+            case .response(let response):
+                return text(of: response.segments)
+            case .toolCalls(let calls):
+                return calls.map(\.toolName).joined(separator: " ")
+            case .toolOutput(let output):
+                return text(of: output.segments)
+            case .reasoning:
+                return ""
+            @unknown default:
+                return ""
+            }
+        }
+
+        /// The `.text` content of `segments`, joined with one space.
+        private static func text(of segments: [Transcript.Segment]) -> String {
+            segments.compactMap { segment -> String? in
+                if case .text(let text) = segment { return text.content }
+                return nil
+            }.joined(separator: " ")
+        }
+    }
+
     /// A ``LoadedLLMContainer`` a resolve can hold resident and nothing can
     /// open a session over.
     ///
@@ -139,6 +196,9 @@ struct ResolutionProgressPublicSurfaceTests {
         /// The message each factory traps with.
         private static let noSessionMessage =
             "ResolveOnlyContainer vends no session; the resolve under test never asks for one"
+
+        /// The counter of this container: one token per word.
+        let tokenCounter: any TokenCounter = WordTokenCounter()
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
             preconditionFailure(Self.noSessionMessage)

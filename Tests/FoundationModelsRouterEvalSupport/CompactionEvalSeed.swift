@@ -36,8 +36,8 @@ struct CompactionEvalSeed: Sendable {
     /// The question asked of the resumed, post-compaction session.
     let question: String
 
-    /// The estimated token count of this seed's compactable span — every turn
-    /// ``Summarization`` replaces with one summary entry.
+    /// The token count of this seed's compactable span, the turns
+    /// ``Summarization`` replaces with one summary entry, under `counter`.
     ///
     /// Partitioned through the same ``TranscriptTurns`` split the stage itself
     /// uses, at the stage's own ``Summarization/keepRecentTurns``, so this
@@ -48,10 +48,16 @@ struct CompactionEvalSeed: Sendable {
     /// ``CompactionEvalFactRetentionReport`` prints the span beside the summary
     /// a discarded compaction produced. A second copy of the partitioning would let
     /// the bound and the evidence measure different spans.
-    var compactableSpanEstimatedTokens: Int {
+    ///
+    /// - Parameter counter: The counter the span is measured with. A gated run
+    ///   passes the loaded model's own counter. A hermetic test passes the
+    ///   counter its scripted backend states.
+    /// - Returns: The span's size, in the tokens `counter` counts.
+    /// - Throws: What `counter` throws.
+    func compactableSpanTokens(counter: any TokenCounter) throws -> Int {
         let (_, turns) = TranscriptTurns.split(entries)
         let (old, _) = TranscriptTurns.partition(turns, keepRecentTurns: Summarization().keepRecentTurns)
-        return Compactor.estimatedTokenCount(of: Transcript(entries: old.flatMap(\.entries)))
+        return try counter.count(Transcript(entries: old.flatMap(\.entries)))
     }
 
     /// `seeds` keyed by ``question``, the join key a recorded sample carries
@@ -59,7 +65,7 @@ struct CompactionEvalSeed: Sendable {
     ///
     /// The one place that join is built. Two readers depend on it and must
     /// never disagree about which seed a sample ran:
-    /// ``CompactionEvalFactRetentionReport/findings(for:seeds:)`` classifies a
+    /// ``CompactionEvalFactRetentionReport/findings(for:seeds:counter:)`` classifies a
     /// recorded sample against it once the run has ended, and
     /// ``CompactionEvalSampleLabel/init(ordinal:of:fixture:id:)`` names the
     /// sample in the progress lines a run emits while it is still going.

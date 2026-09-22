@@ -204,14 +204,14 @@ struct CompactionEvalFactRetentionFinding: Sendable {
     /// The case this sample landed in.
     let classification: CompactionEvalFactRetentionClass
 
-    /// The span this sample's compaction was to replace, in the estimated tokens
-    /// `Compactor` measures a transcript in — `0` when the sample matched no
-    /// seed, since no span is then known.
+    /// The span this sample's compaction was to replace, in the tokens the
+    /// run's counter counts — `0` when the sample matched no seed, since no
+    /// span is then known.
     ///
     /// The other half of a discarded compaction's measurement. `Compactor.compact`
     /// keeps a compaction only when it leaves the transcript smaller, so a summary
     /// that lost is only legible beside the span it was meant to replace.
-    let compactableSpanEstimatedTokens: Int
+    let compactableSpanTokens: Int
 }
 
 /// Turns the gated run's recorded per-sample evidence into a classified table
@@ -226,18 +226,18 @@ enum CompactionEvalFactRetentionReport {
     /// sample whose question matched no seed.
     static let unmatchedSeedID = "<unmatched>"
 
-    /// What ``stanza(for:)`` renders in place of a compaction that produced no
+    /// What ``stanza(for:counter:)`` renders in place of a compaction that produced no
     /// summary at all.
     static let absentSummaryMarker = "<none>"
 
-    /// What ``stanza(for:)`` renders in place of a summary that holds no text.
+    /// What ``stanza(for:counter:)`` renders in place of a summary that holds no text.
     ///
     /// The printer wrote the text itself, so an empty summary rendered as
     /// `summary=` with nothing after it — which reads as a truncated line
     /// rather than as the measurement it is. A marker states it.
     static let emptySummaryMarker = "<empty>"
 
-    /// What ``stanza(for:)`` renders in place of a compaction that ran and was then
+    /// What ``stanza(for:counter:)`` renders in place of a compaction that ran and was then
     /// discarded — see ``CompactionEvalSampleDiagnostic/compactionDiscarded``.
     ///
     /// `Compactor.compact` reports a discarded compaction through the same shortfall
@@ -247,7 +247,7 @@ enum CompactionEvalFactRetentionReport {
     /// pipeline then threw away, is a different measurement and says so.
     static let discardedSummaryMarker = "<discarded>"
 
-    /// What ``lines(of:expecting:)`` renders in place of the unreached seed ids
+    /// What ``lines(of:expecting:counter:)`` renders in place of the unreached seed ids
     /// when the run reached every seed of its tier.
     ///
     /// Stated rather than left out. A table that printed the unreached line only
@@ -255,7 +255,7 @@ enum CompactionEvalFactRetentionReport {
     /// run from a printer that never states one.
     static let everySeedReachedMarker = "<none>"
 
-    /// How many characters of a discarded compaction's summary ``stanza(for:)``
+    /// How many characters of a discarded compaction's summary ``stanza(for:counter:)``
     /// prints before it cuts the text off.
     ///
     /// A discarded summary is bounded only by the ceiling the whole generation
@@ -264,20 +264,22 @@ enum CompactionEvalFactRetentionReport {
     /// and a table that printed one whole for every sample would bury the rest
     /// of the run's evidence.
     ///
-    /// The span byte budget ``Summarization`` holds the FINAL summary to does
+    /// The span budget ``Summarization`` holds the FINAL summary to does
     /// not bound this text, and it is meant not to.
     /// ``CompactionEvalRealSubjectRunner``'s summarizer records the answer as
     /// the call returns it, before the stage resolves anything, so a
     /// discarded compaction is judged on what the model wrote.
     ///
-    /// `1000` is nearly twice the largest summary the allowance itself buys
-    /// (``Summarization/minimumSummaryTokens`` at
-    /// ``Compactor/charsPerTokenEstimate`` is 512 characters), so an answer that
-    /// came back inside that size prints whole, and one that did not is visibly
-    /// cut with its real size stated on the line above.
+    /// `1000` characters is more than the largest summary the allowance
+    /// itself buys. ``RealisticSummaryLengthSummarizer`` writes the whole
+    /// floor of the allowance, ``Summarization/minimumSummaryTokens``, as 614
+    /// bytes of ASCII prose, and a real answer of that allowance is near that
+    /// size. So an answer that kept to the allowance prints whole, and one
+    /// that did not is visibly cut, with its real size stated on the line
+    /// above.
     static let discardedSummaryPrefixCharacters = 1000
 
-    /// What ``stanza(for:)`` appends to a discarded summary it cut short at
+    /// What ``stanza(for:counter:)`` appends to a discarded summary it cut short at
     /// ``discardedSummaryPrefixCharacters``.
     ///
     /// Stated rather than left to the reader to infer from the byte count on
@@ -304,20 +306,25 @@ enum CompactionEvalFactRetentionReport {
     ///     order.
     ///   - seeds: The seeds the run drew its samples from, joined by
     ///     ``CompactionEvalSeed/question``.
+    ///   - counter: The counter each seed's compactable span is measured
+    ///     with. A gated run passes the loaded model's own counter. A hermetic
+    ///     test passes the counter its scripted backend states.
     /// - Returns: One finding per recorded sample, in the same order. A sample
     ///   whose question matches no seed still yields a finding, classified
     ///   ``CompactionEvalFactRetentionClass/unrecognizedSample``, so no
     ///   recorded sample is silently dropped from the table.
+    /// - Throws: What `counter` throws.
     static func findings(
         for diagnostics: [CompactionEvalSampleDiagnostic],
-        seeds: [CompactionEvalSeed]
-    ) -> [CompactionEvalFactRetentionFinding] {
+        seeds: [CompactionEvalSeed],
+        counter: any TokenCounter
+    ) throws -> [CompactionEvalFactRetentionFinding] {
         let seedsByQuestion = CompactionEvalSeed.keyedByQuestion(seeds)
-        return diagnostics.map { diagnostic in
+        return try diagnostics.map { diagnostic in
             guard let seed = seedsByQuestion[diagnostic.question] else {
                 return unrecognizedFinding(for: diagnostic)
             }
-            return finding(for: diagnostic, seed: seed)
+            return try finding(for: diagnostic, seed: seed, counter: counter)
         }
     }
 
@@ -406,20 +413,27 @@ enum CompactionEvalFactRetentionReport {
     ///   - seeds: The seeds the tier was to measure. The head and the closing
     ///     line are read against this, so a run cut short states what it never
     ///     got to rather than reading as a whole measurement of a smaller tier.
+    ///   - counter: The counter a discarded summary's size is measured with.
+    ///     It is the counter the findings were measured with, so the summary
+    ///     and the span it lost against are stated in one unit.
     /// - Returns: The table's lines, ready to print one per line.
     static func lines(
         of findings: [CompactionEvalFactRetentionFinding],
-        expecting seeds: [CompactionEvalSeed]
+        expecting seeds: [CompactionEvalSeed],
+        counter: any TokenCounter
     ) -> [String] {
         let tallied = counts(of: findings)
         let tally = CompactionEvalFactRetentionClass.allCases.map { classification in
             "\(classification.rawValue)=\(tallied[classification] ?? 0)"
         }
-        return ["FactRetention per-sample evidence — \(findings.count) of \(seeds.count) seeds measured"]
-            + findings.flatMap(stanza(for:))
-            + ["counts: " + tally.joined(separator: " ")]
-            + [retentionLine(of: findings, counts: tallied)]
-            + [unreachedLine(of: findings, expecting: seeds)]
+        let head = "FactRetention per-sample evidence — \(findings.count) of \(seeds.count) seeds measured"
+        let stanzas: [String] = findings.flatMap { stanza(for: $0, counter: counter) }
+        let closing: [String] = [
+            "counts: " + tally.joined(separator: " "),
+            retentionLine(of: findings, counts: tallied),
+            unreachedLine(of: findings, expecting: seeds),
+        ]
+        return [head] + stanzas + closing
     }
 
     /// Renders the line stating what the COMPACTIONS carried beside what the ANSWERS
@@ -474,11 +488,14 @@ enum CompactionEvalFactRetentionReport {
     /// - Parameters:
     ///   - diagnostic: The sample's recorded evidence.
     ///   - seed: The seed the sample ran.
+    ///   - counter: The counter the seed's compactable span is measured with.
     /// - Returns: The classified finding.
+    /// - Throws: What `counter` throws.
     private static func finding(
         for diagnostic: CompactionEvalSampleDiagnostic,
-        seed: CompactionEvalSeed
-    ) -> CompactionEvalFactRetentionFinding {
+        seed: CompactionEvalSeed,
+        counter: any TokenCounter
+    ) throws -> CompactionEvalFactRetentionFinding {
         CompactionEvalFactRetentionFinding(
             seedID: seed.id,
             plantedFact: seed.plantedFact,
@@ -490,7 +507,7 @@ enum CompactionEvalFactRetentionReport {
                 answer: diagnostic.answer,
                 factKeyPhrase: seed.factKeyPhrase
             ),
-            compactableSpanEstimatedTokens: seed.compactableSpanEstimatedTokens
+            compactableSpanTokens: try seed.compactableSpanTokens(counter: counter)
         )
     }
 
@@ -509,17 +526,21 @@ enum CompactionEvalFactRetentionReport {
             factInSummary: false,
             diagnostic: diagnostic,
             classification: .unrecognizedSample,
-            compactableSpanEstimatedTokens: 0
+            compactableSpanTokens: 0
         )
     }
 
     /// Renders one classified sample's stanza.
     ///
-    /// - Parameter finding: The classified sample to render.
+    /// - Parameters:
+    ///   - finding: The classified sample to render.
+    ///   - counter: The counter a discarded summary's size is measured with.
     /// - Returns: The stanza's lines — the verdict line, then each text the
     ///   verdict was read from, one per line so a multi-line summary stays
     ///   legible, then the measurement of a discarded compaction when there is one.
-    private static func stanza(for finding: CompactionEvalFactRetentionFinding) -> [String] {
+    private static func stanza(
+        for finding: CompactionEvalFactRetentionFinding, counter: any TokenCounter
+    ) -> [String] {
         [
             "- seed=\(finding.seedID) class=\(finding.classification.rawValue)"
                 + " factInSummary=\(finding.factInSummary)"
@@ -531,7 +552,7 @@ enum CompactionEvalFactRetentionReport {
             "  question=\(finding.diagnostic.question)",
             "  answer=\(finding.diagnostic.answer)",
             "  summary=\(renderedSummary(of: finding.diagnostic))",
-        ] + discardedLines(for: finding)
+        ] + discardedLines(for: finding, counter: counter)
     }
 
     /// Renders the lines a discarded compaction adds to its stanza, or none at all
@@ -543,14 +564,20 @@ enum CompactionEvalFactRetentionReport {
     /// wrote it ran under — the three numbers `Compactor.compact`'s
     /// did-not-shrink guard is decided by — and then the text itself, bounded.
     ///
-    /// - Parameter finding: The classified sample to render.
+    /// - Parameters:
+    ///   - finding: The classified sample to render.
+    ///   - counter: The counter the summary that lost is measured with. It is
+    ///     the counter ``CompactionEvalFactRetentionFinding/compactableSpanTokens``
+    ///     was measured with, so the two sizes on the line are in one unit.
     /// - Returns: The two lines, or an empty array.
-    private static func discardedLines(for finding: CompactionEvalFactRetentionFinding) -> [String] {
+    private static func discardedLines(
+        for finding: CompactionEvalFactRetentionFinding, counter: any TokenCounter
+    ) -> [String] {
         guard let discarded = finding.diagnostic.discardedSummary else { return [] }
         return [
             "  discarded=\(discarded.answer.utf8.count) bytes"
-                + " summaryTokens=\(Summarization.estimatedTokens(of: discarded.answer))"
-                + " spanTokens=\(finding.compactableSpanEstimatedTokens)"
+                + " summaryTokens=\(counter.count(discarded.answer))"
+                + " spanTokens=\(finding.compactableSpanTokens)"
                 + " ceiling=\(discarded.maxTokens)",
             "  discardedText=\(boundedText(of: discarded.answer))",
         ]

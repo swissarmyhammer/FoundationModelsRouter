@@ -101,6 +101,13 @@ public protocol LoadedLLMContainer: LoadedModelContainer {
     /// The raw `FoundationModels.LanguageModel` this container wraps. The
     /// default traps. Only a container that supports ``RoutedModel/makeLanguageModel()`` must override it.
     var languageModel: any FoundationModels.LanguageModel { get }
+
+    /// The counter that counts tokens the way this container's model counts
+    /// them. A session vended over this container owns it, and counts every
+    /// transcript, summary and tool output with it before a model call. The
+    /// live container backs it with the loaded tokenizer; a scripted
+    /// container supplies its own rule.
+    var tokenCounter: any TokenCounter { get }
 }
 
 extension LoadedLLMContainer {

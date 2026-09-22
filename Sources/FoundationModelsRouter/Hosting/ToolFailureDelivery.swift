@@ -12,7 +12,7 @@ import FoundationModels
 /// A true cancellation is different. It stays a throw, or cancellation stops
 /// working.
 ///
-/// Only ``ToolMounting/makeSessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:tracer:)``
+/// Only ``ToolMounting/makeSessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:tokenCounter:tracer:)``
 /// applies this rule, and it applies it outermost. The mount layers beneath
 /// keep their throw. So a caller that is not the model keeps the throw: a tool
 /// from ``ToolContext/mount(_:op:as:postingTo:)``, and a tool of the session's

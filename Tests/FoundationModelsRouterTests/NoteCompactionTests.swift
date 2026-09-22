@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -450,8 +451,8 @@ struct NoteCompactionTests {
     /// `defaultKeepRecentTurns`) has old turns to compact away.
     private static let deterministicCompactionTurnCount = 6
 
-    /// Scales a pre-compaction estimate up to a `TokenBudget` limit whose target
-    /// sits far above the estimate, so ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:protection:)``
+    /// Scales a pre-compaction count up to a `TokenBudget` limit whose target
+    /// sits far above the count, so ``Compactor/compact(_:prompt:budget:counter:summarizer:summarization:pendingRuns:protection:)``
     /// applies no stage and returns the transcript unchanged.
     private static let noOpBudgetLimitMultiplier = 4
 
@@ -467,7 +468,8 @@ struct NoteCompactionTests {
         // target the deterministic stages alone land under.
         let (compacted, result) = try await Compactor.compact(
             Transcript(entries: fixture.entries),
-            budget: deterministicCompactionBudget(for: fixture.entries)
+            budget: deterministicCompactionBudget(for: fixture.entries),
+            counter: characterTokenCounter
         )
         #expect(result.summaryEntryId == nil)
         #expect(!result.stagesApplied.isEmpty)
@@ -488,7 +490,7 @@ struct NoteCompactionTests {
         #expect(checkpoint.index == afterEvents.count - 1)
         #expect(checkpoint.content.stagesApplied == result.stagesApplied)
         // The bare recipe has no measured usage, so the checkpoint carries
-        // the pipeline's estimated token counts.
+        // the pipeline's own token counts.
         #expect(checkpoint.content.tokensBefore == result.tokensBefore)
         #expect(checkpoint.content.tokensAfter == result.tokensAfter)
         // No summarizer read any compaction prompt, and no session mailbox
@@ -518,10 +520,11 @@ struct NoteCompactionTests {
 
         // A budget the transcript is already under: the pipeline returns the
         // transcript unchanged and reports no stage applied.
-        let preCompactionTokens = Compactor.estimatedTokenCount(of: Transcript(entries: fixture.entries))
+        let preCompactionTokens = try characterTokenCounter.count(Transcript(entries: fixture.entries))
         let (compacted, result) = try await Compactor.compact(
             Transcript(entries: fixture.entries),
-            budget: TokenBudget(limit: preCompactionTokens * Self.noOpBudgetLimitMultiplier)
+            budget: TokenBudget(limit: preCompactionTokens * Self.noOpBudgetLimitMultiplier),
+            counter: characterTokenCounter
         )
         #expect(result.stagesApplied.isEmpty)
 

@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -284,6 +285,9 @@ struct CompactionSpikeTests {
     /// A ``LoadedLLMContainer`` that always vends the one test-supplied
     /// ``SpikeBackend``.
     private struct SpikeLLMContainer: LoadedLLMContainer {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         let backend: SpikeBackend
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend { backend }

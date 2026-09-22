@@ -1,4 +1,5 @@
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Synchronization
 
 @testable import FoundationModelsRouter
@@ -238,6 +239,9 @@ struct ScriptedToolCallingModel: LanguageModel {
 /// ``LiveBackendContainer`` for the backend, records it in ``vendedBackends``,
 /// and returns it. Thus one type in the test target builds the backend.
 struct ScriptedToolCallingContainer: LoadedLLMContainer {
+    /// The scripted counter of this container: one token per `Character`.
+    let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
     /// The container that builds every backend this container vends, over
     /// the scripted model.
     private let live: LiveBackendContainer<ScriptedToolCallingModel>

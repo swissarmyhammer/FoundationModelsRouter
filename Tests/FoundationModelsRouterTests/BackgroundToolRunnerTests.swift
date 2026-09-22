@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -21,8 +22,8 @@ struct BackgroundToolRunnerTests {
     /// The pause between two heartbeats.
     private static let heartbeatInterval: TimeInterval = 0.05
 
-    /// A token limit far below any rendered envelope's estimated size, so
-    /// only the envelope exemption can let one through the capping layer.
+    /// A token limit far below the character count of any rendered envelope,
+    /// so only the envelope exemption can let one through the capping layer.
     private static let tinyTokenLimit = 1
 
     // MARK: - The handle on every call
@@ -126,13 +127,15 @@ struct BackgroundToolRunnerTests {
 
         var completionTokens: [String] = []
         for harness in harnesses {
-            let capping = TokenCappingTool(wrapped: harness.mounted, limit: Self.tinyTokenLimit)
+            let capping = TokenCappingTool(wrapped: harness.mounted, limit: Self.tinyTokenLimit, counter: characterTokenCounter)
 
             let rendered = try await capping.call(arguments: MountArguments(value: "capped"))
 
             // The cap would have bitten: the envelope is not short enough to
             // pass on size alone.
-            #expect(ToolOutputCapping.capped(text: rendered, toTokenLimit: Self.tinyTokenLimit) != rendered)
+            #expect(
+                ToolOutputCapping.capped(text: rendered, toTokenLimit: Self.tinyTokenLimit, counter: characterTokenCounter)
+                    != rendered)
             #expect(PendingRunEnvelope.isRendered(text: rendered))
             let envelope = try Fixtures.decodeEnvelope(rendered)
             #expect(
@@ -277,7 +280,7 @@ struct BackgroundToolRunnerTests {
         let harness = Fixtures.backgroundHarness(
             wrapping: Fixtures.InlineGraceTool(gate: gate, grace: Fixtures.generousInterval)
         )
-        let capping = TokenCappingTool(wrapped: harness.mounted, limit: Self.tinyTokenLimit)
+        let capping = TokenCappingTool(wrapped: harness.mounted, limit: Self.tinyTokenLimit, counter: characterTokenCounter)
 
         let rendered = try await capping.call(arguments: MountArguments(value: "capped"))
 
@@ -289,7 +292,8 @@ struct BackgroundToolRunnerTests {
             envelope.detail
                 == ToolOutputCapping.capped(
                     text: Fixtures.InlineGraceTool.output(for: "capped"),
-                    toTokenLimit: Self.tinyTokenLimit
+                    toTokenLimit: Self.tinyTokenLimit,
+                    counter: characterTokenCounter
                 )
         )
         #expect(

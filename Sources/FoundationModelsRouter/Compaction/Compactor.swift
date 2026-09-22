@@ -17,10 +17,10 @@ public struct CompactionResult: Sendable, Equatable {
     /// The ``ModelRef`` string of the model that wrote ``summary``, or `nil`.
     public let summarizerModel: String?
 
-    /// The transcript's estimated size, in tokens, before this pipeline ran.
+    /// The transcript's size, in tokens, before this pipeline ran.
     public let tokensBefore: Int
 
-    /// The transcript's estimated size, in tokens, after this pipeline ran.
+    /// The transcript's size, in tokens, after this pipeline ran.
     public let tokensAfter: Int
 
     /// The stages that were applied, in order.
@@ -30,8 +30,8 @@ public struct CompactionResult: Sendable, Equatable {
     /// ``summary``. `false` on a result rebuilt from a checkpoint.
     public let summaryCut: Bool
 
-    /// The estimated size, in tokens, of the protected tool outputs the
-    /// compacted transcript keeps word for word (see ``ToolOutputProtection``).
+    /// The size, in tokens, of the protected tool outputs the compacted
+    /// transcript keeps word for word (see ``ToolOutputProtection``).
     /// `0` when the session has no rule, or when the rule protects nothing.
     ///
     /// Protected outputs count against the budget like other entries. When
@@ -48,10 +48,10 @@ public struct CompactionResult: Sendable, Equatable {
     ///   - summaryEntryId: The summary entry's `Transcript.Entry.id`, or `nil`. Defaults to `nil`.
     ///   - summarizerModel: The ``ModelRef`` string of the summary's writer, or `nil`. Defaults to `nil`.
     ///   - summaryCut: Whether the last-resort cut removed text from `summary`. Defaults to `false`.
-    ///   - tokensBefore: The estimated pre-compaction size, in tokens.
-    ///   - tokensAfter: The estimated post-compaction size, in tokens.
+    ///   - tokensBefore: The pre-compaction size, in tokens.
+    ///   - tokensAfter: The post-compaction size, in tokens.
     ///   - stagesApplied: The stages that ran, in order.
-    ///   - protectedTokens: The estimated size of the protected tool outputs the
+    ///   - protectedTokens: The size of the protected tool outputs the
     ///     compacted transcript keeps. Defaults to `0`.
     public init(
         id: String = ULID.generate().description,
@@ -97,13 +97,17 @@ public struct CompactionResult: Sendable, Equatable {
 }
 
 /// The logger a compaction reports to when its protected tool outputs keep it over
-/// its target (see ``Compactor/compactionKeptOverTarget(_:stagesApplied:tokensBefore:targetTokens:protection:)``).
+/// its target (see ``Compactor/compactionKeptOverTarget(_:stagesApplied:tokensBefore:targetTokens:protection:counter:)``).
 private let compactorLogger = makeModuleLogger(category: "Compaction")
 
 /// The compaction pipeline. It runs the deterministic stages in order until
 /// the transcript lands under ``TokenBudget/target``, then falls back to the
 /// model-assisted ``Summarization`` stage when a `summarizer` is supplied.
 /// It reports the shortfall when no stage is enough.
+///
+/// Every size the pipeline compares against the budget is counted by the
+/// ``TokenCounter`` the caller passes: the session's own, backed by the
+/// tokenizer of its model.
 package enum Compactor {
     /// The deterministic stages this pipeline runs, in order.
     ///
@@ -113,10 +117,6 @@ package enum Compactor {
     static func stages(protecting protection: ToolOutputProtection?) -> [any CompactionStage] {
         [ToolOutputElision(protection: protection), TurnTruncation(protection: protection)]
     }
-
-    /// The characters-per-token ratio ``estimatedTokenCount(of:)`` applies to
-    /// a transcript's content bytes.
-    package static let charsPerTokenEstimate: Double = 4.0
 
     /// Runs the pipeline over `transcript` and compacts it down to at most
     /// `budget.target` of `budget.limit`. The pipeline stops at the first
@@ -135,24 +135,27 @@ package enum Compactor {
     ///   - transcript: The transcript to compact.
     ///   - prompt: The compaction prompt ``Summarization`` sends to `summarizer`.
     ///   - budget: The token budget to compact against.
+    ///   - counter: The counter every size is measured with.
     ///   - summarizer: The model ``Summarization`` calls, or `nil` for the model-free pipeline.
     ///   - summarization: The model-assisted stage and its tuning.
     ///   - pendingRuns: The run-plane summaries of the runs still running, in tracking order.
     ///   - protection: The host rule whose protected tool outputs every stage
     ///     keeps word for word, or `nil` (the default) to protect nothing.
     /// - Returns: The compacted transcript and a report of what happened.
-    /// - Throws: What `summarizer.summarize(_:maxTokens:)` throws, or
-    ///   ``SummarizationError/emptySummary`` when the summary holds no text.
+    /// - Throws: What `summarizer.summarize(_:maxTokens:)` throws, what
+    ///   `counter` throws, or ``SummarizationError/emptySummary`` when the
+    ///   summary holds no text.
     package static func compact(
         _ transcript: Transcript,
         prompt: CompactionPrompt = .default,
         budget: TokenBudget,
+        counter: any TokenCounter,
         summarizer: (any CompactionSummarizer)? = nil,
         summarization: Summarization = Summarization(),
         pendingRuns: [CompactionSegment.PendingRunSummary] = [],
         protection: ToolOutputProtection? = nil
     ) async throws -> (transcript: Transcript, result: CompactionResult) {
-        let tokensBefore = estimatedTokenCount(of: transcript)
+        let tokensBefore = try counter.count(transcript)
         let targetTokens = budget.targetTokens
 
         // Every exit that returns `transcript` untouched — already under
@@ -161,7 +164,7 @@ package enum Compactor {
         // is actually being returned. One value, so the two cannot drift.
         let shortfallResult = CompactionResult(
             summary: nil, tokensBefore: tokensBefore, tokensAfter: tokensBefore, stagesApplied: [],
-            protectedTokens: protectedTokenCount(of: transcript, protection: protection))
+            protectedTokens: try protectedTokenCount(of: transcript, protection: protection, counter: counter))
 
         guard tokensBefore > targetTokens else {
             return (transcript, shortfallResult)
@@ -174,13 +177,13 @@ package enum Compactor {
             current = stage.apply(current)
             stagesApplied.append(type(of: stage).stageName)
 
-            let estimated = estimatedTokenCount(of: current)
-            if estimated <= targetTokens {
+            let counted = try counter.count(current)
+            if counted <= targetTokens {
                 return (
                     current,
                     CompactionResult(
-                        summary: nil, tokensBefore: tokensBefore, tokensAfter: estimated, stagesApplied: stagesApplied,
-                        protectedTokens: protectedTokenCount(of: current, protection: protection))
+                        summary: nil, tokensBefore: tokensBefore, tokensAfter: counted, stagesApplied: stagesApplied,
+                        protectedTokens: try protectedTokenCount(of: current, protection: protection, counter: counter))
                 )
             }
         }
@@ -197,6 +200,7 @@ package enum Compactor {
                 tokensBefore: tokensBefore,
                 priorStagesApplied: stagesApplied,
                 summarizer: summarizer,
+                counter: counter,
                 pendingRuns: pendingRuns,
                 protection: protection
             )
@@ -210,7 +214,7 @@ package enum Compactor {
             // *larger* transcript and record a checkpoint saying so. A compaction
             // that fails to shrink therefore falls through to the same
             // shortfall exit the oversized-tail case takes below.
-            let tokensAfter = estimatedTokenCount(of: compacted.transcript)
+            let tokensAfter = try counter.count(compacted.transcript)
             if tokensAfter < tokensBefore {
                 return (
                     compacted.transcript,
@@ -221,7 +225,8 @@ package enum Compactor {
                         tokensBefore: tokensBefore,
                         tokensAfter: tokensAfter,
                         stagesApplied: stagesApplied + [Summarization.stageName],
-                        protectedTokens: protectedTokenCount(of: compacted.transcript, protection: protection)
+                        protectedTokens: try protectedTokenCount(
+                            of: compacted.transcript, protection: protection, counter: counter)
                     )
                 )
             }
@@ -230,9 +235,9 @@ package enum Compactor {
         // A deterministic compaction that only its protected tool outputs keep over
         // target completes: no stage may remove them, so returning the
         // original would give up the whole compaction for content that must stay.
-        if let kept = compactionKeptOverTarget(
+        if let kept = try compactionKeptOverTarget(
             current, stagesApplied: stagesApplied, tokensBefore: tokensBefore, targetTokens: targetTokens,
-            protection: protection)
+            protection: protection, counter: counter)
         {
             return kept
         }
@@ -259,19 +264,22 @@ package enum Compactor {
     /// - Parameters:
     ///   - compacted: The transcript the deterministic stages produced.
     ///   - stagesApplied: The stages that produced it, in order.
-    ///   - tokensBefore: The estimated size of the transcript before the compaction.
+    ///   - tokensBefore: The size of the transcript before the compaction.
     ///   - targetTokens: The budget's target, in tokens.
     ///   - protection: The host rule, or `nil`.
+    ///   - counter: The counter every size is measured with.
     /// - Returns: The completed compaction and its report, or `nil`.
+    /// - Throws: What `counter` throws.
     private static func compactionKeptOverTarget(
         _ compacted: Transcript,
         stagesApplied: [String],
         tokensBefore: Int,
         targetTokens: Int,
-        protection: ToolOutputProtection?
-    ) -> (transcript: Transcript, result: CompactionResult)? {
-        let protectedTokens = protectedTokenCount(of: compacted, protection: protection)
-        let tokensAfter = estimatedTokenCount(of: compacted)
+        protection: ToolOutputProtection?,
+        counter: any TokenCounter
+    ) throws -> (transcript: Transcript, result: CompactionResult)? {
+        let protectedTokens = try protectedTokenCount(of: compacted, protection: protection, counter: counter)
+        let tokensAfter = try counter.count(compacted)
         guard protectedTokens > 0, tokensAfter < tokensBefore,
             protectedTokens > targetTokens || tokensAfter - protectedTokens <= targetTokens
         else { return nil }
@@ -290,56 +298,21 @@ package enum Compactor {
         )
     }
 
-    /// The estimated size, in tokens, of the tool outputs `protection`
-    /// protects in `transcript`.
+    /// The size, in tokens, of the tool outputs `protection` protects in
+    /// `transcript`.
     ///
     /// - Parameters:
     ///   - transcript: The transcript to measure.
     ///   - protection: The host rule, or `nil` to protect nothing.
-    /// - Returns: The estimated token count, or `0` when nothing is protected.
-    static func protectedTokenCount(of transcript: Transcript, protection: ToolOutputProtection?) -> Int {
+    ///   - counter: The counter the size is measured with.
+    /// - Returns: The token count, or `0` when nothing is protected.
+    /// - Throws: What `counter` throws.
+    static func protectedTokenCount(
+        of transcript: Transcript, protection: ToolOutputProtection?, counter: any TokenCounter
+    ) throws -> Int {
         let protectedOutputs = ProtectedToolOutputs(entries: Array(transcript), rule: protection)
             .protectedOutputEntries
-        return estimatedTokenCount(of: Transcript(entries: protectedOutputs))
-    }
-
-    /// Estimates `transcript`'s size in tokens: the total content byte size of
-    /// every entry (``TranscriptEntryPayload/contentByteCount``) divided by
-    /// ``charsPerTokenEstimate``. The JSON envelope is not counted.
-    ///
-    /// - Parameter transcript: The transcript to estimate.
-    /// - Returns: The estimated token count.
-    package static func estimatedTokenCount(of transcript: Transcript) -> Int {
-        let totalBytes = transcript.reduce(into: 0) { total, entry in
-            total += contentByteCount(of: entry)
-        }
-        return estimatedTokenCount(bytes: totalBytes)
-    }
-
-    /// Estimates `text`'s size in tokens with the same ratio
-    /// ``estimatedTokenCount(of:)`` applies to a transcript.
-    ///
-    /// - Parameter text: The text to estimate.
-    /// - Returns: The estimated token count.
-    package static func estimatedTokenCount(of text: String) -> Int {
-        estimatedTokenCount(bytes: text.utf8.count)
-    }
-
-    /// Converts a byte count into an estimated token count, rounded up.
-    ///
-    /// - Parameter bytes: The byte count to convert.
-    /// - Returns: The estimated token count.
-    private static func estimatedTokenCount(bytes: Int) -> Int {
-        Int((Double(bytes) / charsPerTokenEstimate).rounded(.up))
-    }
-
-    /// The content byte size of `entry`, measured through its
-    /// ``TranscriptEntryPayload`` mirror without the JSON envelope.
-    ///
-    /// - Parameter entry: The entry to measure.
-    /// - Returns: The entry's content size in bytes.
-    static func contentByteCount(of entry: Transcript.Entry) -> Int {
-        let (_, payload, _) = TranscriptEntryMapper.event(from: entry)
-        return payload.contentByteCount
+        guard !protectedOutputs.isEmpty else { return 0 }
+        return try counter.count(Transcript(entries: protectedOutputs))
     }
 }

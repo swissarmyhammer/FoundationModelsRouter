@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -417,9 +418,9 @@ struct RecordingHandleResumeTests {
     private static let compactionWarmupTurnCount = 6
 
     /// A long-ish canned response, repeated across every turn, so six turns'
-    /// worth of transcript carries a real byte-size estimate and the
+    /// worth of transcript carries a real character count and the
     /// deterministic-compaction budget derivation has room to sit strictly between
-    /// the recency-window floor and the full pre-compaction estimate.
+    /// the recency-window floor and the full pre-compaction count.
     private static let compactableCannedText = String(
         repeating: "The quick brown fox jumps over the lazy dog. ", count: 12)
 
@@ -486,7 +487,8 @@ struct RecordingHandleResumeTests {
         let preCompactionEntries = Array(parentSession.transcript)
         let (compacted, result) = try await Compactor.compact(
             Transcript(entries: preCompactionEntries),
-            budget: deterministicCompactionBudget(for: preCompactionEntries)
+            budget: deterministicCompactionBudget(for: preCompactionEntries),
+            counter: characterTokenCounter
         )
         #expect(!result.stagesApplied.isEmpty)
         _ = await parentHandle.noteCompaction(compacted, result: result)

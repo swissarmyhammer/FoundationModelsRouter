@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Synchronization
 import Testing
 
@@ -217,6 +218,9 @@ struct DiscoveryPrimingTests {
     /// `@unchecked Sendable`: ``log`` is an immutable reference, and the log
     /// itself carries the concurrency invariant (see ``PrimingLog``).
     private final class PrimingObservingContainer: LoadedLLMContainer, @unchecked Sendable {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         /// The shared log every vended backend writes into.
         let log = PrimingLog()
 

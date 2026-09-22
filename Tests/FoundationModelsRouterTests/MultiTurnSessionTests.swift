@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -98,6 +99,9 @@ struct MultiTurnSessionTests {
     /// happens afterward from that same task, so there is no concurrent access
     /// across isolation domains in practice.
     private final class TrackingLLMContainer: LoadedLLMContainer, @unchecked Sendable {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         private(set) var lastBackend: TrackingBackend?
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
@@ -209,6 +213,9 @@ struct MultiTurnSessionTests {
     /// references to independently `Sendable`/lock-guarded types, set once at
     /// initialization and never mutated afterward.
     private final class SuspendableLLMContainer: LoadedLLMContainer, @unchecked Sendable {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         private let log: EventLog
         private let releaseGate: AsyncSemaphore
 

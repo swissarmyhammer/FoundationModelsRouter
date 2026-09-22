@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 import FoundationModelsRouter
@@ -201,6 +202,9 @@ struct GuidedPublicSurfaceTests {
     /// `makeSession(transcript:tools:)` and no `languageModel`, each of which
     /// has a `public` default the protocol supplies.
     private struct MinimalContainer: LoadedLLMContainer {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         /// The chunks every backend this container vends streams for a turn.
         let chunks: [String]
 

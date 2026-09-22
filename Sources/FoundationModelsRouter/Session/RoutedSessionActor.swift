@@ -199,6 +199,7 @@ func makeRoutedSessionActor(
     discoveryPriming: DiscoveryPriming? = nil,
     toolOutputProtection: ToolOutputProtection? = nil,
     recordingRoot: URL? = nil,
+    tokenCounter: any TokenCounter,
     tracer: (any Tracer)?
 ) -> RoutedSessionActor {
     // The construction itself, so the one parameter list below is written once
@@ -234,6 +235,7 @@ func makeRoutedSessionActor(
             discoveryPriming: discoveryPriming,
             toolOutputProtection: toolOutputProtection,
             recordingRoot: recordingRoot,
+            tokenCounter: tokenCounter,
             tracer: tracer
         )
     }
@@ -492,6 +494,13 @@ actor RoutedSessionActor: RoutedSession {
     /// restore takes it from the host again. See ``ToolOutputProtection``.
     nonisolated let toolOutputProtection: ToolOutputProtection?
 
+    /// The counter that counts tokens the way this session's model counts
+    /// them, backed by the tokenizer of the loaded container. Every
+    /// compaction on this session measures with it, and so does the capping
+    /// layer of its tools. A fork carries it forward; a restore takes it from
+    /// the container again. See ``TokenCounter``.
+    nonisolated let tokenCounter: any TokenCounter
+
     /// The parent session and tool call that spawned this session, or `nil`.
     /// Stamped on this session's `session` meta event
     /// (``TranscriptEvent/agentSpawn``) and written to its sidecar
@@ -539,9 +548,11 @@ actor RoutedSessionActor: RoutedSession {
         discoveryPriming: DiscoveryPriming? = nil,
         toolOutputProtection: ToolOutputProtection? = nil,
         recordingRoot: URL? = nil,
+        tokenCounter: any TokenCounter,
         tracer: (any Tracer)?
     ) {
         self.toolOutputProtection = toolOutputProtection
+        self.tokenCounter = tokenCounter
         self.profile = profile
         self.routerId = routerId
         self.id = id

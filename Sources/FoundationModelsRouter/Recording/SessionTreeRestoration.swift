@@ -359,12 +359,13 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // caller's originals, it never derives one live session from
             // another) — mirroring the root site's mount → cap; the fork
             // site is fork → mount → cap (task ^k4nygqa; see
-            // ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)``
+            // ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:)``
             // and ``RoutedSessionActor/fork(workingDirectory:)``).
             let (outbox, mailbox, instancedTools) = makeSessionToolWiring(
                 tools,
                 sessionID: node.id,
-                cappedToTokenLimit: configuration?.budget?.toolOutputLimit
+                cappedToTokenLimit: configuration?.budget?.toolOutputLimit,
+                tokenCounter: routedLLM.container.tokenCounter
             )
             let backend = routedLLM.container.makeSession(
                 transcript: seedTranscript, tools: instancedTools, samplingMode: routedLLM.samplingMode)
@@ -479,6 +480,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 // Not in the envelope, because it is a closure: the rule this
                 // call's host supplied, for every node, as `tools` is.
                 toolOutputProtection: toolOutputProtection,
+                // Not in the envelope either: the counter comes from the
+                // container the node is restored over, as a vended session
+                // takes it.
+                tokenCounter: routedLLM.container.tokenCounter,
                 // The restoring handle's own tracer, exactly as a freshly
                 // vended session takes it: a restored node reports where the
                 // live router reports.

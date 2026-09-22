@@ -341,11 +341,11 @@ struct AutoCompactionTriggerIntegrationTests {
     /// that discarded 7 of 7 gated compactions in `^fm5ddk9` under the old
     /// allowance floor.
     ///
-    /// So this turn is written well past the bound. It estimates 639 tokens,
-    /// measured with ``Compactor/estimatedTokenCount(of:)``'s own arithmetic
-    /// over its 2556 bytes. It stays well under
-    /// ``Summarization/maxChunkTokens`` (2000), so the span is ONE chunk and
-    /// the compaction costs ONE generation.
+    /// So this turn is written well past the bound. It holds 2556 bytes of
+    /// prose, which the pipeline's character count of the time read as 639
+    /// tokens; both numbers are historical measurements of this fixture. It
+    /// stays well under ``Summarization/maxChunkTokens`` (2000), so the span
+    /// is ONE chunk and the compaction costs ONE generation.
     ///
     /// This is a bound on the FIXTURE, and it is not the trigger arithmetic
     /// this card removes. Nothing here is sized against a window or a

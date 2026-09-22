@@ -32,6 +32,12 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         return owningProfile
     }
 
+    /// The counter that counts tokens the way this model counts them, backed
+    /// by the tokenizer of the resident container. Every session vended from
+    /// this handle counts with it. A caller that needs a count before a call
+    /// reads it here. See ``TokenCounter``.
+    public var tokenCounter: any TokenCounter { container.tokenCounter }
+
     // sah:allow duplication a public convenience (^pckk91c) whose body only forwards its parameters into a SessionConfiguration and on to makeSession(configuration:); makeGuidedSession forwards the same parameters plus its grammar, and neither body holds logic that can drift
     /// Vends a new generation session over this resident model.
     ///
@@ -45,7 +51,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - instructions: The session's system instructions, or `nil`.
     ///   - workingDirectory: A working directory override, or `nil` for the recording directory.
     ///   - recordingRoot: A per-session recording root, or `nil` for the router-level root.
-    ///   - tools: The tools the model can call. Each is wrapped by ``makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)``.
+    ///   - tools: The tools the model can call. Each is wrapped by ``makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:)``.
     ///   - budget: The auto-compaction opt-in, or `nil` for manual compaction only.
     ///   - compactionPrompt: The prompt automatic compactions send to the summarizer.
     ///   - summarization: The model-assisted compaction stage every compaction runs.
@@ -133,7 +139,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
 
         // Per-session event wiring plus pure per-session instancing, before
         // the backend is ever built — see
-        // ``makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)``
+        // ``makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:)``
         // for the fresh outbox/mailbox scope rule and the mount → cap
         // chain this site applies (task
         // ^k4nygqa; the fork and restore sites each have their own
@@ -149,7 +155,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         let (outbox, mailbox, instancedTools) = makeSessionToolWiring(
             tools,
             sessionID: sessionId,
-            cappedToTokenLimit: budget?.toolOutputLimit
+            cappedToTokenLimit: budget?.toolOutputLimit,
+            tokenCounter: container.tokenCounter
         )
 
         // The container is only a factory: it manufactures the backend the
@@ -218,6 +225,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // ^ne5g9jn), so the recorded configuration names the recording
             // root the session was actually vended with.
             recordingRoot: recordingRoot,
+            // The container's own counter, so every count this session makes
+            // before a call comes from the tokenizer of its model.
+            tokenCounter: container.tokenCounter,
             // This handle's own tracer, so every span the session opens
             // reports to the backend the router was constructed with.
             tracer: tracer
@@ -228,7 +238,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// against them.
     ///
     /// Each tool is composed by
-    /// ``ToolMounting/makeSessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:tracer:)``,
+    /// ``ToolMounting/makeSessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:tokenCounter:tracer:)``,
     /// carrying this handle's own tracer, so each mounted call opens its
     /// ``RouterTracing/SpanName/tool`` span against the backend the router was
     /// constructed with.
@@ -238,11 +248,13 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - tools: The caller's original tools, never mutated.
     ///   - sessionID: The owning session's identity.
     ///   - tokenLimit: The ``TokenBudget/toolOutputLimit`` to cap output to, or `nil` for no cap.
+    ///   - tokenCounter: The counter the capping layer counts each result with.
     /// - Returns: The session's outbox and mailbox with the instanced tool list.
     func makeSessionToolWiring(
         _ tools: [any Tool],
         sessionID: ULID,
-        cappedToTokenLimit tokenLimit: Int?
+        cappedToTokenLimit tokenLimit: Int?,
+        tokenCounter: any TokenCounter
     ) -> (outbox: SessionOutbox, mailbox: SessionMailbox, tools: [any Tool]) {
         let outbox = SessionOutbox()
         let mailbox = SessionMailbox()
@@ -253,6 +265,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 mailbox: mailbox,
                 sink: outbox,
                 cappedToTokenLimit: tokenLimit,
+                tokenCounter: tokenCounter,
                 tracer: tracer
             )
         }

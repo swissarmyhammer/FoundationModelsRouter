@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -10,16 +11,16 @@ import Testing
 /// transcript in place — the actor counterpart to
 /// ``RecordingLanguageModel/noteCompaction(_:)`` for a bare session over the
 /// recording handle. Both are implemented on the same bare primitives
-/// (``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:protection:)`` +
+/// (``Compactor/compact(_:prompt:budget:counter:summarizer:summarization:pendingRuns:protection:)`` +
 /// ``LanguageModelSessionBackend/replacingTranscript(_:)``) — one mechanism,
 /// two entry points (compaction_plan.md §7).
 ///
 /// Everything runs against a stub ``LoadedLLMContainer``/``StubSessionBackend``
 /// and an ``InMemoryRecorder``, so the suite needs no network and no GPU.
-/// Budgets are derived from the real, measured pre-compaction byte-size estimate
-/// (via ``Compactor/estimatedTokenCount(of:)``, accessible through
-/// `@testable import`) rather than hand-picked magic numbers, so the tests
-/// stay meaningful regardless of exactly how the mapper serializes an entry.
+/// Budgets are derived from the real pre-compaction size counted by
+/// ``characterTokenCounter``, the test target's own counter, rather than
+/// hand-picked magic numbers, so the tests stay meaningful regardless of
+/// exactly how the mapper serializes an entry.
 @Suite("RoutedSession.compact(prompt:budget:): in-place compact on the actor")
 struct RoutedSessionCompactTests {
     // MARK: - Stub container
@@ -28,6 +29,9 @@ struct RoutedSessionCompactTests {
     /// test can inspect its accumulated entries and derive an exact budget
     /// forcing (or not forcing) a compaction.
     private final class ConfiguredLLMContainer: LoadedLLMContainer, @unchecked Sendable {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         let responseText: String
         let usageIncrement: (input: Int, output: Int)?
 
@@ -132,7 +136,7 @@ struct RoutedSessionCompactTests {
 
     /// A long-ish canned response, repeated across every turn, so a handful
     /// of turns' worth of transcript already carries a real, non-trivial
-    /// byte-size estimate — the recency window alone (the newest 4 turns
+    /// character count — the recency window alone (the newest 4 turns
     /// ``ToolOutputElision``/``TurnTruncation`` never touch) is large enough
     /// that a tight-enough budget still needs the model-assisted
     /// ``Summarization`` stage to land under target.
@@ -213,7 +217,7 @@ struct RoutedSessionCompactTests {
 
         let recorder = InMemoryRecorder()
         // A large per-turn usage delta relative to the tiny stub transcript's
-        // own byte-size estimate — simulating a session whose measured fill
+        // own character count — simulating a session whose measured fill
         // is already high (why compaction would run), on a fixed scale that
         // stays comparable across the two turns driven below.
         let container = ConfiguredLLMContainer(responseText: Self.cannedText, usageIncrement: (input: 50_000, output: 0))
@@ -229,7 +233,7 @@ struct RoutedSessionCompactTests {
         try await driveTurns(6, on: session)
 
         let backend = try #require(container.lastBackend)
-        let preCompactionTokens = Compactor.estimatedTokenCount(of: Transcript(entries: backend.transcriptEntries()))
+        let preCompactionTokens = try characterTokenCounter.count(Transcript(entries: backend.transcriptEntries()))
         let recencyOnly = recencyWindowOnlyEstimate(backend.transcriptEntries())
         let preCompactionFill = await session.contextFill
         // A turn's own usage delta reports the *whole* transcript's size at
@@ -239,7 +243,7 @@ struct RoutedSessionCompactTests {
         #expect(preCompactionFill == 0.5)
 
         // A budget whose target sits strictly between the recency-window-only
-        // floor and the full pre-compaction estimate: low enough to guarantee the
+        // floor and the full pre-compaction count: low enough to guarantee the
         // pipeline actually compacts something, high enough that the
         // deterministic TurnTruncation stage alone lands under it — a clean
         // shrink that never needs (and isn't skewed by) the model-assisted
@@ -259,16 +263,16 @@ struct RoutedSessionCompactTests {
         #expect(postCompactionFill < preCompactionFill)
         // The post-compaction fill reflects this compaction's own shrink ratio applied to
         // the measured usage the session already had — `tokensAfter` is the
-        // pipeline's character-ratio estimate, and `contextFill`'s numerator
-        // is measured tokens, so the estimate is rescaled onto that scale
-        // before it is reported (see `RoutedSessionActor.compactedUsage`).
+        // pipeline's own count, and `contextFill`'s numerator is measured
+        // tokens, so the count is rescaled onto that scale before it is
+        // reported (see `RoutedSessionActor.compactedUsage`).
         let expectedPostCompactionTokens = (50_000.0 * Double(result.tokensAfter) / Double(preCompactionTokens)).rounded()
         #expect(postCompactionFill == expectedPostCompactionTokens / 100_000)
     }
 
-    // MARK: - A compaction's reported fill is measured, not estimated
+    // MARK: - A compaction's reported fill is measured, not the pipeline's own count
 
-    @Test("a compaction never raises contextFill, even when the pipeline's own estimate of the compacted transcript exceeds the session's measured usage")
+    @Test("a compaction never raises contextFill, even when the pipeline's own count of the compacted transcript exceeds the session's measured usage")
     @MainActor
     func compactionReportsShrinkOnTheMeasuredScale() async throws {
         let dir = Self.makeTempDir()
@@ -276,9 +280,10 @@ struct RoutedSessionCompactTests {
 
         let recorder = InMemoryRecorder()
         // A *small* per-turn measured usage against a transcript the
-        // character-ratio estimator sizes far higher — the arrangement that
+        // pipeline's own counter sizes far higher — the arrangement that
         // exposed the unit mismatch on real hardware, where an over-counting
-        // estimate written into `contextFill`'s numerator made a genuine compaction
+        // character-ratio estimate (the count of that time) written into
+        // `contextFill`'s numerator made a genuine compaction
         // report a *higher* fill than the measured one it replaced (0.95068
         // after a compaction from 0.89453). The compaction's own accounting has to be
         // denominated in the same tokens the pre-compaction fill was, or a caller
@@ -293,12 +298,12 @@ struct RoutedSessionCompactTests {
         try await driveTurns(6, on: session)
 
         let backend = try #require(container.lastBackend)
-        let preCompactionTokens = Compactor.estimatedTokenCount(of: Transcript(entries: backend.transcriptEntries()))
+        let preCompactionTokens = try characterTokenCounter.count(Transcript(entries: backend.transcriptEntries()))
         let recencyOnly = recencyWindowOnlyEstimate(backend.transcriptEntries())
         let preCompactionFill = await session.contextFill
         // The premise of this test: even the part of the transcript no
-        // deterministic stage may touch estimates larger than everything the
-        // session has actually measured, so reporting the compaction's own estimate
+        // deterministic stage may touch counts larger than everything the
+        // session has actually measured, so reporting the compaction's own count
         // raw could only raise fill.
         #expect(recencyOnly > measuredTokensPerTurn)
 
@@ -398,7 +403,7 @@ struct RoutedSessionCompactTests {
         try await driveTurns(6, on: session)
 
         let backend = try #require(container.lastBackend)
-        let preCompactionTokens = Compactor.estimatedTokenCount(of: Transcript(entries: backend.transcriptEntries()))
+        let preCompactionTokens = try characterTokenCounter.count(Transcript(entries: backend.transcriptEntries()))
         let budget = TokenBudget(limit: preCompactionTokens * 2, target: 0.25)
         try await session.compact(budget: budget)
 
@@ -427,7 +432,7 @@ struct RoutedSessionCompactTests {
         let router = Self.makeRouter(container: container, recorder: recorder, cacheDir: dir)
 
         // Drive turns first (against a throwaway large-context profile) so
-        // the real recency-window-only estimate is known before picking a
+        // the real recency-window-only count is known before picking a
         // context tight enough that the *default* budget (target 0.5 of
         // this profile's own context) still needs Summarization.
         let scratchProfile = try await router.resolve(
@@ -856,7 +861,7 @@ struct RoutedSessionCompactTests {
 
     /// The per-turn measured usage delta the two checkpoint tests below
     /// configure their stub backend with — large against the tiny stub
-    /// transcript's own byte-size estimate, so the compaction's measured-scale
+    /// transcript's own character count, so the compaction's measured-scale
     /// rescale (``RoutedSessionActor``'s `compactedUsage`) is a real conversion
     /// rather than a near-identity.
     private static let measuredTokensPerCheckpointTurn = 50_000

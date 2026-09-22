@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -143,6 +144,9 @@ struct RespondRunPlaneDrainTests {
     /// `@MainActor` test method after that vend returns.
     // swiftlint:disable:next no_unchecked_sendable  lastBackend is written once, synchronously, inside the vend, and read only by the @MainActor test after the vend returned
     private final class ScriptedBackgroundingLLMContainer: LoadedLLMContainer, @unchecked Sendable {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         /// The backend the newest `makeSession(instructions:)` call vended, or
         /// `nil` before the first call.
         private(set) var lastBackend: ScriptedBackgroundingBackend?

@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Synchronization
 import Testing
 
@@ -258,6 +259,9 @@ struct NestedGenerationReentryTests {
     /// tool list `makeSession` threaded through — so the tool the backend calls
     /// is the session's own wrapped instance, not a bare fixture tool.
     private struct ToolCallingLLMContainer: LoadedLLMContainer {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         /// The latch every backend this container vends waits on, or `nil` for
         /// backends that answer at once.
         var latch: RunLatch?

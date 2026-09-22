@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -164,6 +165,9 @@ struct HumanWaitGateTests {
     /// inside `makeSession`, itself only reached from `RoutedModel.makeSession`
     /// on the single `@MainActor` test task, and read from that same task.
     private final class HookedLLMContainer: LoadedLLMContainer, @unchecked Sendable {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         private let hook: TurnHook
         private let observer: TurnObserver
         private(set) var backends: [HookedSessionBackend] = []

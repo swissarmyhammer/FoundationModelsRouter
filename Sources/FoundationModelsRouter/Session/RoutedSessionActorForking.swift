@@ -119,13 +119,13 @@ extension RoutedSessionActor {
         // ``LanguageModelSessionBackend/makeFork(tools:)``).
         // Mounting and capping arrive through the shared per-tool
         // composition
-        // ``ToolMounting/makeSessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:tracer:)``
+        // ``ToolMounting/makeSessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:tokenCounter:tracer:)``
         // (tasks ^k4nygqa, 1334fk3): the forked copy is mounted with the
         // child's own identity, mailbox, and outbox — so the fork's background
         // runs live in the fork's own mailbox, never the parent's — and,
         // when the fork inherits ``autoCompactionBudget``, capped outermost
         // to its ``TokenBudget/toolOutputLimit``, exactly as
-        // ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)``
+        // ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:)``
         // caps a root session's tools. The child's mounts carry this session's
         // tracer, which the child actor is constructed with too, so a tool span
         // the fork opens reports to the same backend as the parent's.
@@ -148,6 +148,7 @@ extension RoutedSessionActor {
                 mailbox: childMailbox,
                 sink: childOutbox,
                 cappedToTokenLimit: autoCompactionBudget?.toolOutputLimit,
+                tokenCounter: tokenCounter,
                 tracer: tracer
             )
         }
@@ -257,6 +258,8 @@ extension RoutedSessionActor {
             // A compaction on a fork keeps what a compaction on its parent keeps: the
             // same host rule protects the same tool outputs.
             toolOutputProtection: toolOutputProtection,
+            // Same model, so the same tokenizer counts for the child.
+            tokenCounter: tokenCounter,
             // The parent's own tracer: a fork continues its parent's
             // conversation, so its spans belong in the same trace and must
             // reach the same backend.

@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -302,6 +303,9 @@ struct PendingEventInjectionTests {
     }
 
     private final class ThrowsBeforeAppendingContainer: LoadedLLMContainer {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
             ThrowsBeforeAppendingBackend()
         }

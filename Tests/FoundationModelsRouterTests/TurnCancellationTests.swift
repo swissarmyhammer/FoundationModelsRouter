@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Synchronization
 import Testing
 
@@ -363,6 +364,9 @@ struct TurnCancellationTests {
     /// backend; the exception is ``lastVendedBackend``, which the compaction fixture
     /// needs (see its doc), so the vended backend is retained behind a lock.
     private final class HookedLLMContainer: LoadedLLMContainer {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         private let hook: TurnHook
         private let observer: TurnObserver
         private let appendsPromptBeforeToolCall: Bool
@@ -598,7 +602,7 @@ struct TurnCancellationTests {
     /// rather than as ``TokenBudget``'s own `limit`/`target` pair —
     /// ``Compactor`` compacts to `limit * target`, so this inverts that.
     ///
-    /// - Parameter targetTokens: The estimated token size the compaction should aim for.
+    /// - Parameter targetTokens: The size, in tokens, the compaction should aim for.
     /// - Returns: A budget with that target size and ``compactionFillTrigger``'s trigger.
     private static func compactionBudget(targetTokens: Int) -> TokenBudget {
         TokenBudget(
@@ -633,13 +637,16 @@ struct TurnCancellationTests {
         }
     }
 
-    /// The estimated size of just ``warmUpEntries()``'s recency window — the floor
+    /// The size of just ``warmUpEntries()``'s recency window — the floor
     /// the deterministic stages bottom out at, since ``TurnTruncation`` drops the
     /// older turns outright and leaves this untouched.
-    private static func warmUpRecencyWindowEstimate() -> Int {
+    ///
+    /// - Returns: The recency window's size under ``characterTokenCounter``.
+    /// - Throws: What ``characterTokenCounter`` throws.
+    private static func warmUpRecencyWindowCount() throws -> Int {
         let (header, turns) = TranscriptTurns.split(warmUpEntries())
         let (_, recent) = TranscriptTurns.partition(turns, keepRecentTurns: compactionRecencyWindowTurns)
-        return Compactor.estimatedTokenCount(of: Transcript(entries: header + recent.flatMap(\.entries)))
+        return try characterTokenCounter.count(Transcript(entries: header + recent.flatMap(\.entries)))
     }
 
     /// A budget the deterministic stages **cannot** satisfy: its target is half the
@@ -649,7 +656,7 @@ struct TurnCancellationTests {
     /// to call the summarizer. That call is the model-assisted stage these tests
     /// cancel inside.
     private static var summarizingCompactionBudget: TokenBudget {
-        compactionBudget(targetTokens: warmUpRecencyWindowEstimate() / 2)
+        get throws { try compactionBudget(targetTokens: warmUpRecencyWindowCount() / 2) }
     }
 
     /// A budget the deterministic stages **can** satisfy: its target sits midway
@@ -657,8 +664,10 @@ struct TurnCancellationTests {
     /// warm-up transcript, so the compaction finishes deterministically and never makes a
     /// model call at all.
     private static var deterministicCompactionBudget: TokenBudget {
-        let whole = Compactor.estimatedTokenCount(of: Transcript(entries: warmUpEntries()))
-        return compactionBudget(targetTokens: (warmUpRecencyWindowEstimate() + whole) / 2)
+        get throws {
+            let whole = try characterTokenCounter.count(Transcript(entries: warmUpEntries()))
+            return try compactionBudget(targetTokens: (warmUpRecencyWindowCount() + whole) / 2)
+        }
     }
 
     /// A session whose measured ``RoutedSession/contextFill`` has already cleared
@@ -1852,7 +1861,7 @@ struct TurnCancellationTests {
         // compaction would suspend in the summarizer all over again.
         fixture.hook.midTurn = nil
         let followUp = try #require(await Self.followUpTurnEvents(on: session, observer: fixture.observer))
-        let untouchedSize = Compactor.estimatedTokenCount(of: Transcript(entries: Self.warmUpEntries()))
+        let untouchedSize = try characterTokenCounter.count(Transcript(entries: Self.warmUpEntries()))
         let compactions = followUp.compactMap { event -> CompactionResult? in
             guard case .compaction(let result) = event else { return nil }
             return result

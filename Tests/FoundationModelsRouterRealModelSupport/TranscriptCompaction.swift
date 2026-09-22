@@ -82,7 +82,7 @@ public struct TranscriptCompactionOutcome: Sendable {
     /// The stage the compaction ran with.
     public let summarization: Summarization
 
-    /// What ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:protection:)``
+    /// What ``Compactor/compact(_:prompt:budget:counter:summarizer:summarization:pendingRuns:protection:)``
     /// reported.
     public let result: CompactionResult
 
@@ -92,14 +92,28 @@ public struct TranscriptCompactionOutcome: Sendable {
     /// The generation ceiling of each call, in call order.
     public var ceilings: [Int] { calls.map(\.ceiling) }
 
-    /// The estimated size of each call's ANSWER, before the cut, in call order.
-    public var answerTokens: [Int] { calls.map { Compactor.estimatedTokenCount(of: $0.answer) } }
+    /// The size of each call's ANSWER, before the cut, in call order, in the
+    /// tokens `counter` counts.
+    ///
+    /// - Parameter counter: The counter the answers are measured with. A
+    ///   suite passes the loaded container's own counter, the counter the
+    ///   compaction itself counted with, so every size it reads is in one unit.
+    /// - Returns: One size per call, in call order.
+    public func answerTokens(counter: any TokenCounter) -> [Int] {
+        calls.map { counter.count($0.answer) }
+    }
 
-    /// The estimated size of the span the compaction replaced, in the tokens
+    /// The size of the span the compaction replaced, in the tokens
     /// ``Compactor``'s did-not-shrink guard measures.
-    public var spanTokens: Int {
-        TranscriptCompaction.compactedSpanTokens(
-            of: transcript, keepRecentTurns: summarization.keepRecentTurns)
+    ///
+    /// - Parameter counter: The counter the span is measured with. A suite
+    ///   passes the loaded container's own counter, the counter the
+    ///   compaction itself counted with.
+    /// - Returns: The span's size.
+    /// - Throws: What `counter` throws.
+    public func spanTokens(counter: any TokenCounter) throws -> Int {
+        try TranscriptCompaction.compactedSpanTokens(
+            of: transcript, keepRecentTurns: summarization.keepRecentTurns, counter: counter)
     }
 }
 
@@ -116,7 +130,7 @@ public struct TranscriptCompactionOutcome: Sendable {
 /// lifetime, because a caller is the only thing that knows whether it is going
 /// to compact once or twice.
 public enum TranscriptCompaction {
-    /// The scale ``budget(forcingSummarizationOf:)`` states its compaction target
+    /// The scale ``budget(forcingSummarizationOf:counter:)`` states its compaction target
     /// against.
     ///
     /// ``TokenBudget`` takes its target as a FRACTION of a limit, and a caller
@@ -143,43 +157,60 @@ public enum TranscriptCompaction {
     /// Derived from the transcript rather than written down, so a transcript
     /// that changes size carries its own budget with it.
     ///
-    /// - Parameter transcript: The transcript the budget is measured against.
+    /// - Parameters:
+    ///   - transcript: The transcript the budget is measured against.
+    ///   - counter: The counter the deterministic floor is measured with, the
+    ///     counter the compaction itself counts with.
     /// - Returns: The budget to compact with.
-    public static func budget(forcingSummarizationOf transcript: Transcript) -> TokenBudget {
-        let deterministicFloor = Compactor.estimatedTokenCount(
-            of: TurnTruncation().apply(ToolOutputElision().apply(transcript)))
+    /// - Throws: What `counter` throws.
+    public static func budget(
+        forcingSummarizationOf transcript: Transcript, counter: any TokenCounter
+    ) throws -> TokenBudget {
+        let deterministicFloor = try counter.count(
+            TurnTruncation().apply(ToolOutputElision().apply(transcript)))
         let targetTokens = Int(Double(deterministicFloor) * compactionTargetShareOfDeterministicFloor)
         return TokenBudget(limit: budgetLimit, target: Double(targetTokens) / Double(budgetLimit))
     }
 
-    /// The estimated token count of the span `transcript`'s compaction replaces — the
+    /// The token count of the span `transcript`'s compaction replaces — the
     /// turns outside the recency window, partitioned exactly as
     /// ``Summarization`` partitions them.
     ///
     /// - Parameters:
     ///   - transcript: The transcript about to be compacted.
     ///   - keepRecentTurns: The recency window the compaction leaves untouched.
-    /// - Returns: The compacted span's size, in the estimated tokens
+    ///   - counter: The counter the span is measured with, the counter the
+    ///     compaction itself counts with.
+    /// - Returns: The compacted span's size, in the tokens
     ///   ``Compactor``'s did-not-shrink guard measures.
-    public static func compactedSpanTokens(of transcript: Transcript, keepRecentTurns: Int) -> Int {
+    /// - Throws: What `counter` throws.
+    public static func compactedSpanTokens(
+        of transcript: Transcript, keepRecentTurns: Int, counter: any TokenCounter
+    ) throws -> Int {
         let (_, turns) = TranscriptTurns.split(Array(transcript))
         let (old, _) = TranscriptTurns.partition(turns, keepRecentTurns: keepRecentTurns)
-        return Compactor.estimatedTokenCount(of: Transcript(entries: old.flatMap(\.entries)))
+        return try counter.count(Transcript(entries: old.flatMap(\.entries)))
     }
 
     /// Compacts `transcript` once against `container`, and puts the run's own
     /// numbers on the record before any assertion reads them — so a red run
     /// states what it went red on rather than only which assertion failed.
     ///
+    /// Every size the run counts, the budget it derives and the sizes it
+    /// prints, is counted with `container`'s own counter: the counter of the
+    /// loaded model's tokenizer, the counter the compaction counts with.
+    ///
     /// - Parameters:
     ///   - transcript: The transcript to compact.
     ///   - summarization: The model-assisted stage to compact with.
     ///   - container: The loaded real model every summarizer call generates
-    ///     over, with the decoding strategy the suite pinned.
+    ///     over, with the decoding strategy the suite pinned, and the counter
+    ///     every size is measured with.
     ///   - label: The tag every printed line of this run carries, so a suite
     ///     that compacts twice can tell its two runs apart in the output.
     /// - Returns: Everything the run measured.
-    /// - Throws: Whatever the compaction throws.
+    /// - Throws: Whatever the compaction throws, or what the container's
+    ///   counter throws.
     // Only the suites in the IntegrationTests package call this.
     // Periphery reads only this package's index, thus it finds no caller.
     // periphery:ignore
@@ -189,10 +220,13 @@ public enum TranscriptCompaction {
         container: RealModelContainer,
         label: String
     ) async throws -> TranscriptCompactionOutcome {
+        let counter = container.container.tokenCounter
         let summarizer = CountingBlankSlateSummarizer(container: container)
+        let forcingBudget = try Self.budget(forcingSummarizationOf: transcript, counter: counter)
         let (_, result) = try await Compactor.compact(
             transcript,
-            budget: budget(forcingSummarizationOf: transcript),
+            budget: forcingBudget,
+            counter: counter,
             summarizer: summarizer,
             summarization: summarization
         )
@@ -202,11 +236,12 @@ public enum TranscriptCompaction {
             result: result,
             calls: await summarizer.calls
         )
+        let spanTokens = try outcome.spanTokens(counter: counter)
         print(
             "[\(label)] summarizerCalls=\(outcome.ceilings.count) ceilings=\(outcome.ceilings) "
-                + "answerTokens=\(outcome.answerTokens) "
-                + "spanTokens=\(outcome.spanTokens) "
-                + "summaryTokens=\(Compactor.estimatedTokenCount(of: result.summary ?? "")) "
+                + "answerTokens=\(outcome.answerTokens(counter: counter)) "
+                + "spanTokens=\(spanTokens) "
+                + "summaryTokens=\(counter.count(result.summary ?? "")) "
                 + "tokensBefore=\(result.tokensBefore) tokensAfter=\(result.tokensAfter) "
                 + "stages=\(result.stagesApplied)"
         )

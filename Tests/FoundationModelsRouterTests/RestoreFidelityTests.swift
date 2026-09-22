@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -84,6 +85,9 @@ struct RestoreFidelityTests {
     /// ``StubBackendRegistry``, so a test can reach the live post-compaction
     /// backend a compaction's `replacingTranscript(_:)` swap installs.
     private struct RegisteringStubContainer: LoadedLLMContainer {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         /// The canned text every backend this container vends responds with.
         let responseText: String
 

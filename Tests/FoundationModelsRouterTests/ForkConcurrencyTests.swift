@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -149,6 +150,9 @@ struct ForkConcurrencyTests {
     /// tracks the most recently manufactured one so a test can assert on its
     /// call history directly. No MLX.
     private final class InstrumentedLLMContainer: LoadedLLMContainer, @unchecked Sendable {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         private let observer: SerialObserver?
         private let releaseGate: AsyncSemaphore?
         private let guidedProbe: GuidedProbe?

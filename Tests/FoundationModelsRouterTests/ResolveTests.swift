@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Synchronization
 import Testing
 
@@ -17,6 +18,9 @@ struct ResolveTests {
     /// A stand-in for a loaded LLM `ModelContainer`, with no MLX dependency.
     /// These resolve tests never generate, so the vended backend always throws.
     private struct StubLLMContainer: LoadedLLMContainer {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
             StubSessionBackend(shouldThrow: true)
         }

@@ -223,9 +223,17 @@ guard missingKinds.isEmpty else {
         and check the model really answered and called its tools.
         """)
 }
+// Counted by the loaded model's own tokenizer, the count the router
+// compacts against.
+let transcriptTokens: Int
+do {
+    transcriptTokens = try profile.standard.tokenCounter.count(transcript)
+} catch {
+    fail("the finished recording does not count: \(error)")
+}
 print(
     "[verify] \(Array(transcript).count) entries, kinds \(kinds), "
-        + "\(Compactor.estimatedTokenCount(of: transcript)) estimated tokens")
+        + "\(transcriptTokens) tokens")
 
 // MARK: - The redaction scan, over the recorded bytes
 

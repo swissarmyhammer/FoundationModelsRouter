@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 
 @testable import FoundationModelsRouter
 
@@ -46,6 +47,9 @@ actor LoadSpy {
 /// the ref it was loaded for, so a test can prove two sessions hit the same
 /// (or different) resident model.
 struct CannedLLMContainer: LoadedLLMContainer {
+    /// The scripted counter of this container: one token per `Character`.
+    let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
     /// The text every session of this container answers with.
     let canned: String
 

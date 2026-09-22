@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import InMemoryTracing
 import Testing
 import Tracing
@@ -48,6 +49,9 @@ struct TurnTracingTests {
     /// `makeSession(transcript:)` builds a fresh backend, which would leave the
     /// test holding a backend the session no longer runs on.
     private struct SharedBackendContainer: LoadedLLMContainer {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         /// The backend every session this container vends runs on.
         let backend: StubSessionBackend
 

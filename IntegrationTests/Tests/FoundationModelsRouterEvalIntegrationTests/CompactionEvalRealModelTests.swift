@@ -94,17 +94,25 @@ private func compactionEvalFactRetentionBar(floor: Double, measured: Int, of tot
 /// - Parameter runner: The tier's runner, holding the evidence its samples
 ///   recorded and the seed set that evidence is read against — so a run the
 ///   time limit cut short states the seeds it never reached.
-private func expectFactRetention(of runner: CompactionEvalRealSubjectRunner) async {
+/// - Throws: What the runner throws when it hands over its model's counter,
+///   or what that counter throws.
+private func expectFactRetention(of runner: CompactionEvalRealSubjectRunner) async throws {
     // Printed before the assertions so a run that misses a bar still
     // leaves the evidence behind: a mean alone cannot say whether a
     // failing sample lost its fact in the compaction or in the answering turn,
     // and this table classifies every sample on exactly that question.
+    //
+    // The table is counted with the loaded model's own counter, the counter
+    // the compaction counted with, so the span and the summary it prints
+    // are in one unit.
     let seeds = runner.seeds
-    let findings = CompactionEvalFactRetentionReport.findings(
+    let counter = try await runner.tokenCounter()
+    let findings = try CompactionEvalFactRetentionReport.findings(
         for: await runner.recordedDiagnostics(),
-        seeds: seeds
+        seeds: seeds,
+        counter: counter
     )
-    for line in CompactionEvalFactRetentionReport.lines(of: findings, expecting: seeds) {
+    for line in CompactionEvalFactRetentionReport.lines(of: findings, expecting: seeds, counter: counter) {
         print(line)
     }
 
@@ -189,7 +197,7 @@ struct CompactionEvaluationIntegrationTests {
             info: ["promptName": CompactionPrompt.default.name]
         )
     )
-    func evaluateCompaction() async {
-        await expectFactRetention(of: compactionEvalSubsetRunner)
+    func evaluateCompaction() async throws {
+        try await expectFactRetention(of: compactionEvalSubsetRunner)
     }
 }
