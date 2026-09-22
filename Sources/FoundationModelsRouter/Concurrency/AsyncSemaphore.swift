@@ -8,8 +8,8 @@ import Synchronization
 /// ``wait()`` is non-throwing, so acquisition runs to completion even when
 /// the task is cancelled while suspended. Cancellation is observed at the
 /// surrounding `await` boundaries and by the body of ``withPermit(isolation:_:)``.
-/// Every session gate — the turn lock, the per-model generation gate, fork
-/// admission — takes this acquire, because a cancelled waiter that walked away
+/// Every session gate — the turn lock and the per-model generation gate —
+/// takes this acquire, because a cancelled waiter that walked away
 /// from those queues would leave a gate count that no later release ever
 /// balances.
 ///

@@ -137,7 +137,6 @@ struct TranscriptTreeTests {
         pool: ModelPool = ModelPool()
     ) -> Router {
         Router(
-            maxConcurrentForks: 4,
             cacheDir: cacheDir,
             recordingsDir: recordingsDir,
             recorder: recorder,

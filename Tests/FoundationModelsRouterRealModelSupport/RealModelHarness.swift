@@ -190,7 +190,7 @@ public enum RealModelHarness {
             makeDurableRecording(
                 slot: slot, model: model, context: context, recordingsDir: recordingsDir, routerId: router.id)
         }
-        let generationGates = ResidentModelGates(maxConcurrentForks: defaultMaxConcurrentForks)
+        let generationGates = ResidentModelGates()
         func makeRoutedLLM(_ slot: ModelSlot) -> RoutedLLM {
             RoutedLLM(
                 slot: slot,
@@ -214,7 +214,7 @@ public enum RealModelHarness {
             routerId: router.id,
             recorder: recorder,
             durableRecording: durableRecording(.embedding),
-            gates: ResidentModelGates(maxConcurrentForks: defaultMaxConcurrentForks)
+            gates: ResidentModelGates()
         )
         return LanguageModelProfile(
             definitionName: definitionName,

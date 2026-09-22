@@ -464,8 +464,6 @@ struct LanguageModelSessionBackendIntegrationTests {
             instructions: nil,
             grammar: nil,
             generationGate: standard.generationGate,
-            forkAdmissionGate: standard.forkAdmissionGate,
-            holdsAdmissionPermit: false,
             persistedEntryCount: 0,
             historyOrdinal: 0,
             // A new root under the vending handle's durable recording, exactly

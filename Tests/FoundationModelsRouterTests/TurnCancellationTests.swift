@@ -820,7 +820,6 @@ struct TurnCancellationTests {
             hook: hook, observer: observer, appendsPromptBeforeToolCall: appendsPromptBeforeToolCall)
         let recorder = InMemoryRecorder()
         let router = Router(
-            maxConcurrentForks: 4,
             cacheDir: cacheDir,
             recorder: recorder,
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),

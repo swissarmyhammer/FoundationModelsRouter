@@ -1,8 +1,39 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: 8b80
+comments:
+- actor: claude-code
+  id: 01m34txqbr1pwa568z2a4hpyxe
+  text: |-
+    ### research — iteration 1
+
+    Sites found with `rg 'maxConcurrentForks|MaxConcurrentForks|forkAdmission|holdsAdmissionPermit'`:
+
+    - Sources: `Router.swift` (constant, property, init parameter, pool call), `Resolution/ModelPool.swift` (acquire parameter), `Concurrency/ResidentModelGates.swift` (`forkAdmission`, init parameter), `LanguageModelProfile.swift` (`forkAdmissionGate` property), `Session/RoutedSessionActor.swift` (`forkAdmissionGate`, `holdsAdmissionPermit`, the `deinit` release, the factory parameters), `Session/RoutedSessionActorForking.swift` (the wait, the docs, the child arguments), `RoutedLLM.swift` (root session arguments), `Recording/SessionTreeRestoration.swift` (restored session arguments and a doc line), `Session/RoutedSession.swift` (protocol doc), `Session/OperationEventJournal.swift` (a doc line names the permit), `Concurrency/AsyncSemaphore.swift` (a doc line names fork admission).
+    - The `deinit` of `RoutedSessionActor` only releases the permit. After the change it does nothing, so it goes.
+    - Tests that assert the wait: `ForkConcurrencyTests.forkAdmissionBoundsConcurrentForks`, `ForkTracingTests.forkWaitingOnTheCeilingHasTheWaitInsideItsSpan`, `CrossRouterResidencyTests.forkCeilingComesFromTheRouterThatLoadedTheKey`. These go. One new test in `ForkConcurrencyTests` makes 8 forks over one model and asserts that all 8 exist at once.
+    - Test helpers that pass `maxConcurrentForks:`: `RouterTestFixtures`, `ResidencyStubs`, `HandBuiltProfileFixtures`, `RealModelHarness`, and the local `makeRouter` in 9 test files. Two integration tests build a `RoutedSessionActor` by hand.
+    - `model-pool.md` §2.7 and §3 describe the ceiling. Rewrite.
+  timestamp: 2026-09-22T15:14:35.512302+00:00
+- actor: claude-code
+  id: 01m34vaf259ppewgtr661jbbhg
+  text: |-
+    ### implement — changed
+    - evidence: 31 files. Sources: Router.swift, Resolution/ModelPool.swift, Concurrency/ResidentModelGates.swift, Concurrency/AsyncSemaphore.swift, LanguageModelProfile.swift, RoutedLLM.swift, Recording/SessionTreeRestoration.swift, Session/RoutedSession.swift, Session/RoutedSessionActor.swift, Session/RoutedSessionActorForking.swift, Session/OperationEventJournal.swift. Docs: model-pool.md, README.md. Tests: ForkConcurrencyTests (deleted the fifth-fork wait test; added `forksOverOneModelAreNotCounted`, 8 forks), ForkTracingTests (deleted the wait-in-span test and the `openForkSpans` helper), CrossRouterResidencyTests (deleted the fork-ceiling test and its two constants), AsyncSemaphoreTests (doc), the helpers RouterTestFixtures, ResidencyStubs, HandBuiltProfileFixtures, RealModelHarness, and 11 test files that passed `maxConcurrentForks:` or built a `RoutedSessionActor` by hand; two IntegrationTests files.
+    - The `deinit` of `RoutedSessionActor` only released the permit, so it is deleted.
+    - `rg 'maxConcurrentForks|MaxConcurrentForks|forkAdmission'` finds nothing outside `.kanban`.
+    - `swift build --build-tests` and `swift build --package-path IntegrationTests --build-tests` both complete with no error.
+    - next: test
+  timestamp: 2026-09-22T15:21:32.997975+00:00
+- actor: claude-code
+  id: 01m34vbs5y183dnvb89y9yee1d
+  text: |-
+    ### test — green
+    - evidence: `swift test` — 1349 tests in 145 suites passed (main bundle), 1 test in 1 suite passed, 83 tests in 10 suites passed; 0 failures, 0 skipped. The 2 known issues are the pre-existing `withKnownIssue` blocks in RealModelHarnessTests and BoundedWaitTests. `forksOverOneModelAreNotCounted` passed. `swift build --package-path IntegrationTests --build-tests` completes with no error. The one build line `warning: missing creator for mutated node` names the `mlx-swift_Cmlx.bundle` product and is a SwiftPM artifact warning that predates this change.
+    - next: commit
+  timestamp: 2026-09-22T15:22:16.126133+00:00
+position_column: doing
+position_ordinal: '80'
 title: Delete the fork admission gate and maxConcurrentForks
 ---
 ## Decision (from the owner, 2026-09-22)

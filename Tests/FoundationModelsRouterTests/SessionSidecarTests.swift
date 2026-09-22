@@ -126,12 +126,10 @@ struct SessionSidecarTests {
         recorder: any TranscriptRecorder,
         cacheDir: URL,
         recordingsDir: URL,
-        maxConcurrentForks: Int = 4,
         recordingLevel: RecordingLevel = .full,
         pool: ModelPool = ModelPool()
     ) -> Router {
         Router(
-            maxConcurrentForks: maxConcurrentForks,
             cacheDir: cacheDir,
             recordingsDir: recordingsDir,
             recorder: recorder,
@@ -631,8 +629,6 @@ struct SessionSidecarTests {
             instructions: instructions,
             grammar: nil,
             generationGate: standard.generationGate,
-            forkAdmissionGate: standard.forkAdmissionGate,
-            holdsAdmissionPermit: false,
             persistedEntryCount: 0,
             historyOrdinal: 0,
             sidecarOrigin: .new(under: standard.durableRecording),
@@ -997,8 +993,7 @@ struct SessionSidecarTests {
         let router = Self.makeRouter(
             recorder: JSONLRecorder(directory: recordingsDir),
             cacheDir: cacheDir,
-            recordingsDir: recordingsDir,
-            maxConcurrentForks: forkCount
+            recordingsDir: recordingsDir
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 

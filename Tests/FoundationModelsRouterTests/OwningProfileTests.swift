@@ -87,7 +87,7 @@ struct OwningProfileTests {
             container: UndrivenLanguageModelContainer(),
             routerId: router.id,
             recorder: InMemoryRecorder(),
-            gates: ResidentModelGates(maxConcurrentForks: defaultMaxConcurrentForks)
+            gates: ResidentModelGates()
         )
     }
 

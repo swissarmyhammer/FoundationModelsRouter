@@ -13,8 +13,7 @@
 /// Class-bound because `SessionOutbox` holds its journal *weakly*: the only
 /// implementation is the ``RoutedSessionActor`` that owns the outbox for its
 /// whole life, so a strong reference back would be a cycle that keeps every
-/// session — and the fork-admission permit its `deinit` releases — alive
-/// forever.
+/// session alive forever.
 protocol OperationEventJournal: AnyObject, Sendable {
     /// Records one posted event in this session's transcript, as its own
     /// entry, in the order it was posted.

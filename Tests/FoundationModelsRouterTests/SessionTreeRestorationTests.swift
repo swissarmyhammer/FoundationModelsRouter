@@ -134,7 +134,6 @@ struct SessionTreeRestorationTests {
     ///     to simulate a fresh process continuing the same recording root.
     ///   - cacheDir: The disposable cache directory.
     ///   - recordingsDir: The durable recordings root.
-    ///   - maxConcurrentForks: The in-flight fork ceiling per profile.
     ///   - recorder: The recorder to construct with. A recording root admits
     ///     one live writer, so a continuation router that must *write* while
     ///     the first router is still alive in this process has to share the
@@ -144,13 +143,11 @@ struct SessionTreeRestorationTests {
         id: ULID = .generate(),
         cacheDir: URL,
         recordingsDir: URL,
-        maxConcurrentForks: Int = 4,
         recorder: JSONLRecorder? = nil,
         pool: ModelPool = ModelPool()
     ) -> Router {
         Router(
             id: id,
-            maxConcurrentForks: maxConcurrentForks,
             cacheDir: cacheDir,
             recordingsDir: recordingsDir,
             recorder: recorder ?? JSONLRecorder(directory: recordingsDir),

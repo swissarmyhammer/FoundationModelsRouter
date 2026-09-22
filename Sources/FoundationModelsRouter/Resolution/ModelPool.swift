@@ -105,9 +105,9 @@ package struct SlotCharge: Sendable {
 /// ``shared`` is that instance; a router names it when it is given no pool.
 ///
 /// The first loader wins a key. The router that first loads a key makes the
-/// container with its own loader and mints the entry's ``ResidentModelGates``
-/// from its own fork ceiling. A later router that names the same key gets
-/// that container and that ceiling, whatever its own loader would have made.
+/// container with its own loader and mints the entry's ``ResidentModelGates``.
+/// A later router that names the same key gets that container and those
+/// gates, whatever its own loader would have made.
 ///
 /// Residency is reference-counted per ``ResidencyKey`` across every profile
 /// that holds it. A resolve prices a resident candidate at its marginal cost
@@ -221,7 +221,6 @@ public actor ModelPool {
     ///     figure less `sessionBytes`.
     ///   - sessionBytes: The margined KV cache this hold adds at its own
     ///     context, and what its release gives back. Zero for an embedder.
-    ///   - maxConcurrentForks: The fork ceiling a fresh entry's gates admit.
     ///   - load: The loader call that produces a fresh resident container.
     ///     It is `@Sendable` because the pool, not the caller, runs it.
     ///   - evict: The loader call that frees the container at zero references.
@@ -232,7 +231,6 @@ public actor ModelPool {
         key: ResidencyKey,
         footprintBytes: Int64,
         sessionBytes: Int64,
-        maxConcurrentForks: Int,
         load: @Sendable () async throws -> PooledContainer,
         evict: @escaping @Sendable (any LoadedModelContainer) async -> Void
     ) async throws -> PoolEntry {
@@ -247,7 +245,7 @@ public actor ModelPool {
             baseWeightsBytes: footprintBytes - sessionBytes,
             acquiredChargeBytes: sessionBytes,
             container: try await load(),
-            gates: ResidentModelGates(maxConcurrentForks: maxConcurrentForks),
+            gates: ResidentModelGates(),
             evict: evict
         )
         entries[key] = entry

@@ -47,7 +47,7 @@ enum HandBuiltProfileFixtures {
         router: Router
     ) -> LanguageModelProfile {
         let recorder = InMemoryRecorder()
-        let generationGates = ResidentModelGates(maxConcurrentForks: defaultMaxConcurrentForks)
+        let generationGates = ResidentModelGates()
         return LanguageModelProfile(
             definitionName: definitionName,
             standard: makeGenerationHandle(
@@ -74,7 +74,7 @@ enum HandBuiltProfileFixtures {
                 container: StubEmbeddingContainer(dimension: RouterTestFixtures.stubDimension),
                 routerId: router.id,
                 recorder: recorder,
-                gates: ResidentModelGates(maxConcurrentForks: defaultMaxConcurrentForks)
+                gates: ResidentModelGates()
             ),
             residencyToken: .generate()
         )

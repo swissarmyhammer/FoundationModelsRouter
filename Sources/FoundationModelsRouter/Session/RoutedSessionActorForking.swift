@@ -26,9 +26,9 @@ extension RoutedSessionActor {
     ///
     /// The span opens before `body` runs, so it covers every part of the call
     /// that can refuse or suspend: the reentry guard, which throws before any
-    /// gate is touched, and ``forkAdmissionGate``'s wait for a free slot. A
-    /// refused fork therefore still leaves a span carrying its refusal, and a
-    /// queued fork's wait for a slot is time its own span covers.
+    /// gate is touched, and the ``turnLock`` wait that reads the parent's
+    /// state. A refused fork therefore still leaves a span carrying its
+    /// refusal.
     ///
     /// The child's id is written only once the child exists, so a fork that
     /// threw names no child.
@@ -53,8 +53,8 @@ extension RoutedSessionActor {
 
     /// The fork mechanics ``fork(workingDirectory:)`` opens its span around.
     ///
-    /// Waits on ``forkAdmissionGate`` for a free slot, then builds the child's
-    /// tools from ``originalTools`` (never this session's own already-instanced
+    /// Builds the child's tools from ``originalTools`` (never this session's
+    /// own already-instanced
     /// ``tools``) so a ``ForkableTool`` conformer forks exactly once from its
     /// pristine state before being wrapped in the child's own mount
     /// layer — the chain is fork → mount → cap, so the child's background
@@ -84,17 +84,11 @@ extension RoutedSessionActor {
     ///   nothing has to be unwound. Otherwise nothing — see the protocol doc's
     ///   ``RoutedSession/fork(workingDirectory:)`` `Throws:` note.
     private func performFork(workingDirectory: URL?) async throws -> RoutedSession {
-        // Before the admission gate, so a refused fork takes no slot. The span
-        // is already open around this, so the refusal is recorded on it.
+        // The span is already open around this, so the refusal is recorded on
+        // it.
         guard !isInsideOwnTurnToolCall else {
             throw SessionReentryError.forkDuringSameSessionTurn(sessionID: id)
         }
-
-        // Admission: at most the router's `maxConcurrentForks` fork sessions over
-        // this model may be in flight at once. Past the ceiling this suspends
-        // (FIFO) until an outstanding fork is released and frees its slot. The
-        // permit is held for the child's lifetime and released in its `deinit`.
-        await forkAdmissionGate.wait()
 
         // Fresh-per-session outbox plus fork-then-mount tool composition
         // (see ``outbox``'s doc comment): built from ``originalTools`` — the
@@ -223,8 +217,6 @@ extension RoutedSessionActor {
             outbox: childOutbox,
             mailbox: childMailbox,
             generationGate: generationGate,
-            forkAdmissionGate: forkAdmissionGate,
-            holdsAdmissionPermit: true,
             persistedEntryCount: entryCountAtFork,
             // The child's history starts where the parent's recorded history
             // stood at fork time — this initial ordinal is also the cut point

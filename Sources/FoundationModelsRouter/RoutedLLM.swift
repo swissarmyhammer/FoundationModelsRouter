@@ -183,13 +183,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             originalTools: tools,
             outbox: outbox,
             mailbox: mailbox,
-            // The generation and fork-admission gates are the model handle's,
-            // shared across all its sessions and forks — the session mints its
-            // own per-session turn lock. A root session holds no fork-admission
-            // permit.
+            // The generation gate is the model handle's, shared across all its
+            // sessions and forks — the session mints its own per-session turn
+            // lock.
             generationGate: generationGate,
-            forkAdmissionGate: forkAdmissionGate,
-            holdsAdmissionPermit: false,
             // A root session starts with nothing persisted: the first turn's
             // whole transcript diff (including any leading `.instructions`
             // entry) is new.

@@ -155,12 +155,12 @@ func withSessionSpan<Result>(
 /// was made would leave its span unreadable.
 ///
 /// **A forked child carries two spans, and they are not two costs.** The
-/// enclosing ``RouterTracing/SpanName/fork`` span measures the whole fork,
-/// including the wait for a free admission slot; the session span opened here
-/// measures only the construction inside it. The session span is a child of
-/// the fork span — the fork opened its own before it reached this factory, and
-/// the task-local `ServiceContext` carries it here — so a reader sees one
-/// nested inside the other and never adds the two together.
+/// enclosing ``RouterTracing/SpanName/fork`` span measures the whole fork;
+/// the session span opened here measures only the construction inside it.
+/// The session span is a child of the fork span — the fork opened its own
+/// before it reached this factory, and the task-local `ServiceContext`
+/// carries it here — so a reader sees one nested inside the other and never
+/// adds the two together.
 ///
 /// A ``RouterTracing/SessionOrigin/restored`` session gets no span from this
 /// factory: its span is already open around the transcript read that precedes
@@ -186,8 +186,6 @@ func makeRoutedSessionActor(
     outbox: SessionOutbox = SessionOutbox(),
     mailbox: SessionMailbox = SessionMailbox(),
     generationGate: AsyncSemaphore,
-    forkAdmissionGate: AsyncSemaphore,
-    holdsAdmissionPermit: Bool,
     persistedEntryCount: Int,
     historyOrdinal: Int,
     sidecarOrigin: SessionSidecarOrigin,
@@ -224,8 +222,6 @@ func makeRoutedSessionActor(
             outbox: outbox,
             mailbox: mailbox,
             generationGate: generationGate,
-            forkAdmissionGate: forkAdmissionGate,
-            holdsAdmissionPermit: holdsAdmissionPermit,
             persistedEntryCount: persistedEntryCount,
             historyOrdinal: historyOrdinal,
             sidecarOrigin: sidecarOrigin,
@@ -397,13 +393,6 @@ actor RoutedSessionActor: RoutedSession {
     /// drain. One gate per waiter, because two callers can drain at once.
     var runPlaneDrainWaitGates: [ULID: RaceGate<RunPlaneDrainWaitOutcome>] = [:]
 
-    /// The fork-admission gate, shared with the owning model.
-    nonisolated let forkAdmissionGate: AsyncSemaphore
-
-    /// Whether this session holds a fork-admission permit to release at
-    /// deallocation. `true` for a fork, `false` for a root session.
-    nonisolated let holdsAdmissionPermit: Bool
-
     /// Whether the session's first-line `session` meta event has been recorded.
     /// Set before the meta append, so no reentrant turn can emit it twice.
     var didRecordSessionMeta = false
@@ -538,8 +527,6 @@ actor RoutedSessionActor: RoutedSession {
         outbox: SessionOutbox = SessionOutbox(),
         mailbox: SessionMailbox = SessionMailbox(),
         generationGate: AsyncSemaphore,
-        forkAdmissionGate: AsyncSemaphore,
-        holdsAdmissionPermit: Bool = false,
         persistedEntryCount: Int,
         historyOrdinal: Int,
         sidecarOrigin: SessionSidecarOrigin,
@@ -572,8 +559,6 @@ actor RoutedSessionActor: RoutedSession {
         self.outbox = outbox
         self.mailbox = mailbox
         self.generationGate = generationGate
-        self.forkAdmissionGate = forkAdmissionGate
-        self.holdsAdmissionPermit = holdsAdmissionPermit
         self.persistedEntryCount = persistedEntryCount
         self.persistedBaseline = TranscriptDiffer.Baseline(
             transcript: Transcript(entries: backend.transcriptEntries().prefix(persistedEntryCount)))
@@ -624,14 +609,5 @@ actor RoutedSessionActor: RoutedSession {
             ).persistable,
             to: recordingDirectory
         )
-    }
-
-    /// Releases this session's fork-admission permit at deallocation. Only a
-    /// fork holds one. Does not run ``close()``'s mailbox sweep: a `deinit`
-    /// cannot await an actor. Close a session explicitly where its life ends.
-    deinit {
-        if holdsAdmissionPermit {
-            forkAdmissionGate.signal()
-        }
     }
 }

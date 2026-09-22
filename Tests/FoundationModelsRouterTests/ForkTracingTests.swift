@@ -12,13 +12,7 @@ import Tracing
 ///
 /// The span opens as the first statement of the fork, so it covers the whole
 /// call and not only the part that succeeds: a fork the reentry guard refuses
-/// still leaves a span with its error recorded, and a fork that waits for a
-/// free admission slot has that wait inside its own span.
-///
-/// The ceiling test holds the one slot with a fork that is still alive, and it
-/// reads the gate's own waiter count and the tracer's own open spans. Nothing
-/// here asserts on a duration, which is what makes the observation sound on a
-/// loaded machine.
+/// still leaves a span with its error recorded.
 ///
 /// The rule that no attribute carries the caller's own content lives in
 /// ``SpanContentSafetyTests``, which names no span and therefore already
@@ -134,17 +128,14 @@ struct ForkTracingTests {
     ///
     /// - Parameters:
     ///   - cacheDir: The router's cache directory.
-    ///   - maxConcurrentForks: The in-flight fork ceiling the profile admits.
     ///   - tracer: The tracer every vended handle carries.
     /// - Returns: The resolved profile.
     /// - Throws: Whatever profile resolution throws.
     private static func makeProfile(
         cacheDir: URL,
-        maxConcurrentForks: Int = defaultMaxConcurrentForks,
         tracer: any Tracer
     ) async throws -> LanguageModelProfile {
         let router = RouterTestFixtures.makeRouter(
-            maxConcurrentForks: maxConcurrentForks,
             cacheDir: cacheDir,
             loader: StubModelLoader(
                 container: ForkingStubContainer(), dimension: RouterTestFixtures.stubDimension),
@@ -167,14 +158,6 @@ struct ForkTracingTests {
         reportedTo tracer: InMemoryTracer
     ) -> [FinishedInMemorySpan] {
         tracer.finishedSpans.filter { $0.operationName == spanName }
-    }
-
-    /// The fork spans `tracer` holds that are still open.
-    ///
-    /// - Parameter tracer: The tracer the driven work reported to.
-    /// - Returns: Every fork span that has started and not yet ended.
-    private static func openForkSpans(reportedTo tracer: InMemoryTracer) -> [InMemorySpan] {
-        tracer.activeSpans.filter { $0.operationName == spanName }
     }
 
     // MARK: - A fork that is served
@@ -260,56 +243,5 @@ struct ForkTracingTests {
         try #require(span.errors.count == 1)
         let recorded = try #require(span.errors.first?.error as? SessionReentryError)
         #expect(recorded == .forkDuringSameSessionTurn(sessionID: fixture.session.id))
-    }
-
-    // MARK: - A fork that waits for a free admission slot
-
-    @Test("a fork that waits for a free admission slot has that wait inside its own span")
-    func forkWaitingOnTheCeilingHasTheWaitInsideItsSpan() async throws {
-        let directory = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
-        defer { try? FileManager.default.removeItem(at: directory) }
-
-        let tracer = InMemoryTracer()
-        let profile = try await Self.makeProfile(
-            cacheDir: directory, maxConcurrentForks: 1, tracer: tracer)
-        let admissionGate = profile.standard.forkAdmissionGate
-        let root = profile.standard.makeSession()
-
-        // The one admission slot, taken by a fork that stays alive and so keeps
-        // holding it.
-        var held: (any RoutedSession)? = try await root.fork(workingDirectory: nil)
-        #expect(admissionGate.availablePermits == 0)
-        #expect(Self.finishedForkSpans(reportedTo: tracer).count == 1)
-        _ = held
-
-        // A second fork, past the ceiling. It opens its span and then suspends
-        // on the gate.
-        let queued = Task { try await root.fork(workingDirectory: nil) }
-        #expect(
-            await BoundedWait.conditionReached("the queued fork suspending on the admission gate") {
-                admissionGate.waiterCount == 1
-            })
-
-        // The wait is inside the span: the queued fork's span is open while the
-        // slot it is waiting for is still taken. Read as state, never as
-        // elapsed time.
-        let openSpans = Self.openForkSpans(reportedTo: tracer)
-        #expect(openSpans.count == 1)
-        #expect(openSpans.first?.attributes.get("session.id") == .string(root.id.description))
-        #expect(admissionGate.availablePermits == 0)
-        // Still one finished span — the queued fork's own has not ended.
-        #expect(Self.finishedForkSpans(reportedTo: tracer).count == 1)
-
-        // Releasing the held fork frees its slot, the waiter is admitted, and
-        // its span then closes carrying the child it made.
-        held = nil
-        let child = try await queued.value
-        let spans = Self.finishedForkSpans(reportedTo: tracer)
-        #expect(spans.count == 2)
-        #expect(spans.last?.attributes.get("fork.child_session_id") == .string(child.id.description))
-        #expect(spans.last?.errors.isEmpty == true)
-        #expect(Self.openForkSpans(reportedTo: tracer).isEmpty)
-
-        withExtendedLifetime(child) {}
     }
 }

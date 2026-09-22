@@ -267,9 +267,8 @@ public protocol RoutedSession: Actor {
     /// The child takes a fresh id with ``parentId`` set to this session's id,
     /// a ``recordingDirectory`` nested under the parent's, and the parent's
     /// ``grammar``. Its backend is seeded from this session's conversation
-    /// state through ``LanguageModelSessionBackend/makeFork()``. At most the
-    /// router's `maxConcurrentForks` forks over one model may be in flight; a
-    /// fork past that ceiling awaits a free slot.
+    /// state through ``LanguageModelSessionBackend/makeFork()``. Forks are
+    /// not counted: any number of forks over one model can exist at once.
     ///
     /// - Parameter workingDirectory: The child's working directory, or `nil` for its recording directory.
     /// - Throws: ``SessionReentryError/forkDuringSameSessionTurn(sessionID:)``

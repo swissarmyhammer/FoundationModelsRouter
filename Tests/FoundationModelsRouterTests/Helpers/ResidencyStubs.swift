@@ -269,8 +269,6 @@ enum ResidencyFixtures {
     ///   - cacheDir: The router's cache directory (a per-test temp dir).
     ///   - pool: The resident-model pool. Defaults to a fresh pool, so two
     ///     routers share residents only when a test passes one pool to both.
-    ///   - maxConcurrentForks: The in-flight fork ceiling the router mints for
-    ///     every key it loads.
     ///   - samplingMode: The decoding strategy the router passes to every
     ///     backend it makes, or `nil` (the default) for the provider default.
     ///   - llmContainer: An override for the container each generation ref gets.
@@ -283,7 +281,6 @@ enum ResidencyFixtures {
         recommendedMaxWorkingSetSize: Int64,
         cacheDir: URL,
         pool: ModelPool = ModelPool(),
-        maxConcurrentForks: Int = defaultMaxConcurrentForks,
         samplingMode: GenerationOptions.SamplingMode? = nil,
         llmContainer: (@Sendable (ModelRef) -> any LoadedLLMContainer)? = nil,
         gatedRef: ModelRef? = nil,
@@ -292,7 +289,6 @@ enum ResidencyFixtures {
     ) -> Router {
         Router(
             headroomReserve: 0,
-            maxConcurrentForks: maxConcurrentForks,
             cacheDir: cacheDir,
             recorder: InMemoryRecorder(),
             // The shared probe stub from `Helpers/RouterTestFixtures.swift`.

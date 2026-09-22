@@ -1,0 +1,40 @@
+---
+assignees:
+- claude-code
+position_column: todo
+position_ordinal: '9780'
+title: Count tokens with the model's tokenizer; delete charsPerTokenEstimate
+---
+## Decision (from the owner, 2026-09-22)
+
+`Compactor.charsPerTokenEstimate` (4.0, `Compaction/Compactor.swift:119`) is a guess and must go. Every token count the router makes before a model call comes from the loaded model's own tokenizer. After a call, the exact `usage.input` (^j6b24gd) is the count.
+
+## Why
+
+- Code and JSON run near 3 characters per token, so the estimate undercounts by about a quarter, in the direction that hides an overflow. On django__django-13964 (2026-09-21) the estimate said about 225,000 tokens for a context that was over the 262,144 window.
+- The tokenizer is already loaded with the model: `context.tokenizer.encode(text:addSpecialTokens:)` (`Resolution/LiveModelLoader.swift:488`), used by the embedding path today.
+
+## Sites
+
+- `Compactor.swift:117-119`: the constant. `:306-334` `estimatedTokenCount(of:)` (transcript and text) and `estimatedTokenCount(bytes:)`.
+- `Summarization.swift:61` `shrinkMarginBytes`, `:730-733` `characters(forEstimatedTokens:)`, `:816-821` `estimatedTokens(of:)`, and every division by the estimate (`:337, :747`). Most of these go with ^pke18c2; what remains counts with the tokenizer.
+- `Session/ToolOutputCapping.swift:18`: the host's `toolOutputLimit` (tokens) is applied in bytes through the estimate. Apply it in tokens: encode the result, keep the first `limit` tokens, decode them back, and state the true counts in the marker.
+- The evals (`Tests/FoundationModelsRouterEvalSupport`) report sizes "in the same estimate"; they report tokenizer counts instead.
+- Tests that assert estimated counts (`CompactionTokenAccountingTests`, `ToolOutputCappingTests`, fixtures that compute expected sizes as bytes ÷ 4).
+
+## Do this
+
+1. Add a `TokenCounter` the session owns, backed by the loaded container's tokenizer: `count(_ text: String) -> Int` and `count(_ transcript: Transcript) -> Int` (the rendered form the model sees, instructions included). The scripted test backends supply a counter of their own (a test may define its own rule; the number lives in the test).
+2. Give the counter to `Compactor.compact`, `Summarization`, the capping layer, and the overflow retry computation (^m39wmx1). Delete the constant and every function that divides by it.
+3. `shrinkMarginBytes` becomes "the summary must count at least one token less than the span it replaces", in tokens.
+4. Update the tests: expected counts come from the test's counter, not from bytes ÷ 4.
+
+## Order
+
+Before ^pke18c2 (the one-call compaction), which needs the counter for the summary's allowed size and the summarizer window check. ^m39wmx1 can use the counter or land first with `usage.input`; say which on that card when this one lands.
+
+## Acceptance
+
+- `rg 'charsPerTokenEstimate|estimatedTokenCount|estimatedTokens\('` finds nothing in `Sources`.
+- A tool output of 1,500 tokens by the model's tokenizer passes a `toolOutputLimit` of 1,500 uncut; one of 1,501 is cut to 1,500 tokens with a marker that states 1,500 of 1,501.
+- All tests pass. #compaction #limits

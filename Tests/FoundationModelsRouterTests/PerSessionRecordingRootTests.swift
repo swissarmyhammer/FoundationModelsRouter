@@ -141,12 +141,10 @@ struct PerSessionRecordingRootTests {
         id: ULID = .generate(),
         cacheDir: URL,
         recordingsDir: URL,
-        maxConcurrentForks: Int = defaultMaxConcurrentForks,
         pool: ModelPool = ModelPool()
     ) -> Router {
         Router(
             id: id,
-            maxConcurrentForks: maxConcurrentForks,
             cacheDir: cacheDir,
             recordingsDir: recordingsDir,
             recorder: JSONLRecorder(directory: recordingsDir),

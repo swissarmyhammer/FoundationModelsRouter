@@ -111,10 +111,6 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// serialize. A turn can hand it back while it waits on a person.
     let generationGate: AsyncSemaphore
 
-    /// The fork-admission gate, a fair FIFO ``AsyncSemaphore`` at value
-    /// `maxConcurrentForks`. A fork past the ceiling awaits a free slot.
-    let forkAdmissionGate: AsyncSemaphore
-
     /// The shared claim on the residency this handle's container belongs to,
     /// or `nil` for a hand-built handle that resolved nothing.
     ///
@@ -176,7 +172,6 @@ public final class RoutedModel<Container: Sendable>: Sendable {
         self.durableRecording = durableRecording
         self.samplingMode = samplingMode
         generationGate = gates.generation
-        forkAdmissionGate = gates.forkAdmission
         self.residencyHold = residencyHold
     }
 }

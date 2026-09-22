@@ -1,6 +1,7 @@
 ---
 assignees:
 - claude-code
+depends_on: []
 position_column: todo
 position_ordinal: '9080'
 title: Derive the summary size from the compaction target; delete summaryTokenRatio and statedBudgetShareOfContent

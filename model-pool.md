@@ -256,12 +256,10 @@ un-ignored `Package.resolved`.
 
 ### 2.7 Two rules the shared entry sets for every router
 
-- **Fork ceiling: the first router wins.** `ResidentModelGates` is minted at
-  first load from the loading router's `maxConcurrentForks`. A second router
-  over the same key gets that ceiling. The alternative, a per-handle
-  admission gate beside the shared generation gate, is more code for a
-  setting almost every application leaves at the default. The rule is stated
-  on `ResidentModelGates` and pinned by a cross-router test.
+- **Gates: the first router wins.** `ResidentModelGates` is minted at first
+  load and holds the generation gate. A second router over the same key gets
+  that gate. Forks are not counted: any number of forks over one container
+  can exist at once. The rule is stated on `ResidentModelGates`.
 - **Lifetime: a container is freed only by `release`.** Today a dropped
   `Router` frees its pool through ARC. With `ModelPool.shared`, a global
   holds the containers, so a leaked profile whose `deinit` task never runs
@@ -291,9 +289,8 @@ un-ignored `Package.resolved`.
   `makeSession` receives; two routers with different modes over one pool
   each see their own mode; the compaction summarizer backend receives the
   router's mode.
-- **Fork-ceiling test**: two routers with different `maxConcurrentForks`
-  over one pool; the second router's forks admit at the first router's
-  ceiling.
+- **Uncounted-forks test**: eight forks over one model all exist at once.
+  See `ForkConcurrencyTests`.
 - **Gated real-model test**, in `IntegrationTests/`: two `Router`s over
   `LiveModelLoader` resolve one profile. With `InMemoryTracing` bound, the
   second resolve opens zero `load` spans, and a session from each router
@@ -304,7 +301,7 @@ un-ignored `Package.resolved`.
 
 1. `ModelPool` extraction with `Router(pool:)`; every unit-test router
    names a pool.
-2. Cross-router unit tests, including the fork-ceiling pin.
+2. Cross-router unit tests.
 3. Drop the context from the key (after 2: both edit
    `PooledResidencyTests.swift`).
 4. Sampling mode, step A: the seam (after 2: its test lands in the
@@ -331,8 +328,7 @@ un-ignored `Package.resolved`.
   priced per session already.
 - **Sampling mode moves to the router.** It is a decode option. Storing it on
   a shared container gives the wrong mode to the second router.
-- **Fork ceiling: first router wins** (§2.7). Stated, tested, not
-  engineered around.
+- **Gates: first router wins** (§2.7). Forks are not counted.
 - **A container is freed only by `release`** (§2.7). The pool is process
   lifetime; a host can read `residentModelCount`.
 - **Each router keeps its own budget over the shared residents** (§2.7).

@@ -326,11 +326,9 @@ struct MultiTurnSessionTests {
     private static func makeRouter(
         container: any LoadedLLMContainer,
         cacheDir: URL,
-        maxConcurrentForks: Int = 4,
         pool: ModelPool = ModelPool()
     ) -> Router {
         Router(
-            maxConcurrentForks: maxConcurrentForks,
             cacheDir: cacheDir,
             recorder: InMemoryRecorder(),
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),

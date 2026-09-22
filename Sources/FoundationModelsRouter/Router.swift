@@ -2,10 +2,6 @@ import Foundation
 import FoundationModels
 import Tracing
 
-/// The default in-flight fork-session ceiling per resolved profile. It is
-/// `public` because a `public` initializer uses it as a default argument.
-public let defaultMaxConcurrentForks = 4
-
 /// The default headroom reserved out of the machine budget for OS and app use.
 public let defaultHeadroomReserveBytes: Int64 = 4 << 30
 
@@ -41,9 +37,6 @@ public actor Router {
 
     /// Bytes held out of the budget for OS/app headroom.
     let headroomReserve: Int64
-
-    /// The in-flight fork-session ceiling per resolved profile.
-    let maxConcurrentForks: Int
 
     /// The durable transcripts root, or `nil` when recording to memory/none.
     let recordingsDir: URL?
@@ -84,7 +77,6 @@ public actor Router {
     /// - Parameters:
     ///   - id: The recording root id. Pass one in to continue a prior root.
     ///   - headroomReserve: Bytes held out of the budget.
-    ///   - maxConcurrentForks: In-flight fork sessions per profile.
     ///   - cacheDir: The disposable cache directory, or `nil` for the user caches directory.
     ///   - recordingsDir: The durable transcripts root, or `nil`.
     ///   - recorder: The recorder, or `nil` for a JSONL recorder under `recordingsDir` or ``NoneRecorder``.
@@ -106,7 +98,6 @@ public actor Router {
     public init(
         id: ULID = .generate(),
         headroomReserve: Int64 = defaultHeadroomReserveBytes,
-        maxConcurrentForks: Int = defaultMaxConcurrentForks,
         cacheDir: URL? = nil,
         recordingsDir: URL? = nil,
         recorder: (any TranscriptRecorder)? = nil,
@@ -121,7 +112,6 @@ public actor Router {
     ) {
         self.id = id
         self.headroomReserve = headroomReserve
-        self.maxConcurrentForks = maxConcurrentForks
         let resolvedCacheDir = cacheDir ?? Self.defaultCacheDir()
         self.recordingsDir = recordingsDir
         let baseRecorder = recorder ?? Self.defaultRecorder(recordingsDir: recordingsDir)
@@ -444,7 +434,6 @@ public actor Router {
             key: key,
             footprintBytes: footprintBytes,
             sessionBytes: sessionBytes,
-            maxConcurrentForks: maxConcurrentForks,
             load: {
                 // Runs only for a key the pool did not hold, so a slot the
                 // pool already held opens no load span at all: a trace

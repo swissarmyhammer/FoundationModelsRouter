@@ -77,7 +77,6 @@ struct ForkAfterCompactionRestorationTests {
     ) -> Router {
         Router(
             id: id,
-            maxConcurrentForks: 4,
             cacheDir: cacheDir,
             recordingsDir: recordingsDir,
             recorder: recorder,

@@ -116,14 +116,14 @@ struct ForkConcurrencyTests {
         }
 
         /// No synthetic transcript is tracked here — this suite exercises
-        /// call-count/prompt-history/generation-gate/admission-gate behavior, not
+        /// call-count/prompt-history/generation-gate behavior, not
         /// transcript accumulation, so there is nothing meaningful to report.
         func transcriptEntries() -> [Transcript.Entry] {
             []
         }
 
         /// No usage is tracked here — this suite exercises call-count/prompt-
-        /// history/generation-gate/admission-gate behavior, not token metering.
+        /// history/generation-gate behavior, not token metering.
         func usageTokenCounts() -> (input: Int, output: Int)? {
             nil
         }
@@ -279,11 +279,9 @@ struct ForkConcurrencyTests {
     private static func makeRouter(
         container: InstrumentedLLMContainer,
         cacheDir: URL,
-        maxConcurrentForks: Int = 4,
         pool: ModelPool = ModelPool()
     ) -> Router {
         Router(
-            maxConcurrentForks: maxConcurrentForks,
             cacheDir: cacheDir,
             recorder: InMemoryRecorder(),
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
@@ -418,11 +416,7 @@ struct ForkConcurrencyTests {
         // established the FIFO arrival order.
         let releaseGate = AsyncSemaphore(value: 0)
         let container = InstrumentedLLMContainer(observer: observer, releaseGate: releaseGate)
-        let router = Self.makeRouter(
-            container: container,
-            cacheDir: dir,
-            maxConcurrentForks: 16
-        )
+        let router = Self.makeRouter(container: container, cacheDir: dir)
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         // Four callers over the SAME model: a root session and three forks. They
@@ -468,41 +462,34 @@ struct ForkConcurrencyTests {
         _ = callers
     }
 
-    // MARK: - Fork admission gate
+    // MARK: - Forks are not counted
 
-    @Test("at most maxConcurrentForks forks run concurrently; the next fork awaits a release")
+    /// How many forks ``forksOverOneModelAreNotCounted()`` makes over one
+    /// model. The card names eight.
+    private static let uncountedForkCount = 8
+
+    @Test("eight forks over one model all exist at once; no fork waits for another to end")
     @MainActor
-    func forkAdmissionBoundsConcurrentForks() async throws {
+    func forksOverOneModelAreNotCounted() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let container = InstrumentedLLMContainer()
-        let router = Self.makeRouter(container: container, cacheDir: dir, maxConcurrentForks: 2)
+        let router = Self.makeRouter(container: container, cacheDir: dir)
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
-        let admissionGate = profile.standard.forkAdmissionGate
         let root = profile.standard.makeSession()
 
-        // Two forks fit the admission ceiling and are admitted immediately.
-        var forkA: RoutedSession? = try await root.fork(workingDirectory: nil)
-        let forkB: RoutedSession? = try await root.fork(workingDirectory: nil)
-        #expect(admissionGate.availablePermits == 0)
-        _ = forkA
-        _ = forkB
+        // Each fork is held in `forks` while the next one is made, so every
+        // earlier fork is still alive when the last one returns. A gate that
+        // counted forks would suspend one of these calls; none of them can.
+        var forks: [RoutedSession] = []
+        for _ in 0..<Self.uncountedForkCount {
+            forks.append(try await root.fork(workingDirectory: nil))
+        }
 
-        // A third fork must await a free admission slot.
-        let thirdTask = Task { try await root.fork(workingDirectory: nil) }
-        await Self.spin(until: { admissionGate.waiterCount == 1 })
-
-        // Releasing one fork frees its slot; the waiter is admitted. (The ceiling
-        // was never exceeded while all three were requested: the suspended-state
-        // assertions above — two admitted, the third blocked on the gate — are the
-        // robust bound evidence for the ceiling itself.)
-        forkA = nil
-        let third = try await thirdTask.value
-
-        _ = forkB
-        _ = third
-        _ = root
+        #expect(forks.count == Self.uncountedForkCount)
+        #expect(Set(forks.map(\.id)).count == Self.uncountedForkCount)
+        #expect(forks.allSatisfy { $0.parentId == root.id })
+        withExtendedLifetime((root, forks)) {}
     }
 }

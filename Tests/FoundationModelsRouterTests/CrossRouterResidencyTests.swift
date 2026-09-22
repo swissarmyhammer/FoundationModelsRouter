@@ -32,15 +32,6 @@ struct CrossRouterResidencyTests {
         let secondSpy: LoadSpy
     }
 
-    /// The fork ceiling of the router that loads the key in the fork-ceiling
-    /// test. The one ceiling the second router's forks must admit at.
-    private static let loadingRouterForkCeiling = 1
-
-    /// The fork ceiling of the router that reuses the key in the fork-ceiling
-    /// test. Larger than ``loadingRouterForkCeiling``, so a fork admitted
-    /// past the first router's ceiling would show.
-    private static let reusingRouterForkCeiling = 4
-
     /// How many times one ref loads when two routers on two pools each load it.
     private static let loadsWithoutSharing = 2
 
@@ -85,8 +76,6 @@ struct CrossRouterResidencyTests {
     ///   - firstPool: The first router's pool.
     ///   - secondPool: The second router's pool. Defaults to `firstPool`, so
     ///     the two routers share residents unless a test passes a second pool.
-    ///   - firstForkCeiling: The first router's `maxConcurrentForks`.
-    ///   - secondForkCeiling: The second router's `maxConcurrentForks`.
     ///   - firstSamplingMode: The first router's sampling mode, or `nil`.
     ///   - secondSamplingMode: The second router's sampling mode, or `nil`.
     ///   - llmContainer: An override for the container each generation ref
@@ -98,8 +87,6 @@ struct CrossRouterResidencyTests {
         cacheDir: URL,
         firstPool: ModelPool,
         secondPool: ModelPool? = nil,
-        firstForkCeiling: Int = defaultMaxConcurrentForks,
-        secondForkCeiling: Int = defaultMaxConcurrentForks,
         firstSamplingMode: GenerationOptions.SamplingMode? = nil,
         secondSamplingMode: GenerationOptions.SamplingMode? = nil,
         llmContainer: (@Sendable (ModelRef) -> any LoadedLLMContainer)? = nil
@@ -112,7 +99,6 @@ struct CrossRouterResidencyTests {
                 recommendedMaxWorkingSetSize: recommendedMaxWorkingSetSize,
                 cacheDir: cacheDir,
                 pool: firstPool,
-                maxConcurrentForks: firstForkCeiling,
                 samplingMode: firstSamplingMode,
                 llmContainer: llmContainer
             ),
@@ -122,7 +108,6 @@ struct CrossRouterResidencyTests {
                 recommendedMaxWorkingSetSize: recommendedMaxWorkingSetSize,
                 cacheDir: cacheDir,
                 pool: secondPool ?? firstPool,
-                maxConcurrentForks: secondForkCeiling,
                 samplingMode: secondSamplingMode,
                 llmContainer: llmContainer
             ),
@@ -285,54 +270,6 @@ struct CrossRouterResidencyTests {
             #expect(firstLoads + secondLoads == Self.loadsWithoutSharing)
         }
         withExtendedLifetime((fromFirst, fromSecond)) {}
-    }
-
-    // MARK: - The fork ceiling comes from the router that loaded the key.
-
-    /// `model-pool.md` §2.7, "Fork ceiling: the first router wins":
-    /// ``ResidentModelGates`` is minted at first load from the loading
-    /// router's `maxConcurrentForks`, and a second router over the same key
-    /// gets that ceiling. The suspending-fork shape is
-    /// `ForkConcurrencyTests.forkAdmissionBoundsConcurrentForks`.
-    @Test("a second router's forks admit at the ceiling of the router that loaded the key")
-    @MainActor
-    func forkCeilingComesFromTheRouterThatLoadedTheKey() async throws {
-        let dir = Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let pair = Self.makePair(
-            recommendedMaxWorkingSetSize: Self.oneTrioPlusReuseBudget,
-            cacheDir: dir,
-            firstPool: ModelPool(),
-            firstForkCeiling: Self.loadingRouterForkCeiling,
-            secondForkCeiling: Self.reusingRouterForkCeiling
-        )
-
-        let fromFirst = try await pair.first.resolve(profile: Self.sharedTrio, reporting: ResolutionProgress())
-        let fromSecond = try await pair.second.resolve(profile: Self.sharedTrio, reporting: ResolutionProgress())
-
-        // One gate for one container, minted at the first router's ceiling.
-        let admissionGate = fromSecond.standard.forkAdmissionGate
-        #expect(admissionGate === fromFirst.standard.forkAdmissionGate)
-        #expect(admissionGate.availablePermits == Self.loadingRouterForkCeiling)
-
-        // One fork fills the first router's ceiling, well under the second's.
-        let root = fromSecond.standard.makeSession()
-        var firstFork: RoutedSession? = try await root.fork(workingDirectory: nil)
-        #expect(firstFork?.parentId == root.id)
-        #expect(admissionGate.availablePermits == 0)
-
-        // A second fork must await a free slot. `async let` keeps the wait
-        // structured: the fork is awaited below, after the slot frees.
-        async let secondFork = root.fork(workingDirectory: nil)
-        #expect(await BoundedWait.conditionReached("the second fork waiting on the admission gate") {
-            admissionGate.waiterCount == 1
-        })
-
-        // Releasing the first fork frees its slot; the waiter is admitted.
-        firstFork = nil
-        let admitted = try await secondFork
-        #expect(admitted.parentId == root.id)
-        withExtendedLifetime((fromFirst, root)) {}
     }
 
     // MARK: - Each router passes its own sampling mode to the shared container.

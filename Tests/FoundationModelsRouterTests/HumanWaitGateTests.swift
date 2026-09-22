@@ -289,7 +289,6 @@ struct HumanWaitGateTests {
         container: HookedLLMContainer, cacheDir: URL, pool: ModelPool = ModelPool()
     ) -> Router {
         Router(
-            maxConcurrentForks: 4,
             cacheDir: cacheDir,
             recorder: InMemoryRecorder(),
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),

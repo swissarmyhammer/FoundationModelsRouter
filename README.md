@@ -78,8 +78,8 @@ process holds.
 
 Pass a fresh pool to `Router(pool:)` to give a router an isolated pool. Pass
 `Router(samplingMode:)` to set the decoding strategy of a router; two routers
-over one shared model each decode with their own mode. The fork ceiling of a
-shared model comes from the router that loaded it.
+over one shared model each decode with their own mode. Forks are not counted:
+any number of forks over one model can exist at once.
 
 ## Install
 

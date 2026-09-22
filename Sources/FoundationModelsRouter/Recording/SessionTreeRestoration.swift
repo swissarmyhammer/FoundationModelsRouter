@@ -172,7 +172,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// re-applied. A recorded context that differs from the live one is
     /// reported in ``RestoredSessionTree/contextMismatches``.
     ///
-    /// No sidecar is written. No fork-admission permit is consumed. For each
+    /// No sidecar is written. For each
     /// node, one terminal `.completed` event with outcome
     /// ``OperationOutcome/lost`` is posted to the node's outbox per orphaned
     /// journaled run. See ``TranscriptTree/lostRunTerminalEvents(in:)``.
@@ -446,8 +446,6 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 outbox: outbox,
                 mailbox: mailbox,
                 generationGate: routedLLM.generationGate,
-                forkAdmissionGate: routedLLM.forkAdmissionGate,
-                holdsAdmissionPermit: false,
                 // The transcript the backend really holds, which an
                 // instructions override can make one entry longer. The next
                 // turn's diff must treat every entry of it as persisted, or

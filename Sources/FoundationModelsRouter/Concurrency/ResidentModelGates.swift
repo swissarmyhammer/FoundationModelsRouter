@@ -5,23 +5,16 @@
 /// contend on one generation gate, whichever router made them. A second set
 /// over an already-resident container is a defect.
 ///
-/// The set is minted at first load from the loading router's
-/// `maxConcurrentForks`. That is the fork ceiling every later router over
-/// the same container gets, whatever its own ceiling is.
+/// The set holds the generation gate only. A fork is not counted: any number
+/// of forks over one container can exist at once, and they serialize on the
+/// generation gate when they generate.
 package struct ResidentModelGates: Sendable {
     /// The per-container generation gate, a fair FIFO ``AsyncSemaphore`` at
     /// value `1`. Every session and fork over the container waits on it.
     let generation: AsyncSemaphore
 
-    /// The per-container fork-admission gate, an ``AsyncSemaphore`` at value
-    /// `maxConcurrentForks`. A fork past the ceiling awaits a free slot.
-    let forkAdmission: AsyncSemaphore
-
     /// Mints a fresh set of gates. Call it once for each resident container.
-    ///
-    /// - Parameter maxConcurrentForks: The in-flight fork ceiling ``forkAdmission`` admits.
-    package init(maxConcurrentForks: Int) {
+    package init() {
         generation = AsyncSemaphore(value: 1)
-        forkAdmission = AsyncSemaphore(value: maxConcurrentForks)
     }
 }
