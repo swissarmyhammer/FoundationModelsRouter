@@ -3,15 +3,12 @@ import FoundationModels
 /// The rule a host gives to keep a tool output through compaction.
 ///
 /// The rule gets the call that made the output and the output itself, and
-/// returns `true` to protect the output. Every compaction stage keeps a
-/// protected `.toolOutput` entry word for word:
-///
-/// - ``ToolOutputElision`` does not elide it.
-/// - ``TurnTruncation`` and ``Summarization`` do not drop it with its old turn.
-///   They keep the `.toolCalls` entry that holds its call, reduced to the
-///   protected calls, and the output itself, right after the header in their
-///   original order. A kept output never stays without its call.
-/// - ``Summarization`` never sends it to the summarizer.
+/// returns `true` to protect the output. A compaction keeps a protected
+/// `.toolOutput` entry word for word in the new snapshot, next to the
+/// summary. It also keeps the `.toolCalls` entry that holds its call, reduced
+/// to the protected calls, in the original order. A kept output never stays
+/// without its call. The protected entries count against the target: the
+/// summary gets the room that the target leaves after them.
 ///
 /// The rule sees the call, so a host can decide on the tool name and on the
 /// arguments, for example a `skills` call whose `op` argument is `use skill`.
@@ -85,26 +82,15 @@ struct ProtectedToolOutputs {
         outputPositions.contains(position)
     }
 
-    /// The entries a stage keeps when it drops ``entries``: each `.toolCalls`
+    /// The entries a compaction keeps when it replaces ``entries``: each `.toolCalls`
     /// entry that holds a protected call, reduced to its protected calls, and
     /// each protected `.toolOutput` entry, in original order.
     var keptEntries: [Transcript.Entry] {
         entries.indices.compactMap(keptEntry(at:))
     }
 
-    /// ``entries`` without the protected `.toolOutput` entries: what a
-    /// summarizer may read.
-    var unprotectedEntries: [Transcript.Entry] {
-        entries.indices.filter { !isProtectedOutput(at: $0) }.map { entries[$0] }
-    }
-
-    /// The protected `.toolOutput` entries, in original order.
-    var protectedOutputEntries: [Transcript.Entry] {
-        outputPositions.sorted().map { entries[$0] }
-    }
-
-    /// The entry a stage keeps in place of the entry at `position`, or `nil`
-    /// when the stage keeps nothing of it.
+    /// The entry a compaction keeps in place of the entry at `position`, or
+    /// `nil` when the compaction keeps nothing of it.
     ///
     /// - Parameter position: A position in ``entries``.
     /// - Returns: The protected output unchanged, the `.toolCalls` entry

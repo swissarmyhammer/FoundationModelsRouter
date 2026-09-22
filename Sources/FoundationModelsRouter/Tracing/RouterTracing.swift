@@ -178,12 +178,10 @@ enum RouterTracing {
         static let compactionTrigger = "compaction.trigger"
 
         /// The summarizer tier that wrote the compaction's applied summary: `flash`
-        /// for the profile's flash slot, `own-model` for the session's own
-        /// model, or `deterministic` when no summarizer wrote one at all.
+        /// for the profile's flash slot, or `own-model` for the session's own
+        /// model.
         ///
-        /// The automatic compaction degrades from tier to tier without throwing, so
-        /// this key, and never an error record, is what says a degrade
-        /// happened.
+        /// The span does not have this key when no summary applied.
         static let compactionTier = "compaction.tier"
 
         /// How many strings one embed call embeds.

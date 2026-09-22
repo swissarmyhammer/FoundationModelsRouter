@@ -26,28 +26,9 @@ import Testing
 /// measure it on here.
 ///
 /// It is the same family as Qwen3.8-27B, the standard model task ^xx02yn6
-/// designed the summarization prompt for, and it writes no `<think>` block —
-/// which is what makes ``compactionRoundTripReasoningTokenHeadroom`` safe to
-/// cut below the production default.
+/// designed the compaction prompt for, and it writes no `<think>` block, so
+/// its whole output is the summary.
 private let compactionRoundTripModel: ModelRef = "mlx-community/Qwen2.5-3B-Instruct-4bit"
-
-/// The tokens every summarizer call of this suite is given on top of its
-/// summary allowance, and deliberately not ``Summarization``'s own default of
-/// 8192.
-///
-/// That default is sized for a model that writes a `<think>` block before its
-/// answer. ``compactionRoundTripModel`` writes none, so almost all of that
-/// headroom is a ceiling no generation reaches — and reaching for it is what a
-/// compaction pays for when the model runs on. The gated eval subset measured what
-/// that freedom costs: two of seven compactions generated to the ceiling, 20485 and
-/// 16060 bytes of summary answer, at 28.5 seconds each, where the five bounded
-/// compactions cost 2.5 to 7.4 seconds.
-///
-/// The same value the three compaction smoke suites and every gated eval tier
-/// cut this to, for the same measured reason. Not zero, so a summary has a
-/// little room to finish its last sentence inside the ceiling rather than
-/// always ending at it.
-private let compactionRoundTripReasoningTokenHeadroom = 128
 
 // MARK: - Suite
 
@@ -57,12 +38,13 @@ private let compactionRoundTripReasoningTokenHeadroom = 128
 ///
 /// 1. `contextFill` climbs across scripted turns that grow the transcript.
 /// 2. Compacting once the 0.80 trigger is reached — against
-///    ``CompactionRoundTripFixture/compactionBudget``, which forces the whole
-///    pipeline through its model-assisted stage — shrinks `contextFill` and
-///    never changes the session's identity (id, recording directory, router
-///    id).
+///    ``CompactionRoundTripFixture/compactionBudget``, whose target the live
+///    context is over, so the compaction makes its one summarizer call —
+///    shrinks `contextFill` and never changes the session's identity (id,
+///    recording directory, router id).
 /// 3. A turn after compaction succeeds and recalls a fact planted only in
-///    the compacted span — proof the summary, not just the mechanism, worked.
+///    the compacted conversation — proof the summary, not just the mechanism,
+///    worked.
 /// 4. Restoring from disk (a fresh `Router`/`LanguageModelProfile`,
 ///    simulating a new process — the same technique
 ///    ``SessionTreeRestorationIntegrationTests`` uses) yields the
@@ -72,28 +54,22 @@ private let compactionRoundTripReasoningTokenHeadroom = 128
 ///
 /// ## What it NO LONGER proves (task ^k0d30s4)
 ///
-/// The five steps above ran against `Muse-Glimmer-30B-4bit` and an unbounded
-/// summarizer ceiling until this task, and the run of 2026-08-20 measured them
-/// at 541.6 seconds — 4.5 times the two-minute budget every integration test
-/// now has. Two changes bring the loop inside it:
-/// ``compactionRoundTripModel`` and ``compactionRoundTripReasoningTokenHeadroom``.
-/// What is no longer proven is:
+/// The five steps above ran against `Muse-Glimmer-30B-4bit` until task
+/// ^k0d30s4, and the run of 2026-08-20 measured them at 541.6 seconds — 4.5
+/// times the two-minute budget every integration test now has.
+/// ``compactionRoundTripModel`` brings the loop inside it. What is no longer
+/// proven is:
 ///
 /// - **The 30B model's summary quality.** Step 3 recalls `CRIMSON-77` out of a
 ///   summary a 3B model wrote. That the 3B carries the fact says nothing about
 ///   the 30B, and a fact this subject lost might survive under the larger one.
 ///   `CompactionEvalRealModel` records the same trade for the eval tiers, and
 ///   the measured baseline this subject is held to there.
-/// - **What a compaction costs when the summarizer may run on.** The headroom cut
-///   makes the largest summary this loop can be handed `summaryAllowance` plus
-///   ``compactionRoundTripReasoningTokenHeadroom``, whatever the model chooses
-///   to write. A compaction that generated to the production default's 8192 tokens is
-///   no longer measured here.
 ///
-/// Everything else is untouched. The fixture, the working context, the reply
-/// ceiling, the 0.80 trigger, the compaction budget, the stage list, the identity
-/// checks, the restore and the further turn are all exactly what they were, so
-/// each of the five steps still asserts what it always asserted.
+/// Since task ^pke18c2 the compaction is one summarizer call over the whole
+/// live context. The call's output ceiling is the room the window leaves after
+/// the call's input, and the session sets no summarization settings. Nobody
+/// has measured this suite's time again since that change.
 ///
 /// Builds a ``LanguageModelProfile`` directly over an already-loaded
 /// model's ``MLXFoundationModelsContainer`` (bypassing
@@ -121,10 +97,8 @@ private let compactionRoundTripReasoningTokenHeadroom = 128
     "Gated real-model end-to-end coverage: RoutedSession.compact(prompt:budget:) round trip (task rjvrgt9)",
     .serialized,
     // The whole target's budget. The 40 minutes this stated before were the
-    // 30B model's cost with an unbounded summarizer ceiling: the run of
-    // 2026-08-17 measured 425 seconds, task ^xx02yn6's condense re-ask can
-    // double the compaction's model work, and the run of 2026-08-20 measured 541.6.
-    // The two changes at the top of this file are what removed that cost.
+    // 30B model's cost: the run of 2026-08-20 measured 541.6 seconds.
+    // ``compactionRoundTripModel`` is what removed that cost.
     .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
@@ -171,12 +145,8 @@ struct CompactionRoundTripIntegrationTests {
         // one and every handle already carries it.
         let routerId = profile.standard.routerId
 
-        // The stage is session-scoped rather than per-call, so the explicit
-        // `compact(budget:)` at step 2 compactions with the ceiling stated here.
         let session = profile.standard.makeSession(
-            instructions: CompactionRoundTripFixture.instructions,
-            summarization: Summarization(
-                reasoningTokenHeadroom: compactionRoundTripReasoningTokenHeadroom)
+            instructions: CompactionRoundTripFixture.instructions
         )
         let sessionId = session.id
         let recordingDirectoryBefore = session.recordingDirectory
@@ -198,18 +168,16 @@ struct CompactionRoundTripIntegrationTests {
 
         // 2. Compact at the trigger: shrinks fill, preserves identity.
         let result = try await session.compact(budget: CompactionRoundTripFixture.compactionBudget)
-        // Every stage, in order — not merely "something ran". A compaction that
-        // stops after the deterministic stages records a checkpoint too
-        // (task ^h1008kb), but this test is about the model-assisted round
-        // trip — a real summary whose quality step 3 measures by recall —
-        // so `stagesApplied` non-empty cannot tell that compaction from this
-        // one. `CompactionRoundTripFixture.compactionBudget` is what makes the
-        // full pipeline a property here rather than a coincidence.
+        // The applied summary, and not merely "something ran". A compaction
+        // that stops on a shortfall reports no stage and leaves the live
+        // context as it was. This test is about a real summary whose quality
+        // step 3 measures by recall, so it requires the one stage.
+        // `CompactionRoundTripFixture.compactionBudget` puts the live context
+        // over the target, so the one call is a property here rather than a
+        // coincidence.
         #expect(
-            result.stagesApplied == [
-                ToolOutputElision.stageName, TurnTruncation.stageName, Summarization.stageName,
-            ],
-            "expected the full pipeline through the model-assisted stage, got \(result.stagesApplied)"
+            result.stagesApplied == [Summarization.stageName],
+            "expected the summary to apply, got stages \(result.stagesApplied), shortfall \(String(describing: result.shortfall))"
         )
         #expect(result.summary != nil)
         #expect(result.tokensAfter < result.tokensBefore)
@@ -223,7 +191,8 @@ struct CompactionRoundTripIntegrationTests {
         // `CompactionRoundTripFixture.compactionBudget`.
         print(
             "[compactionRoundTrip] tokensBefore=\(result.tokensBefore) tokensAfter=\(result.tokensAfter) "
-                + "saved=\(result.tokensBefore - result.tokensAfter)"
+                + "saved=\(result.tokensBefore - result.tokensAfter) "
+                + "summarizerTier=\(String(describing: result.summarizerTier))"
         )
         let fillAfterCompaction = await session.contextFill
         #expect(fillAfterCompaction < fillBeforeCompaction)

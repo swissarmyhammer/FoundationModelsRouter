@@ -78,9 +78,9 @@ struct RoutedSessionPublicSurfaceTests {
 
         let result = try await session.compact(budget: AutoCompactionFixtures.fixedBudget)
 
-        // The fixture's budget targets less than the recency window alone
-        // holds, so the compaction cannot land on the deterministic stages: it runs
-        // the model-assisted stage and really shrinks the transcript.
+        // The target of the fixture's budget is less than the warm-up
+        // transcript, so the compaction makes the one summarizer call and
+        // really shrinks the transcript.
         #expect(result.stagesApplied.contains("Summarization"))
         #expect(result.tokensAfter < result.tokensBefore)
         #expect(result.summary != nil)

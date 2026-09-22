@@ -15,8 +15,8 @@ import Testing
 /// down.
 ///
 /// The suite drives one session through the work that produces content: a
-/// scripted turn, a tool call inside it, further turns and a compaction over what
-/// they accumulated, and an embed. It then reads *every* attribute of *every*
+/// scripted turn, a tool call inside it, a compaction over what the turn
+/// accumulated, and an embed. It then reads *every* attribute of *every*
 /// recorded span, and fails on any value that carries the fixture's own
 /// content. Nothing here names a span, so a card that teaches the router to
 /// open a new span is held to the rule the moment it lands, with no edit to
@@ -71,14 +71,10 @@ struct SpanContentSafetyTests {
         let toolOutput = ScriptedToolFixture.marker(for: ScriptedToolFixture.firstStepName)
         #expect(answer.contains(toolOutput))
 
-        // Enough further turns to push the tool turn out of the un-compactable
-        // recency window, so the compaction below has something it may compact.
-        try await driveTurns(defaultKeepRecentTurns, on: fixture.session)
-
-        // A compaction over what those turns accumulated. The budget is derived from
+        // A compaction over what the turn accumulated. The budget is derived from
         // the measured pre-compaction size, and the shrink says the compaction really ran.
         let compaction = try await fixture.session.compact(
-            budget: deterministicCompactionBudget(for: fixture.transcriptEntries()))
+            budget: summarizingCompactionBudget(for: fixture.transcriptEntries()))
         #expect(compaction.tokensAfter < compaction.tokensBefore)
 
         // One embed, over the same profile.

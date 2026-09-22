@@ -77,40 +77,16 @@ struct AutoCompactionTests {
     ///   - tools: The tools to vend the session with — see task 4ce0a1k's own
     ///     tools-plus-budget composition tests below. Defaults to none,
     ///     unchanged from every pre-existing test in this suite.
-    ///   - summarization: The model-assisted stage every compaction on the vended
-    ///     session runs with. Defaults to `Summarization()` — every default —
-    ///     which is what every test in this suite but the compaction-tuning one
-    ///     below wants.
     /// - Returns: The session plus its `standard`/`flash` containers, so a
     ///   test can configure `shouldThrow` on either before driving the
     ///   triggering turn.
     /// - Throws: Whatever profile resolution or a warm-up turn throws.
     private static func makeTriggeredSession(
         budget: TokenBudget?,
-        tools: [any Tool] = [],
-        summarization: Summarization = Summarization()
+        tools: [any Tool] = []
     ) async throws -> (session: RoutedSession, standard: ConfiguredLLMContainer, flash: ConfiguredLLMContainer) {
         try await AutoCompactionFixtures.makeTriggeredSession(
-            budget: budget, tools: tools, summarization: summarization, tempDirPrefix: tempDirPrefix)
-    }
-
-    /// Derives a working context tight enough that the reactive retry's own
-    /// hardcoded `target: 0.35` sits strictly between `seedEntries`'
-    /// recency-window-only character count and its full pre-compaction count —
-    /// guaranteeing `TurnTruncation` alone lands under target (no need for
-    /// the model-assisted `Summarization` stage, which the reactive tests'
-    /// own stub backends cannot service). Copied from
-    /// `ExamplesTests.reactiveCompactionRecoversFromContextOverflow()`'s own
-    /// derivation.
-    ///
-    /// - Throws: What ``characterTokenCounter`` throws.
-    private static func reactiveRetryContextTokens(_ seedEntries: [Transcript.Entry]) throws -> Int {
-        let (header, turns) = TranscriptTurns.split(seedEntries)
-        let (_, recent) = TranscriptTurns.partition(turns, keepRecentTurns: 4)
-        let recencyOnlyCount = try characterTokenCounter.count(Transcript(entries: header + recent.flatMap(\.entries)))
-        let preCompactionCount = try characterTokenCounter.count(Transcript(entries: seedEntries))
-        let midTarget = (recencyOnlyCount + preCompactionCount) / 2
-        return Int(Double(midTarget) / 0.35)
+            budget: budget, tools: tools, tempDirPrefix: tempDirPrefix)
     }
 
     // MARK: - Proactive compaction, preferring flash
@@ -395,14 +371,12 @@ struct AutoCompactionTests {
         // A budget whose trigger will never fire proactively (usage is
         // unmeasured — `usageTokenCounts()` always `nil` — so fill stays at
         // its unmeasured/zero starting point) — isolating the *reactive*
-        // path this test targets from the proactive one. `target: 0.35`'s
-        // own `limit` is derived from the seeded transcript's own counted
-        // size (mirrors `ExamplesTests.reactiveCompactionRecoversFromContextOverflow()`),
-        // guaranteeing the retry's compaction actually drops something real
-        // (`TurnTruncation` alone lands under it) rather than no-op'ing on an
-        // already-under-target transcript.
-        let session = try profile.standard.makeSession(
-            budget: TokenBudget(limit: Self.reactiveRetryContextTokens(seedEntries), target: 0.35))
+        // path this test targets from the proactive one. The `limit` is the
+        // seeded transcript's own counted size, so the target is under it and
+        // the retry's compaction really summarizes rather than no-op'ing on an
+        // already-under-target transcript. The flash slot writes the summary.
+        let session = profile.standard.makeSession(
+            budget: TokenBudget(limit: characterCount(of: seedEntries), target: 0.35))
 
         // No `do`/`catch` here at all — unlike `ExamplesTests.respondWithReactiveCompaction`,
         // which the caller must wrap manually, this session recovers on its
@@ -464,7 +438,7 @@ struct AutoCompactionTests {
         // Built by overriding ``fixedBudget`` rather than restating its
         // numbers: the recovery this test asserts depends on the retry's own
         // compaction *actually shrinking* the transcript, which is exactly what
-        // `fixedBudget`'s derived below-the-recency-floor target guarantees.
+        // `fixedBudget`'s target under the warm-up transcript guarantees.
         var hardCeilingBudget = Self.fixedBudget
         hardCeilingBudget.trigger = 2.0
         hardCeilingBudget.hardCeiling = 0.85
@@ -784,44 +758,31 @@ struct AutoCompactionTests {
         #expect(events.contains(.textDelta(Self.cannedText)))
     }
 
-    // MARK: - The session's own Summarization reaches the automatic compaction
-
-    /// The recency window the compaction-tuning test below vends its session's
-    /// ``Summarization`` with: half the stage's own default, so two turns the
-    /// default window would have kept land in the span flash actually reads.
-    private static let narrowedRecentTurns = Summarization().keepRecentTurns / 2
+    // MARK: - The automatic compaction is one flash call over the whole context
 
     @Test(
-        "an automatic compaction summarizes with the Summarization the session was vended with, not the stage's defaults: a narrowed keepRecentTurns puts turns the default window keeps out into the span flash reads"
+        "an automatic compaction makes one flash call whose prompt holds every warm-up turn, and no call on the session's own model"
     )
     @MainActor
-    func autoCompactionSummarizesWithTheSessionsOwnKeepRecentTurns() async throws {
-        let (narrowedSession, _, narrowedFlash) = try await Self.makeTriggeredSession(
-            budget: Self.fixedBudget,
-            summarization: Summarization(keepRecentTurns: Self.narrowedRecentTurns))
-        let (unturnedSession, _, unturnedFlash) = try await Self.makeTriggeredSession(budget: Self.fixedBudget)
+    func autoCompactionMakesOneFlashCallOverTheWholeContext() async throws {
+        let (session, standard, flash) = try await Self.makeTriggeredSession(budget: Self.fixedBudget)
+        let ownCallsBeforeTurn = standard.generationLog.calls.count
 
-        // No caller-side compact() in either arm: the triggering turn compacts on
-        // its own, which is the compaction this test exists for — it is the one no
-        // caller could pass a Summarization to.
-        let narrowedEvents = try await collectEvents(narrowedSession, prompt: "turn \(Self.turnCount)")
-        let unturnedEvents = try await collectEvents(unturnedSession, prompt: "turn \(Self.turnCount)")
-        #expect(narrowedEvents.contains { if case .compaction = $0 { return true }; return false })
-        #expect(unturnedEvents.contains { if case .compaction = $0 { return true }; return false })
+        // No caller-side compact(): the triggering turn compacts on its own.
+        let events = eventsAfterTurnFrame(try await collectEvents(session, prompt: "turn \(Self.turnCount)"))
+        guard case .compaction(let result) = events.first else {
+            Issue.record("expected the first event to be .compaction, got \(String(describing: events.first))")
+            return
+        }
 
-        // The newest turn only the narrowed window compactions: inside the default
-        // window, so a compaction running at the stage's defaults never reads it.
-        let narrowedWindowOnly = renderedLineOfNewestCompactedTurn(
-            turnCount: Self.turnCount, keepRecentTurns: Self.narrowedRecentTurns)
-        #expect(narrowedFlash.generationLog.calls.contains { $0.prompt.contains(narrowedWindowOnly) })
-        #expect(!unturnedFlash.generationLog.calls.contains { $0.prompt.contains(narrowedWindowOnly) })
-
-        // Both compactions really did read a span — the newest turn the *default*
-        // window compacts is in each — so the assertions above separate two live
-        // compactions rather than a compaction from a no-op.
-        let compactedEitherWay = renderedLineOfNewestCompactedTurn(
-            turnCount: Self.turnCount, keepRecentTurns: Summarization().keepRecentTurns)
-        #expect(narrowedFlash.generationLog.calls.contains { $0.prompt.contains(compactedEitherWay) })
-        #expect(unturnedFlash.generationLog.calls.contains { $0.prompt.contains(compactedEitherWay) })
+        #expect(result.summarizerTier == .flash)
+        let flashCalls = flash.generationLog.calls
+        #expect(flashCalls.count == 1)
+        let prompt = try #require(flashCalls.first?.prompt)
+        for turn in 0..<Self.turnCount {
+            #expect(prompt.contains("User: turn \(turn)"))
+        }
+        // The session's own model served the triggering turn only: one call.
+        #expect(standard.generationLog.calls.count == ownCallsBeforeTurn + 1)
     }
 }

@@ -3,9 +3,9 @@ import FoundationModels
 
 import FoundationModelsRouter
 
-/// A built seed transcript ready to hand to the compaction pipeline: the raw
-/// entries (instructions header, the fixture's background turn, fact-bearing
-/// "old" turns, filler "recent" turns), the fact under test, and the question
+/// A built seed transcript ready to hand to the compaction: the raw entries
+/// (instructions header, the fixture's background turn, the fact-bearing
+/// turns, then the filler turns), the fact under test, and the question
 /// probing it.
 ///
 /// Kept separate from ``CompactionEvaluationOutcome`` (the `Codable` type
@@ -19,9 +19,8 @@ struct CompactionEvalSeed: Sendable {
     let id: String
 
     /// The full seed transcript: `.instructions`, then the fixture's
-    /// background turn, then every fact-bearing "old" turn (in order), then
-    /// every filler "recent" turn — in original order, exactly as
-    /// ``TranscriptTurns/split(_:)`` expects.
+    /// background turn, then every fact-bearing turn (in order), then every
+    /// filler turn — in original order.
     let entries: [Transcript.Entry]
 
     /// The fact ``question`` is answerable from — ``CompactionEvalFixtureSpec/facts``
@@ -36,16 +35,16 @@ struct CompactionEvalSeed: Sendable {
     /// The question asked of the resumed, post-compaction session.
     let question: String
 
-    /// The token count of this seed's compactable span, the turns
-    /// ``Summarization`` replaces with one summary entry, under `counter`.
+    /// The token count of this seed's compactable span, the entries the
+    /// compaction replaces with one summary entry, under `counter`.
     ///
-    /// Partitioned through the same ``TranscriptTurns`` split the stage itself
-    /// uses, at the stage's own ``Summarization/keepRecentTurns``, so this
-    /// measures what a compaction really replaces rather than a model of it.
+    /// The compaction keeps the instructions entry and replaces every other
+    /// entry of a seed, which holds no protected tool output. So the span is
+    /// every entry but the instructions.
     ///
-    /// Read by two callers that must agree: `CompactionEvalSeedSizingTests`
-    /// holds every seed's span above the largest real summary of it, and
-    /// ``CompactionEvalFactRetentionReport`` prints the span beside the summary
+    /// Read by callers that must agree: the evaluation tests read the span of
+    /// each seed, and ``CompactionEvalFactRetentionReport`` prints the span
+    /// beside the summary
     /// a discarded compaction produced. A second copy of the partitioning would let
     /// the bound and the evidence measure different spans.
     ///
@@ -55,9 +54,11 @@ struct CompactionEvalSeed: Sendable {
     /// - Returns: The span's size, in the tokens `counter` counts.
     /// - Throws: What `counter` throws.
     func compactableSpanTokens(counter: any TokenCounter) throws -> Int {
-        let (_, turns) = TranscriptTurns.split(entries)
-        let (old, _) = TranscriptTurns.partition(turns, keepRecentTurns: Summarization().keepRecentTurns)
-        return try counter.count(Transcript(entries: old.flatMap(\.entries)))
+        let span = entries.filter {
+            if case .instructions = $0 { return false }
+            return true
+        }
+        return try counter.count(Transcript(entries: span))
     }
 
     /// `seeds` keyed by ``question``, the join key a recorded sample carries
@@ -139,9 +140,8 @@ struct CompactionEvalSeed: Sendable {
     }
 }
 
-/// Builds one ``TranscriptTurns`` turn's worth of entries for a single stated
-/// fact or filler line: always starts with a `.prompt`, so
-/// ``TranscriptTurns/split(_:)`` recognizes it as its own turn.
+/// Builds one turn's worth of entries for a single stated fact or filler line.
+/// The turn always starts with a `.prompt`.
 enum CompactionEvalTurn {
     /// - Parameters:
     ///   - text: The fact or filler line to state, as the turn's prompt.

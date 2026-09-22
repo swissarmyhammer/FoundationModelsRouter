@@ -88,9 +88,8 @@ enum CompactionContinuityEvaluationError: Error {
 /// `CompactionContinuityEvaluationTests.everyTaskIsSizedToForceACompaction` sizes the
 /// fixtures against.
 ///
-/// `target` leaves the compacted window at 30% of the limit, well clear of the
-/// four-turn recency window no deterministic stage may touch, so a compaction has
-/// somewhere to land.
+/// `target` sets the new snapshot at 30% of the limit: the summary gets the
+/// room that the target leaves after the instructions.
 let compactionContinuityDefaultBudget = TokenBudget(limit: 2048, trigger: 0.80, target: 0.30)
 
 /// Where the FAST continuity tier puts the auto-compaction trigger, as a share
@@ -110,21 +109,14 @@ let compactionContinuityFastTriggerShareOfContext = 0.02
 /// Where the fast tier puts the compaction target, as a share of
 /// ``CompactionContinuityRealModel/context``.
 ///
-/// It resolves to 492 estimated tokens. Two properties place it:
+/// It resolves to 492 estimated tokens. The opening step alone estimates past
+/// it, so the compaction's own entry guard (`tokensBefore > targetTokens`)
+/// passes when the compaction fires. The compaction is one summarizer call,
+/// and the summary gets the room this target leaves after the instructions.
 ///
-/// - The opening step alone estimates past it, so `Compactor.compact`'s own
-///   entry guard (`tokensBefore > targetTokens`) passes when the compaction fires.
-/// - The deterministic stages can never land it. A fast task holds three
-///   turns, fewer than ``TurnTruncation``'s default window of four, so
-///   truncation drops nothing and the pipeline always falls through to the
-///   model-assisted ``Summarization`` stage — the stage whose summary the
-///   tier measures. That guarantee is structural (a turn count against a
-///   window), not an estimate against a size, which is the arithmetic task
-///   ^wnj3ka3 showed drifting.
-///
-/// The compacted transcript — one summary entry, the readiness turn, and the
-/// header — lands well under this target, so ``CompactionContinuityMetric/budgetHeld``
-/// stays a real measurement rather than a constant failure.
+/// The new snapshot — the instructions and one summary entry — is sized to
+/// this target, so ``CompactionContinuityMetric/budgetHeld`` stays a real
+/// measurement rather than a constant failure.
 let compactionContinuityFastTargetShareOfContext = 0.06
 
 /// The auto-compaction budget the FAST continuity tier vends its sessions
@@ -141,42 +133,14 @@ let compactionContinuityFastBudget = TokenBudget(
     target: compactionContinuityFastTargetShareOfContext
 )
 
-/// How many of the newest turns every fast-tier compaction leaves untouched.
-///
-/// One is what lets a THREE-turn task compaction: ``Summarization`` answers `nil`
-/// while every turn is inside the recency window, and at the default of four
-/// a fast task would need five turns — five real generations — before a compaction
-/// could do anything. One is also the smallest window that is still a window:
-/// the compaction replaces the opening turn and keeps the readiness turn verbatim.
-/// `AutoCompactionTriggerIntegrationTests` uses the same value for the same
-/// reason.
-let compactionContinuityFastKeepRecentTurns = 1
-
-/// The model-assisted stage the fast continuity tier vends its sessions with.
-///
-/// A session is where this choice belongs, because an automatic compaction has no
-/// caller to pass one to. See ``compactionContinuityFastKeepRecentTurns`` for
-/// the recency window and ``compactionEvalReasoningTokenHeadroom`` for the
-/// generation bound both gated tiers share.
-// Only `CompactionContinuityRealModelTests`, in the IntegrationTests
-// package, reads this. Periphery reads only this package's index, thus it
-// finds no reader — and thus also none for the two constants the body
-// below reads.
-// periphery:ignore
-var compactionContinuityFastSummarization: Summarization {
-    Summarization(
-        keepRecentTurns: compactionContinuityFastKeepRecentTurns,
-        reasoningTokenHeadroom: compactionEvalReasoningTokenHeadroom
-    )
-}
-
 /// The mean `FactsSurvived` the gated continuity tier must reach: at least
 /// one planted fact in the final answer, after a real compaction.
 ///
 /// The subject's measured baseline, minus one task of margin — the standing
 /// rule every gated eval floor follows. The gated run of 2026-08-21 under
 /// ``CompactionContinuityRealModel`` (Qwen2.5-3B-Instruct), at greedy
-/// decoding, under task ^xx02yn6's `router-default-v3` prompt, over the four
+/// decoding, under task ^xx02yn6's `router-default-v3` prompt (a run that
+/// predates task ^pke18c2's one-call compaction), over the four
 /// tasks ``compactionContinuityFastTierIDs`` names, measured 4 of 4 tasks
 /// carrying at least one fact end to end, and the four compaction summaries carried
 /// both facts verbatim. One task under that is 3 of 4, which is 0.75. Written

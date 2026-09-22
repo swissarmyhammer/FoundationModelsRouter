@@ -13,11 +13,11 @@ import FoundationModelsRouterTestSupport
 /// target has no `RoutedSession`/`RoutedSessionActor` in play — the eval
 /// drives the bare-session recipe (compaction_plan.md §1.5) directly.
 ///
-/// An `actor` rather than a `struct` so it can record its own calls: one compaction
-/// makes more than one summarizer call when ``Summarization`` chunks a long
-/// span into several map calls plus a reduce call, and
-/// ``CompactionEvalSampleDiagnostic/summarizerCalls`` reports every one of them
-/// with the answer it produced.
+/// An `actor` rather than a `struct` so it can record its own calls: a
+/// compaction makes one summarizer call, and
+/// ``CompactionEvalSampleDiagnostic/summarizerCalls`` reports it with the
+/// answer it produced. The record keeps the answer of a summary the
+/// compaction discarded, which the compaction result does not keep.
 private actor BlankSlateSummarizer: CompactionSummarizer {
     /// The resident model every call opens a fresh, empty session over, with
     /// the decoding strategy the tier pinned.
@@ -201,7 +201,7 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
 
     /// Runs one sample's real subject work (compaction_plan.md §1.4/§1.5's bare-session
     /// recipe): compacts `entries` with `prompt`/`budget` via
-    /// ``Compactor/compact(_:prompt:budget:counter:summarizer:summarization:pendingRuns:protection:)``, resumes a live
+    /// ``Compactor/compact(_:prompt:budget:counter:summarizers:summarization:pendingRuns:protection:abandoning:)``, resumes a live
     /// session over the compacted transcript, and asks `question`.
     ///
     /// - Parameters:
@@ -211,7 +211,7 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
     ///   - question: The question to ask the resumed session.
     /// - Returns: The resumed session's answer plus the compaction's report.
     /// - Throws: Whatever ``container()`` throws while loading the resident
-    ///   model, or whatever ``Compactor/compact(_:prompt:budget:counter:summarizer:summarization:pendingRuns:protection:)``
+    ///   model, or whatever ``Compactor/compact(_:prompt:budget:counter:summarizers:summarization:pendingRuns:protection:abandoning:)``
     ///   or the resumed session's `respond(to:maxTokens:)` throws while
     ///   compacting `entries` or answering `question`.
     ///
@@ -243,19 +243,20 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
         CompactionEvalProgressLog.emit(
             CompactionEvalProgressLog.makeStepStartedLine(.compaction, sample: label, elapsedSeconds: nil))
         let summarizer = BlankSlateSummarizer(loaded: loaded)
-        // The summarization cuts `reasoningTokenHeadroom` to the shared eval
-        // bound, because the resident model writes no `<think>` block and the
-        // default headroom of 8192 is free generation room for it — see
-        // `compactionEvalReasoningTokenHeadroom` for the measured runaway
-        // compacts behind the cut. Every other summarization value stays at its
-        // production default, so the compaction under test is the production compaction.
+        // One slot: the resident model is the session's own model here, and
+        // its window is the context it was loaded at. The compaction under
+        // test is the production compaction, with no settings of its own.
         let (compacted, result) = try await Compactor.compact(
             Transcript(entries: entries),
             prompt: prompt,
             budget: budget,
             counter: loaded.container.tokenCounter,
-            summarizer: summarizer,
-            summarization: Summarization(reasoningTokenHeadroom: compactionEvalReasoningTokenHeadroom)
+            summarizers: [
+                CompactionSummarizerSlot(
+                    tier: .ownModel, summarizer: summarizer,
+                    windowTokens: CompactionEvalRealModel.context,
+                    model: CompactionEvalRealModel.ref.stringValue)
+            ]
         )
         let compactionReturnedAt = Date()
         let summarizerCalls = await summarizer.calls

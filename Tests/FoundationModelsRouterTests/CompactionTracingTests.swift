@@ -16,10 +16,11 @@ import Tracing
 /// summarizer tier that actually ran, and the error record on a compaction that
 /// throws.
 ///
-/// The tier attribute carries the whole of the automatic path's degrade. That
-/// path never throws: a failed summarizer tier falls to the next one, and the
-/// compaction still returns. So a degrade must show as the tier the span names, and
-/// never as a failed span — three of the tests below measure exactly that.
+/// The tier attribute names the tier that wrote the applied summary. On the
+/// automatic path a failed flash tier falls to the session's own model, so
+/// that degrade shows as the tier the span names and never as a failed span.
+/// A compaction that applies no summary writes no tier. When the last tier
+/// fails, the error reaches the caller and the span records it.
 ///
 /// The rule that no attribute carries the caller's own content lives in
 /// ``SpanContentSafetyTests``, which names no span and therefore already
@@ -105,9 +106,9 @@ struct CompactionTracingTests {
         #expect(span.attributes.get("compaction.trigger") == .string("caller"))
         #expect(span.errors.isEmpty)
 
-        // The fixed budget's target sits below the recency floor, so the compaction
-        // needed the model-assisted stage and the session's own model wrote
-        // the summary that applied.
+        // The fixed budget's target is under the warm-up transcript, so the
+        // compaction made its one call and the session's own model wrote the
+        // summary that applied.
         #expect(result.summarizerModel == "org/std-a")
         #expect(span.attributes.get("compaction.tier") == .string("own-model"))
     }
@@ -128,22 +129,23 @@ struct CompactionTracingTests {
         #expect(result.tokensAfter < result.tokensBefore)
     }
 
-    @Test("a caller-driven compaction no summarizer served names the deterministic tier")
-    func callerDrivenDeterministicCompactionNamesTheDeterministicTier() async throws {
+    @Test("a caller-driven compaction that applies no summary writes no tier on its span")
+    func callerDrivenCompactionWithNoSummaryWritesNoTier() async throws {
         let tracer = InMemoryTracer()
         let (session, _, _) = try await AutoCompactionFixtures.makeTriggeredSession(
             budget: nil, tracer: tracer, tempDirPrefix: Self.tempDirPrefix)
 
-        // A target between the recency floor and the full estimate, so
-        // TurnTruncation alone lands under it and no summarizer ever runs.
-        let result = try await session.compact(
-            budget: deterministicCompactionBudget(for: AutoCompactionFixtures.expectedWarmUpEntries()))
+        // A target as large as the whole warm-up transcript: the live context
+        // is already under it, so no summarizer runs and no summary applies.
+        let warmUpTokens = characterCount(of: AutoCompactionFixtures.expectedWarmUpEntries())
+        let result = try await session.compact(budget: TokenBudget(limit: warmUpTokens, target: 1))
+        #expect(result.summarizerTier == nil)
         #expect(result.summarizerModel == nil)
-        #expect(result.tokensAfter < result.tokensBefore)
+        #expect(result.tokensAfter == result.tokensBefore)
 
         let span = try Self.singleCompactionSpan(reportedTo: tracer)
         #expect(span.attributes.get("compaction.trigger") == .string("caller"))
-        #expect(span.attributes.get("compaction.tier") == .string("deterministic"))
+        #expect(span.attributes.get("compaction.tier") == nil)
         #expect(span.errors.isEmpty)
     }
 
@@ -210,16 +212,14 @@ struct CompactionTracingTests {
         #expect(span.errors.isEmpty)
     }
 
-    @Test("an automatic compaction that degrades all the way to the deterministic tier says so in the tier, not as a failed span")
+    @Test("an automatic compaction whose every tier fails records the error on its span and writes no tier")
     @MainActor
-    func automaticCompactionDegradedToTheDeterministicTierKeepsACleanSpan() async throws {
+    func automaticCompactionWhoseEveryTierFailsRecordsTheError() async throws {
         let tracer = InMemoryTracer()
         let (session, standard, flash) = try await AutoCompactionFixtures.makeTriggeredSession(
             budget: AutoCompactionFixtures.fixedBudget, tracer: tracer, tempDirPrefix: Self.tempDirPrefix)
-        // Both model-assisted tiers fail, so only the deterministic pipeline
-        // is left. The session's own model then cannot serve the triggering
-        // turn's own generation either, which is what the turn throws below —
-        // the compaction itself never throws.
+        // Both summarizer tiers fail. The last tier's failure reaches the
+        // caller, and no summary applies.
         flash.shouldThrow = true
         standard.lastBackend?.shouldThrow = true
 
@@ -229,8 +229,8 @@ struct CompactionTracingTests {
 
         let span = try Self.singleCompactionSpan(reportedTo: tracer)
         #expect(span.attributes.get("compaction.trigger") == .string("auto"))
-        #expect(span.attributes.get("compaction.tier") == .string("deterministic"))
-        #expect(span.errors.isEmpty)
+        #expect(span.attributes.get("compaction.tier") == nil)
+        #expect(span.errors.count == 1)
     }
 
     @Test("a compaction with no tracer injected and no backend bootstrapped compacts normally")

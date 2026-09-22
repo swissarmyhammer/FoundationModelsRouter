@@ -27,6 +27,9 @@ private let autoCompactionTriggerModel: ModelRef = "mlx-community/Llama-3.2-1B-I
 /// scaled by the ratio between the two, and this suite compares a measured
 /// `contextFill` against ``syntheticTriggerShareOfContext`` directly.
 ///
+/// It is also the window of the session's own model, so the compaction's one
+/// summarizer call runs in it when the own model writes the summary.
+///
 /// The value itself is not load-bearing at all. That is this card's whole
 /// point: the trigger is a fraction the test states, so no fixture is sized
 /// against this window.
@@ -54,10 +57,8 @@ private let autoCompactionTriggerSamplingMode: GenerationOptions.SamplingMode = 
 /// on 02 Sep 2026.
 ///
 /// A reply is part of its turn, and the turn is part of the transcript the
-/// compaction reads. So a reply that moves with the clock moves the fourth fact this
-/// suite asserts, which is that the fill FELL across the turn. The run of
-/// 2026-08-20 recorded under ``compactionSummaryTokenRatio`` shows that fact going
-/// red when a compaction saved too little.
+/// compaction reads. So a reply that moves with the clock moves the fourth fact
+/// this suite asserts, which is that the fill FELL across the turn.
 ///
 /// The value comes from ``RealModelContainer/chatTemplateFallbackDate``, which
 /// is the template's own fallback and which states why.
@@ -97,9 +98,7 @@ private let autoCompactionTriggerChatTemplateDate =
 /// It does not prove the summary is any good either. A compaction that carries the
 /// facts a resumed session needs is what
 /// `FoundationModelsRouterEvalIntegrationTests` measures, over a hand-written
-/// dataset. That tier drove the 30B model when this sentence was written; it
-/// drives a small canary under a two-minute limit now (task ^k0d30s4). That
-/// tier stays where it is.
+/// dataset.
 ///
 /// It does not prove a compaction works at every fixture size. This suite compacts one
 /// small transcript with one model.
@@ -119,14 +118,20 @@ private let autoCompactionTriggerChatTemplateDate =
 /// ## The trigger is injectable through the PUBLIC surface
 ///
 /// No production code changed to make this suite possible, and none needed to.
-/// ``TokenBudget`` is public, its initializer takes `limit` and `trigger` as
-/// ordinary parameters, and
+/// ``TokenBudget`` is public, its initializer takes `limit`, `trigger` and
+/// `target` as ordinary parameters, and
 /// ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:)``
-/// takes the budget. The recency window rides on the same call, as
-/// ``Summarization/keepRecentTurns``. Every knob this suite sets is one a
-/// caller outside the package can set.
+/// takes the budget. Every knob this suite sets is one a caller outside the
+/// package can set.
 ///
-/// ## What this suite measures
+/// ## What this suite measured before task ^pke18c2
+///
+/// Every number in this section predates task ^pke18c2, which made the
+/// compaction one summarizer call over the whole live context. The suite then
+/// drove three turns and set a target of 4 tokens. Under one call, a target
+/// that small leaves no room for a summary after the instructions, so the
+/// suite now states ``compactionTargetShareOfContext`` and drives two turns.
+/// Nobody has measured this suite again since that change.
 ///
 /// Measured on 2026-08-18, on an Apple silicon box with the model already in
 /// the Hugging Face cache. Three consecutive runs, each printing its own
@@ -138,38 +143,18 @@ private let autoCompactionTriggerChatTemplateDate =
 /// | 2 | 5.0 s | 2.0 s |
 /// | 3 | 5.0 s | 2.0 s |
 ///
-/// The run makes four generations: one for each of the three scripted turns,
-/// and one for the compaction's summarizer call. All three runs reported identical
-/// compaction numbers, which is ``autoCompactionTriggerSamplingMode`` doing its job.
-/// Task ^xx02yn6's span-budget trim then moved the compaction numbers, and the run
-/// of 2026-08-20 under ``compactionSummaryTokenRatio`` re-measured them:
-///
-/// | what the run measured | 2026-08-18 | 2026-08-20 |
-/// |---|---|---|
-/// | the synthetic trigger, in tokens | 82 | 82 |
-/// | the compaction target, in tokens | 4 | 4 |
-/// | context fill before the turn | 0.167 | 0.167 |
-/// | context fill after the turn | 0.107 | 0.114 |
-/// | compacts inside the turn | 1 | 1 |
-/// | stages the compaction applied | elision, truncation, summarization | the same |
-/// | the compaction's transcript, before and after | 733 -> 369 | 733 -> 463 |
-///
-/// ### The numbers this suite reports now (task ^xfj1am4)
-///
-/// Both columns above were measured with the calendar date the run's own clock
-/// stamped, so each column is one day's sample. That is what
-/// ``autoCompactionTriggerChatTemplateDate`` closes.
-///
-/// Measured on 2026-09-01, with the pin in place:
+/// The run made four generations: one for each of the three scripted turns,
+/// and one for the compaction's summarizer call. All three runs reported
+/// identical compaction numbers, which is ``autoCompactionTriggerSamplingMode``
+/// doing its job. Measured on 2026-09-01, with
+/// ``autoCompactionTriggerChatTemplateDate`` in place:
 ///
 /// | what the run measured | value |
 /// |---|---|
 /// | the synthetic trigger, in tokens | 82 |
-/// | the compaction target, in tokens | 4 |
 /// | context fill before the turn | 0.167236328125 |
 /// | context fill after the turn | 0.1142578125 |
 /// | compacts inside the turn | 1 |
-/// | stages the compaction applied | elision, truncation, summarization |
 /// | the compaction's transcript, before and after | 733 -> 426 |
 /// | the turn's own reply | 147 characters |
 /// | the test's wall clock | 7.2 s, of which 1.8 s the model load |
@@ -180,21 +165,14 @@ private let autoCompactionTriggerChatTemplateDate =
 ///
 /// These numbers WILL move again, because the prompt moves whenever the
 /// compaction prompt or the fixture changes. That is expected, and it is not a
-/// regression.
-///
-/// Earlier runs of 2026-08-20 measured this test at 23.7 and at 54.6 seconds,
-/// on a box that loaded the model in 6.1 to 7.5 seconds: task ^xx02yn6's stage
-/// makes more model work for each compaction. The three runs of 2026-08-20 that
-/// measured the whole target reported 5.2, then 5.1, then 5.1 seconds. The
-/// limit is the shared ``integrationTestBudgetMinutes``, which this suite
-/// states in place of a bound of its own, and which states the whole run
-/// table.
+/// regression. The limit is the shared ``integrationTestBudgetMinutes``, which
+/// this suite states in place of a bound of its own, and which states the
+/// whole run table.
 ///
 /// One of the three compaction smoke suites, with
 /// ``CompactionSmokeIntegrationTests`` and
 /// ``RecordedTranscriptCompactionIntegrationTests``. The three answer one
 /// question — does compaction work at all against a real model — in seconds.
-///
 @Suite(
     "Real-model smoke test: a synthetic trigger compacts a short transcript inside its own turn (task ^d02ryqj)",
     .timeLimit(.minutes(integrationTestBudgetMinutes)),
@@ -215,19 +193,21 @@ struct AutoCompactionTriggerIntegrationTests {
     private static let syntheticTriggerShareOfContext = 0.02
 
     /// Where this suite puts the compaction target, as a share of
-    /// ``autoCompactionTriggerContext``.
+    /// ``autoCompactionTriggerContext``: the trigger's own share.
     ///
-    /// Low enough to be unreachable, on purpose. ``Compactor`` runs
-    /// ``ToolOutputElision`` and ``TurnTruncation`` first and stops as soon as
-    /// one of them lands the transcript under target. Neither can reach 4
-    /// tokens, so the pipeline always falls through to ``Summarization`` and
-    /// the compaction this suite asserts on is always the model-assisted one.
+    /// The compaction brings the live context back to the size at which the
+    /// trigger fires, so this suite states no second number. The compaction
+    /// states the target less the instructions as the summary's size. The
+    /// instructions are ``instructions``, one sentence, and the trigger's 82
+    /// tokens leave room for a summary after them. A target that left no room
+    /// stops the compaction with ``CompactionShortfall/targetLeavesNoRoomForSummary(allowedSummaryTokens:)``,
+    /// and the assertion below names that shortfall.
     ///
-    /// A target the deterministic stages COULD reach would make which stage
-    /// compacted depend on how long the model's own replies happened to run,
-    /// which is the defect `f80n046` records against
-    /// ``CompactionRoundTripIntegrationTests``.
-    private static let compactionTargetShareOfContext = 0.001
+    /// The target is far under the live context the first turn builds, so the
+    /// compaction always makes its one summarizer call. It does not depend on
+    /// how long the model's own replies happen to run, which is the defect
+    /// `f80n046` records against ``CompactionRoundTripIntegrationTests``.
+    private static let compactionTargetShareOfContext = syntheticTriggerShareOfContext
 
     /// The auto-compaction opt-in this suite vends its session with — the one
     /// value that makes the compaction below automatic.
@@ -243,109 +223,35 @@ struct AutoCompactionTriggerIntegrationTests {
         )
     }
 
-    // MARK: - Compaction tuning
-
-    /// How many of the newest turns every compaction on this session leaves
-    /// untouched, and deliberately not ``Summarization``'s own default of 4.
-    ///
-    /// This is what lets a THREE-turn conversation compaction. ``Summarization``
-    /// answers `nil` when every turn is still inside the recency window, and
-    /// ``Compactor`` then returns the original transcript with no stage
-    /// applied. At the default of 4 the session would have to reach five turns
-    /// before a compaction could do anything, and each turn is a real generation.
-    ///
-    /// One is the smallest window that is still a window: the compaction replaces
-    /// every turn before the newest, and the newest turn stays verbatim.
-    ///
-    /// ``Compactor/stages(protecting:)`` builds each stage at the default of 4, so
-    /// ``TurnTruncation`` still keeps four turns and removes nothing here. That
-    /// costs the run nothing — it removes no entry and makes no model call —
-    /// and ``compactionTargetShareOfContext`` means the pipeline never stops there
-    /// anyway.
-    private static let compactionKeepRecentTurns = 1
-
-    /// The tokens every summarizer call of this suite is given on top of its
-    /// summary allowance, and deliberately not ``Summarization``'s own default
-    /// of 4096.
-    ///
-    /// The same value ``CompactionSmokeIntegrationTests`` uses, for the same
-    /// measured reason: that default is sized for a model that always writes a
-    /// `<think>` block before its answer, and ``autoCompactionTriggerModel``
-    /// writes no such block. Cutting it bounds the one unbounded cost in the
-    /// run, which is the summarizer generation.
-    private static let reasoningTokenHeadroom = 128
-
-    /// The summary cap every summarizer call of this suite runs under, as
-    /// ``Summarization/summaryTokenRatio`` — and deliberately not the default
-    /// of 0.25.
-    ///
-    /// Task ^xx02yn6 sizes a call's stated budget and generation ceiling from
-    /// the span's own content, for the standard thinking model, which writes
-    /// near the budget it is asked for. ``autoCompactionTriggerModel`` does
-    /// not: it generates to whatever ceiling it is given. The run of
-    /// 2026-08-20 at the default ratio measured what that costs here — the
-    /// answer overran the compacted span's byte budget, the stage condensed and
-    /// then cut it to 64 bytes under the span, the compaction saved 16 of 733
-    /// estimated tokens, and the turn's own prompt and reply cost more than
-    /// that, so the fill ROSE across the turn (0.167 to 0.177) and the suite
-    /// went red on its own fourth fact.
-    ///
-    /// At 0.1 the cap is 200 tokens (`0.1` of ``Summarization/maxChunkTokens``),
-    /// so the whole generation is bounded at 328 tokens with
-    /// ``reasoningTokenHeadroom`` — about 1.6 KB at the dataset-measured 4.79
-    /// bytes for each token, well under this fixture's span byte budget. The
-    /// answer therefore fits the span and is stored whole, and the compaction's
-    /// saving is the span minus a BOUNDED answer, by construction rather than
-    /// by the model's good behaviour — the same device
-    /// ``reasoningTokenHeadroom`` already applies to the reasoning half.
-    private static let compactionSummaryTokenRatio = 0.1
-
-    /// The model-assisted stage this suite vends its session with.
-    ///
-    /// A session is where this choice belongs, because an automatic compaction has no
-    /// caller to pass one to. That is exactly why
-    /// ``RoutedSessionActor/summarization`` exists, and it is what makes the
-    /// recency window a test input here.
-    private static var compactionSummarization: Summarization {
-        Summarization(
-            keepRecentTurns: compactionKeepRecentTurns,
-            summaryTokenRatio: compactionSummaryTokenRatio,
-            reasoningTokenHeadroom: reasoningTokenHeadroom
-        )
-    }
-
     // MARK: - The fixture
 
-    /// The system instructions the session is created with. No compaction stage
-    /// may touch the header the instructions sit in.
+    /// The system instructions the session is created with. The compaction
+    /// keeps them in the new snapshot.
     private static let instructions = "You are a terse, literal assistant. Keep every reply to one sentence."
 
     /// The reply ceiling every scripted turn is submitted with.
     ///
-    /// Small, and load-bearing in one direction only. The two priming turns
-    /// below carry the transcript the compaction reads, and a reply is part of its
+    /// Small, and load-bearing in one direction only. The priming turn below
+    /// carries the transcript the compaction reads, and a reply is part of its
     /// turn — so a large ceiling would let the model, rather than this file,
-    /// decide how big the recency window is. No assertion reads a reply's
-    /// content, so a reply this ceiling truncates costs the suite nothing.
+    /// decide how big that transcript is. No assertion reads a reply's
+    /// content, so a reply this ceiling stops short costs the suite nothing.
     private static let replyTokenCeiling = 48
 
-    /// The first scripted turn, and the whole of the span the compaction replaces.
+    /// The first scripted turn, and the bulk of the live context the
+    /// compaction summarizes.
     ///
     /// Its length is deliberate and it is the one fixture dimension that
-    /// matters. The largest summary a call of this suite can produce is
-    /// bounded by its generation ceiling — 328 tokens, see
-    /// ``compactionSummaryTokenRatio`` — so a span that OUTWEIGHS that bound is a
-    /// span the compaction always shrinks, and the fill assertion below measures
-    /// the wiring rather than the model's own brevity. A span near the bound
-    /// would instead buy a summary as large as itself, which is the shape
-    /// that discarded 7 of 7 gated compactions in `^fm5ddk9` under the old
-    /// allowance floor.
+    /// matters. The compaction states the target less the instructions as the
+    /// summary's size, and this turn is many times that size, so a summary
+    /// that keeps to the stated size makes the context smaller, and the fill
+    /// assertion below measures the wiring rather than the model's own
+    /// brevity. A summary the model writes past its stated size and past the
+    /// size of this turn fails ``Compactor``'s did-not-shrink check, which is
+    /// the shape that discarded 7 of 7 gated compactions in `^fm5ddk9`.
     ///
-    /// So this turn is written well past the bound. It holds 2556 bytes of
-    /// prose, which the pipeline's character count of the time read as 639
-    /// tokens; both numbers are historical measurements of this fixture. It
-    /// stays well under ``Summarization/maxChunkTokens`` (2000), so the span
-    /// is ONE chunk and the compaction costs ONE generation.
+    /// It holds 2556 bytes of prose, which a character count of the time read
+    /// as 639 tokens; both numbers are historical measurements of this fixture.
     ///
     /// This is a bound on the FIXTURE, and it is not the trigger arithmetic
     /// this card removes. Nothing here is sized against a window or a
@@ -378,18 +284,11 @@ struct AutoCompactionTriggerIntegrationTests {
         later, and a report that is thrown away leaves nothing to study.
         """
 
-    /// The second scripted turn.
+    /// The second scripted turn — the turn under test.
     ///
-    /// Short, and its only job is to exist. It is the recency window at the
-    /// moment the compaction runs, so the compaction leaves it verbatim, and a short window
-    /// is what makes the compacted transcript small.
-    private static let followUpPrompt = "Name the first tie-breaker the tool applies."
-
-    /// The third scripted turn — the turn under test.
-    ///
-    /// Short, for the same reason as ``followUpPrompt``, and it asks for
-    /// something the model can answer from the recency window alone. The
-    /// assertion reads only whether the turn answered at all.
+    /// Short, so the prompt and its reply add little to the snapshot the
+    /// compaction leaves, and the fill after the turn stays under the fill
+    /// before it. The assertion reads only whether the turn answered at all.
     private static let triggeringPrompt = "State how far ahead the rota is published, in one sentence."
 
     // MARK: - One driven turn
@@ -494,22 +393,21 @@ struct AutoCompactionTriggerIntegrationTests {
         let budget = Self.syntheticBudget
         let session = profile.standard.makeSession(
             instructions: Self.instructions,
-            budget: budget,
-            summarization: Self.compactionSummarization
+            budget: budget
         )
 
-        // Two priming turns, and neither is the turn under test. A fresh
-        // session measures 0 tokens: `ContextUsageState.none` gives a
-        // `measuredTokens` of 0, not `nil`. Only `.unknown` gives `nil` and
-        // stops the comparison. So the pre-turn check DOES run on the FIRST
-        // turn, and it compares 0 against `budget.triggerTokens`. 0 is below
-        // any POSITIVE trigger, and `syntheticTriggerShareOfContext` sets a
-        // positive one — a trigger of 0.0 resolves to 0 tokens, and the check
-        // would fire on turn one. The compaction also needs a turn outside the
-        // recency window to summarize. Two turns is the smallest transcript
-        // the automatic path can compact at `compactionKeepRecentTurns`.
+        // One priming turn, and it is not the turn under test. A fresh session
+        // measures 0 tokens: `ContextUsageState.none` gives a `measuredTokens`
+        // of 0, not `nil`. Only `.unknown` gives `nil` and stops the
+        // comparison. So the pre-turn check DOES run on the FIRST turn, and it
+        // compares 0 against `budget.triggerTokens`. 0 is below any POSITIVE
+        // trigger, and `syntheticTriggerShareOfContext` sets a positive one — a
+        // trigger of 0.0 resolves to 0 tokens, and the check would fire on turn
+        // one. After this turn the measured usage is past the trigger, so the
+        // NEXT turn's pre-turn check compacts. A second priming turn would take
+        // that compaction itself, and the turn under test would then start
+        // from a context already compacted.
         _ = try await Self.drive(session, prompt: Self.openingBrief)
-        _ = try await Self.drive(session, prompt: Self.followUpPrompt)
 
         let contextFillBeforeTheTurn = await session.contextFill
         let turn = try await Self.drive(session, prompt: Self.triggeringPrompt)
@@ -527,6 +425,8 @@ struct AutoCompactionTriggerIntegrationTests {
         print(
             "[autoCompactionTrigger] compactionsInTheTurn=\(turn.compactions.count) "
                 + "stages=\(turn.compactions.map(\.stagesApplied)) "
+                + "shortfalls=\(turn.compactions.map { String(describing: $0.shortfall) }) "
+                + "tiers=\(turn.compactions.map { String(describing: $0.summarizerTier) }) "
                 + "tokensBefore=\(turn.compactions.map(\.tokensBefore)) tokensAfter=\(turn.compactions.map(\.tokensAfter)) "
                 + "replyCharacters=\(turn.reply.count)"
         )
@@ -545,16 +445,14 @@ struct AutoCompactionTriggerIntegrationTests {
         //    could have compacted is the session's own trigger check.
         let compaction = try #require(
             turn.appliedCompactions.last,
-            "the turn applied no compaction — it reported \(turn.compactions.count) compaction(s), stages \(turn.compactions.map(\.stagesApplied))"
+            "the turn applied no compaction — it reported \(turn.compactions.count) compaction(s), stages \(turn.compactions.map(\.stagesApplied)), shortfalls \(turn.compactions.map { String(describing: $0.shortfall) })"
         )
 
-        // The stage that compacted, named. `compactionTargetShareOfContext` puts the
-        // deterministic stages out of reach, so the model-assisted stage is
-        // what applied this compaction, and a run where it did not is a run that
-        // measured something else.
+        // The stage that compacted, named. A compaction is one summarizer call,
+        // and an applied one names that stage alone.
         #expect(
-            compaction.stagesApplied.last == Summarization.stageName,
-            "expected the model-assisted stage to apply the compaction, got stages \(compaction.stagesApplied)"
+            compaction.stagesApplied == [Summarization.stageName],
+            "expected the summary to apply the compaction, got stages \(compaction.stagesApplied)"
         )
 
         // 3. The turn still answered.

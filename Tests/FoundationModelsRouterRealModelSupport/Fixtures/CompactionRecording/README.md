@@ -52,10 +52,11 @@ and `toolOutput` entries. The test asserts each kind is present, so a fixture
 that silently lost one goes red rather than compacting something simpler than it
 claims to.
 
-The transcript estimates 4297 tokens, of which the compacted span is 2366. That
-span is past `Summarization.maxChunkTokens` (2000), so the stage chunks it and
-the compaction costs three summarizer calls rather than one — the map-reduce path no
-other fast suite reaches.
+The transcript estimates 4297 tokens, of which the compacted span is 2366.
+These counts were made at recording time, before task `^pke18c2`. The
+compaction now makes one summarizer call over the whole live context,
+instructions included, so this recording costs one call like every other
+fixture. It is the largest live context a fast suite compacts.
 
 ## How it was made
 
@@ -71,9 +72,9 @@ conversation this recording holds.
 The conversation is a synthetic engineering discussion — an ingest-path
 replacement for a "station archive" and its migration plan — written for this
 fixture. Two turns carry long prose, one turn asks the model to call a tool, and
-three short turns follow. The long turns are what put the compacted span past the
-point where `Summarization.minimumSummaryTokens` stops binding; the short turns
-are the recency window.
+three short turns follow. The long turns make the live context large, so a
+summary that keeps to the size the compaction states is much smaller than the
+context it replaces. The short turns end the conversation.
 
 The model's own replies, its reasoning, its tool calls and the tool outputs are
 whatever the model produced. Nothing was written by hand into the recording.

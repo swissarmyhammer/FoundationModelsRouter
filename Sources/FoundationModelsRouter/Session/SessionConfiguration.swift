@@ -26,7 +26,8 @@ public struct SessionConfiguration: Sendable {
     /// The compaction prompt automatic compactions send to the summarizer, when ``budget`` is set.
     public var compactionPrompt: CompactionPrompt
 
-    /// The model-assisted compaction stage every compaction on the vended session runs.
+    /// The summarization stage every compaction on the vended session runs.
+    /// It has no settings. The sidecar keeps it so that an old sidecar still decodes.
     public var summarization: Summarization
 
     /// The parent session/tool-call the session was spawned from, or `nil`.
@@ -117,7 +118,8 @@ public struct SessionConfiguration: Sendable {
         /// The compaction prompt for automatic compactions.
         let compactionPrompt: CompactionPrompt
 
-        /// The model-assisted compaction stage.
+        /// The summarization stage every compaction runs. It has no settings.
+        /// The sidecar keeps it so that an old sidecar still decodes.
         let summarization: Summarization
 
         /// The spawn context, or `nil`.

@@ -2,27 +2,28 @@ import Foundation
 
 import FoundationModelsRouter
 
-/// The ceiling one summarizer call of a compaction ran under, and what it answered.
+/// The output ceiling the one summarizer call of a compaction ran under, and
+/// what the call answered.
 ///
-/// The ceiling bounds the generation; the assembled prompt also states the
-/// call's summary allowance to the model as a word-count target (task
-/// ^xx02yn6) — see ``Summarization`` — and the call reads back whatever the
-/// model writes.
+/// The ceiling bounds the generation. The assembled prompt also states the
+/// size of the summary to the model: "Size budget: about N tokens.", where N
+/// is the budget's target less the instructions, the protected tool outputs
+/// and the pending-runs rendering (see ``Summarization``). The call reads
+/// back what the model writes.
 ///
-/// Recorded because a discarded compaction leaves no other trace of its summary.
-/// `Compactor.compact` throws such a compaction away and reports the shortfall exit's
-/// `nil` summary, so the size of the summary that lost — the one number that
-/// says whether the compaction missed by a few percent or by a multiple — survives
-/// nowhere else. The summarizer holds it at the moment it answers, so it is
-/// kept there.
+/// Recorded because a discarded summary leaves no other trace.
+/// `Compactor.compact` discards a summary that does not shrink the live
+/// context, and it reports the shortfall with a `nil` summary. So the size of
+/// the summary that lost, the one number that says whether the compaction
+/// missed by a few percent or by a multiple, is kept nowhere else. The
+/// summarizer holds it at the moment it answers, so it is kept there.
 struct CompactionEvalSummarizerCall: Sendable {
-    /// The ceiling, in tokens, the compaction gave this call.
+    /// The output ceiling, in tokens, the compaction gave this call.
     ///
-    /// ``Summarization``'s summary allowance plus its
-    /// ``Summarization/reasoningTokenHeadroom``, and it bounds the WHOLE
-    /// generation — the reasoning and the answer together — rather than the
-    /// summary text alone. Recorded beside the answer so a run can read the two
-    /// against each other.
+    /// It is the room the summarizer's window leaves after the call's input:
+    /// the window less the assembled prompt. It bounds the WHOLE generation,
+    /// the reasoning and the answer together, and not the summary text alone.
+    /// Recorded beside the answer so a run can read the two against each other.
     let maxTokens: Int
 
     /// The model's complete answer to this call.
@@ -46,7 +47,7 @@ struct CompactionEvalSampleDiagnostic: Sendable {
     let question: String
 
     /// The compaction's synthesized summary text (``CompactionResult/summary``), or
-    /// `nil` when no `Summarization` stage ran and so no summary exists.
+    /// `nil` when the compaction applied no summary.
     let summary: String?
 
     /// The resumed session's answer to ``question`` — the exact string
@@ -64,33 +65,36 @@ struct CompactionEvalSampleDiagnostic: Sendable {
     /// text survives nowhere else — see ``CompactionEvalSummarizerCall``.
     let summarizerCalls: [CompactionEvalSummarizerCall]
 
-    /// How many round trips to the model the compaction's summarizer made. One compaction
-    /// makes more than one call when ``Summarization`` chunks a long span into
-    /// several map calls plus a reduce call, so this distinguishes a
-    /// single-shot compaction from a chunked one.
+    /// How many round trips to the model the compaction's summarizer made.
+    ///
+    /// A compaction makes one summarizer call over the whole live context, or
+    /// no call when it stops before the call (the context is already under its
+    /// target, or a shortfall stops it). So this is `1` or `0`, and a larger
+    /// count on a printed line is a defect to read.
     var summarizerCallCount: Int {
         summarizerCalls.count
     }
 
-    /// Whether this sample's compaction reached the model-assisted
-    /// ``Summarization`` stage — the one stage that leaves a summary a later
-    /// question can be answered from.
+    /// Whether this sample's compaction applied a summary: whether
+    /// ``stagesApplied`` names ``Summarization/stageName``. The summary is what
+    /// a later question can be answered from.
     var compacted: Bool {
         stagesApplied.contains(Summarization.stageName)
     }
 
     /// Whether this sample's compaction ran and was then thrown away.
     ///
-    /// `Compactor.compact` refuses a compaction whose summary left the transcript no
-    /// smaller than it was, and its shortfall exit reports the same values as a
-    /// compaction that never ran at all: no summary, and no stage applied. The two are
-    /// not the same measurement, and telling them apart is what this reads.
+    /// `Compactor.compact` discards a summary that left the transcript no
+    /// smaller than it was (``CompactionShortfall/summaryDidNotShrinkContext(snapshotTokens:)``).
+    /// That shortfall reports the same values as a compaction that made no
+    /// call: no summary, and no stage applied. The two are not the same
+    /// measurement, and this property tells them apart.
     ///
-    /// The summarizer is called from ``Summarization`` and nowhere else, and an
-    /// applied `Summarization` always names itself in
-    /// ``CompactionResult/stagesApplied``. So a call with no stage to show for it
-    /// is a compaction that ran and was discarded, and nothing else can produce that
-    /// pair.
+    /// The summarizer is called from ``Summarization`` and nowhere else, and
+    /// an applied summary always names ``Summarization/stageName`` in
+    /// ``CompactionResult/stagesApplied``. So a call with no stage to show for
+    /// it is a summary the compaction discarded, and nothing else can produce
+    /// that pair.
     var compactionDiscarded: Bool {
         summarizerCallCount > 0 && !compacted
     }
@@ -98,10 +102,8 @@ struct CompactionEvalSampleDiagnostic: Sendable {
     /// The call whose answer a discarded compaction would have stored, or `nil` when
     /// this sample's compaction was not discarded.
     ///
-    /// The LAST call, because that is the summary a compaction stores: a span inside
-    /// ``Summarization/maxChunkTokens`` takes one call, and a longer one takes
-    /// several map calls and then reduce rounds whose final call produces the
-    /// single summary the boundary carries.
+    /// The LAST call. A compaction makes one call, so the last call is the
+    /// only call, and its answer is the summary the boundary entry would carry.
     var discardedSummary: CompactionEvalSummarizerCall? {
         guard compactionDiscarded else { return nil }
         return summarizerCalls.last
@@ -242,9 +244,10 @@ enum CompactionEvalFactRetentionReport {
     ///
     /// `Compactor.compact` reports a discarded compaction through the same shortfall
     /// exit an uncompacted transcript takes, so the summary arrives as `nil` and the
-    /// table wrote ``absentSummaryMarker`` for it — the same rendering a stage
-    /// that never ran gets. A compaction the summarizer really answered, and the
-    /// pipeline then threw away, is a different measurement and says so.
+    /// table wrote ``absentSummaryMarker`` for it — the same rendering a
+    /// compaction that made no call gets. A summary the summarizer really
+    /// wrote, and the compaction then discarded, is a different measurement
+    /// and says so.
     static let discardedSummaryMarker = "<discarded>"
 
     /// What ``lines(of:expecting:counter:)`` renders in place of the unreached seed ids
@@ -258,25 +261,22 @@ enum CompactionEvalFactRetentionReport {
     /// How many characters of a discarded compaction's summary ``stanza(for:counter:)``
     /// prints before it cuts the text off.
     ///
-    /// A discarded summary is bounded only by the ceiling the whole generation
-    /// ran under — ``Summarization/reasoningTokenHeadroom`` on top of the
-    /// summary allowance — so it can run to tens of thousands of characters,
-    /// and a table that printed one whole for every sample would bury the rest
-    /// of the run's evidence.
+    /// The one bound on a discarded summary is the output ceiling of its call:
+    /// the room the summarizer's window leaves after the input. In the gated
+    /// tier that is most of ``CompactionEvalRealModel/context``, so a summary
+    /// can run to tens of thousands of characters. A table that printed each
+    /// one whole would bury the rest of the run's evidence.
     ///
-    /// The span budget ``Summarization`` holds the FINAL summary to does
-    /// not bound this text, and it is meant not to.
+    /// The compaction does not cut the summary to the size its prompt states,
+    /// and this text is not cut to it either.
     /// ``CompactionEvalRealSubjectRunner``'s summarizer records the answer as
-    /// the call returns it, before the stage resolves anything, so a
-    /// discarded compaction is judged on what the model wrote.
+    /// the call returns it, so a discarded summary is judged on what the model
+    /// wrote.
     ///
-    /// `1000` characters is more than the largest summary the allowance
-    /// itself buys. ``RealisticSummaryLengthSummarizer`` writes the whole
-    /// floor of the allowance, ``Summarization/minimumSummaryTokens``, as 614
-    /// bytes of ASCII prose, and a real answer of that allowance is near that
-    /// size. So an answer that kept to the allowance prints whole, and one
-    /// that did not is visibly cut, with its real size stated on the line
-    /// above.
+    /// The value is a display choice for one printed line, and it bounds no
+    /// compaction. The prefix shows what the model wrote and whether it kept
+    /// to the prompt's sections. The real size of the whole answer, in bytes
+    /// and in tokens, is on the line above, so the cut hides no measurement.
     static let discardedSummaryPrefixCharacters = 1000
 
     /// What ``stanza(for:counter:)`` appends to a discarded summary it cut short at

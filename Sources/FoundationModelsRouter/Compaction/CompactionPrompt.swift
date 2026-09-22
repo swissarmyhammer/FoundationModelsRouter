@@ -1,4 +1,4 @@
-/// The instructions given to the ``Summarization`` compaction stage, with a
+/// The instructions given to the ``Summarization`` compaction call, with a
 /// `name` so recorded compactions can be attributed to the prompt that produced
 /// them. Consumers pass their own value to specialize summarization.
 public struct CompactionPrompt: Sendable, Equatable, Codable {
@@ -7,7 +7,7 @@ public struct CompactionPrompt: Sendable, Equatable, Codable {
     public var name: String
 
     /// The summarization instructions sent to the summarizer model verbatim,
-    /// immediately ahead of the rendered span being condensed.
+    /// immediately ahead of the stated size and the rendered live context.
     public var text: String
 
     /// Creates a compaction prompt.
@@ -20,11 +20,11 @@ public struct CompactionPrompt: Sendable, Equatable, Codable {
         self.text = text
     }
 
-    /// The router's default compaction prompt, `"router-default-v4"`: eight
-    /// numbered sections, verbatim values, and a size budget that
+    /// The router's default compaction prompt, `"router-default-v5"`: eight
+    /// numbered sections, verbatim values, and a size budget in tokens that
     /// ``Summarization`` states per request.
     public static let `default` = CompactionPrompt(
-        name: "router-default-v4",
+        name: "router-default-v5",
         text: """
             You are compacting an agent conversation into a continuation summary. The
             summary will REPLACE the older conversation: whoever continues has no other
@@ -37,10 +37,9 @@ public struct CompactionPrompt: Sendable, Equatable, Codable {
             description of it: give the number the conversation stated, never the fact
             that a number was stated.
 
-            Each request states a size budget for the whole summary, as a word count.
-            Aim near it without counting words: keep every section terse, and drop
-            polish rather than stated facts. Text far past the budget is trimmed away
-            and lost.
+            Each request states a size budget for the whole summary, in tokens.
+            Aim near it without counting: keep every section terse, and drop polish
+            rather than stated facts.
 
             Structure the summary exactly as:
 

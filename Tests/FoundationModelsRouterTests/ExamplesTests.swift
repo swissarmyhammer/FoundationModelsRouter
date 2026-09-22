@@ -732,11 +732,14 @@ struct ExamplesTests {
             self.replaceSpy = replaceSpy
         }
 
-        /// Synthetic prompt/response turns — long enough in aggregate,
-        /// `turnCount` past `TurnTruncation`'s default 4-turn recency
-        /// window, that a tight-enough `TokenBudget` forces a real compaction
-        /// (`TurnTruncation` actually dropping the oldest turns) rather than
-        /// a no-op.
+        /// Synthetic prompt/response turns, long enough in aggregate that a
+        /// tight-enough `TokenBudget` forces a real compaction (one summary
+        /// that replaces the turns) rather than a no-op.
+        ///
+        /// - Parameters:
+        ///   - turnCount: How many turns to build.
+        ///   - responseText: The text of every response.
+        /// - Returns: The entries, in order.
         static func seedEntries(turnCount: Int, responseText: String) -> [Transcript.Entry] {
             (0..<turnCount).flatMap { index -> [Transcript.Entry] in
                 [
@@ -782,12 +785,16 @@ struct ExamplesTests {
         func usageTokenCounts() -> (input: Int, output: Int)? { nil }
 
         func replacingTranscript(_ transcript: Transcript) -> any LanguageModelSessionBackend {
-            // Only reached when compact() actually compacted something — a
-            // no-op compaction (already under target) never swaps the backend
-            // (see RoutedSessionActor.compact(prompt:budget:)'s own doc
-            // comment). The fresh backend is already past its one-time
-            // overflow, seeded from the compacted transcript.
-            replaceSpy.recordReplace()
+            // A compaction calls this twice: once with an empty transcript for
+            // the blank-slate backend its summarizer call runs on, and once
+            // with the new snapshot when it swaps the backend. Only the swap
+            // is recorded, and a no-op compaction (already under target)
+            // never swaps (see RoutedSessionActor.compact(prompt:budget:)'s
+            // own doc comment). The fresh backend is already past its
+            // one-time overflow, so the summarizer call answers.
+            if !Array(transcript).isEmpty {
+                replaceSpy.recordReplace()
+            }
             return OverflowOnceBackend(
                 responseText: responseText, entries: Array(transcript), hasOverflowed: true, replaceSpy: replaceSpy)
         }
@@ -814,9 +821,9 @@ struct ExamplesTests {
     )
     @MainActor
     func reactiveCompactionRecoversFromContextOverflow() async throws {
-        // Seed enough real transcript content (more than TurnTruncation's
-        // 4-turn recency window) that the lowered-target compact() this
-        // test drives actually compacts something real, not a no-op — so this
+        // Seed enough real transcript content that the lowered-target
+        // compact() this test drives actually compacts something real, not a
+        // no-op — so this
         // test would fail if a future change dropped the compact() call
         // from the reactive pattern, or broke it, rather than passing
         // vacuously on the retry alone (which only depends on the stub's
@@ -826,18 +833,12 @@ struct ExamplesTests {
         let replaceSpy = ReplaceSpy()
         let backend = OverflowOnceBackend(responseText: "recovered", entries: seedEntries, replaceSpy: replaceSpy)
 
-        // Derive a context tight enough that the reactive pattern's own
-        // hardcoded 0.35 target sits strictly between the seeded
-        // transcript's real recency-window-only character count and its full
-        // pre-compaction count — guaranteeing TurnTruncation alone lands under
-        // target (no need for the model-assisted Summarization stage, which
-        // this stub cannot service).
-        let (header, turns) = TranscriptTurns.split(seedEntries)
-        let (_, recent) = TranscriptTurns.partition(turns, keepRecentTurns: 4)
-        let recencyOnlyCount = try characterTokenCounter.count(Transcript(entries: header + recent.flatMap(\.entries)))
-        let preCompactionCount = try characterTokenCounter.count(Transcript(entries: seedEntries))
-        let midTarget = (recencyOnlyCount + preCompactionCount) / 2
-        let contextTokens = Int(Double(midTarget) / 0.35)
+        // A context twice the seeded transcript: the reactive pattern's own
+        // hardcoded 0.35 target is then under the seeded transcript, so the
+        // compaction makes its one summarizer call, and the session's window
+        // holds that call's input. The stub's fresh backend answers the call.
+        let preCompactionCount = characterCount(of: seedEntries)
+        let contextTokens = preCompactionCount * 2
 
         let session = try await CompactionExampleHarness.makeSession(over: backend, context: contextTokens)
 

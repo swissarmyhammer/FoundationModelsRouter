@@ -1,12 +1,55 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m35ans8bz0xaf9ayvajanybx
+  text: |-
+    Research and first implementation notes.
+
+    - The library now compacts in one call. `Summarization.plan` builds the call: the input is the compaction prompt plus the whole live context, the instructions included. The allowed size is `targetTokens - instructions - protected entries - pending-runs rendering`. The prompt states it as "Size budget: about N tokens." When the size is not positive, the result has `shortfall = .targetLeavesNoRoomForSummary`.
+    - `CompactionCall.outputCeiling(for:)` holds the choice by window. The flash tier runs when `window - input >= allowed size`. The own model runs when `window - input > 0`. The ceiling is `window - input`. When no tier can run, the result has `shortfall = .inputFillsSummarizerWindow`.
+    - A reading of the card: the check for the own model is "window - input > 0", not "window >= input + allowed size". The reason: at the kept defaults (trigger 0.80, target 0.50), input (0.8 W) + summary (0.5 W) is more than W. The stricter check would stop every automatic compaction. The card's own words ("whose window holds the live context by construction", "the live context is at the window") name the failure as no room after the input. The flash tier keeps the stricter rule, word for word.
+    - The new snapshot is the instructions, then the summary entry (checkpoint and pending-runs text), then the protected tool outputs with their calls. The did-it-shrink check returns the live context unchanged with `shortfall = .summaryDidNotShrinkContext`.
+    - The session measures with its tokenizer before the call. After the call, the next turn's `usage.input` replaces the count (`compactedUsage` rescales it).
+    - Gone: `ToolOutputElision`, `TurnTruncation`, `CompactionStage`, `TranscriptTurns`, the stage loop, `compactionKeptOverTarget`, the deterministic tier and `CompactionSegment.appendingDeterministicBoundary`, `RecordingLanguageModel.noteCompaction(_:result:)`, `CompactionResult.summaryCut`, every chunk/reduce/condense/repetition/headroom constant and function. `Summarization` has no settings now. An old sidecar still decodes, and a restore ignores its values.
+    - New: `CompactionResult.summarizerTier` and `CompactionResult.shortfall` (`CompactionShortfall`). They record which tier ran and why a compaction left the context as it was. The span writes `compaction.tier` only when a summary applied.
+    - The caller-driven `compact()` offers the own model only, as before. The automatic compaction offers flash, then the own model. When flash fails, the own model runs. The abandon-on-cancel rule stays.
+    - `CompactionPrompt.default` is now `router-default-v5`. It states the size budget in tokens.
+  timestamp: 2026-09-22T19:49:52.523935+00:00
+- actor: claude-code
+  id: 01m35e4y7megvece1hmmvk3k81
+  text: |-
+    ### implement — changed
+    - evidence: 79 paths. Sources (Compactor, Summarization, CompactionSegment, ToolOutputProtection, CompactionPrompt, RoutedSessionActorCompaction, RecordingLanguageModel, doc comments). Deleted ToolOutputElision, TurnTruncation, CompactionStage, TranscriptTurns. Unit tests: the four old test files are deleted; OneCallCompactionTests, OneCallCompactionTierTests and CompactionPromptTests are new; the tests of behavior that stays are rewritten. The evals, the eval support, the real-model support, the IntegrationTests, the tool and the example lose the deleted parameters.
+    - The checkpoint now states the measured scale (`CompactionSegment.restatingSizes`), so a restore reports the same fill as the live session.
+    - Acceptance rg over Sources: no match.
+
+    ### test — green
+    - evidence: `swift test`: 1297 unit tests in 145 suites passed (2 known issues, not new in this change), 1 public-surface test passed, 83 eval tests in 10 suites passed. `swift build --package-path IntegrationTests --build-tests`: Build complete. The one build warning, "missing creator for mutated node … mlx-swift_Cmlx.bundle", comes from the build system and is not new.
+
+    ### Real-model eval tier (gated) — the numbers
+    Command: `swift test --package-path IntegrationTests --filter FoundationModelsRouterEvalIntegrationTests`. Model: Qwen2.5-3B-Instruct-4bit, greedy decoding, on this machine.
+    - Fact retention: FAIL against its floors. 7 of 7 seeds ran, and each made exactly 1 summarizer call. Summary share 3 of 7 (0.43). Answer share 4 of 7 (0.57). The floors are 0.71 (5 of 7). Before this change the same tier measured 6 of 7 on both sides.
+      - budget-cap-tool-and-owner: summaryLostFact, 1936 B
+      - db-port: retained, 155 B
+      - encryption-algorithm: discarded (summary 599 tokens, span 507, ceiling 7114), 2534 B
+      - license-key-and-region: retained, 1555 B
+      - sesame-allergy: summaryLostFact, 1566 B
+      - three-facts-long-project-brief: retained, 415 B
+      - three-facts-support-escalation: summaryLostFact, 299 B
+      - In the lost seeds, the summary lists the assistant's acknowledgements as the facts.
+    - Continuity: PASS. 4 tasks; compactionOccurred 1.0, factsSurvived 1.0, answersCorrect 1.0.
+    - Smoke suites (Llama-3.2-1B): the answer runs to the ceiling (`ceilings=[2821] answerTokens=[2821]`), and the did-it-shrink check discards it (`summaryDidNotShrinkContext(snapshotTokens: 2866)` against 744). `AutoCompactionTriggerIntegrationTests` shows the same result. `CompactionSpikeIntegrationTests` passes.
+    - For the owner: the card sets the output ceiling at window − input with no other bound. A small model that does not keep to the stated size writes until that ceiling. The did-it-shrink check then rejects the summary. The code follows the card. I made no change to the floors, and I added no bound.
+    - `compactionEvalDefaultBudget` is now `TokenBudget(limit: 418, trigger: 0.80, target: 1.0)`. The old 40-token target was under the 78-token recall instructions, so every compaction stopped. The measurement is in its doc comment.
+  timestamp: 2026-09-22T20:50:34.868885+00:00
 depends_on:
 - 01M34SPS7H39SK38H95M39WMX1
 - 01M34VATXAFNGB9WBF6XJK0PP8
 - 01M3599BYH1WBNJA33FN1KHNXA
-position_column: todo
-position_ordinal: '9380'
+position_column: doing
+position_ordinal: '80'
 title: 'Make compaction one call: current context + compaction prompt → a snapshot of instructions + summary'
 ---
 ## Decision (from the owner, 2026-09-22)

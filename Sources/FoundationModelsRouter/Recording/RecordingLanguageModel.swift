@@ -54,29 +54,12 @@ struct RecordingLanguageModel: LanguageModel, Sendable {
     /// The call is idempotent.
     ///
     /// After this call, rebuild the `LanguageModelSession` over this handle
-    /// with `transcript: compacted`. For a deterministic-only compaction, use
-    /// ``noteCompaction(_:result:)`` so the checkpoint reaches disk.
+    /// with `transcript: compacted`. The summary entry of `compacted` carries
+    /// the ``CompactionSegment`` checkpoint to disk.
     ///
     /// - Parameter compacted: The transcript compaction produced.
     func noteCompaction(_ compacted: Transcript) async {
-        _ = await state.noteCompaction(compacted)
-    }
-
-    /// Carries this handle's recording forward across a compaction, like
-    /// ``noteCompaction(_:)``. When `result` reports a deterministic-only
-    /// compaction (no summary entry, at least one stage applied), one boundary
-    /// entry is synthesized and recorded so the ``CompactionSegment``
-    /// checkpoint reaches disk.
-    ///
-    /// After this call, rebuild the `LanguageModelSession` over this handle
-    /// with the returned transcript, not with `compacted`.
-    ///
-    /// - Parameters:
-    ///   - compacted: The transcript compaction produced.
-    ///   - result: The report of what the compaction did.
-    /// - Returns: The transcript to seed the rebuilt session with.
-    func noteCompaction(_ compacted: Transcript, result: CompactionResult) async -> Transcript {
-        await state.noteCompaction(compacted, result: result)
+        await state.noteCompaction(compacted)
     }
 
     /// The executor every `LanguageModelSession` built over a
@@ -252,43 +235,13 @@ actor RecordingLanguageModelState {
 
     /// Carries this handle's recording forward across a compaction. It records
     /// the compaction's new entries by `Transcript.Entry.id` and resets
-    /// ``lastSeen`` to what it recorded.
+    /// ``lastSeen`` to `compacted`.
     ///
-    /// - Parameters:
-    ///   - compacted: The transcript compaction produced.
-    ///   - result: The report of what the compaction did, or `nil` to record
-    ///     `compacted` as-is with no boundary synthesis.
-    /// - Returns: The transcript recorded and set as the new ``lastSeen``.
-    ///   The caller seeds the rebuilt session with it.
-    func noteCompaction(_ compacted: Transcript, result: CompactionResult? = nil) async -> Transcript {
+    /// - Parameter compacted: The transcript compaction produced.
+    func noteCompaction(_ compacted: Transcript) async {
         await enterGateAndRecordMeta(compacted)
-        let applied = appliedTranscript(for: compacted, result: result)
-        await diffAndRecordCompaction(compacted: applied)
+        await diffAndRecordCompaction(compacted: compacted)
         generationGate.signal()
-        return applied
-    }
-
-    /// Returns `compacted` plus one synthesized deterministic boundary entry
-    /// when `result` reports an applied compaction with no summary entry, or
-    /// `compacted` unchanged otherwise. Must run inside the generation gate
-    /// because it reads ``lastSeen``.
-    ///
-    /// - Parameters:
-    ///   - compacted: The transcript compaction produced.
-    ///   - result: The report of what the compaction did, or `nil`.
-    /// - Returns: The transcript to record and reset ``lastSeen`` to.
-    private func appliedTranscript(for compacted: Transcript, result: CompactionResult?) -> Transcript {
-        guard let result, result.summaryEntryId == nil, !result.stagesApplied.isEmpty else {
-            return compacted
-        }
-        return CompactionSegment.appendingDeterministicBoundary(
-            to: compacted,
-            preCompactionEntryIds: lastSeen.map(\.id),
-            tokensBefore: result.tokensBefore,
-            tokensAfter: result.tokensAfter,
-            stagesApplied: result.stagesApplied,
-            pendingRuns: nil
-        )
     }
 
     /// Writes the sidecar on first use, acquires the generation gate, and

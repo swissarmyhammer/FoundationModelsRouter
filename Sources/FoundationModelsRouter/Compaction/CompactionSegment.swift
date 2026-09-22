@@ -41,7 +41,8 @@ package struct CompactionSegment: PersistableStructuredSegment, Equatable, Custo
         /// The measured transcript size, in tokens, after this compaction.
         var tokensAfter: Int
 
-        /// The pipeline stages this compaction applied, in order.
+        /// The stages this compaction applied, in order. A checkpoint recorded
+        /// before compaction became one call can name more than one stage.
         var stagesApplied: [String]
 
         /// The name of the `CompactionPrompt` that produced this compaction's summary.
@@ -162,14 +163,14 @@ package struct CompactionSegment: PersistableStructuredSegment, Equatable, Custo
             """
     }
 
-    /// Builds the boundary entry an applied compaction appends: a `.response` with
+    /// Builds the summary entry of an applied compaction: a `.response` with
     /// a text segment for `summaryText` (id `<entryId>-text`), a pending-runs
     /// text segment (id `<entryId>-pending-runs`) when `content.pendingRuns`
     /// is not `nil`, and the `.structure` ``CompactionSegment`` manifest.
     ///
     /// - Parameters:
     ///   - entryId: The boundary entry's `Transcript.Entry.id`.
-    ///   - summaryText: The model-visible summary text, or empty.
+    ///   - summaryText: The model-visible summary text.
     ///   - content: The compaction manifest the `.structure` segment wraps.
     /// - Returns: The boundary entry.
     internal static func boundaryEntry(
@@ -200,48 +201,33 @@ package struct CompactionSegment: PersistableStructuredSegment, Equatable, Custo
         )
     }
 
-    /// The ``Content/promptName`` of a deterministic-only compaction: empty,
-    /// because no summarizer read a prompt.
-    internal static let deterministicCompactionPromptName = ""
-
-    /// Returns `compacted` with one boundary entry appended. The boundary has an
-    /// empty summary and ``deterministicCompactionPromptName``.
+    /// Returns `entry` with the sizes of its checkpoint set to `tokensBefore`
+    /// and `tokensAfter`. Every other segment, and the checkpoint's own id,
+    /// stay as they are. An entry that carries no checkpoint returns
+    /// unchanged.
+    ///
+    /// A session calls this to put its checkpoint on the measured scale, the
+    /// scale its context fill reads, so that a restore reports the same fill
+    /// as the live session.
     ///
     /// - Parameters:
-    ///   - compacted: The transcript the deterministic pipeline produced.
-    ///   - preCompactionEntryIds: The entry ids before the compaction; the ones absent from `compacted` become ``Content/compactedEntryIds``.
-    ///   - tokensBefore: The pre-compaction transcript size.
-    ///   - tokensAfter: The post-compaction transcript size, on the same scale as `tokensBefore`.
-    ///   - stagesApplied: The pipeline stages the compaction applied, in order.
-    ///   - pendingRuns: The summaries of the runs still running, or `nil`.
-    /// - Returns: `compacted` plus the boundary entry, in that order.
-    internal static func appendingDeterministicBoundary(
-        to compacted: Transcript,
-        preCompactionEntryIds: [String],
-        tokensBefore: Int,
-        tokensAfter: Int,
-        stagesApplied: [String],
-        pendingRuns: [PendingRunSummary]?
-    ) -> Transcript {
-        let entryId = "compaction-boundary-\(UUID().uuidString)"
-        let liveEntryIds = compacted.map(\.id)
-        let liveIdSet = Set(liveEntryIds)
-        let boundary = boundaryEntry(
-            id: entryId,
-            // Empty deliberately: a deterministic compaction synthesizes no summary
-            // text, and the boundary's job for the model is only to exist —
-            // "a boundary entry whose text part is empty or minimal".
-            summaryText: "",
-            content: Content(
-                liveWindowEntryIds: liveEntryIds + [entryId],
-                compactedEntryIds: preCompactionEntryIds.filter { !liveIdSet.contains($0) },
-                tokensBefore: tokensBefore,
-                tokensAfter: tokensAfter,
-                stagesApplied: stagesApplied,
-                promptName: deterministicCompactionPromptName,
-                pendingRuns: pendingRuns
-            )
-        )
-        return Transcript(entries: Array(compacted) + [boundary])
+    ///   - entry: The summary entry of a compaction.
+    ///   - tokensBefore: The size before the compaction, on the new scale.
+    ///   - tokensAfter: The size after the compaction, on the new scale.
+    /// - Returns: The entry with the new sizes.
+    internal static func restatingSizes(
+        of entry: Transcript.Entry, tokensBefore: Int, tokensAfter: Int
+    ) -> Transcript.Entry {
+        guard case .response(let response) = entry else { return entry }
+        let segments = response.segments.map { segment -> Transcript.Segment in
+            guard case .structure(let structured) = segment,
+                let checkpoint = (try? CompactionSegment(structuredSegment: structured)) ?? nil
+            else { return segment }
+            var content = checkpoint.content
+            content.tokensBefore = tokensBefore
+            content.tokensAfter = tokensAfter
+            return CompactionSegment(id: checkpoint.id, content: content).transcriptSegment
+        }
+        return .response(Transcript.Response(id: response.id, segments: segments))
     }
 }

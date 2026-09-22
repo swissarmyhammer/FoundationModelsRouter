@@ -4,14 +4,12 @@ import FoundationModels
 @testable import FoundationModelsRouter
 
 /// Shared fixture builders for constructing ``Transcript``s in tests: a
-/// leading `.instructions` entry (the untouchable header) and one or more
-/// "turns" — a `.prompt`, optionally a `.toolCalls`/`.toolOutput` pair, and a
-/// `.response` — the shape ``TranscriptTurns/split(_:)`` partitions a
-/// transcript into.
+/// leading `.instructions` entry and one or more turns. A turn is a
+/// `.prompt`, optionally a `.toolCalls`/`.toolOutput` pair, and a
+/// `.response`.
 ///
-/// Shared by `CompactionStageTests` and `CompactorPipelineTests` (both
-/// exercise task vvjfkfb — compaction_plan.md §1.3's deterministic stages and
-/// the `Compactor` pipeline) so the fixture shape lives in exactly one place.
+/// The suites that build transcripts share these builders, so the fixture
+/// shape is in one place only.
 enum TranscriptFixtures {
     /// A single `.instructions` entry carrying a fixed system prompt — the
     /// header every fixture transcript below prefixes its turns with.
@@ -26,8 +24,16 @@ enum TranscriptFixtures {
     }
 
     /// Builds one turn: a `.prompt`, optionally a `.toolCalls`/`.toolOutput`
-    /// pair (when `toolOutputText` is non-nil), and a `.response` — the shape
-    /// ``TranscriptTurns/split(_:)`` partitions a transcript into.
+    /// pair (when `toolOutputText` is not `nil`), and a `.response`.
+    ///
+    /// - Parameters:
+    ///   - index: The turn's index, which every entry id of the turn carries.
+    ///   - promptText: The text of the prompt.
+    ///   - toolOutputText: The text of the tool output, or `nil` for a turn
+    ///     with no tool call.
+    ///   - responseText: The text of the response.
+    /// - Returns: The turn's entries, in order.
+    /// - Throws: What `GeneratedContent(json:)` throws.
     static func makeTurn(
         index: Int,
         promptText: String = "question",
@@ -99,8 +105,7 @@ enum TranscriptFixtures {
     /// - Parameters:
     ///   - entryId: The boundary entry's own `Transcript.Entry.id`.
     ///   - segmentId: The persisted ``CompactionSegment/id``.
-    ///   - summaryText: The model-visible summary text; empty for a
-    ///     deterministic-only compaction.
+    ///   - summaryText: The model-visible summary text.
     ///   - tokensBefore: The pre-compaction token count the segment records.
     ///   - tokensAfter: The post-compaction token count the segment records.
     /// - Returns: The boundary entry.
@@ -131,9 +136,7 @@ enum TranscriptFixtures {
 
     /// Builds a `.response`-kind event carrying a text summary segment plus a
     /// ``CompactionSegment`` — the exact shape a real compaction's
-    /// synthesized entry takes (see ``CompactionSegment``'s own doc comment
-    /// and ``Summarization/apply(_:prompt:tokensBefore:priorStagesApplied:summarizer:pendingRuns:protection:)``'s
-    /// `makeSummaryEntry`).
+    /// summary entry takes (see ``CompactionSegment/boundaryEntry(id:summaryText:content:)``).
     ///
     /// Shared by `TranscriptReconstructionTests` and
     /// `SessionTreeRestorationTests` — both exercise task x3nggmx's

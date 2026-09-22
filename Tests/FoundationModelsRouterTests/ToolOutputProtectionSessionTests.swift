@@ -10,8 +10,8 @@ import Testing
 ///
 /// Each session starts with a transcript that holds one protected tool output
 /// (a loaded skill body) and one unprotected tool output (a search result),
-/// then takes enough turns that both tool turns are old. A compaction through each
-/// stage must keep the skill body word for word and remove the search result.
+/// then takes some plain turns. A compaction must keep the skill body word for
+/// word next to the summary and remove the search result.
 ///
 /// Everything runs against stubs: a ``StubSessionBackend``-backed container
 /// and a ``JSONLRecorder`` in a temp directory. A second router, pointed at the
@@ -91,19 +91,16 @@ struct ToolOutputProtectionSessionTests {
         return try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
     }
 
-    /// A budget whose target no deterministic stage can reach, so the compaction
-    /// falls through to ``Summarization``.
+    /// Compacts `session` against a target one token under its live context,
+    /// so the summary gets the room the kept entries leave.
     ///
-    /// - Parameter transcript: The live transcript about to be compacted.
-    /// - Returns: The budget.
-    /// - Throws: What ``characterTokenCounter`` throws.
-    private static func summarizationBudget(for transcript: Transcript) throws -> TokenBudget {
-        let before = try characterTokenCounter.count(transcript)
-        return TokenBudget(limit: before, target: Double(Self.unreachableTargetTokens) / Double(before))
+    /// - Parameter session: The session to compact.
+    /// - Returns: What the compaction did.
+    /// - Throws: What the compaction throws.
+    @discardableResult
+    private static func compact(_ session: RoutedSession) async throws -> CompactionResult {
+        try await session.compact(budget: budgetJustUnder(await session.transcript))
     }
-
-    /// A target, in tokens, under the header alone.
-    private static let unreachableTargetTokens = 1
 
     /// Asserts that `transcript` keeps the skill body word for word and holds
     /// the search result nowhere.
@@ -117,25 +114,24 @@ struct ToolOutputProtectionSessionTests {
 
     // MARK: - The vended session
 
-    @Test("a session vended with the rule keeps the protected output through a deterministic compaction")
-    func vendedSessionKeepsTheProtectedOutputThroughADeterministicCompaction() async throws {
+    @Test("a session vended with the rule keeps the protected output through a compaction and reports its size")
+    func vendedSessionKeepsTheProtectedOutputThroughACompaction() async throws {
         let directories = Directories()
         defer { directories.remove() }
         let profile = try await Self.resolveProfile(in: directories, routerId: .generate())
         let session = profile.standard.makeSession(toolOutputProtection: Fixtures.rule)
         try await driveTurns(Fixtures.recentTurnCount, on: session)
 
-        let budget = deterministicCompactionBudget(for: Array(await session.transcript), protection: Fixtures.rule)
-        let result = try await session.compact(budget: budget)
+        let result = try await Self.compact(session)
 
-        #expect(result.summary == nil)
-        #expect(!result.stagesApplied.isEmpty)
-        #expect(result.protectedTokens > 0)
+        #expect(result.summary != nil)
+        #expect(result.stagesApplied == [Summarization.stageName])
+        #expect(result.protectedTokens == characterCount(of: [try Fixtures.skillCallsEntry(), Fixtures.skillOutputEntry]))
         Self.expectProtectedOnly(in: await session.transcript)
     }
 
-    @Test("a session vended with the rule keeps the protected output through a summarization compaction")
-    func vendedSessionKeepsTheProtectedOutputThroughASummarizationCompaction() async throws {
+    @Test("a session configured with the rule keeps the protected output through a compaction")
+    func configuredSessionKeepsTheProtectedOutputThroughACompaction() async throws {
         let directories = Directories()
         defer { directories.remove() }
         let profile = try await Self.resolveProfile(in: directories, routerId: .generate())
@@ -143,24 +139,25 @@ struct ToolOutputProtectionSessionTests {
             configuration: SessionConfiguration(toolOutputProtection: Fixtures.rule))
         try await driveTurns(Fixtures.recentTurnCount, on: session)
 
-        let result = try await session.compact(budget: Self.summarizationBudget(for: await session.transcript))
+        let result = try await Self.compact(session)
 
-        #expect(result.stagesApplied.last == Summarization.stageName)
+        #expect(result.stagesApplied == [Summarization.stageName])
         Self.expectProtectedOnly(in: await session.transcript)
     }
 
-    @Test("a session vended with no rule elides the skill output, the behavior before the rule existed")
-    func vendedSessionWithoutARuleElidesTheSkillOutput() async throws {
+    @Test("a session vended with no rule keeps no tool output: the summary replaces the skill output")
+    func vendedSessionWithoutARuleKeepsNoToolOutput() async throws {
         let directories = Directories()
         defer { directories.remove() }
         let profile = try await Self.resolveProfile(in: directories, routerId: .generate())
         let session = profile.standard.makeSession()
         try await driveTurns(Fixtures.recentTurnCount, on: session)
 
-        _ = try await session.compact(budget: deterministicCompactionBudget(for: Array(await session.transcript)))
+        let result = try await Self.compact(session)
 
+        #expect(result.protectedTokens == 0)
         let transcript = await session.transcript
-        #expect(Fixtures.outputText(in: Array(transcript), id: Fixtures.skillCallId) != Fixtures.skillBody)
+        #expect(Fixtures.outputText(in: Array(transcript), id: Fixtures.skillCallId) == nil)
     }
 
     // MARK: - The fork
@@ -175,8 +172,7 @@ struct ToolOutputProtectionSessionTests {
         try await driveTurns(Fixtures.recentTurnCount, on: session)
 
         let fork = try await session.fork(workingDirectory: nil)
-        _ = try await fork.compact(
-            budget: deterministicCompactionBudget(for: Array(await fork.transcript), protection: Fixtures.rule))
+        try await Self.compact(fork)
 
         Self.expectProtectedOnly(in: await fork.transcript)
     }
@@ -197,8 +193,7 @@ struct ToolOutputProtectionSessionTests {
         let restored = try await restoring.standard.restoreSession(
             id: session.id, recordingRoot: nil, toolOutputProtection: Fixtures.rule
         ).session
-        _ = try await restored.compact(
-            budget: deterministicCompactionBudget(for: Array(await restored.transcript), protection: Fixtures.rule))
+        try await Self.compact(restored)
 
         Self.expectProtectedOnly(in: await restored.transcript)
     }
@@ -212,7 +207,7 @@ struct ToolOutputProtectionSessionTests {
         let session = original.standard.makeSession(
             configuration: SessionConfiguration(toolOutputProtection: Fixtures.rule))
         try await driveTurns(Fixtures.recentTurnCount, on: session)
-        _ = try await session.compact(budget: Self.summarizationBudget(for: await session.transcript))
+        try await Self.compact(session)
         let liveTranscript = await session.transcript
         let liveIds = liveTranscript.map(\.id)
 

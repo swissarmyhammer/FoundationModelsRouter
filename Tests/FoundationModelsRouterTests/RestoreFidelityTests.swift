@@ -18,9 +18,9 @@ import Testing
 ///    must equal the live transcript's record-time canonical form entry for
 ///    entry (see ``canonicalized(_:)`` for the one live-only facet no
 ///    persisted form can keep). The transcript carries all six entry kinds.
-/// 2. **Multi-compaction restore.** A live session compacts twice through the
-///    model-assisted `Summarization` stage (the stub backend is the scripted
-///    summarizer), and the restored transcript must equal the live
+/// 2. **Multi-compaction restore.** A live session compacts twice, each time
+///    in one summarizer call (the stub backend is the scripted summarizer),
+///    and the restored transcript must equal the live
 ///    post-second-compaction transcript — both through ``TranscriptTree`` and
 ///    through a fresh-process `restoreSessionTree(root:)`.
 /// 3. **Driven restored forks.** A restored fork answers a new turn with
@@ -29,7 +29,7 @@ import Testing
 ///
 /// The warm-up turns and the compaction-budget floor come from the shared compaction
 /// fixtures in `Helpers/CompactionFixtures.swift` — ``driveTurns(_:on:)``
-/// and ``recencyWindowOnlyEstimate(_:)`` — and the recording root comes from
+/// and ``summarizingCompactionBudget(for:)`` — and the recording root comes from
 /// ``RouterTestFixtures/routerDirectory(routerId:recordingsDir:)``, so the
 /// path rule and the compaction math live in exactly one place each.
 @Suite("Restore fidelity: rich content, multi-compaction, driven forks (task ^810gdjj)")
@@ -46,39 +46,14 @@ struct RestoreFidelityTests {
     private static let cannedText = String(
         repeating: "The quick brown fox jumps over the lazy dog. ", count: 12)
 
-    /// How many warm-up turns each compaction needs: more than
-    /// ``defaultKeepRecentTurns``, so turns older than the untouchable
-    /// recency window exist for the compaction to work on.
+    /// How many warm-up turns each compaction follows, so the live context
+    /// holds many copies of ``cannedText`` for the summary to replace.
     private static let compactionWarmupTurnCount = 6
-
-    /// The factor a summarization-forcing budget's `limit` scales the
-    /// recency-window-only estimate by, mirroring
-    /// `RoutedSessionCompactTests`' budget shape.
-    private static let summarizationBudgetLimitFactor = 2
-
-    /// The summarization-forcing budget's `target` fraction: applied to a
-    /// limit of `recencyOnly * 2` it lands the target at half the
-    /// recency-window floor, which no deterministic stage can reach — so
-    /// the model-assisted `Summarization` stage must run.
-    private static let summarizationBudgetTarget = 0.25
 
     /// The step name the structured tool call in the rich-content turn
     /// names, distinct from ``ScriptedToolFixture/firstStepName`` so the
     /// two calls in the round stay distinguishable by content.
     private static let structuredStepName = "TWO"
-
-    /// A budget that forces the model-assisted `Summarization` stage:
-    /// its target sits strictly under `entries`' recency-window-only floor,
-    /// which no deterministic stage can compact below.
-    ///
-    /// - Parameter entries: The live transcript entries about to be compacted.
-    /// - Returns: The budget to pass to `compact(budget:)`.
-    private static func summarizationForcingBudget(for entries: [Transcript.Entry]) -> TokenBudget {
-        TokenBudget(
-            limit: recencyWindowOnlyEstimate(entries) * summarizationBudgetLimitFactor,
-            target: summarizationBudgetTarget
-        )
-    }
 
     /// A ``LoadedLLMContainer`` vending ``StubSessionBackend``s that record
     /// themselves — and every clone a compaction creates — into one shared
@@ -249,14 +224,14 @@ struct RestoreFidelityTests {
         let profile1 = try await router1.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
 
-        // First compaction: warm up past the recency window, then force the
-        // model-assisted Summarization stage — the stub backend's canned
-        // response is the scripted summary.
+        // First compaction: warm up, then compact under a target below the
+        // live context, so the one summarizer call runs — the stub backend's
+        // canned response is the scripted summary.
         let root = profile1.standard.makeSession()
         try await driveTurns(Self.compactionWarmupTurnCount, on: root)
         let firstCompactionBackend = try #require(registry.created.last)
         let firstResult = try await root.compact(
-            budget: Self.summarizationForcingBudget(for: firstCompactionBackend.transcriptEntries()))
+            budget: summarizingCompactionBudget(for: firstCompactionBackend.transcriptEntries()))
         #expect(firstResult.stagesApplied.contains("Summarization"))
 
         // Second compaction: more turns on the already-compacted session, then compact
@@ -265,7 +240,7 @@ struct RestoreFidelityTests {
         try await driveTurns(Self.compactionWarmupTurnCount, on: root)
         let secondCompactionBackend = try #require(registry.created.last)
         let secondResult = try await root.compact(
-            budget: Self.summarizationForcingBudget(for: secondCompactionBackend.transcriptEntries()))
+            budget: summarizingCompactionBudget(for: secondCompactionBackend.transcriptEntries()))
         #expect(secondResult.stagesApplied.contains("Summarization"))
 
         // One post-compaction turn, so the restore must stitch the second

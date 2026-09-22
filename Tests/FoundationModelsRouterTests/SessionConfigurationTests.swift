@@ -82,8 +82,7 @@ struct SessionConfigurationTests {
         let workingDirectory = dir.appendingPathComponent("work", isDirectory: true)
         let budget = TokenBudget(limit: 4096, trigger: 0.9, target: 0.6)
         let prompt = CompactionPrompt(name: "custom", text: "condense")
-        let summarization = Summarization(
-            keepRecentTurns: 2, maxChunkTokens: 500, summaryTokenRatio: 0.5)
+        let summarization = Summarization()
         let priming = DiscoveryPriming(tool: "ambient-emitter", queryProperty: "value")
         let spawn = SessionSidecar.AgentSpawn(
             parentSessionId: ULID.generate(), parentToolCallId: "call-1")
@@ -187,8 +186,7 @@ struct SessionConfigurationTests {
             tools: [AmbientEventPostingTool(), AmbientNonStringOutputTool()],
             budget: TokenBudget(limit: 4096, hardCeiling: 0.95, toolOutputLimit: 256),
             compactionPrompt: CompactionPrompt(name: "custom", text: "condense"),
-            summarization: Summarization(
-                keepRecentTurns: 2, maxChunkTokens: 500, summaryTokenRatio: 0.5),
+            summarization: Summarization(),
             agentSpawn: SessionSidecar.AgentSpawn(
                 parentSessionId: ULID.generate(), parentToolCallId: "call-1"),
             discoveryPriming: DiscoveryPriming(tool: "ambient-emitter", queryProperty: "value"),

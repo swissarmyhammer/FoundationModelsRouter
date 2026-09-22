@@ -821,7 +821,7 @@ struct SessionTreeRestorationTests {
 
         let budget = TokenBudget(limit: 100_000, toolOutputLimit: 512)
         let prompt = CompactionPrompt(name: "custom", text: "Condense the conversation.")
-        let summarization = Summarization(keepRecentTurns: 2, maxChunkTokens: 500, summaryTokenRatio: 0.5)
+        let summarization = Summarization()
         let priming = DiscoveryPriming(tool: "ambient-emitter", queryProperty: "value")
         let root = profile1.standard.makeSession(
             tools: [AmbientEventPostingTool()],

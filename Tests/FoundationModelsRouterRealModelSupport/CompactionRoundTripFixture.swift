@@ -7,7 +7,7 @@ import FoundationModelsRouter
 /// One type carries all five because they are one measurement, not five
 /// settings: the turns are sized against the context's 0.80 trigger, the
 /// sizing suite multiplies the reply ceiling into its worst case, and the
-/// compaction budget decides which pipeline stage the live run must reach. The
+/// compaction budget sets the size the one summarizer call states. The
 /// gated suite lives in the real-model integration target and the sizing
 /// suite lives in the hermetic unit target, so the fixture lives here, in
 /// the plain support target both of them read (task ^cvsh3m9) — a change to
@@ -28,14 +28,13 @@ public enum CompactionRoundTripFixture {
     /// Deliberately local, and deliberately not
     /// `GatedRealModelBudget.responseTokenCeiling` — the shared ceiling every
     /// other gated turn in this package now uses. This constant is a fixture
-    /// dimension, not only a limit on one reply:
-    /// `ScriptedTurnSizingTests/triggerIsNotReachedBeforeAnOldSpanExists()`
-    /// multiplies it by `TurnTruncation`'s `keepRecentTurns` (4) to get the
-    /// largest size the first turns can reach, then compares that size against
-    /// the 1638-token trigger of ``context`` (2048). The shared ceiling of 4096
-    /// makes that product 16384, far above the trigger, and that **ungated**
-    /// sizing test fails. Raise this value only together with the fixture it
-    /// sizes.
+    /// dimension, not only a limit on one reply: `ScriptedTurnSizingTests`
+    /// sizes the live context of the scripted turns on the condition that
+    /// each reply adds almost nothing, and a small ceiling is what keeps a
+    /// reply small. The shared ceiling of 4096 is twice the whole working
+    /// context of ``context`` (2048), so one long reply could fill the window
+    /// before the scripted turns reach the trigger. Raise this value only
+    /// together with the fixture it sizes.
     ///
     /// The turns of the gated loop assert nothing about their own replies, so
     /// a reply this ceiling truncates costs the round trip nothing. The two
@@ -44,41 +43,32 @@ public enum CompactionRoundTripFixture {
     public static let replyMaxTokens = 64
 
     /// The system instructions the round trip's session is created with —
-    /// part of the transcript's header, which no compaction stage may touch,
-    /// so `ScriptedTurnSizingTests` counts it too.
+    /// part of the transcript's header, which the new snapshot keeps word for
+    /// word, so `ScriptedTurnSizingTests` counts it too.
     public static let instructions =
         "You are a terse assistant. Follow each instruction exactly and keep replies to one sentence."
 
     /// The budget the round trip compacts against.
     ///
-    /// Deliberately not the default (`target` 0.50). A 0.50 target of this
-    /// fixture's 2048-token working context is 1024 estimated tokens, and the
-    /// four newest scripted turns — the recency window
-    /// ``ToolOutputElision``/``TurnTruncation`` may not touch — estimate
-    /// within a couple of hundred tokens of that either side depending on how
-    /// long the model's own four most recent replies happened to run. Whether
-    /// the deterministic stages landed under target on their own, and so
-    /// whether ``Summarization`` ran at all, was therefore decided by sampled
-    /// reply lengths rather than by anything the gated suite asserts — the same
-    /// run could reach stage 3 or stop at stage 2 (task f80n046). Both shapes now
-    /// record a compaction checkpoint (task ^h1008kb), but only the stage-3
-    /// run synthesizes the real summary whose recall step 3 measures.
+    /// The compaction makes one summarizer call over the whole live context,
+    /// and the prompt states a size for the summary: this budget's target
+    /// less the instructions. The new snapshot is the instructions and one
+    /// summary entry, so the target sets the size of the restored window.
     ///
-    /// A 0.25 target is 512 tokens, which the recency window's own prompt text
-    /// exceeds on its own by a wide margin whichever four turns it happens to
-    /// be — `ScriptedTurnSizingTests/recencyWindowCannotFitUnderTheCompactionTarget()`
-    /// pins that mechanically — so the deterministic stages cannot land under
-    /// it and the model-assisted stage always runs. It changes nothing about
-    /// *what* is compacted: the old/recent split is `keepRecentTurns`' business,
-    /// not the target's, so the compacted span, the summary, and the restored
-    /// window are exactly what a default-budget compaction would produce on the run
-    /// where it happened to reach stage 3.
+    /// A 0.25 target of this fixture's 2048-token working context is 512
+    /// tokens. The live context that crossed the 1638-token trigger is over
+    /// that target, so the compaction makes its call.
+    /// `ScriptedTurnSizingTests/compactionTargetLeavesRoomForASummary()`
+    /// holds the target over the instructions, so the stated size is more
+    /// than zero and the call writes the summary whose recall step 3
+    /// measures. The value 0.25 predates task ^pke18c2: task f80n046 chose it
+    /// for the compaction of that day, and the one call keeps it because it
+    /// meets both conditions above.
     public static let compactionBudget = TokenBudget(limit: context, target: compactionTargetShare)
 
     /// The share of ``context`` the compaction must come down to — the `target` of
     /// ``compactionBudget``, named here so the doc comment above has one value to
-    /// reason about. See that comment for why 0.25 rather than the 0.50
-    /// default.
+    /// reason about. See that comment for why the value is 0.25.
     private static let compactionTargetShare = 0.25
 
     /// Long, distinct scripted documents fed into the session one per turn —
@@ -102,9 +92,7 @@ public enum CompactionRoundTripFixture {
     /// run measured 1633 and stopped at a `contextFill` of 0.79736328125, five
     /// tokens short. The estimate counts about 1.23 tokens for each token the
     /// model's own tokenizer counts, so the two added turns are what carry the
-    /// live run past the trigger rather than up to it. They sit at the end,
-    /// because the first four turns are bounded separately — see
-    /// `ScriptedTurnSizingTests/triggerIsNotReachedBeforeAnOldSpanExists()`.
+    /// live run past the trigger rather than up to it.
     ///
     /// `ScriptedTurnSizingTests` holds both bounds mechanically, in the tokens
     /// a live run measures, so the fixture can neither shrink below the trigger

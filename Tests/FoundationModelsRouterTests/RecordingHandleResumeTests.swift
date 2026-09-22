@@ -413,14 +413,11 @@ struct RecordingHandleResumeTests {
 
     // MARK: - Resume after a compaction: cut in append-only history coordinates (task ^bw2gts3)
 
-    /// Enough driven turns that ``TurnTruncation`` (default recency window
-    /// `defaultKeepRecentTurns`) has old turns to compact away.
+    /// How many turns the parent handle records before it compacts.
     private static let compactionWarmupTurnCount = 6
 
-    /// A long-ish canned response, repeated across every turn, so six turns'
-    /// worth of transcript carries a real token count and the
-    /// deterministic-compaction budget derivation has room to sit strictly between
-    /// the recency-window floor and the full pre-compaction count.
+    /// A canned response, repeated across every turn, so six turns' worth of
+    /// transcript is much larger than the summary that replaces it.
     private static let compactableCannedText = String(
         repeating: "The quick brown fox jumps over the lazy dog. ", count: 12)
 
@@ -476,22 +473,20 @@ struct RecordingHandleResumeTests {
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
-        // The parent handle records six turns, then compacts deterministically:
-        // the derived budget's target sits where TurnTruncation alone lands
-        // under it, so no model-assisted summarization runs.
+        // The parent handle records six turns, then compacts in one summarizer
+        // call and notes the new snapshot on the handle.
         let parentHandle = profile.standard.makeLanguageModel()
         let parentSession = LanguageModelSession(
             model: parentHandle, tools: [], instructions: "be terse")
         try await Self.driveTurns(Self.compactionWarmupTurnCount, on: parentSession, syncing: parentHandle)
 
         let preCompactionEntries = Array(parentSession.transcript)
-        let (compacted, result) = try await Compactor.compact(
+        let (compacted, result) = try await compactWithUnboundedWindow(
             Transcript(entries: preCompactionEntries),
-            budget: deterministicCompactionBudget(for: preCompactionEntries),
-            counter: characterTokenCounter
-        )
-        #expect(!result.stagesApplied.isEmpty)
-        _ = await parentHandle.noteCompaction(compacted, result: result)
+            budget: summarizingCompactionBudget(for: preCompactionEntries),
+            summarizer: RecordingSummarizer(summary: "Summary: the six turns."))
+        #expect(result.stagesApplied == [Summarization.stageName])
+        await parentHandle.noteCompaction(compacted)
 
         // The resume cut in the recorded history's own append-only
         // coordinates: the raw effective entry-event count, boundary entry

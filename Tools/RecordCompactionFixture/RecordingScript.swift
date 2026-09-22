@@ -65,10 +65,11 @@ enum RecordingScript {
     ///
     /// The conversation is a synthetic engineering discussion — an
     /// ingest-path replacement for a "station archive" and its migration
-    /// plan — written for this fixture. The two long turns put the compacted
-    /// span past the point where `Summarization.minimumSummaryTokens` stops
-    /// binding; the short turns are the recency window; and the questions
-    /// give the model reasons to call its tools.
+    /// plan — written for this fixture. The two long turns make the live
+    /// context large, so a summary that keeps to the size the compaction
+    /// states is much smaller than the context it replaces. The short turns
+    /// end the conversation, and the questions give the model reasons to call
+    /// its tools.
     static let prompts = [
         """
         Design brief. We are replacing the ingest path for the station archive. The present path reads each

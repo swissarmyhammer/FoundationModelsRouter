@@ -16,8 +16,9 @@ private let compactionEvalSubsetRunner = CompactionEvalRealSubjectRunner(
     seeds: compactionEvalRepresentativeSeeds)
 
 /// The tier's evaluation: the runner's own seeds compacted with the router's
-/// default compaction prompt against a budget whose target is small enough to
-/// force the model-assisted `Summarization` stage (see
+/// default compaction prompt against ``compactionEvalDefaultBudget``. Every
+/// seed is over that budget's target, so each compaction makes its one
+/// summarizer call (see
 /// ``CompactionEvaluation/init(prompt:budget:seeds:includesJudgedDimensions:runSubject:)``'s
 /// own doc comment).
 ///

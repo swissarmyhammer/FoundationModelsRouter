@@ -10,13 +10,14 @@ import FoundationModelsRouter
 /// 197.4 to 352.0 seconds for ONE fact-retention sample — and then
 /// `mlx-community/Llama-3.2-1B-Instruct-4bit` until task ^m03heaa. The 1B
 /// stopped serving as a canary when task ^xx02yn6 redesigned the
-/// summarization prompt and trim for Qwen3.8-27B (the standard model): the
-/// redesign took the standard model from 0 of 7 to 5 of 7 stored subset
-/// summaries, and the 1B the OTHER way, from 6 of 7 to 2 of 7 — it ignores
-/// the stated size budget, enumerates background head-first, and the
-/// last-resort cut then drops the facts stated later in the span. The floors
-/// derived from that baseline fell to 0.14, a bar a change that breaks half
-/// of the retained seeds still clears.
+/// summarization prompt for Qwen3.8-27B (the standard model): the redesign
+/// took the standard model from 0 of 7 to 5 of 7 stored subset summaries,
+/// and the 1B the OTHER way, from 6 of 7 to 2 of 7. The 1B ignores the
+/// stated size budget and writes about the background first, so the summary
+/// the compaction of that day stored lost the facts stated later in the
+/// span. These measurements predate task ^pke18c2's one-call compaction. The
+/// floors derived from that baseline fell to 0.14, a bar a change that
+/// breaks half of the retained seeds still clears.
 ///
 /// Qwen2.5-3B-Instruct is the first candidate of ^m03heaa's trial order the
 /// redesigned prompt serves: the same family as the standard model the
@@ -53,9 +54,11 @@ enum CompactionEvalRealModel {
     /// The maximum context window, in tokens, to load ``ref`` with — passed
     /// straight through to ``LiveModelLoader/loadLLM(ref:slot:context:reporting:)``.
     ///
-    /// Unchanged by the model swaps. Every seed transcript, every compaction prompt
-    /// chunk (bounded by ``Summarization/maxChunkTokens``), and every resumed
-    /// answering turn fits this window.
+    /// Unchanged by the model swaps. It is also the window of the one
+    /// summarizer call: the call's input (the compaction prompt and the whole
+    /// seed transcript) and its output share it, so the call's output ceiling
+    /// is this window less the input. Every seed transcript, every summarizer
+    /// call, and every resumed answering turn fits this window.
     // Only `CompactionEvalRealSubjectRunner`, in the IntegrationTests
     // package, reads this. Periphery reads only this package's index, thus
     // it finds no reader.

@@ -22,13 +22,16 @@ import Testing
 private let recordedTranscriptCompactionModel: ModelRef = "mlx-community/Llama-3.2-1B-Instruct-4bit"
 
 /// The working context this suite loads ``recordedTranscriptCompactionModel``
-/// at.
+/// at, and the window its one summarizer call runs in.
 ///
-/// Deliberately smaller than ``RealModels/context`` (8192). The largest call
-/// this suite makes is one summarizer call over one chunk of the compacted span,
-/// which ``Summarization/maxChunkTokens`` already bounds at 2000 estimated
-/// tokens, and a smaller window costs less to allocate.
-private let recordedTranscriptCompactionContext = 4096
+/// The compaction is one summarizer call over the whole live context, so the
+/// call's input holds the whole recorded conversation. The recording ran at
+/// ``RealModels/context`` (the recording tool's `workingContextTokens` states
+/// the same value), so the recorded conversation fits that window by
+/// construction. The same window holds the summarizer's call: the recorded
+/// conversation and the compaction prompt as input, and the room left after
+/// them as the output ceiling. The first compacting test prints that ceiling.
+private let recordedTranscriptCompactionContext = RealModels.context
 
 /// The decoding this suite loads ``recordedTranscriptCompactionModel`` with.
 ///
@@ -47,7 +50,8 @@ private let recordedTranscriptCompactionSamplingMode: GenerationOptions.Sampling
 /// Llama 3.2 chat template writes `Today Date: <today>` into the system header
 /// of every summarizer call, and it reads that date off the clock. So this
 /// suite's compaction arithmetic was a new sample on every calendar day. Task
-/// ^xfj1am4 measured that here, from one binary with only `TZ` changed:
+/// ^xfj1am4 measured that here, from one binary with only `TZ` changed, before
+/// task ^pke18c2 made the compaction one call:
 ///
 /// | the date the clock stamped | summarizer calls | answerTokens |
 /// |---|---|---|
@@ -75,31 +79,26 @@ private let recordedTranscriptCompactionChatTemplateDate =
 ///    ``TranscriptTree/load(under:)`` and
 ///    ``TranscriptTree/effectiveTranscript(forSession:view:)``, and
 ///    ``Compactor`` compacts that transcript. No session is opened and no turn is
-///    driven; the only generations the suite makes are the compaction's own
-///    summarizer calls.
+///    driven; the only generation the suite makes is the compaction's own
+///    summarizer call.
 /// 2. **The recording still has the shape real traffic has.** The reconstructed
 ///    transcript carries an instructions header, prompts, responses, reasoning
 ///    entries, tool calls and tool outputs. This suite asserts each of those
 ///    kinds is present, so a fixture that silently lost one goes red here
 ///    rather than quietly compacting something simpler than it claims to.
-/// 3. **The MAP-REDUCE path runs.** This one was not designed in; the recording
-///    brought it. The compacted span measures 2366 estimated tokens, past
-///    ``Summarization/maxChunkTokens`` (2000), so the stage chunks the span,
-///    summarizes each chunk, and re-summarizes the results — three summarizer
-///    calls rather than one. ``CompactionSmokeIntegrationTests`` sizes its own
-///    fixture to stay under that ceiling and asserts the one map call plus at
-///    most one condense re-ask, so this is the only fast suite that reaches
-///    the chunking path at all. It is also
-///    the clearest illustration of the card: a recording is whatever real
-///    traffic was, and it exercises code a fixture written to a budget avoids.
+/// 3. **One call holds a whole real conversation.** The compaction sends the
+///    whole recorded conversation — every entry kind above — to the summarizer
+///    in one call, and stores one summary. The recording is larger than the
+///    fixture ``CompactionSmokeIntegrationTests`` builds, and it carries
+///    reasoning and tool traffic that fixture does not. A recording is
+///    whatever real traffic was, and it exercises what a fixture written to a
+///    budget avoids.
 ///
 /// ## What this suite does NOT prove
 ///
 /// **It does not measure summary quality.** Whether a compaction keeps the facts a
 /// resumed session needs is what `FoundationModelsRouterEvalIntegrationTests`
-/// measures, over a hand-written dataset. That tier drove the 30B model in tens
-/// of minutes when this sentence was written; it drives a small canary under a
-/// two-minute limit now (task ^k0d30s4). That tier stays where it is.
+/// measures, over a hand-written dataset.
 ///
 /// **It does not prove the recording FORMAT is stable across schema versions.**
 /// The fixture carries ``RecordingSchemaVersion`` 2. A reader that stopped
@@ -136,7 +135,12 @@ private let recordedTranscriptCompactionChatTemplateDate =
 /// read "whatever recording is on this box" would find nothing on any box, so
 /// it would skip everywhere and prove nothing.
 ///
-/// ## What this suite measures
+/// ## What this suite measured before task ^pke18c2
+///
+/// Every number in this section predates task ^pke18c2, which made the
+/// compaction one summarizer call over the whole live context. The earlier
+/// compaction summarized part of the conversation, in more than one call, at
+/// a window of 4096. Nobody has measured this suite again since that change.
 ///
 /// Measured on 2026-08-18, on an Apple silicon box with the summarizer model
 /// already in the Hugging Face cache. Three consecutive runs, each printing its
@@ -157,94 +161,33 @@ private let recordedTranscriptCompactionChatTemplateDate =
 /// | reconstructed transcript entries | 30 |
 /// | entry kinds present | instructions, prompt, response, reasoning, toolCalls, toolOutput |
 /// | the whole transcript, in estimated tokens | 4297 |
-/// | the compacted span | 2366 |
-/// | summarizer calls | 3, at ceilings 377, 475 and 378 |
-/// | what the model answered, per call | 500, 552 and 442 estimated tokens |
-/// | the stored summary | 442 |
-/// | stages the compaction applied | elision, truncation, summarization |
+/// | summarizer calls | 3 |
 /// | the compaction's transcript, before and after | 4297 -> 2372 |
 ///
-/// It is slower than its two neighbours — 10 s against their 4 s and 5 s — and
-/// the three summarizer calls are the whole difference. That is the cost of
-/// compacting real traffic rather than a span sized to one chunk, and it is still
-/// seconds.
-///
-/// ### The numbers this suite reports now (task ^xfj1am4)
-///
-/// Every number above was measured with the calendar date the run's own clock
-/// stamped, so each row is one day's sample. That is what
-/// ``recordedTranscriptCompactionChatTemplateDate`` closes. The rows above
-/// also predate task ^xx02yn6's recovery ladder, which is why the call count
-/// moved.
-///
-/// Measured on 2026-09-01, with the pin in place:
-///
-/// | what the run measured | value |
-/// |---|---|
-/// | the whole transcript, in estimated tokens | 4297 |
-/// | the compacted span | 2366 |
-/// | summarizer calls | 4, each at a ceiling of 628 |
-/// | what the model answered, per call | 793, 679, 708 and 661 estimated tokens |
-/// | the stored summary | 661 |
-/// | stages the compaction applied | elision, truncation, summarization |
-/// | the compaction's transcript, before and after | 4297 -> 2592 |
-/// | the compaction's wall clock | 19.1 s, of which 1.8 s the model load |
-///
-/// The suite reported exactly that row under `TZ=Pacific/Midway`
-/// (01 Sep 2026) and under `TZ=Pacific/Kiritimati` (02 Sep 2026), from one
-/// binary with nothing else changed. The clock no longer reaches this compaction.
+/// Measured on 2026-09-01, with ``recordedTranscriptCompactionChatTemplateDate``
+/// in place: 4 summarizer calls, and the transcript went from 4297 to 2592
+/// estimated tokens in 19.1 s, of which 1.8 s was the model load. The suite
+/// reported exactly that under `TZ=Pacific/Midway` (01 Sep 2026) and under
+/// `TZ=Pacific/Kiritimati` (02 Sep 2026), from one binary with nothing else
+/// changed. The clock no longer reaches this compaction.
 ///
 /// These numbers WILL move again, because the prompt moves whenever the
-/// compaction prompt or the recovery ladder changes. That is expected, and it
-/// is not a regression.
+/// compaction prompt changes. That is expected, and it is not a regression.
 ///
-/// The three runs of 2026-08-20 measured the compaction at 12.1, then 11.7, then
-/// 12.2 seconds, and the entry-kind check at 0.012, then 0.011, then 0.0
-/// seconds, against ``integrationTestBudgetMinutes``, which is now the limit
-/// and which states the whole run table. This suite carried
-/// a three-minute limit of its own before, derived from its own dearest
-/// measured run on a busy box; task ^k0d30s4 replaces that direction with one
-/// budget every suite of this target shares, so a suite states no limit of its
-/// own and the three minutes are gone.
+/// The limit is ``integrationTestBudgetMinutes``, which states the whole run
+/// table. Task ^k0d30s4 gave every suite of this target that one budget, so a
+/// suite states no limit of its own.
 ///
 /// One of the three compaction smoke suites, with
 /// ``CompactionSmokeIntegrationTests`` and
 /// ``AutoCompactionTriggerIntegrationTests``. The three answer one
 /// question — does compaction work at all against a real model — in seconds.
-///
 @Suite(
     "Real-model smoke test: a recorded transcript boots the compaction (task ^pfdrppj)",
     .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
 struct RecordedTranscriptCompactionIntegrationTests {
-    // MARK: - The recording
-
-    /// The model-assisted stage this suite compacts with.
-    ///
-    /// ``Summarization/keepRecentTurns`` stays at its own default of 4, because
-    /// the recorded conversation is long enough that four recent turns still
-    /// leave a span to compact. Nothing here is sized against the recording; this
-    /// is the production default, unchanged.
-    ///
-    /// ``Summarization/reasoningTokenHeadroom`` is cut to
-    /// ``reasoningTokenHeadroom`` for the reason both neighbouring suites cut
-    /// it.
-    private static var compactionSummarization: Summarization {
-        Summarization(reasoningTokenHeadroom: reasoningTokenHeadroom)
-    }
-
-    /// The tokens every summarizer call of this suite is given on top of its
-    /// summary allowance, and deliberately not ``Summarization``'s own default
-    /// of 4096.
-    ///
-    /// The same value both neighbouring suites use, for the same measured
-    /// reason: that default is sized for a model that always writes a `<think>`
-    /// block before its answer, and ``recordedTranscriptCompactionModel`` writes
-    /// no such block. Cutting it bounds the one unbounded cost in the run, which
-    /// is the summarizer generation.
-    private static let reasoningTokenHeadroom = 128
-
     /// The tag every printed line of this suite's compaction carries.
     private static let compactionLabel = "recordedTranscriptCompaction"
 
@@ -314,7 +257,7 @@ struct RecordedTranscriptCompactionIntegrationTests {
     }
 
     @Test(
-        "one compaction of the recorded transcript against a real model: the summarizer runs, answers with text, and the compaction is applied rather than discarded"
+        "one compaction of the recorded transcript against a real model: the summarizer runs once, answers with text, and the compaction is applied rather than discarded"
     )
     func theRecordedTranscriptCompacts() async throws {
         let startedAt = Date()
@@ -339,8 +282,8 @@ struct RecordedTranscriptCompactionIntegrationTests {
 
         let outcome = try await TranscriptCompaction.run(
             transcript,
-            summarization: Self.compactionSummarization,
             container: loaded,
+            windowTokens: recordedTranscriptCompactionContext,
             label: Self.compactionLabel
         )
         await loaded.container.model.evict()
@@ -350,18 +293,17 @@ struct RecordedTranscriptCompactionIntegrationTests {
         let counter = loaded.container.tokenCounter
         let result = outcome.result
 
-        // 1. The summarizer ran. Its call count is the whole generation budget
-        //    of this suite, and it is read rather than asserted at a number:
-        //    the recorded span decides how many chunks
-        //    `Summarization.maxChunkTokens` splits it into, and nothing in
-        //    Swift should restate a size the recording already fixes.
+        // 1. The summarizer ran exactly once. A compaction is one call over
+        //    the whole live context, whatever size the recording is. No call
+        //    means the compaction stopped on a shortfall, which the message
+        //    names.
         #expect(
-            !outcome.ceilings.isEmpty,
-            "the summarizer was never called, so no compaction was attempted"
+            outcome.ceilings.count == 1,
+            "expected one summarizer call, got \(outcome.ceilings.count) at ceilings \(outcome.ceilings), shortfall \(String(describing: result.shortfall))"
         )
 
         // 2. It answered with text. `^bgxtdk3` was an empty summary on 19 of 19
-        //    gated seeds, and an empty summary erases the span it replaced.
+        //    gated seeds, and an empty summary erases the conversation it replaced.
         let summary = try #require(
             result.summary,
             "the compaction was discarded, so there is no summary to read — see stages above")
@@ -371,7 +313,7 @@ struct RecordedTranscriptCompactionIntegrationTests {
         )
 
         // 3. The summary is smaller than the span it replaced, in the unit
-        //    `Compactor`'s did-not-shrink guard measures. `^fm5ddk9` measured
+        //    `Compactor`'s did-not-shrink check measures. `^fm5ddk9` measured
         //    the 30B model at 1.30x to 2.07x here.
         let summaryTokens = counter.count(summary)
         let spanTokens = try outcome.spanTokens(counter: counter)
@@ -385,8 +327,8 @@ struct RecordedTranscriptCompactionIntegrationTests {
         //    of 7 gated seeds took in `^fm5ddk9` while still reporting a
         //    summarizer call.
         #expect(
-            result.stagesApplied.last == Summarization.stageName,
-            "expected the compaction to be applied, got stages \(result.stagesApplied)"
+            result.stagesApplied == [Summarization.stageName],
+            "expected the compaction to be applied, got stages \(result.stagesApplied), shortfall \(String(describing: result.shortfall))"
         )
 
         // 5. The returned result shrank.

@@ -42,15 +42,15 @@ struct CompactionEvalFixtureSpec: Sendable {
     /// Background prose on this fixture's own subject, stated as the first
     /// turn of the compactable head, ahead of every fact turn.
     ///
-    /// The compaction has to be worth applying, and that is arithmetic rather than
-    /// taste. `Compactor.compact` discards a compaction whose summary entry is no
-    /// smaller than the span it replaces, and
-    /// ``Summarization/minimumSummaryTokens`` gives every span this small the
-    /// same summary allowance — a floor of 128 tokens, which is 614 bytes of
-    /// prose at ``compactionEvalMeasuredBytesPerToken``. A head of one fact
-    /// sentence plus its acknowledgement is a few hundred bytes, so the compaction
-    /// cost more than it saved and the gated run of 2026-08-17 discarded 8 of
-    /// 9 of them. This paragraph is what carries the head past that floor;
+    /// The compaction has to run and has to be worth applying, and that is
+    /// arithmetic rather than taste. `Compactor.compact` makes no summarizer
+    /// call on a context that is already under the budget's target, and it
+    /// discards a summary that does not make the context smaller. A head of
+    /// one fact sentence plus its acknowledgement is a few hundred bytes. The
+    /// gated run of 2026-08-17, which predates task ^pke18c2, discarded 8 of 9
+    /// compactions of heads that small. This paragraph carries each seed over
+    /// the target of ``compactionEvalDefaultBudget``, so the one call runs
+    /// and a summary that keeps to its stated size shrinks the context.
     /// `CompactionEvalSeedSizingTests` holds every fixture to it mechanically.
     ///
     /// Written per fixture rather than shared, and about this fixture's own
@@ -87,13 +87,12 @@ struct CompactionEvalFixtureSpec: Sendable {
 
     /// What kind of thing `facts[probedFactIndex]` states, so the shape of the
     /// answer ``question`` asks for. No other field carries it: the fact count,
-    /// the probed position, the delivery and the recency window all vary, and
+    /// the probed position, the delivery and the filler turn count all vary, and
     /// a fixture can change kind while every one of them stays the same.
     let probedFactKind: CompactionEvalProbedFactKind
 
     /// The question asked of the resumed, post-compaction session — answerable
-    /// only from `facts[probedFactIndex]`, never from the untouched recency
-    /// window.
+    /// only from `facts[probedFactIndex]`, never from the filler turns.
     let question: String
 
     /// Whether the probed fact's turn is delivered via a simulated tool call
@@ -101,10 +100,14 @@ struct CompactionEvalFixtureSpec: Sendable {
     /// plain assistant reply.
     let probedFactViaTool: Bool
 
-    /// How many filler turns pad the untouchable recency window — varies the
-    /// fixture's overall transcript length. Always at least the
-    /// `ToolOutputElision`/`TurnTruncation` default `keepRecentTurns` (4), so
-    /// every probed fact's turn is provably outside the recency window.
+    /// How many filler turns follow the facts.
+    ///
+    /// The compaction replaces every entry but the instructions with one
+    /// summary, so the filler turns are part of the span the summarizer reads.
+    /// Their count sets the size of that span and how far the probed fact
+    /// sits from the end of the conversation the summarizer reads. The field
+    /// keeps its name from the compaction that kept the newest turns word for
+    /// word, which task ^pke18c2 removed.
     let recentTurnCount: Int
 }
 
@@ -120,19 +123,18 @@ struct CompactionEvalFillerTurn: Sendable {
     let reply: String
 }
 
-/// A pool of filler turns padding every fixture's untouchable recency window —
-/// content that pads the transcript but is never itself the subject of a
-/// question.
+/// A pool of filler turns that follow every fixture's facts — content that
+/// pads the transcript but is never itself the subject of a question.
 ///
 /// Every reply differs from every other, and the pool is longer than the
 /// largest ``CompactionEvalFixtureSpec/recentTurnCount``, so cycling can never
-/// repeat a turn inside one fixture's recency window. That is the property
+/// repeat a turn inside one fixture. That is the property
 /// `CompactionEvaluationHermeticTests.noSeedRepeatsAnAssistantReply` pins, and
 /// it is load-bearing rather than cosmetic: the gated run of 2026-08-09
 /// measured 18 of 19 `factRetention` failures answering with the single canned
 /// reply every statement turn then shared, which is pattern completion over
 /// the model's own visible transcript rather than a verdict on the summary
-/// above it. A dataset whose recency window repeats one string cannot tell
+/// above it. A dataset whose filler turns repeat one string cannot tell
 /// those two apart.
 let compactionEvalFillerTurns: [CompactionEvalFillerTurn] = [
     CompactionEvalFillerTurn(
@@ -197,8 +199,8 @@ let compactionEvalFactAcknowledgements: [String] = [
 let compactionEvalContextAcknowledgement = "Noted — I have the background in mind."
 
 /// Every hand-written fixture: seven seed transcripts spanning single- and
-/// multi-fact heads, plain-reply and tool-traffic delivery, short-to-long
-/// recency windows, and both kinds of probed fact — a value the summary can
+/// multi-fact heads, plain-reply and tool-traffic delivery, few to many
+/// filler turns, and both kinds of probed fact — a value the summary can
 /// only copy, and a rule on the assistant's own later answers.
 ///
 /// These are exactly the seeds ``compactionEvalRepresentativeSubsetIDs`` names,
@@ -429,16 +431,16 @@ let compactionEvalSeeds: [CompactionEvalSeed] = compactionEvalFixtureSpecs.map(C
 /// Chosen for coverage. Four things vary across them — how many facts the
 /// compactable head states, which of them the question probes, whether the probed
 /// fact arrives as tool traffic or as a plain reply, and how many filler turns
-/// pad the untouchable recency window. Each member is here for a property it
-/// carries, and together they span all four:
+/// follow the facts. Each member is here for a property it carries, and
+/// together they span all four:
 ///
-/// | fixture | head | probed fact | delivery | recency window |
+/// | fixture | head | probed fact | delivery | filler turns |
 /// |---|---|---|---|---|
 /// | `sesame-allergy` | one fact | the only one | plain reply | 4 — the shortest here |
 /// | `db-port` | one fact | the only one | tool traffic | 4 |
 /// | `encryption-algorithm` | one fact | the only one | tool traffic | 5 |
 /// | `license-key-and-region` | two facts | the second, so the last of its head | plain reply | 4 |
-/// | `budget-cap-tool-and-owner` | two facts | the second, delivered by tool, so elision acts on a fact that is not the first of its head | tool traffic | 6 |
+/// | `budget-cap-tool-and-owner` | two facts | the second, delivered by tool, so the summarizer reads a tool call and output for a fact that is not the first of its head | tool traffic | 6 |
 /// | `three-facts-support-escalation` | three facts | the second of three, the middle fact the summary must reach past a fact on each side of | plain reply | 7 — the longest here |
 /// | `three-facts-long-project-brief` | three facts | the third, so the last of its head | plain reply | 6 |
 ///

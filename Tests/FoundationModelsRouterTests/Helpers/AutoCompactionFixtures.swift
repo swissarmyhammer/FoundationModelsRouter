@@ -193,8 +193,8 @@ enum AutoCompactionFixtures {
 
     /// How many warm-up turns
     /// ``makeTriggeredSession(budget:tools:summarization:tracer:samplingMode:tempDirPrefix:)``
-    /// drives — past ``TurnTruncation``'s default 4-turn recency window, so
-    /// compaction has real old-span content to work with.
+    /// drives. The warm-up transcript then holds many copies of
+    /// ``cannedText``, so a summary of one copy makes it much smaller.
     static let turnCount = 6
 
     /// The working context every session this fixture vends resolves at — the
@@ -215,34 +215,25 @@ enum AutoCompactionFixtures {
     /// ``fixedBudgetTriggerFraction`` only on the final warm-up turn.
     private static let warmUpUsageStepTokens = 15_000
 
-    /// The divisor that puts ``fixedBudget``'s target at half the warm-up
-    /// transcript's own recency-window floor — strictly below the floor, so
-    /// every compaction this budget drives needs the model-assisted
-    /// ``Summarization`` stage and really calls a summarizer.
-    private static let belowRecencyFloorDivisor = 2
-
     /// The fraction of ``fixedBudget``'s limit at which auto-compaction starts.
     ///
     /// This value is the same as ``TokenBudget``'s own default trigger. The
     /// escalating warm-up crosses it only on the last warm-up turn.
     private static let fixedBudgetTriggerFraction = 0.8
 
-    /// A budget whose target sits strictly below the warm-up transcript's own
-    /// recency-window floor — forcing every compaction it drives to need the
-    /// model-assisted ``Summarization`` stage (and so to actually call a
-    /// summarizer), the same ratio
-    /// `RoutedSessionCompactTests.compactIsAppendOnlyAndPreservesIdentity()`
-    /// uses. The trigger is ``fixedBudgetTriggerFraction``, and `limit`
-    /// is ``warmUpContextTokens`` so the trigger fires exactly where the
+    /// A budget whose target is under the warm-up transcript, so every
+    /// compaction it drives calls a summarizer. The target in tokens is the one
+    /// ``summarizingCompactionBudget(for:)`` gives the warm-up transcript. The
+    /// trigger is ``fixedBudgetTriggerFraction``, and `limit` is
+    /// ``warmUpContextTokens`` so the trigger fires exactly where the
     /// escalating warm-up's own `contextFill` readings say it does; `target` is
-    /// expressed as the fraction of that limit which lands on half the recency
-    /// floor.
+    /// that target expressed as a fraction of this limit.
     static let fixedBudget: TokenBudget = {
-        let recencyOnly = recencyWindowOnlyEstimate(expectedWarmUpEntries())
+        let targetTokens = summarizingCompactionBudget(for: expectedWarmUpEntries()).targetTokens
         return TokenBudget(
             limit: warmUpContextTokens,
             trigger: fixedBudgetTriggerFraction,
-            target: Double(recencyOnly / belowRecencyFloorDivisor) / Double(warmUpContextTokens)
+            target: Double(targetTokens) / Double(warmUpContextTokens)
         )
     }()
 
@@ -281,8 +272,8 @@ enum AutoCompactionFixtures {
     ///     `nil` to opt out (the regression case, and the way a caller-driven
     ///     compaction is left as the only compaction that runs).
     ///   - tools: The tools to vend the session with. Defaults to none.
-    ///   - summarization: The model-assisted stage every compaction on the vended
-    ///     session runs with. Defaults to `Summarization()` — every default.
+    ///   - summarization: The summarization stage every compaction on the vended
+    ///     session runs with. Defaults to `Summarization()`.
     ///   - tracer: The tracer every handle of the resolved profile carries, or
     ///     `nil` (the default) to read `InstrumentationSystem.tracer` at call
     ///     time.

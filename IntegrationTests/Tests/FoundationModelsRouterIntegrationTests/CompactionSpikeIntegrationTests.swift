@@ -18,9 +18,9 @@ private let compactionSpikeTinyModel: ModelRef = RealModels.standard
 /// `LanguageModelSession(transcript:)` — the exact API
 /// ``RoutedSession/compact(prompt:budget:)`` (compaction_plan.md §1.4) will
 /// rebuild the inner session over after a compaction — tolerates and completes a
-/// turn over a transcript containing entries no real turn ever produced: a
-/// synthesized summary `.response` entry and a synthesized elision-placeholder
-/// `.toolOutput` entry reusing an old entry's id.
+/// turn over a transcript containing entries no real turn ever produced in
+/// that order: a synthesized summary `.response` entry, next to a
+/// `.toolCalls` and `.toolOutput` pair that keeps its old ids.
 ///
 /// Builds directly over an already-loaded tiny model's
 /// ``MLXFoundationModelsContainer`` (bypassing `Router.resolve(_:reporting:)`,
@@ -43,13 +43,17 @@ private let compactionSpikeTinyModel: ModelRef = RealModels.standard
     .exclusiveRealModel
 )
 struct CompactionSpikeIntegrationTests {
-    /// The same synthesized shape ``CompactionSpikeTests`` proves round-trips
-    /// through the recording mirror: instructions, a real `.toolCalls` entry,
-    /// an elision-placeholder `.toolOutput` entry that reuses the old tool
-    /// output's id (rather than being a new, unrelated entry), and a
-    /// synthesized summary `.response` entry no real turn produced — the exact
-    /// shape a `ToolOutputElision` + `Summarization` compaction
-    /// (compaction_plan.md §1.3) would leave behind.
+    /// A synthesized transcript of the entry kinds a compaction's new snapshot
+    /// holds: instructions, a `.toolCalls` entry and the `.toolOutput` entry
+    /// it made, both with their old ids (the new snapshot keeps a protected
+    /// tool output and its call word for word), and a synthesized summary
+    /// `.response` entry no real turn produced.
+    ///
+    /// The tool output states no fact the test asks about, so the answer can
+    /// come only from the summary entry.
+    ///
+    /// - Returns: The synthesized transcript.
+    /// - Throws: What `GeneratedContent(json:)` throws for the call's arguments.
     private static func makeSynthesizedTranscript() throws -> Transcript {
         let instructions = Transcript.Instructions(
             id: "instr-1",
@@ -66,14 +70,14 @@ struct CompactionSpikeIntegrationTests {
                 )
             ]
         )
-        let elisionPlaceholder = Transcript.ToolOutput(
+        let keptToolOutput = Transcript.ToolOutput(
             id: "tooloutput-old-1",
             toolName: "search",
             segments: [
                 .text(
                     Transcript.TextSegment(
-                        id: "elision-text-1",
-                        content: "[elided: original \"search\" output omitted by compaction]"
+                        id: "kept-text-1",
+                        content: "search found no stored document for this query."
                     )
                 )
             ]
@@ -92,7 +96,7 @@ struct CompactionSpikeIntegrationTests {
         return Transcript(entries: [
             .instructions(instructions),
             .toolCalls(oldToolCalls),
-            .toolOutput(elisionPlaceholder),
+            .toolOutput(keptToolOutput),
             .response(summary),
         ])
     }
@@ -107,7 +111,7 @@ struct CompactionSpikeIntegrationTests {
     /// `CompactionSpikeTests`'s header comment) survive ingestion into a live
     /// session, or whether the SDK reassigns them. Recorded once observed —
     /// see the assertion below and this test's own inline result.
-    @Test("a live LanguageModelSession rebuilt over a transcript containing a synthesized summary entry and an elision-placeholder entry completes one turn without error")
+    @Test("a live LanguageModelSession rebuilt over a transcript containing a synthesized summary entry and a kept tool output completes one turn without error")
     func rebuiltSessionOverSynthesizedTranscriptCompletesATurn() async throws {
         let loaded = try await RealModelContainer.load(ref: compactionSpikeTinyModel)
 

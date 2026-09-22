@@ -13,13 +13,14 @@ import FoundationModelsRouter
 /// each sample's four lines complete before the next sample's first line.
 ///
 /// Measured against ``CompactionEvalRealModel`` — Qwen2.5-3B-Instruct since
-/// task ^m03heaa put it in place of the 1B canary — with every summarizer call
-/// bounded by ``compactionEvalReasoningTokenHeadroom``, under task ^xx02yn6's
-/// span-budget trim and its `router-default-v3` prompt, at greedy decoding.
-/// The seven samples cost 5.4, 4.7, 12.1, 3.2, 5.1, 15.9 and 15.9 seconds.
-/// Four of the seven compactions made one summarizer call and three made two,
-/// because the redesigned stage re-asks: an answer past the span budget
-/// earns one condense call before the last-resort cut. The rate rose from the
+/// task ^m03heaa put it in place of the 1B canary — under task ^xx02yn6's
+/// `router-default-v3` prompt, at greedy decoding. That run predates task
+/// ^pke18c2, which made the compaction one summarizer call: the compaction
+/// of that day could make a second call on a long answer, and it did on
+/// three of the seven samples. The one-call compaction makes one call on
+/// every sample, so this rate is an upper bound for it until the tier is
+/// measured again. The seven samples cost 5.4, 4.7, 12.1, 3.2, 5.1, 15.9 and
+/// 15.9 seconds. The rate rose from the
 /// 7.2-second dearest sample the 1B canary measured over the same recipe on
 /// the same day, which is what a model of three times the parameters costs to
 /// decode. The 30B run of 2026-08-18 measured 197.4 to 352.0 seconds per
@@ -35,15 +36,17 @@ import FoundationModelsRouter
 /// figure above. The run of 2026-08-20 filed six of its seven samples as
 /// `retained` and one as `summaryLostFact`, and none as
 /// ``CompactionEvalFactRetentionClass/compactionProducedNoSummary``, which is how
-/// its own trail shows that each compaction applied. Two ungated tests keep the
-/// property true without a gated run:
+/// its own trail shows that each compaction applied. Ungated tests keep the
+/// property true without a gated run.
 /// `CompactionEvaluationHermeticTests/everySeedCompactionSurvivesARealisticSummary`
-/// compacts every seed against a summarizer that answers at a real summary's
-/// length, and
-/// `CompactionEvalSeedSizingTests/everySeedsCompactableSpanOutweighsARealSummary`
-/// holds every seed's compactable span above the largest summary such a
-/// summarizer writes for it. So `Compactor.compact` cannot throw a compaction away
-/// on its did-not-shrink guard (task ^6ssbakk).
+/// compacts every seed against ``StatedSizeSummarizer``, which answers with
+/// the whole size the prompt states. `CompactionEvalSeedSizingTests` holds
+/// the arithmetic behind it: `everySeedIsOverTheTarget` holds every seed over
+/// the default budget's target, `targetLeavesRoomAfterTheInstructions` holds
+/// the stated size above zero, and `everySeedsCallFitsTheGatedWindow`
+/// holds each call inside ``CompactionEvalRealModel/context``. So a summary
+/// that keeps to the stated size cannot fail `Compactor.compact`'s
+/// did-not-shrink check (task ^6ssbakk).
 ///
 /// The DEAREST sizes a limit, not the mean, because the spread between
 /// samples is what a limit has to survive (task ^6ssbakk).
@@ -56,7 +59,8 @@ import FoundationModelsRouter
 /// seven-sample run and 82.4 seconds as sample 21 of the twenty-four-sample
 /// one; `three-facts-long-project-brief` cost 15.9 seconds as sample 6 here and
 /// 56.5 seconds as sample 18 there. Each seed did the SAME work in both runs —
-/// two summarizer calls, and 1948 and 2103 summary bytes, which greedy decoding
+/// two summarizer calls under the compaction of that day, which predates task
+/// ^pke18c2, and 1948 and 2103 summary bytes, which greedy decoding
 /// repeats — so what changed is throughput, and a rate measured over a short
 /// run cannot bound a long one (task ^5q0vv85). That is why
 /// ``compactionEvalDerivedTimeLimitMinutes(forSamples:chargedAt:)`` charges the
@@ -139,7 +143,7 @@ func compactionEvalDerivedTimeLimitMinutes(
 ///
 /// The measured run behind the derivation is the gated subset run of
 /// 2026-08-20 against ``CompactionEvalRealModel``, under task ^xx02yn6's
-/// span-budget trim, whose whole wall clock was 63.5 seconds — the seconds
+/// prompt and before task ^pke18c2, whose whole wall clock was 63.5 seconds — the seconds
 /// the derivation does not carry are the framework's own dispatch and
 /// report, spent outside any sample's own trail. That measured 63.5 seconds
 /// is inside task ^k0d30s4's two-minute budget for every integration test,
@@ -183,8 +187,9 @@ let compactionEvalSubsetTimeLimitMinutes = 2
 /// sample of its margin.
 ///
 /// Task ^m03heaa re-measured against the canary it chose, Qwen2.5-3B-Instruct,
-/// under task ^xx02yn6's span-budget trim and its `router-default-v3`
-/// size-budget prompt, at greedy decoding. The gated runs of 2026-08-20
+/// under task ^xx02yn6's `router-default-v3` size-budget prompt, at greedy
+/// decoding, before task ^pke18c2 made the compaction one call. The gated
+/// runs of 2026-08-20
 /// measured 6 of the 7 summaries of this tier carrying the fact, and 23 of 24
 /// on the wider tier ^k0d30s4 later deleted. One sample under each is 5 of 7,
 /// which is 0.714, and 22 of 24, which is 0.917, so the seven-seed tier was
@@ -197,9 +202,9 @@ let compactionEvalSubsetTimeLimitMinutes = 2
 /// for Qwen3.8-27B (the standard model, which the redesign took from 0 of 7
 /// to 5 of 7 subset summaries), took the 1B the OTHER way, from 6 of 7 to 2
 /// of 7 subset summaries and from 17 of 24 to 13 of 24 whole-dataset ones.
-/// The 1B overshoots the stated size budget on most seeds, its answers
-/// enumerate background head-first, and the last-resort cut then drops the
-/// facts stated later in the span. A floor of 0.14 asked 1 of the subset's 7
+/// The 1B overshoots the stated size budget on most seeds and writes about
+/// the background first, so the summary the compaction of that day stored
+/// lost the facts stated later in the span. A floor of 0.14 asked 1 of the subset's 7
 /// seeds, which a change that breaks half of the retained seeds still
 /// cleared. ^m03heaa answered that by changing the canary rather than the
 /// rule.
@@ -297,9 +302,8 @@ func compactionEvalFactRetentionRequiredSamples(of sampleCount: Int, floor: Doub
 ///
 /// The fixtures are sized in the tokens the model really counts, and this is
 /// the rate between those tokens and the bytes of prose a fixture holds.
-/// ``Summarization`` sizes a summarizer call's answer in tokens
-/// (``Summarization/minimumSummaryTokens``, ``Summarization/summaryTokenRatio``),
-/// and a fixture is written as bytes of prose. A fixture sized by a character
+/// A compaction states the size of its summary in tokens, and a fixture is
+/// written as bytes of prose. A fixture sized by a character
 /// count in place of a tokenizer is exactly how
 /// `CompactionRoundTripIntegrationTests` ended up below its own trigger (task
 /// ^wnj3ka3), so this dataset is sized in the tokens the model really counts.
@@ -338,121 +342,60 @@ func compactionEvalFactRetentionRequiredSamples(of sampleCount: Int, floor: Doub
 /// single-line literals of the two dataset sources, 8776 bytes against 1940
 /// tokens — which is why the table above re-states it.
 ///
-/// Every use of this constant converts a real-token allowance into the bytes
-/// a real summary occupies, so the largest rate over-states every such
-/// summary and each gate it feeds stays strict: the hermetic shrink gate
-/// compacts against a summary bigger than the model writes, and the seed sizing
-/// outweighs a worst case bigger than the real one.
+/// Every use of this constant converts real tokens into the bytes of prose
+/// they occupy, so the largest rate over-states every such size and each gate
+/// it feeds stays strict.
 let compactionEvalMeasuredBytesPerToken = 4.79
 
-/// The ceiling one summarizer call of an eval-sized compaction is given at the
-/// PRODUCTION defaults: ``Summarization/minimumSummaryTokens`` — the FLOOR
-/// of the summary allowance, which task ^xx02yn6 derives from the stated
-/// size budget for larger spans — plus
-/// ``Summarization/reasoningTokenHeadroom``.
+/// A summarizer whose answer is the size the compaction states for it.
 ///
-/// Read off the stage's own values rather than restated as a literal, so a
-/// recorded sample here can never claim a ceiling the stage does not hand
-/// out. The hermetic report tests build their recorded calls at this number.
-/// The GATED tiers run under ``compactionEvalReasoningTokenHeadroom``
-/// instead, so their recorded calls carry a smaller ceiling; nothing compares
-/// the two, and the report renders whichever ceiling the call really had.
-let compactionEvalSummarizerCeiling =
-    Summarization.minimumSummaryTokens + Summarization().reasoningTokenHeadroom
+/// A stub answering `"fake summary"` shrinks a compaction whatever the seed
+/// holds, so it proves the compaction REACHED its summarizer call and nothing
+/// about whether the compaction survived the did-not-shrink check. The gated
+/// run of 2026-08-17 discarded 8 of the 9 compactions the stub suite reported
+/// as reaching the call (task ^vjf3mdm).
+///
+/// The compaction states the size the summary may take, in the tokens its
+/// counter counts, in the assembled prompt: `Size budget: about N tokens.`
+/// This summarizer reads that number and answers with that many characters.
+/// Under the hermetic counter, which counts one token for each character,
+/// that is an answer that fills the whole stated size: the largest answer a
+/// WELL-BEHAVED summarizer writes. A seed that clears the shrink check against
+/// this answer clears it against every answer that keeps to the stated size.
+struct StatedSizeSummarizer: CompactionSummarizer {
+    /// The words of the assembled prompt in front of the stated size.
+    private static let statedSizeOpening = "Size budget: about "
 
-/// The tokens every GATED summarizer call is given on top of its summary
-/// allowance, and deliberately not ``Summarization``'s own default of 8192.
-///
-/// The default is sized for a model that writes a `<think>` block before its
-/// answer. Neither gated subject writes one: ``CompactionEvalRealModel/ref``
-/// is a Qwen2.5 instruct model, which task ^m03heaa chose in part to keep
-/// this property, and ``CompactionContinuityRealModel/ref`` names the same
-/// Qwen2.5 instruct model since task ^mx4jqrn, for the same reason among
-/// others. So the default hands each of them thousands of tokens of
-/// free generation. The gated subset run of 2026-08-19 measured what that
-/// freedom costs: two of seven compactions generated to the ceiling — 20485 and
-/// 16060 bytes of summary answer — at 28.5 seconds each, where the five
-/// bounded compactions cost 2.5 to 7.4 seconds. The three fast compaction smoke
-/// suites cut the same value for the same measured reason. Every gated eval
-/// tier reads this one constant, so they cannot drift.
-let compactionEvalReasoningTokenHeadroom = 128
-
-/// A summarizer whose answer is the length a real one writes.
-///
-/// A stub answering `"fake summary"` shrinks a compaction whatever the seed holds, so
-/// it proves the pipeline REACHED ``Summarization`` and nothing about whether
-/// the compaction survived `Compactor.compact`'s did-not-shrink guard. The gated run
-/// of 2026-08-17 discarded 8 of the 9 compactions the stub suite reported as reaching
-/// the stage (task ^vjf3mdm).
-///
-/// `maxTokens` bounds the whole generation — the reasoning and the answer
-/// together, see ``CompactionSummarizer/summarize(_:maxTokens:)`` — so the
-/// answer alone is what is left once ``Summarization/reasoningTokenHeadroom`` is
-/// taken off: the summary allowance.
-///
-/// An answer that fills that allowance is the largest a WELL-BEHAVED summarizer
-/// writes — one that keeps to the word-count target the assembled prompt
-/// states for it (task ^xx02yn6). The gated run of 2026-08-17 (task ^fm5ddk9)
-/// measured what a real model did when nothing was stated: it called every one
-/// of 7 seeds at a ceiling of 4224 tokens against an allowance of 128, and
-/// every one answered with 374 to 698 real tokens — 2.9x to 5.5x the
-/// allowance. So this summarizer stands for the good case. The generation
-/// ceiling and the span budget ``Summarization`` applies in code are what
-/// hold the bad one, and `Compactor.compact`'s did-not-shrink guard still
-/// catches what gets past both.
-///
-/// Those two bounds are different numbers, and they do different jobs. This
-/// summarizer reads only the first.
-///
-/// - The stated size budget sizes the summary allowance (task ^xx02yn6:
-///   ``Summarization/statedBudgetShareOfContent`` of the span's content
-///   bytes, capped by ``Summarization/summaryTokenRatio``, floored at
-///   ``Summarization/minimumSummaryTokens``), so the ceiling always covers
-///   the budget the prompt states. The stage adds
-///   ``Summarization/reasoningTokenHeadroom`` to it and hands the sum down
-///   as `maxTokens`. That is a ceiling on the GENERATION, in real tokens,
-///   and it covers the reasoning and the answer together.
-/// - The span budget bounds the FINAL summary the compaction stores, in the
-///   tokens the compaction's counter measures: an answer past it earns one
-///   condense re-ask, then the last-resort cut — except when the cut would
-///   leave no text at all, where `Summarization` hands the answer back whole
-///   rather than erase the span, and the did-not-shrink guard judges it.
-///
-/// This summarizer answers the whole allowance in the bytes a real model's
-/// tokens occupy: 128 tokens at ``compactionEvalMeasuredBytesPerToken`` is
-/// 614 bytes. So a seed that clears this gate clears a summary of the size a
-/// real model writes for that allowance, and not a smaller one.
-///
-/// The span budget does not bind on that answer for any seed, so this
-/// gate measures a seed against the summary as written and never against one
-/// the stage had already condensed or cut. That budget is
-/// ``Summarization/statedBudgetShareOfContent`` of the span's own content, so a
-/// 614-byte answer overruns it only when the content is under 819 bytes, and
-/// `CompactionEvalSeedSizingTests/everySeedsCompactableSpanOutweighsARealSummary`
-/// already requires every seed's span to hold 921 characters or more.
-struct RealisticSummaryLengthSummarizer: CompactionSummarizer {
-    /// The headroom the stage under test adds on top of the summary allowance.
-    ///
-    /// Read from the same ``Summarization`` value the compaction is given rather than
-    /// restated, so this summarizer cannot drift away from the stage calling it.
-    let reasoningTokenHeadroom: Int
-
-    /// One sentence in the register a compaction summary is written in, repeated
-    /// to reach a required size. ASCII throughout, so one character is one byte
-    /// and the size ``summarize(_:maxTokens:)`` computes below is the size it
-    /// produces — read off the ceiling the call carries, not off the stated
-    /// word-count target in the prompt; see the type's own documentation.
+    /// One sentence in the register a compaction summary is written in,
+    /// repeated to reach the stated size. ASCII throughout, so one character
+    /// is one byte.
     private static let sentence =
         "The conversation above stated a constraint the next turn has to keep, so this summary records it in the order it was given. "
 
+    /// Answers with as many characters as `prompt` states for the summary.
+    ///
+    /// - Parameters:
+    ///   - prompt: The assembled compaction prompt.
+    ///   - maxTokens: The output ceiling of the call. This summarizer does not
+    ///     read it: the stated size, not the ceiling, sets its answer.
+    /// - Returns: ``sentence`` repeated and cut to the stated size, or the
+    ///   empty string when the prompt states no size.
     func summarize(_ prompt: String, maxTokens: Int) async throws -> String {
-        let summaryTokens = max(0, maxTokens - reasoningTokenHeadroom)
-        let bytes = Int((Double(summaryTokens) * compactionEvalMeasuredBytesPerToken).rounded(.up))
+        let characters = Self.statedSize(in: prompt)
         var text = ""
-        while text.utf8.count < bytes {
+        while text.count < characters {
             text += Self.sentence
         }
-        return String(text.prefix(bytes))
+        return String(text.prefix(characters))
+    }
+
+    /// The summary size `prompt` states, or `0` when it states none.
+    ///
+    /// - Parameter prompt: The assembled prompt.
+    /// - Returns: The stated size, in tokens.
+    private static func statedSize(in prompt: String) -> Int {
+        guard let opening = prompt.range(of: statedSizeOpening) else { return 0 }
+        return Int(prompt[opening.upperBound...].prefix { $0.isNumber }) ?? 0
     }
 }
 

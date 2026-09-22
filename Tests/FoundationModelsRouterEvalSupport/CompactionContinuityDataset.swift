@@ -32,7 +32,7 @@ struct CompactionContinuityTaskSpec: Sendable {
     /// is impossible to complete without at least one live compaction along the
     /// way (this dataset's own "sized to be impossible without >=1 compaction"
     /// requirement, distinct from ``CompactionEvalFixtureSpec``'s fixed
-    /// `recentTurnCount`, which only pads the untouched recency window).
+    /// `recentTurnCount`, which only adds turns after the planted facts).
     let fillerStepCount: Int
 
     /// The final step: an instruction whose correct completion requires
@@ -410,17 +410,14 @@ struct CompactionContinuitySeed: Sendable {
 /// The padding paragraph every fast task's opening step carries after its
 /// planted facts.
 ///
-/// The length is the point, not the content. The opening step is the whole
-/// span the fast tier's one compaction replaces, and a span too small cannot buy a
-/// summary smaller than itself: ``Summarization/minimumSummaryTokens`` gives
-/// every small span the same 128-token allowance, and `Compactor.compact`'s
-/// did-not-shrink guard discards a compaction whose summary is not smaller than its
-/// span. `AutoCompactionTriggerIntegrationTests` records the measured
-/// arithmetic: the floor stops binding past 512 estimated tokens, and its own
-/// opening brief is written past that at 639. This paragraph plays the same
-/// role here, and
-/// `CompactionContinuityEvaluationHermeticTests.everyFastTasksOpeningStepOutweighsTheCompactionFloor`
-/// holds each built opening step past the same bound.
+/// The length is the point, not the content. The fast tier's one compaction
+/// summarizes the whole live context, and it makes its call only when that
+/// context is over the budget's target. The new snapshot is the instructions
+/// and a summary of about the size the target leaves them, so a context over
+/// the target also gets a smaller snapshot, and `Compactor.compact` does not
+/// discard it. This paragraph carries the opening step past the target, and
+/// `CompactionContinuityEvaluationHermeticTests.everyFastTasksOpeningStepIsOverTheCompactionTarget`
+/// holds each built opening step past it.
 ///
 /// The content mentions no task's planted facts, so the facts stated before
 /// it are the only source a summary can carry them from. It closes by asking
@@ -491,14 +488,13 @@ let compactionContinuityFastInstructions = """
     refuse to state a fact from this conversation, and never invent a value.
     """
 
-/// The fast tier's second step — the recency window at the moment the compaction
+/// The fast tier's second step, the newest turn at the moment the compaction
 /// runs.
 ///
-/// Short on purpose. The fast tier's summarization keeps the newest turn
-/// verbatim, so this turn is what the compaction leaves untouched, and a short
-/// window is what makes the compacted transcript small. It asks for nothing the
-/// final instruction needs, so the answer to the final instruction can only
-/// come from the compaction's own summary.
+/// Short on purpose. The one compaction call summarizes this turn with the
+/// rest of the live context, so it adds little to the call's input. It asks
+/// for nothing the final instruction needs, so the answer to the final
+/// instruction can only come from the compaction's own summary.
 let compactionContinuityFastReadinessCheck =
     "Confirm you are ready for the final question, in one short sentence."
 
@@ -516,10 +512,10 @@ let compactionContinuityFastReadinessCheck =
 /// generations.
 ///
 /// The opening step states BOTH facts and then carries
-/// ``compactionContinuityFastPadding``, so the one compaction's span holds the
-/// facts and is large enough for a real summary to shrink it. The second step
-/// is ``compactionContinuityFastReadinessCheck``, the turn the compaction leaves
-/// verbatim. The final instruction is asked over the compacted transcript, so a
+/// ``compactionContinuityFastPadding``, so the live context the one compaction
+/// summarizes holds the facts and is over the budget's target. The second step
+/// is ``compactionContinuityFastReadinessCheck``, a short turn that asks for
+/// nothing the final instruction needs. The final instruction is asked over the compacted transcript, so a
 /// correct answer proves the summary carried the facts — the same continuity
 /// property the original seeds measure, through one compaction instead of whichever
 /// compactions thirteen driven steps happened to force.

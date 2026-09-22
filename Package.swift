@@ -292,10 +292,9 @@ let package = Package(
         // (`has overlapping sources`), and a `.testTarget` that another target
         // depends on is compiled by `swift build -c release`, where a
         // `@testable import` cannot resolve — so a plain target is the only
-        // shape that serves both. Nothing here uses `@testable`; the two router
-        // symbols it needs beyond the public surface — `TranscriptTurns` and
-        // `Compactor.estimatedTokenCount(of:)` — are `package`, which stops at
-        // this package's own boundary.
+        // shape that serves both. Nothing here uses `@testable`. The one router
+        // symbol it needs beyond the public surface, the `CompactionSummarizer`
+        // protocol, is `package`, which stops at this package's own boundary.
         //
         // `import Evaluations` needs no extra linker/search-path configuration:
         // the toolchain's test-only framework search path reaches a plain

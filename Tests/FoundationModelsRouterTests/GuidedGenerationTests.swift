@@ -487,9 +487,9 @@ struct GuidedGenerationTests {
     private static let autoCompactionCannedText = String(
         repeating: "The quick brown fox jumps over the lazy dog. ", count: 12)
 
-    /// How many warm-up turns the guided trigger test drives — past
-    /// `TurnTruncation`'s default 4-turn recency window, so compaction has real
-    /// old-span content to work with. Mirrors `AutoCompactionTests.turnCount`.
+    /// How many warm-up turns the guided trigger test drives, so the live
+    /// context holds many copies of the canned text. Mirrors
+    /// `AutoCompactionTests.turnCount`.
     private static let autoCompactionTurnCount = 6
 
     /// The exact entries the guided trigger test's warm-up turns produce,
@@ -512,15 +512,15 @@ struct GuidedGenerationTests {
     /// including why the two have to be the same number.
     private static let autoCompactionContextTokens = 100_000
 
-    /// A budget whose target sits strictly below the warm-up transcript's own
-    /// recency-window floor — forcing the triggering compaction to need the
-    /// model-assisted ``Summarization`` stage. Mirrors `AutoCompactionTests.fixedBudget`.
+    /// A budget whose target is under the warm-up transcript, so the triggering
+    /// compaction makes its one summarizer call. Mirrors
+    /// `AutoCompactionFixtures.fixedBudget`.
     private static let autoCompactionFixedBudget: TokenBudget = {
-        let recencyOnly = recencyWindowOnlyEstimate(autoCompactionWarmUpEntries())
+        let targetTokens = summarizingCompactionBudget(for: autoCompactionWarmUpEntries()).targetTokens
         return TokenBudget(
             limit: autoCompactionContextTokens,
             trigger: 0.8,
-            target: Double(recencyOnly / 2) / Double(autoCompactionContextTokens)
+            target: Double(targetTokens) / Double(autoCompactionContextTokens)
         )
     }()
 

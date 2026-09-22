@@ -43,8 +43,8 @@ enum CompactionContinuityRealModel {
     /// reference the continuity tier resolves — 1.6 GB on disk, the same
     /// family as the standard model the redesigned summarization prompt is
     /// written for, and a real instruct model that writes no `<think>` block,
-    /// so ``compactionEvalReasoningTokenHeadroom`` stays correct for it. See
-    /// the type's own doc comment for the measured trail behind the choice.
+    /// so its whole output ceiling goes to the answer. See the type's own doc
+    /// comment for the measured trail behind the choice.
     // Only `CompactionContinuityEvalRealSubjectRunner`, in the
     // IntegrationTests package, reads this. Periphery reads only this
     // package's index, thus it finds no reader.

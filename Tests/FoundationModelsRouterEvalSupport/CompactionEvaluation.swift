@@ -79,29 +79,58 @@ enum CompactionEvaluationError: Error {
 /// The token budget every ``CompactionEvaluation`` compacts against unless a
 /// caller passes its own.
 ///
-/// `limit` is small because the hand-written seeds are small — around 420-520
-/// tokens of content each (``compactionEvalSeeds``) as first measured — and
-/// `target` resolves to 40 tokens, strictly below the smallest seed's untouched
-/// recency-window size (63 under that same measurement). That is the whole
-/// point of the value: it
-/// guarantees ``Compactor/compact(_:prompt:budget:counter:summarizer:summarization:pendingRuns:protection:)``
-/// can never land under target on the deterministic stages alone, so it always
-/// falls through to the model-assisted `Summarization` stage — the one stage
-/// that leaves a summary entry for ``CompactionEvalMetric/factRetention`` to
-/// check, where `TurnTruncation` would instead drop the planted fact with no
-/// trace at all (see ``CompactionEvalSeed``'s doc comment).
+/// ## What the target must do
 ///
-/// `CompactionEvaluationTests.defaultBudgetForcesSummarizationStage` asserts
-/// that property against every seed, and is what caught this value going stale
-/// once the pipeline's transcript count stopped counting a transcript's JSON
-/// envelope as if a tokenizer would see it: the old
-/// `limit: 4000, target: 0.05` resolved to 200 tokens, more than half of which
-/// were envelope padding rather than content.
+/// ``Compactor/compact(_:prompt:budget:counter:summarizers:summarization:pendingRuns:protection:abandoning:)``
+/// makes one summarizer call over the whole seed, the instructions included,
+/// and states a size for the summary: the target less the instructions. So the
+/// target has two bounds, and each must hold under both counters the
+/// evaluation counts with:
 ///
-/// `trigger` plays no part here — this evaluation calls `Compactor` directly
-/// rather than driving a session that could compact on its own — and is left at
-/// ``TokenBudget``'s own default.
-let compactionEvalDefaultBudget = TokenBudget(limit: 400, trigger: 0.80, target: 0.10)
+/// - It is over the instructions. Else the stated size is zero or less, and
+///   every compaction stops with
+///   ``CompactionShortfall/targetLeavesNoRoomForSummary(allowedSummaryTokens:)``
+///   and no call.
+/// - It is under every seed. Else the seed is already under the target, and
+///   the compaction leaves it as it is and makes no call. Under the target
+///   also means the snapshot (the instructions and a summary of the stated
+///   size) is smaller than the seed, so the compaction applies the summary.
+///
+/// ## The measurement (task ^pke18c2, 2026-09-22)
+///
+/// Every seed opens with the same ``compactionEvalRecallInstructions``.
+///
+/// | counter | instructions | smallest seed (`sesame-allergy`) | largest seed |
+/// |---|---|---|---|
+/// | hermetic `CharacterTokenCounter` | 359 | 2006 | 2377 |
+/// | tokenizer of ``CompactionEvalRealModel`` (Qwen2.5-3B) | 78 | 528 | 628 |
+///
+/// The hermetic tests cannot load the tokenizer, so they convert characters
+/// at ``compactionEvalMeasuredBytesPerToken``, the largest measured rate. That
+/// gives the fewest tokens the tokenizer can count: 2006 / 4.79 = 418.8 for the
+/// smallest seed. The character counter counts the instructions as more
+/// tokens than the tokenizer does, so it is the strict side of the lower
+/// bound. The bounds that both counters hold are thus 359 < target < 418.8.
+///
+/// The target is 418, the top of that interval. The top gives the summary the
+/// most room the seeds allow: 418 - 78 = 340 tokens under the tokenizer, and
+/// 59 characters under the character counter. Under the tokenizer the
+/// snapshot then aims at 418 tokens against a smallest seed of 528.
+///
+/// `limit` is the target itself, and `target` is its whole share, because this
+/// evaluation calls `Compactor` directly and never triggers. `trigger` plays no
+/// part, and stays at ``TokenBudget``'s own default.
+///
+/// `CompactionEvalSeedSizingTests` holds both bounds against every seed under
+/// both counters, and
+/// `CompactionEvaluationHermeticTests.defaultBudgetForcesSummarizationStage`
+/// holds the one call against every seed. A seed edit that moves the smallest
+/// seed fails them until this measurement is made again.
+///
+/// The value before task ^pke18c2, `limit: 400, target: 0.10` (40 tokens), was
+/// sized for the compaction of that time. Under the one call it is under the
+/// instructions, so every compaction stopped with no call.
+let compactionEvalDefaultBudget = TokenBudget(limit: 418, trigger: 0.80, target: 1.0)
 
 /// The compaction-quality evaluation (compaction_plan.md §5): plants a fact in
 /// a seed transcript's compactable head, compacts it with ``prompt``/``budget``,
@@ -122,8 +151,9 @@ let compactionEvalDefaultBudget = TokenBudget(limit: 400, trigger: 0.80, target:
 ///   (``CompactionEvaluationTests``).
 /// - The gated `@Test` wires in a closure that drives a real resident MLX
 ///   model through the exact bare-session recipe compaction_plan.md §1.5
-///   describes: ``Compactor/compact(_:prompt:budget:counter:summarizer:summarization:pendingRuns:protection:)`` over the
-///   seed's entries, then a live session resumed over the compacted transcript.
+///   describes: ``Compactor/compact(_:prompt:budget:counter:summarizers:summarization:pendingRuns:protection:abandoning:)``
+///   over the seed's entries, then a live session resumed over the compacted
+///   transcript.
 struct CompactionEvaluation: Evaluation {
     /// The expected/ground-truth sample type the `Evaluation` protocol
     /// requires — Apple's own `ModelSample` wrapping
@@ -184,12 +214,9 @@ struct CompactionEvaluation: Evaluation {
     ///   - prompt: The compaction prompt under test. Defaults to
     ///     ``CompactionPrompt/default``.
     ///   - budget: The token budget every sample compacts against. Defaults to
-    ///     ``compactionEvalDefaultBudget``, whose `target` is small enough that
-    ///     the untouched recency window alone still exceeds it — guaranteeing
-    ///     the pipeline falls through to the model-assisted `Summarization`
-    ///     stage rather than stopping at `TurnTruncation` (which would drop the
-    ///     planted fact with no trace at all — see ``CompactionEvalSeed``'s doc
-    ///     comment).
+    ///     ``compactionEvalDefaultBudget``, whose target is over the
+    ///     instructions and under every seed, so every compaction makes its one
+    ///     summarizer call and applies the summary.
     ///   - seeds: The seed transcripts to draw samples from. Defaults to
     ///     ``compactionEvalSeeds`` (every hand-written fixture).
     ///   - includesJudgedDimensions: Whether ``evaluators`` builds the

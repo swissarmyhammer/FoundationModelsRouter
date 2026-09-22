@@ -477,7 +477,7 @@ actor RoutedSessionActor: RoutedSession {
     /// summarizer, when ``autoCompactionBudget`` is set. Ignored otherwise.
     nonisolated let autoCompactionPrompt: CompactionPrompt
 
-    /// The model-assisted compaction stage every compaction on this session uses,
+    /// The summarization stage every compaction on this session uses,
     /// the caller-driven and the automatic compaction alike. A fork carries it
     /// forward.
     nonisolated let summarization: Summarization

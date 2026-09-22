@@ -10,12 +10,13 @@ import Testing
 /// synchronously-evaluated `.evaluates(...)` trait argument.
 ///
 /// The runner drives ``compactionContinuityFastTierSeeds`` under
-/// ``compactionContinuityFastSummarization`` — the gated tier's own task set
-/// and one-turn recency window, which the suite's doc comment below explains.
+/// ``compactionContinuityFastInstructions`` — the gated tier's own task set
+/// and header, which the suite's doc comment below explains. Its sessions
+/// compact with the production compaction: one summarizer call over the whole
+/// live context.
 private let compactionContinuityEvalRealSubjectRunner = CompactionContinuityEvalRealSubjectRunner(
     tasks: compactionContinuityFastTierSeeds,
-    instructions: compactionContinuityFastInstructions,
-    summarization: compactionContinuityFastSummarization
+    instructions: compactionContinuityFastInstructions
 )
 
 /// The real-model evaluation itself: points at the FAST seed of every task

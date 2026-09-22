@@ -54,7 +54,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - tools: The tools the model can call. Each is wrapped by ``makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:)``.
     ///   - budget: The auto-compaction opt-in, or `nil` for manual compaction only.
     ///   - compactionPrompt: The prompt automatic compactions send to the summarizer.
-    ///   - summarization: The model-assisted compaction stage every compaction runs.
+    ///   - summarization: The summarization stage every compaction runs.
     ///   - agentSpawn: The parent session and tool call this session was spawned from, or `nil`.
     ///   - discoveryPriming: The pre-discovery seeding opt-in, or `nil` to leave it off.
     ///   - toolOutputProtection: The host rule whose protected tool outputs

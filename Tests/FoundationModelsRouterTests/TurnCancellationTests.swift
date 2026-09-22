@@ -572,15 +572,9 @@ struct TurnCancellationTests {
         }
     }
 
-    /// How many of the newest turns every compaction stage leaves untouched —
-    /// ``ToolOutputElision``/``TurnTruncation``/``Summarization``'s shared
-    /// `keepRecentTurns` default, which a compaction test's warm-up must exceed for a
-    /// compact to have any old span left to summarize.
-    private static let compactionRecencyWindowTurns = 4
-
     /// How many warm-up turns ``makeCompactionTriggeredSession(_:budget:metersTriggeringFill:)`` drives
-    /// before the turn that compacts — past ``compactionRecencyWindowTurns``, so the compaction
-    /// has an old span to condense and therefore a real summarizer call to make.
+    /// before the turn that compacts, so the compaction has a conversation to
+    /// summarize and therefore a real summarizer call to make.
     private static let compactionWarmUpTurnCount = 6
 
     /// The measured fill a compaction test's budget compacts at — ``TokenBudget``'s own
@@ -637,37 +631,12 @@ struct TurnCancellationTests {
         }
     }
 
-    /// The size of just ``warmUpEntries()``'s recency window — the floor
-    /// the deterministic stages bottom out at, since ``TurnTruncation`` drops the
-    /// older turns outright and leaves this untouched.
-    ///
-    /// - Returns: The recency window's size under ``characterTokenCounter``.
-    /// - Throws: What ``characterTokenCounter`` throws.
-    private static func warmUpRecencyWindowCount() throws -> Int {
-        let (header, turns) = TranscriptTurns.split(warmUpEntries())
-        let (_, recent) = TranscriptTurns.partition(turns, keepRecentTurns: compactionRecencyWindowTurns)
-        return try characterTokenCounter.count(Transcript(entries: header + recent.flatMap(\.entries)))
-    }
-
-    /// A budget the deterministic stages **cannot** satisfy: its target is half the
-    /// warm-up transcript's recency-window floor, so ``ToolOutputElision`` (nothing
-    /// to elide — these turns make no tool calls) and ``TurnTruncation`` (which
-    /// bottoms out at that floor) both leave it over target, and the compaction goes on
-    /// to call the summarizer. That call is the model-assisted stage these tests
-    /// cancel inside.
+    /// A budget whose target is under the warm-up transcript: the default
+    /// target of ``TokenBudget`` over a limit of the warm-up transcript's size.
+    /// The compaction then makes its one summarizer call, which is the call
+    /// these tests cancel inside.
     private static var summarizingCompactionBudget: TokenBudget {
-        get throws { try compactionBudget(targetTokens: warmUpRecencyWindowCount() / 2) }
-    }
-
-    /// A budget the deterministic stages **can** satisfy: its target sits midway
-    /// between the recency-window floor ``TurnTruncation`` lands on and the whole
-    /// warm-up transcript, so the compaction finishes deterministically and never makes a
-    /// model call at all.
-    private static var deterministicCompactionBudget: TokenBudget {
-        get throws {
-            let whole = try characterTokenCounter.count(Transcript(entries: warmUpEntries()))
-            return try compactionBudget(targetTokens: (warmUpRecencyWindowCount() + whole) / 2)
-        }
+        compactionBudget(targetTokens: TokenBudget(limit: characterCount(of: warmUpEntries())).targetTokens)
     }
 
     /// A session whose measured ``RoutedSession/contextFill`` has already cleared
@@ -678,7 +647,7 @@ struct TurnCancellationTests {
     /// - Parameters:
     ///   - fixture: The fixture to vend the session from.
     ///   - budget: The auto-compaction opt-in to vend it with, sized by
-    ///     ``summarizingCompactionBudget`` or ``deterministicCompactionBudget``.
+    ///     ``summarizingCompactionBudget``.
     ///   - metersTriggeringFill: Whether the last warm-up turn measures enough usage
     ///     to clear `budget`'s trigger. `true` (the default) for a test about the
     ///     *proactive* compaction; `false` for one about the **reactive**
@@ -1597,9 +1566,8 @@ struct TurnCancellationTests {
         }
 
         // Streamed, because the *only* observable difference between abandoning this
-        // compaction and degrading it to the deterministic-only tier is the
-        // ``SessionEvent/compaction(_:)`` that tier's empty result would deliver — see
-        // the assertion below.
+        // compaction and letting it finish is the ``SessionEvent/compaction(_:)``
+        // a finished compaction would deliver — see the assertion below.
         let delivered = DeliveredEvents()
         let turnTask = Task {
             for try await event in await session.streamEvents(to: "compacts-first") {
@@ -1644,7 +1612,7 @@ struct TurnCancellationTests {
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         // Warmed up for its transcript alone here: a manual compaction needs no trigger,
-        // just enough old content for the model-assisted stage to have work to do.
+        // just enough content for the summarizer call to have work to do.
         let session = try await Self.makeCompactionTriggeredSession(fixture, budget: Self.summarizingCompactionBudget)
 
         let insideSummarizer = AsyncSemaphore(value: 0)
@@ -1783,7 +1751,7 @@ struct TurnCancellationTests {
         }
 
         // A cancelled compaction is abandoned outright, not degraded down to the
-        // deterministic-only tier the way a broken summarizer is: so the consumer is
+        // next summarizer tier the way a broken summarizer is: so the consumer is
         // never told a compaction happened, and every `.compaction` this session reports
         // describes work it really did. Pinned by the router-API route — on the
         // caller-cancels one it holds trivially, since a consumer that cancelled itself
@@ -1890,8 +1858,11 @@ struct TurnCancellationTests {
         // Composed on top of the summarizer suspension rather than replacing it: this turn
         // has to overflow *and then* suspend inside the compaction that overflow triggers.
         let suspendInSummarizer = fixture.hook.midTurn
+        // The summarizer call renders the whole live context, the failed turn's
+        // own prompt last, so its prompt also ends with the turn's prompt. Only
+        // a call that is not the summarizer's is the turn's own call.
         fixture.hook.midTurn = { prompt in
-            guard prompt.hasSuffix(Self.overflowingCompactionPrompt) else {
+            guard !Self.isSummarizerCall(prompt), prompt.hasSuffix(Self.overflowingCompactionPrompt) else {
                 try await suspendInSummarizer?(prompt)
                 return
             }
@@ -1909,7 +1880,10 @@ struct TurnCancellationTests {
         // The retry never ran: the model saw this turn exactly once, and what the
         // caller gets is the cancellation rather than the overflow it was recovering
         // from.
-        #expect(await fixture.observer.entered.filter { $0.hasSuffix(Self.overflowingCompactionPrompt) }.count == 1)
+        #expect(
+            await fixture.observer.entered.filter {
+                !Self.isSummarizerCall($0) && $0.hasSuffix(Self.overflowingCompactionPrompt)
+            }.count == 1)
 
         // One close, not two: the failed attempt's own, recorded before the compaction
         // started. The retry that would have written the second never happened, and
@@ -1920,20 +1894,19 @@ struct TurnCancellationTests {
         #expect(recorded.last?.text == nil)
     }
 
-    @Test("a deterministic-only compaction with no cancellation outstanding compacts and runs its turn exactly as before")
+    @Test("a compaction with no cancellation outstanding makes its one call and runs its turn exactly as before")
     @MainActor
-    func deterministicOnlyCompactionIsUnaffected() async throws {
+    func compactionWithNoStopOutstandingIsUnaffected() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
-        let session = try await Self.makeCompactionTriggeredSession(fixture, budget: Self.deterministicCompactionBudget)
+        let session = try await Self.makeCompactionTriggeredSession(fixture, budget: Self.summarizingCompactionBudget)
 
-        // No hook installed, and none needed: this compaction makes no model call at all,
-        // which is exactly what must stay true — a cheap compaction gained no cancellation
-        // check of its own.
+        // No hook installed and no stop requested: the cancellation boundary around
+        // the summarizer call must cost the compaction nothing.
         var collected: [SessionEvent] = []
-        for try await event in await session.streamEvents(to: "compacts-deterministically") {
+        for try await event in await session.streamEvents(to: "compacts-uncancelled") {
             collected.append(event)
         }
         let events = eventsAfterTurnFrame(collected)
@@ -1942,16 +1915,16 @@ struct TurnCancellationTests {
             Issue.record("expected the turn's first event to be .compaction, got \(String(describing: events.first))")
             return
         }
-        #expect(result.stagesApplied == [ToolOutputElision.stageName, TurnTruncation.stageName])
-        #expect(result.summary == nil)
-        #expect(await fixture.observer.entered.contains(where: Self.isSummarizerCall) == false)
+        let untouchedSize = try characterTokenCounter.count(Transcript(entries: Self.warmUpEntries()))
+        #expect(result.tokensBefore == untouchedSize)
+        #expect(await fixture.observer.entered.filter(Self.isSummarizerCall).count == 1)
 
         // And the turn's own work ran normally straight after the compaction.
         let streamedText = events.compactMap { event -> String? in
             guard case .textDelta(let text) = event else { return nil }
             return text
         }.joined()
-        #expect(streamedText == "ok-compacts-deterministically")
+        #expect(streamedText == "ok-compacts-uncancelled")
     }
 }
 

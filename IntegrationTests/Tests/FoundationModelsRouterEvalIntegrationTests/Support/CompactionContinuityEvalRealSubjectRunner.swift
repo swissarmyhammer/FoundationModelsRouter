@@ -60,18 +60,10 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
     /// does today.
     private let samplePermit = AsyncSemaphore(value: 1)
 
-    /// The model-assisted stage every session this runner vends is created
-    /// with.
-    ///
-    /// A parameter rather than the production default, because the fast tier
-    /// needs ``compactionContinuityFastSummarization``'s one-turn recency
-    /// window for a three-turn task to compact at all — see that constant.
-    private nonisolated let summarization: Summarization
-
     /// The system instructions every session this runner vends is created
     /// with.
     ///
-    /// A parameter for the same reason ``summarization`` is: the instructions
+    /// A parameter and not the production default, because the instructions
     /// are part of the tier's fixture, and the fast tier states its own — see
     /// ``compactionContinuityFastInstructions`` for the measured run behind
     /// them.
@@ -79,17 +71,18 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
 
     /// Creates a runner over one tier's tasks.
     ///
+    /// Every session this runner vends compacts with the production
+    /// compaction: one summarizer call over the whole live context. The
+    /// runner passes no summarization settings, because the one call has none.
+    ///
     /// - Parameters:
     ///   - tasks: The tier's tasks, in the order the tier states them.
     ///   - instructions: The system instructions every session this runner
     ///     vends is created with — see ``instructions``.
-    ///   - summarization: The model-assisted stage every session this runner
-    ///     vends is created with — see ``summarization``.
-    init(tasks: [CompactionContinuitySeed], instructions: String, summarization: Summarization) {
+    init(tasks: [CompactionContinuitySeed], instructions: String) {
         self.tasks = tasks
         self.tasksByFinalInstruction = CompactionContinuitySeed.keyedByFinalInstruction(tasks)
         self.instructions = instructions
-        self.summarization = summarization
     }
 
     /// The resident container, loading it on first access and caching it for
@@ -216,8 +209,7 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
         let session = profile.standard.makeSession(
             instructions: instructions,
             budget: budget,
-            compactionPrompt: prompt,
-            summarization: summarization
+            compactionPrompt: prompt
         )
 
         // A free function, not a nested closure capturing this method's own

@@ -61,33 +61,17 @@ let demoContextTokens = 4096
 /// 901 tokens of the 4096-token window, against the 0.80 production
 /// default — so a handful of one-paragraph documents crosses it in seconds
 /// instead of needing to fill a real window. High enough, though, that the
-/// compacted span holds several turns: ``Summarization`` discards a compaction whose
-/// summary fails to shrink the transcript, and a span of a few hundred
-/// tokens is where that discard bites (the smoke tests record the
-/// measurement). Measured with `.greedy` decoding on 2026-08-19: the six
-/// fixture documents land at 239, 428, 617, 811, 976 and 1138 measured
-/// tokens, so this share crosses after the fifth document with about 75
-/// tokens of margin on each side.
+/// live context holds several turns: the compaction discards a summary that
+/// fails to shrink the live context. Measured with `.greedy` decoding on
+/// 2026-08-19: the six fixture documents land at 239, 428, 617, 811, 976 and
+/// 1138 measured tokens, so this share crosses after the fifth document with
+/// about 75 tokens of margin on each side.
 let demoTriggerShare = 0.22
 
-/// Where a compaction aims to land, as a share of ``demoContextTokens``. Low
-/// enough (205 tokens) to be unreachable by the deterministic stages, so
-/// the compaction that fires always falls through to the model-assisted
-/// ``Summarization`` stage and always writes a summary — the same device
-/// `AutoCompactionTriggerIntegrationTests` uses, for the same reason.
+/// Where a compaction aims to land, as a share of ``demoContextTokens``: 205
+/// tokens. The summary gets the room this target leaves after the
+/// instructions, and the compaction states that room to the summarizer.
 let demoTargetShare = 0.05
-
-/// How many of the newest turns every compaction on this session leaves
-/// untouched. One is the smallest window that is still a window: the compaction
-/// replaces the older turns and the newest turn stays verbatim.
-let demoKeepRecentTurns = 1
-
-/// The reasoning-token headroom each summarizer call gets, instead of
-/// ``Summarization``'s default of 8192. That default is sized for a model
-/// that writes a `<think>` block before its answer; ``demoModel`` writes
-/// none, so cutting it bounds the one unbounded generation in the run —
-/// the measured reason `CompactionSmokeIntegrationTests` cuts it too.
-let demoReasoningTokenHeadroom = 128
 
 /// The reply ceiling every scripted turn is submitted with. Small, so the
 /// documents — not the model's replies — decide how fast usage climbs.
@@ -99,12 +83,10 @@ let demoReplyTokenCeiling = 48
 /// The default prompt scaffolds an eight-section agent-work summary
 /// (intent, stated facts, next steps, ...). Measured on 2026-08-19 with
 /// ``demoSummarizerModel`` over this demo's compacted span: the sectioned
-/// summary it earns is faithful but long, so the compaction's retention cut
-/// truncates it mid-section, and the truncated scaffold then derails the
-/// small session model's next reply into a repetition loop. This
-/// one-paragraph prompt fits inside the cut, keeps the post-compaction reply
-/// coherent, and is the public `compactionPrompt:` knob working as
-/// designed.
+/// summary it earns is faithful but long, and the long scaffold then derails
+/// the small session model's next reply into a repetition loop. This
+/// one-paragraph prompt keeps the post-compaction reply coherent, and is the
+/// public `compactionPrompt:` knob working as designed.
 let demoCompactionPrompt = CompactionPrompt(
     name: "compaction-demo-v1",
     text: """
@@ -243,11 +225,7 @@ let session = profile.standard.makeSession(
     instructions:
         "You are a terse assistant reviewing project documents one at a time. Keep every reply to one sentence.",
     budget: budget,
-    compactionPrompt: demoCompactionPrompt,
-    summarization: Summarization(
-        keepRecentTurns: demoKeepRecentTurns,
-        reasoningTokenHeadroom: demoReasoningTokenHeadroom
-    )
+    compactionPrompt: demoCompactionPrompt
 )
 
 // swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
@@ -322,9 +300,9 @@ print(
 
     The transcript now holds \(documentsRead) document turns and measures \(usageTokens)
     tokens — at or over the \(budget.triggerTokens)-token trigger. The next turn will
-    therefore compact the transcript before it generates: the session replaces
-    the older turns with a model-written summary and keeps the newest
-    \(demoKeepRecentTurns) turn verbatim.
+    therefore compact the transcript before it generates: one summarizer call
+    reads the whole live context, and the session restarts the live context
+    as the instructions and the model-written summary.
 
     --- 2. the compaction checkpoint event ---
     """)
@@ -358,7 +336,7 @@ print(
 
     --- 3. the compacted summary the compaction wrote ---
 
-    \(compaction.summary ?? "(no summary text: only deterministic stages applied — stages \(compaction.stagesApplied))")
+    \(compaction.summary ?? "(no summary text)")
     """)
 // swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
 print(String(format: "\n[done] wall clock: %.1f seconds", Date().timeIntervalSince(startedAt)))

@@ -36,7 +36,7 @@ struct CompactionEvaluationOutcome: Codable, Sendable {
 
     /// Ground truth: the token ceiling ``UnderTarget`` checks the produced
     /// ``tokensAfter`` against — `budget.limit * budget.target`, rounded, the
-    /// same arithmetic ``Compactor/compact(_:prompt:budget:counter:summarizer:summarization:pendingRuns:protection:)``
+    /// same arithmetic ``Compactor/compact(_:prompt:budget:counter:summarizers:summarization:pendingRuns:protection:abandoning:)``
     /// itself uses.
     var targetTokens: Int
 

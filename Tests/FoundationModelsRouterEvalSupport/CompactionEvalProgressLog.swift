@@ -16,8 +16,8 @@ import FoundationModelsRouter
 /// it asks its final instruction, so it pays for as many generations as its task
 /// has steps (task ^aktsp2e).
 enum CompactionEvalProgressStep: String, Sendable, CaseIterable {
-    /// ``Compactor/compact(_:prompt:budget:counter:summarizer:summarization:pendingRuns:protection:)``
-    /// over the seed's entries, summarizer call included.
+    /// ``Compactor/compact(_:prompt:budget:counter:summarizers:summarization:pendingRuns:protection:abandoning:)``
+    /// over the seed's entries, its one summarizer call included.
     case compaction
 
     /// The resumed session's answer to the seed's question.
@@ -249,8 +249,9 @@ enum CompactionEvalProgressLog {
         summarizerCalls: [CompactionEvalSummarizerCall]
     ) -> String {
         // The LAST call, for the same reason
-        // `CompactionEvalSampleDiagnostic.discardedSummary` reads it: a chunked
-        // compaction's final reduce call is the one answer the boundary carries.
+        // `CompactionEvalSampleDiagnostic.discardedSummary` reads it: a
+        // compaction makes one call, and its answer is the one the boundary
+        // entry carries.
         let summarizerBytes = summarizerCalls.last?.answer.utf8.count ?? 0
         return "stages=\(stagesApplied.joined(separator: ","))"
             + " summarizerCalls=\(summarizerCalls.count)"

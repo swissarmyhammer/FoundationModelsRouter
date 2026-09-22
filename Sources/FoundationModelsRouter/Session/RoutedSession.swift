@@ -84,12 +84,14 @@ public protocol RoutedSession: Actor {
     /// Compacts this session's transcript in place: same ``id``, same
     /// ``recordingDirectory``, shorter live window.
     ///
-    /// The deterministic compaction stages run first, then the model-assisted
-    /// ``Summarization`` stage only if the transcript is still over target,
-    /// with the configuration this session was vended with
-    /// (``RoutedSessionActor/summarization``). A compaction that changes anything
-    /// appends the summary entry to `transcript.jsonl` and reseeds the backend.
-    /// A transcript already under target stays as it is.
+    /// The compaction is one summarizer call on this session's own model. The
+    /// call reads the compaction prompt and the whole live context, the
+    /// instructions included. The summary restarts the live context as the
+    /// instructions, the summary entry and the protected tool outputs. A
+    /// compaction that applies appends the summary entry to `transcript.jsonl`
+    /// and reseeds the backend. A transcript already under target stays as
+    /// it is. A summary that does not shrink the live context is discarded,
+    /// and ``CompactionResult/shortfall`` states why.
     ///
     /// A compaction holds the turn lock, so ``cancelCurrentTurn()`` can cancel it.
     /// To recover from `LanguageModelError.contextSizeExceeded`, compact with
@@ -97,9 +99,8 @@ public protocol RoutedSession: Actor {
     ///
     /// - Parameter budget: The token budget to compact against, or `nil` for this
     ///   session's resolved working context.
-    /// - Throws: The summarizer's error. A caller-driven compaction does not degrade:
-    ///   unlike the automatic compaction, which falls back to the deterministic-only
-    ///   pipeline and never throws, a summarizer failure here reaches the caller.
+    /// - Throws: The summarizer's error. A caller-driven compaction offers the
+    ///   own model only, so a summarizer failure here reaches the caller.
     ///   Also `CancellationError` when cancelled, or
     ///   ``SessionReentryError/sameSessionTurnInFlight(sessionID:)`` when called
     ///   from a tool of this session's own turn.
@@ -240,8 +241,8 @@ public protocol RoutedSession: Actor {
     /// follows the attach-or-requeue rule. The gates stay balanced, including
     /// for a turn suspended in ``awaitingUser(_:)``.
     ///
-    /// Only the turn in flight is affected. A compaction's model-assisted stage is
-    /// cancelled where it stands; its deterministic stages are not interrupted.
+    /// Only the turn in flight is affected. A compaction's summarizer call is
+    /// cancelled where it stands.
     /// A ``respond(to:maxTokens:)`` draining the run plane stops draining and
     /// returns its last turn's answer; the runs it waited on stay running.
     @discardableResult

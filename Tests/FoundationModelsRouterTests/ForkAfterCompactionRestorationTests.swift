@@ -61,10 +61,9 @@ struct ForkAfterCompactionRestorationTests {
 
     // MARK: - Fixtures
 
-    /// A long-ish canned response, repeated across every turn, so six turns'
-    /// worth of transcript carries a real byte-size estimate and the
-    /// deterministic-compaction budget derivation has room to sit strictly between
-    /// the recency-window floor and the full pre-compaction estimate.
+    /// A canned response, repeated across every turn and given as the answer
+    /// of the summarizer call. Six turns of it are much larger than one copy,
+    /// so the summary makes the live context smaller.
     private static let cannedText = String(
         repeating: "The quick brown fox jumps over the lazy dog. ", count: 12)
 
@@ -131,13 +130,13 @@ struct ForkAfterCompactionRestorationTests {
         let profile1 = try await router1.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
 
-        // Parent records N turns, then compacts deterministically: the derived
-        // budget's target sits where TurnTruncation alone lands under it.
+        // Parent records N turns, then compacts: the derived budget's target
+        // is under the live context, so the one summarizer call runs.
         let root = profile1.standard.makeSession()
         try await driveTurns(6, on: root)
         let rootBackend = try #require(container.lastBackend)
-        let result = try await root.compact(budget: deterministicCompactionBudget(for: rootBackend.transcriptEntries()))
-        #expect(!result.stagesApplied.isEmpty)
+        let result = try await root.compact(budget: summarizingCompactionBudget(for: rootBackend.transcriptEntries()))
+        #expect(result.stagesApplied == [Summarization.stageName])
 
         let fork = try await root.fork(workingDirectory: nil)
 
@@ -214,8 +213,8 @@ struct ForkAfterCompactionRestorationTests {
         let root = profile1.standard.makeSession()
         try await driveTurns(6, on: root)
         let rootBackend = try #require(container.lastBackend)
-        let result = try await root.compact(budget: deterministicCompactionBudget(for: rootBackend.transcriptEntries()))
-        #expect(!result.stagesApplied.isEmpty)
+        let result = try await root.compact(budget: summarizingCompactionBudget(for: rootBackend.transcriptEntries()))
+        #expect(result.stagesApplied == [Summarization.stageName])
         _ = try await root.respond(to: "root turn after the compaction")
 
         // Fresh process: restore the compacted root, then fork it.

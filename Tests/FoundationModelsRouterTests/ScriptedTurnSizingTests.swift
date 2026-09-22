@@ -97,13 +97,6 @@ struct ScriptedTurnSizingTests {
         measuredTokens(forCharacters: perTurnCharacters.reduce(0, +)) + liveOverheadTokens
     }
 
-    /// How many of the newest turns the deterministic stages must leave
-    /// untouched — read off ``TurnTruncation``'s own default rather than
-    /// restated, so this suite tracks the stage it reasons about.
-    private static var keepRecentTurns: Int {
-        TurnTruncation().keepRecentTurns
-    }
-
     /// The character count of each scripted turn's prompt text, in order.
     private static var perTurnCharacters: [Int] {
         CompactionRoundTripFixture.scriptedTurns.map { counter.count($0) }
@@ -136,58 +129,20 @@ struct ScriptedTurnSizingTests {
         )
     }
 
-    // MARK: - The compaction reaches the model-assisted stage by construction (task f80n046)
+    // MARK: - The compaction makes its summarizer call by construction
 
-    @Test("no window of consecutive scripted turns fits under the compaction target, so the deterministic stages alone can never land it")
-    func recencyWindowCannotFitUnderTheCompactionTarget() throws {
-        // `TurnTruncation` keeps the newest `keepRecentTurns` turns verbatim
-        // and `ToolOutputElision` touches nothing here (these turns call no
-        // tools), so the deterministic pipeline's floor is that window. When
-        // the window cannot fit under target, the pipeline must fall through
-        // to `Summarization` — which is the only stage that synthesizes the
-        // summary entry the gated suite's step 4 restores.
-        //
-        // Which four turns the window holds depends on how many turns the live
-        // run needed to cross the trigger, so every consecutive window is
-        // checked rather than only the last. Prompt text alone, converted to
-        // the tokens the live run measures: the window also carries the
-        // replies and the header, which only add.
+    @Test("the compaction target leaves room for a summary after the instructions, so the compaction makes its one call")
+    func compactionTargetLeavesRoomForASummary() throws {
+        // The one call gets the room the target leaves after the
+        // instructions, which the new snapshot keeps word for word. When the
+        // instructions alone fill the target, the compaction makes no call
+        // and writes no summary entry for the gated suite's step 4 to restore.
         let targetTokens = CompactionRoundTripFixture.compactionBudget.targetTokens
-        let keepRecentTurns = Self.keepRecentTurns
-        let turns = CompactionRoundTripFixture.scriptedTurns
-        #expect(turns.count > keepRecentTurns)
-        for start in 0...(turns.count - keepRecentTurns) {
-            let window = turns[start..<(start + keepRecentTurns)]
-            let windowTokens = Self.measuredTokens(forCharacters: Self.counter.count(window.joined()))
-            #expect(
-                windowTokens > targetTokens,
-                "turns \(start)..<\(start + keepRecentTurns) predict \(windowTokens) measured prompt tokens, which does not exceed the compaction target's \(targetTokens)"
-            )
-        }
-    }
-
-    @Test("the first turns cannot cross the trigger before some turn falls outside the recency window, so a compaction always has an old span to summarize")
-    func triggerIsNotReachedBeforeAnOldSpanExists() throws {
-        // The other half of the same property: `Summarization` returns `nil`
-        // — and the pipeline reports the oversized-tail shortfall with an
-        // empty `stagesApplied` — when every turn is still inside the recency
-        // window. So the trigger must not be reachable within the first
-        // `keepRecentTurns` turns.
-        //
-        // Worst case, and mechanical: every one of those turns' replies runs
-        // to the full `replyMaxTokens` ceiling, and the header's instructions
-        // count too. The prompt text and the header are converted to the
-        // tokens the live run measures; the reply ceiling is already in them.
-        let keepRecentTurns = Self.keepRecentTurns
-        let firstTurns = CompactionRoundTripFixture.scriptedTurns.prefix(keepRecentTurns)
-        let promptTokens = Self.measuredTokens(forCharacters: Self.counter.count(firstTurns.joined()))
-        let replyTokens = keepRecentTurns * CompactionRoundTripFixture.replyMaxTokens
-        let headerTokens = Self.measuredTokens(
+        let instructionsTokens = Self.measuredTokens(
             forCharacters: Self.counter.count(CompactionRoundTripFixture.instructions))
-        let worstCase = promptTokens + replyTokens + headerTokens
         #expect(
-            worstCase < Self.triggerTokens,
-            "the first \(keepRecentTurns) turns reach \(worstCase) tokens at their largest, at or over the trigger's \(Self.triggerTokens) — the compaction could find no turn outside the recency window to summarize"
+            targetTokens > instructionsTokens,
+            "the instructions predict \(instructionsTokens) measured tokens, which fill the compaction target's \(targetTokens)"
         )
     }
 }

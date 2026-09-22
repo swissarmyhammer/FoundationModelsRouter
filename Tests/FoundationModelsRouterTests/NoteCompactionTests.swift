@@ -445,95 +445,61 @@ struct NoteCompactionTests {
         #expect(appended.text == "Summary: everything through turn 2 compacted again.")
     }
 
-    // MARK: - Deterministic-only compactions (task ^dcgkd66)
+    // MARK: - A real one-call compaction, noted on the bare path
 
-    /// Enough driven turns that ``TurnTruncation`` (default recency window
-    /// `defaultKeepRecentTurns`) has old turns to compact away.
-    private static let deterministicCompactionTurnCount = 6
-
-    /// Scales a pre-compaction count up to a `TokenBudget` limit whose target
-    /// sits far above the count, so ``Compactor/compact(_:prompt:budget:counter:summarizer:summarization:pendingRuns:protection:)``
-    /// applies no stage and returns the transcript unchanged.
-    private static let noOpBudgetLimitMultiplier = 4
-
-    @Test("a deterministic-only compaction noted with its result records exactly one boundary entry carrying a decodable CompactionSegment checkpoint")
+    @Test("a one-call compaction noted on the handle records exactly its summary entry, whose checkpoint decodes")
     @MainActor
-    func deterministicOnlyCompactionRecordsOneDecodableCheckpoint() async throws {
-        let fixture = try await Self.makeFixture(turnCount: Self.deterministicCompactionTurnCount)
+    func oneCallCompactionRecordsItsSummaryEntry() async throws {
+        let turnCount = 6
+        let fixture = try await Self.makeFixture(turnCount: turnCount)
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
 
         let beforeEvents = await fixture.recorder.events
 
-        // A real deterministic-only compaction: no summarizer, and a budget whose
-        // target the deterministic stages alone land under.
-        let (compacted, result) = try await Compactor.compact(
-            Transcript(entries: fixture.entries),
-            budget: deterministicCompactionBudget(for: fixture.entries),
-            counter: characterTokenCounter
-        )
-        #expect(result.summaryEntryId == nil)
-        #expect(!result.stagesApplied.isEmpty)
-        // The compaction added no new entry ids of its own — exactly the gap this
-        // overload closes: an id-diff alone would record nothing.
-        let preCompactionIds = Set(fixture.entries.map(\.id))
-        #expect(compacted.allSatisfy { preCompactionIds.contains($0.id) })
+        let (compacted, result) = try await compactWithUnboundedWindow(
+            Transcript(entries: fixture.entries), budget: summarizingCompactionBudget(for: fixture.entries),
+            summarizer: RecordingSummarizer(summary: "Summary: every turn compacted."))
+        let summaryEntryId = try #require(result.summaryEntryId)
 
-        let applied = await fixture.handle.noteCompaction(compacted, result: result)
+        await fixture.handle.noteCompaction(compacted)
 
-        // Exactly one new recorded event: the synthesized boundary.
+        // Exactly one new recorded event: the summary entry. The instructions
+        // the snapshot keeps were recorded before.
         let afterEvents = await fixture.recorder.events
         #expect(afterEvents.count == beforeEvents.count + 1)
         #expect(Array(afterEvents.prefix(beforeEvents.count)) == beforeEvents)
+        #expect(afterEvents.last?.entry?.entryId == summaryEntryId)
 
-        // The boundary's checkpoint decodes, and restore finds it newest.
+        // The checkpoint decodes, and restore finds it newest.
         let checkpoint = try #require(TranscriptTree.newestCompactionCheckpoint(in: afterEvents))
         #expect(checkpoint.index == afterEvents.count - 1)
-        #expect(checkpoint.content.stagesApplied == result.stagesApplied)
-        // The bare recipe has no measured usage, so the checkpoint carries
-        // the pipeline's own token counts.
-        #expect(checkpoint.content.tokensBefore == result.tokensBefore)
-        #expect(checkpoint.content.tokensAfter == result.tokensAfter)
-        // No summarizer read any compaction prompt, and no session mailbox
-        // exists on the bare path.
-        #expect(checkpoint.content.promptName.isEmpty)
-        #expect(checkpoint.content.pendingRuns == nil)
-
-        // The returned transcript is the compacted window plus the boundary, in
-        // that order — the boundary names itself last in its own live window.
-        #expect(applied.count == compacted.count + 1)
-        #expect(Array(applied.prefix(compacted.count)).map(\.id) == compacted.map(\.id))
-        let boundaryId = try #require(applied.last?.id)
-        #expect(checkpoint.content.liveWindowEntryIds == compacted.map(\.id) + [boundaryId])
-        // The compacted ids name exactly the pre-compaction entries the window dropped.
-        let liveIds = Set(checkpoint.content.liveWindowEntryIds)
-        #expect(checkpoint.content.compactedEntryIds == fixture.entries.map(\.id).filter { !liveIds.contains($0) })
-        #expect(!checkpoint.content.compactedEntryIds.isEmpty)
+        #expect(checkpoint.content.stagesApplied == [Summarization.stageName])
+        #expect(checkpoint.content.liveWindowEntryIds == Array(compacted).map(\.id))
     }
 
-    @Test("a no-op compaction result records nothing and returns the transcript unchanged")
+    @Test("noting a compaction that left the live context as it was records nothing")
     @MainActor
-    func noOpCompactionResultRecordsNothing() async throws {
-        let fixture = try await Self.makeFixture(turnCount: 2)
+    func noOpCompactionRecordsNothing() async throws {
+        let turnCount = 2
+        let fixture = try await Self.makeFixture(turnCount: turnCount)
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
 
         let beforeEvents = await fixture.recorder.events
 
-        // A budget the transcript is already under: the pipeline returns the
-        // transcript unchanged and reports no stage applied.
-        let preCompactionTokens = try characterTokenCounter.count(Transcript(entries: fixture.entries))
-        let (compacted, result) = try await Compactor.compact(
-            Transcript(entries: fixture.entries),
-            budget: TokenBudget(limit: preCompactionTokens * Self.noOpBudgetLimitMultiplier),
-            counter: characterTokenCounter
-        )
+        // A budget the transcript is already under: the compaction returns the
+        // transcript unchanged and makes no call.
+        let summarizer = RecordingSummarizer(summary: "unused")
+        let preCompactionTokens = characterCount(of: fixture.entries)
+        let (compacted, result) = try await compactWithUnboundedWindow(
+            Transcript(entries: fixture.entries), budget: TokenBudget(limit: preCompactionTokens, target: 1),
+            summarizer: summarizer)
         #expect(result.stagesApplied.isEmpty)
+        #expect(await summarizer.prompts.isEmpty)
 
-        let applied = await fixture.handle.noteCompaction(compacted, result: result)
+        await fixture.handle.noteCompaction(compacted)
 
-        // Every entry was already recorded and no compaction applied: nothing new
-        // is recorded, and no boundary is synthesized.
+        // Every entry was already recorded: nothing new is recorded.
         let afterEvents = await fixture.recorder.events
         #expect(afterEvents == beforeEvents)
-        #expect(applied.map(\.id) == fixture.entries.map(\.id))
     }
 }

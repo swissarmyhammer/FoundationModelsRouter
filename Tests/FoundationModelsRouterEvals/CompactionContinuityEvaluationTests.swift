@@ -55,31 +55,29 @@ struct CompactionContinuityEvaluationHermeticTests {
         }
     }
 
-    @Test("every FAST task's opening step outweighs the compaction floor and the compaction target")
-    func everyFastTasksOpeningStepOutweighsTheCompactionFloor() {
-        // The fast tier's one compaction replaces the opening turn, and two sizes
-        // decide whether that compaction really happens (task ^k0d30s4):
+    @Test("every FAST task's opening step is over the compaction target on its own, under a conservative token conversion")
+    func everyFastTasksOpeningStepIsOverTheCompactionTarget() {
+        // The fast tier's one compaction summarizes the whole live context,
+        // and one size decides whether that compaction really happens (tasks
+        // ^k0d30s4, ^pke18c2). `Compactor.compact` makes its call only when
+        // the context counts past `targetTokens`. The new snapshot is the
+        // instructions and one summary of about the size the target leaves
+        // them, so a context over the target also gets a smaller snapshot.
         //
-        // - `Compactor.compact`'s entry guard needs the transcript to count
-        //   past `targetTokens`, and the opening step's prompt alone is the
-        //   conservative bound for that — the live transcript also carries the
-        //   readiness turn, every reply, and the instructions header.
-        // - The did-not-shrink guard discards a compaction whose summary is not
-        //   smaller than its span. `AutoCompactionTriggerIntegrationTests`
-        //   records the measured arithmetic: the 128-token summary floor stops
-        //   binding past 512 estimated tokens, and its own opening brief is
-        //   written past that at 639. 560 keeps the same margin over 512.
-        let compactionFloorTokens = 560
+        // The opening step's prompt alone is the conservative bound: the live
+        // context also carries the readiness turn, every reply and the
+        // instructions. The target is in the tokens the model counts, and
+        // this test can only convert characters. Converting at the LARGER
+        // measured bytes-per-token rate under-states the real token count —
+        // see `compactionEvalMeasuredBytesPerToken` — so an opening step that
+        // is over the target here is over it live.
         let targetTokens = compactionContinuityFastBudget.targetTokens
         for seed in compactionContinuityFastSeeds {
-            let openingTokens = CharacterTokenCounter().count(seed.steps[0])
+            let conservativeRealTokens =
+                Double(seed.steps[0].utf8.count) / compactionEvalMeasuredBytesPerToken
             #expect(
-                openingTokens >= compactionFloorTokens,
-                "task \(seed.id)'s opening step counts \(openingTokens) tokens, under the compaction floor's \(compactionFloorTokens)"
-            )
-            #expect(
-                openingTokens > targetTokens,
-                "task \(seed.id)'s opening step counts \(openingTokens) tokens, not past the compaction target's \(targetTokens)"
+                conservativeRealTokens > Double(targetTokens),
+                "task \(seed.id)'s opening step converts to \(conservativeRealTokens) tokens, not past the compaction target's \(targetTokens)"
             )
         }
     }
@@ -98,24 +96,6 @@ struct CompactionContinuityEvaluationHermeticTests {
             #expect(
                 conservativeRealTokens > Double(triggerTokens),
                 "task \(seed.id)'s opening step converts to \(conservativeRealTokens) tokens, under the trigger's \(triggerTokens)"
-            )
-        }
-    }
-
-    @Test("every FAST task holds fewer turns than TurnTruncation's window, so only the model-assisted stage can compact it")
-    func everyFastTaskHoldsFewerTurnsThanTheTruncationWindow() {
-        // The structural guarantee behind
-        // `compactionContinuityFastTargetShareOfContext`: with fewer turns
-        // than the deterministic window, `TurnTruncation` drops nothing, so
-        // the pipeline always falls through to `Summarization` — the stage
-        // whose summary the fast tier measures. A turn count against a window
-        // needs no size arithmetic, which is what makes this guard exact.
-        let truncationWindow = TurnTruncation().keepRecentTurns
-        for seed in compactionContinuityFastSeeds {
-            let turnCount = seed.steps.count + 1
-            #expect(
-                turnCount < truncationWindow,
-                "task \(seed.id) drives \(turnCount) turns, not under TurnTruncation's window of \(truncationWindow)"
             )
         }
     }

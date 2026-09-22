@@ -5,12 +5,12 @@ import FoundationModels
 
 /// Shared fixtures for the tool-output protection tests: a host rule that
 /// protects a loaded skill, and transcripts that hold one protected and one
-/// unprotected tool output in turns older than the recency window.
+/// unprotected tool output, followed by plain turns.
 ///
 /// The rule and the transcript shape follow the host that asked for the
 /// protection: a `skills` tool call with the argument `op` equal to
 /// `use skill` loads a skill body, and that body must stay in the transcript
-/// word for word through every compaction stage.
+/// word for word through every compaction.
 enum ProtectedToolOutputFixtures {
     /// The name of the tool whose `use skill` output the rule protects.
     static let skillsToolName = "skills"
@@ -25,7 +25,7 @@ enum ProtectedToolOutputFixtures {
     static let searchToolName = "search"
 
     /// How many times the skill and search texts repeat their sentence, so
-    /// each output is large enough that elision measurably shrinks it.
+    /// each output is much larger than a summary of it.
     static let outputRepeatCount = 40
 
     /// The protected skill body. Distinct from every other fixture text, so a
@@ -50,8 +50,8 @@ enum ProtectedToolOutputFixtures {
     /// The id of the call that lists skills, and of its output entry.
     static let listCallId = "call-list"
 
-    /// How many plain turns follow the tool turns: the whole recency window of
-    /// every stage's default, so each tool turn is old.
+    /// How many plain turns follow the tool turns, so the tool turns are not
+    /// the newest turns of the transcript.
     static let recentTurnCount = 4
 
     /// The index the first plain recent turn takes, above every tool turn's
@@ -180,7 +180,7 @@ enum ProtectedToolOutputFixtures {
         ]
     }
 
-    /// The plain turns that fill the recency window.
+    /// The plain turns that follow the tool turns.
     ///
     /// - Returns: The entries of ``recentTurnCount`` turns with no tool call.
     static func recentTurns() -> [Transcript.Entry] {
@@ -189,7 +189,7 @@ enum ProtectedToolOutputFixtures {
         }
     }
 
-    /// The header, the skill turn, the search turn, then the recency window.
+    /// The header, the skill turn, the search turn, then the plain turns.
     ///
     /// - Returns: The transcript.
     /// - Throws: What the call builders throw.

@@ -558,11 +558,11 @@ extension RoutedSessionActor {
         composedPrompt: String,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
-        // A cancellation that landed while this turn held no model call — inside a
-        // compaction's deterministic stages, between two of its summarizer calls, or
-        // between a failed attempt and this retry — had no task to cancel, so it is
-        // honored here instead of being dropped, and the model (with every tool call
-        // it would make) is never re-entered on behalf of a turn already cancelled.
+        // A cancellation that landed while this turn held no model call — between two
+        // summarizer tiers of a compaction, or between a failed attempt and this
+        // retry — had no task to cancel, so it is honored here instead of being
+        // dropped, and the model (with every tool call it would make) is never
+        // re-entered on behalf of a turn already cancelled.
         if isTurnCancelled {
             throw CancellationError()
         }
