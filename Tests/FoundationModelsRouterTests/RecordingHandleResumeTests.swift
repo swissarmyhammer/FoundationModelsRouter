@@ -418,7 +418,7 @@ struct RecordingHandleResumeTests {
     private static let compactionWarmupTurnCount = 6
 
     /// A long-ish canned response, repeated across every turn, so six turns'
-    /// worth of transcript carries a real character count and the
+    /// worth of transcript carries a real token count and the
     /// deterministic-compaction budget derivation has room to sit strictly between
     /// the recency-window floor and the full pre-compaction count.
     private static let compactableCannedText = String(

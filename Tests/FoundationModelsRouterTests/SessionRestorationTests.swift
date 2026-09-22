@@ -39,6 +39,9 @@ struct SessionRestorationTests {
 
     /// Vends a plain ``StubSessionBackend`` for every session.
     private struct BasicLLMContainer: PlainTranscriptStubContainer {
+        /// The scripted counter of this container: one token per `Character`.
+        let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
             StubSessionBackend(responseText: "stub response")
         }

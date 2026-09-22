@@ -30,6 +30,34 @@ comments:
     - evidence: swift test — 1353 tests in 145 suites passed, 1 test in 1 suite passed, 83 tests in 10 suites passed; 0 failed, 0 skipped. The 2 known issues are pre-existing withKnownIssue marks in RealModelHarnessTests.swift and BoundedWaitTests.swift, files this change does not touch. swift build --build-tests: no compiler warning. swift build --package-path IntegrationTests --build-tests: Build complete (real-model suites are gated and left to CI).
     - next: commit
   timestamp: 2026-09-22T16:45:38.030104+00:00
+- actor: claude-code
+  id: 01m35055ztmhccxn728bswcjpa
+  text: |-
+    ### commit — changed
+    - evidence: 32b6a63 feat(compaction): count tokens with the model's tokenizer; delete charsPerTokenEstimate
+    - next: review
+  timestamp: 2026-09-22T16:46:02.746023+00:00
+- actor: claude-code
+  id: 01m3553xc1rvh9jrb68qea0hj8
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD — 8 findings, 8 confirmed, 0 refuted. RecordingHandleResumeTests.swift:421, RoutedSessionCompactTests.swift:236, :301, :406, SessionRestorationTests.swift:62, SummarizationStageTests.swift:1, TokenizerTokenCounterTests.swift:32, ToolOutputProtectionTests.swift:253.
+    - next: implement
+  timestamp: 2026-09-22T18:12:44.033740+00:00
+- actor: claude-code
+  id: 01m355hvkm4d2t72zxgs4y9x6p
+  text: |-
+    ### implement — changed
+    - evidence: 8 findings worked. RecordingHandleResumeTests.swift:421 now says "token count". RoutedSessionCompactTests.swift: a `private static let characterTokenCounter` is added, the three counts use `Self.characterTokenCounter`, and the other "character count" comments in the file now say "token count". SessionRestorationTests.swift: BasicLLMContainer states its own `tokenCounter`. TokenizerTokenCounterTests.swift: ScriptedTokenizer is a plain `Sendable` class (each stored property is an immutable Sendable value; `renders` is a Mutex). ToolOutputProtectionTests.swift:253 says "in tokens". SummarizationStageTests.swift is split: the reasoning-headroom, no-op, failure and Compactor.compact tests move word for word (diff-checked) to the new SummarizationStageCompactorTests.swift as an extension of the same suite; the shared helpers are internal. The head file is now 89,897 bytes (126,461 before).
+    - next: test
+  timestamp: 2026-09-22T18:20:20.980697+00:00
+- actor: claude-code
+  id: 01m355hxgzvrft6d07qzeqdkkd
+  text: |-
+    ### test — green
+    - evidence: swift test — 1353 tests in 145 suites passed, 1 test in 1 suite passed, 83 tests in 10 suites passed; 0 failed. The 2 known issues are the pre-existing withKnownIssue marks in RealModelHarnessTests.swift and BoundedWaitTests.swift. swift build --build-tests: no compiler warning (the one SwiftPM line "missing creator for mutated node ... mlx-swift_Cmlx.bundle" comes from the build system for the MLX dependency, not from the code). swift build --package-path IntegrationTests --build-tests: Build complete.
+    - next: commit
+  timestamp: 2026-09-22T18:20:22.943771+00:00
 position_column: doing
 position_ordinal: '80'
 title: Count tokens with the model's tokenizer; delete charsPerTokenEstimate
@@ -67,3 +95,52 @@ Before ^pke18c2 (the one-call compaction), which needs the counter for the summa
 - `rg 'charsPerTokenEstimate|estimatedTokenCount|estimatedTokens\('` finds nothing in `Sources`.
 - A tool output of 1,500 tokens by the model's tokenizer passes a `toolOutputLimit` of 1,500 uncut; one of 1,501 is cut to 1,500 tokens with a marker that states 1,500 of 1,501.
 - All tests pass. #compaction #limits
+
+## Review Findings (2026-09-22 12:30)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 90 file(s) reviewed, 7 not reviewed.
+
+> ⚠️ 1 file(s) not reviewed — the rendered prompt would exceed the agent's prompt cap:
+> - `Tests/FoundationModelsRouterTests/SummarizationStageTests.swift` — 336782 rendered bytes, over the 262144-byte per-file cap; not reviewed by: duplication (split the file)
+
+> 6 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 6 file(s)
+
+> ⚠️ tool rule 'code-hygiene/disallowed-constructs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> disallowed-constructs-swift found no file at Sources/FoundationModelsRouter/Core/UTF8Budget.swift, so its constructs are unread
+
+> ⚠️ tool rule 'code-hygiene/disallowed-constructs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> disallowed-constructs-swift found no file at Tests/FoundationModelsRouterTests/CompactionTokenAccountingTests.swift, so its constructs are unread
+
+> ⚠️ tool rule 'code-hygiene/function-length-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> function-length-swift found no file at Sources/FoundationModelsRouter/Core/UTF8Budget.swift, so its bodies are unread
+
+> ⚠️ tool rule 'code-hygiene/function-length-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> function-length-swift found no file at Tests/FoundationModelsRouterTests/CompactionTokenAccountingTests.swift, so its bodies are unread
+
+> ⚠️ tool rule 'code-hygiene/idioms-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> idioms-swift found no file at Sources/FoundationModelsRouter/Core/UTF8Budget.swift, so its declarations are unread
+
+> ⚠️ tool rule 'code-hygiene/idioms-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> idioms-swift found no file at Tests/FoundationModelsRouterTests/CompactionTokenAccountingTests.swift, so its declarations are unread
+
+> ⚠️ tool rule 'code-hygiene/magic-numbers-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> magic-numbers-swift found no file at Sources/FoundationModelsRouter/Core/UTF8Budget.swift, so its literals are unread
+
+> ⚠️ tool rule 'code-hygiene/magic-numbers-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> magic-numbers-swift found no file at Tests/FoundationModelsRouterTests/CompactionTokenAccountingTests.swift, so its literals are unread
+
+> ⚠️ tool rule 'code-hygiene/missing-docs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> missing-docs-swift found no file at Sources/FoundationModelsRouter/Core/UTF8Budget.swift, so its declarations are unread
+
+> ⚠️ tool rule 'code-hygiene/missing-docs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> missing-docs-swift found no file at Tests/FoundationModelsRouterTests/CompactionTokenAccountingTests.swift, so its declarations are unread
+
+- [x] `Tests/FoundationModelsRouterTests/RecordingHandleResumeTests.swift:421` `swift/naming-clarity` — The doc comment uses 'character count' which is misleading terminology after switching from character-based estimation to token-based counting. The term 'character count' specifically means counting characters, but this change moves all measurement to token-based counting via TokenCounter. Using 'character count' in this context violates clarity by using terminology that contradicts what the system now does. Change line 421 from 'carries a real character count' to 'carries a real token count' to accurately reflect that the measurement system is now token-based, not character-based.
+- [x] `Tests/FoundationModelsRouterTests/RoutedSessionCompactTests.swift:236` `completeness/invariant-propagation` — The code uses `characterTokenCounter.count(...)` throughout test methods but never defines this variable, while ScriptedTurnSizingTests properly defines its counter at the class level (line 36: `private static let counter = CharacterTokenCounter()`). The same pattern should be followed for consistency. Add `private static let characterTokenCounter = CharacterTokenCounter()` to the RoutedSessionCompactTests class body, following the same pattern as ScriptedTurnSizingTests.
+- [x] `Tests/FoundationModelsRouterTests/RoutedSessionCompactTests.swift:301` `completeness/invariant-propagation` — The code uses `characterTokenCounter.count(...)` but this variable is never defined in the test class, consistent with the same issue at line 236. Define `private static let characterTokenCounter = CharacterTokenCounter()` at the test class level to fix all occurrences.
+- [x] `Tests/FoundationModelsRouterTests/RoutedSessionCompactTests.swift:406` `completeness/invariant-propagation` — The code uses `characterTokenCounter.count(...)` but this variable is never defined in the test class, consistent with the same issue at lines 236 and 301. Define `private static let characterTokenCounter = CharacterTokenCounter()` at the test class level to fix all occurrences.
+- [x] `Tests/FoundationModelsRouterTests/SessionRestorationTests.swift:62` `completeness/invariant-propagation` — tokenCounter property added to SeedCapturingContainer (line 60-62), but BasicLLMContainer (lines 41-45) is a sibling container in the same file that was left unchanged. Both are test fixtures in SessionRestorationTests; the task description states 'every scripted container supplies a counter', implying both should receive the treatment. Add tokenCounter property to BasicLLMContainer: `let tokenCounter: any TokenCounter = CharacterTokenCounter()`.
+- [x] `Tests/FoundationModelsRouterTests/SummarizationStageTests.swift:1` `review-engine/prompt-cap` — This file exceeds the review prompt cap — 336782 rendered bytes against the 262144-byte per-file cap — so these validators could not review it: duplication. Split the file into smaller modules that fit the review prompt cap.
+- [x] `Tests/FoundationModelsRouterTests/TokenizerTokenCounterTests.swift:32` `code-hygiene/disallowed-constructs-swift` — no_unchecked_sendable: Instead of @unchecked Sendable, write a plain Sendable conformance or a @preconcurrency import. If the type really must be @unchecked Sendable, write // swiftlint:disable:next no_unchecked_sendable above it with the synchronization invariant that makes the type thread-safe.
+- [x] `Tests/FoundationModelsRouterTests/ToolOutputProtectionTests.swift:253` `swift/naming-clarity` — The doc comment states 'The size, in characters' but the variable name is `protectedOutputTokens` and the context of this change is converting to token-based counting. The comment should clearly reflect that this measures tokens, not characters. Update the comment to 'The size, in tokens, of the protected tool output the fixture holds.' to accurately document that this property counts tokens.

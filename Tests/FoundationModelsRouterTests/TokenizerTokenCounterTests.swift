@@ -27,9 +27,9 @@ struct TokenizerTokenCounterTests {
     /// A tokenizer with a rule of its own: one id per Unicode scalar, and a
     /// chat template that renders each message as one `role: content` line.
     ///
-    /// `@unchecked Sendable` invariant: `renders` is guarded by its `Mutex`;
-    /// every other property is immutable.
-    private final class ScriptedTokenizer: Tokenizer, @unchecked Sendable {
+    /// The class is `Sendable` because each stored property is an immutable
+    /// `Sendable` value, and `renders` is a `Mutex`.
+    private final class ScriptedTokenizer: Tokenizer, Sendable {
         /// Whether the tokenizer has a chat template. Without one every
         /// render throws `TokenizerError.missingChatTemplate`.
         private let hasChatTemplate: Bool

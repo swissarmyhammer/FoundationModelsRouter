@@ -18,7 +18,7 @@ import Testing
 /// Everything runs against a stub ``LoadedLLMContainer``/``StubSessionBackend``
 /// and an ``InMemoryRecorder``, so the suite needs no network and no GPU.
 /// Budgets are derived from the real pre-compaction size counted by
-/// ``characterTokenCounter``, the test target's own counter, rather than
+/// ``characterTokenCounter``, the suite's own counter, rather than
 /// hand-picked magic numbers, so the tests stay meaningful regardless of
 /// exactly how the mapper serializes an entry.
 @Suite("RoutedSession.compact(prompt:budget:): in-place compact on the actor")
@@ -134,9 +134,13 @@ struct RoutedSessionCompactTests {
 
     private static let stubDimension = 8
 
+    /// The counter the tests size a transcript with: one token per
+    /// `Character`, the same rule ``ConfiguredLLMContainer`` counts with.
+    private static let characterTokenCounter = CharacterTokenCounter()
+
     /// A long-ish canned response, repeated across every turn, so a handful
     /// of turns' worth of transcript already carries a real, non-trivial
-    /// character count — the recency window alone (the newest 4 turns
+    /// token count — the recency window alone (the newest 4 turns
     /// ``ToolOutputElision``/``TurnTruncation`` never touch) is large enough
     /// that a tight-enough budget still needs the model-assisted
     /// ``Summarization`` stage to land under target.
@@ -217,7 +221,7 @@ struct RoutedSessionCompactTests {
 
         let recorder = InMemoryRecorder()
         // A large per-turn usage delta relative to the tiny stub transcript's
-        // own character count — simulating a session whose measured fill
+        // own token count — simulating a session whose measured fill
         // is already high (why compaction would run), on a fixed scale that
         // stays comparable across the two turns driven below.
         let container = ConfiguredLLMContainer(responseText: Self.cannedText, usageIncrement: (input: 50_000, output: 0))
@@ -233,7 +237,7 @@ struct RoutedSessionCompactTests {
         try await driveTurns(6, on: session)
 
         let backend = try #require(container.lastBackend)
-        let preCompactionTokens = try characterTokenCounter.count(Transcript(entries: backend.transcriptEntries()))
+        let preCompactionTokens = try Self.characterTokenCounter.count(Transcript(entries: backend.transcriptEntries()))
         let recencyOnly = recencyWindowOnlyEstimate(backend.transcriptEntries())
         let preCompactionFill = await session.contextFill
         // A turn's own usage delta reports the *whole* transcript's size at
@@ -298,7 +302,7 @@ struct RoutedSessionCompactTests {
         try await driveTurns(6, on: session)
 
         let backend = try #require(container.lastBackend)
-        let preCompactionTokens = try characterTokenCounter.count(Transcript(entries: backend.transcriptEntries()))
+        let preCompactionTokens = try Self.characterTokenCounter.count(Transcript(entries: backend.transcriptEntries()))
         let recencyOnly = recencyWindowOnlyEstimate(backend.transcriptEntries())
         let preCompactionFill = await session.contextFill
         // The premise of this test: even the part of the transcript no
@@ -403,7 +407,7 @@ struct RoutedSessionCompactTests {
         try await driveTurns(6, on: session)
 
         let backend = try #require(container.lastBackend)
-        let preCompactionTokens = try characterTokenCounter.count(Transcript(entries: backend.transcriptEntries()))
+        let preCompactionTokens = try Self.characterTokenCounter.count(Transcript(entries: backend.transcriptEntries()))
         let budget = TokenBudget(limit: preCompactionTokens * 2, target: 0.25)
         try await session.compact(budget: budget)
 
@@ -861,7 +865,7 @@ struct RoutedSessionCompactTests {
 
     /// The per-turn measured usage delta the two checkpoint tests below
     /// configure their stub backend with — large against the tiny stub
-    /// transcript's own character count, so the compaction's measured-scale
+    /// transcript's own token count, so the compaction's measured-scale
     /// rescale (``RoutedSessionActor``'s `compactedUsage`) is a real conversion
     /// rather than a near-identity.
     private static let measuredTokensPerCheckpointTurn = 50_000

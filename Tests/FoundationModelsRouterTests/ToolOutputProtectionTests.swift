@@ -250,7 +250,7 @@ struct ToolOutputProtectionTests {
     /// transcript only a little: the deterministic stages always land under it.
     private static let nearlyWholeTarget = 0.9
 
-    /// The size, in characters, of the protected tool output the fixture holds.
+    /// The size, in tokens, of the protected tool output the fixture holds.
     private static let protectedOutputTokens = characterCount(of: [Fixtures.skillOutputEntry])
 
     /// A budget whose target is half the header and recency window of
