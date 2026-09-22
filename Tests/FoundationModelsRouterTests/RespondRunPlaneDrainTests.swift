@@ -11,6 +11,8 @@ import Testing
 /// keeps backgrounding as its feature. Task ^ftdmr58 adds the run signals a
 /// settled run owes the model on each surface: its honest outcome in the
 /// drained answer, and ``SessionEvent/runSettled(_:)`` on the event stream.
+/// Task ^chw3rc6 removes the drain's round count: the drain runs until a
+/// turn starts no new background work.
 ///
 /// Everything runs against stubs — tools gated on a ``RunLatch``, a backend
 /// that calls them, and an ``InMemoryRecorder`` — so the suite needs no
@@ -19,21 +21,33 @@ import Testing
 struct RespondRunPlaneDrainTests {
     // MARK: - Backends
 
-    /// A backend whose every turn tracks one fresh run on the session's own
-    /// mailbox — the shape the termination rule exists for: a drained turn
-    /// that starts yet more background work.
+    /// A backend scripted to start background work for a set number of turns.
+    /// Each of its first `backgroundingTurns` turns tracks one fresh run on
+    /// the session's own mailbox. Every later turn tracks none. This is the
+    /// shape the drain's exit exists for: a drained turn that starts yet more
+    /// background work, until one turn does not.
     ///
     /// It reaches the mailbox through the turn-scope ambient ``ToolContext``
     /// the session binds around every model call, which is the same route a
     /// tool of that turn would take.
     ///
     /// `@unchecked Sendable` on the same terms as ``BackgroundingBackend``.
-    private final class AlwaysSuspendingBackend: LanguageModelSessionBackend, @unchecked Sendable {
-        /// The answer every turn produces, so a test can assert respond
-        /// returned an answer rather than a pending envelope.
-        static let answerText = "started another run"
+    private final class ScriptedBackgroundingBackend: LanguageModelSessionBackend, @unchecked Sendable {
+        /// The answer one turn produces, so a test can assert which turn's
+        /// answer `respond` returned.
+        ///
+        /// - Parameter turn: The turn's ordinal, counted from 1.
+        /// - Returns: That turn's answer text.
+        static func answerText(ofTurn turn: Int) -> String {
+            "answer of turn \(turn)"
+        }
 
+        /// The stub that records each turn's transcript entries and answers
+        /// the surfaces this backend does not script.
         private let inner = StubSessionBackend()
+
+        /// How many turns, counted from the first, track a background run.
+        private let backgroundingTurns: Int
 
         /// Holds every run this backend tracked, so the test can release them
         /// one at a time.
@@ -42,13 +56,23 @@ struct RespondRunPlaneDrainTests {
         /// Every prompt this backend was asked to respond to, in turn order.
         private(set) var receivedPrompts: [String] = []
 
+        /// Makes a backend that tracks a background run in each of its first
+        /// `backgroundingTurns` turns.
+        ///
+        /// - Parameter backgroundingTurns: How many turns, counted from the
+        ///   first, track a background run.
+        init(backgroundingTurns: Int) {
+            self.backgroundingTurns = backgroundingTurns
+        }
+
         func respond(to prompt: String, maxTokens: Int?) async throws -> String {
             receivedPrompts.append(prompt)
+            let turn = receivedPrompts.count
             _ = try await inner.respond(to: prompt, maxTokens: maxTokens)
-            if let mailbox = ToolContext.current?.mailbox {
+            if turn <= backgroundingTurns, let mailbox = ToolContext.current?.mailbox {
                 await releaser.track(on: mailbox)
             }
-            return Self.answerText
+            return Self.answerText(ofTurn: turn)
         }
 
         func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
@@ -106,13 +130,28 @@ struct RespondRunPlaneDrainTests {
 
     // MARK: - Containers
 
-    /// Vends one retained ``AlwaysSuspendingBackend`` per session, under the same
-    /// `@unchecked Sendable` invariant ``BackgroundingLLMContainer`` documents.
-    private final class AlwaysSuspendingLLMContainer: LoadedLLMContainer, @unchecked Sendable {
-        private(set) var lastBackend: AlwaysSuspendingBackend?
+    /// Vends one retained ``ScriptedBackgroundingBackend`` per session, under
+    /// the same `@unchecked Sendable` invariant ``BackgroundingLLMContainer``
+    /// documents.
+    private final class ScriptedBackgroundingLLMContainer: LoadedLLMContainer, @unchecked Sendable {
+        /// The backend the newest `makeSession(instructions:)` call vended, or
+        /// `nil` before the first call.
+        private(set) var lastBackend: ScriptedBackgroundingBackend?
+
+        /// How many turns of each vended backend track a background run.
+        private let backgroundingTurns: Int
+
+        /// Makes a container whose every vended backend tracks a background
+        /// run in each of its first `backgroundingTurns` turns.
+        ///
+        /// - Parameter backgroundingTurns: How many turns of each vended
+        ///   backend track a background run.
+        init(backgroundingTurns: Int) {
+            self.backgroundingTurns = backgroundingTurns
+        }
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            let backend = AlwaysSuspendingBackend()
+            let backend = ScriptedBackgroundingBackend(backgroundingTurns: backgroundingTurns)
             lastBackend = backend
             return backend
         }
@@ -141,6 +180,12 @@ struct RespondRunPlaneDrainTests {
     /// the run settles as ``OperationOutcome/timedOut`` well inside the
     /// mailbox wait, and its latch never opens before then.
     private static let fixtureTimeoutSeconds: TimeInterval = 0.05
+
+    /// How many turns of one `respond` call start a background run in the
+    /// no-round-count test. The card ^chw3rc6 sets it: the scripted model
+    /// starts a run in each of 6 rounds and then none, so the drain runs one
+    /// turn more than this and answers with that turn's text.
+    private static let backgroundingTurnCount = 6
 
     // MARK: - Fixtures
 
@@ -360,17 +405,17 @@ struct RespondRunPlaneDrainTests {
         #expect(answer.contains(OperationEventSegment.renderedLine(for: terminal)))
     }
 
-    // MARK: - The termination rule
+    // MARK: - The drain has no round count
 
     @Test(
-        "a drained turn that backgrounds another run still terminates: respond runs its own turn plus at most the drain-round limit"
+        "the drain runs until a turn starts no new background work: a model that backgrounds work in each of 6 turns gets a seventh turn, and respond answers with the seventh"
     )
     @MainActor
-    func drainedTurnThatBackgroundsAnotherRunTerminates() async throws {
+    func drainRunsUntilATurnStartsNoBackgroundWork() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "RespondRunPlaneDrainTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let container = AlwaysSuspendingLLMContainer()
+        let container = ScriptedBackgroundingLLMContainer(backgroundingTurns: Self.backgroundingTurnCount)
         let profile = try await Self.makeProfile(container: container, dir: dir)
         let session = profile.standard.makeSession()
         let backend = try #require(container.lastBackend)
@@ -395,10 +440,16 @@ struct RespondRunPlaneDrainTests {
         let answer = try await responding.value
         driver.cancel()
 
-        #expect(answer == AlwaysSuspendingBackend.answerText)
-        #expect(backend.receivedPrompts.count == 1 + RoutedSessionActor.backgroundRunDrainRoundLimit)
+        // Each of the first 6 turns started a run. The drain settled each run
+        // and ran one further turn. The seventh turn started none, so the
+        // drain ended there, and the answer is the seventh turn's.
+        let turnCount = Self.backgroundingTurnCount + 1
+        #expect(backend.receivedPrompts.count == turnCount)
+        #expect(answer == ScriptedBackgroundingBackend.answerText(ofTurn: turnCount))
+        #expect(await session.mailbox.backgroundRuns().isEmpty)
 
-        // No background run outlives the test.
+        // No background run outlives the test, even when an expectation above
+        // failed.
         await backend.releaser.releaseAll()
     }
 

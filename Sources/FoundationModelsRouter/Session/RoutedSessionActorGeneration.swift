@@ -2,11 +2,6 @@
 /// event-stream entry points a caller drives, plus the session-scoped event
 /// subscriptions a host watches a whole session through.
 extension RoutedSessionActor {
-    /// The most drained continuation turns one ``respond(to:maxTokens:)`` call
-    /// runs after its own turn. After this many rounds the call answers with
-    /// what the last turn produced.
-    static let backgroundRunDrainRoundLimit = 4
-
     /// The prompt each drained continuation turn carries. The settled runs'
     /// results precede it as that turn's preamble.
     static let drainedRunContinuationPrompt = """
@@ -23,11 +18,13 @@ extension RoutedSessionActor {
 
     /// Generates a complete text response to a prompt, recording the call.
     /// After its own turn, drains the run plane: awaits every background run
-    /// in `SessionMailbox` and runs a further turn with the settled results,
-    /// up to ``backgroundRunDrainRoundLimit`` rounds. The drain ends early
-    /// when a run outlasts ``ToolContext/deadlineSecondsCeiling`` or when a
-    /// cancellation reaches this call; it then answers with the last turn's
-    /// answer. It does not sweep.
+    /// in `SessionMailbox` and runs a further turn with the settled results.
+    /// Each further turn that starts new background work starts one more
+    /// round. The drain ends when a round finds no background run to await.
+    /// No count bounds the rounds. The drain ends early when a run outlasts
+    /// ``ToolContext/deadlineSecondsCeiling`` or when a cancellation reaches
+    /// this call; it then answers with the last turn's answer. It does not
+    /// sweep.
     ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
@@ -62,7 +59,9 @@ extension RoutedSessionActor {
         // nothing to land on.
         runPlaneDrainCount += 1
         defer { runPlaneDrainCount -= 1 }
-        for _ in 0..<Self.backgroundRunDrainRoundLimit {
+        // The loop has two exits, and both are below: a cancellation, and a
+        // round that finds no background run to await.
+        while true {
             // A cancelled turn is never drained. Cancellation does not always
             // reach this call as a thrown error: a background tool call answers
             // the cancellation by going to the background and returning its pending envelope

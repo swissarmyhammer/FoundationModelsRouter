@@ -111,8 +111,10 @@ public protocol RoutedSession: Actor {
     /// This call drains both planes before it answers. The content plane is
     /// compacted into each turn's prompt as a preamble. The run plane is drained
     /// after this call's own turn: every background run is awaited to
-    /// settlement, and a further turn delivers the results to the model, for at
-    /// most ``RoutedSessionActor/backgroundRunDrainRoundLimit`` further turns.
+    /// settlement, and a further turn delivers the results to the model. Each
+    /// further turn that starts new background work starts one more round. The
+    /// drain ends when a round finds no background run to await; no count
+    /// bounds the rounds.
     /// The drain does not end background runs; that is ``close()``'s job. A
     /// cancellation ends the drain and returns the last turn's answer, and the
     /// runs it waited on stay running.

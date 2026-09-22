@@ -32,8 +32,31 @@ comments:
     - evidence: `swift test` — 1349 tests in 145 suites passed (main bundle), 1 test in 1 suite passed, 83 tests in 10 suites passed; 0 failures, 0 skipped. The 2 known issues are the pre-existing `withKnownIssue` blocks in RealModelHarnessTests and BoundedWaitTests. `forksOverOneModelAreNotCounted` passed. `swift build --package-path IntegrationTests --build-tests` completes with no error. The one build line `warning: missing creator for mutated node` names the `mlx-swift_Cmlx.bundle` product and is a SwiftPM artifact warning that predates this change.
     - next: commit
   timestamp: 2026-09-22T15:22:16.126133+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m34vccfk4tzeh39y2mp58sk4
+  text: |-
+    ### commit — changed
+    - evidence: 35f41fe refactor(fork): delete the fork admission gate and maxConcurrentForks
+    - next: review
+  timestamp: 2026-09-22T15:22:35.891544+00:00
+- actor: claude-code
+  id: 01m34vzbhhrn61y5dyd9j1me7d
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` — 0 findings, 0 confirmed, 2 refuted; 32 files reviewed. `README.md` and `model-pool.md` match no validator. No prior findings section on the card.
+    - next: done
+  timestamp: 2026-09-22T15:32:57.521070+00:00
+- actor: claude-code
+  id: 01m34vzxh84n2zkeerths4es87
+  text: |-
+    ### finish iteration 1 — review clean, task in done
+    - implement: changed — 31 files; the gate, the constant, the parameter, the property, the wait and the `deinit` release are deleted; docs rewritten; the fifth-fork tests replaced by `ForkConcurrencyTests.forksOverOneModelAreNotCounted` (8 forks)
+    - test: green — `swift test`: 1349 + 1 + 83 tests passed, 0 failures, 0 skipped; `swift build --package-path IntegrationTests --build-tests` compiles
+    - commit: 35f41fe
+    - review: clean — `review sha HEAD~1..HEAD`: 0 findings; `rg 'maxConcurrentForks|MaxConcurrentForks|forkAdmission'` finds nothing outside `.kanban`
+  timestamp: 2026-09-22T15:33:15.944295+00:00
+position_column: done
+position_ordinal: ffffe080
 title: Delete the fork admission gate and maxConcurrentForks
 ---
 ## Decision (from the owner, 2026-09-22)

@@ -1,8 +1,24 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '9280'
+comments:
+- actor: claude-code
+  id: 01m34w7a466tketpv97x6ndpc8
+  text: |-
+    ### research
+    - Sites found: `Sources/FoundationModelsRouter/Session/RoutedSessionActorGeneration.swift` (the constant, the `respond` doc, the counted `for` loop), `Sources/FoundationModelsRouter/Session/RoutedSession.swift:115` (the protocol doc that names the count), `Tests/FoundationModelsRouterTests/RespondRunPlaneDrainTests.swift:399` (the test that asserts the cut-off).
+    - `streamResponse` and `streamEvents` do not drain. Only `respond(to:maxTokens:)` drains. No other entry point names the count.
+    - No document in the repo names the count outside these three files.
+
+    ### implementation
+    - Deleted `backgroundRunDrainRoundLimit`. The drain loop is now `while true` with its two exits: the cancellation guard and the `settleBackgroundRuns` guard.
+    - Rewrote the `respond` doc in both source files: no count bounds the rounds; the drain ends when a round finds no background run to await.
+    - Replaced `AlwaysSuspendingBackend` with `ScriptedBackgroundingBackend(backgroundingTurns:)`. It starts one run in each of its first N turns and none after. Each turn answers with its own text.
+    - Replaced the cut-off test with `drainRunsUntilATurnStartsNoBackgroundWork`: N = 6 (the card's number, named `backgroundingTurnCount`), 7 prompts reach the backend, the answer is the seventh turn's, and the run plane is empty.
+    - `swift test --filter RespondRunPlaneDrainTests`: 9 tests in 1 suite passed. `rg backgroundRunDrainRoundLimit` finds nothing.
+  timestamp: 2026-09-22T15:37:18.214831+00:00
+position_column: doing
+position_ordinal: '80'
 title: Delete backgroundRunDrainRoundLimit; the drain runs until no new background work starts
 ---
 ## Decision (from the owner, 2026-09-22)
