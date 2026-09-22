@@ -223,30 +223,34 @@ struct SessionMailboxTests {
         #expect(terminal.detail == "done")
     }
 
-    // MARK: - Bounded settled-event retention
+    // MARK: - Settled-event retention for the session's lifetime
 
-    @Test("settled terminal events are retained under a bounded FIFO: the oldest settlement is evicted past the limit")
-    func settledTerminalEventRetentionIsBounded() async {
+    /// The number of runs the lifetime-retention test settles. This is one
+    /// more than the retention bound the mailbox had before, so the test
+    /// fails if an eviction comes back at that bound.
+    private static let settlementsPastTheRemovedBound = 129
+
+    @Test("the mailbox keeps every settled terminal event: wait() and cancel() on the first token answer with its terminal after many settlements")
+    func settledTerminalEventsAreKeptForTheSessionLifetime() async throws {
         let mailbox = SessionMailbox()
-        var tokens: [String] = []
-        for _ in 0...SessionMailbox.settledTerminalEventRetentionLimit {
+        let firstLatch = RunLatch()
+        let firstToken = await trackFakeRun(on: mailbox, latch: firstLatch, detailOnSettle: "first")
+        await firstLatch.open()
+        let firstSettlement = await mailbox.wait(completionToken: firstToken, seconds: 5)
+        let settledTerminal: OperationEvent? =
+            if case .settled(let terminal) = firstSettlement { terminal } else { nil }
+        let firstTerminal = try #require(settledTerminal, "expected .settled for the first run, got \(firstSettlement)")
+        #expect(firstTerminal.correlationID == firstToken)
+        #expect(firstTerminal.detail == "first")
+        for _ in 1..<Self.settlementsPastTheRemovedBound {
             let latch = RunLatch()
             let token = await trackFakeRun(on: mailbox, latch: latch)
             await latch.open()
             _ = await mailbox.wait(completionToken: token, seconds: 5)
-            tokens.append(token)
         }
 
-        // One more settlement than the limit: the oldest terminal event was
-        // evicted and its token honestly reports unknown again; the newest
-        // is still retained.
-        let oldest = tokens[0]
-        let newest = tokens[tokens.count - 1]
-        #expect(await mailbox.wait(completionToken: oldest, seconds: 5) == .unknownToken)
-        guard case .settled = await mailbox.wait(completionToken: newest, seconds: 5) else {
-            Issue.record("expected the newest settlement to still be retained")
-            return
-        }
+        #expect(await mailbox.wait(completionToken: firstToken, seconds: 5) == .settled(firstTerminal))
+        #expect(await mailbox.cancel(completionToken: firstToken) == .alreadySettled(firstTerminal))
     }
 
     // MARK: - Settlement forwarding

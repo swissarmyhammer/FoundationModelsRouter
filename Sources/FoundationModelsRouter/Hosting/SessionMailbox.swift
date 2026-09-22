@@ -27,10 +27,6 @@ actor SessionMailbox {
 
     // MARK: - Constants
 
-    /// The number of most recent settled terminal events retained for late
-    /// `wait` and `cancel` calls. Older tokens report `unknownToken` again.
-    static let settledTerminalEventRetentionLimit = 128
-
     /// Nanoseconds in one second.
     private static let nanosecondsPerSecond: Double = 1_000_000_000
 
@@ -70,12 +66,11 @@ actor SessionMailbox {
     /// Completion tokens in tracking order.
     private var trackingOrder: [String] = []
 
-    /// Terminal events of settled runs, by completion token. Bounded to the newest
-    /// ``settledTerminalEventRetentionLimit`` settlements.
+    /// Terminal events of settled runs, by completion token. The mailbox keeps
+    /// each settled terminal for the session's lifetime. So a late `wait` or
+    /// `cancel` on any settled token answers with its terminal, never with
+    /// `unknownToken`.
     private var settledTerminalEvents: [String: OperationEvent] = [:]
-
-    /// Settled completion tokens in settlement order (the FIFO eviction order).
-    private var settledOrder: [String] = []
 
     /// Whether a ``sweep()`` is in flight. A concurrent second sweep returns empty.
     private var isSweeping = false
@@ -398,14 +393,9 @@ actor SessionMailbox {
         await settlementObserver?.deliver(settledTerminal: terminal)
     }
 
-    /// Retains a settled run's terminal event with bounded FIFO retention.
+    /// Keeps a settled run's terminal event for the session's lifetime.
     private func retainSettledTerminalEvent(_ terminal: OperationEvent, for completionToken: String) {
         settledTerminalEvents[completionToken] = terminal
-        settledOrder.append(completionToken)
-        while settledOrder.count > Self.settledTerminalEventRetentionLimit {
-            let evicted = settledOrder.removeFirst()
-            settledTerminalEvents.removeValue(forKey: evicted)
-        }
     }
 
     /// Clamps a seconds value to a safe nanosecond count: NaN and negative values

@@ -1,8 +1,27 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8780'
+comments:
+- actor: claude-code
+  id: 01m358ykzx5hhppgctgpxmh74f
+  text: 'Research: `settledOrder` has one reader only: `retainSettledTerminalEvent` (the eviction loop). `sweep` and `close` do not read it. `sweep` calls `retainSettledTerminalEvent` and reads `settledTerminalEvents` only. So `settledOrder` goes with the constant. The only other reader of `settledTerminalEventRetentionLimit` is the test `settledTerminalEventRetentionIsBounded` in `Tests/FoundationModelsRouterTests/SessionMailboxTests.swift`. No doc outside `.kanban/` names the bound.'
+  timestamp: 2026-09-22T19:19:44.893852+00:00
+- actor: claude-code
+  id: 01m35900vew5td0ex45xg77aa4
+  text: |-
+    ### implement — changed
+    - evidence: 2 files — Sources/FoundationModelsRouter/Hosting/SessionMailbox.swift (constant, `settledOrder` and eviction loop deleted; doc on `settledTerminalEvents` says kept for the session's lifetime), Tests/FoundationModelsRouterTests/SessionMailboxTests.swift (`settledTerminalEventRetentionIsBounded` replaced by `settledTerminalEventsAreKeptForTheSessionLifetime`: 129 settlements, then `wait` and `cancel` on the first token answer with its settled terminal). The count 129 lives in the test only.
+    - next: test
+  timestamp: 2026-09-22T19:20:30.830590+00:00
+- actor: claude-code
+  id: 01m3591q3x0cp1tt5vw4jbswwp
+  text: |-
+    ### test — green
+    - evidence: `swift test` — 1356 tests in 145 suites passed (2 known issues are the intended `withKnownIssue` checks in BoundedWaitTests and RealModelHarnessTests), plus 1 and 83 tests in the other runners passed; 0 failed. The new test `settledTerminalEventsAreKeptForTheSessionLifetime` passed. `swift build --build-tests` and `swift build --package-path IntegrationTests --build-tests` complete with no compiler warning. The only build line is the SwiftPM note "missing creator for mutated node" on the mlx-swift_Cmlx.bundle dependency product, not on project source.
+    - next: commit
+  timestamp: 2026-09-22T19:21:26.397171+00:00
+position_column: doing
+position_ordinal: '80'
 title: Remove the settled terminal event retention bound in SessionMailbox
 ---
 ## Decision (from the owner, 2026-09-22)
