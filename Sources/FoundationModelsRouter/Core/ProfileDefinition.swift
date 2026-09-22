@@ -18,6 +18,11 @@ public struct ProfileDefinition: Sendable, Codable {
     /// max context lookup failing — so those failures still resolve through
     /// the ordinary fixed-context path instead of having nothing to loop over
     /// (see ``JointFit``).
+    ///
+    /// The number is not the response token floor of the live session
+    /// backend (`MLXFoundationModelsSessionBackend.responseTokenFloor`). A
+    /// log line that prints one of the two values then cannot be read as
+    /// the other.
     public static let defaultContext = 8192
 
     /// The profile's unique, human-meaningful name.

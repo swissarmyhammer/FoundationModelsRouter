@@ -123,4 +123,9 @@ struct TurnTokenCeilingTests {
 
         #expect(log.requestedCeilings == [MLXFoundationModelsSessionBackend.responseTokenFloor])
     }
+
+    @Test("the floor of the live backend is not the default context, so a printed value tells the two apart")
+    func floorIsNotDefaultContext() {
+        #expect(MLXFoundationModelsSessionBackend.responseTokenFloor != ProfileDefinition.defaultContext)
+    }
 }

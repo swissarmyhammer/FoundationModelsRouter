@@ -15,6 +15,10 @@ import MLXLMCommon
 // throws `unsupportedModelType` *after* paying for the whole download.
 import MLXVLM
 import Synchronization
+import os
+
+/// The logger for the ceiling a live session backend applies to a call.
+private let sessionBackendLogger = makeModuleLogger(category: "SessionBackend")
 
 // The MLX container types are the live loaded handles. They are `final class …:
 // Sendable`, so conforming them to the router's marker protocols lets
@@ -186,7 +190,11 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// ``RoutedSessionActor/responseTokenCeiling(requested:contextTokens:)``).
     /// This value applies only to a caller that reports no context and names
     /// no ceiling, so that the MLX executor still gets a finite budget.
-    static let responseTokenFloor = 8192
+    ///
+    /// The number is not ``ProfileDefinition/defaultContext``. A log line
+    /// that prints one of the two values then cannot be read as the other.
+    /// `TurnTokenCeilingTests` keeps the two apart.
+    static let responseTokenFloor = 8000
 
     /// Makes the generation options of one call on ``liveSession``.
     ///
@@ -198,8 +206,28 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     ///   ``responseTokenFloor``.
     /// - Returns: The options that carry ``samplingMode`` and the ceiling.
     private func makeGenerationOptions(maxTokens: Int?) -> GenerationOptions {
-        GenerationOptions(
-            samplingMode: samplingMode, maximumResponseTokens: maxTokens ?? Self.responseTokenFloor)
+        GenerationOptions(samplingMode: samplingMode, maximumResponseTokens: appliedCeiling(maxTokens: maxTokens))
+    }
+
+    /// The ceiling one call decodes under.
+    ///
+    /// When the floor applies, one log line names the constant. A reader of
+    /// the log can then tell ``responseTokenFloor`` from the context of a
+    /// session, which is a different number.
+    ///
+    /// - Parameter maxTokens: The ceiling the caller named, or `nil` for
+    ///   ``responseTokenFloor``.
+    /// - Returns: `maxTokens` when the caller named one, else
+    ///   ``responseTokenFloor``.
+    private func appliedCeiling(maxTokens: Int?) -> Int {
+        if let maxTokens { return maxTokens }
+        sessionBackendLogger.notice(
+            """
+            the caller named no ceiling; the call decodes under \
+            responseTokenFloor=\(Self.responseTokenFloor, privacy: .public)
+            """
+        )
+        return Self.responseTokenFloor
     }
 
     /// Test-only accessor onto ``liveSession``. Not part of the protocol.
