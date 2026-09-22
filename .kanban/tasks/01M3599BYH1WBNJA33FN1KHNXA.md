@@ -28,8 +28,31 @@ comments:
     - evidence: `swift test` — 1358 tests in 145 suites passed (2 known issues are `withKnownIssue` marks that were there before this card), plus 1 and 83 tests in the other runs, 0 failed, 0 warnings; `swift build --package-path IntegrationTests --build-tests` — Build complete.
     - next: commit
   timestamp: 2026-09-22T19:31:54.942040+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m359n3mfw69v6fkcm41kbrqd
+  text: |-
+    ### commit — changed
+    - evidence: 252a981 feat(compaction): compact to the configured target when the caller named no ceiling
+    - next: review
+  timestamp: 2026-09-22T19:32:01.807040+00:00
+- actor: claude-code
+  id: 01m359wvrp7cqwpwt4jfj2at7g
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` — 0 findings, 0 confirmed, 3 refuted; 14 validator passes attempted, 0 failed; 8 files reviewed; 6 `.kanban/` files skipped by `.reviewignore`. No prior `## Review Findings` sections exist.
+    - next: done
+  timestamp: 2026-09-22T19:36:15.894614+00:00
+- actor: claude-code
+  id: 01m359x577ksmjyj5htg8sg73f
+  text: |-
+    ### finish iteration 1 — review clean, task in done
+    - implement: changed — ResponseTokenCeiling.swift added; OverflowRetryTarget.swift, RoutedSessionActorTurnExecution.swift, RoutedSessionActorGeneration.swift, Compactor.swift, AutoCompactionTests.swift, TurnCancellationTests.swift, AutoCompactionFixtures.swift changed; `rg retryableResponseCeiling` finds nothing
+    - test: green — `swift test`: 1358 tests in 145 suites passed, 0 failed, 0 warnings; `swift build --package-path IntegrationTests --build-tests`: Build complete
+    - commit: 252a981
+    - review: clean — `review sha HEAD~1..HEAD`: 0 findings
+  timestamp: 2026-09-22T19:36:25.575717+00:00
+position_column: done
+position_ordinal: ffffe680
 title: Overflow retry with no caller ceiling compacts to the configured target, then retries
 ---
 ## Decision (from the owner, 2026-09-22)
