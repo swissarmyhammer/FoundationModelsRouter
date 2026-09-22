@@ -1,6 +1,7 @@
 import Foundation
 import FoundationModels
 import FoundationModelsRouterTestSupport
+import Synchronization
 import Testing
 
 @testable import FoundationModelsRouter
@@ -37,29 +38,48 @@ struct SummarizationStageTests {
     /// order), and returns canned responses from `responses`, cycling a
     /// final placeholder if more calls happen than responses were supplied.
     ///
-    /// `@unchecked Sendable` is safe for the same reason as `SpikeBackend`
-    /// (`CompactionSpikeTests`) and `MutableEntriesBackend`
-    /// (`CompactionSegmentTests`): every access is sequential, driven by a
-    /// single awaited test method, one call at a time — `Summarization.apply`
-    /// never issues concurrent summarizer calls.
-    final class ScriptedSummarizer: CompactionSummarizer, @unchecked Sendable {
-        private(set) var receivedPrompts: [String] = []
+    /// The class is `Sendable` because `responses` is an immutable
+    /// `Sendable` value, and the calls it records are in a `Mutex`.
+    final class ScriptedSummarizer: CompactionSummarizer, Sendable {
+        /// What the summarizer received, one element per call, in call order.
+        private struct Received {
+            /// The assembled prompt of each call.
+            var prompts: [String] = []
+
+            /// The output ceiling of each call.
+            var maxTokens: [Int] = []
+        }
+
+        /// The calls received so far.
+        private let received = Mutex(Received())
+
+        /// The canned answers, one per call, in call order.
+        private let responses: [String]
+
+        /// The assembled prompt of each call, in call order.
+        var receivedPrompts: [String] {
+            received.withLock { $0.prompts }
+        }
 
         /// The output ceiling each call was given, in call order — the bound a
         /// real summarizer would generate under.
-        private(set) var receivedMaxTokens: [Int] = []
-        private let responses: [String]
+        var receivedMaxTokens: [Int] {
+            received.withLock { $0.maxTokens }
+        }
 
+        /// Creates the summarizer.
+        ///
+        /// - Parameter responses: The canned answers, one per call, in call order.
         init(responses: [String]) {
             self.responses = responses
         }
 
         func summarize(_ prompt: String, maxTokens: Int) async throws -> String {
-            defer {
-                receivedPrompts.append(prompt)
-                receivedMaxTokens.append(maxTokens)
+            let index = received.withLock { state in
+                state.prompts.append(prompt)
+                state.maxTokens.append(maxTokens)
+                return state.prompts.count - 1
             }
-            let index = receivedPrompts.count
             return index < responses.count ? responses[index] : "unscripted-response-\(index)"
         }
     }

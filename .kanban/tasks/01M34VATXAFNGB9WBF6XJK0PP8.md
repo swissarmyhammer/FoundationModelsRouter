@@ -58,6 +58,34 @@ comments:
     - evidence: swift test — 1353 tests in 145 suites passed, 1 test in 1 suite passed, 83 tests in 10 suites passed; 0 failed. The 2 known issues are the pre-existing withKnownIssue marks in RealModelHarnessTests.swift and BoundedWaitTests.swift. swift build --build-tests: no compiler warning (the one SwiftPM line "missing creator for mutated node ... mlx-swift_Cmlx.bundle" comes from the build system for the MLX dependency, not from the code). swift build --package-path IntegrationTests --build-tests: Build complete.
     - next: commit
   timestamp: 2026-09-22T18:20:22.943771+00:00
+- actor: claude-code
+  id: 01m355j4jkt8qm1a3jqvzyrvq4
+  text: |-
+    ### commit — changed
+    - evidence: 90ca217 fix(review): state token counts in the test fixtures; split SummarizationStageTests under the review prompt cap
+    - next: review
+  timestamp: 2026-09-22T18:20:30.163348+00:00
+- actor: claude-code
+  id: 01m35684e1ph1ydsyces1z65as
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (90ca217) — 1 finding, 1 confirmed, 9 refuted. SummarizationStageTests.swift:45 (no_unchecked_sendable on ScriptedSummarizer).
+    - next: implement
+  timestamp: 2026-09-22T18:32:30.913540+00:00
+- actor: claude-code
+  id: 01m356a7kb8w3hw7rbd4h2wedw
+  text: |-
+    ### implement — changed
+    - evidence: SummarizationStageTests.swift — ScriptedSummarizer is now a plain `Sendable` class: `responses` is immutable, and the received prompts and ceilings are in a `Mutex`. `receivedPrompts` and `receivedMaxTokens` read the Mutex. No `@unchecked Sendable` is left in SummarizationStageTests.swift or SummarizationStageCompactorTests.swift. The file is 90,459 bytes, under the review prompt cap.
+    - next: test
+  timestamp: 2026-09-22T18:33:39.691861+00:00
+- actor: claude-code
+  id: 01m356a8zg7hgrt8r6rrmxb958
+  text: |-
+    ### test — green
+    - evidence: swift test — 1353 tests in 145 suites passed, 1 test in 1 suite passed, 83 tests in 10 suites passed; 0 failed; 2 pre-existing known issues (RealModelHarnessTests.swift, BoundedWaitTests.swift). swift build --build-tests: no compiler warning. swift build --package-path IntegrationTests --build-tests: Build complete.
+    - next: commit
+  timestamp: 2026-09-22T18:33:41.104907+00:00
 position_column: doing
 position_ordinal: '80'
 title: Count tokens with the model's tokenizer; delete charsPerTokenEstimate
@@ -144,3 +172,12 @@ Before ^pke18c2 (the one-call compaction), which needs the counter for the summa
 - [x] `Tests/FoundationModelsRouterTests/SummarizationStageTests.swift:1` `review-engine/prompt-cap` — This file exceeds the review prompt cap — 336782 rendered bytes against the 262144-byte per-file cap — so these validators could not review it: duplication. Split the file into smaller modules that fit the review prompt cap.
 - [x] `Tests/FoundationModelsRouterTests/TokenizerTokenCounterTests.swift:32` `code-hygiene/disallowed-constructs-swift` — no_unchecked_sendable: Instead of @unchecked Sendable, write a plain Sendable conformance or a @preconcurrency import. If the type really must be @unchecked Sendable, write // swiftlint:disable:next no_unchecked_sendable above it with the synchronization invariant that makes the type thread-safe.
 - [x] `Tests/FoundationModelsRouterTests/ToolOutputProtectionTests.swift:253` `swift/naming-clarity` — The doc comment states 'The size, in characters' but the variable name is `protectedOutputTokens` and the context of this change is converting to token-based counting. The comment should clearly reflect that this measures tokens, not characters. Update the comment to 'The size, in tokens, of the protected tool output the fixture holds.' to accurately document that this property counts tokens.
+
+## Review Findings (2026-09-22 13:20)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 7 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/SummarizationStageTests.swift:45` `code-hygiene/disallowed-constructs-swift` — no_unchecked_sendable: Instead of @unchecked Sendable, write a plain Sendable conformance or a @preconcurrency import. If the type really must be @unchecked Sendable, write // swiftlint:disable:next no_unchecked_sendable above it with the synchronization invariant that makes the type thread-safe.
