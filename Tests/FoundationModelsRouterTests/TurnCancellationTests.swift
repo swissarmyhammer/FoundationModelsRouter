@@ -519,9 +519,13 @@ struct TurnCancellationTests {
     /// rather than left to the `0.50` default so the compaction's target size is
     /// visible at the call site.
     ///
-    /// Inert either way: at this scale the target — and the halved one the
-    /// overflow retry compacts harder to — stays far above the transcript.
+    /// Inert either way: at this scale the target — and the overflow retry's
+    /// target, which is never above it — stays far above the transcript.
     private static let inertCompactionTarget = 0.25
+
+    /// The response ceiling an overflowing turn in this suite names. See
+    /// ``AutoCompactionFixtures/retryableResponseCeiling``.
+    private static let retryableResponseCeiling = AutoCompactionFixtures.retryableResponseCeiling
 
     /// The auto-compaction opt-in ``cancellationSurvivesIntoTheOverflowRetry(route:)``
     /// vends its session with: enough to turn on the reactive
@@ -1444,7 +1448,9 @@ struct TurnCancellationTests {
                 .init(contextSize: 100, tokenCount: 150, debugDescription: "stub context overflow"))
         }
 
-        let turnTask = Task { try await session.respond(to: "overflow-then-cancel") }
+        let turnTask = Task {
+            try await session.respond(to: "overflow-then-cancel", maxTokens: Self.retryableResponseCeiling)
+        }
         await insideTool.wait()
         // Both routes must behave identically here: neither may let the retry
         // re-enter the model on behalf of a turn already cancelled.
@@ -1897,7 +1903,9 @@ struct TurnCancellationTests {
                 .init(contextSize: 100, tokenCount: 150, debugDescription: "stub context overflow"))
         }
 
-        let turnTask = Task { try await session.respond(to: Self.overflowingCompactionPrompt) }
+        let turnTask = Task {
+            try await session.respond(to: Self.overflowingCompactionPrompt, maxTokens: Self.retryableResponseCeiling)
+        }
         await insideSummarizer.wait()
         #expect(await session.cancelCurrentTurn() == .requested)
         try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)

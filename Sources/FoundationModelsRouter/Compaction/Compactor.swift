@@ -40,6 +40,11 @@ public struct CompactionResult: Sendable, Equatable {
     /// target. This value tells the host why.
     public let protectedTokens: Int
 
+    /// The target the retry after a context overflow computed for this
+    /// compaction, or `nil` for every other compaction. It states what the
+    /// retry aimed for and why.
+    public let overflowRetryTarget: OverflowRetryTarget?
+
     /// Creates a compaction result.
     ///
     /// - Parameters:
@@ -53,6 +58,8 @@ public struct CompactionResult: Sendable, Equatable {
     ///   - stagesApplied: The stages that ran, in order.
     ///   - protectedTokens: The size of the protected tool outputs the
     ///     compacted transcript keeps. Defaults to `0`.
+    ///   - overflowRetryTarget: The target the retry after a context overflow
+    ///     computed, or `nil`. Defaults to `nil`.
     public init(
         id: String = ULID.generate().description,
         summary: String?,
@@ -62,7 +69,8 @@ public struct CompactionResult: Sendable, Equatable {
         tokensBefore: Int,
         tokensAfter: Int,
         stagesApplied: [String],
-        protectedTokens: Int = 0
+        protectedTokens: Int = 0,
+        overflowRetryTarget: OverflowRetryTarget? = nil
     ) {
         self.id = id
         self.summary = summary
@@ -73,6 +81,7 @@ public struct CompactionResult: Sendable, Equatable {
         self.tokensAfter = tokensAfter
         self.stagesApplied = stagesApplied
         self.protectedTokens = protectedTokens
+        self.overflowRetryTarget = overflowRetryTarget
     }
 
     /// Returns a copy of this result that names the model that wrote its
@@ -82,7 +91,29 @@ public struct CompactionResult: Sendable, Equatable {
     /// - Returns: The named copy, or `self`.
     func withSummarizerModel(_ modelName: String?) -> CompactionResult {
         guard summary != nil, let modelName else { return self }
-        return CompactionResult(
+        return copy(summarizerModel: modelName, overflowRetryTarget: overflowRetryTarget)
+    }
+
+    /// Returns a copy of this result that carries the target the retry after
+    /// a context overflow computed for it.
+    ///
+    /// - Parameter target: The target the retry computed.
+    /// - Returns: The copy that carries `target`.
+    func withOverflowRetryTarget(_ target: OverflowRetryTarget) -> CompactionResult {
+        copy(summarizerModel: summarizerModel, overflowRetryTarget: target)
+    }
+
+    /// Returns a copy of this result with the two values a session adds after
+    /// the pipeline ran. Every other field is copied unchanged.
+    ///
+    /// - Parameters:
+    ///   - modelName: The ``ModelRef`` string of the summary's writer, or `nil`.
+    ///   - target: The target the retry after a context overflow computed, or `nil`.
+    /// - Returns: The copy.
+    private func copy(summarizerModel modelName: String?, overflowRetryTarget target: OverflowRetryTarget?)
+        -> CompactionResult
+    {
+        CompactionResult(
             id: id,
             summary: summary,
             summaryEntryId: summaryEntryId,
@@ -91,7 +122,8 @@ public struct CompactionResult: Sendable, Equatable {
             tokensBefore: tokensBefore,
             tokensAfter: tokensAfter,
             stagesApplied: stagesApplied,
-            protectedTokens: protectedTokens
+            protectedTokens: protectedTokens,
+            overflowRetryTarget: target
         )
     }
 }

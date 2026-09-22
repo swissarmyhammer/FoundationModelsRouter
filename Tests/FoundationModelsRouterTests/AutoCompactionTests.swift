@@ -265,6 +265,30 @@ struct AutoCompactionTests {
         }
 
         func respond(to prompt: String, maxTokens: Int?) async throws -> String {
+            try answer(prompt)
+        }
+
+        /// Streams the same outcome ``respond(to:maxTokens:)`` gives, so a turn that
+        /// ``RoutedSession/streamEvents(to:maxTokens:)`` drives overflows the same way.
+        func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
+            AsyncThrowingStream { continuation in
+                do {
+                    continuation.yield(try answer(prompt))
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+
+        /// Counts the call, then throws the overflow while one remains, or appends
+        /// the prompt and the response and answers.
+        ///
+        /// - Parameter prompt: The prompt of the call.
+        /// - Returns: ``responseText``.
+        /// - Throws: `LanguageModelError.contextSizeExceeded` while
+        ///   ``overflowsRemaining`` is positive.
+        private func answer(_ prompt: String) throws -> String {
             callLog.increment()
             if overflowsRemaining > 0 {
                 overflowsRemaining -= 1
@@ -275,13 +299,6 @@ struct AutoCompactionTests {
             entries.append(
                 .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: responseText))])))
             return responseText
-        }
-
-        func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
-            AsyncThrowingStream { continuation in
-                continuation.yield(responseText)
-                continuation.finish()
-            }
         }
 
         func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws -> String {
@@ -381,16 +398,19 @@ struct AutoCompactionTests {
         // path this test targets from the proactive one. `target: 0.35`'s
         // own `limit` is derived from the seeded transcript's own counted
         // size (mirrors `ExamplesTests.reactiveCompactionRecoversFromContextOverflow()`),
-        // guaranteeing the lowered-target retry compaction actually drops
-        // something real (`TurnTruncation` alone lands under it) rather
-        // than no-op'ing on an already-under-target transcript.
+        // guaranteeing the retry's compaction actually drops something real
+        // (`TurnTruncation` alone lands under it) rather than no-op'ing on an
+        // already-under-target transcript. The window leaves far more room than
+        // that target, so the retry compacts to the configured target.
         let session = try profile.standard.makeSession(
             budget: TokenBudget(limit: Self.reactiveRetryContextTokens(seedEntries), target: 0.35))
 
         // No `do`/`catch` here at all — unlike `ExamplesTests.respondWithReactiveCompaction`,
         // which the caller must wrap manually, this session recovers on its
-        // own.
-        let response = try await session.respond(to: "keep going")
+        // own. The turn names a ceiling far under the window, so the window
+        // keeps room for the transcript and the retry runs.
+        let response = try await session.respond(
+            to: "keep going", maxTokens: AutoCompactionFixtures.retryableResponseCeiling)
 
         #expect(response == "recovered")
         // The backend was called twice: the overflowing first attempt, then
@@ -423,7 +443,8 @@ struct AutoCompactionTests {
 
         var caughtOverflow = false
         do {
-            _ = try await session.respond(to: "keep going")
+            _ = try await session.respond(
+                to: "keep going", maxTokens: AutoCompactionFixtures.retryableResponseCeiling)
         } catch LanguageModelError.contextSizeExceeded {
             caughtOverflow = true
         }
@@ -460,7 +481,11 @@ struct AutoCompactionTests {
         // mid-turn rather than only once the whole turn finished.
         standard.lastBackend?.usageIncrement = (input: 1_000, output: 0)
 
-        let events = eventsAfterTurnFrame(try await collectEvents(session, prompt: "turn 6"))
+        // The turn names a ceiling far under the window, so the window keeps room
+        // for the transcript and the retry runs.
+        let events = eventsAfterTurnFrame(
+            try await collect(
+                session.streamEvents(to: "turn 6", maxTokens: AutoCompactionFixtures.retryableResponseCeiling)))
 
         guard case .turnEnded(let blockedUsage) = events.first else {
             Issue.record(
@@ -507,7 +532,7 @@ struct AutoCompactionTests {
         // (`makeTriggeredSession`'s `router.resolve(profile: RouterTestFixtures.profile(context: 100_000)...)`),
         // and `target: 0.9` sits far above the tiny warm-up transcript's real
         // size, so every compaction this budget drives — including the reactive
-        // retry's own lowered-target compaction — is a genuine no-op (nothing to
+        // retry's own compaction, whose target is never above this one — is a genuine no-op (nothing to
         // shrink): `contextFill` never actually moves once measured. That
         // deterministically guarantees the retry's own pre-check sees the
         // exact same fill that tripped the first attempt, rather than
@@ -524,7 +549,9 @@ struct AutoCompactionTests {
         var collected: [SessionEvent] = []
         var caught: Error?
         do {
-            for try await event in await session.streamEvents(to: "turn 6", maxTokens: nil) {
+            for try await event in await session.streamEvents(
+                to: "turn 6", maxTokens: AutoCompactionFixtures.retryableResponseCeiling)
+            {
                 collected.append(event)
             }
         } catch {
@@ -553,6 +580,128 @@ struct AutoCompactionTests {
         // Both attempts were blocked pre-flight; the original backend was
         // never asked to generate again after the warm-up turns.
         #expect(standard.lastBackend?.callCount == callsBeforeTriggeringTurn)
+    }
+
+    // MARK: - The retry compacts to the room the turn needs (task m39wmx1)
+
+    /// The window, in tokens, of the sessions the room tests vend.
+    private static let roomTestWindowTokens = 10_000
+
+    /// The size, in tokens, of the prompt of an overflowing turn that fits the
+    /// window. ``OverflowLLMContainer`` counts one token per `Character`.
+    private static let roomTestPromptTokens = 1_000
+
+    /// The response ceiling, in tokens, the overflowing turn names.
+    private static let roomTestResponseCeiling = 2_000
+
+    /// A configured target above the room the turn leaves: 8,000 of the
+    /// 10,000-token window.
+    private static let targetAboveRoom = 0.8
+
+    /// A configured target below the room the turn leaves: 5,000 of the
+    /// 10,000-token window.
+    private static let targetBelowRoom = 0.5
+
+    /// Vends a session on a ``roomTestWindowTokens`` window whose backend
+    /// overflows `overflowsRemaining` times, with a budget whose limit is the
+    /// window and whose target is `target`.
+    ///
+    /// - Parameters:
+    ///   - target: The configured target of the budget, as a fraction of the window.
+    ///   - overflowsRemaining: How many calls the backend fails with an overflow.
+    /// - Returns: The session and its container.
+    /// - Throws: Whatever profile resolution throws.
+    private static func makeRoomTestSession(
+        target: Double, overflowsRemaining: Int
+    ) async throws -> (session: RoutedSession, container: OverflowLLMContainer) {
+        let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
+        let container = OverflowLLMContainer(
+            responseText: "recovered", seedEntries: [], overflowsRemaining: overflowsRemaining)
+        let loader = PerSlotModelLoader(
+            standard: container, flash: ConfiguredLLMContainer(responseText: "FLASH-SUMMARY"),
+            dimension: RouterTestFixtures.stubDimension)
+        let router = RouterTestFixtures.makeRouter(cacheDir: dir, recorder: InMemoryRecorder(), loader: loader)
+        let profile = try await router.resolve(
+            profile: RouterTestFixtures.profile(context: roomTestWindowTokens), reporting: ResolutionProgress())
+        let session = profile.standard.makeSession(
+            budget: TokenBudget(limit: roomTestWindowTokens, target: target))
+        return (session, container)
+    }
+
+    /// The retry targets the `.compaction` events in `events` carry, in order.
+    private static func overflowRetryTargets(in events: [SessionEvent]) -> [OverflowRetryTarget] {
+        events.compactMap { event in
+            guard case .compaction(let result) = event else { return nil }
+            return result.overflowRetryTarget
+        }
+    }
+
+    /// Drives one turn with a ``roomTestPromptTokens``-token prompt and a
+    /// ``roomTestResponseCeiling`` ceiling on a session whose backend overflows
+    /// once, and returns the target its retry computed.
+    ///
+    /// - Parameter target: The configured target of the budget.
+    /// - Returns: The retry's target, and the number of model calls the turn made.
+    /// - Throws: Whatever the turn throws, or a failed `#require`.
+    private static func retryTargetOfOneOverflow(
+        target: Double
+    ) async throws -> (target: OverflowRetryTarget, calls: Int) {
+        let (session, container) = try await makeRoomTestSession(target: target, overflowsRemaining: 1)
+        let prompt = String(repeating: "x", count: roomTestPromptTokens)
+        let events = try await collect(session.streamEvents(to: prompt, maxTokens: roomTestResponseCeiling))
+        #expect(events.contains(.textDelta("recovered")))
+        let retryTarget = try #require(overflowRetryTargets(in: events).first)
+        return (retryTarget, container.callLog.count)
+    }
+
+    @Test(
+        "an overflow with a 1,000-token prompt on a 10,000-token window with a 2,000-token ceiling compacts to 7,000 tokens"
+    )
+    @MainActor
+    func overflowRetryCompactsToTheRoomTheTurnNeeds() async throws {
+        let (target, calls) = try await Self.retryTargetOfOneOverflow(target: Self.targetAboveRoom)
+
+        #expect(target.contextTokens == 10_000)
+        #expect(target.promptTokens == 1_000)
+        #expect(target.responseTokenCeiling == 2_000)
+        #expect(target.roomTokens == 7_000)
+        #expect(target.configuredTargetTokens == 8_000)
+        #expect(target.targetTokens == 7_000)
+        // The overflowing attempt and the one retry.
+        #expect(calls == 2)
+    }
+
+    @Test("the retry's target is capped at the configured target when the configured target is lower than the room")
+    @MainActor
+    func overflowRetryTargetIsCappedAtTheConfiguredTarget() async throws {
+        let (target, calls) = try await Self.retryTargetOfOneOverflow(target: Self.targetBelowRoom)
+
+        #expect(target.roomTokens == 7_000)
+        #expect(target.configuredTargetTokens == 5_000)
+        #expect(target.targetTokens == 5_000)
+        #expect(calls == 2)
+    }
+
+    @Test("an overflow whose prompt is larger than the window retries nothing and throws the overflow")
+    @MainActor
+    func overflowWithAPromptLargerThanTheWindowDoesNotRetry() async throws {
+        let (session, container) = try await Self.makeRoomTestSession(
+            target: Self.targetAboveRoom, overflowsRemaining: 1)
+        let prompt = String(repeating: "x", count: Self.roomTestWindowTokens + 1)
+
+        var events: [SessionEvent] = []
+        let caught = await #expect(throws: LanguageModelError.self) {
+            for try await event in await session.streamEvents(to: prompt, maxTokens: Self.roomTestResponseCeiling) {
+                events.append(event)
+            }
+        }
+
+        var isOverflow = false
+        if case .contextSizeExceeded? = caught { isOverflow = true }
+        #expect(isOverflow)
+        // One attempt, and no compaction: no compaction can make the turn fit.
+        #expect(container.callLog.count == 1)
+        #expect(!events.contains { if case .compaction = $0 { return true }; return false })
     }
 
     // MARK: - Tools + budget composition (task 4ce0a1k)

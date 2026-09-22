@@ -316,8 +316,8 @@ extension RoutedSessionActor {
     /// A failed attempt is recorded, and then
     /// ``recoverFailedAttempt(from:grammar:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetries:_:)``
     /// runs the attempt again when a recovery applies: a rejected tool call
-    /// goes back to the model, and a recoverable context overflow compacts to a
-    /// lower target and retries once when `allowOverflowRetry` is set.
+    /// goes back to the model, and a recoverable context overflow compacts to the
+    /// room the turn needs and retries once when `allowOverflowRetry` is set.
     ///
     /// - Parameters:
     ///   - grammar: The grammar in force for this turn.
@@ -411,8 +411,11 @@ extension RoutedSessionActor {
     ///   turn, or the context fills. Each retry's prompt carries the earlier
     ///   tool errors, so a model that never corrects its call reaches the
     ///   overflow path.
-    /// - A recoverable context overflow compacts to a lower target and retries
-    ///   once, when `allowOverflowRetry` is set.
+    /// - A recoverable context overflow compacts to the room the turn needs
+    ///   (``OverflowRetryTarget``) and retries once, when `allowOverflowRetry`
+    ///   is set. When the prompt and the response ceiling alone fill the
+    ///   window, no compaction helps: the turn does not retry, and `error`
+    ///   reaches the caller.
     ///
     /// The caller has already recorded the failed attempt, so the retry
     /// carries no pending events.
@@ -453,11 +456,16 @@ extension RoutedSessionActor {
             throw error
         }
 
-        let loweredBudget = TokenBudget(
-            limit: budget.limit, trigger: budget.trigger, target: Self.loweredRetryTarget(from: budget.target)
-        )
-        let result = try await performAutoCompaction(prompt: autoCompactionPrompt, budget: loweredBudget)
-        onEvent?(.compaction(result))
+        let retryTarget = overflowRetryTarget(
+            retryPrompt: ownPrompt, responseTokenCeiling: responseTokenCeiling, budget: budget)
+        retryTarget?.log(sessionID: id)
+        guard let retryTarget, retryTarget.leavesRoom else {
+            throw error
+        }
+
+        let result = try await performAutoCompaction(
+            prompt: autoCompactionPrompt, budget: retryTarget.budget(lowering: budget))
+        onEvent?(.compaction(result.withOverflowRetryTarget(retryTarget)))
 
         return try await runTurnAttempt(
             grammar: grammar, pendingEvents: [], ownPrompt: ownPrompt,
@@ -656,16 +664,26 @@ extension RoutedSessionActor {
         return false
     }
 
-    /// The divisor ``loweredRetryTarget(from:)`` applies to a budget's configured target.
-    private static let retryTargetHalvingDivisor: Double = 2
-
-    /// The compaction target the overflow-recovery retry compacts to: strictly lower
-    /// than the budget's configured target, with no absolute floor.
+    /// The compaction target of the retry after a context overflow: the room the
+    /// window keeps for the transcript after the retry's prompt and response room.
     ///
-    /// - Parameter target: The budget's own configured target.
-    /// - Returns: The lowered target the retry's compaction uses.
-    private static func loweredRetryTarget(from target: Double) -> Double {
-        target / retryTargetHalvingDivisor
+    /// The retry's prompt is measured with this session's ``tokenCounter``,
+    /// the tokenizer of its model. The retry carries no pending events, so its
+    /// composed prompt is `retryPrompt` unchanged.
+    ///
+    /// - Parameters:
+    ///   - retryPrompt: The prompt text the retry sends.
+    ///   - responseTokenCeiling: The token ceiling the turn gave the backend, or `nil`.
+    ///   - budget: The session's own budget.
+    /// - Returns: The target, or `nil` when the turn gave the backend no ceiling.
+    private func overflowRetryTarget(
+        retryPrompt: String, responseTokenCeiling: Int?, budget: TokenBudget
+    ) -> OverflowRetryTarget? {
+        OverflowRetryTarget(
+            contextTokens: contextTokens,
+            promptTokens: tokenCounter.count(Self.composedPrompt(pendingEvents: [], prompt: retryPrompt)),
+            responseTokenCeiling: responseTokenCeiling,
+            configuredTargetTokens: budget.targetTokens)
     }
 
     /// Runs the earliest still-pending queued prompt as one normal recorded turn.
