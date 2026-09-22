@@ -106,8 +106,15 @@ extension RoutedSessionActor: ToolInvocationObserver {
     /// Delivers one live ``ToolInvocationRecord`` as
     /// ``SessionEvent/toolInvocation(_:)``. See ``deliverLive(_:)``.
     ///
+    /// An open record ends the generation call that asked for the tool, so
+    /// that call's usage is reported first (see
+    /// ``reportGenerationCallAtToolOpen()``).
+    ///
     /// - Parameter record: The record the outbox forwarded.
-    func deliver(invocation record: ToolInvocationRecord) {
+    func deliver(invocation record: ToolInvocationRecord) async {
+        if record.closedAt == nil {
+            await reportGenerationCallAtToolOpen()
+        }
         deliverLive(.toolInvocation(record))
     }
 

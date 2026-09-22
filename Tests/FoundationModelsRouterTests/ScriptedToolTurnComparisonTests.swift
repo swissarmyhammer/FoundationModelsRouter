@@ -123,7 +123,7 @@ struct ScriptedToolTurnComparisonTests {
                 failedIds.append(id)
             case .turnStarted, .toolStatus, .toolInvocation, .toolCallReport, .reasoningDelta, .entryRecorded,
                 .compaction, .discoveryPrimingFailed, .generationStalled, .runSettled, .elicitationRequested,
-                .turnEnded:
+                .generationCall, .turnEnded:
                 break
             }
         }

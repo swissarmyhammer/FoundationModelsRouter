@@ -304,13 +304,19 @@ struct ToolInvocationLivenessTests {
         let pending = await fixture.session.outbox.pending()
         #expect(pending.events.isEmpty)
 
-        // Not recorded: the persisted shape of a tool-using turn is exactly
-        // what the post-turn diff alone records — the session meta line, then
-        // the turn's own SDK entries (instructions included, the same shape
-        // `ScriptedToolTurnComparisonTests` asserts on the raw transcript).
-        // No invocation record reaches the recorder.
+        // Not recorded: the persisted shape of a tool-using turn is the
+        // session meta line, the usage of the generation call that asked for
+        // the tool (written at the tool's open, before the diff), the turn's
+        // own SDK entries as the post-turn diff records them (instructions
+        // included, the same shape `ScriptedToolTurnComparisonTests` asserts
+        // on the raw transcript), and the usage of the answering call. No
+        // invocation record reaches the recorder.
         let recordedKinds = await fixture.recorder.events.map(\.kind)
-        #expect(recordedKinds == [.session, .instructions, .prompt, .toolCalls, .toolOutput, .response])
+        #expect(
+            recordedKinds == [
+                .session, .generationCall, .instructions, .prompt, .toolCalls, .toolOutput, .response,
+                .generationCall,
+            ])
     }
 
     // MARK: - Projection phase
@@ -646,11 +652,16 @@ struct ToolInvocationLivenessTests {
         #expect(events.compactMap(\.carriedReport).count == 1)
         let pending = await fixture.session.outbox.pending()
         #expect(pending.events.isEmpty)
-        // The persisted shape is the one the post-turn diff alone records, the
-        // same shape `invocationRecordsAreDeliveryOnlyAndChangeNoRecording`
-        // asserts for a turn with no attachments.
+        // The persisted shape is the one the post-turn diff and the per-call
+        // usage reports record, the same shape
+        // `invocationRecordsAreDeliveryOnlyAndChangeNoRecording` asserts for a
+        // turn with no attachments. No report reaches the recorder.
         let recordedKinds = await fixture.recorder.events.map(\.kind)
-        #expect(recordedKinds == [.session, .instructions, .prompt, .toolCalls, .toolOutput, .response])
+        #expect(
+            recordedKinds == [
+                .session, .generationCall, .instructions, .prompt, .toolCalls, .toolOutput, .response,
+                .generationCall,
+            ])
     }
 
     @Test("a ToolRun whose sink is a plain OperationEventSink drops the report without a trap and still posts both records")

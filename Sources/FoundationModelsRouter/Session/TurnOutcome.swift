@@ -77,11 +77,12 @@ struct TurnOutcomeFold {
             // attempt's usage with the retry's — the closing value.
             usage = attemptUsage
         case .turnStarted, .reasoningDelta, .entryRecorded, .discoveryPrimingFailed,
-            .generationStalled, .runSettled, .toolCallReport, .elicitationRequested:
+            .generationStalled, .runSettled, .toolCallReport, .elicitationRequested, .generationCall:
             // Deliberately not carried by the outcome: the frame, the priming
             // report, the stall report, a background run's settlement, a
-            // call's attachments, and a pending elicitation are live-driver
-            // concerns — a stall report says the turn is still running and
+            // call's attachments, a pending elicitation, and one generation
+            // call's usage are live-driver concerns — the closing `usage`
+            // sums every generation call, a stall report says the turn is still running and
             // changes nothing about what it finally produced, so it has no
             // place in a finished turn's outcome, a tool call report carries
             // records only a host can decode, and an elicitation request is a

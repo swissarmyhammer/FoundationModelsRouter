@@ -90,6 +90,16 @@ public enum SessionEvent: Sendable, Equatable {
     /// so it never reaches this event.
     case elicitationRequested(OperationEvent)
 
+    /// One generation call of the attempt in flight ended, with its own
+    /// measured usage. An attempt that calls a tool makes more than one
+    /// generation call, and ``turnEnded(_:)`` sums them. This event reports
+    /// each call alone: one when a tool call of the session's own turn opens,
+    /// for the call that asked for the tool, and one when the attempt closes,
+    /// for the last call. A backend that reports no usage gives none. The
+    /// run journal records each one as a ``TranscriptEvent/Kind/generationCall``
+    /// event.
+    case generationCall(GenerationCallUsage)
+
     /// One generate attempt closed, with its measured token usage. Emitted once per inner generate call.
     case turnEnded(TokenUsage)
 }

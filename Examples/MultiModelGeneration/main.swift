@@ -107,7 +107,8 @@ func runObservedTurn(
                 "[\(label)] turnEnded tokensIn=\(usage.tokensIn) tokensOut=\(usage.tokensOut) contextFill=\(percent)%"
             )
         case .reasoningDelta, .toolCall, .toolStatus, .toolInvocation, .toolCallReport,
-            .compaction, .discoveryPrimingFailed, .generationStalled, .runSettled, .elicitationRequested:
+            .compaction, .discoveryPrimingFailed, .generationStalled, .runSettled, .elicitationRequested,
+            .generationCall:
             // Silent by construction — see this function's documentation.
             break
         }

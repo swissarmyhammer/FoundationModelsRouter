@@ -345,6 +345,8 @@ extension RoutedSessionActor {
 
         let started = Date()
         let usageBefore = backend.usageTokenCounts()
+        // Open for this attempt alone. `finishTurn` closes it on both exits.
+        openGenerationCallLedger(usageBefore: usageBefore, responseTokenCeiling: responseTokenCeiling)
         do {
             // The hard-ceiling pre-check (compaction_plan.md §1.7, task g2hcm36):
             // when the budget opts into ``TokenBudget/hardCeiling``, measured

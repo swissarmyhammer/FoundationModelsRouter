@@ -417,6 +417,11 @@ actor RoutedSessionActor: RoutedSession {
     /// ``SessionEvent/toolInvocation(_:)`` to the current turn.
     var currentTurnEventSink: ((SessionEvent) -> Void)?
 
+    /// The ledger of the generate attempt in flight, or `nil` between
+    /// attempts and when the backend reports no usage. See
+    /// ``GenerationCallLedger``.
+    var generationCallLedger: GenerationCallLedger?
+
     /// The stall watch over the one model call in flight, or `nil` between
     /// calls. See ``beginGenerationStallWatch()`` and ``GenerationStall``.
     var generationStallWatch: GenerationStallWatch?

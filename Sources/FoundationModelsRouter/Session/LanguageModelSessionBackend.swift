@@ -87,8 +87,11 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// backend cannot report usage.
     ///
     /// Call this only while the owning session's turn lock
-    /// (``RoutedSessionActor/turnLock``) is held. The counts are running
-    /// totals since the session began, not a per-turn delta.
+    /// (``RoutedSessionActor/turnLock``) is held. The one exception is a tool
+    /// call of the owning session's own turn, where the model waits in the
+    /// tool and no concurrent writer exists
+    /// (``RoutedSessionActor/reportGenerationCallAtToolOpen()``). The counts
+    /// are running totals since the session began, not a per-turn delta.
     func usageTokenCounts() -> (input: Int, output: Int)?
 
     /// The output token count of the last generation call that the most

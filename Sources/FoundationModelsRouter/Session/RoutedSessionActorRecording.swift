@@ -34,12 +34,21 @@ extension RoutedSessionActor {
         let usage = Self.usageDelta(before: usageBefore, after: backend.usageTokenCounts())
         // Read before the diff below, which moves the baseline past this
         // attempt's entries.
+        let turnEntries = unrecordedTranscriptEntries()
         let finishReason = FinishReason(
-            turnEntries: unrecordedTranscriptEntries(), outputTokens: usage?.output,
+            turnEntries: turnEntries, outputTokens: usage?.output,
             lastCallOutputTokens: backend.lastGenerationCallOutputTokenCount(),
             responseTokenCeiling: responseTokenCeiling)
+        // The last generation call of the attempt. Taken before the diff for
+        // the same reason, and reported after it, so its journal event
+        // follows the entries the call left.
+        let lastGenerationCall = takeGenerationCall(leaving: GenerationCallEntryKind(leftBy: turnEntries))
+        closeGenerationCallLedger()
         let (diffIncludedResponse, pendingEventsAttached) = await recordTranscriptDelta(
             grammar: grammar, since: since, usage: usage, pendingEvents: pendingEvents, onEvent: onEvent)
+        if let lastGenerationCall {
+            await report(generationCall: lastGenerationCall)
+        }
         // Only a turn whose diff actually included a `.response`-kind entry
         // measured the whole transcript (generation is stateless, so that
         // turn's own delta *is* the whole transcript's size) — a turn
@@ -77,7 +86,7 @@ extension RoutedSessionActor {
     /// gives only its new entries.
     ///
     /// - Returns: The unrecorded entries, in transcript order.
-    private func unrecordedTranscriptEntries() -> [Transcript.Entry] {
+    func unrecordedTranscriptEntries() -> [Transcript.Entry] {
         let recordedIds = Set(persistedBaseline.entryIds)
         return backend.transcriptEntries().filter { !recordedIds.contains($0.id) }
     }
@@ -333,7 +342,7 @@ extension RoutedSessionActor {
             onEvent(.entryRecorded(id: entry.entryId, kind: .reasoning))
         case .response:
             onEvent(.entryRecorded(id: entry.entryId, kind: .response))
-        case .session, .instructions, .prompt, .embedding, .divergence, .toolCall, .unknown:
+        case .session, .instructions, .prompt, .embedding, .divergence, .generationCall, .toolCall, .unknown:
             break
         }
     }

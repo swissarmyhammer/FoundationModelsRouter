@@ -13,7 +13,8 @@ import Foundation
 public struct TranscriptEvent: Sendable, Codable, Equatable {
     /// What kind of moment an event records. Six kinds mirror
     /// `FoundationModels.Transcript.Entry` cases. ``session``, ``embedding``,
-    /// and ``divergence`` are router-only. ``unknown`` carries a newer SDK case.
+    /// ``divergence`` and ``generationCall`` are router-only. ``unknown``
+    /// carries a newer SDK case.
     public enum Kind: String, Sendable, Codable, Equatable {
         /// The session was created (its first event).
         case session
@@ -37,6 +38,13 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         /// recorded baseline (see ``TranscriptDiffer/divergence(from:in:)``).
         /// Router-only. ``TranscriptEvent/text`` holds the description.
         case divergence
+        /// One generation call of a turn ended (see
+        /// ``SessionEvent/generationCall(_:)``). Router-only.
+        /// ``TranscriptEvent/tokensIn`` and ``TranscriptEvent/tokensOut`` hold
+        /// the counts of that one call, and ``TranscriptEvent/text`` holds the
+        /// ``GenerationCallUsage/description``. A reader of the turn's usage
+        /// stamp skips it: the stamp stays on the last `.response` event.
+        case generationCall
         /// A tool invocation was requested. Deprecated: ``toolCalls`` replaces
         /// it. Kept so pre-v2 recordings decode.
         case toolCall
@@ -52,7 +60,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
             switch self {
             case .instructions, .prompt, .toolCalls, .toolOutput, .response, .reasoning, .unknown:
                 return true
-            case .session, .embedding, .divergence, .toolCall:
+            case .session, .embedding, .divergence, .generationCall, .toolCall:
                 return false
             }
         }
@@ -113,7 +121,8 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     /// `true` when this event mirrors a `FoundationModels.Transcript.Entry`
     /// that a reader can rebuild: an entry kind that is not the router's
     /// failed-turn close. `false` for every router-only marker (``Kind/session``,
-    /// ``Kind/embedding``, ``Kind/divergence``, the legacy ``Kind/toolCall``)
+    /// ``Kind/embedding``, ``Kind/divergence``, ``Kind/generationCall``, the
+    /// legacy ``Kind/toolCall``)
     /// and for the close, none of which carries an entry. A reader that
     /// rebuilds the SDK's transcript skips an event where this is `false`. An
     /// entry-kind event with no `entry` (a v1 line) still reads `true`, so that

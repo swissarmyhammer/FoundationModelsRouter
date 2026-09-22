@@ -159,7 +159,8 @@ public final class SessionProjection {
             phase = .compacting
             transcript.append(
                 TranscriptEntry(id: result.id, kind: .compaction(result), sourceEntryId: result.summaryEntryId))
-        case .discoveryPrimingFailed, .generationStalled, .runSettled, .toolCallReport, .elicitationRequested:
+        case .discoveryPrimingFailed, .generationStalled, .runSettled, .toolCallReport, .elicitationRequested,
+            .generationCall:
             // Handled explicitly, and deliberately changes nothing. A settled
             // run's terminal reaches this mirror as the recorded tool output
             // of the turn that next carries it. A turn whose
@@ -171,7 +172,9 @@ public final class SessionProjection {
             // carries records for a host to decode, and the call's phase is
             // already mirrored from its ``SessionEvent/toolInvocation(_:)``
             // records. An elicitation request names a question only a host
-            // can answer, and the asking call is still running. So this
+            // can answer, and the asking call is still running. One
+            // generation call's usage is a part of the attempt's usage, and
+            // ``SessionEvent/turnEnded(_:)`` carries the sum. So this
             // projection's phase, transcript, and counters are already the
             // faithful mirror of what happened. All of them are for a driver
             // watching the event stream, not session state.
@@ -418,7 +421,7 @@ public final class SessionProjection {
                 rows.append(
                     TranscriptEntry(
                         id: payload.entryId, kind: .reasoning(text ?? ""), sourceEntryId: payload.entryId))
-            case .session, .instructions, .embedding, .divergence, .toolCall, .unknown:
+            case .session, .instructions, .embedding, .divergence, .generationCall, .toolCall, .unknown:
                 break
             }
         }
@@ -568,7 +571,7 @@ public final class SessionProjection {
                 superseded.formUnion(turnTextEntryIds)
                 turnTextEntryIds.append(payload.entryId)
             case .toolCalls, .toolOutput, .reasoning, .session, .instructions, .embedding, .divergence,
-                .toolCall, .unknown:
+                .generationCall, .toolCall, .unknown:
                 break
             }
         }
