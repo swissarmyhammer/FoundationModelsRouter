@@ -92,7 +92,8 @@ struct TranscriptNestingTests {
             "num_attention_heads": 8,
             "num_key_value_heads": 2,
             "head_dim": 16,
-            "hidden_size": 128
+            "hidden_size": 128,
+            "max_position_embeddings": 8192
         }
         """.utf8)
 
@@ -106,11 +107,10 @@ struct TranscriptNestingTests {
         RawRepoMetadata(configJSON: configJSON, treeJSON: treeJSON)
     }
 
-    /// `config.json` declaring an explicit `max_position_embeddings` (32768)
-    /// rather than falling back to ``RepoMetadata/defaultNativeMaxContext``
-    /// (8192) — so a `context: nil` profile's ladder derivation settles on a
-    /// figure distinguishable from both the explicit-context default and the
-    /// no-fields-present fallback.
+    /// `config.json` that declares a `max_position_embeddings` of 32768, not
+    /// the 8192 that ``configJSON`` declares. A `context: nil` profile derives
+    /// its ladder from this figure, so the derived context is different from
+    /// both the explicit-context default and the ``configJSON`` window.
     private static let configJSONWithNativeMax32768 = Data("""
         {
             "num_hidden_layers": 2,
@@ -587,9 +587,9 @@ struct TranscriptNestingTests {
 
         // Built directly (not through makeRouter(recorder:cacheDir:recordingsDir:))
         // so the metadata source can be swapped for one whose config.json
-        // declares a native max context (32768) instead of the shared
-        // fixture's implicit 8192 default — triggering the ladder to settle
-        // on a figure distinguishable from the explicit-context test above.
+        // declares a native max context of 32768 instead of the shared
+        // fixture's 8192 — triggering the ladder to settle on a figure
+        // distinguishable from the explicit-context test above.
         let router = Router(
             cacheDir: cacheDir,
             recordingsDir: recordingsDir,
@@ -613,7 +613,7 @@ struct TranscriptNestingTests {
         // budget at any rung, so the ladder settles on the candidate's own
         // native max context (32768) at its first (largest) rung — never
         // stepping down, and distinguishable from both the 8192
-        // explicit-context figure and the 8192 no-fields-present fallback.
+        // explicit-context figure and the shared fixture's 8192 window.
         let resolved = try #require(sidecar.profile)
         #expect(resolved.context == 32_768)
         #expect(resolved.standard == profile.standard.chosen)

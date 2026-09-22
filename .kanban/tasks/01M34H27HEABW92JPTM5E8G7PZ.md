@@ -66,8 +66,32 @@ comments:
     - evidence: `swift test` — 1356 tests in 145 suites passed (2 known issues, pre-existing), 1 test in 1 suite passed, 83 tests in 10 suites passed; 0 failures, 0 skipped, 0 Swift warnings. `swift build --package-path IntegrationTests --build-tests` — Build complete.
     - next: /commit, then /review 5e8g7pz HEAD~1..HEAD.
   timestamp: 2026-09-22T14:17:46.007675+00:00
-position_column: review
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m34qnz7m8g18w1g378tjswrd
+  text: |-
+    ### commit — changed (iteration 2)
+    - evidence: bdb12db fix(review): answer the review findings of the compaction rename
+    - next: /review 5e8g7pz HEAD~1..HEAD
+  timestamp: 2026-09-22T14:17:55.700007+00:00
+- actor: claude-code
+  id: 01m34qtyp9zjc6sx0q08a40y6v
+  text: |-
+    ### review — clean (iteration 2)
+    - evidence: `review sha HEAD~1..HEAD` — 0 findings, 0 confirmed, 0 refuted, 7 attempted; 4 files reviewed. Every prior finding is checked.
+    - task moved review -> done.
+  timestamp: 2026-09-22T14:20:38.985859+00:00
+- actor: claude-code
+  id: 01m34qvgn33qs52k9v7q866fz2
+  text: |-
+    ### finish iteration 1 — review clean, task in done
+    - implement: changed — 115 files renamed or rewritten, 4 files moved with `git mv`, `CompactionSegment.Content` gained explicit `CodingKeys` and a legacy-key decode path with two tests; second pass answered 5 review findings and released 1 by the written rule on tests that already existed
+    - test: green — `swift test`: 1356 tests in 145 suites, 1 test in 1 suite, 83 tests in 10 suites, all passed, 0 failures, 0 skipped, 0 Swift warnings; `swift build --package-path IntegrationTests --build-tests`: Build complete
+    - commit: 177a9b4, bdb12db
+    - review: clean — `review sha HEAD~1..HEAD` 0 findings after bdb12db; the earlier pass on 177a9b4 had 6 findings at Examples/CompactionDemo/main.swift:295, Examples/CompactionDemo/main.swift:329, IntegrationTests/.../CompactionContinuityEvalRealSubjectRunner.swift:258, Tests/FoundationModelsRouterTests/CompactionTracingTests.swift:116, Tests/FoundationModelsRouterTests/ExamplesTests.swift:663, Tests/FoundationModelsRouterTests/SummarizationStageTests.swift:1, all checked
+    - acceptance: `rg -i '\bfold(s|ed|ing)?\b'` finds nothing; `rg -oI '\b\w*[Ff]old\w*\b'` finds only scaffolding 9, folders 6, scaffold 5, foldedEntryIds 4 (the wire-format key), scaffolds 2, folder 1
+  timestamp: 2026-09-22T14:20:57.379131+00:00
+position_column: done
+position_ordinal: ffffdd80
 title: Replace "fold" with "compact" in code, comments, tests and docs
 ---
 ## Decision (from the owner, 2026-09-22)

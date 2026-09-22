@@ -206,7 +206,8 @@ struct ResolveTests {
             "num_attention_heads": 8,
             "num_key_value_heads": 2,
             "head_dim": 16,
-            "hidden_size": 128
+            "hidden_size": 128,
+            "max_position_embeddings": 8192
         }
         """.utf8)
 
@@ -796,7 +797,8 @@ struct ResolveTests {
             "num_attention_heads": 1,
             "num_key_value_heads": 1,
             "head_dim": 1,
-            "hidden_size": 1
+            "hidden_size": 1,
+            "max_position_embeddings": 8192
         }
         """.utf8)
 

@@ -66,27 +66,15 @@ struct RepoMetadata: Sendable, Equatable, Codable {
     /// The model's native maximum context length, from `max_position_embeddings`,
     /// then `n_positions`, then `max_seq_len`, then `seq_length`.
     ///
-    /// Defaults to ``defaultNativeMaxContext`` when none is present. Clamped to
-    /// `[nativeMaxContextFloor, nativeMaxContextCap]`.
+    /// The value is the raw `config.json` figure. No floor, cap or default is
+    /// applied. ``init(raw:repo:)`` fails when no field is present or when the
+    /// value is not positive.
     let nativeMaxContext: Int
-
-    /// Why ``nativeMaxContext`` differs from the raw `config.json` value, or `nil`
-    /// when it does not.
-    let nativeMaxContextDiagnostic: String?
-
-    /// The ceiling that ``nativeMaxContext`` is capped to.
-    static let nativeMaxContextCap = 1_048_576
-
-    /// The floor that ``nativeMaxContext`` is raised to.
-    static let nativeMaxContextFloor = 4096
-
-    /// The native max context used when `config.json` has no context-length field.
-    static let defaultNativeMaxContext = 8192
 
     /// Creates parsed metadata from already-resolved values.
     ///
     /// `numFullAttentionLayers` defaults to `numHiddenLayers`. `nativeMaxContext`
-    /// defaults to ``defaultNativeMaxContext``.
+    /// has no default; every caller passes the figure it read.
     init(
         weightBytes: Int64,
         numHiddenLayers: Int,
@@ -95,8 +83,7 @@ struct RepoMetadata: Sendable, Equatable, Codable {
         headDim: Int?,
         hiddenSize: Int?,
         numFullAttentionLayers: Int? = nil,
-        nativeMaxContext: Int = RepoMetadata.defaultNativeMaxContext,
-        nativeMaxContextDiagnostic: String? = nil
+        nativeMaxContext: Int
     ) {
         self.weightBytes = weightBytes
         self.numHiddenLayers = numHiddenLayers
@@ -106,14 +93,18 @@ struct RepoMetadata: Sendable, Equatable, Codable {
         self.hiddenSize = hiddenSize
         self.numFullAttentionLayers = numFullAttentionLayers ?? numHiddenLayers
         self.nativeMaxContext = nativeMaxContext
-        self.nativeMaxContextDiagnostic = nativeMaxContextDiagnostic
     }
 
     /// Parses sizing metadata from raw fetched artifacts.
     ///
+    /// - Parameters:
+    ///   - raw: The fetched `config.json` and tree listing.
+    ///   - repo: The Hugging Face repository id, e.g. `"org/repo"`. The error
+    ///     for a missing or non-positive context-length field names it.
     /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)`` when `config.json`
-    ///   is absent, does not parse, lacks required fields, or the tree has no `*.safetensors`.
-    init(raw: RawRepoMetadata) throws {
+    ///   is absent, does not parse, lacks required fields, has no positive
+    ///   context-length field, or the tree has no `*.safetensors`.
+    init(raw: RawRepoMetadata, repo: String) throws {
         guard let configJSON = raw.configJSON else {
             throw RepoMetadataError.metadataUnavailable("config.json is not present in the repo")
         }
@@ -138,9 +129,7 @@ struct RepoMetadata: Sendable, Equatable, Codable {
         // falls back to numHiddenLayers, preserving prior behavior.
         let numFullAttentionLayers = sizing.layerTypes?.filter { $0 == Self.fullAttentionLayerType }.count
             ?? sizing.numHiddenLayers
-        let (nativeMaxContext, nativeMaxContextDiagnostic) = Self.resolveNativeMaxContext(
-            raw: sizing.nativeMaxContextRaw
-        )
+        let nativeMaxContext = try Self.nativeMaxContext(from: sizing, repo: repo)
         self.init(
             weightBytes: weightBytes,
             numHiddenLayers: sizing.numHiddenLayers,
@@ -149,37 +138,33 @@ struct RepoMetadata: Sendable, Equatable, Codable {
             headDim: sizing.headDim,
             hiddenSize: sizing.hiddenSize,
             numFullAttentionLayers: numFullAttentionLayers,
-            nativeMaxContext: nativeMaxContext,
-            nativeMaxContextDiagnostic: nativeMaxContextDiagnostic
+            nativeMaxContext: nativeMaxContext
         )
     }
 
-    /// Clamps the raw context-length figure and returns it with a diagnostic.
+    /// The native max context `config.json` declares, as-is.
     ///
-    /// - Returns: The clamped native max context, and why it differs from `raw` (`nil` when it does not).
-    private static func resolveNativeMaxContext(raw: Int?) -> (Int, String?) {
-        guard let raw else {
-            return (
-                Self.defaultNativeMaxContext,
-                "config.json has none of max_position_embeddings, n_positions, max_seq_len, "
-                    + "or seq_length; defaulting native max context to \(Self.defaultNativeMaxContext)"
+    /// - Parameters:
+    ///   - sizing: The resolved sizing source.
+    ///   - repo: The repository id the error names.
+    /// - Returns: The first context-length field present, unchanged.
+    /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)`` when no
+    ///   context-length field is present, or when the first present one is not
+    ///   positive. The message names `repo` and the four field names.
+    private static func nativeMaxContext(from sizing: ResolvedSizing, repo: String) throws -> Int {
+        guard let declared = sizing.nativeMaxContextRaw else {
+            throw RepoMetadataError.metadataUnavailable(
+                "config.json for \(repo) has none of the context-length fields "
+                    + SizingFields.nativeMaxContextFieldNames
             )
         }
-        if raw > Self.nativeMaxContextCap {
-            return (
-                Self.nativeMaxContextCap,
-                "config.json's native max context \(raw) exceeds the sanity cap of "
-                    + "\(Self.nativeMaxContextCap); capping to \(Self.nativeMaxContextCap)"
+        guard declared > 0 else {
+            throw RepoMetadataError.metadataUnavailable(
+                "config.json for \(repo) declares a context length of \(declared); the first present of "
+                    + "\(SizingFields.nativeMaxContextFieldNames) must be positive"
             )
         }
-        if raw < Self.nativeMaxContextFloor {
-            return (
-                Self.nativeMaxContextFloor,
-                "config.json's native max context \(raw) is below the floor of "
-                    + "\(Self.nativeMaxContextFloor); raising to \(Self.nativeMaxContextFloor)"
-            )
-        }
-        return (raw, nil)
+        return declared
     }
 
     /// The memory footprint estimate for this repo. Uses ``numFullAttentionLayers``
@@ -264,8 +249,19 @@ struct RepoMetadata: Sendable, Equatable, Codable {
             case seqLength = "seq_length"
         }
 
+        /// The context-length keys, in the order ``resolved`` reads them.
+        static let nativeMaxContextKeys: [CodingKeys] = [
+            .maxPositionEmbeddings, .nPositions, .maxSeqLen, .seqLength,
+        ]
+
+        /// The context-length key names, comma separated, for an error message.
+        static var nativeMaxContextFieldNames: String {
+            nativeMaxContextKeys.map(\.rawValue).joined(separator: ", ")
+        }
+
         /// This field set as a ``ResolvedSizing``, or `nil` when `numHiddenLayers`
-        /// or `numAttentionHeads` is absent.
+        /// or `numAttentionHeads` is absent. The context-length fields are read
+        /// in the order of ``nativeMaxContextKeys``.
         var resolved: ResolvedSizing? {
             guard let numHiddenLayers, let numAttentionHeads else { return nil }
             return ResolvedSizing(
@@ -423,7 +419,7 @@ struct RepoMetadataReader: Sendable {
     /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)`` when the raw
     ///   artifacts lack sizing inputs, or any error from the cache write.
     private func parseAndCache(_ raw: RawRepoMetadata, for ref: ModelRef) throws -> RepoMetadata {
-        let parsed = try RepoMetadata(raw: raw)
+        let parsed = try RepoMetadata(raw: raw, repo: ref.repo)
         try cache.save(parsed, repo: ref.repo, revision: ref.revision)
         return parsed
     }

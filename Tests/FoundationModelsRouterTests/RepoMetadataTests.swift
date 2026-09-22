@@ -54,6 +54,7 @@ struct RepoMetadataTests {
             "num_key_value_heads": 8,
             "head_dim": 128,
             "hidden_size": 4096,
+            "max_position_embeddings": 8192,
             "quantization": {"bits": 4, "group_size": 64}
         }
         """.utf8)
@@ -110,18 +111,21 @@ struct RepoMetadataTests {
         #expect(footprint.footprint(context: 16) == Self.expectedWeightBytes + 262_144)
     }
 
-    @Test("config.json missing every context-length field defaults nativeMaxContext to 8192 with a diagnostic")
-    func nativeMaxContextDefaultsWhenNoFieldPresent() async throws {
-        // fullConfigJSON has none of max_position_embeddings/n_positions/max_seq_len/seq_length.
-        let (reader, dir, _) = Self.makeReader(
-            raw: RawRepoMetadata(configJSON: Self.fullConfigJSON, treeJSON: Self.weightTreeJSON)
-        )
-        defer { try? FileManager.default.removeItem(at: dir) }
+    @Test("config.json with no context-length field is an error that names the repo and the four fields")
+    func nativeMaxContextMissingFieldIsAnError() throws {
+        let config = Data("""
+            {"num_hidden_layers": 4, "num_attention_heads": 32, "head_dim": 128}
+            """.utf8)
+        let raw = RawRepoMetadata(configJSON: config, treeJSON: Self.weightTreeJSON)
 
-        let metadata = try await reader.metadata(for: "org/model")
-
-        #expect(metadata.nativeMaxContext == 8192)
-        #expect(metadata.nativeMaxContextDiagnostic != nil)
+        #expect(
+            throws: RepoMetadataError.metadataUnavailable(
+                "config.json for org/model has none of the context-length fields "
+                    + "max_position_embeddings, n_positions, max_seq_len, seq_length"
+            )
+        ) {
+            _ = try RepoMetadata(raw: raw, repo: "org/model")
+        }
     }
 
     @Test("nativeMaxContext resolves from max_position_embeddings when present")
@@ -136,10 +140,9 @@ struct RepoMetadataTests {
             """.utf8)
         let raw = RawRepoMetadata(configJSON: config, treeJSON: Self.weightTreeJSON)
 
-        let metadata = try RepoMetadata(raw: raw)
+        let metadata = try RepoMetadata(raw: raw, repo: "org/model")
 
         #expect(metadata.nativeMaxContext == 32768)
-        #expect(metadata.nativeMaxContextDiagnostic == nil)
     }
 
     @Test("nativeMaxContext falls back to n_positions when max_position_embeddings is absent")
@@ -154,10 +157,9 @@ struct RepoMetadataTests {
             """.utf8)
         let raw = RawRepoMetadata(configJSON: config, treeJSON: Self.weightTreeJSON)
 
-        let metadata = try RepoMetadata(raw: raw)
+        let metadata = try RepoMetadata(raw: raw, repo: "org/model")
 
         #expect(metadata.nativeMaxContext == 16384)
-        #expect(metadata.nativeMaxContextDiagnostic == nil)
     }
 
     @Test("nativeMaxContext falls back to max_seq_len when higher-priority fields are absent")
@@ -172,10 +174,9 @@ struct RepoMetadataTests {
             """.utf8)
         let raw = RawRepoMetadata(configJSON: config, treeJSON: Self.weightTreeJSON)
 
-        let metadata = try RepoMetadata(raw: raw)
+        let metadata = try RepoMetadata(raw: raw, repo: "org/model")
 
         #expect(metadata.nativeMaxContext == 8192)
-        #expect(metadata.nativeMaxContextDiagnostic == nil)
     }
 
     @Test("nativeMaxContext falls back to seq_length as the last resort")
@@ -190,86 +191,47 @@ struct RepoMetadataTests {
             """.utf8)
         let raw = RawRepoMetadata(configJSON: config, treeJSON: Self.weightTreeJSON)
 
-        let metadata = try RepoMetadata(raw: raw)
+        let metadata = try RepoMetadata(raw: raw, repo: "org/model")
 
         #expect(metadata.nativeMaxContext == 12000)
-        #expect(metadata.nativeMaxContextDiagnostic == nil)
     }
 
-    @Test("an absurdly large nativeMaxContext value is capped to the sanity ceiling")
-    func nativeMaxContextCappedWhenAbsurd() throws {
+    @Test("a very large nativeMaxContext value passes through unchanged")
+    func nativeMaxContextVeryLargeValuePassesThrough() throws {
         let config = Data("""
             {
                 "num_hidden_layers": 4,
                 "num_attention_heads": 32,
                 "head_dim": 128,
-                "max_position_embeddings": 99999999
+                "max_position_embeddings": 10485760
             }
             """.utf8)
         let raw = RawRepoMetadata(configJSON: config, treeJSON: Self.weightTreeJSON)
 
-        let metadata = try RepoMetadata(raw: raw)
+        let metadata = try RepoMetadata(raw: raw, repo: "org/model")
 
-        #expect(metadata.nativeMaxContext == 1_048_576)
-        #expect(metadata.nativeMaxContextDiagnostic != nil)
+        #expect(metadata.nativeMaxContext == 10_485_760)
     }
 
-    @Test("a tiny nativeMaxContext value is raised to the floor")
-    func nativeMaxContextFlooredWhenTiny() throws {
+    @Test("a small nativeMaxContext value passes through unchanged")
+    func nativeMaxContextSmallValuePassesThrough() throws {
         let config = Data("""
             {
                 "num_hidden_layers": 4,
                 "num_attention_heads": 32,
                 "head_dim": 128,
-                "max_position_embeddings": 128
+                "max_position_embeddings": 2048
             }
             """.utf8)
         let raw = RawRepoMetadata(configJSON: config, treeJSON: Self.weightTreeJSON)
 
-        let metadata = try RepoMetadata(raw: raw)
+        let metadata = try RepoMetadata(raw: raw, repo: "org/model")
 
-        #expect(metadata.nativeMaxContext == 4096)
-        #expect(metadata.nativeMaxContextDiagnostic != nil)
+        #expect(metadata.nativeMaxContext == 2048)
     }
 
-    @Test("a value exactly at the sanity cap passes through unchanged, with no diagnostic")
-    func nativeMaxContextAtCapBoundaryPassesThrough() throws {
-        let config = Data("""
-            {
-                "num_hidden_layers": 4,
-                "num_attention_heads": 32,
-                "head_dim": 128,
-                "max_position_embeddings": 1048576
-            }
-            """.utf8)
-        let raw = RawRepoMetadata(configJSON: config, treeJSON: Self.weightTreeJSON)
-
-        let metadata = try RepoMetadata(raw: raw)
-
-        #expect(metadata.nativeMaxContext == 1_048_576)
-        #expect(metadata.nativeMaxContextDiagnostic == nil)
-    }
-
-    @Test("a value exactly at the floor passes through unchanged, with no diagnostic")
-    func nativeMaxContextAtFloorBoundaryPassesThrough() throws {
-        let config = Data("""
-            {
-                "num_hidden_layers": 4,
-                "num_attention_heads": 32,
-                "head_dim": 128,
-                "max_position_embeddings": 4096
-            }
-            """.utf8)
-        let raw = RawRepoMetadata(configJSON: config, treeJSON: Self.weightTreeJSON)
-
-        let metadata = try RepoMetadata(raw: raw)
-
-        #expect(metadata.nativeMaxContext == 4096)
-        #expect(metadata.nativeMaxContextDiagnostic == nil)
-    }
-
-    @Test("a non-positive nativeMaxContext value is raised to the floor, with a diagnostic")
-    func nativeMaxContextFlooredWhenNonPositive() throws {
+    @Test("a non-positive nativeMaxContext value is an error that names the repo and the four fields")
+    func nativeMaxContextNonPositiveIsAnError() throws {
         let config = Data("""
             {
                 "num_hidden_layers": 4,
@@ -280,20 +242,23 @@ struct RepoMetadataTests {
             """.utf8)
         let raw = RawRepoMetadata(configJSON: config, treeJSON: Self.weightTreeJSON)
 
-        let metadata = try RepoMetadata(raw: raw)
-
-        #expect(metadata.nativeMaxContext == 4096)
-        #expect(metadata.nativeMaxContextDiagnostic != nil)
+        #expect(
+            throws: RepoMetadataError.metadataUnavailable(
+                "config.json for org/model declares a context length of -1; the first present of "
+                    + "max_position_embeddings, n_positions, max_seq_len, seq_length must be positive"
+            )
+        ) {
+            _ = try RepoMetadata(raw: raw, repo: "org/model")
+        }
     }
 
     @Test("nativeMaxContext resolves from a VLM's text_config, matching the coherent-source rule")
     func nativeMaxContextFromTextConfig() throws {
         let raw = RawRepoMetadata(configJSON: Self.qwenVLConfigJSON, treeJSON: Self.weightTreeJSON)
 
-        let metadata = try RepoMetadata(raw: raw)
+        let metadata = try RepoMetadata(raw: raw, repo: "mlx-community/Qwen3.5-2B-mxfp4")
 
         #expect(metadata.nativeMaxContext == 262_144)
-        #expect(metadata.nativeMaxContextDiagnostic == nil)
     }
 
     /// The verbatim `config.json` fetched from
@@ -457,6 +422,7 @@ struct RepoMetadataTests {
                 "num_key_value_heads": 8,
                 "head_dim": 128,
                 "hidden_size": 4096,
+                "max_position_embeddings": 8192,
                 "text_config": {
                     "num_hidden_layers": 24,
                     "num_attention_heads": 8,
@@ -468,7 +434,7 @@ struct RepoMetadataTests {
             """.utf8)
         let raw = RawRepoMetadata(configJSON: config, treeJSON: Self.weightTreeJSON)
 
-        let metadata = try RepoMetadata(raw: raw)
+        let metadata = try RepoMetadata(raw: raw, repo: "org/model")
 
         #expect(metadata.numHiddenLayers == 4)
         #expect(metadata.numAttentionHeads == 32)
@@ -484,6 +450,7 @@ struct RepoMetadataTests {
                 "num_hidden_layers": 4,
                 "text_config": {
                     "num_hidden_layers": 24,
+                    "max_position_embeddings": 8192,
                     "num_attention_heads": 8,
                     "num_key_value_heads": 2,
                     "head_dim": 256,
@@ -493,7 +460,7 @@ struct RepoMetadataTests {
             """.utf8)
         let raw = RawRepoMetadata(configJSON: config, treeJSON: Self.weightTreeJSON)
 
-        let metadata = try RepoMetadata(raw: raw)
+        let metadata = try RepoMetadata(raw: raw, repo: "org/model")
 
         // The top level has num_hidden_layers but not num_attention_heads, so it is
         // not a coherent source; every field must come from text_config instead —
@@ -508,7 +475,7 @@ struct RepoMetadataTests {
     @Test("GQA fallback: absent num_key_value_heads uses num_attention_heads")
     func gqaFallback() async throws {
         let config = Data("""
-            {"num_hidden_layers": 2, "num_attention_heads": 8, "head_dim": 16}
+            {"num_hidden_layers": 2, "num_attention_heads": 8, "head_dim": 16, "max_position_embeddings": 8192}
             """.utf8)
         let (reader, dir, _) = Self.makeReader(
             raw: RawRepoMetadata(configJSON: config, treeJSON: Self.weightTreeJSON)
@@ -523,7 +490,7 @@ struct RepoMetadataTests {
     @Test("head_dim fallback: absent head_dim uses hidden_size / num_attention_heads")
     func headDimFallback() async throws {
         let config = Data("""
-            {"num_hidden_layers": 2, "num_attention_heads": 8, "hidden_size": 512}
+            {"num_hidden_layers": 2, "num_attention_heads": 8, "hidden_size": 512, "max_position_embeddings": 8192}
             """.utf8)
         let (reader, dir, _) = Self.makeReader(
             raw: RawRepoMetadata(configJSON: config, treeJSON: Self.weightTreeJSON)
@@ -571,7 +538,7 @@ struct RepoMetadataTests {
         let raw = RawRepoMetadata(configJSON: Data("not json".utf8), treeJSON: Self.weightTreeJSON)
 
         #expect(throws: RepoMetadataError.metadataUnavailable("config.json could not be parsed")) {
-            _ = try RepoMetadata(raw: raw)
+            _ = try RepoMetadata(raw: raw, repo: "org/model")
         }
     }
 
@@ -587,7 +554,7 @@ struct RepoMetadataTests {
                 "config.json is missing num_hidden_layers or num_attention_heads"
             )
         ) {
-            _ = try RepoMetadata(raw: raw)
+            _ = try RepoMetadata(raw: raw, repo: "org/model")
         }
     }
 
@@ -603,7 +570,7 @@ struct RepoMetadataTests {
                 "config.json has neither head_dim nor hidden_size to size a head"
             )
         ) {
-            _ = try RepoMetadata(raw: raw)
+            _ = try RepoMetadata(raw: raw, repo: "org/model")
         }
     }
 
@@ -616,7 +583,8 @@ struct RepoMetadataTests {
             numKeyValueHeads: 8,
             headDim: 128,
             hiddenSize: 4096,
-            numFullAttentionLayers: 6
+            numFullAttentionLayers: 6,
+            nativeMaxContext: 32768
         )
 
         let data = try JSONEncoder().encode(metadata)
@@ -624,28 +592,7 @@ struct RepoMetadataTests {
 
         #expect(decoded == metadata)
         #expect(decoded.numFullAttentionLayers == 6)
-    }
-
-    @Test("RepoMetadata Codable round-trip preserves a non-default nativeMaxContext")
-    func codableRoundTripPreservesNonDefaultNativeMaxContext() throws {
-        let metadata = RepoMetadata(
-            weightBytes: Self.expectedWeightBytes,
-            numHiddenLayers: 24,
-            numAttentionHeads: 32,
-            numKeyValueHeads: 8,
-            headDim: 128,
-            hiddenSize: 4096,
-            numFullAttentionLayers: 6,
-            nativeMaxContext: 32768,
-            nativeMaxContextDiagnostic: "some diagnostic"
-        )
-
-        let data = try JSONEncoder().encode(metadata)
-        let decoded = try JSONDecoder().decode(RepoMetadata.self, from: data)
-
-        #expect(decoded == metadata)
         #expect(decoded.nativeMaxContext == 32768)
-        #expect(decoded.nativeMaxContextDiagnostic == "some diagnostic")
     }
 
     @Test("a reference pinned to a commit hash never refetches after the first fetch")

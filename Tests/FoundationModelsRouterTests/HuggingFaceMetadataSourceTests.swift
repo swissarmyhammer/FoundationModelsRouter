@@ -47,7 +47,7 @@ struct HuggingFaceMetadataSourceTests {
     @Test("a 200 for config.json populates configJSON with the response bytes")
     func presentConfigJSONPopulatesConfigJSON() async throws {
         let configJSON = Data("""
-            {"num_hidden_layers": 4}
+            {"num_hidden_layers": 4, "max_position_embeddings": 8192}
             """.utf8)
         let treeJSON = Data("[]".utf8)
         MockURLProtocol.install { request in

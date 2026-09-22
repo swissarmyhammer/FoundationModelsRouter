@@ -357,7 +357,7 @@ struct JointFitTests {
         )
     }
 
-    @Test("native max fits: the candidate resolves at its own native max context, capped")
+    @Test("native max fits: the candidate resolves at its own native max context")
     func nativeMaxFitsResolvesAtNativeMax() throws {
         // weightBytes: 0, coefficient 4 bytes/token (layers 1 × kvHeads 1 × headDim 1).
         // footprint(8192) = 32_768, × 1.2 = 39_322.

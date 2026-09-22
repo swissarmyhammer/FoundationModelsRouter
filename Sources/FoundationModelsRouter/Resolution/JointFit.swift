@@ -378,11 +378,10 @@ enum JointFit {
     }
 
     /// Builds the descending context ladder for one standard-slot candidate:
-    /// its native max context, capped at ``RepoMetadata/nativeMaxContextCap``,
-    /// then every step-down rung below that top rung.
+    /// its native max context as the top rung, then every step-down rung
+    /// below that top rung. The top rung is the `config.json` figure as-is.
     private static func contextLadder(nativeMaxContext: Int) -> [Int] {
-        let topRung = min(nativeMaxContext, RepoMetadata.nativeMaxContextCap)
-        return [topRung] + ladderStepDowns.filter { $0 < topRung }
+        [nativeMaxContext] + ladderStepDowns.filter { $0 < nativeMaxContext }
     }
 
     /// A standard-slot candidate's winning ``TrioAttempt``, with the embedding

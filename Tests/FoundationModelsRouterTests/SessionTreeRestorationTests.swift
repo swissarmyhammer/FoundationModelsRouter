@@ -85,6 +85,7 @@ struct SessionTreeRestorationTests {
     private static let configJSON = Data("""
         {
             "num_hidden_layers": 2,
+            "max_position_embeddings": 8192,
             "num_attention_heads": 8,
             "num_key_value_heads": 2,
             "head_dim": 16,

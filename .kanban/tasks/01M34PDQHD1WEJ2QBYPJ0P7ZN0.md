@@ -1,8 +1,45 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8480'
+comments:
+- actor: claude-code
+  id: 01m34r6j9r8yqnf1yffk6n79f3
+  text: |-
+    ### research
+    - The three constants, the diagnostic field and the clamp function are all in `Sources/FoundationModelsRouter/Sizing/RepoMetadata.swift` (lines 66-110, 141-143, 157-183).
+    - The only memberwise `init` callers are `init(raw:)` in the same file and two Codable round-trip tests in `RepoMetadataTests.swift` (612, 631). No source caller uses the default.
+    - No caller prints `nativeMaxContextDiagnostic`. `Router.swift` maps `RepoMetadata.nativeMaxContext` only (line 704-708).
+    - `JointFit.contextLadder` (line 383-386) is the one place that reads `nativeMaxContextCap`.
+    - `RepoMetadata.init(raw:)` does not know the repo. The reader (`parseAndCache`) has the `ModelRef`. Plan: add a `repo` parameter to the parse so the new error can name the repo.
+    - Test fixtures: `RepoMetadataTests.fullConfigJSON` has no context field. Many reader and cache tests use it. It must get a `max_position_embeddings` field, or those tests fail with the new error. Other fixtures will be checked the same way.
+    - `JointFitTests.swift:360` has a test title that says "capped" but the test does not assert a cap. The title will lose the word.
+  timestamp: 2026-09-22T14:26:59.512458+00:00
+- actor: claude-code
+  id: 01m34rk9tkt2r9gv404rhb4rnt
+  text: |-
+    ### implementation landed (build and tests not yet run)
+    - `RepoMetadata.swift`: the three constants, the diagnostic field and the clamp are gone. `init(raw:repo:)` reads the first context field as-is and throws `metadataUnavailable` that names the repo and the four field names when no field is present or the value is not positive. `nativeMaxContext` is a required `init` parameter. The field names in the message come from `SizingFields.nativeMaxContextKeys`.
+    - `JointFit.contextLadder` uses `nativeMaxContext` as the top rung with no cap.
+    - `RepoMetadataTests`: the missing-field test and the non-positive test replace the default and clamp tests. The two boundary tests now assert 10_485_760 and 2048 pass through unchanged. The second Codable test is folded into the first, because there is no default to compare against.
+    - 40 test fixtures got `"max_position_embeddings": 8192`. That figure is what these fixtures got by default before this change, so the arithmetic of the tests that use them does not move. Three subagents did the mechanical part for 37 files.
+    - Doc comments in `TranscriptNestingTests` and the test title in `JointFitTests:360` no longer name a default or a cap.
+  timestamp: 2026-09-22T14:33:56.819799+00:00
+- actor: claude-code
+  id: 01m34rpg6nhwfhsga2p6afvc29
+  text: |-
+    ### implement — changed
+    - evidence: 44 files — Sources/FoundationModelsRouter/Sizing/RepoMetadata.swift, Sources/FoundationModelsRouter/Resolution/JointFit.swift, Tests/FoundationModelsRouterTests/RepoMetadataTests.swift, Tests/FoundationModelsRouterTests/JointFitTests.swift, Tests/FoundationModelsRouterTests/TranscriptNestingTests.swift, Tests/FoundationModelsRouterTests/ResolveTests.swift, and 38 test files whose config.json fixture gained max_position_embeddings
+    - next: test
+  timestamp: 2026-09-22T14:35:41.653405+00:00
+- actor: claude-code
+  id: 01m34rpjee3n6b0vhvrz0jns12
+  text: |-
+    ### test — green
+    - evidence: swift test — 1353 + 1 + 83 = 1437 tests passed, 0 failed, 0 skipped (2 pre-existing withKnownIssue expectations in RealModelHarness and BoundedWait); swift build --package-path IntegrationTests --build-tests — Build complete; rg 'nativeMaxContextFloor|nativeMaxContextCap|defaultNativeMaxContext|nativeMaxContextDiagnostic' over *.swift — no matches
+    - next: commit
+  timestamp: 2026-09-22T14:35:43.950493+00:00
+position_column: doing
+position_ordinal: '80'
 title: Remove the native max context floor, cap and default; use config.json as-is
 ---
 ## Decision (from the owner, 2026-09-22)
