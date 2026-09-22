@@ -69,12 +69,22 @@ comments:
     ### test — green
     - evidence: `swift test`: 1297 unit tests in 145 suites passed (2 known issues, not new), 1 test passed, 83 eval tests passed. The only build warning is the old build-system "missing creator" warning.
   timestamp: 2026-09-22T21:21:42.621742+00:00
+- actor: claude-code
+  id: 01m35g374ccs9wbte5ebnhwkf7
+  text: |-
+    ### finish iteration 2 — review: clean
+    - implement: changed — d11e566: the named eval target `compactionEvalDefaultTargetTokens`, and the labeled test helper `compact(session:)`
+    - test: green — `swift test`: 1297 unit tests in 145 suites (2 known issues, not new), 1 public-surface test, 83 eval tests: all pass. `swift build --package-path IntegrationTests --build-tests`: Build complete
+    - commit: 18965cd, d11e566
+    - review: clean — `review sha HEAD~1..HEAD`: 0 findings. Both prior findings are checked. The task is in done.
+    - Note for the owner: the gated real-model fact-retention tier measured 3 of 7 against a floor of 5 of 7. The small-model smoke suites discard summaries that run to the window − input ceiling. See the test record above. The card's design sets that ceiling, so these results are for the owner to decide.
+  timestamp: 2026-09-22T21:24:35.596139+00:00
 depends_on:
 - 01M34SPS7H39SK38H95M39WMX1
 - 01M34VATXAFNGB9WBF6XJK0PP8
 - 01M3599BYH1WBNJA33FN1KHNXA
-position_column: review
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffe780
 title: 'Make compaction one call: current context + compaction prompt → a snapshot of instructions + summary'
 ---
 ## Decision (from the owner, 2026-09-22)
