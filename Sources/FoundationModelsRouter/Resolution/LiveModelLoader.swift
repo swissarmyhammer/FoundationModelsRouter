@@ -15,10 +15,6 @@ import MLXLMCommon
 // throws `unsupportedModelType` *after* paying for the whole download.
 import MLXVLM
 import Synchronization
-import os
-
-/// The logger for the ceiling a live session backend applies to a call.
-private let sessionBackendLogger = makeModuleLogger(category: "SessionBackend")
 
 // The MLX container types are the live loaded handles. They are `final class …:
 // Sendable`, so conforming them to the router's marker protocols lets
@@ -192,52 +188,24 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// A lock guards it for the same reason as ``lastGenerationCall``.
     private let newestSnapshot = Mutex<InFlightResponse?>(nil)
 
-    /// The token ceiling for a generation call whose caller gives no
-    /// `maxTokens`.
-    ///
-    /// This is a floor, and not a policy. A routed session gives every call
-    /// the ceiling it derives from the resolved context of its model (see
-    /// ``RoutedSessionActor/responseTokenCeiling(requested:contextTokens:)``).
-    /// This value applies only to a caller that reports no context and names
-    /// no ceiling, so that the MLX executor still gets a finite budget.
-    ///
-    /// The number is a response budget, not a context window. The log line
-    /// names it `responseTokenFloor`, so it cannot be read as the window of
-    /// a model.
-    static let responseTokenFloor = 8000
-
     /// Makes the generation options of one call on ``liveSession``.
     ///
     /// Each generation call uses this one helper, so the respond path and the
     /// stream path always decode with the same ``samplingMode`` and the same
     /// ceiling.
     ///
-    /// - Parameter maxTokens: The ceiling the caller named, or `nil` for
-    ///   ``responseTokenFloor``.
-    /// - Returns: The options that carry ``samplingMode`` and the ceiling.
+    /// The backend adds no ceiling of its own. A routed session gives every
+    /// call the ceiling it derives from the resolved context of its model (see
+    /// ``RoutedSessionActor/responseTokenCeiling(requested:contextTokens:)``),
+    /// and that context is the window of the model. A caller that names no
+    /// ceiling sends `nil` to the engine, and the engine then applies its own
+    /// default.
+    ///
+    /// - Parameter maxTokens: The ceiling the caller named, or `nil` when the
+    ///   caller named none.
+    /// - Returns: The options that carry ``samplingMode`` and `maxTokens`.
     private func makeGenerationOptions(maxTokens: Int?) -> GenerationOptions {
-        GenerationOptions(samplingMode: samplingMode, maximumResponseTokens: appliedCeiling(maxTokens: maxTokens))
-    }
-
-    /// The ceiling one call decodes under.
-    ///
-    /// When the floor applies, one log line names the constant. A reader of
-    /// the log can then tell ``responseTokenFloor`` from the context of a
-    /// session, which is a different number.
-    ///
-    /// - Parameter maxTokens: The ceiling the caller named, or `nil` for
-    ///   ``responseTokenFloor``.
-    /// - Returns: `maxTokens` when the caller named one, else
-    ///   ``responseTokenFloor``.
-    private func appliedCeiling(maxTokens: Int?) -> Int {
-        if let maxTokens { return maxTokens }
-        sessionBackendLogger.notice(
-            """
-            the caller named no ceiling; the call decodes under \
-            responseTokenFloor=\(Self.responseTokenFloor, privacy: .public)
-            """
-        )
-        return Self.responseTokenFloor
+        GenerationOptions(samplingMode: samplingMode, maximumResponseTokens: maxTokens)
     }
 
     /// Test-only accessor onto ``liveSession``. Not part of the protocol.

@@ -12,7 +12,8 @@ struct ResponseTokenCeiling: Sendable, Equatable {
 
     /// The ceiling to give the backend, as
     /// ``RoutedSessionActor/responseTokenCeiling(requested:contextTokens:)``
-    /// derives it, or `nil` when the backend applies its own floor.
+    /// derives it, or `nil` when the caller named none and the context is
+    /// unknown.
     let resolved: Int?
 
     /// Resolves the ceiling of a turn.

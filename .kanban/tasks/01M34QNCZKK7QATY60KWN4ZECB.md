@@ -1,10 +1,31 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m37jrwrjm65kvymwx50ebpxb
+  text: |-
+    ### Research and design choices
+
+    - Check result: `mlx-swift-lm` (`Libraries/MLXFoundationModels/MLXLanguageModel.swift:843`) does not need a number. When `maximumResponseTokens` is `nil`, the executor applies its own `private static let defaultMaxTokens = 4096` (lines 1777, 2126, 2311, 2404, 2512). This limit is in the dependency, not in this package.
+    - Choice 1: `makeGenerationOptions(maxTokens:)` passes `maxTokens` through as `maximumResponseTokens`. `nil` stays `nil`. The backend adds no number and no constant.
+    - Choice 2: the backend does not learn the window. A routed session already gives every call `contextTokens` (the window, after ^24hrxdj) through `RoutedSessionActor.responseTokenCeiling(requested:contextTokens:)`. Only a direct backend call with `nil`, or a session whose context is not positive, sends `nil`.
+    - Choice 3: `appliedCeiling`, its log line and the `SessionBackend` logger are deleted; nothing else used the logger. `import os` in LiveModelLoader.swift is deleted with it.
+    - Choice 4: `CeilingProbeLanguageModel.spentCeiling(_:scriptedTokenCount:)` gives the scripted length when the ceiling is `nil`. The scripted lengths are sums of `emittedTokenCount` (`truncatedAnswerScriptedTokenCount`, `toolCallScriptedTokenCount`), in the test helper only.
+    - Choice 5: `Core/ProfileDefinition.swift` no longer names the floor (^24hrxdj removed those lines). `floorIsNotDefaultContext` is already gone.
+    - New work: the 4096 default of the engine is an invented limit in the dependency. A separate card records it for the owner.
+  timestamp: 2026-09-23T16:49:51.890697+00:00
+- actor: claude-code
+  id: 01m37js4yh30ha1d2q015jb5dk
+  text: |-
+    ### implement — changed
+    - evidence: 7 files — Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift, Sources/FoundationModelsRouter/Session/ResponseTokenCeiling.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnExecution.swift, Tests/FoundationModelsRouterTests/TurnTokenCeilingTests.swift, Tests/FoundationModelsRouterTests/Helpers/CeilingProbeLanguageModel.swift, Examples/MultiModelGeneration/main.swift, IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/IntegrationTests.swift. `rg 'responseTokenFloor|appliedCeiling'` finds nothing. `swift test`: 1326 tests in 149 suites passed (2 known issues, expected), 1 test in 1 suite passed, 19 tests in 3 suites passed. `swift build --build-tests --package-path IntegrationTests`: exit 0.
+    - next: commit, then review.
+  timestamp: 2026-09-23T16:50:00.273839+00:00
 depends_on:
 - 01M34PH8G88KM01QGSS24HRXDJ
-position_column: todo
-position_ordinal: '8880'
+position_column: doing
+position_ordinal: '80'
 title: Remove responseTokenFloor; a call with no ceiling decodes to the model's window
 ---
 ## Decision (from the owner, 2026-09-22)

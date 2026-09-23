@@ -198,33 +198,50 @@ struct CeilingProbeLanguageModel: LanguageModel {
             "ceiling-probe-tool-calls-\(callIndex)"
         }
 
+        /// The scripted length of a ``CeilingProbeCallEnding/truncatedInAnswerText``
+        /// call: one fragment of thought and one fragment of answer.
+        private static let truncatedAnswerScriptedTokenCount = emittedTokenCount + emittedTokenCount
+
+        /// The scripted length of a ``CeilingProbeCallEnding/callsTool`` call:
+        /// one fragment of thought, one of narration and one of tool arguments.
+        private static let toolCallScriptedTokenCount = emittedTokenCount + emittedTokenCount + emittedTokenCount
+
         /// The output token count a call reports when it spends its whole
-        /// ceiling.
+        /// budget.
         ///
-        /// - Parameter ceiling: The `maximumResponseTokens` of the call, or
-        ///   `nil` for ``MLXFoundationModelsSessionBackend/responseTokenFloor``.
-        /// - Returns: The ceiling the backend applied to the call.
-        private static func spentCeiling(_ ceiling: Int?) -> Int {
-            ceiling ?? MLXFoundationModelsSessionBackend.responseTokenFloor
+        /// - Parameters:
+        ///   - ceiling: The `maximumResponseTokens` of the call, or `nil` when
+        ///     the call named none.
+        ///   - scriptedTokenCount: The tokens the call sends up to its
+        ///     scripted end.
+        /// - Returns: `ceiling` when the call named one. With no ceiling the
+        ///   probe decodes to its own scripted end, so the count is
+        ///   `scriptedTokenCount`.
+        private static func spentCeiling(_ ceiling: Int?, scriptedTokenCount: Int) -> Int {
+            ceiling ?? scriptedTokenCount
         }
 
-        /// Sends one usage whose output is equal to the ceiling of the call.
+        /// Sends one usage whose output is equal to the budget of the call.
         ///
         /// - Parameters:
         ///   - ceiling: The `maximumResponseTokens` of the call, or `nil`.
+        ///   - scriptedTokenCount: The tokens the call sends up to its
+        ///     scripted end, which the usage reports when `ceiling` is `nil`.
         ///   - entryID: The response entry id of the call.
         ///   - channel: The generation channel this call emits into.
         private static func sendUsageSpendingCeiling(
             _ ceiling: Int?,
+            scriptedTokenCount: Int,
             entryID: String,
             into channel: LanguageModelExecutorGenerationChannel
         ) async {
+            let spent = spentCeiling(ceiling, scriptedTokenCount: scriptedTokenCount)
             await channel.send(
                 .response(
                     entryID: entryID,
                     action: .updateUsage(
                         input: .init(totalTokenCount: reportedInputTokens, cachedTokenCount: 0),
-                        output: .init(totalTokenCount: spentCeiling(ceiling), reasoningTokenCount: emittedTokenCount))))
+                        output: .init(totalTokenCount: spent, reasoningTokenCount: emittedTokenCount))))
         }
 
         /// The response entry id the call at `callIndex` sends its answer or
@@ -320,8 +337,9 @@ struct CeilingProbeLanguageModel: LanguageModel {
         /// the call.
         ///
         /// - Parameters:
-        ///   - ceiling: The `maximumResponseTokens` of the call, or `nil` for
-        ///     ``MLXFoundationModelsSessionBackend/responseTokenFloor``.
+        ///   - ceiling: The `maximumResponseTokens` of the call, or `nil` when
+        ///     the call named none. With `nil` the usage reports
+        ///     ``truncatedAnswerScriptedTokenCount``.
         ///   - entryID: The response entry id of the call.
         ///   - channel: The generation channel this call emits into.
         private static func sendAnswerTruncatedAtCeiling(
@@ -333,7 +351,8 @@ struct CeilingProbeLanguageModel: LanguageModel {
                 .response(
                     entryID: entryID,
                     action: .appendText(truncatedAnswerText, tokenCount: emittedTokenCount)))
-            await sendUsageSpendingCeiling(ceiling, entryID: entryID, into: channel)
+            await sendUsageSpendingCeiling(
+                ceiling, scriptedTokenCount: truncatedAnswerScriptedTokenCount, entryID: entryID, into: channel)
         }
 
         /// Sends a short narration, one call to ``toolName``, and then one
@@ -345,8 +364,9 @@ struct CeilingProbeLanguageModel: LanguageModel {
         /// reaches the ceiling whatever the later call spends.
         ///
         /// - Parameters:
-        ///   - ceiling: The `maximumResponseTokens` of the call, or `nil` for
-        ///     ``MLXFoundationModelsSessionBackend/responseTokenFloor``.
+        ///   - ceiling: The `maximumResponseTokens` of the call, or `nil` when
+        ///     the call named none. With `nil` the usage reports
+        ///     ``toolCallScriptedTokenCount``.
         ///   - callIndex: The zero-based position of the call.
         ///   - channel: The generation channel this call emits into.
         private static func sendToolCallSpendingCeiling(
@@ -364,7 +384,8 @@ struct CeilingProbeLanguageModel: LanguageModel {
                         id: toolCallID,
                         name: toolName,
                         action: .appendArguments(#"{"value":"\#(toolStep)"}"#, tokenCount: emittedTokenCount))))
-            await sendUsageSpendingCeiling(ceiling, entryID: entryID, into: channel)
+            await sendUsageSpendingCeiling(
+                ceiling, scriptedTokenCount: toolCallScriptedTokenCount, entryID: entryID, into: channel)
         }
     }
 }

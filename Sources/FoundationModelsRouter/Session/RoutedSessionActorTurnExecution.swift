@@ -24,8 +24,8 @@ extension RoutedSessionActor {
     ///   - requested: The ceiling the caller named, or `nil`.
     ///   - contextTokens: The resolved working context of the session, in tokens.
     /// - Returns: The ceiling to give the backend, or `nil` when the caller
-    ///   named none and the context is unknown. The backend then applies its
-    ///   own floor.
+    ///   named none and the context is unknown. The backend then sends no
+    ///   ceiling to the engine.
     static func responseTokenCeiling(requested: Int?, contextTokens: Int) -> Int? {
         if let requested { return requested }
         guard contextTokens > 0 else { return nil }

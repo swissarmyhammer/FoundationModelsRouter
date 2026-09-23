@@ -224,7 +224,7 @@ private struct DownloadObservingLoader: ModelLoader {
 ///   thinking: the 30B still writes its `<think>` block before each answer.
 /// - **A turn past the ceiling.** Each of the four turns stops at
 ///   ``GatedRealModelBudget/responseTokenCeiling`` tokens rather than at
-///   the live backend's own `responseTokenFloor`. A turn that generated past
+///   the window of the model, where an uncapped turn stops. A turn that generated past
 ///   it is no longer measured here.
 /// - **The whole test body on the main actor.** The four turns run off the
 ///   main actor now. That change was measured and it moved no phase: on the
@@ -378,9 +378,9 @@ struct IntegrationTests {
         // 2. A standard session returns non-empty text.
         //
         //    Every turn below states `GatedRealModelBudget.responseTokenCeiling`
-        //    as its reply ceiling. Without one each turn takes the live
-        //    backend's own `responseTokenFloor`, so a run whose `<think>`
-        //    block does not stop generates until that floor.
+        //    as its reply ceiling. Without one each turn runs to the window of
+        //    the model, so a run whose `<think>` block does not stop
+        //    generates until that window.
         //    The ceiling gives space to the `<think>` block and to the answer —
         //    see that constant — and a turn that stops earlier still costs only
         //    the tokens it generated.

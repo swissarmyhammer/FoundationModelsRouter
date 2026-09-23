@@ -9,8 +9,8 @@ import Testing
 ///
 /// A routed session knows the working context its profile resolved to. A turn
 /// that names no `maxTokens` generates under that context. A turn that names
-/// one keeps it. The live backend keeps a named floor only for a caller that
-/// gives it no ceiling at all.
+/// one keeps it. The live backend adds no ceiling of its own: a caller that
+/// gives it no ceiling at all makes it request none from the engine.
 ///
 /// Each rule is proven on the respond path and on each stream path, because
 /// each path gives the backend its ceiling through a different call.
@@ -113,15 +113,15 @@ struct TurnTokenCeilingTests {
     }
 
     @Test(
-        "the live backend generates under its named floor when the caller gives no ceiling",
+        "the live backend requests no ceiling when the caller gives no ceiling",
         arguments: BackendSurface.allCases)
-    func liveBackendFallsBackToFloor(surface: BackendSurface) async throws {
+    func liveBackendRequestsNoCeiling(surface: BackendSurface) async throws {
         let log = CeilingProbeLog()
         let container = LiveBackendContainer(model: CeilingProbeLanguageModel(ending: .finished, log: log))
         let backend = container.makeSession(instructions: nil)
 
         try await surface.runCall(on: backend)
 
-        #expect(log.requestedCeilings == [MLXFoundationModelsSessionBackend.responseTokenFloor])
+        #expect(log.requestedCeilings == [nil])
     }
 }

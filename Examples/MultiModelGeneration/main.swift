@@ -31,8 +31,9 @@ import Tokenizers
 
 /// The reply ceiling every observed turn is submitted with.
 ///
-/// Load-bearing for the demo's wall clock: SmolLM-135M in `flash` rambles to
-/// the live backend's own `responseTokenFloor` when nothing caps it (measured
+/// Load-bearing for the demo's wall clock: SmolLM-135M in `flash` rambles
+/// until the window of the model when nothing caps it, because an uncapped
+/// turn runs to the resolved context of its session (measured
 /// on 2026-08-19: that one uncapped triage turn put the whole run at 121.7
 /// seconds). Both real answers fit comfortably inside this cap — the triage
 /// wants one word, and the measured `standard` reply ran 59 tokens.
