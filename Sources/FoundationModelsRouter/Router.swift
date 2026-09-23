@@ -149,6 +149,8 @@ public actor Router {
     ///   - progress: The UI-bindable progress to drive, mutated on the main actor.
     /// - Returns: The resolved, resident profile.
     /// - Throws: ``ResolutionFailure`` when no trio fits the effective budget,
+    ///   ``NoWindowFailure`` when the profile names no context and no standard
+    ///   candidate's window could be read,
     ///   `CancellationError` when the calling task is cancelled, or any download
     ///   or load error from the ``ModelLoader``.
     public func resolve(
@@ -187,6 +189,8 @@ public actor Router {
     ///     against and, on success, the model each slot chose.
     /// - Returns: The resolved, resident profile.
     /// - Throws: ``ResolutionFailure`` when no trio fits the effective budget,
+    ///   ``NoWindowFailure`` when the profile names no context and no standard
+    ///   candidate's window could be read,
     ///   `CancellationError` when the calling task is cancelled, or any download
     ///   or load error from the ``ModelLoader``.
     private func runResolve(
@@ -224,6 +228,8 @@ public actor Router {
     ///     against and, on success, the model each slot chose.
     /// - Returns: The resolved, resident profile.
     /// - Throws: ``ResolutionFailure`` when no trio fits the effective budget,
+    ///   ``NoWindowFailure`` when the profile names no context and no standard
+    ///   candidate's window could be read,
     ///   `CancellationError` when the calling task is cancelled, or any download
     ///   or load error from the ``ModelLoader``.
     private func runResolvePipeline(
@@ -688,7 +694,20 @@ public actor Router {
                 }
             )
         } catch let failure as ResolutionFailure {
-            await recordFailure(failure: failure, progress: progress)
+            await recordFailure(
+                outcomes: failure.slots.map { ($0.slot, $0.chosen) },
+                failedReason: "no candidate fit the remaining budget",
+                description: failure.description,
+                progress: progress
+            )
+            throw failure
+        } catch let failure as NoWindowFailure {
+            await recordFailure(
+                outcomes: [(.standard, nil)],
+                failedReason: "no candidate window could be read",
+                description: failure.description,
+                progress: progress
+            )
             throw failure
         }
     }
@@ -1029,17 +1048,25 @@ public actor Router {
 
     /// Records a joint-fit failure into the progress: the unsatisfiable slots are
     /// marked failed and the phase carries the diagnostic description.
-    private func recordFailure(failure: ResolutionFailure, progress: ResolutionProgress) async {
+    ///
+    /// - Parameters:
+    ///   - outcomes: Each slot the failure reports, with the model it chose, or `nil` when it chose none.
+    ///   - failedReason: The failed state of a slot that chose no model.
+    ///   - description: The diagnostic description of the failure.
+    private func recordFailure(
+        outcomes: [(slot: ModelSlot, chosen: ModelRef?)],
+        failedReason: String,
+        description: String,
+        progress: ResolutionProgress
+    ) async {
         await MainActor.run {
-            for slotRes in failure.slots {
-                var sp = progress.slots[slotRes.slot] ?? SlotProgress()
-                sp.chosen = slotRes.chosen
-                sp.state = slotRes.chosen == nil
-                    ? .failed("no candidate fit the remaining budget")
-                    : .sizing
-                progress.slots[slotRes.slot] = sp
+            for outcome in outcomes {
+                var sp = progress.slots[outcome.slot] ?? SlotProgress()
+                sp.chosen = outcome.chosen
+                sp.state = outcome.chosen == nil ? .failed(failedReason) : .sizing
+                progress.slots[outcome.slot] = sp
             }
-            progress.phase = .failed(failure.description)
+            progress.phase = .failed(description)
             progress.refreshFraction()
         }
     }

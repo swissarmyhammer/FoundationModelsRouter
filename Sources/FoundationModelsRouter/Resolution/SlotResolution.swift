@@ -111,7 +111,7 @@ package struct SlotResolution: Sendable, Equatable {
         remainingBudgetBytes: Int64,
         chosen: ModelRef?,
         considered: [CandidateReport],
-        contextTokens: Int = ProfileDefinition.defaultContext
+        contextTokens: Int
     ) {
         self.slot = slot
         self.remainingBudgetBytes = remainingBudgetBytes
@@ -156,7 +156,8 @@ struct ResolutionFailure: Error, Equatable, CustomStringConvertible {
     }
 
     /// Renders one candidate as `<ref> — <footprint> bytes: <verdict>`.
-    private static func line(for candidate: CandidateReport) -> String {
+    /// ``NoWindowFailure`` renders its candidates with this line too.
+    static func line(for candidate: CandidateReport) -> String {
         let footprint = footprintText(candidate.estimatedFootprintBytes)
         return "\(candidate.ref.stringValue) — \(footprint)\(sharedWeightsNote(for: candidate)): "
             + verdictText(candidate.verdict)
@@ -218,5 +219,29 @@ struct ResolutionFailure: Error, Equatable, CustomStringConvertible {
         case .embedding, .flash:
             return "trio blocked by \(slot.rawValue)"
         }
+    }
+}
+
+/// The error thrown when a profile with no ``ProfileDefinition/context`` has
+/// no standard-slot candidate whose window could be read. The standard slot
+/// names no candidate, or the native max context of each candidate is
+/// unavailable. Then there is no context to size a slot at, so no slot is
+/// sized. See ``JointFit``.
+struct NoWindowFailure: Error, Equatable, CustomStringConvertible {
+    /// The name of the profile that could not be resolved.
+    let profileName: String
+
+    /// The standard-slot candidates, in preference order, each with the
+    /// verdict that tells why its window could not be read. Empty when the
+    /// standard slot names no candidate.
+    let standardConsidered: [CandidateReport]
+
+    /// A multi-line rendering of the failure: the cause, then each
+    /// standard-slot candidate.
+    var description: String {
+        let header = "NoWindowFailure: profile \"\(profileName)\" has no standard candidate whose window "
+            + "could be read. There is no context, so no slot was sized."
+        let lines = standardConsidered.map { "    - \(ResolutionFailure.line(for: $0))" }
+        return ([header] + lines).joined(separator: "\n")
     }
 }

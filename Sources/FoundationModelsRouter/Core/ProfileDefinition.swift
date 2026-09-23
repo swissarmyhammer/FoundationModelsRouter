@@ -11,20 +11,6 @@
 /// the key decodes to `nil`, and legacy JSON carrying a number decodes to that
 /// number unchanged.
 public struct ProfileDefinition: Sendable, Codable {
-    /// The default working context size in tokens (8K), used both as the initializer's default and as the resolve-path fallback.
-    ///
-    /// It covers degenerate cases derivation itself can't recover from — no
-    /// standard candidate to size a window for, or every candidate's native
-    /// max context lookup failing — so those failures still resolve through
-    /// the ordinary fixed-context path instead of having nothing to loop over
-    /// (see ``JointFit``).
-    ///
-    /// The number is not the response token floor of the live session
-    /// backend (`MLXFoundationModelsSessionBackend.responseTokenFloor`). A
-    /// log line that prints one of the two values then cannot be read as
-    /// the other.
-    public static let defaultContext = 8192
-
     /// The profile's unique, human-meaningful name.
     public var name: String
 
@@ -43,9 +29,10 @@ public struct ProfileDefinition: Sendable, Codable {
     /// The working context size in tokens, or `nil` to derive it at resolve time from each candidate's native max context (``RepoMetadata/nativeMaxContext``) instead of a caller-supplied figure.
     ///
     /// Scales the KV-cache footprint and determines candidate fit once
-    /// resolved to a concrete value. Defaults to ``defaultContext`` (8192)
-    /// when the initializer's `context` parameter is omitted; pass `nil`
-    /// explicitly to opt into derivation.
+    /// resolved to a concrete value. It is `nil` when the initializer's
+    /// `context` parameter is omitted, so the model's own window is the
+    /// default. A number is an override, for example to make a test compact
+    /// early.
     public var context: Int?
 
     /// Creates a profile definition.
@@ -56,16 +43,16 @@ public struct ProfileDefinition: Sendable, Codable {
     ///   - standard: Candidate models for the `standard` slot.
     ///   - flash: Candidate models for the `flash` slot.
     ///   - embedding: Candidate models for the `embedding` slot.
-    ///   - context: The working context size in tokens; defaults to 8192.
-    ///     Pass `nil` to signal that the context should be derived at resolve
-    ///     time rather than caller-supplied.
+    ///   - context: The working context size in tokens, as an override.
+    ///     Omit it, or pass `nil`, to derive the context from the model at
+    ///     resolve time.
     public init(
         name: String,
         description: String,
         standard: [ModelRef],
         flash: [ModelRef],
         embedding: [ModelRef],
-        context: Int? = ProfileDefinition.defaultContext
+        context: Int? = nil
     ) {
         self.name = name
         self.description = description

@@ -233,7 +233,8 @@ struct ResolveTests {
         description: "test profile",
         standard: ["org/std-a", "org/std-b"],
         flash: ["org/flash-a"],
-        embedding: ["org/emb-a"]
+        embedding: ["org/emb-a"],
+        context: ScriptedSessionContext.tokens
     )
 
     /// Creates a unique temporary cache directory.
@@ -516,8 +517,8 @@ struct ResolveTests {
     // MARK: - Candidate-sizing merge and failure paths
 
     /// The generation-slot (`standard`/`flash`) raw footprint for
-    /// ``rawMetadata`` at the default context: 10 MB weights plus a 2 MB KV
-    /// cache at context 8192.
+    /// ``rawMetadata`` at `ScriptedSessionContext.tokens`: 10 MB weights plus
+    /// a 2 MB KV cache at that context.
     private static let generationSlotFootprint: Int64 = 12_097_152
 
     /// The embedding-slot raw footprint for ``rawMetadata``: weights alone,
@@ -537,7 +538,7 @@ struct ResolveTests {
 
         // The same ref is the sole candidate for both `embedding` and
         // `standard`. Sized as an embedder it is only 10 MB (no KV cache);
-        // sized as a generation model at the default context it is ~12.1 MB
+        // sized as a generation model at the profile's context it is ~12.1 MB
         // (weights + KV cache). The merge in `sizeCandidates` must keep the
         // larger of the two for *both* slots' fit test.
         let shared: ModelRef = "org/shared-embed-std"
@@ -546,7 +547,8 @@ struct ResolveTests {
             description: "one ref is a candidate for both the embedding and standard slots",
             standard: [shared],
             flash: ["org/flash-only"],
-            embedding: [shared]
+            embedding: [shared],
+            context: ScriptedSessionContext.tokens
         )
 
         let progress = ResolutionProgress()
@@ -607,7 +609,8 @@ struct ResolveTests {
             description: "one ref fails its first fetch, then sizes successfully",
             standard: [heals],
             flash: [heals],
-            embedding: ["org/emb-only"]
+            embedding: ["org/emb-only"],
+            context: ScriptedSessionContext.tokens
         )
 
         let progress = ResolutionProgress()
@@ -654,7 +657,8 @@ struct ResolveTests {
             description: "one ref fails on every slot's fetch",
             standard: [dualFail],
             flash: [dualFail],
-            embedding: ["org/emb-only"]
+            embedding: ["org/emb-only"],
+            context: ScriptedSessionContext.tokens
         )
 
         let progress = ResolutionProgress()
@@ -713,7 +717,8 @@ struct ResolveTests {
             description: "one candidate fails with a RepoMetadataError, one with a generic Error",
             standard: [direct, generic],
             flash: ["org/flash-only"],
-            embedding: ["org/emb-only"]
+            embedding: ["org/emb-only"],
+            context: ScriptedSessionContext.tokens
         )
 
         let progress = ResolutionProgress()

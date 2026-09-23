@@ -19,8 +19,9 @@ struct TurnTokenCeilingTests {
     /// The prefix of each temp directory this suite makes.
     private static let tempDirPrefix = "TurnTokenCeilingTests"
 
-    /// A resolved working context that is not the default context, so a test
-    /// cannot pass on a fallback that happens to equal it.
+    /// A resolved working context that is not `ScriptedSessionContext.tokens`,
+    /// the window most fixtures state, so a test cannot pass on a fixture
+    /// window that happens to equal it.
     private static let resolvedContext = 32_768
 
     /// An explicit ceiling a caller names, smaller than any context here.
@@ -122,10 +123,5 @@ struct TurnTokenCeilingTests {
         try await surface.runCall(on: backend)
 
         #expect(log.requestedCeilings == [MLXFoundationModelsSessionBackend.responseTokenFloor])
-    }
-
-    @Test("the floor of the live backend is not the default context, so a printed value tells the two apart")
-    func floorIsNotDefaultContext() {
-        #expect(MLXFoundationModelsSessionBackend.responseTokenFloor != ProfileDefinition.defaultContext)
     }
 }

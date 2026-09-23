@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModelsRouterTestSupport
 
 @testable import FoundationModelsRouter
 
@@ -88,7 +89,9 @@ enum HandBuiltProfileFixtures {
     ///   - chosen: The model reference the slot names.
     /// - Returns: The slot resolution.
     private static func slotResolution(slot: ModelSlot, chosen: ModelRef) -> SlotResolution {
-        SlotResolution(slot: slot, remainingBudgetBytes: 0, chosen: chosen, considered: [])
+        SlotResolution(
+            slot: slot, remainingBudgetBytes: 0, chosen: chosen, considered: [],
+            contextTokens: ScriptedSessionContext.tokens)
     }
 
     /// Builds one generation handle over `container`.

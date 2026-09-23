@@ -121,7 +121,9 @@ enum JointFit {
     ///   - sessionBytes: The absolute KV cache bytes of one session at a context. Read only for a slot that reuses an earlier slot's container.
     ///   - nativeMaxContext: The native max context of a candidate. Read only when ``ProfileDefinition/context`` is `nil`.
     /// - Returns: The chosen trio and per-slot reasoning.
-    /// - Throws: ``ResolutionFailure`` when any slot has no viable candidate.
+    /// - Throws: ``ResolutionFailure`` when any slot has no viable candidate,
+    ///   or ``NoWindowFailure`` when the context is derived and no standard
+    ///   candidate's window could be read.
     static func resolve(
         profile: ProfileDefinition,
         budgetBytes: Int64,
@@ -646,7 +648,9 @@ enum JointFit {
     /// candidates are tried in preference order. The first candidate with a
     /// window that fits wins at its largest window.
     ///
-    /// - Throws: ``ResolutionFailure`` when no standard candidate has a window that fits.
+    /// - Throws: ``NoWindowFailure`` when no standard candidate's window could
+    ///   be read, or ``ResolutionFailure`` when no standard candidate has a
+    ///   window that fits.
     private static func resolveAtLargestWindow(
         profile: ProfileDefinition,
         budgetBytes: Int64,
@@ -654,27 +658,12 @@ enum JointFit {
         sessionBytes: (ModelRef, Int) -> Result<Int64, RepoMetadataError>,
         nativeMaxContext: (ModelRef) -> Result<Int, RepoMetadataError>
     ) throws -> JointResolution {
-        // No standard candidate to size a window for — a degenerate authored
-        // profile. Fall back to one fixed context at the ordinary default so
-        // this still fails informatively through the ordinary path instead of
-        // having nothing to loop over.
-        guard !profile.standard.isEmpty else {
-            return try resolveAtFixedContext(
-                profile: profile,
-                budgetBytes: budgetBytes,
-                context: ProfileDefinition.defaultContext,
-                footprint: footprint,
-                sessionBytes: sessionBytes
-            )
-        }
-
         var standardConsidered: [CandidateReport] = []
         // The smallest window actually tried, so the failure path below can
-        // size embedding/flash's diagnostics at a real, tried context rather
-        // than an arbitrary one. Starts at the ordinary default in case no
-        // candidate's window could be searched (every native max context
-        // lookup failed).
-        var lastTriedContext = ProfileDefinition.defaultContext
+        // size embedding/flash's diagnostics at a real, tried context. It
+        // stays `nil` when no candidate's window was searched: the standard
+        // slot names no candidate, or each native max context lookup failed.
+        var lastTriedContext: Int?
 
         for (index, candidate) in profile.standard.enumerated() {
             switch nativeMaxContext(candidate) {
@@ -721,16 +710,37 @@ enum JointFit {
             }
         }
 
-        // No standard candidate has a window that fits. Re-resolve
-        // embedding/flash once more at the smallest window actually tried, so
-        // the failure's diagnostics show what those slots looked like at the
-        // context resolution gave up at.
+        guard let triedContext = lastTriedContext else {
+            throw NoWindowFailure(profileName: profile.name, standardConsidered: standardConsidered)
+        }
+        throw windowFailure(
+            profile: profile,
+            budgetBytes: budgetBytes,
+            standardConsidered: standardConsidered,
+            triedContext: triedContext,
+            footprint: footprint,
+            sessionBytes: sessionBytes
+        )
+    }
+
+    /// The failure when no standard candidate has a window that fits.
+    /// Embedding and flash are resolved once more at `triedContext`, the
+    /// smallest window actually tried, so the diagnostics show those slots at
+    /// the context where resolution stopped.
+    private static func windowFailure(
+        profile: ProfileDefinition,
+        budgetBytes: Int64,
+        standardConsidered: [CandidateReport],
+        triedContext: Int,
+        footprint: (ModelRef, Int) -> Result<Int64, RepoMetadataError>,
+        sessionBytes: (ModelRef, Int) -> Result<Int64, RepoMetadataError>
+    ) -> ResolutionFailure {
         var budget = SharedBudget(totalBytes: budgetBytes)
         let embeddingResolution = resolveSlot(
             .embedding,
             candidates: profile.embedding,
             budget: budget,
-            context: lastTriedContext,
+            context: triedContext,
             footprint: footprint,
             sessionBytes: sessionBytes
         )
@@ -740,17 +750,17 @@ enum JointFit {
             remainingBudgetBytes: budget.remainingBytes,
             chosen: nil,
             considered: standardConsidered,
-            contextTokens: lastTriedContext
+            contextTokens: triedContext
         )
         let flashResolution = resolveSlot(
             .flash,
             candidates: profile.flash,
             budget: budget,
-            context: lastTriedContext,
+            context: triedContext,
             footprint: footprint,
             sessionBytes: sessionBytes
         )
-        throw ResolutionFailure(
+        return ResolutionFailure(
             profileName: profile.name,
             budgetBytes: budgetBytes,
             slots: [embeddingResolution, standardResolution, flashResolution]

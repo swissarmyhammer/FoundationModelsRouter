@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -82,7 +83,8 @@ struct OwningProfileTests {
                 slot: .standard,
                 remainingBudgetBytes: 0,
                 chosen: chosenRef,
-                considered: []
+                considered: [],
+                contextTokens: ScriptedSessionContext.tokens
             ),
             container: UndrivenLanguageModelContainer(),
             routerId: router.id,

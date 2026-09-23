@@ -50,8 +50,9 @@ struct RealModelHarnessTests {
     /// harness records what a caller loaded rather than loading anything.
     private static let model: ModelRef = "mlx-community/probe-model"
 
-    /// A working context that is NOT ``ProfileDefinition/defaultContext``, so a
-    /// build that silently fell back to the default is visible.
+    /// A working context that is NOT `ScriptedSessionContext.tokens`, the
+    /// window most tests state, so a build that silently used that window is
+    /// visible.
     ///
     /// The number ``CompactionRoundTripIntegrationTests`` resolves at, which is
     /// the smaller window that makes its scripted turns cross the trigger.
@@ -95,21 +96,6 @@ struct RealModelHarnessTests {
                     contextTokens: Self.context
                 ))
         }
-    }
-
-    @Test("stating the profile default explicitly resolves to what the omitted default resolved to")
-    func statingTheProfileDefaultMatchesOmittingIt() {
-        // `SessionTreeRestorationIntegrationTests` built its own resolutions
-        // with no `contextTokens:` argument at all, so every slot took
-        // `SlotResolution`'s own default. The harness has no default to inherit,
-        // so that suite now states `ProfileDefinition.defaultContext`. This is
-        // the equality that makes those two spellings the same profile.
-        let stated = RealModelHarness.makeResolution(
-            slot: .standard, model: Self.model, context: ProfileDefinition.defaultContext)
-        let omitted = SlotResolution(
-            slot: .standard, remainingBudgetBytes: 0, chosen: Self.model, considered: [])
-
-        #expect(stated == omitted)
     }
 
     // MARK: - The sidecar a restore reads

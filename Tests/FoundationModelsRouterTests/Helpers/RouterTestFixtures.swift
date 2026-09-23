@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Tracing
 
 @testable import FoundationModelsRouter
@@ -67,12 +68,14 @@ struct StubModelLoader: ModelLoader {
 /// lives in exactly one place instead of being repeated per suite.
 enum RouterTestFixtures {
     /// The canned `config.json` payload behind ``rawMetadata`` — a tiny,
-    /// valid model config the resolver can size.
+    /// valid model config the resolver can size. Its window is
+    /// `ScriptedSessionContext.tokens`, so a profile that names no context
+    /// resolves at the window the tests state.
     static let configJSON = Data(
         """
         {
             "num_hidden_layers": 2,
-            "max_position_embeddings": 8192,
+            "max_position_embeddings": \(ScriptedSessionContext.tokens),
             "num_attention_heads": 8,
             "num_key_value_heads": 2,
             "head_dim": 16,
@@ -104,11 +107,11 @@ enum RouterTestFixtures {
 
     /// The standard test profile: one candidate per slot.
     ///
-    /// - Parameter context: The profile's working-context override, or
-    ///   ``ProfileDefinition/defaultContext`` (the default) to leave it
-    ///   alone.
+    /// - Parameter context: The profile's working-context override. The
+    ///   default is `ScriptedSessionContext.tokens`, the small, known window
+    ///   the tests state. Pass `nil` to derive the window from the model.
     /// - Returns: The profile definition.
-    static func profile(context: Int? = ProfileDefinition.defaultContext) -> ProfileDefinition {
+    static func profile(context: Int? = ScriptedSessionContext.tokens) -> ProfileDefinition {
         ProfileDefinition(
             name: "coding",
             description: "test profile",

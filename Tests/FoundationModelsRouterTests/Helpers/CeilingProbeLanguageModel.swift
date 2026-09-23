@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Synchronization
 
 @testable import FoundationModelsRouter
@@ -394,7 +395,7 @@ struct CeilingProbeSessionFixture {
     /// - Throws: Whatever profile resolution throws.
     static func make(
         ending: CeilingProbeEnding,
-        context: Int = ProfileDefinition.defaultContext,
+        context: Int = ScriptedSessionContext.tokens,
         tools: [any Tool] = [],
         tempDirPrefix: String
     ) async throws -> CeilingProbeSessionFixture {

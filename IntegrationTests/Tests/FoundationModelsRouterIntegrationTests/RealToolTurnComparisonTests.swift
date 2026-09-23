@@ -242,11 +242,9 @@ struct RealToolTurnComparisonTests {
 
         let profile = RealModelHarness.make(
             model: realToolTurnModel,
-            // The window the hand-built copy resolved at: it stated no
-            // `contextTokens` at all, so every slot took `SlotResolution`'s own
-            // default. Stated explicitly here, because the harness has no
-            // default of its own to inherit.
-            context: ProfileDefinition.defaultContext,
+            // The small, known window the tests state. The harness has no
+            // default of its own, and the library has no default context.
+            context: ScriptedSessionContext.tokens,
             container: loaded.container,
             samplingMode: loaded.samplingMode,
             cacheDir: directory,

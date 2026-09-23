@@ -117,7 +117,7 @@ struct Qwen38ToolTurnIntegrationTests {
 
         let profile = RealModelHarness.make(
             model: qwen38ToolTurnModel,
-            context: ProfileDefinition.defaultContext,
+            context: ScriptedSessionContext.tokens,
             container: container.container,
             samplingMode: container.samplingMode,
             cacheDir: directory,

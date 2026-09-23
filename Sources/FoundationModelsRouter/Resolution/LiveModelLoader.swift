@@ -201,9 +201,9 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// This value applies only to a caller that reports no context and names
     /// no ceiling, so that the MLX executor still gets a finite budget.
     ///
-    /// The number is not ``ProfileDefinition/defaultContext``. A log line
-    /// that prints one of the two values then cannot be read as the other.
-    /// `TurnTokenCeilingTests` keeps the two apart.
+    /// The number is a response budget, not a context window. The log line
+    /// names it `responseTokenFloor`, so it cannot be read as the window of
+    /// a model.
     static let responseTokenFloor = 8000
 
     /// Makes the generation options of one call on ``liveSession``.

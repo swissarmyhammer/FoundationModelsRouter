@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModelsRouterTestSupport
 import InMemoryTracing
 import Testing
 import Tracing
@@ -132,7 +133,8 @@ struct EmbedTracingTests {
             chosen: chosen,
             footprintBytes: 0,
             resolution: SlotResolution(
-                slot: .embedding, remainingBudgetBytes: 0, chosen: chosen, considered: []),
+                slot: .embedding, remainingBudgetBytes: 0, chosen: chosen, considered: [],
+                contextTokens: ScriptedSessionContext.tokens),
             container: ThrowingEmbeddingContainer(dimension: RouterTestFixtures.stubDimension),
             routerId: router.id,
             recorder: InMemoryRecorder(),

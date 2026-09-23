@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -104,7 +105,8 @@ struct JointFitTests {
             description: "portability preference order",
             standard: [std32b8, std32b4, std14b4],
             flash: [flash3b],
-            embedding: [embBge]
+            embedding: [embBge],
+            context: ScriptedSessionContext.tokens
         )
     }
 
@@ -200,7 +202,8 @@ struct JointFitTests {
             description: "exact-fit profile",
             standard: [Self.std14b4],
             flash: [Self.flash3b],
-            embedding: [Self.embBge]
+            embedding: [Self.embBge],
+            context: ScriptedSessionContext.tokens
         )
         // The raw sum is exactly 11_500. At the exact sum it resolves.
         let exact = try JointFit.resolve(
@@ -278,7 +281,8 @@ struct JointFitTests {
             description: "first candidate cannot be sized",
             standard: [Self.unsizable, Self.std14b4],
             flash: [Self.flash3b],
-            embedding: [Self.embBge]
+            embedding: [Self.embBge],
+            context: ScriptedSessionContext.tokens
         )
         let result = try JointFit.resolve(
             profile: profile,
@@ -1022,5 +1026,71 @@ struct JointFitTests {
         let text = error.description
         #expect(text.contains("trio blocked by embedding"))
         #expect(!text.contains("\(Self.sharedGeneration.stringValue) — unsized: too large"))
+    }
+
+    // MARK: - The model's window is the default context
+
+    /// The native max context of ``windowNativeFits`` in the tests below.
+    private static let modelWindowNative = 4_096
+
+    /// A budget far above what the trio charges at ``modelWindowNative``.
+    private static let modelWindowBudget: Int64 = 1_000_000
+
+    /// The footprint table for a trio whose standard slot names ``windowNativeFits``.
+    private static let modelWindowFootprints = windowEmbFlashFootprints.merging(
+        [windowNativeFits: Footprint(weightBytes: 0, layers: 1, kvHeads: 1, headDim: 1)]
+    ) { _, new in new }
+
+    @Test("a profile made with no context argument has no context, and resolves at the model's window")
+    func profileWithNoContextArgumentResolvesAtTheModelsWindow() throws {
+        let profile = ProfileDefinition(
+            name: "model-window",
+            description: "names no context",
+            standard: [Self.windowNativeFits],
+            flash: [Self.windowFlash],
+            embedding: [Self.windowEmb]
+        )
+        #expect(profile.context == nil)
+
+        let result = try JointFit.resolve(
+            profile: profile,
+            budgetBytes: Self.modelWindowBudget,
+            footprint: Self.sizedFootprint(Self.modelWindowFootprints),
+            sessionBytes: Self.neverCalledSessionBytes,
+            nativeMaxContext: Self.nativeMaxTable([Self.windowNativeFits: Self.modelWindowNative])
+        )
+        #expect(Self.resolution(result, for: .standard).contextTokens == Self.modelWindowNative)
+    }
+
+    @Test("a profile with no standard candidate fails with no window, and no slot is sized")
+    func noStandardCandidateFailsWithNoWindow() throws {
+        let failure = try #require(throws: NoWindowFailure.self) {
+            try JointFit.resolve(
+                profile: Self.windowProfile(standard: []),
+                budgetBytes: Self.modelWindowBudget,
+                footprint: Self.sizedFootprint(Self.modelWindowFootprints),
+                sessionBytes: Self.neverCalledSessionBytes,
+                nativeMaxContext: Self.neverCalledNativeMaxContext
+            )
+        }
+        #expect(failure.standardConsidered.isEmpty)
+    }
+
+    @Test("a profile whose native windows cannot be read reports each candidate and no context")
+    func unreadableWindowsFailWithNoWindow() throws {
+        let failure = try #require(throws: NoWindowFailure.self) {
+            try JointFit.resolve(
+                profile: Self.windowProfile(standard: [Self.windowBig, Self.windowSmall]),
+                budgetBytes: Self.modelWindowBudget,
+                footprint: Self.sizedFootprint(Self.modelWindowFootprints),
+                sessionBytes: Self.neverCalledSessionBytes,
+                nativeMaxContext: Self.nativeMaxTable([:])
+            )
+        }
+        let expectedVerdicts = [Self.windowBig, Self.windowSmall].map {
+            Verdict.metadataUnavailable("no native max context injected for \($0.stringValue)")
+        }
+        #expect(failure.standardConsidered.map(\.verdict) == expectedVerdicts)
+        #expect(failure.description.contains("There is no context, so no slot was sized."))
     }
 }

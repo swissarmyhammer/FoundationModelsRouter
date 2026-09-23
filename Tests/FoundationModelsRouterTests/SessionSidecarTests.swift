@@ -633,6 +633,7 @@ struct SessionSidecarTests {
             persistedEntryCount: 0,
             historyOrdinal: 0,
             sidecarOrigin: .new(under: standard.durableRecording),
+            contextTokens: standard.contextTokens,
             tokenCounter: CharacterTokenCounter(),
             tracer: standard.tracer
         )

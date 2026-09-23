@@ -187,7 +187,7 @@ struct SessionEventStreamTests {
     private static let configJSON = Data("""
         {
             "num_hidden_layers": 2,
-            "max_position_embeddings": 8192,
+            "max_position_embeddings": \(ScriptedSessionContext.tokens),
             "num_attention_heads": 8,
             "num_key_value_heads": 2,
             "head_dim": 16,
@@ -561,10 +561,11 @@ struct SessionEventStreamTests {
         ]
 
         let events = try await collectEvents(session, prompt: "hi")
-        // contextFill is this turn's usage over the profile's default context
-        // (``ProfileDefinition/defaultContext``, 8192) — this session was
-        // vended with no explicit `context:`.
-        #expect(events.last == .turnEnded(TokenUsage(tokensIn: 10, tokensOut: 5, contextFill: 15.0 / 8192.0)))
+        // contextFill is this turn's usage over the resolved window. The
+        // profile names no context, so the window is the stub model's own
+        // window, which `configJSON` states as `ScriptedSessionContext.tokens`.
+        let expectedFill = 15.0 / Double(ScriptedSessionContext.tokens)
+        #expect(events.last == .turnEnded(TokenUsage(tokensIn: 10, tokensOut: 5, contextFill: expectedFill)))
     }
 
     @Test("a backend reporting no usage never emits turnEnded")

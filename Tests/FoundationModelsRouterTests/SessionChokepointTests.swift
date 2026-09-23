@@ -208,7 +208,7 @@ struct SessionChokepointTests {
     private static let configJSON = Data("""
         {
             "num_hidden_layers": 2,
-            "max_position_embeddings": 8192,
+            "max_position_embeddings": \(ScriptedSessionContext.tokens),
             "num_attention_heads": 8,
             "num_key_value_heads": 2,
             "head_dim": 16,
@@ -537,7 +537,7 @@ struct SessionChokepointTests {
         // reaches the container as the resolved working context of the
         // session, and not as a constant (see
         // `RoutedSessionActor.responseTokenCeiling(requested:contextTokens:)`).
-        #expect(await maxTokensSpy.observed == [4096, ProfileDefinition.defaultContext])
+        #expect(await maxTokensSpy.observed == [4096, ScriptedSessionContext.tokens])
     }
 
     @Test("streamResponse threads an explicit maxTokens override to the container; omitting it passes the resolved context")
@@ -563,6 +563,6 @@ struct SessionChokepointTests {
         // Mirrors respondThreadsMaxTokensOverride for the streaming path. The
         // explicit override is not the resolved context, so the two values
         // stay distinguishable.
-        #expect(await maxTokensSpy.observed == [2048, ProfileDefinition.defaultContext])
+        #expect(await maxTokensSpy.observed == [2048, ScriptedSessionContext.tokens])
     }
 }

@@ -158,7 +158,7 @@ struct GuidedGenerationTests {
     private static let configJson = Data("""
         {
             "num_hidden_layers": 2,
-            "max_position_embeddings": 8192,
+            "max_position_embeddings": \(ScriptedSessionContext.tokens),
             "num_attention_heads": 8,
             "num_key_value_heads": 2,
             "head_dim": 16,
@@ -650,6 +650,6 @@ struct GuidedGenerationTests {
         _ = try await profile.standard.respond(to: "hi", following: .jsonSchema(Self.smallSchema))
 
         // Omitting the override gives the guided call the resolved context.
-        #expect(await maxTokensSpy.observed == [2048, ProfileDefinition.defaultContext])
+        #expect(await maxTokensSpy.observed == [2048, ScriptedSessionContext.tokens])
     }
 }

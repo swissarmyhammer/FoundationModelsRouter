@@ -53,8 +53,8 @@ struct CoreTypesTests {
         #expect(ref == literal)
     }
 
-    @Test("ProfileDefinition defaults context to 8192")
-    func profileDefinitionDefaultContext() {
+    @Test("ProfileDefinition names no context by default, so resolution uses the model's window")
+    func profileDefinitionDefaultContextIsTheModelsWindow() {
         let profile = ProfileDefinition(
             name: "coder",
             description: "coding profile",
@@ -63,7 +63,7 @@ struct CoreTypesTests {
             embedding: ["org/embedding"]
         )
 
-        #expect(profile.context == 8192)
+        #expect(profile.context == nil)
     }
 
     @Test("ProfileDefinition.context accepts nil to signal the context should be derived at resolve time")

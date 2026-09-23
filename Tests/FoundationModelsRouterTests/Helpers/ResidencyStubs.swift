@@ -147,11 +147,12 @@ struct SpyingModelLoader: ModelLoader {
 /// attention shape with a single 10 MB weight shard, so footprints are the
 /// same well-understood magnitude every other suite in this target uses
 /// (`generationSlotFootprint` is 12_097_152 bytes and
-/// `embeddingSlotFootprint` is 10_000_000 bytes at the default 8192-token
-/// context; see `ResolveTests`). Every figure is the raw footprint estimate
+/// `embeddingSlotFootprint` is 10_000_000 bytes at the stub model's window,
+/// `ScriptedSessionContext.tokens`; see `ResolveTests`). "The stub window"
+/// below names that window. Every figure is the raw footprint estimate
 /// that ``JointFit`` charges.
 enum ResidencyFixtures {
-    /// One generation model's raw footprint at the default context: the
+    /// One generation model's raw footprint at the stub window: the
     /// 10_000_000-byte weights plus one 2_097_152-byte session KV cache.
     static let generationModelFootprint: Int64 = 12_097_152
 
@@ -164,7 +165,7 @@ enum ResidencyFixtures {
     /// How many models one trio profile (standard, flash, embedding) loads.
     static let modelsPerTrio = 3
 
-    /// One full trio's raw footprint at the default context: one
+    /// One full trio's raw footprint at the stub window: one
     /// ``generationModelFootprint`` for each generation slot, plus the
     /// embedding model.
     static let oneTrioFootprint: Int64 =
@@ -175,8 +176,8 @@ enum ResidencyFixtures {
     /// charge, so a budget meant to fit exactly N trios has room for no more.
     static let headroomBufferBytes: Int64 = 1_000
 
-    /// The raw KV cache of ONE generation session at the default 8192-token
-    /// context for the canned 2-layer config: the extra steady-state cost
+    /// The raw KV cache of ONE generation session at the stub window for
+    /// the canned 2-layer config: the extra steady-state cost
     /// each generation slot beyond the first adds on a shared resident model,
     /// and exactly what ``JointFit`` charges a second generation slot naming
     /// an already-charged reference.
@@ -201,7 +202,7 @@ enum ResidencyFixtures {
     /// flash model's whole footprint, and zero for the reused embedder.
     static let reuseWithOwnFlashCharge: Int64 = sessionKVBytes + generationModelFootprint
 
-    /// A working context below ``ProfileDefinition/defaultContext``, for the
+    /// A working context below `ScriptedSessionContext.tokens`, for the
     /// profile that names an already-resident repo at a second context. The
     /// context is not part of the ``ResidencyKey``: the loader does not size
     /// a container by it, so the same repo at this context shares the
@@ -229,7 +230,7 @@ enum ResidencyFixtures {
     /// One generation model's raw weights alone, with no KV cache: the canned
     /// 10_000_000-byte shard. It is the first load's raw footprint less its
     /// own raw KV cache at either context (`12_097_152 - 2_097_152` at the
-    /// default context, `11_048_576 - 1_048_576` at ``steppedDownContext``),
+    /// stub window, `11_048_576 - 1_048_576` at ``steppedDownContext``),
     /// and it is what a resident generation model holds against the budget
     /// once every hold that carries a KV cache has released.
     static let generationWeightsBytes: Int64 = 10_000_000
@@ -240,7 +241,7 @@ enum ResidencyFixtures {
     static let steppedDownTrioFootprint: Int64 =
         steppedDownGenerationModelFootprint * generationSlotsPerTrio + embeddingModelFootprint
 
-    /// The whole reservation a profile at the default context is charged when
+    /// The whole reservation a profile at the stub window is charged when
     /// it reuses a resident generation model but brings its own flash model
     /// and its own embedder: one session KV cache on the reused generation
     /// model, its own flash model's whole footprint, and its own embedder's
@@ -249,10 +250,10 @@ enum ResidencyFixtures {
         sessionKVBytes + generationModelFootprint + embeddingModelFootprint
 
     /// What the pool holds after the profile that loaded a shared generation
-    /// model at ``steppedDownContext`` releases while a profile at the default
-    /// context still holds it: the weights one time
+    /// model at ``steppedDownContext`` releases while a profile at the stub
+    /// window still holds it: the weights one time
     /// (``generationWeightsBytes``), the remaining profile's KV cache at the
-    /// default context (``sessionKVBytes``), and that profile's own flash
+    /// stub window (``sessionKVBytes``), and that profile's own flash
     /// model and embedder. Nothing of the released KV cache remains.
     static let wideHoldAfterNarrowRelease: Int64 =
         generationWeightsBytes + sessionKVBytes + generationModelFootprint + embeddingModelFootprint

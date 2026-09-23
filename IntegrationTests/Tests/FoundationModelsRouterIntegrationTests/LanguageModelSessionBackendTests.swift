@@ -426,11 +426,9 @@ struct LanguageModelSessionBackendIntegrationTests {
 
         let profile = RealModelHarness.make(
             model: sessionBackendModel,
-            // The window the hand-built copy resolved at: it stated no
-            // `contextTokens` at all, so every slot took `SlotResolution`'s own
-            // default. Stated explicitly here, because the harness has no
-            // default of its own to inherit.
-            context: ProfileDefinition.defaultContext,
+            // The small, known window the tests state. The harness has no
+            // default of its own, and the library has no default context.
+            context: ScriptedSessionContext.tokens,
             container: loaded.container,
             samplingMode: loaded.samplingMode,
             cacheDir: cacheDir,
@@ -467,6 +465,9 @@ struct LanguageModelSessionBackendIntegrationTests {
             // as `makeSession` names it: this session writes its own sidecar,
             // and so does any fork taken from it.
             sidecarOrigin: .new(under: standard.durableRecording),
+            // The handle's own resolved window, exactly as `makeSession`
+            // hands it on.
+            contextTokens: standard.contextTokens,
             // The container's own counter, exactly as `makeSession` hands it
             // on: every count the session makes before a call comes from the
             // tokenizer of its model.
