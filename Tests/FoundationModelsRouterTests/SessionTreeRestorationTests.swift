@@ -994,7 +994,7 @@ struct SessionTreeRestorationTests {
 
         // Rewrite the recorded context to a figure the live resolution does
         // not match — the on-disk stand-in for a recording made on a machine
-        // whose context ladder settled on a different rung.
+        // whose window search settled on a different window.
         let sidecarURL = RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
             .appendingPathComponent(root.id.description, isDirectory: true)
             .appendingPathComponent("session.json", isDirectory: false)

@@ -12,7 +12,7 @@ import Testing
 /// Everything runs against stubs — a stub `ModelLoader` and a container that
 /// vends a ``StubSessionBackend`` with a test-configured `usageIncrement` —
 /// so the suite needs no network and no GPU. Every profile fixture pins an
-/// explicit `context:`, bypassing the context ladder entirely, so the
+/// explicit `context:`, which skips the window search entirely, so the
 /// denominator ``RoutedSession/contextFill`` divides by is a known constant.
 @Suite("TokenBudget defaults and contextFill measured token accounting")
 struct TokenBudgetTests {
@@ -129,7 +129,7 @@ struct TokenBudgetTests {
 
     /// A profile with an explicit, small `context`, so the denominator
     /// ``RoutedSession/contextFill`` divides by is this exact constant rather
-    /// than whatever the ladder would have derived.
+    /// than whatever the window search would have derived.
     private static func profile(context: Int) -> ProfileDefinition {
         ProfileDefinition(
             name: "coding",

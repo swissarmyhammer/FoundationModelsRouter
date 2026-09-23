@@ -6,11 +6,13 @@ enum Verdict: Sendable, Equatable {
     case chosen
 
     /// The bytes this candidate charges exceeded the remaining budget. For a
-    /// laddered candidate, the candidate itself blocked the smallest rung tried.
+    /// standard-slot candidate whose window is derived, the candidate itself
+    /// did not fit at a window of one token.
     case tooLarge
 
-    /// This standard-slot candidate fit at every rung, but another slot had no
-    /// viable candidate at the smallest rung. The associated value is that slot.
+    /// This standard-slot candidate fit at a window of one token, but another
+    /// slot had no viable candidate at that window. The associated value is
+    /// that slot.
     case trioBlocked(ModelSlot)
 
     /// A higher-preference candidate was already chosen, so this one was not sized.
@@ -20,28 +22,34 @@ enum Verdict: Sendable, Equatable {
     case metadataUnavailable(String)
 }
 
-/// One context rung tried for a standard-slot candidate while the working
-/// context was derived by the ladder. See ``JointFit``.
-struct LadderAttempt: Sendable, Equatable {
-    /// The context size in tokens tried at this rung.
-    let contextTokens: Int
+/// The record of the window search for one standard-slot candidate while the
+/// working context was derived: the candidate's native window, and the
+/// largest window that fits or the slot that blocked the smallest window.
+/// See ``JointFit``.
+struct WindowFit: Sendable, Equatable {
+    /// What the window search found.
+    enum Outcome: Sendable, Equatable {
+        /// The whole trio co-fit at `contextTokens`, the largest window that
+        /// fits. `estimatedFootprintBytes` is this candidate's own `× 1.2`
+        /// footprint at that window, or `nil` when it could not be sized.
+        case fits(contextTokens: Int, estimatedFootprintBytes: Int64?)
 
-    /// This candidate's own `× 1.2` footprint at this rung, or `nil` when it
-    /// could not be sized.
-    let estimatedFootprintBytes: Int64?
+        /// No window fits: at a window of one token, `by` found no viable
+        /// candidate. `estimatedFootprintBytes` is this candidate's own
+        /// `× 1.2` footprint at that window, or `nil` when it could not be sized.
+        case blocked(by: ModelSlot, estimatedFootprintBytes: Int64?)
+    }
 
-    /// The slot that found no viable candidate at this rung, or `nil` when the
-    /// whole trio co-fit.
-    let blockedSlot: ModelSlot?
+    /// The candidate's native max context, in tokens.
+    let nativeContextTokens: Int
 
-    /// Whether the full trio co-fit the budget at this rung.
-    var fits: Bool { blockedSlot == nil }
+    /// What the window search found.
+    let outcome: Outcome
 
-    /// Creates a ladder attempt record.
-    init(contextTokens: Int, estimatedFootprintBytes: Int64?, blockedSlot: ModelSlot?) {
-        self.contextTokens = contextTokens
-        self.estimatedFootprintBytes = estimatedFootprintBytes
-        self.blockedSlot = blockedSlot
+    /// Creates a window-search record.
+    init(nativeContextTokens: Int, outcome: Outcome) {
+        self.nativeContextTokens = nativeContextTokens
+        self.outcome = outcome
     }
 }
 
@@ -64,9 +72,9 @@ package struct CandidateReport: Sendable, Equatable {
     /// Why this candidate was or was not chosen.
     let verdict: Verdict
 
-    /// The context rungs tried for this candidate. Non-empty only for a
-    /// standard-slot candidate sized by the ladder.
-    let ladderAttempts: [LadderAttempt]
+    /// The window search for this candidate. Set only for a standard-slot
+    /// candidate whose window was derived; `nil` otherwise.
+    let windowFit: WindowFit?
 
     /// Creates a candidate report.
     init(
@@ -74,13 +82,13 @@ package struct CandidateReport: Sendable, Equatable {
         estimatedFootprintBytes: Int64?,
         chargedBytes: Int64?,
         verdict: Verdict,
-        ladderAttempts: [LadderAttempt] = []
+        windowFit: WindowFit? = nil
     ) {
         self.ref = ref
         self.estimatedFootprintBytes = estimatedFootprintBytes
         self.chargedBytes = chargedBytes
         self.verdict = verdict
-        self.ladderAttempts = ladderAttempts
+        self.windowFit = windowFit
     }
 }
 
@@ -152,8 +160,8 @@ struct ResolutionFailure: Error, Equatable, CustomStringConvertible {
             )
             for candidate in slot.considered {
                 lines.append("    - \(Self.line(for: candidate))")
-                for attempt in candidate.ladderAttempts {
-                    lines.append("        \(Self.line(for: attempt))")
+                if let fit = candidate.windowFit {
+                    lines.append("        \(Self.line(for: fit))")
                 }
             }
         }
@@ -162,8 +170,7 @@ struct ResolutionFailure: Error, Equatable, CustomStringConvertible {
 
     /// Renders one candidate as `<ref> — <footprint> bytes: <verdict>`.
     private static func line(for candidate: CandidateReport) -> String {
-        let footprint = candidate.estimatedFootprintBytes
-            .map { "\($0) bytes" } ?? "unsized"
+        let footprint = footprintText(candidate.estimatedFootprintBytes)
         return "\(candidate.ref.stringValue) — \(footprint)\(sharedWeightsNote(for: candidate)): "
             + verdictText(candidate.verdict)
     }
@@ -181,12 +188,22 @@ struct ResolutionFailure: Error, Equatable, CustomStringConvertible {
         return " (\(charged) bytes charged; an earlier slot already reserved the weights)"
     }
 
-    /// Renders one ladder rung as `context <n> tokens — <footprint> bytes: <outcome>`.
-    private static func line(for attempt: LadderAttempt) -> String {
-        let footprint = attempt.estimatedFootprintBytes
-            .map { "\($0) bytes" } ?? "unsized"
-        return "context \(attempt.contextTokens) tokens — \(footprint): "
-            + blockedText(attempt.blockedSlot)
+    /// Renders one window search as `native window <n> tokens, <result> —
+    /// <footprint>: <outcome>`.
+    private static func line(for fit: WindowFit) -> String {
+        let native = "native window \(fit.nativeContextTokens) tokens"
+        switch fit.outcome {
+        case .fits(let contextTokens, let footprintBytes):
+            return "\(native), fitted window \(contextTokens) tokens — \(footprintText(footprintBytes)): fit"
+        case .blocked(let slot, let footprintBytes):
+            return "\(native), no window fits — \(footprintText(footprintBytes)) at one token: "
+                + blockedText(slot)
+        }
+    }
+
+    /// Renders a footprint as `<n> bytes`, or `unsized` when it is `nil`.
+    private static func footprintText(_ bytes: Int64?) -> String {
+        bytes.map { "\($0) bytes" } ?? "unsized"
     }
 
     /// A short human-readable label for a verdict.
@@ -205,15 +222,13 @@ struct ResolutionFailure: Error, Equatable, CustomStringConvertible {
         }
     }
 
-    /// A short label for what stopped a ladder rung: `fit`, `too large`, or
-    /// `trio blocked by <slot>`.
-    private static func blockedText(_ blockedSlot: ModelSlot?) -> String {
-        switch blockedSlot {
-        case nil:
-            return "fit"
+    /// A short label for the slot that blocked the smallest window: `too
+    /// large` when it is the standard slot, or `trio blocked by <slot>`.
+    private static func blockedText(_ slot: ModelSlot) -> String {
+        switch slot {
         case .standard:
             return "too large"
-        case .some(let slot):
+        case .embedding, .flash:
             return "trio blocked by \(slot.rawValue)"
         }
     }

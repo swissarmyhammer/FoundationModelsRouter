@@ -27,10 +27,10 @@ public final class RoutedModel<Container: Sendable>: Sendable {
 
     /// The resolved working context, in tokens.
     ///
-    /// This is the value the resolution ladder selected, not the value the
-    /// ``ProfileDefinition`` asked for. When the ladder steps down from a
-    /// candidate's native context to fit the budget, this value is smaller
-    /// than `ProfileDefinition.context` (see `JointFit`). Every slot of one
+    /// This is the value resolution selected. When `ProfileDefinition.context`
+    /// is `nil`, it is the largest window at which the profile fits the
+    /// budget, which is smaller than the candidate's native context when the
+    /// native context does not fit (see `JointFit`). Every slot of one
     /// profile shares the same value.
     ///
     /// A session vended from this handle divides its context fill by this

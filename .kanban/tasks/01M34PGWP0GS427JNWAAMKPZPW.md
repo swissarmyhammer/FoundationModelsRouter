@@ -1,10 +1,28 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m37frrntnbtjq6jf10hpy5cs
+  text: |-
+    ### Design choices (made without the owner; record for review)
+
+    1. The whole trio grows with the window, not only the standard slot: every slot is sized at the one working context, and a flash slot on the same container pays a second KV cache. So the computation uses the charge of the whole trio, not only the standard KV cache.
+    2. The computation: try the native window with `attemptTrio`. If it does not fit, try a window of one token. If that does not fit, the candidate does not fit (the slot that blocked it gives the verdict). Else take the trio that fit at one token as the plan, measure the bytes the plan charges at one token and at the failed window (one `attemptTrio` with an unlimited budget, so the reservation rule for a shared container stays the same), divide the difference by the tokens between them to get the bytes for each token, and compute `1 + floor((budget − charge at one token) / bytes per token)`, capped below the failed window. Confirm with one `attemptTrio`. When the confirmation does not fit (margin rounding, or a slot picks another candidate), the same computation runs again with that window as the failed window. Each step is smaller, so the search ends; the window of one token is already confirmed.
+    3. When a charge cannot be sized at the failed window, or the charge does not grow with the window, the result is the confirmed window of one token. No new number enters the code: `smallestWindow = 1` is the lower end of the range `1...nativeMaxContext` that the card names.
+    4. The report: `LadderAttempt` is now `WindowFit { nativeContextTokens, outcome }` with `outcome` = `.fits(contextTokens:estimatedFootprintBytes:)` or `.blocked(by:estimatedFootprintBytes:)`. `CandidateReport.ladderAttempts` is now `CandidateReport.windowFit: WindowFit?`. `ResolutionFailure.description` renders `native window N tokens, fitted window W tokens` or `native window N tokens, no window fits`.
+    5. The `× 1.2` margin stays (^3scx5rz removes it). `ProfileDefinition.defaultContext` stays in the two fallback paths (^24hrxdj removes it). `UPSTREAM_ASKS.md` and `compaction_plan.md` keep the word "ladder": they are records of past answers and plans, not current docs.
+
+    ### implement — changed
+    - evidence: `Sources/FoundationModelsRouter/Resolution/JointFit.swift`, `Resolution/SlotResolution.swift`, `LanguageModelProfile.swift`, `Core/ProfileDefinition.swift`; tests `JointFitTests.swift` (new: native fits, computed window, window + 1 does not fit, not fitting at one token, multitool window 51_761 and + 1), `ResolveTests.swift`, `TranscriptNestingTests.swift`, `SessionTreeRestorationTests.swift`, `TokenBudgetTests.swift`, `TokenUsageMeteringTests.swift` (words only).
+    - `swift test`: Test run with 1325 tests in 149 suites passed (2 known issues); Test run with 1 test in 1 suite passed; Test run with 19 tests in 3 suites passed. `swift build --build-tests --package-path IntegrationTests`: Build complete.
+    - `rg 'ladderStepDowns|contextLadder|walkLadder|LadderAttempt|ladderAttempts'` finds nothing.
+    - next: commit, review.
+  timestamp: 2026-09-23T15:57:21.978201+00:00
 depends_on:
 - 01M34PDQHD1WEJ2QBYPJ0P7ZN0
-position_column: todo
-position_ordinal: '8580'
+position_column: doing
+position_ordinal: '80'
 title: Replace the context ladder with the largest window that fits
 ---
 ## Decision (from the owner, 2026-09-22)

@@ -37,11 +37,12 @@ struct JointResolution: Sendable, Equatable {
 /// charged only its per-session KV cache, read from `sessionBytes`.
 ///
 /// When ``ProfileDefinition/context`` is explicit, every candidate is sized at
-/// that one context. When it is `nil`, the context is derived by a ladder:
-/// standard-slot candidates are the outer loop, and a descending ladder of
-/// context rungs, anchored on each candidate's native max context, is the
-/// inner loop. The first candidate with a fitting rung wins at its largest
-/// fitting rung.
+/// that one context. When it is `nil`, the context is the largest window that
+/// fits: standard-slot candidates are tried in preference order, and each one
+/// gets the largest window, from one token up to its native max context, at
+/// which the whole trio co-fits the budget. The first candidate with a window
+/// wins at that window. The window comes from the model and the budget, not
+/// from a list of steps.
 ///
 /// The allocation is pure. Footprints and native max contexts are injected as
 /// closures, so it does no I/O.
@@ -52,9 +53,9 @@ enum JointFit {
     /// The overhead margin denominator.
     private static let marginDenominator: Int64 = 5
 
-    /// The context step-down rungs a ladder tries below the native max
-    /// context, in descending order.
-    private static let ladderStepDowns: [Int] = [131_072, 65_536, 32_768, 16_384, 8_192, 4_096]
+    /// The smallest window a model can run at: one token. The window search
+    /// looks for a fit in `smallestWindow...nativeMaxContext`.
+    private static let smallestWindow = 1
 
     /// Applies the `× 1.2` overhead margin to a raw footprint. Rounds up.
     ///
@@ -150,7 +151,7 @@ enum JointFit {
                 sessionBytes: sessionBytes
             )
         }
-        return try resolveViaLadder(
+        return try resolveAtLargestWindow(
             profile: profile,
             budgetBytes: budgetBytes,
             footprint: footprint,
@@ -159,7 +160,7 @@ enum JointFit {
         )
     }
 
-    // MARK: - Explicit context (single rung)
+    // MARK: - Explicit context
 
     /// Resolves the trio at one fixed working context. Every slot resolution it
     /// returns carries this one `context`.
@@ -173,19 +174,14 @@ enum JointFit {
         sessionBytes: (ModelRef, Int) -> Result<Int64, RepoMetadataError>
     ) throws -> JointResolution {
         let attempt = attemptTrio(
-            profile: profile,
-            standardCandidates: profile.standard,
+            TrioCandidates(profile: profile, standard: profile.standard),
             budgetBytes: budgetBytes,
             context: context,
             footprint: footprint,
             sessionBytes: sessionBytes
         )
 
-        guard
-            let embedding = attempt.embedding.chosen,
-            let standard = attempt.standard.chosen,
-            let flash = attempt.flash.chosen
-        else {
+        guard case .cofit(let winner) = attempt.outcome else {
             throw ResolutionFailure(
                 profileName: profile.name,
                 budgetBytes: budgetBytes,
@@ -194,9 +190,9 @@ enum JointFit {
         }
 
         return JointResolution(
-            embedding: embedding,
-            standard: standard,
-            flash: flash,
+            embedding: winner.embedding,
+            standard: winner.standard,
+            flash: winner.flash,
             slots: attempt.slots
         )
     }
@@ -311,37 +307,99 @@ enum JointFit {
         resolution.considered.first { $0.verdict == .chosen }
     }
 
-    // MARK: - Derived context (ladder)
+    // MARK: - One trio at one context
+
+    /// The candidates each slot tries in one trio attempt, in preference order.
+    private struct TrioCandidates {
+        /// The embedding-slot candidates.
+        let embedding: [ModelRef]
+
+        /// The standard-slot candidates.
+        let standard: [ModelRef]
+
+        /// The flash-slot candidates.
+        let flash: [ModelRef]
+
+        /// The profile's embedding and flash candidates, with `standard` as
+        /// the standard-slot candidates.
+        init(profile: ProfileDefinition, standard: [ModelRef]) {
+            embedding = profile.embedding
+            self.standard = standard
+            flash = profile.flash
+        }
+
+        /// The three models `winner` chose, one for each slot.
+        init(chosenBy winner: TrioWinner) {
+            embedding = [winner.embedding]
+            standard = [winner.standard]
+            flash = [winner.flash]
+        }
+    }
 
     /// One attempt at resolving the full trio at one working context.
     private struct TrioAttempt {
+        /// The embedding slot's resolution.
         let embedding: SlotResolution
+
+        /// The standard slot's resolution.
         let standard: SlotResolution
+
+        /// The flash slot's resolution.
         let flash: SlotResolution
 
         /// The three resolutions in allocation order.
         var slots: [SlotResolution] { [embedding, standard, flash] }
 
-        /// Whether every slot found a viable candidate at this rung.
-        var isSucceeded: Bool { blockedSlot == nil }
-
-        /// The slot that stopped this rung, or `nil` when the whole trio co-fit.
-        /// The standard slot is reported first, ahead of allocation order.
-        var blockedSlot: ModelSlot? {
-            if standard.chosen == nil {
-                return .standard
-            }
-            return slots.first { $0.chosen == nil }?.slot
+        /// Whether the whole trio co-fit, or the slot that stopped this
+        /// attempt. The standard slot is reported first, ahead of allocation
+        /// order.
+        var outcome: TrioOutcome {
+            guard let standardModel = standard.chosen else { return .blocked(by: .standard) }
+            guard let embeddingModel = embedding.chosen else { return .blocked(by: .embedding) }
+            guard let flashModel = flash.chosen else { return .blocked(by: .flash) }
+            return .cofit(
+                TrioWinner(attempt: self, embedding: embeddingModel, standard: standardModel, flash: flashModel)
+            )
         }
+
+        /// The standard-slot candidate's own `× 1.2` footprint in this
+        /// attempt, or `nil` when it could not be sized.
+        var standardFootprintBytes: Int64? {
+            standard.considered.first?.estimatedFootprintBytes
+        }
+    }
+
+    /// The outcome of one ``TrioAttempt``.
+    private enum TrioOutcome {
+        /// Every slot chose a model.
+        case cofit(TrioWinner)
+
+        /// The slot found no viable candidate.
+        case blocked(by: ModelSlot)
+    }
+
+    /// A ``TrioAttempt`` in which every slot chose a model, with the three
+    /// choices unwrapped from it.
+    private struct TrioWinner {
+        /// The attempt that co-fit the budget.
+        let attempt: TrioAttempt
+
+        /// The chosen embedding model.
+        let embedding: ModelRef
+
+        /// The chosen standard model.
+        let standard: ModelRef
+
+        /// The chosen flash model.
+        let flash: ModelRef
     }
 
     /// Resolves the full trio at one working context against one shared budget.
     /// Each slot's choice is charged before the next slot is resolved.
     ///
-    /// - Parameter standardCandidates: The standard-slot candidates to try here.
+    /// - Parameter candidates: The candidates each slot tries here.
     private static func attemptTrio(
-        profile: ProfileDefinition,
-        standardCandidates: [ModelRef],
+        _ candidates: TrioCandidates,
         budgetBytes: Int64,
         context: Int,
         footprint: (ModelRef, Int) -> Result<Int64, RepoMetadataError>,
@@ -350,7 +408,7 @@ enum JointFit {
         var budget = SharedBudget(totalBytes: budgetBytes)
         let embedding = resolveSlot(
             .embedding,
-            candidates: profile.embedding,
+            candidates: candidates.embedding,
             budget: budget,
             context: context,
             footprint: footprint,
@@ -359,7 +417,7 @@ enum JointFit {
         budget.charge(embedding)
         let standard = resolveSlot(
             .standard,
-            candidates: standardCandidates,
+            candidates: candidates.standard,
             budget: budget,
             context: context,
             footprint: footprint,
@@ -368,7 +426,7 @@ enum JointFit {
         budget.charge(standard)
         let flash = resolveSlot(
             .flash,
-            candidates: profile.flash,
+            candidates: candidates.flash,
             budget: budget,
             context: context,
             footprint: footprint,
@@ -377,93 +435,202 @@ enum JointFit {
         return TrioAttempt(embedding: embedding, standard: standard, flash: flash)
     }
 
-    /// Builds the descending context ladder for one standard-slot candidate:
-    /// its native max context as the top rung, then every step-down rung
-    /// below that top rung. The top rung is the `config.json` figure as-is.
-    private static func contextLadder(nativeMaxContext: Int) -> [Int] {
-        [nativeMaxContext] + ladderStepDowns.filter { $0 < nativeMaxContext }
+    // MARK: - Derived context (the largest window that fits)
+
+    /// The outcome of one standard-slot candidate's window search.
+    private enum WindowSearchResult {
+        /// The trio co-fit at the window that `fit` records. `winner` is the
+        /// attempt at that window.
+        case found(fit: WindowFit, winner: TrioWinner)
+
+        /// No window fits. `fit` records the slot that blocked the smallest
+        /// window, and `verdict` is the candidate's verdict for that slot.
+        case unfit(fit: WindowFit, verdict: Verdict)
     }
 
-    /// A standard-slot candidate's winning ``TrioAttempt``, with the embedding
-    /// and flash choices unwrapped from it.
-    private struct LadderWinner {
-        let attempt: TrioAttempt
-        let embedding: ModelRef
-        let flash: ModelRef
-    }
-
-    /// The outcome of one standard-slot candidate's ladder walk.
-    private struct LadderWalkResult {
-        /// Every rung tried, largest first.
-        let attempts: [LadderAttempt]
-
-        /// The rung the candidate won at, or `nil` when no rung co-fit the trio.
-        let winner: LadderWinner?
-    }
-
-    /// Walks one standard-slot candidate's descending context ladder. Stops at
-    /// the first rung where the whole trio co-fits the budget.
+    /// Finds the largest window in `1...native` at which one standard-slot
+    /// candidate's trio co-fits the budget.
+    ///
+    /// The native window is tried first. When it does not fit, a window of
+    /// one token is tried. When that does not fit either, no window fits.
+    /// Otherwise the window is computed from the bytes the trio charges, which
+    /// grow linearly with the window, and confirmed with one trio attempt.
     ///
     /// - Parameter native: The candidate's native max context.
-    private static func walkLadder(
+    private static func searchWindow(
         candidate: ModelRef,
         profile: ProfileDefinition,
         budgetBytes: Int64,
         native: Int,
         footprint: (ModelRef, Int) -> Result<Int64, RepoMetadataError>,
         sessionBytes: (ModelRef, Int) -> Result<Int64, RepoMetadataError>
-    ) -> LadderWalkResult {
-        var attempts: [LadderAttempt] = []
-
-        for context in contextLadder(nativeMaxContext: native) {
-            let attempt = attemptTrio(
-                profile: profile,
-                standardCandidates: [candidate],
-                budgetBytes: budgetBytes,
-                context: context,
-                footprint: footprint,
-                sessionBytes: sessionBytes
-            )
-            attempts.append(
-                LadderAttempt(
-                    contextTokens: context,
-                    estimatedFootprintBytes: attempt.standard.considered.first?.estimatedFootprintBytes,
-                    blockedSlot: attempt.blockedSlot
-                )
-            )
-
-            if attempt.isSucceeded, let embeddingChosen = attempt.embedding.chosen, let flashChosen = attempt.flash.chosen {
-                return LadderWalkResult(
-                    attempts: attempts,
-                    winner: LadderWinner(attempt: attempt, embedding: embeddingChosen, flash: flashChosen)
-                )
-            }
+    ) -> WindowSearchResult {
+        let candidates = TrioCandidates(profile: profile, standard: [candidate])
+        let atNative = attemptTrio(
+            candidates, budgetBytes: budgetBytes, context: native, footprint: footprint, sessionBytes: sessionBytes
+        )
+        if case .cofit(let winner) = atNative.outcome {
+            return found(winner, native: native, window: native)
         }
 
-        return LadderWalkResult(attempts: attempts, winner: nil)
+        let atSmallest = attemptTrio(
+            candidates, budgetBytes: budgetBytes, context: smallestWindow,
+            footprint: footprint, sessionBytes: sessionBytes
+        )
+        let smallestWinner: TrioWinner
+        switch atSmallest.outcome {
+        case .cofit(let winner):
+            smallestWinner = winner
+        case .blocked(by: let slot):
+            let fit = WindowFit(
+                nativeContextTokens: native,
+                outcome: .blocked(by: slot, estimatedFootprintBytes: atSmallest.standardFootprintBytes)
+            )
+            return .unfit(fit: fit, verdict: verdict(blockedBy: slot))
+        }
+
+        let largest = largestConfirmedWindow(
+            smallestWinner: smallestWinner,
+            candidates: candidates,
+            failedWindow: native,
+            budgetBytes: budgetBytes,
+            footprint: footprint,
+            sessionBytes: sessionBytes
+        )
+        return found(largest.winner, native: native, window: largest.window)
     }
 
-    /// Builds the ``JointResolution`` after a standard-slot candidate won at a
-    /// ladder rung. Later candidates are recorded as skipped.
+    /// The search result for a window at which the trio co-fit.
+    private static func found(_ winner: TrioWinner, native: Int, window: Int) -> WindowSearchResult {
+        let fit = WindowFit(
+            nativeContextTokens: native,
+            outcome: .fits(
+                contextTokens: window,
+                estimatedFootprintBytes: winner.attempt.standardFootprintBytes
+            )
+        )
+        return .found(fit: fit, winner: winner)
+    }
+
+    /// Computes the largest window below `failedWindow` from the trio charges,
+    /// and confirms it with one trio attempt. When the attempt does not
+    /// co-fit, the computation runs again with that window as the new failed
+    /// window, so each step is smaller and the search ends at the smallest
+    /// window, which `smallestWinner` already confirms.
+    ///
+    /// - Parameters:
+    ///   - smallestWinner: The trio that co-fit at the smallest window.
+    ///   - failedWindow: A window at which the trio did not co-fit.
+    private static func largestConfirmedWindow(
+        smallestWinner: TrioWinner,
+        candidates: TrioCandidates,
+        failedWindow: Int,
+        budgetBytes: Int64,
+        footprint: (ModelRef, Int) -> Result<Int64, RepoMetadataError>,
+        sessionBytes: (ModelRef, Int) -> Result<Int64, RepoMetadataError>
+    ) -> (window: Int, winner: TrioWinner) {
+        guard
+            let window = computedWindow(
+                plan: TrioCandidates(chosenBy: smallestWinner),
+                below: failedWindow,
+                budgetBytes: budgetBytes,
+                footprint: footprint,
+                sessionBytes: sessionBytes
+            ),
+            window > smallestWindow
+        else {
+            return (smallestWindow, smallestWinner)
+        }
+        let attempt = attemptTrio(
+            candidates, budgetBytes: budgetBytes, context: window, footprint: footprint, sessionBytes: sessionBytes
+        )
+        if case .cofit(let winner) = attempt.outcome {
+            return (window, winner)
+        }
+        return largestConfirmedWindow(
+            smallestWinner: smallestWinner,
+            candidates: candidates,
+            failedWindow: window,
+            budgetBytes: budgetBytes,
+            footprint: footprint,
+            sessionBytes: sessionBytes
+        )
+    }
+
+    /// The largest window below `failedWindow` at which the bytes `plan`
+    /// charges stay in the budget.
+    ///
+    /// The charge is measured at the smallest window and at `failedWindow`.
+    /// The difference, divided by the tokens between the two, is the bytes
+    /// each token adds. The budget left after the charge at the smallest
+    /// window, divided by the bytes for each token, floored, is the number of
+    /// tokens the window can add.
+    ///
+    /// - Returns: The window, or `nil` when a charge cannot be sized or the
+    ///   charge does not grow with the window.
+    private static func computedWindow(
+        plan: TrioCandidates,
+        below failedWindow: Int,
+        budgetBytes: Int64,
+        footprint: (ModelRef, Int) -> Result<Int64, RepoMetadataError>,
+        sessionBytes: (ModelRef, Int) -> Result<Int64, RepoMetadataError>
+    ) -> Int? {
+        guard
+            let smallestCharge = planChargeBytes(
+                plan, context: smallestWindow, footprint: footprint, sessionBytes: sessionBytes
+            ),
+            let failedCharge = planChargeBytes(
+                plan, context: failedWindow, footprint: footprint, sessionBytes: sessionBytes
+            )
+        else {
+            return nil
+        }
+        let bytesPerToken = (failedCharge - smallestCharge) / Int64(failedWindow - smallestWindow)
+        guard bytesPerToken > 0 else { return nil }
+        let addedTokens = (budgetBytes - smallestCharge) / bytesPerToken
+        return min(failedWindow - 1, smallestWindow + Int(addedTokens))
+    }
+
+    /// The bytes `plan` charges at `context` when every slot keeps its one
+    /// model. The attempt runs against an unlimited budget, so every slot
+    /// chooses its model, and a slot that reuses an earlier slot's container
+    /// is charged its KV cache only, as in a real attempt.
+    ///
+    /// - Returns: The sum of the three charges, or `nil` when one cannot be sized.
+    private static func planChargeBytes(
+        _ plan: TrioCandidates,
+        context: Int,
+        footprint: (ModelRef, Int) -> Result<Int64, RepoMetadataError>,
+        sessionBytes: (ModelRef, Int) -> Result<Int64, RepoMetadataError>
+    ) -> Int64? {
+        let attempt = attemptTrio(
+            plan, budgetBytes: .max, context: context, footprint: footprint, sessionBytes: sessionBytes
+        )
+        let charges = attempt.slots.map { chosenReport($0)?.chargedBytes }
+        guard charges.allSatisfy({ $0 != nil }) else { return nil }
+        return charges.compactMap { $0 }.reduce(0, +)
+    }
+
+    /// Builds the ``JointResolution`` after a standard-slot candidate found a
+    /// window. Later candidates are recorded as skipped.
     ///
     /// - Parameters:
     ///   - index: The candidate's position in ``ProfileDefinition/standard``.
     ///   - standardConsidered: The reports for standard candidates tried before this one.
-    private static func makeLadderSuccess(
-        candidate: ModelRef,
+    private static func makeWindowSuccess(
         index: Int,
         profile: ProfileDefinition,
         standardConsidered: [CandidateReport],
-        ladderAttempts: [LadderAttempt],
-        winner: LadderWinner
+        fit: WindowFit,
+        winner: TrioWinner
     ) -> JointResolution {
         let winningReport = chosenReport(winner.attempt.standard)
         let report = CandidateReport(
-            ref: candidate,
+            ref: winner.standard,
             estimatedFootprintBytes: winningReport?.estimatedFootprintBytes,
             chargedBytes: winningReport?.chargedBytes,
             verdict: .chosen,
-            ladderAttempts: ladderAttempts
+            windowFit: fit
         )
         let skipped = profile.standard[(index + 1)...].map {
             CandidateReport(
@@ -476,35 +643,34 @@ enum JointFit {
         let standardResolution = SlotResolution(
             slot: .standard,
             remainingBudgetBytes: winner.attempt.standard.remainingBudgetBytes,
-            chosen: candidate,
+            chosen: winner.standard,
             considered: standardConsidered + [report] + skipped,
             contextTokens: winner.attempt.standard.contextTokens
         )
 
         return JointResolution(
             embedding: winner.embedding,
-            standard: candidate,
+            standard: winner.standard,
             flash: winner.flash,
             slots: [winner.attempt.embedding, standardResolution, winner.attempt.flash]
         )
     }
 
     /// Resolves a profile whose ``ProfileDefinition/context`` is `nil`. Standard
-    /// candidates are the outer loop. Each candidate's context ladder is the
-    /// inner loop. The first candidate with a fitting rung wins at its largest
-    /// fitting rung.
+    /// candidates are tried in preference order. The first candidate with a
+    /// window that fits wins at its largest window.
     ///
-    /// - Throws: ``ResolutionFailure`` when no standard candidate has a fitting rung.
-    private static func resolveViaLadder(
+    /// - Throws: ``ResolutionFailure`` when no standard candidate has a window that fits.
+    private static func resolveAtLargestWindow(
         profile: ProfileDefinition,
         budgetBytes: Int64,
         footprint: (ModelRef, Int) -> Result<Int64, RepoMetadataError>,
         sessionBytes: (ModelRef, Int) -> Result<Int64, RepoMetadataError>,
         nativeMaxContext: (ModelRef) -> Result<Int, RepoMetadataError>
     ) throws -> JointResolution {
-        // No standard candidate to anchor a ladder on — a degenerate authored
-        // profile. Fall back to one fixed rung at the ordinary default so this
-        // still fails informatively through the ordinary path instead of
+        // No standard candidate to size a window for — a degenerate authored
+        // profile. Fall back to one fixed context at the ordinary default so
+        // this still fails informatively through the ordinary path instead of
         // having nothing to loop over.
         guard !profile.standard.isEmpty else {
             return try resolveAtFixedContext(
@@ -517,10 +683,10 @@ enum JointFit {
         }
 
         var standardConsidered: [CandidateReport] = []
-        // The smallest context rung actually tried, so the failure path below
-        // can size embedding/flash's diagnostics at a real, tried context
-        // rather than an arbitrary one. Starts at the ordinary default in case
-        // no candidate's ladder could even be built (every native max context
+        // The smallest window actually tried, so the failure path below can
+        // size embedding/flash's diagnostics at a real, tried context rather
+        // than an arbitrary one. Starts at the ordinary default in case no
+        // candidate's window could be searched (every native max context
         // lookup failed).
         var lastTriedContext = ProfileDefinition.defaultContext
 
@@ -536,7 +702,7 @@ enum JointFit {
                     )
                 )
             case .success(let native):
-                let walk = walkLadder(
+                let search = searchWindow(
                     candidate: candidate,
                     profile: profile,
                     budgetBytes: budgetBytes,
@@ -544,38 +710,35 @@ enum JointFit {
                     footprint: footprint,
                     sessionBytes: sessionBytes
                 )
-                if let mostRecentRung = walk.attempts.last?.contextTokens {
-                    lastTriedContext = mostRecentRung
-                }
 
-                guard let winner = walk.winner else {
+                switch search {
+                case .found(let fit, let winner):
+                    return makeWindowSuccess(
+                        index: index,
+                        profile: profile,
+                        standardConsidered: standardConsidered,
+                        fit: fit,
+                        winner: winner
+                    )
+                case .unfit(let fit, let verdict):
+                    lastTriedContext = smallestWindow
                     standardConsidered.append(
                         CandidateReport(
                             ref: candidate,
                             estimatedFootprintBytes: nil,
                             chargedBytes: nil,
-                            verdict: exhaustedLadderVerdict(walk.attempts),
-                            ladderAttempts: walk.attempts
+                            verdict: verdict,
+                            windowFit: fit
                         )
                     )
-                    continue
                 }
-
-                return makeLadderSuccess(
-                    candidate: candidate,
-                    index: index,
-                    profile: profile,
-                    standardConsidered: standardConsidered,
-                    ladderAttempts: walk.attempts,
-                    winner: winner
-                )
             }
         }
 
-        // Every standard candidate exhausted its ladder with nothing fitting.
-        // Re-resolve embedding/flash once more at the smallest context
-        // actually tried, so the failure's diagnostics show what those slots
-        // looked like at the context resolution gave up at.
+        // No standard candidate has a window that fits. Re-resolve
+        // embedding/flash once more at the smallest window actually tried, so
+        // the failure's diagnostics show what those slots looked like at the
+        // context resolution gave up at.
         var budget = SharedBudget(totalBytes: budgetBytes)
         let embeddingResolution = resolveSlot(
             .embedding,
@@ -608,18 +771,18 @@ enum JointFit {
         )
     }
 
-    /// The verdict for a standard-slot candidate whose whole ladder failed.
+    /// The verdict for a standard-slot candidate with no window that fits,
+    /// when `slot` blocked the smallest window.
     ///
-    /// - Returns: ``Verdict/tooLarge`` when the candidate blocked the smallest
-    ///   rung, or ``Verdict/trioBlocked(_:)`` naming the slot that blocked it.
-    private static func exhaustedLadderVerdict(_ attempts: [LadderAttempt]) -> Verdict {
-        guard
-            let smallestRung = attempts.last,
-            let blocked = smallestRung.blockedSlot,
-            blocked != .standard
-        else {
+    /// - Returns: ``Verdict/tooLarge`` when the candidate itself blocked the
+    ///   smallest window, or ``Verdict/trioBlocked(_:)`` naming the slot that
+    ///   blocked it.
+    private static func verdict(blockedBy slot: ModelSlot) -> Verdict {
+        switch slot {
+        case .standard:
             return .tooLarge
+        case .embedding, .flash:
+            return .trioBlocked(slot)
         }
-        return .trioBlocked(blocked)
     }
 }

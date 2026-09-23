@@ -39,8 +39,7 @@ struct JointFitTests {
     /// A footprint provider over an injected raw-byte table, surfacing
     /// `metadataUnavailable` for refs flagged unsizable or absent from the
     /// table. Every profile these fixtures back has an *explicit* context, so
-    /// the context argument is never consulted — matching the original
-    /// (pre-ladder) fixture behavior exactly.
+    /// the context argument is never consulted.
     private static func provider(
         _ table: [ModelRef: Int64] = raw,
         unavailable: [ModelRef: String] = [:]
@@ -58,8 +57,8 @@ struct JointFitTests {
 
     /// A ``JointFit/resolve(profile:budgetBytes:footprint:sessionBytes:nativeMaxContext:)``
     /// `nativeMaxContext` closure that fails the test if invoked — for a
-    /// profile with an explicit context, the ladder must never run, so this
-    /// closure must never be called.
+    /// profile with an explicit context, the window search must never run, so
+    /// this closure must never be called.
     private static func neverCalledNativeMaxContext(_ ref: ModelRef) -> Result<Int, RepoMetadataError> {
         Issue.record("nativeMaxContext must not be called when ProfileDefinition.context is explicit")
         return .failure(.metadataUnavailable("nativeMaxContext should not be called"))
@@ -85,7 +84,7 @@ struct JointFitTests {
     ///
     /// - Parameter table: The footprints every reference is sized from.
     /// - Returns: A session-cache closure over `table`.
-    private static func ladderSessionBytes(
+    private static func sizedSessionBytes(
         _ table: [ModelRef: Footprint]
     ) -> (ModelRef, Int) -> Result<Int64, RepoMetadataError> {
         { ref, context in
@@ -96,12 +95,13 @@ struct JointFitTests {
         }
     }
 
-    /// The portability profile: a standard ladder (32B-8bit → 32B-4bit → 14B),
-    /// one flash, one embedding, all sized at the default explicit context.
-    private static func ladderProfile() -> ProfileDefinition {
+    /// The portability profile: standard candidates in preference order
+    /// (32B-8bit → 32B-4bit → 14B), one flash, one embedding, all sized at the
+    /// default explicit context.
+    private static func portabilityProfile() -> ProfileDefinition {
         ProfileDefinition(
             name: coderProfileName,
-            description: "portability ladder",
+            description: "portability preference order",
             standard: [std32b8, std32b4, std14b4],
             flash: [flash3b],
             embedding: [embBge]
@@ -120,7 +120,7 @@ struct JointFitTests {
     @Test("big budget chooses the largest standard (32B-8bit)")
     func bigBudgetChoosesLargestStandard() throws {
         let result = try JointFit.resolve(
-            profile: Self.ladderProfile(),
+            profile: Self.portabilityProfile(),
             budgetBytes: 50_000,
             footprint: Self.provider(),
             sessionBytes: Self.neverCalledSessionBytes,
@@ -134,7 +134,7 @@ struct JointFitTests {
     @Test("small budget falls through to 14B for the same profile")
     func smallBudgetFallsThroughToSmallestStandard() throws {
         let result = try JointFit.resolve(
-            profile: Self.ladderProfile(),
+            profile: Self.portabilityProfile(),
             budgetBytes: 15_000,
             footprint: Self.provider(),
             sessionBytes: Self.neverCalledSessionBytes,
@@ -162,7 +162,7 @@ struct JointFitTests {
         // embedding's 600 is reserved (remaining 38_300) — so standard falls to
         // 32B-4bit. Proves the budget is shared and reduced embedding-first.
         let result = try JointFit.resolve(
-            profile: Self.ladderProfile(),
+            profile: Self.portabilityProfile(),
             budgetBytes: 38_900,
             footprint: Self.provider(),
             sessionBytes: Self.neverCalledSessionBytes,
@@ -181,7 +181,7 @@ struct JointFitTests {
     @Test("estimatedFootprintBytes reflects the ×1.2 margin")
     func reportFootprintIsScaledByMargin() throws {
         let result = try JointFit.resolve(
-            profile: Self.ladderProfile(),
+            profile: Self.portabilityProfile(),
             budgetBytes: 50_000,
             footprint: Self.provider(),
             sessionBytes: Self.neverCalledSessionBytes,
@@ -198,7 +198,7 @@ struct JointFitTests {
     func marginBoundaryIsInclusive() throws {
         let profile = ProfileDefinition(
             name: "boundary",
-            description: "exact-fit ladder",
+            description: "exact-fit profile",
             standard: [Self.std14b4],       // ×1.2 = 10_800
             flash: [Self.flash3b],          // ×1.2 =  2_400
             embedding: [Self.embBge]        // ×1.2 =    600
@@ -231,7 +231,7 @@ struct JointFitTests {
     func unsatisfiableSlotHasNilChosenInFailure() throws {
         let error = try #require(throws: ResolutionFailure.self) {
             try JointFit.resolve(
-                profile: Self.ladderProfile(),
+                profile: Self.portabilityProfile(),
                 budgetBytes: 5_000,
                 footprint: Self.provider(),
                 sessionBytes: Self.neverCalledSessionBytes,
@@ -256,7 +256,7 @@ struct JointFitTests {
     func failureDescriptionRendersDiagnostics() throws {
         let error = try #require(throws: ResolutionFailure.self) {
             try JointFit.resolve(
-                profile: Self.ladderProfile(),
+                profile: Self.portabilityProfile(),
                 budgetBytes: 5_000,
                 footprint: Self.provider(),
                 sessionBytes: Self.neverCalledSessionBytes,
@@ -298,21 +298,36 @@ struct JointFitTests {
         #expect(std.considered[1].verdict == .chosen)
     }
 
-    // MARK: - Context ladder (ProfileDefinition.context == nil)
+    // MARK: - The largest window that fits (ProfileDefinition.context == nil)
 
-    /// Ladder-test candidate references, distinct from the explicit-context
+    /// Window-search candidate references, distinct from the explicit-context
     /// fixtures above so the two families never cross-contaminate.
-    private static let ladderBig: ModelRef = "org/ladder-big"
-    private static let ladderSmall: ModelRef = "org/ladder-small"
-    private static let ladderNativeFits: ModelRef = "org/ladder-native-fits"
-    private static let ladderEmb: ModelRef = "org/ladder-emb"
-    private static let ladderFlash: ModelRef = "org/ladder-flash"
+    private static let windowBig: ModelRef = "org/window-big"
+    private static let windowSmall: ModelRef = "org/window-small"
+    private static let windowNativeFits: ModelRef = "org/window-native-fits"
+    private static let windowEmb: ModelRef = "org/window-emb"
+    private static let windowFlash: ModelRef = "org/window-flash"
+
+    /// The native max context of ``windowBig`` and ``windowSmall``.
+    private static let windowBigNative = 131_072
+
+    /// ``windowBig``'s architecture: no weights, 400 KV bytes for each token
+    /// (`2 × layers 1 × kvHeads 1 × headDim 100 × 2`).
+    private static let windowBigFootprint = Footprint(weightBytes: 0, layers: 1, kvHeads: 1, headDim: 100)
+
+    /// A budget ``windowBig`` does not fit at its native window. The trio
+    /// charges `120 + 480 × window + 120` bytes, so the largest window that
+    /// fits is `(15_800_000 − 240) / 480`, floored: 32_916.
+    private static let windowBigBudget: Int64 = 15_800_000
+
+    /// The largest window at which ``windowBig``'s trio co-fits ``windowBigBudget``.
+    private static let windowBigWindow = 32_916
 
     /// A footprint provider backed by real ``Footprint`` fixtures, so the
-    /// byte figure genuinely scales with the context argument the ladder
-    /// passes in — unlike ``provider(_:unavailable:)`` above, whose fixed
-    /// tables never needed to vary with context.
-    private static func ladderFootprint(
+    /// byte figure scales with the context argument the window search passes
+    /// in — unlike ``provider(_:unavailable:)`` above, whose fixed tables
+    /// never needed to vary with context.
+    private static func sizedFootprint(
         _ table: [ModelRef: Footprint]
     ) -> (ModelRef, Int) -> Result<Int64, RepoMetadataError> {
         { ref, context in
@@ -324,7 +339,7 @@ struct JointFitTests {
     }
 
     /// A native-max-context provider over an injected table.
-    private static func ladderNativeMax(
+    private static func nativeMaxTable(
         _ table: [ModelRef: Int]
     ) -> (ModelRef) -> Result<Int, RepoMetadataError> {
         { ref in
@@ -336,24 +351,45 @@ struct JointFitTests {
     }
 
     /// Embedding/flash candidates with a flat, context-independent footprint
-    /// (no KV cache: `layers: 0`) so every ladder scenario below reserves a
-    /// constant 120 bytes (`100 × 1.2`) for each, regardless of which rung is
-    /// under test.
-    private static let ladderEmbFlashFootprints: [ModelRef: Footprint] = [
-        ladderEmb: Footprint(weightBytes: 100, layers: 0, kvHeads: 0, headDim: 0),
-        ladderFlash: Footprint(weightBytes: 100, layers: 0, kvHeads: 0, headDim: 0),
+    /// (no KV cache: `layers: 0`) so every window scenario below reserves a
+    /// constant 120 bytes (`100 × 1.2`) for each, whatever the window.
+    private static let windowEmbFlashFootprints: [ModelRef: Footprint] = [
+        windowEmb: Footprint(weightBytes: 100, layers: 0, kvHeads: 0, headDim: 0),
+        windowFlash: Footprint(weightBytes: 100, layers: 0, kvHeads: 0, headDim: 0),
     ]
 
-    /// A profile with `context: nil` — the ladder derives it — over the given
-    /// standard candidates, plus the shared ladder embedding/flash candidates.
-    private static func ladderProfile(standard: [ModelRef]) -> ProfileDefinition {
+    /// A profile over the given standard candidates, plus the shared window
+    /// embedding/flash candidates, at `context`. A `nil` context makes the
+    /// window search derive it.
+    private static func windowProfile(standard: [ModelRef], context: Int? = nil) -> ProfileDefinition {
         ProfileDefinition(
-            name: "ladder",
+            name: "window",
             description: "context is derived, not authored",
             standard: standard,
-            flash: [Self.ladderFlash],
-            embedding: [Self.ladderEmb],
-            context: nil
+            flash: [Self.windowFlash],
+            embedding: [Self.windowEmb],
+            context: context
+        )
+    }
+
+    /// The footprint table with ``windowBig`` and ``windowSmall`` beside the
+    /// flat embedding/flash candidates. ``windowSmall`` has no KV cache.
+    private static let windowBigSmallFootprints = windowEmbFlashFootprints.merging(
+        [
+            windowBig: windowBigFootprint,
+            windowSmall: Footprint(weightBytes: 100, layers: 0, kvHeads: 0, headDim: 0),
+        ]
+    ) { _, new in new }
+
+    /// Resolves ``windowBig`` alone at an explicit `context` against
+    /// ``windowBigBudget``, as one trio attempt at that context.
+    private static func resolveWindowBig(atContext context: Int) throws -> JointResolution {
+        try JointFit.resolve(
+            profile: windowProfile(standard: [windowBig], context: context),
+            budgetBytes: windowBigBudget,
+            footprint: sizedFootprint(windowBigSmallFootprints),
+            sessionBytes: neverCalledSessionBytes,
+            nativeMaxContext: neverCalledNativeMaxContext
         )
     }
 
@@ -361,111 +397,118 @@ struct JointFitTests {
     func nativeMaxFitsResolvesAtNativeMax() throws {
         // weightBytes: 0, coefficient 4 bytes/token (layers 1 × kvHeads 1 × headDim 1).
         // footprint(8192) = 32_768, × 1.2 = 39_322.
-        let footprints = Self.ladderEmbFlashFootprints.merging(
-            [Self.ladderNativeFits: Footprint(weightBytes: 0, layers: 1, kvHeads: 1, headDim: 1)]
+        let nativeFitsFootprint = Footprint(weightBytes: 0, layers: 1, kvHeads: 1, headDim: 1)
+        let footprints = Self.windowEmbFlashFootprints.merging(
+            [Self.windowNativeFits: nativeFitsFootprint]
         ) { _, new in new }
         let result = try JointFit.resolve(
-            profile: Self.ladderProfile(standard: [Self.ladderNativeFits]),
+            profile: Self.windowProfile(standard: [Self.windowNativeFits]),
             budgetBytes: 40_000,
-            footprint: Self.ladderFootprint(footprints),
+            footprint: Self.sizedFootprint(footprints),
             sessionBytes: Self.neverCalledSessionBytes,
-            nativeMaxContext: Self.ladderNativeMax([Self.ladderNativeFits: 8_192])
+            nativeMaxContext: Self.nativeMaxTable([Self.windowNativeFits: 8_192])
         )
-        #expect(result.standard == Self.ladderNativeFits)
+        #expect(result.standard == Self.windowNativeFits)
         let std = Self.resolution(result, for: .standard)
         #expect(std.contextTokens == 8_192)
         #expect(std.considered.count == 1)
         #expect(std.considered[0].verdict == .chosen)
-        // Only the native-max rung was tried — it fit immediately, so the
-        // ladder never had to step down.
-        #expect(std.considered[0].ladderAttempts.count == 1)
-        #expect(std.considered[0].ladderAttempts[0].contextTokens == 8_192)
-        #expect(std.considered[0].ladderAttempts[0].fits == true)
+        // The native window fit, so the record states it as the fitted window.
+        #expect(
+            std.considered[0].windowFit
+                == WindowFit(
+                    nativeContextTokens: 8_192,
+                    outcome: .fits(
+                        contextTokens: 8_192,
+                        estimatedFootprintBytes: JointFit.withMargin(nativeFitsFootprint.footprint(context: 8_192))
+                    )
+                )
+        )
 
         // Every slot in the resolution shares the same resolved context.
         #expect(Self.resolution(result, for: .embedding).contextTokens == 8_192)
         #expect(Self.resolution(result, for: .flash).contextTokens == 8_192)
     }
 
-    @Test("step-down fits: a candidate too large at native max resolves at the largest fitting rung below it")
-    func stepDownFitsResolvesAtLargestFittingRung() throws {
-        // weightBytes: 0, coefficient 400 bytes/token (layers 1 × kvHeads 1 × headDim 100).
-        // footprint(131_072) = 52_428_800, × 1.2 = 62_914_560 — too large.
-        // footprint(65_536)  = 26_214_400, × 1.2 = 31_457_280 — too large.
-        // footprint(32_768)  = 13_107_200, × 1.2 = 15_728_640 — fits.
-        let footprints = Self.ladderEmbFlashFootprints.merging(
-            [Self.ladderBig: Footprint(weightBytes: 0, layers: 1, kvHeads: 1, headDim: 100)]
-        ) { _, new in new }
-        // Budget covers embedding (120) + big@32_768 (15_728_640) + flash (120)
-        // = 15_728_880, comfortably above that and comfortably below what
-        // big@65_536 would need (31_457_520).
+    @Test("a candidate too large at its native window resolves at the largest window that fits")
+    func tooLargeAtNativeResolvesAtLargestWindow() throws {
         let result = try JointFit.resolve(
-            profile: Self.ladderProfile(standard: [Self.ladderBig]),
-            budgetBytes: 15_800_000,
-            footprint: Self.ladderFootprint(footprints),
+            profile: Self.windowProfile(standard: [Self.windowBig]),
+            budgetBytes: Self.windowBigBudget,
+            footprint: Self.sizedFootprint(Self.windowBigSmallFootprints),
             sessionBytes: Self.neverCalledSessionBytes,
-            nativeMaxContext: Self.ladderNativeMax([Self.ladderBig: 131_072])
+            nativeMaxContext: Self.nativeMaxTable([Self.windowBig: Self.windowBigNative])
         )
-        #expect(result.standard == Self.ladderBig)
+        #expect(result.standard == Self.windowBig)
         let std = Self.resolution(result, for: .standard)
-        #expect(std.contextTokens == 32_768)
+        #expect(std.contextTokens == Self.windowBigWindow)
         #expect(std.considered[0].verdict == .chosen)
 
-        let attempts = std.considered[0].ladderAttempts
-        #expect(attempts.map(\.contextTokens) == [131_072, 65_536, 32_768])
-        #expect(attempts.map(\.fits) == [false, false, true])
+        // The report states the native window and the computed window.
+        #expect(
+            std.considered[0].windowFit
+                == WindowFit(
+                    nativeContextTokens: Self.windowBigNative,
+                    outcome: .fits(
+                        contextTokens: Self.windowBigWindow,
+                        estimatedFootprintBytes: JointFit.withMargin(
+                            Self.windowBigFootprint.footprint(context: Self.windowBigWindow)
+                        )
+                    )
+                )
+        )
     }
 
-    @Test("model-outer preference: a bigger model at a smaller rung beats a smaller model at a bigger rung")
+    @Test("the computed window is the largest: the trio co-fits at it and not at one token more")
+    func computedWindowIsTheLargestThatFits() throws {
+        let atWindow = try Self.resolveWindowBig(atContext: Self.windowBigWindow)
+        #expect(atWindow.standard == Self.windowBig)
+        #expect(throws: ResolutionFailure.self) {
+            try Self.resolveWindowBig(atContext: Self.windowBigWindow + 1)
+        }
+    }
+
+    @Test("model-outer preference: a bigger model at a smaller window beats a smaller model at a bigger window")
     func modelOuterPreferenceBeatsSmallerModelAtBiggerContext() throws {
-        // Same "big" fixture as the step-down test: fits only at 32_768.
-        // "small" has no KV cache at all, so it trivially fits at its own
-        // native max (131_072) — but big is preference-first, so if the
-        // policy is truly model-outer/context-inner, big must win at 32_768
-        // rather than small winning at 131_072.
-        let footprints = Self.ladderEmbFlashFootprints.merging(
-            [
-                Self.ladderBig: Footprint(weightBytes: 0, layers: 1, kvHeads: 1, headDim: 100),
-                Self.ladderSmall: Footprint(weightBytes: 100, layers: 0, kvHeads: 0, headDim: 0),
-            ]
-        ) { _, new in new }
+        // "big" fits only below its native window. "small" has no KV cache at
+        // all, so it fits at its own native window — but big is
+        // preference-first, so big must win at its computed window rather than
+        // small winning at its native window.
         let result = try JointFit.resolve(
-            profile: Self.ladderProfile(standard: [Self.ladderBig, Self.ladderSmall]),
-            budgetBytes: 15_800_000,
-            footprint: Self.ladderFootprint(footprints),
+            profile: Self.windowProfile(standard: [Self.windowBig, Self.windowSmall]),
+            budgetBytes: Self.windowBigBudget,
+            footprint: Self.sizedFootprint(Self.windowBigSmallFootprints),
             sessionBytes: Self.neverCalledSessionBytes,
-            nativeMaxContext: Self.ladderNativeMax([Self.ladderBig: 131_072, Self.ladderSmall: 131_072])
+            nativeMaxContext: Self.nativeMaxTable(
+                [Self.windowBig: Self.windowBigNative, Self.windowSmall: Self.windowBigNative]
+            )
         )
-        #expect(result.standard == Self.ladderBig)
+        #expect(result.standard == Self.windowBig)
         let std = Self.resolution(result, for: .standard)
-        #expect(std.contextTokens == 32_768)
+        #expect(std.contextTokens == Self.windowBigWindow)
         #expect(std.considered.count == 2)
-        #expect(std.considered[0].ref == Self.ladderBig)
+        #expect(std.considered[0].ref == Self.windowBig)
         #expect(std.considered[0].verdict == .chosen)
         // The smaller, later-preference model was never even tried — it is
         // recorded only as skipped, not as a rejected/failed candidate.
-        #expect(std.considered[1].ref == Self.ladderSmall)
+        #expect(std.considered[1].ref == Self.windowSmall)
         #expect(std.considered[1].verdict == .skippedHigherPreferenceChosen)
-        #expect(std.considered[1].ladderAttempts.isEmpty)
+        #expect(std.considered[1].windowFit == nil)
     }
 
-    @Test("nothing fits on any candidate at any rung throws ResolutionFailure with per-candidate ladder detail")
-    func nothingFitsAtAnyRungThrowsWithLadderDetail() throws {
-        let footprints = Self.ladderEmbFlashFootprints.merging(
-            [
-                Self.ladderBig: Footprint(weightBytes: 0, layers: 1, kvHeads: 1, headDim: 100),
-                Self.ladderSmall: Footprint(weightBytes: 100, layers: 0, kvHeads: 0, headDim: 0),
-            ]
-        ) { _, new in new }
-        // A budget of 1 byte can't even fit the embedding candidate (120),
-        // so every rung of every standard candidate's ladder fails.
+    @Test("a candidate that does not fit at one token is reported as not fitting")
+    func notFittingAtOneTokenIsReportedAsNotFitting() throws {
+        // A budget of 1 byte cannot fit even the embedding candidate (120),
+        // so no standard candidate co-fits the trio at a window of one token.
         let error = try #require(throws: ResolutionFailure.self) {
             try JointFit.resolve(
-                profile: Self.ladderProfile(standard: [Self.ladderBig, Self.ladderSmall]),
+                profile: Self.windowProfile(standard: [Self.windowBig, Self.windowSmall]),
                 budgetBytes: 1,
-                footprint: Self.ladderFootprint(footprints),
+                footprint: Self.sizedFootprint(Self.windowBigSmallFootprints),
                 sessionBytes: Self.neverCalledSessionBytes,
-                nativeMaxContext: Self.ladderNativeMax([Self.ladderBig: 131_072, Self.ladderSmall: 131_072])
+                nativeMaxContext: Self.nativeMaxTable(
+                    [Self.windowBig: Self.windowBigNative, Self.windowSmall: Self.windowBigNative]
+                )
             )
         }
         let std = try #require(error.slots.first { $0.slot == .standard })
@@ -473,41 +516,42 @@ struct JointFitTests {
         #expect(std.considered.count == 2)
         for candidate in std.considered {
             #expect(candidate.verdict == .tooLarge)
-            // Six rungs: the native max (131_072) plus every step-down below it.
-            #expect(candidate.ladderAttempts.count == 6)
-            #expect(candidate.ladderAttempts.allSatisfy { $0.fits == false })
-            #expect(candidate.ladderAttempts.map(\.contextTokens) == [131_072, 65_536, 32_768, 16_384, 8_192, 4_096])
+            // The record states the native window, and that the candidate
+            // itself blocked the window of one token.
+            let footprint = try #require(Self.windowBigSmallFootprints[candidate.ref])
+            #expect(
+                candidate.windowFit
+                    == WindowFit(
+                        nativeContextTokens: Self.windowBigNative,
+                        outcome: .blocked(
+                            by: .standard,
+                            estimatedFootprintBytes: JointFit.withMargin(footprint.footprint(context: 1))
+                        )
+                    )
+            )
         }
-        // The description surfaces the ladder rungs, not just the top-level verdict.
-        #expect(error.description.contains("131072 tokens"))
-        #expect(error.description.contains("4096 tokens"))
+        // The description states the native window and that no window fits.
+        #expect(error.description.contains("native window 131072 tokens"))
+        #expect(error.description.contains("no window fits"))
     }
 
-    @Test("an explicit context bypasses the ladder entirely: nativeMaxContext is never invoked")
-    func explicitContextBypassesLadder() throws {
-        let footprints = Self.ladderEmbFlashFootprints.merging(
-            [Self.ladderNativeFits: Footprint(weightBytes: 0, layers: 1, kvHeads: 1, headDim: 1)]
+    @Test("an explicit context skips the window search: nativeMaxContext is never invoked")
+    func explicitContextSkipsWindowSearch() throws {
+        let footprints = Self.windowEmbFlashFootprints.merging(
+            [Self.windowNativeFits: Footprint(weightBytes: 0, layers: 1, kvHeads: 1, headDim: 1)]
         ) { _, new in new }
-        let profile = ProfileDefinition(
-            name: "explicit",
-            description: "an authored, explicit context",
-            standard: [Self.ladderNativeFits],
-            flash: [Self.ladderFlash],
-            embedding: [Self.ladderEmb],
-            context: 8_192
-        )
         let result = try JointFit.resolve(
-            profile: profile,
+            profile: Self.windowProfile(standard: [Self.windowNativeFits], context: 8_192),
             budgetBytes: 40_000,
-            footprint: Self.ladderFootprint(footprints),
+            footprint: Self.sizedFootprint(footprints),
             sessionBytes: Self.neverCalledSessionBytes,
             nativeMaxContext: Self.neverCalledNativeMaxContext
         )
-        #expect(result.standard == Self.ladderNativeFits)
+        #expect(result.standard == Self.windowNativeFits)
         let std = Self.resolution(result, for: .standard)
         #expect(std.contextTokens == 8_192)
-        // No ladder attempts are recorded for an explicit-context resolution.
-        #expect(std.considered[0].ladderAttempts.isEmpty)
+        // No window search is recorded for an explicit-context resolution.
+        #expect(std.considered[0].windowFit == nil)
     }
 
     // MARK: - One reference named by two slots
@@ -526,7 +570,7 @@ struct JointFitTests {
     private static let sharedEmbedding: ModelRef = "org/shared-emb"
 
     /// The explicit working context the shared-reference profiles are authored
-    /// at, which keeps the ladder out of the arithmetic below.
+    /// at, which keeps the window search out of the arithmetic below.
     private static let sharedContext = 100
 
     /// ``sharedGeneration``'s architecture: 20 KV bytes for each token
@@ -579,8 +623,8 @@ struct JointFitTests {
         let result = try JointFit.resolve(
             profile: Self.sharedProfile(standard: Self.sharedGeneration, flash: Self.sharedGeneration),
             budgetBytes: Self.sharedDedupedBudget,
-            footprint: Self.ladderFootprint(Self.sharedFootprints),
-            sessionBytes: Self.ladderSessionBytes(Self.sharedFootprints),
+            footprint: Self.sizedFootprint(Self.sharedFootprints),
+            sessionBytes: Self.sizedSessionBytes(Self.sharedFootprints),
             nativeMaxContext: Self.neverCalledNativeMaxContext
         )
         #expect(result.standard == Self.sharedGeneration)
@@ -592,8 +636,8 @@ struct JointFitTests {
             try JointFit.resolve(
                 profile: Self.sharedProfile(standard: Self.sharedGeneration, flash: Self.sharedGeneration),
                 budgetBytes: Self.sharedDedupedBudget - 1,
-                footprint: Self.ladderFootprint(Self.sharedFootprints),
-                sessionBytes: Self.ladderSessionBytes(Self.sharedFootprints),
+                footprint: Self.sizedFootprint(Self.sharedFootprints),
+                sessionBytes: Self.sizedSessionBytes(Self.sharedFootprints),
                 nativeMaxContext: Self.neverCalledNativeMaxContext
             )
         }
@@ -604,8 +648,8 @@ struct JointFitTests {
         let result = try JointFit.resolve(
             profile: Self.sharedProfile(standard: Self.sharedGeneration, flash: Self.sharedGeneration),
             budgetBytes: Self.sharedDedupedBudget,
-            footprint: Self.ladderFootprint(Self.sharedFootprints),
-            sessionBytes: Self.ladderSessionBytes(Self.sharedFootprints),
+            footprint: Self.sizedFootprint(Self.sharedFootprints),
+            sessionBytes: Self.sizedSessionBytes(Self.sharedFootprints),
             nativeMaxContext: Self.neverCalledNativeMaxContext
         )
         let standard = Self.resolution(result, for: .standard)
@@ -637,8 +681,8 @@ struct JointFitTests {
             try JointFit.resolve(
                 profile: Self.sharedProfile(standard: Self.sharedGeneration, flash: Self.sharedGeneration),
                 budgetBytes: Self.sharedDedupedBudget - 1,
-                footprint: Self.ladderFootprint(Self.sharedFootprints),
-                sessionBytes: Self.ladderSessionBytes(Self.sharedFootprints),
+                footprint: Self.sizedFootprint(Self.sharedFootprints),
+                sessionBytes: Self.sizedSessionBytes(Self.sharedFootprints),
                 nativeMaxContext: Self.neverCalledNativeMaxContext
             )
         }
@@ -661,8 +705,8 @@ struct JointFitTests {
                     standard: Self.sharedGeneration, flash: Self.sharedGenerationPinned
                 ),
                 budgetBytes: Self.sharedDedupedBudget,
-                footprint: Self.ladderFootprint(Self.sharedFootprints),
-                sessionBytes: Self.ladderSessionBytes(Self.sharedFootprints),
+                footprint: Self.sizedFootprint(Self.sharedFootprints),
+                sessionBytes: Self.sizedSessionBytes(Self.sharedFootprints),
                 nativeMaxContext: Self.neverCalledNativeMaxContext
             )
         }
@@ -671,8 +715,8 @@ struct JointFitTests {
                 standard: Self.sharedGeneration, flash: Self.sharedGenerationPinned
             ),
             budgetBytes: Self.sharedSeparateBudget,
-            footprint: Self.ladderFootprint(Self.sharedFootprints),
-            sessionBytes: Self.ladderSessionBytes(Self.sharedFootprints),
+            footprint: Self.sizedFootprint(Self.sharedFootprints),
+            sessionBytes: Self.sizedSessionBytes(Self.sharedFootprints),
             nativeMaxContext: Self.neverCalledNativeMaxContext
         )
         #expect(result.standard == Self.sharedGeneration)
@@ -701,7 +745,7 @@ struct JointFitTests {
         resident: Set<ModelRef>,
         residentContext: Int
     ) -> (ModelRef, Int) -> Result<Int64, RepoMetadataError> {
-        let sized = ladderFootprint(table)
+        let sized = sizedFootprint(table)
         return { ref, context in
             guard resident.contains(ref), context == residentContext else {
                 return sized(ref, context)
@@ -720,7 +764,7 @@ struct JointFitTests {
                 resident: [Self.sharedGeneration],
                 residentContext: Self.sharedContext
             ),
-            sessionBytes: Self.ladderSessionBytes(Self.sharedFootprints),
+            sessionBytes: Self.sizedSessionBytes(Self.sharedFootprints),
             nativeMaxContext: Self.neverCalledNativeMaxContext
         )
         let standard = Self.resolution(result, for: .standard)
@@ -748,7 +792,7 @@ struct JointFitTests {
                     resident: [Self.sharedGeneration],
                     residentContext: Self.sharedContext
                 ),
-                sessionBytes: Self.ladderSessionBytes(Self.sharedFootprints),
+                sessionBytes: Self.sizedSessionBytes(Self.sharedFootprints),
                 nativeMaxContext: Self.neverCalledNativeMaxContext
             )
         }
@@ -795,7 +839,7 @@ struct JointFitTests {
         let result = try JointFit.resolve(
             profile: Self.crossRoleProfile(),
             budgetBytes: Self.crossRoleSeparateBudget,
-            footprint: Self.ladderFootprint(Self.crossRoleFootprints),
+            footprint: Self.sizedFootprint(Self.crossRoleFootprints),
             sessionBytes: Self.neverCalledSessionBytes,
             nativeMaxContext: Self.neverCalledNativeMaxContext
         )
@@ -821,7 +865,7 @@ struct JointFitTests {
             try JointFit.resolve(
                 profile: Self.crossRoleProfile(),
                 budgetBytes: Self.crossRoleSeparateBudget - 1,
-                footprint: Self.ladderFootprint(Self.crossRoleFootprints),
+                footprint: Self.sizedFootprint(Self.crossRoleFootprints),
                 sessionBytes: Self.neverCalledSessionBytes,
                 nativeMaxContext: Self.neverCalledNativeMaxContext
             )
@@ -837,9 +881,9 @@ struct JointFitTests {
     /// The `multitool-cli-demo` embedding model.
     private static let multitoolEmbedding: ModelRef = "org/Qwen3-Embedding-0.6B-4bit-DWQ"
 
-    /// The generation model's architecture, reconstructed from the ladder the
-    /// field report printed. It reproduces every rung of that report to the
-    /// byte: 38872712722 at 262144 tokens down to 18578992248 at 4096.
+    /// The generation model's architecture, reconstructed from the report the
+    /// field printed. It reproduces every figure of that report to the byte:
+    /// 38872712722 at 262144 tokens down to 18578992248 at 4096.
     private static let multitoolGenerationFootprint = Footprint(
         weightBytes: 15_214_058_084, layers: 64, kvHeads: 8, headDim: 32
     )
@@ -851,12 +895,13 @@ struct JointFitTests {
     /// The host budget the field report failed against.
     private static let multitoolBudgetBytes: Int64 = 26_800_603_136
 
-    /// The generation model's native max context, anchoring its ladder.
+    /// The generation model's native max context.
     private static let multitoolNativeMaxContext = 262_144
 
-    /// The rung the deduped ladder settles on: 65536 is the first rung the
-    /// flash slot blocks, and 131072 is still too large for standard itself.
-    private static let multitoolResolvedContext = 32_768
+    /// The largest window at which the trio co-fits: the standard slot pays
+    /// the weights and one KV cache, and the flash slot pays a second KV
+    /// cache on the same container.
+    private static let multitoolResolvedContext = 51_761
 
     /// The footprint table the `multitool-cli-demo` profile is sized against.
     private static let multitoolFootprints: [ModelRef: Footprint] = [
@@ -865,39 +910,50 @@ struct JointFitTests {
     ]
 
     /// The reported profile: one generation model in both generation slots,
-    /// one embedding model, and a derived context.
-    private static func multitoolProfile() -> ProfileDefinition {
+    /// one embedding model, and `context` (`nil` to derive it).
+    private static func multitoolProfile(context: Int? = nil) -> ProfileDefinition {
         ProfileDefinition(
             name: "multitool-cli-demo",
             description: "one generation model serves both generation slots",
             standard: [multitoolGeneration],
             flash: [multitoolGeneration],
             embedding: [multitoolEmbedding],
-            context: nil
+            context: context
+        )
+    }
+
+    /// Resolves ``multitoolProfile(context:)`` against the reported budget.
+    private static func resolveMultitool(context: Int?) throws -> JointResolution {
+        try JointFit.resolve(
+            profile: multitoolProfile(context: context),
+            budgetBytes: multitoolBudgetBytes,
+            footprint: sizedFootprint(multitoolFootprints),
+            sessionBytes: sizedSessionBytes(multitoolFootprints),
+            nativeMaxContext: nativeMaxTable([multitoolGeneration: multitoolNativeMaxContext])
         )
     }
 
     @Test("the reported multitool-cli-demo profile co-fits the budget it failed against")
     func multitoolProfileCoFitsItsReportedBudget() throws {
-        let result = try JointFit.resolve(
-            profile: Self.multitoolProfile(),
-            budgetBytes: Self.multitoolBudgetBytes,
-            footprint: Self.ladderFootprint(Self.multitoolFootprints),
-            sessionBytes: Self.ladderSessionBytes(Self.multitoolFootprints),
-            nativeMaxContext: Self.ladderNativeMax(
-                [Self.multitoolGeneration: Self.multitoolNativeMaxContext]
-            )
-        )
+        let result = try Self.resolveMultitool(context: nil)
         #expect(result.standard == Self.multitoolGeneration)
         #expect(result.flash == Self.multitoolGeneration)
         #expect(result.embedding == Self.multitoolEmbedding)
         #expect(Self.resolution(result, for: .standard).contextTokens == Self.multitoolResolvedContext)
     }
 
+    @Test("the multitool-cli-demo window is the largest: one token more does not co-fit")
+    func multitoolWindowIsTheLargestThatFits() throws {
+        _ = try Self.resolveMultitool(context: Self.multitoolResolvedContext)
+        #expect(throws: ResolutionFailure.self) {
+            try Self.resolveMultitool(context: Self.multitoolResolvedContext + 1)
+        }
+    }
+
     // MARK: - Verdicts that contradict each other
 
     /// An embedding candidate too large for ``blockedByEmbeddingBudget``, so
-    /// the embedding slot blocks the trio at every rung.
+    /// the embedding slot blocks the trio at every window.
     private static let oversizedEmbedding: ModelRef = "org/oversized-emb"
 
     /// The raw footprint of ``oversizedEmbedding``, which margins to 1_200_000.
@@ -907,8 +963,7 @@ struct JointFitTests {
     /// does not.
     private static let blockedByEmbeddingBudget: Int64 = 500_000
 
-    /// The generation candidate's native max context, giving a two-rung ladder
-    /// of 8192 and 4096.
+    /// The generation candidate's native max context.
     private static let blockedByEmbeddingNativeMax = 8_192
 
     /// The footprint table for the embedding-blocked profile.
@@ -918,7 +973,7 @@ struct JointFitTests {
     ]
 
     /// A profile whose embedding slot cannot fit, while the one reference both
-    /// generation slots name fits at every rung.
+    /// generation slots name fits at every window.
     private static func blockedByEmbeddingProfile() -> ProfileDefinition {
         ProfileDefinition(
             name: "blocked-by-embedding",
@@ -937,9 +992,9 @@ struct JointFitTests {
             try JointFit.resolve(
                 profile: blockedByEmbeddingProfile(),
                 budgetBytes: blockedByEmbeddingBudget,
-                footprint: ladderFootprint(blockedByEmbeddingFootprints),
-                sessionBytes: ladderSessionBytes(blockedByEmbeddingFootprints),
-                nativeMaxContext: ladderNativeMax([sharedGeneration: blockedByEmbeddingNativeMax])
+                footprint: sizedFootprint(blockedByEmbeddingFootprints),
+                sessionBytes: sizedSessionBytes(blockedByEmbeddingFootprints),
+                nativeMaxContext: nativeMaxTable([sharedGeneration: blockedByEmbeddingNativeMax])
             )
         }
     }
@@ -970,8 +1025,8 @@ struct JointFitTests {
         Self.expectNoContradictoryVerdicts(error.slots)
     }
 
-    @Test("a rung another slot blocked is not rendered as this candidate being too large")
-    func rungBlockedByAnotherSlotIsNotRenderedAsTooLarge() throws {
+    @Test("a window another slot blocked is not rendered as this candidate being too large")
+    func windowBlockedByAnotherSlotIsNotRenderedAsTooLarge() throws {
         let error = try Self.blockedByEmbeddingFailure()
         let text = error.description
         #expect(text.contains("trio blocked by embedding"))

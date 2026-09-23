@@ -170,7 +170,7 @@ struct TokenUsageMeteringTests {
 
     /// A profile with an explicit, small `context`, so restored
     /// ``RoutedSession/contextFill``'s denominator is a known constant rather
-    /// than whatever the context ladder would have derived.
+    /// than whatever the window search would have derived.
     private static func profile(context: Int) -> ProfileDefinition {
         ProfileDefinition(
             name: "coding",

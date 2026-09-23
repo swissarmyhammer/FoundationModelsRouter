@@ -108,9 +108,9 @@ struct TranscriptNestingTests {
     }
 
     /// `config.json` that declares a `max_position_embeddings` of 32768, not
-    /// the 8192 that ``configJSON`` declares. A `context: nil` profile derives
-    /// its ladder from this figure, so the derived context is different from
-    /// both the explicit-context default and the ``configJSON`` window.
+    /// the 8192 that ``configJSON`` declares. A `context: nil` profile starts
+    /// its window search at this figure, so the derived context is different
+    /// from both the explicit-context default and the ``configJSON`` window.
     private static let configJSONWithNativeMax32768 = Data("""
         {
             "num_hidden_layers": 2,
@@ -135,10 +135,11 @@ struct TranscriptNestingTests {
     )
 
     /// A profile with `context: nil`, so resolution derives the working
-    /// context via ``JointFit``'s ladder instead of using an authored figure.
+    /// context via ``JointFit``'s window search instead of using an authored
+    /// figure.
     private static let profileWithDerivedContext = ProfileDefinition(
         name: "coding-derived",
-        description: "test profile with ladder-derived context",
+        description: "test profile with a derived context",
         standard: ["org/std-a"],
         flash: ["org/flash-a"],
         embedding: ["org/emb-a"],
@@ -563,7 +564,7 @@ struct TranscriptNestingTests {
         #expect(resolved.flash == profile.flash.chosen)
         #expect(resolved.embedding == profile.embedding.chosen)
         // `Self.profile` uses the default explicit context (8192), so the
-        // ladder never runs and the sidecar records that figure verbatim.
+        // window search never runs and the sidecar records that figure verbatim.
         #expect(resolved.context == 8192)
         #expect(sidecar.context == 8192)
     }
@@ -575,9 +576,9 @@ struct TranscriptNestingTests {
             .appendingPathComponent(session.id.description, isDirectory: true)
     }
 
-    @Test("a root sidecar recording a ladder-derived context round-trips through disk")
+    @Test("a root sidecar recording a derived context round-trips through disk")
     @MainActor
-    func rootSidecarRecordsLadderDerivedContext() async throws {
+    func rootSidecarRecordsDerivedContext() async throws {
         let cacheDir = Self.makeTempDir()
         let recordingsDir = Self.makeTempDir()
         defer {
@@ -588,7 +589,7 @@ struct TranscriptNestingTests {
         // Built directly (not through makeRouter(recorder:cacheDir:recordingsDir:))
         // so the metadata source can be swapped for one whose config.json
         // declares a native max context of 32768 instead of the shared
-        // fixture's 8192 — triggering the ladder to settle on a figure
+        // fixture's 8192 — so the window search settles on a figure
         // distinguishable from the explicit-context test above.
         let router = Router(
             cacheDir: cacheDir,
@@ -601,7 +602,8 @@ struct TranscriptNestingTests {
             pool: ModelPool()
         )
         // `profileWithDerivedContext` has `context: nil`, so JointFit derives
-        // the working context via the ladder instead of using an authored figure.
+        // the working context via the window search instead of using an
+        // authored figure.
         let profile = try await router.resolve(
             profile: Self.profileWithDerivedContext, reporting: ResolutionProgress())
 
@@ -610,9 +612,9 @@ struct TranscriptNestingTests {
             try SessionSidecar.read(in: Self.sessionDirectory(of: root, under: recordingsDir)))
 
         // The tiny fixture model's footprint is trivial next to the 48 GB
-        // budget at any rung, so the ladder settles on the candidate's own
-        // native max context (32768) at its first (largest) rung — never
-        // stepping down, and distinguishable from both the 8192
+        // budget at any window, so the search settles on the candidate's own
+        // native max context (32768) at its first try — never computing a
+        // smaller window, and distinguishable from both the 8192
         // explicit-context figure and the shared fixture's 8192 window.
         let resolved = try #require(sidecar.profile)
         #expect(resolved.context == 32_768)

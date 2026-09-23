@@ -277,8 +277,8 @@ struct ResolveTests {
         #expect(resolved.embedding.slot == .embedding)
 
         // Every handle reports the profile's own context as its resolved
-        // working context, because the profile fixes it and the ladder never
-        // runs.
+        // working context, because the profile fixes it and the window search
+        // never runs.
         let profileContext = try #require(Self.profile.context)
         #expect(resolved.standard.contextTokens == profileContext)
         #expect(resolved.flash.contextTokens == profileContext)
@@ -755,14 +755,14 @@ struct ResolveTests {
         #expect(standardSlot.chosen == nil)
     }
 
-    // MARK: - Context ladder wiring (ProfileDefinition.context == nil)
+    // MARK: - Largest-window wiring (ProfileDefinition.context == nil)
 
     /// A `config.json` for a "big" standard candidate: a tiny weight (100
     /// bytes) but a KV-cache coefficient of 400 bytes/token (`head_dim: 100`
     /// on a single layer/head), so its footprint is dominated by context and
-    /// blows the budget at its own native max (131_072) but fits at a lower
-    /// rung (32_768).
-    private static let ladderBigConfigJSON = Data("""
+    /// blows the budget at its own native max (131_072) but fits at a
+    /// computed window (32_768).
+    private static let windowBigConfigJSON = Data("""
         {
             "num_hidden_layers": 1,
             "num_attention_heads": 1,
@@ -777,8 +777,8 @@ struct ResolveTests {
     /// weight, but a KV-cache coefficient of only 4 bytes/token, so it fits
     /// comfortably even at its own native max (131_072) — the model-outer
     /// preference test proves the bigger, preference-first candidate still
-    /// wins at its own smaller rung rather than this one winning at 131_072.
-    private static let ladderSmallConfigJSON = Data("""
+    /// wins at its own smaller window rather than this one winning at 131_072.
+    private static let windowSmallConfigJSON = Data("""
         {
             "num_hidden_layers": 1,
             "num_attention_heads": 1,
@@ -789,10 +789,10 @@ struct ResolveTests {
         }
         """.utf8)
 
-    /// A `config.json` for the ladder-test flash/embedding candidates: zero
+    /// A `config.json` for the window-test flash/embedding candidates: zero
     /// hidden layers, so their footprint is a flat, context-independent 100
     /// bytes (no KV cache growth at any context).
-    private static let ladderFlatConfigJSON = Data("""
+    private static let windowFlatConfigJSON = Data("""
         {
             "num_hidden_layers": 0,
             "num_attention_heads": 1,
@@ -804,9 +804,9 @@ struct ResolveTests {
         """.utf8)
 
     /// A tree listing with a single 100-byte weight shard, shared by every
-    /// ladder-wiring fixture above (the weight size is negligible next to the
+    /// window-wiring fixture above (the weight size is negligible next to the
     /// KV-cache math the test cares about).
-    private static let ladderTreeJSON = Data("""
+    private static let windowTreeJSON = Data("""
         [
             {"type": "file", "path": "model.safetensors", "size": 100}
         ]
@@ -814,18 +814,18 @@ struct ResolveTests {
 
     @Test("router wiring: the bigger standard candidate at a smaller derived context beats the smaller one at a bigger context")
     @MainActor
-    func routerDerivesContextViaLadderAndPrefersModelOuter() async throws {
+    func routerDerivesLargestWindowAndPrefersModelOuter() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let big: ModelRef = "org/ladder-router-big"
-        let small: ModelRef = "org/ladder-router-small"
-        let flash: ModelRef = "org/ladder-router-flash"
-        let embedding: ModelRef = "org/ladder-router-embedding"
+        let big: ModelRef = "org/window-router-big"
+        let small: ModelRef = "org/window-router-small"
+        let flash: ModelRef = "org/window-router-flash"
+        let embedding: ModelRef = "org/window-router-embedding"
 
-        let bigRaw = RawRepoMetadata(configJSON: Self.ladderBigConfigJSON, treeJSON: Self.ladderTreeJSON)
-        let smallRaw = RawRepoMetadata(configJSON: Self.ladderSmallConfigJSON, treeJSON: Self.ladderTreeJSON)
-        let flatRaw = RawRepoMetadata(configJSON: Self.ladderFlatConfigJSON, treeJSON: Self.ladderTreeJSON)
+        let bigRaw = RawRepoMetadata(configJSON: Self.windowBigConfigJSON, treeJSON: Self.windowTreeJSON)
+        let smallRaw = RawRepoMetadata(configJSON: Self.windowSmallConfigJSON, treeJSON: Self.windowTreeJSON)
+        let flatRaw = RawRepoMetadata(configJSON: Self.windowFlatConfigJSON, treeJSON: Self.windowTreeJSON)
 
         let source = ScriptedMetadataSource(
             scripts: [
@@ -840,9 +840,10 @@ struct ResolveTests {
         let loader = StubModelLoader(progress: progress)
 
         // budget = recommendedMaxWorkingSetSize.
-        // Embedding (120) + flash (120) + big@32_768 (15_728_640, ×1.2 margin)
-        // = 15_728_880, comfortably under this budget; big@65_536 would need
-        // 31_457_520 (comfortably over), so 32_768 is the largest fitting rung.
+        // Embedding (120) + flash (120) + big at window w (ceil(1.2 × (100 +
+        // 400 × w))) fits this budget up to w = 32_768 exactly: at 32_768 the
+        // trio charges 15_729_000 bytes, and one token more adds 480 bytes.
+        // So 32_768 is the largest window that fits.
         let router = Router(
             cacheDir: dir,
             probe: StubProbe(chip: "Apple Test", totalRAM: 15_729_000, recommendedMaxWorkingSetSize: 15_729_000),
@@ -852,8 +853,8 @@ struct ResolveTests {
         )
 
         let profile = ProfileDefinition(
-            name: "ladder-router",
-            description: "router-level context ladder wiring",
+            name: "window-router",
+            description: "router-level largest-window wiring",
             standard: [big, small],
             flash: [flash],
             embedding: [embedding],
@@ -867,11 +868,11 @@ struct ResolveTests {
         #expect(resolved.flash.resolution.contextTokens == 32_768)
         #expect(resolved.embedding.resolution.contextTokens == 32_768)
 
-        // The public read reports the rung the ladder selected, not the
-        // candidate's native max from `ladderBigConfigJSON`.
-        let derivedRung = 32_768
+        // The public read reports the window the search computed, not the
+        // candidate's native max from `windowBigConfigJSON`.
+        let derivedWindow = 32_768
         let nativeMax = 131_072
-        #expect(resolved.standard.contextTokens == derivedRung)
+        #expect(resolved.standard.contextTokens == derivedWindow)
         #expect(resolved.standard.contextTokens != nativeMax)
     }
 
