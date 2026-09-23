@@ -27,10 +27,20 @@ comments:
     - fix: removed the explicit `WindowFit` initializer, and removed the same cause from the whole file: the `ResolutionFailure` initializer was also identical to the synthesized one. The finding box is checked.
     - next: test, commit, review HEAD~1..HEAD again.
   timestamp: 2026-09-23T16:03:49.105809+00:00
+- actor: claude-code
+  id: 01m37g7wfkqv0k9yc5gj55rsjn
+  text: |-
+    ### finish iteration 2 — done
+    - review 1 (e8d7601): 1 finding, fixed in 8905877, box checked.
+    - review 2 (8905877, HEAD~1..HEAD): clean, 0 findings.
+    - commits: e8d7601 feat(sizing): replace the context ladder with the largest window that fits; 8905877 refactor(sizing): use the synthesized initializers of WindowFit and ResolutionFailure.
+    - `swift test`: Test run with 1325 tests in 149 suites passed (2 known issues); Test run with 1 test in 1 suite passed; Test run with 19 tests in 3 suites passed.
+    - `swift build --build-tests --package-path IntegrationTests`: Build complete.
+  timestamp: 2026-09-23T16:05:37.395107+00:00
 depends_on:
 - 01M34PDQHD1WEJ2QBYPJ0P7ZN0
-position_column: review
-position_ordinal: '80'
+position_column: done
+position_ordinal: fffff480
 title: Replace the context ladder with the largest window that fits
 ---
 ## Decision (from the owner, 2026-09-22)
