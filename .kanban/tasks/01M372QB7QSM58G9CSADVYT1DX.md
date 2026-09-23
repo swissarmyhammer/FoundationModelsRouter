@@ -76,8 +76,17 @@ comments:
     - commit: in this commit (local, not pushed).
     - review: not run — the owner stopped the card before review. The card stays out of `done`.
   timestamp: 2026-09-23T13:25:14.715447+00:00
-position_column: doing
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01m37agsgrh656apmbgjehpr9c
+  text: |-
+    ### review — findings
+    - evidence: review sha 549642c~1..549642c: 1 finding, Qwen38CompactionIntegrationTests.swift:107 no_direct_standard_out_logs.
+    - fix: the print line now has `// swiftlint:disable:next no_direct_standard_out_logs` with the reason, the same form as the ^9ddjkjm suite. `IntegrationTests` builds.
+    - note: the real-model proof moved to ^9ddjkjm (done): one in-turn compaction 16070 -> 416, the summary kept the value, and the same turn answered.
+    - next: commit, then review HEAD~1..HEAD.
+  timestamp: 2026-09-23T14:25:37.816204+00:00
+position_column: review
+position_ordinal: '80'
 title: A salient-points compaction prompt (router-default-v6); no time limit on the gated real-model suites; re-measure on Qwen3.8-27B
 ---
 ## Decision (from the owner, 2026-09-23)
@@ -121,3 +130,15 @@ Run on Qwen3.8-27B (the eval constants already name it): the fact-retention tier
 - The 27B results are on this card. All unit tests pass; `IntegrationTests` builds.
 
 #compaction
+
+## Review Findings (2026-09-23 09:16)
+
+> Scope: `review sha 549642c~1..549642c` — reviewed the diffs only — lines this change added or modified. 41 file(s) reviewed, 13 not reviewed.
+
+> 12 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 12 file(s)
+
+> 1 file(s) not reviewed — no validator matched:
+> - `compaction_plan.md` — no validator matches this file
+
+- [x] `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/Qwen38CompactionIntegrationTests.swift:107` `code-hygiene/disallowed-constructs-swift` — no_direct_standard_out_logs: Do not commit print(…), debugPrint(…), dump(…) or _printChanges(), which write to standard out in release. Log to a dedicated logging system, or silence one debug-only line with // swiftlint:disable:next no_direct_standard_out_logs and the reason after it.

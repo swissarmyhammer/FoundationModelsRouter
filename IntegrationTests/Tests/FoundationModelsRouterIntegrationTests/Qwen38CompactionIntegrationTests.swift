@@ -104,6 +104,8 @@ struct Qwen38CompactionIntegrationTests {
         await loaded.container.model.evict()
 
         let result = outcome.result
+        // The gated run's record for the card: a reader copies this line. This test target does not ship.
+        // swiftlint:disable:next no_direct_standard_out_logs - the gated run's record; this target does not ship
         print(
             "[\(qwen38CompactionLabel)] wallClock=\(ContinuousClock.now - wallClock) summary:\n\(result.summary ?? "<none>")"
         )
