@@ -734,6 +734,8 @@ struct RoutedSessionCompactTests {
         let call = try #require(calls.first)
         #expect(call.maxTokens == min(allowedTokens, contextTokens - call.prompt.count))
         #expect(call.maxTokens == allowedTokens)
+        // The summarizer call turns reasoning off (task ^dvyt1dx).
+        #expect(call.reasoningOff)
         #expect(call.prompt.contains("User: turn 0"))
         #expect(call.prompt.contains("User: turn 5"))
         #expect(result.summarizerTier == .ownModel)

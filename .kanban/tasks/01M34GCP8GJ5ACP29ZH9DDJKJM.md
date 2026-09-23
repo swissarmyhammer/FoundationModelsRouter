@@ -1,6 +1,14 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m376zwf7pxj2f8jdff6b5bj7
+  text: |-
+    ### owner requirement (2026-09-23) — the real-model test for this card
+
+    Add ONE short gated test on Qwen3.8-27B: "a tool call can trigger a compaction". Set the session window artificially small (a test number). Seed the context just under the trigger. Mount one tool whose result crosses the trigger. Run ONE turn: the model calls the tool once, the result crosses the trigger at the tool-result boundary, one compaction runs, and the same turn continues and answers. Assert the compaction event inside the turn, a smaller snapshot, and the answer. At most one model turn per tool call; no long scripted conversation. Owner: "don't make this time consuming or hard, compaction is a simple prompt driven feature". Decide design points yourself and record them here; do not stop to ask.
+  timestamp: 2026-09-23T13:23:58.055993+00:00
 depends_on:
 - 01M34GC0FRM3175J7XJJ6B24GD
 - 01M34H27HEABW92JPTM5E8G7PZ

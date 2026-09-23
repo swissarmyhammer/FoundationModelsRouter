@@ -71,9 +71,8 @@ struct CompactionEvalRealModelContainer: Sendable {
     /// it with the pinned mode, timing the load on its own two progress lines.
     ///
     /// The load is stated apart from the samples, so it is never charged to the
-    /// first one. A tier that spends its whole limit here leaves the started
-    /// line and no returned line, which is the trail
-    /// ``gatedEvalSuiteTimeLimitMinutes`` exists to bound.
+    /// first one. A tier that is stopped here leaves the started line and no
+    /// returned line, and that trail shows that the load did not end.
     ///
     /// - Parameters:
     ///   - ref: The model to resolve — ``CompactionEvalRealModel/ref`` for the

@@ -15,12 +15,12 @@ import Testing
 /// a GPU-heavy game for the whole measurement (load average 8 to 9): the 30B
 /// took 3.6 seconds to drop the inherited container, 3.5 seconds for the
 /// clean load and 74.9 seconds for the turn — 82.1 seconds, 68 percent of
-/// ``integrationTestBudgetMinutes``. A second run of the same code measured
+/// the two-minute budget of that time. A second run of the same code measured
 /// 3.7, 3.5 and 74.7, for 82.0 seconds, so argmax decoding takes the spread
 /// out and leaves the work: the turn takes two rounds, and the 30B writes a
 /// `<think>` block ahead of each one. No Router-side change shortens those
 /// blocks, and this suite never disables thinking, so on the 30B the test
-/// cannot reach half the budget.
+/// could not reach half that budget.
 ///
 /// The 4B makes the same turn, and the turn is what the probe reads: two
 /// rounds, the same entry kinds — `instructions, prompt, response, reasoning,
@@ -120,16 +120,16 @@ private let propagationProbeToolName = "context_probe"
 /// ## What it NO LONGER proves (task ^s49ya8p)
 ///
 /// Until that task the MLX path drove ``RealModels/standard``, the 30B, and its
-/// turn stated a reply ceiling but no sampling mode. The nine runs in the table
-/// of ``integrationTestBudgetMinutes`` measured that test at 21.0 to 118.7
-/// seconds — the widest spread of the table, a factor of five with no code
-/// change to the suite, and 118.7 is 99 percent of the budget. The per-phase
+/// turn stated a reply ceiling but no sampling mode. Nine whole runs of this
+/// target measured that test at 21.0 to 118.7 seconds — the widest spread of
+/// the target, a factor of five with no code change to the suite, and 118.7
+/// is 99 percent of the two-minute budget of that time. The per-phase
 /// clock ``PropagationProbeIntegrationTests/mlxPathPropagationVerdict()`` now
 /// prints named the cost before either change was made: measured in isolation
 /// on 2026-08-22 under the provider default, the two loads took 3.8 and 3.5
 /// seconds and the turn took 79.4, so the two loads were never the cost.
 ///
-/// Two changes bring the test inside half the budget, and each one is stated on
+/// Two changes brought the test inside half that budget, and each one is stated on
 /// the declaration that carries it:
 /// ``PropagationProbeIntegrationTests/turnOptions`` pins argmax decoding on
 /// every turn, and ``propagationProbeModel`` moves the MLX path onto a 4B model
@@ -155,12 +155,10 @@ private let propagationProbeToolName = "context_probe"
 /// the double load that keeps an inherited prompt cache out of the turn, the
 /// four stages, and every assertion on the arriving context and on its
 /// `completionToken` are exactly what they were. The system-model path drives
-/// the same `SystemLanguageModel.default` it always drove. See
-/// ``integrationTestBudgetMinutes`` for the whole run table.
+/// the same `SystemLanguageModel.default` it always drove.
 @Suite(
     "Gated propagation probe: does the ToolContext task local survive respond()? (task c25mpnw)",
     .serialized,
-    .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
 struct PropagationProbeIntegrationTests {
@@ -168,8 +166,8 @@ struct PropagationProbeIntegrationTests {
     /// opens with.
     ///
     /// Its own tag, and not the target's `gatedTest` one, so a grep that
-    /// collects the run table's per-test measurements never picks up a phase
-    /// line. See ``integrationTestBudgetMinutes`` for that table.
+    /// collects the per-test measurements of a run never picks up a phase
+    /// line.
     private static let phaseLabel = "propagationProbePhase"
 
     // MARK: - Probe tool

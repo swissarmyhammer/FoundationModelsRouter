@@ -52,7 +52,8 @@ public actor CountingBlankSlateSummarizer: CompactionSummarizer {
     }
 
     /// Answers `prompt` in one generation over a session that has seen
-    /// nothing else.
+    /// nothing else, with reasoning off as the production summarizer asks
+    /// (``LanguageModelSessionBackend/respondWithoutReasoning(to:maxTokens:)``).
     ///
     /// - Parameters:
     ///   - prompt: The assembled compaction prompt and the live context.
@@ -62,7 +63,7 @@ public actor CountingBlankSlateSummarizer: CompactionSummarizer {
     public func summarize(_ prompt: String, maxTokens: Int) async throws -> String {
         let answer = try await loaded.container
             .makeSession(transcript: Transcript(entries: []), samplingMode: loaded.samplingMode)
-            .respond(to: prompt, maxTokens: maxTokens)
+            .respondWithoutReasoning(to: prompt, maxTokens: maxTokens)
         calls.append(Call(ceiling: maxTokens, answer: answer))
         return answer
     }

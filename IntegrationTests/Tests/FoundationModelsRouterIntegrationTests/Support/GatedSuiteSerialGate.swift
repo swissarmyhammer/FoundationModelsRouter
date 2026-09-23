@@ -21,6 +21,11 @@ import Testing
 /// process — so it cannot see this gate, and its own real-model evals are not
 /// serialized against these suites.
 ///
+/// The gated suites of this target have no time limit. A gated run ends when
+/// it ends, or when the caller stops it. A limit that cancels a test
+/// mid-generation can abort the whole process on a Metal assertion (fork card
+/// ^3axg80k).
+///
 /// ## How a suite of this target is selected
 ///
 /// By the PACKAGE, and by nothing else. No suite here reads an environment
@@ -49,185 +54,6 @@ enum GatedSuiteSerialGate {
     static let shared = AsyncSemaphore(value: 1)
 }
 
-// MARK: - The budget
-
-/// The wall clock every `@Test` of this target runs under, in minutes.
-///
-/// Two minutes is task ^k0d30s4's budget for every integration test, stated as
-/// the limit so a test past the budget FAILS rather than merely being slow.
-/// Every suite of this target that loads a model reads this one value, so no
-/// such suite can buy itself more time by stating a limit of its own. The
-/// sibling target states the same budget in `gatedEvalSuiteTimeLimitMinutes`.
-///
-/// One suite states a limit of its own, and it is STRICTER than this value:
-/// `MetalLibraryBootstrapIntegrationTests` runs under a
-/// `metalLibraryBootstrapTimeLimitMinutes` of 1, because it downloads nothing
-/// and adds four integers — the three runs below measured it at 0.001, 0.001
-/// and 0.0 seconds. A suite may hold itself to less than the budget; the rule
-/// this value carries is that none may hold itself to more.
-///
-/// Swift Testing measures a time limit in whole minutes, and applies a suite's
-/// limit to each `@Test` inside it rather than to the suite as a whole — so
-/// this is a per-test bound, which is what the budget asks for, and the time a
-/// suite spends waiting on ``GatedSuiteSerialGate/shared`` is not charged
-/// against it.
-///
-/// ## What the thirteen runs measured
-///
-/// Every `@Test` of this target, in thirteen whole runs on one Apple silicon
-/// box with every model already in the Hugging Face cache. Runs 1 to 3 are the
-/// three runs of 2026-08-20. Run 1 stands before task ^k0d30s4's conversion of
-/// the compaction round trip, run 2 after it, and run 3 is the configuration of
-/// that day — `swift test --package-path IntegrationTests` with the
-/// whole-dataset eval tier stepped aside by name, under this budget. Task
-/// ^k0d30s4 has since deleted that tier, so the command CI runs is now the
-/// nested package whole. Runs 4 and 5 are the two runs of 2026-08-21 of that
-/// whole package, after task ^bpwfbyz converted the two tests that ran nearest
-/// the budget: `SessionTreeRestorationIntegrationTests` and
-/// `RecordingHandleIntegrationTests`, each of which states what its conversion
-/// no longer proves. Runs 6 and 7 are the two runs later that day, after task
-/// ^6ww73dm converted `RealToolTurnComparisonTests`, the test that then ran
-/// nearest the budget; that suite states what its conversion no longer proves.
-/// Runs 8 and 9 are the two runs of 2026-08-22, after task ^pa5q5dt pinned
-/// argmax decoding and a reply ceiling on the end-to-end resolution test, the
-/// test that then ran nearest the budget; `IntegrationTests` states what that
-/// change no longer proves. Runs 10 and 11 are the two runs later that day,
-/// after task ^s49ya8p pinned argmax decoding on the propagation probe's turn
-/// and moved its MLX path onto a 4B model, the test that then ran nearest the
-/// budget; `PropagationProbeIntegrationTests` states what those changes no
-/// longer prove. Runs 12 and 13 are the two runs later that day again, after
-/// task ^g1s1efb pinned argmax decoding on every container
-/// `LanguageModelSessionBackendTests` loads, the suite that then carried the
-/// test nearest the budget; that suite states the per-phase split which named
-/// the cost, and what the pin no longer proves.
-///
-/// Several runs rather than one, because one run states no spread and this
-/// target had a wide one. A suite that takes the provider's default sampling —
-/// temperature 0.6 out of MLX's clock-seeded PRNG — writes a `<think>` block of
-/// a different length ahead of each answer on every run, and its wall clock is
-/// different with it. That was most of this target through run 11. It is two
-/// suites now, one row each: `CompactionSpikeIntegrationTests` and
-/// `TranscriptReconstructionIntegrationTests`. Every other suite of this
-/// package that generates pins argmax, the sibling eval target included — its
-/// two suites state the pin in their shared subject runners rather than in the
-/// suite file.
-///
-/// The box is the other half of the spread, and it moved between the columns.
-/// Runs 4 to 11 were measured while another process held the box's GPU for
-/// their whole duration — a GPU-heavy game at 900 to 1600 percent CPU, load
-/// average 12 to 22, for runs 6 and 7, load average 12.0 and 14.6 for runs 8
-/// and 9, and load average 14.3 and 11.1 for runs 10 and 11 — and the 30B
-/// decoded near ten tokens a second under it, which is why most rows grew
-/// between run 3 and run 4 with no code change to their suites. Run 12 ran on
-/// a quiet box, at load average 2.3 rising to 3.1, and run 13 on a busier one,
-/// at 7.4 rising to 10.0, which is why nearly every row grew between those
-/// two. Each column is the code of its day on the same box; a row whose suite
-/// a task converted between two runs names that task below.
-///
-/// Runs 1 and 2 are read off Swift Testing's own per-test lines, because
-/// ``GatedRealModelSuiteTrait`` did not print yet. Runs 3 to 13 are read off
-/// that trait's own lines, which is what the budget is measured against from
-/// here on — so the table can be measured again without a stopwatch.
-///
-/// | run 1 | run 2 | run 3 | run 4 | run 5 | run 6 | run 7 | run 8 | run 9 | run 10 | run 11 | run 12 | run 13 | test |
-/// |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-/// | 94.1 | 114.1 | 116.4 | 3.1 | 3.1 | 3.0 | 3.1 | 3.1 | 3.1 | 3.0 | 3.0 | 2.6 | 3.2 | a whole fork tree recorded, torn down, and restored by root id |
-/// | 16.7 | 40.9 | 101.5 | 55.4 | 44.8 | 35.1 | 37.0 | 35.2 | 37.7 | 34.6 | 36.0 | 28.3 | 34.3 | a tool-using turn over a RecordingLanguageModel handle |
-/// | 86.7 | 85.3 | 85.8 | 109.4 | 110.7 | 17.4 | 17.0 | 17.0 | 17.0 | 17.0 | 16.8 | 14.1 | 16.8 | a real tool-using turn delivers its own tools' data, on each surface |
-/// | 40.3 | 48.3 | 58.6 | 52.6 | 34.6 | 63.6 | 36.6 | 46.8 | 47.7 | 47.5 | 46.6 | 36.5 | 40.1 | a second respond() call on the same backend sees the first turn |
-/// | 54.4 | 61.7 | 58.5 | 49.6 | 47.9 | 56.9 | 51.4 | 50.9 | 44.4 | 54.6 | 55.3 | 45.5 | 55.4 | restoreSessionTree(tools:) gives a restored session real tool-calling |
-/// | 45.7 | 27.9 | 46.5 | 62.4 | 60.9 | 48.6 | 43.4 | 46.6 | 46.5 | 48.7 | 48.0 | 44.6 | 45.2 | makeSession(transcript:) seeds a fresh backend |
-/// | 46.6 | 48.7 | 44.9 | 84.9 | 60.9 | 89.8 | 55.0 | 57.5 | 58.2 | 57.6 | 56.4 | 48.6 | 57.0 | resolve real profile, then generate, embed, guide, fork, and record |
-/// | 48.7 | 40.4 | 41.8 | 46.3 | 51.8 | 55.9 | 57.1 | 49.1 | 40.9 | 40.3 | 46.6 | 36.5 | 42.3 | turn 2's usage.input.cachedTokenCount is positive |
-/// | 41.9 | 41.1 | 41.0 | 53.1 | 53.2 | 8.1 | 8.0 | 7.8 | 7.7 | 7.8 | 7.8 | 6.4 | 7.5 | the real transcript has the same entry kinds the scripted scenario produces |
-/// | 28.8 | 62.3 | 39.7 | 63.8 | 45.6 | 39.9 | 30.4 | 44.7 | 48.6 | 76.3 | 28.9 | 46.9 | 51.8 | makeFork() seeds the child's transcript from the parent's |
-/// | 67.2 | 27.4 | 24.4 | 85.5 | 68.5 | 21.0 | 35.7 | 60.6 | 118.7 | 7.2 | 8.7 | 7.3 | 7.2 | MLX path: whether the ToolContext bound around respond() arrives |
-/// | 19.0 | 15.0 | 23.0 | 20.4 | 25.8 | 23.3 | 15.9 | 21.6 | 19.6 | 21.9 | 19.7 | 17.8 | 20.4 | recorded entry kinds match after a live streaming turn |
-/// | 23.3 | 30.0 | 21.7 | 22.8 | 19.6 | 40.9 | 23.9 | 21.9 | 25.0 | 26.5 | 22.6 | 18.9 | 20.0 | each respond() call leaves exactly one prompt entry and one response |
-/// | 19.2 | 20.0 | 21.6 | 29.2 | 25.2 | 23.5 | 17.2 | 24.9 | 21.5 | 22.6 | 22.8 | 18.9 | 21.1 | transcriptEntries().count equals session.transcript.count |
-/// | 19.5 | 17.2 | 20.3 | 23.4 | 18.8 | 24.4 | 24.7 | 18.6 | 20.3 | 21.5 | 22.0 | 17.9 | 20.6 | recorded entry kinds match the real session.transcript kinds |
-/// | 16.6 | 21.0 | 19.3 | 20.2 | 21.2 | 19.4 | 23.4 | 19.8 | 19.9 | 19.6 | 16.6 | 17.8 | 20.6 | recorded tokensIn/tokensOut on the turn's response event |
-/// | 14.6 | 15.2 | 18.6 | 18.6 | 18.7 | 18.0 | 17.8 | 17.6 | 23.5 | 22.0 | 17.1 | 13.6 | 22.4 | one compaction against a real model |
-/// | 16.0 | 20.4 | 17.9 | 25.1 | 25.3 | 20.9 | 21.5 | 22.5 | 21.2 | 17.6 | 18.0 | 17.9 | 20.4 | a fork taken after one turn begins holding exactly that turn's entries |
-/// | 19.1 | 16.6 | 17.5 | 18.0 | 19.1 | 18.9 | 16.7 | 23.1 | 17.0 | 14.5 | 14.2 | 10.7 | 12.1 | turn 2 tends to be faster than turn 1 |
-/// | 541.6 | 17.4 | 17.3 | 25.4 | 21.6 | 20.8 | 21.1 | 21.0 | 23.2 | 20.9 | 20.7 | 17.1 | 20.7 | contextFill climbs, compact() compacts at the 0.80 trigger |
-/// | 19.7 | 24.1 | 17.1 | 25.6 | 24.9 | 15.8 | 18.2 | 22.7 | 16.6 | 17.7 | 22.8 | 14.3 | 19.1 | reconstructed Transcript entry kinds and count match |
-/// | 17.5 | 9.4 | 17.0 | 18.6 | 13.3 | 14.8 | 4.9 | 21.0 | 18.2 | 34.0 | 25.4 | 17.1 | 19.1 | a live LanguageModelSession rebuilt over a transcript |
-/// | 18.8 | 19.3 | 14.5 | 23.8 | 24.4 | 23.2 | 23.1 | 22.8 | 18.4 | 17.1 | 22.1 | 17.4 | 17.4 | a fact planted at the very end of the compacted span |
-/// | 12.1 | 11.7 | 12.2 | 15.1 | 15.7 | 15.0 | 14.6 | 14.3 | 14.6 | 14.1 | 14.4 | 11.6 | 14.2 | one compaction of the recorded transcript against a real model |
-/// | 5.8 | 5.7 | 5.7 | 6.1 | 6.2 | 6.0 | 6.2 | 6.1 | 6.0 | 6.3 | 6.2 | 5.6 | 6.2 | a generation cancelled mid-decode unwinds as CancellationError |
-/// | 5.2 | 5.1 | 5.1 | 7.5 | 5.7 | 5.5 | 5.4 | 5.9 | 5.8 | 5.8 | 5.8 | 4.8 | 5.8 | a session vended with a synthetic trigger compacts inside its own turn |
-/// | 2.1 | 2.3 | 2.1 | 2.5 | 2.5 | 1.9 | 2.0 | 2.1 | 2.1 | 2.2 | 1.9 | 1.8 | 2.0 | system-model path: whether the ToolContext bound around respond() arrives |
-/// | 0.012 | 0.011 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | the recorded transcript still carries the entry kinds real traffic has |
-/// | 0.001 | 0.001 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | a GPU-device MLXArray evaluation completes |
-///
-/// ## What the table says about the margin
-///
-/// The one test that did NOT fit is the compaction round trip, at 541.6
-/// seconds — 4.5 times this budget. It is the test task ^k0d30s4 converted, and
-/// it costs 17.3 to 25.4 seconds now; see `CompactionRoundTripIntegrationTests`
-/// for what the conversion no longer proves.
-///
-/// Every test of all thirteen runs fits. In runs 1 to 3 two tests fit by
-/// little: the fork-tree restoration measured 94.1, then 114.1, then 116.4
-/// seconds — 97 percent of this budget — and the `RecordingLanguageModel`
-/// handle round trip measured 16.7, then 40.9, then 101.5, which is six times
-/// its own first measurement with no code change between the three. Task
-/// ^bpwfbyz converted
-/// both: the fork-tree restoration measures 3.1 and 3.1 seconds in runs 4 and
-/// 5, and the handle round trip 55.4 and 44.8, each under half of this budget
-/// in both runs. The test nearest the limit in runs 4 and 5 was the
-/// both-surfaces tool turn of `RealToolTurnComparisonTests`, at 109.4 and
-/// 110.7 seconds — 92 percent of this budget, up from 86 in runs 1 to 3. Task
-/// ^6ww73dm moved that suite onto a 4B model that reasons and calls tools,
-/// loads one container for each test, caps each round's reply and asks for
-/// both calls in one step: the test measures 17.4 and 17.0 seconds in runs 6
-/// and 7, and the transcript-shape test 8.1 and 8.0. See that suite for the
-/// 30B measurement that ruled it out and for what the move no longer proves.
-/// The test nearest the limit in runs 6 and 7 was `resolve real profile, then
-/// generate, embed, guide, fork, and record`, at 89.8 seconds in run 6 — 75
-/// percent of this budget on the shared box — and 55.0 in run 7; runs 1 to 5
-/// measured it at 44.9 to 84.9. Task ^pa5q5dt pinned argmax decoding on the
-/// containers it loads and gave each of its four turns a reply ceiling, which
-/// took the spread out rather than the work: the test measures 57.5 and 58.2
-/// seconds in runs 8 and 9, under half of this budget in both. See
-/// `IntegrationTests` for the per-phase split that named the cost and for what
-/// the change no longer proves.
-///
-/// The test nearest the limit in runs 8 and 9 was `MLX path: whether the
-/// ToolContext bound around respond() arrives`, at 60.6 and 118.7 seconds —
-/// 99 percent of this budget in run 9, and the widest spread of the table:
-/// runs 1 to 7 measured it at 21.0 to 85.5. Task ^s49ya8p pinned argmax
-/// decoding on its turn and moved its MLX path onto a 4B model that reasons
-/// and calls tools: the test measures 7.2 and 8.7 seconds in runs 10 and 11,
-/// 7 percent of this budget. See `PropagationProbeIntegrationTests` for the
-/// per-phase split that named the cost, for the 30B measurement that ruled it
-/// out, and for what the changes no longer prove.
-///
-/// The test nearest the limit in runs 10 and 11 was `makeFork() seeds the
-/// child's transcript from the parent's`, at 76.3 seconds in run 10 — 64
-/// percent of this budget — and 28.9 in run 11; runs 1 to 9 measured it at
-/// 28.8 to 63.8. Task ^g1s1efb pinned argmax decoding on every container
-/// `LanguageModelSessionBackendTests` loads: the test measures 46.9 and 51.8
-/// seconds in runs 12 and 13, under half of this budget in both. The pin took
-/// the spread out rather than the work, and the suite's own prints say so —
-/// `turn1Out=76` and `tokensOut=128` in both runs, so the two runs decoded the
-/// same tokens and what stands between 46.9 and 51.8 is the box. See that
-/// suite for the per-phase split that named the cost and for what the pin no
-/// longer proves.
-///
-/// No test of runs 12 and 13 reaches half this budget. The nearest is `resolve
-/// real profile, then generate, embed, guide, fork, and record`, at 48.6 and
-/// 57.0 seconds — 48 percent of this budget in run 13, on the busier box that
-/// run measured on.
-///
-/// A test the limit cancels is worse than a plain red: the cancellation lands
-/// mid-generation, and a cancellation on GPU work aborts the whole process on a
-/// Metal assertion (fork card ^3axg80k), taking every other suite's results
-/// with it. That is why the margin is stated here rather than left to be
-/// discovered.
-let integrationTestBudgetMinutes = 2
-
 // MARK: - The trait every gated suite of this target carries
 
 /// The tag every wall-clock line of this target carries, so one `grep` collects
@@ -249,12 +75,10 @@ extension Trait where Self == GatedRealModelSuiteTrait {
     /// targets keep separate permits, and for why the whole job sits in a
     /// suite-scoped trait rather than in the test bodies.
     ///
-    /// The clock is per test rather than per suite. The budget is stated per
-    /// test, Swift Testing charges `.timeLimit` per test, and a suite of this
-    /// target holds many tests, so a per-test clock is the measurement that can
-    /// be read straight against ``integrationTestBudgetMinutes``. No suite here
-    /// asks for teardown as it ends: each gated `@Test` body evicts whatever it
-    /// loaded for itself.
+    /// The clock is per test rather than per suite. A suite of this target
+    /// holds many tests, so a per-test clock shows which test costs the time.
+    /// No suite here asks for teardown as it ends: each gated `@Test` body
+    /// evicts whatever it loaded for itself.
     ///
     /// - Returns: The trait.
     static var exclusiveRealModel: Self {

@@ -42,6 +42,10 @@ struct StubGenerationCall: Sendable, Equatable {
     /// The ceiling the caller put on that call's own answer, or `nil` to leave
     /// it to the model's own default.
     let maxTokens: Int?
+
+    /// `true` when the caller asked for the call with reasoning off
+    /// (``LanguageModelSessionBackend/respondWithoutReasoning(to:maxTokens:)``).
+    let reasoningOff: Bool
 }
 
 /// A generation log shared by a ``StubSessionBackend`` and every clone it
@@ -56,7 +60,7 @@ struct StubGenerationCall: Sendable, Equatable {
 /// what lets a test read the prompt and the output ceiling a session's compaction
 /// actually handed its summarizer.
 ///
-/// `@unchecked Sendable` invariant: ``record(prompt:maxTokens:)`` runs only
+/// `@unchecked Sendable` invariant: ``record(prompt:maxTokens:reasoningOff:)`` runs only
 /// from inside a backend call, ``RoutedSessionActor`` serializes every
 /// backend call onto its own executor, and a test reads ``calls`` only after
 /// the turns that made them returned.
@@ -69,8 +73,9 @@ final class StubGenerationLog: @unchecked Sendable {
     /// - Parameters:
     ///   - prompt: The prompt the backend was asked to respond to.
     ///   - maxTokens: The ceiling on that call's own answer, or `nil`.
-    func record(prompt: String, maxTokens: Int?) {
-        calls.append(StubGenerationCall(prompt: prompt, maxTokens: maxTokens))
+    ///   - reasoningOff: `true` when the caller asked for reasoning off.
+    func record(prompt: String, maxTokens: Int?, reasoningOff: Bool) {
+        calls.append(StubGenerationCall(prompt: prompt, maxTokens: maxTokens, reasoningOff: reasoningOff))
     }
 }
 
@@ -222,7 +227,7 @@ final class StubSessionBackend: LanguageModelSessionBackend {
     /// `nil`, mirroring a real backend that cannot meter.
     ///
     /// Set this before driving a turn to give a test canned, configurable
-    /// counts; ``recordCall(prompt:maxTokens:preflight:)`` is what actually
+    /// counts; ``recordCall(prompt:maxTokens:reasoningOff:preflight:)`` is what actually
     /// compacts it into the running total on each successful call, the way a
     /// real `LanguageModelSession.usage` grows across turns.
     var usageIncrement: (input: Int, output: Int)? {
@@ -311,6 +316,12 @@ final class StubSessionBackend: LanguageModelSessionBackend {
     /// ``StubError/boom`` when ``shouldThrow`` is set.
     func respond(to prompt: String, maxTokens: Int?) async throws -> String {
         try recordCall(prompt: prompt, maxTokens: maxTokens)
+    }
+
+    /// Records the call as a call with reasoning off, and answers as
+    /// ``respond(to:maxTokens:)`` does.
+    func respondWithoutReasoning(to prompt: String, maxTokens: Int?) async throws -> String {
+        try recordCall(prompt: prompt, maxTokens: maxTokens, reasoningOff: true)
     }
 
     /// Records the call and streams ``responseText`` as a single chunk, or
@@ -425,6 +436,7 @@ final class StubSessionBackend: LanguageModelSessionBackend {
     /// - Parameters:
     ///   - prompt: The prompt this call was asked to respond to.
     ///   - maxTokens: The ceiling this call was made under, or `nil`.
+    ///   - reasoningOff: `true` when the caller asked for reasoning off.
     ///   - preflight: A check that runs after the prompt is recorded and
     ///     before the throw check — the guided entry point's grammar
     ///     validation. Its error propagates.
@@ -434,12 +446,13 @@ final class StubSessionBackend: LanguageModelSessionBackend {
     private func recordCall(
         prompt: String,
         maxTokens: Int?,
+        reasoningOff: Bool = false,
         preflight: () throws -> Void = {}
     ) throws -> String {
         try state.withLock { state in
             state.callCount += 1
             state.receivedPrompts.append(prompt)
-            generationLog?.record(prompt: prompt, maxTokens: maxTokens)
+            generationLog?.record(prompt: prompt, maxTokens: maxTokens, reasoningOff: reasoningOff)
             state.entries.append(.prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))])))
             try preflight()
             if state.shouldThrow { throw StubError.boom }

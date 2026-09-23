@@ -36,18 +36,16 @@ private let sessionBackendModel: ModelRef = RealModels.standard
 /// test. `internal var session` on the backend exists specifically so this
 /// `@testable import` can read `transcript.count` directly.
 ///
-/// This suite holds 11 tests, and each of them loads the model once. The limit
-/// is ``integrationTestBudgetMinutes``, which replaces the 15 minutes this
-/// suite stated before; see it for the whole run table, which holds a row for
-/// each of the eleven.
+/// This suite holds 11 tests, and each of them loads the model once. The suite
+/// has no time limit. A run ends when it ends, or when the caller stops it.
 ///
 /// ## What it NO LONGER proves (task ^g1s1efb)
 ///
 /// Until that task every container this suite loaded took the provider's own
-/// sampling, and each turn stated a reply ceiling alone. The eleven runs in the
-/// table of ``integrationTestBudgetMinutes`` measured `makeFork() seeds the
-/// child's transcript from the parent's` at 28.8 to 76.3 seconds. The 76.3 is
-/// 64 percent of the budget, and the very next run of the same code on the same
+/// sampling, and each turn stated a reply ceiling alone. Eleven whole runs of
+/// this target measured `makeFork() seeds the child's transcript from the
+/// parent's` at 28.8 to 76.3 seconds. The 76.3 was 64 percent of the two-minute
+/// budget of that time, and the very next run of the same code on the same
 /// box measured 28.9 — a factor of 2.6 with no change to the suite between
 /// them.
 ///
@@ -88,14 +86,13 @@ private let sessionBackendModel: ModelRef = RealModels.standard
 /// chokepoint fidelity pair, the usage delta, the KV-cache bounds and the
 /// timing print are exactly what they were.
 ///
-/// A test the limit cancels is worse than a plain red result. The cancellation
-/// lands mid-generation, and a cancellation on GPU work aborts the whole
-/// process on a Metal assertion (fork card ^3axg80k), which takes every other
-/// suite's results with it.
+/// A test that a time limit cancels is worse than a plain red result. The
+/// cancellation lands mid-generation, and a cancellation on GPU work aborts
+/// the whole process on a Metal assertion (fork card ^3axg80k), which takes
+/// every other suite's results with it.
 @Suite(
     "Gated real-model coverage: MLXFoundationModelsSessionBackend (milestone 7)",
     .serialized,
-    .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
 struct LanguageModelSessionBackendIntegrationTests {
@@ -103,8 +100,8 @@ struct LanguageModelSessionBackendIntegrationTests {
     /// ``makeForkSeedsFromParentTranscript()`` opens with.
     ///
     /// Its own tag, and not the target's `gatedTest` one, so a grep that
-    /// collects the run table's per-test measurements never picks up a phase
-    /// line. See ``integrationTestBudgetMinutes`` for that table.
+    /// collects the per-test measurements of a run never picks up a phase
+    /// line.
     private static let phaseLabel = "sessionBackendPhase"
 
     /// The decoding every container this suite loads is pinned to.
@@ -114,8 +111,8 @@ struct LanguageModelSessionBackendIntegrationTests {
     /// the `<think>` block the 30B writes before each answer, and the wall
     /// clock with it, differed on every run of identical code. Argmax decoding
     /// consumes no randomness at all, which is what lets a red run here be
-    /// attributed to the change under test, and what lets the wall clock be
-    /// measured against the budget rather than against the run.
+    /// attributed to the change under test, and what lets the wall clock of
+    /// one run be compared with the wall clock of the next.
     ///
     /// The pin is stated one time, at load, on ``RealModelContainer/samplingMode``,
     /// and read back into each `makeSession(...samplingMode:)` call rather than

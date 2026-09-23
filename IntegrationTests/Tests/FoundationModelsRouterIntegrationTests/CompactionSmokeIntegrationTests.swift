@@ -12,8 +12,9 @@ import Testing
 /// NOT ``RealModels/standard``.
 ///
 /// ``RealModels/standard`` is `Muse-Glimmer-30B-mxfp4`, 17 GB of weights. Its
-/// load alone costs more than this suite's whole budget, which is why this
-/// suite names a model of its own instead of the target's slot roster.
+/// load alone cost more than the whole time budget this suite had when it was
+/// written, which is why this suite names a model of its own instead of the
+/// target's slot roster.
 ///
 /// `Llama-3.2-1B-Instruct-4bit` is 680 MB on disk and is a real instruct model,
 /// not a toy: it follows the compaction prompt's own section structure and it
@@ -160,12 +161,10 @@ private let compactionSmokeChatTemplateDate = RealModelContainer.chatTemplateFal
 /// read: the whole package, this suite's real model included, in 18.0
 /// seconds.
 ///
-/// The limit is the shared ``integrationTestBudgetMinutes``, which this suite
-/// states in place of a bound of its own, and which states the whole run
-/// table.
+/// The suite has no time limit. A run ends when it ends, or when the caller
+/// stops it.
 @Suite(
     "Real-model smoke test: the compaction works end to end (task ^w1cz46m)",
-    .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
 struct CompactionSmokeIntegrationTests {

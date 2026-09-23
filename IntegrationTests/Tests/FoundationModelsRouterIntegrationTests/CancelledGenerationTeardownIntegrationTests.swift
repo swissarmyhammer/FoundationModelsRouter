@@ -7,8 +7,7 @@ import Testing
 @testable import FoundationModelsRouterRealModelSupport
 
 /// The model this suite cancels mid-generation: the same 1B model the
-/// compaction smoke suite drives, small enough that the whole suite stays
-/// inside the two-minute integration budget.
+/// compaction smoke suite drives, small enough to keep the whole suite fast.
 private let cancellationSmokeModel: ModelRef = "mlx-community/Llama-3.2-1B-Instruct-4bit"
 
 /// The response-token ceiling of the generation this suite cancels.
@@ -16,8 +15,8 @@ private let cancellationSmokeModel: ModelRef = "mlx-community/Llama-3.2-1B-Instr
 /// Sized so the generation is still decoding on the GPU when the cancel
 /// lands at ``cancellationDelaySeconds``: at the 1B model's measured decode
 /// rate this many tokens run well past that point, and — should cancellation
-/// fail to propagate at all — a full uncancelled run still ends inside the
-/// suite's ``integrationTestBudgetMinutes`` limit rather than hanging it.
+/// fail to propagate at all — a full uncancelled run still stops at this
+/// ceiling rather than hanging the suite.
 private let cancelledGenerationMaxTokens = 2048
 
 /// How long the suite lets the doomed generation run before it cancels it.
@@ -46,12 +45,11 @@ private let cancellationDelaySeconds = 2
 /// target and the command that leaves it out.
 ///
 /// The three runs of 2026-08-20 measured this suite's one test at 5.8, then
-/// 5.7, then 5.7 seconds, against the shared ``integrationTestBudgetMinutes``
-/// this suite now states as its limit; see it for the whole run table.
+/// 5.7, then 5.7 seconds. The suite has no time limit. A run ends when it
+/// ends, or when the caller stops it.
 @Suite(
     "Gated real-model coverage: cancellation mid-generation does not abort the process (task bkdm97c)",
     .serialized,
-    .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
 struct CancelledGenerationTeardownIntegrationTests {

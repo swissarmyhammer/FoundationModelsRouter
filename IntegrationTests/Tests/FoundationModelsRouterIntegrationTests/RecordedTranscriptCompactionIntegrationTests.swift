@@ -174,9 +174,8 @@ private let recordedTranscriptCompactionChatTemplateDate =
 /// These numbers WILL move again, because the prompt moves whenever the
 /// compaction prompt changes. That is expected, and it is not a regression.
 ///
-/// The limit is ``integrationTestBudgetMinutes``, which states the whole run
-/// table. Task ^k0d30s4 gave every suite of this target that one budget, so a
-/// suite states no limit of its own.
+/// The suite has no time limit. A run ends when it ends, or when the caller
+/// stops it.
 ///
 /// One of the three compaction smoke suites, with
 /// ``CompactionSmokeIntegrationTests`` and
@@ -184,7 +183,6 @@ private let recordedTranscriptCompactionChatTemplateDate =
 /// question — does compaction work at all against a real model — in seconds.
 @Suite(
     "Real-model smoke test: a recorded transcript boots the compaction (task ^pfdrppj)",
-    .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
 struct RecordedTranscriptCompactionIntegrationTests {

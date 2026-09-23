@@ -5,8 +5,8 @@ import Testing
 
 /// The wall-clock ceiling this suite runs under.
 ///
-/// One minute rather than the shared ``integrationTestBudgetMinutes`` the
-/// model-loading suites take: this suite loads no model, touches no GPU, and
+/// One minute, although the model-loading suites have no time limit: this
+/// suite loads no model, touches no GPU, and
 /// encodes one small value.
 private let toolCallAttachmentSurfaceTimeLimitMinutes = 1
 

@@ -502,7 +502,7 @@ let compactionContinuityFastReadinessCheck =
 /// final instruction as ``compactionContinuitySeeds``, over two steps instead
 /// of twelve to fourteen.
 ///
-/// This is task ^k0d30s4's two-minute budget applied to the continuity tier.
+/// Task ^k0d30s4 made these seeds for the two-minute budget of that time.
 /// The original seeds spend ten to twelve filler steps consuming context
 /// toward ``compactionContinuityDefaultBudget``'s 1638-token trigger, and
 /// every step is a real generation. A synthetic trigger makes that filler
@@ -550,18 +550,18 @@ let compactionContinuityFastSeeds: [CompactionContinuitySeed] = compactionContin
 /// Task ^m03heaa moved the fact-retention tiers to Qwen2.5-3B-Instruct and
 /// measured this tier at 219.1 seconds of suite wall clock over all ten fast
 /// seeds under the same model on 2026-08-20 — past task ^k0d30s4's two-minute
-/// budget, which `gatedEvalSuiteTimeLimitMinutes` states. The measurement run
+/// budget of that time. The measurement run
 /// of 2026-08-21 over the same ten seeds under the same model, at greedy
 /// decoding, cost 99.5 seconds: the ten tasks cost 8.5, 7.8, 11.7, 6.8, 7.2,
 /// 8.8, 17.1, 12.7, 8.7 and 8.7 seconds, and the model loaded in 1.3. Ten tasks
-/// at the dearest of those rates, 17.1 seconds, is 172.3 seconds, which a
-/// two-minute limit cannot bound, and at the throughput of 2026-08-20 the ten
+/// at the dearest of those rates, 17.1 seconds, is 172.3 seconds, which that
+/// two-minute limit could not bound, and at the throughput of 2026-08-20 the ten
 /// take 219 seconds. Four tasks is about 40 percent of that work: 4 x 17.1 s
 /// plus 1.3 s is 69.7 seconds at the dearest rate, and about 88 seconds at the
-/// slower throughput of 2026-08-20, so the tier fits the budget with margin on
-/// both days that have been measured. A tier must never REACH its limit,
-/// because a run that reaches one takes a Metal abort in place of a failure
-/// (fork card ^3axg80k). The two gated runs of 2026-08-21 over these four
+/// slower throughput of 2026-08-20, so the tier fit that budget with margin on
+/// both days that were measured. The gated suites have no time limit now. A
+/// limit that cancels a run mid-generation can cause a Metal abort in place of
+/// a failure (fork card ^3axg80k). The two gated runs of 2026-08-21 over these four
 /// tasks measured 30.9 and 29.7 seconds of suite wall clock: the tasks cost
 /// 7.0, 6.5, 8.6 and 7.3 seconds in the first run and 6.9, 6.1, 7.7 and 7.5
 /// in the second, and the model loaded in 1.4 both times.

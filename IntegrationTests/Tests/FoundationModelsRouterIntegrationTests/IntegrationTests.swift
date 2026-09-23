@@ -176,20 +176,20 @@ private struct DownloadObservingLoader: ModelLoader {
 /// `@Suite`/`@Test` macros reject a redundant `@available` attribute on the
 /// type), and the target lives in the nested `IntegrationTests/` package,
 /// which a root `swift test` cannot see. `.serialized` so the heavy load
-/// happens once at a time, under ``integrationTestBudgetMinutes``. Downloads
-/// are cached on disk by the Hub client and reused across runs — a box that has
-/// never fetched these models pays that download inside the budget.
+/// happens once at a time. Downloads are cached on disk by the Hub client and
+/// reused across runs — a box that has never fetched these models pays that
+/// download inside the run.
 ///
 /// The three runs of 2026-08-20 measured this test at 46.6, then 48.7, then
 /// 44.9 seconds, against the 30 minutes the limit stated before task ^k0d30s4's
-/// budget replaced it. See ``integrationTestBudgetMinutes`` for the whole
-/// run table.
+/// two-minute budget replaced it. The suite has no time limit now. A run ends
+/// when it ends, or when the caller stops it.
 ///
 /// ## What it NO LONGER proves (task ^pa5q5dt)
 ///
 /// Runs 6 and 7 of 2026-08-21 measured this test at 89.8 and 55.0 seconds, and
-/// the 89.8 was 75 percent of ``integrationTestBudgetMinutes`` and the dearest
-/// test of the target. The per-phase clock this test now prints says where the
+/// the 89.8 was 75 percent of the two-minute budget of that time and the
+/// dearest test of the target. The per-phase clock this test now prints says where the
 /// cost stands. Measured in isolation on 2026-08-22, on a box that ran a
 /// GPU-heavy game for the whole measurement (load average above 10): resolve
 /// 5.4 seconds, the plain turn 22.4, the embedding 0.03, the guided turn 5.2,
@@ -239,15 +239,14 @@ private struct DownloadObservingLoader: ModelLoader {
 @Suite(
     "Gated real-model integration (milestone 7)",
     .serialized,
-    .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
 struct IntegrationTests {
     /// The tag the per-phase wall-clock line of ``endToEnd()`` opens with.
     ///
     /// Its own tag, and not the target's `gatedTest` one, so a grep that
-    /// collects the run table's per-test measurements never picks up a phase
-    /// line. See ``integrationTestBudgetMinutes`` for that table.
+    /// collects the per-test measurements of a run never picks up a phase
+    /// line.
     private static let phaseLabel = "endToEndPhase"
 
     /// The decoding strategy every container this test loads generates with.
@@ -381,7 +380,7 @@ struct IntegrationTests {
         //    Every turn below states `GatedRealModelBudget.responseTokenCeiling`
         //    as its reply ceiling. Without one each turn takes the live
         //    backend's own `responseTokenFloor`, so a run whose `<think>`
-        //    block does not stop cannot be held inside the budget.
+        //    block does not stop generates until that floor.
         //    The ceiling gives space to the `<think>` block and to the answer —
         //    see that constant — and a turn that stops earlier still costs only
         //    the tokens it generated.

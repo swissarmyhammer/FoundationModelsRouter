@@ -165,9 +165,8 @@ private let autoCompactionTriggerChatTemplateDate =
 ///
 /// These numbers WILL move again, because the prompt moves whenever the
 /// compaction prompt or the fixture changes. That is expected, and it is not a
-/// regression. The limit is the shared ``integrationTestBudgetMinutes``, which
-/// this suite states in place of a bound of its own, and which states the
-/// whole run table.
+/// regression. The suite has no time limit. A run ends when it ends, or when
+/// the caller stops it.
 ///
 /// One of the three compaction smoke suites, with
 /// ``CompactionSmokeIntegrationTests`` and
@@ -175,7 +174,6 @@ private let autoCompactionTriggerChatTemplateDate =
 /// question — does compaction work at all against a real model — in seconds.
 @Suite(
     "Real-model smoke test: a synthetic trigger compacts a short transcript inside its own turn (task ^d02ryqj)",
-    .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
 struct AutoCompactionTriggerIntegrationTests {

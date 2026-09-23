@@ -3,11 +3,9 @@ import Testing
 
 /// The wall-clock ceiling this suite runs under.
 ///
-/// One minute rather than the shared ``integrationTestBudgetMinutes`` the
-/// model-loading suites take: this suite adds four integers and downloads
-/// nothing. The three runs of 2026-08-20 measured it at 0.001, then 0.001,
-/// then 0.0 seconds; see ``integrationTestBudgetMinutes`` for the whole
-/// run table.
+/// One minute, although the model-loading suites have no time limit: this
+/// suite adds four integers and downloads nothing. The three runs of
+/// 2026-08-20 measured it at 0.001, then 0.001, then 0.0 seconds.
 private let metalLibraryBootstrapTimeLimitMinutes = 1
 
 /// The first operand in the run the probe below adds on the GPU.

@@ -18,13 +18,13 @@ import Testing
 /// the whole measurement (load average above 12): the 30B took 3.6 seconds to
 /// load and 51.2 and 49.5 seconds for the two turns, 544 output tokens each,
 /// near eleven tokens a second — 104.2 seconds for the both-surfaces test, 87
-/// percent of ``integrationTestBudgetMinutes``. The same code with the old
+/// percent of the two-minute budget of that time. The same code with the old
 /// instructions, which left the round count to the model, took three rounds a
 /// turn and 106.4 seconds, so the round count was not the cost. The turns
 /// are: the two tool calls and the answer are under 60 of the 544 tokens, and
 /// the rest is the `<think>` block the 30B writes before its calls and before
 /// its answer. No Router-side change shortens that block, and this suite never
-/// disables thinking, so on the 30B the test cannot reach half the budget.
+/// disables thinking, so on the 30B the test could not reach half that budget.
 ///
 /// The 4B makes the same turn: both calls in one round, the same entry kinds,
 /// a `<think>` block before the calls and before the answer, and an answer
@@ -90,8 +90,8 @@ private let realToolTurnModel: ModelRef = "mlx-community/Qwen3-4B-4bit"
 /// model. The three runs of 2026-08-20 measured the both-surfaces test at
 /// 86.7, then 85.3, then 85.8 seconds, and the two whole-target runs of
 /// 2026-08-21 at 109.4 and 110.7 seconds — 92 percent of
-/// ``integrationTestBudgetMinutes``, the dearest test of the target. Four
-/// changes bring the test inside half the budget, and each one is stated on
+/// the two-minute budget of that time, the dearest test of the target. Four
+/// changes brought the test inside half that budget, and each one is stated on
 /// the declaration that carries it: ``realToolTurnModel`` moves the suite onto
 /// a 4B model that reasons and calls tools, with the measurement that rules
 /// the 30B out; ``loadContainer()`` loads one container for each test;
@@ -99,8 +99,8 @@ private let realToolTurnModel: ModelRef = "mlx-community/Qwen3-4B-4bit"
 /// ``GatedRealModelBudget/responseTokenCeiling`` as each round's reply
 /// ceiling; and ``instructions`` asks for both calls in one step. Measured in
 /// isolation on 2026-08-21 under those four: 18.0 seconds for the
-/// both-surfaces test and 8.2 for the transcript-shape test. See
-/// ``integrationTestBudgetMinutes`` for the whole run table.
+/// both-surfaces test and 8.2 for the transcript-shape test. The suite has no
+/// time limit now. A run ends when it ends, or when the caller stops it.
 ///
 /// What is no longer proven is:
 ///
@@ -132,7 +132,6 @@ private let realToolTurnModel: ModelRef = "mlx-community/Qwen3-4B-4bit"
 @Suite(
     "Gated real-model integration: a real tool-using turn delivers its tools' data on both session surfaces (task ^w8dzvee)",
     .serialized,
-    .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
 struct RealToolTurnComparisonTests {
@@ -275,8 +274,8 @@ struct RealToolTurnComparisonTests {
     /// text for the run's printed record.
     ///
     /// A session here drives exactly one turn, so the cumulative count is that
-    /// turn's own count. Printed beside the turn's wall clock so the run table
-    /// in `integrationTestBudgetMinutes` can state tokens as well as seconds.
+    /// turn's own count. Printed beside the turn's wall clock so a reader of
+    /// the run can state tokens as well as seconds.
     ///
     /// - Parameter session: The session whose turn has already returned.
     /// - Returns: `in=<input> out=<output>`, or `unmetered` when the backend
@@ -453,9 +452,8 @@ struct RealToolTurnComparisonTests {
         let streamDuration = ContinuousClock.now - streamStarted
 
         // Printed so the scripted-versus-real comparison is checkable by a
-        // reader rather than asserted and thrown away, and so the run table in
-        // `integrationTestBudgetMinutes` can split the test's cost into its
-        // load and its two turns.
+        // reader rather than asserted and thrown away, and so a reader of the
+        // run can split the test's cost into its load and its two turns.
         print(
             """
             REAL load: \(loadDuration), respond turn: \(respondDuration), stream turn: \(streamDuration)

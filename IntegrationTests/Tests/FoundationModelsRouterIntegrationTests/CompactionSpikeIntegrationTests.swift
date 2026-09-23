@@ -33,13 +33,11 @@ private let compactionSpikeTinyModel: ModelRef = RealModels.standard
 /// bookkeeping around it (already covered hermetically elsewhere).
 ///
 /// The three runs of 2026-08-20 measured this suite's one test at 17.5, then
-/// 9.4, then 17.0 seconds. The limit is now the shared
-/// ``integrationTestBudgetMinutes``, which replaces the 15 minutes this suite
-/// stated before; see it for the whole run table.
+/// 9.4, then 17.0 seconds. The suite has no time limit. A run ends when it
+/// ends, or when the caller stops it.
 @Suite(
     "Gated real-model coverage: a rebuilt live LanguageModelSession over synthesized entries (task dws80ms)",
     .serialized,
-    .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
 struct CompactionSpikeIntegrationTests {

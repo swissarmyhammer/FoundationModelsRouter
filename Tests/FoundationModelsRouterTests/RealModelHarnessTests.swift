@@ -17,7 +17,8 @@ import Testing
 /// one loads a real model — which is why the card that added
 /// ``RealModelHarness`` left all three copies in place rather than moving them
 /// on a compile alone. Both stated a limit of 20 minutes against the 30B model
-/// then. Both run under `integrationTestBudgetMinutes` of 2 now, and the round
+/// then. Task ^k0d30s4 moved both to a two-minute budget, and both have no
+/// time limit now. The round
 /// trip drives `mlx-community/Qwen2.5-3B-Instruct-4bit` (task ^k0d30s4); the
 /// argument for this suite is unchanged, because a gated suite still cannot
 /// run on a box with no model.

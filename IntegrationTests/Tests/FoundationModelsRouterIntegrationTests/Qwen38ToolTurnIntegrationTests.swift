@@ -39,7 +39,6 @@ private let qwen38ToolTurnModel: ModelRef = "mlx-community/Qwen3.8-27B-mxfp4"
 @Suite(
     "Gated real-model integration: Qwen 3.8 27B mxfp4 calls its tools on the respond surface",
     .serialized,
-    .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
 struct Qwen38ToolTurnIntegrationTests {
@@ -223,7 +222,8 @@ struct Qwen38ToolTurnIntegrationTests {
         // loads. The CI run of 2026-09-08 for commit 422023d measured what a
         // suite that does not evict costs the suites after it: on the runner,
         // the Muse Glimmer load that took 6 seconds before this suite ran took
-        // 104 seconds after it, and four Muse suites timed out at the budget.
+        // 104 seconds after it, and four Muse suites timed out at the time
+        // limit of that day.
         await container.container.model.evict()
 
         // Printed so a reader can see what the model did, and so the cost

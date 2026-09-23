@@ -258,17 +258,64 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
         try await respond(to: prompt, schema: nil, maxTokens: maxTokens)
     }
 
+    /// The reasoning level that asks `MLXLanguageModel` to turn thinking off.
+    ///
+    /// `MLXLanguageModel` reads `.custom("no_think")`, and only that value, as
+    /// "thinking off". For a model that turns thinking on and off with a chat
+    /// template flag, the engine then renders the prompt with that flag off:
+    /// for Qwen3, `enable_thinking` is `false` in the template's additional
+    /// context. The flag applies to the one call that states this level.
+    private static let thinkingOffReasoningLevel = ContextOptions.ReasoningLevel.custom("no_think")
+
+    /// Generates a complete text response through ``liveSession`` with
+    /// thinking off, when ``model`` turns thinking on and off with a chat
+    /// template flag. Any other model generates as ``respond(to:maxTokens:)``
+    /// does.
+    ///
+    /// The engine refuses "thinking off" for a model that always reasons and
+    /// for a model with no thinking control. Thus this call asks for it only
+    /// when the loaded model's reasoning strategy is a template flag.
+    func respondWithoutReasoning(to prompt: String, maxTokens: Int?) async throws -> String {
+        guard try await modelTurnsThinkingOffByTemplateFlag() else {
+            return try await respond(to: prompt, maxTokens: maxTokens)
+        }
+        return try await respond(
+            to: prompt, schema: nil, maxTokens: maxTokens,
+            contextOptions: ContextOptions(reasoningLevel: Self.thinkingOffReasoningLevel))
+    }
+
+    /// Whether ``model`` is an `MLXLanguageModel` whose loaded configuration
+    /// turns thinking on and off with a chat template flag.
+    ///
+    /// - Returns: `true` for a template-flag reasoning strategy, else `false`.
+    /// - Throws: What loading the model's container throws.
+    private func modelTurnsThinkingOffByTemplateFlag() async throws -> Bool {
+        guard let mlxModel = model as? MLXLanguageModel else { return false }
+        let configuration = await (try await mlxModel.loadContainer()).configuration
+        guard case .templateFlag = configuration.reasoningConfig?.promptStrategy else { return false }
+        return true
+    }
+
     /// Runs ``liveSession`` and returns its response content. With a `schema`
     /// the decode is constrained to it and the result is its JSON string.
+    ///
+    /// - Parameters:
+    ///   - prompt: The prompt text.
+    ///   - schema: The schema that constrains the decode, or `nil`.
+    ///   - maxTokens: The ceiling the caller named, or `nil`.
+    ///   - contextOptions: The context options of this one call.
+    /// - Returns: The response content.
     private func respond(
         to prompt: String,
         schema: GenerationSchema?,
-        maxTokens: Int?
+        maxTokens: Int?,
+        contextOptions: ContextOptions = ContextOptions()
     ) async throws -> String {
         let options = makeGenerationOptions(maxTokens: maxTokens)
         forgetLastGenerationCall()
         guard let schema else {
-            let response = try await liveSession.respond(to: prompt, options: options)
+            let response = try await liveSession.respond(
+                to: prompt, options: options, contextOptions: contextOptions)
             recordLastGenerationCall(usage: response.usage, entries: response.transcriptEntries)
             return response.content
         }

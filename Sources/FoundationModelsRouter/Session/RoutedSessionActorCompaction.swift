@@ -13,6 +13,12 @@ private let sessionCompactionLogger = makeModuleLogger(category: "Compaction")
 /// transcript), never on the live backend. The live backend holds the live
 /// context that the call summarizes, and the call must not enter the
 /// conversation history.
+///
+/// The call turns the model's reasoning off
+/// (``LanguageModelSessionBackend/respondWithoutReasoning(to:maxTokens:)``).
+/// Task ^dvyt1dx measured Qwen3.8-27B with its reasoning on: in all four
+/// continuity tasks the model spent the whole ceiling of the call on its
+/// reasoning and wrote no summary. The ceiling stays as it is.
 private struct BackendCompactionSummarizer: CompactionSummarizer {
     /// The backend each blank-slate summarizer call is built from.
     let backend: any LanguageModelSessionBackend
@@ -21,7 +27,8 @@ private struct BackendCompactionSummarizer: CompactionSummarizer {
         // The compaction's own ceiling, passed down to the generation path rather
         // than left to resolve to its generic per-turn default — see
         // ``CompactionSummarizer/summarize(_:maxTokens:)``.
-        try await backend.replacingTranscript(Transcript(entries: [])).respond(to: prompt, maxTokens: maxTokens)
+        try await backend.replacingTranscript(Transcript(entries: []))
+            .respondWithoutReasoning(to: prompt, maxTokens: maxTokens)
     }
 }
 

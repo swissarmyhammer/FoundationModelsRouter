@@ -43,7 +43,7 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
     /// ``run(steps:finalInstruction:prompt:budget:)``, including the ones still
     /// running.
     ///
-    /// A sample the time limit cut short is counted here and recorded nowhere
+    /// A sample the caller stopped is counted here and recorded nowhere
     /// else, which is what lets its progress lines state where in the tier it
     /// stood.
     private var startedSampleCount = 0
@@ -90,9 +90,9 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
     ///
     /// The load is timed and stated on its own two progress lines by
     /// ``CompactionEvalRealModelContainer/load(ref:context:samplingMode:unexpectedContainerType:)``,
-    /// so it is never charged to the first sample. A tier that spends its whole
-    /// limit here leaves the started line and no returned line, which is the
-    /// trail ``gatedEvalSuiteTimeLimitMinutes`` exists to bound (task ^aktsp2e).
+    /// so it is never charged to the first sample. A tier that is stopped here
+    /// leaves the started line and no returned line, and that trail shows that
+    /// the load did not end (task ^aktsp2e).
     ///
     /// - Returns: The cached container with its pinned mode, if one was
     ///   already loaded, or the newly-loaded and now-cached one otherwise.
@@ -150,8 +150,8 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
     /// changed nothing, so it is not counted; see the event handling below.
     ///
     /// Every one of those generations states itself on a
-    /// ``CompactionEvalProgressLog`` line as it happens, so a run the suite time
-    /// limit cuts short names the sample it stopped in AND the step of that
+    /// ``CompactionEvalProgressLog`` line as it happens, so a run the caller
+    /// stops names the sample it stopped in AND the step of that
     /// sample. Nothing else survives such a run: the tier's own outcome is
     /// returned only once every step has finished (task ^aktsp2e).
     ///

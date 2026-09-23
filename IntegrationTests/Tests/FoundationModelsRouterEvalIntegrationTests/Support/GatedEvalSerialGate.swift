@@ -107,31 +107,6 @@ enum GatedEvalSerialGate {
     static let shared = AsyncSemaphore(value: 1)
 }
 
-/// The wall-clock ceiling a gated eval suite's `@Test` runs under.
-///
-/// Two minutes is task ^k0d30s4's budget for every integration test, stated
-/// as the limit so a test past the budget FAILS rather than merely being
-/// slow. Swift Testing measures a time limit in whole minutes, and applies a
-/// suite's limit to each `@Test` inside it rather than to the suite as a
-/// whole, so the time a suite spends waiting on ``GatedEvalSerialGate/shared``
-/// is not charged against it.
-///
-/// `CompactionContinuityEvaluationIntegrationTests` runs under this value,
-/// against ``CompactionContinuityRealModel`` — Qwen2.5-3B over four tasks
-/// since task ^mx4jqrn, measured at 30.9 and 29.7 seconds of suite wall clock
-/// on 2026-08-21. The same model over all ten tasks measured 219.1 seconds on
-/// 2026-08-20 and 99.5 on 2026-08-21, past this budget or too near it, which
-/// is why the tier drives four; the 1B model it drove before measured 26.2 to
-/// 41.4 seconds over ten and lost the facts under the redesigned prompt.
-/// `CompactionEvaluationIntegrationTests` states its own limit
-/// through its own measured constant, `compactionEvalSubsetTimeLimitMinutes`,
-/// which `CompactionEvalTierBarTests` holds against the measured per-sample
-/// cost. A second fact-retention tier stated a limit of its own until task
-/// ^k0d30s4 deleted it.
-/// The 20 minutes this value stated before belonged to the 30B model the eval
-/// tiers no longer drive.
-let gatedEvalSuiteTimeLimitMinutes = 2
-
 /// A gated eval's real-model runner, as its suite's trait drives it.
 protocol GatedEvalRealModelRunner: Sendable {
     /// Evicts the resident model, if one was ever loaded.

@@ -51,10 +51,10 @@ private let recordingHandleTinyModel: ModelRef = RealModels.standard
 /// The three runs of 2026-08-20 measured this suite's one test at 16.7, then
 /// 40.9, then 101.5 seconds, with no code change between the runs, and the run
 /// of 2026-08-21 above measured it at 21.4 seconds. The 101.5 was six times
-/// run 1 and 85 percent of ``integrationTestBudgetMinutes``. The 30B writes a
+/// run 1 and 85 percent of the two-minute budget of that time. The 30B writes a
 /// `<think>` block before each round of a tool turn, and under the sampler
 /// that block, and the number of rounds, differed on every run. Two changes
-/// bring the test inside half the budget, and ``turnOptions`` states both:
+/// brought the test inside half that budget, and ``turnOptions`` states both:
 /// argmax decoding, and ``GatedRealModelBudget/responseTokenCeiling`` as each
 /// round's reply ceiling. Measured in isolation on 2026-08-21 under those
 /// options: 32.5 seconds, of which 3.4 seconds the load and 28.9 seconds the
@@ -72,12 +72,10 @@ private let recordingHandleTinyModel: ModelRef = RealModels.standard
 ///
 /// Everything else is untouched: the model, the handle, the tool, the prompt,
 /// the instructions, and every assertion on the disk sequence, the sidecar and
-/// the reconstruction are exactly what they were. See
-/// ``integrationTestBudgetMinutes`` for the whole run table.
+/// the reconstruction are exactly what they were.
 @Suite(
     "Gated real-model integration: a tool-using turn over a RecordingLanguageModel handle round-trips to disk (task 0n38p3w)",
     .serialized,
-    .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
 struct RecordingHandleIntegrationTests {

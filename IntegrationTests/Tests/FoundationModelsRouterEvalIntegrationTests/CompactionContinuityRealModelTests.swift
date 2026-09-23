@@ -86,20 +86,17 @@ private let compactionContinuityEvalRealEvaluation = CompactionContinuityEvaluat
 ///
 /// `.exclusiveResidentModel(of:)` holds this suite's real model exclusive
 /// against the other real-model eval suites, evicts it when the suite ends,
-/// and prints the suite's own wall clock, so a run past
-/// ``gatedEvalSuiteTimeLimitMinutes`` fails rather than merely being slow and
-/// a run inside it states its measurement. Measured on 2026-08-21 with
-/// Qwen2.5-3B already in the Hugging Face cache, over the four tasks: 30.9
-/// and 29.7 seconds of suite wall clock across two runs, against the
-/// two-minute limit — the four tasks cost 6.1 to 8.6 seconds each and the
-/// model loaded in 1.4. The bound the dearest task of the day's ten-task run
-/// derives, 4 x 17.1 s plus 1.3 s, is 69.7 seconds, so the tier never reaches
-/// its limit even when every task lands where the dearest landed. The 1B
-/// model this suite drove before measured 26.2 to 41.4 seconds over ten tasks
-/// on 2026-08-19.
+/// and prints the suite's own wall clock, so each run states its measurement.
+/// The suite has no time limit. A run ends when it ends, or when the caller
+/// stops it. Measured on 2026-08-21 with Qwen2.5-3B already in the Hugging
+/// Face cache, over the four tasks: 30.9 and 29.7 seconds of suite wall clock
+/// across two runs, against the two-minute limit of that time — the four
+/// tasks cost 6.1 to 8.6 seconds each and the model loaded in 1.4. The bound
+/// the dearest task of the day's ten-task run derives, 4 x 17.1 s plus 1.3 s,
+/// is 69.7 seconds. The 1B model this suite drove before measured 26.2 to
+/// 41.4 seconds over ten tasks on 2026-08-19.
 @Suite(
-    .exclusiveResidentModel(of: compactionContinuityEvalRealSubjectRunner),
-    .timeLimit(.minutes(gatedEvalSuiteTimeLimitMinutes))
+    .exclusiveResidentModel(of: compactionContinuityEvalRealSubjectRunner)
 )
 struct CompactionContinuityEvaluationIntegrationTests {
     @Test(

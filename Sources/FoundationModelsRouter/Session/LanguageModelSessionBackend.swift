@@ -35,6 +35,16 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// Generates a complete text response to `prompt`.
     func respond(to prompt: String, maxTokens: Int?) async throws -> String
 
+    /// Generates a complete text response to `prompt`, with the model's
+    /// reasoning turned off for this call only when the model can turn it off.
+    ///
+    /// A compaction's summarizer call uses it. A reasoning model can spend the
+    /// whole ceiling of that call on its reasoning, and then it writes no
+    /// summary. There is a default implementation: it calls
+    /// ``respond(to:maxTokens:)``. Only a backend that can turn reasoning off
+    /// overrides it.
+    func respondWithoutReasoning(to prompt: String, maxTokens: Int?) async throws -> String
+
     /// Streams a text response to `prompt` as it is produced.
     func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error>
 
@@ -138,6 +148,12 @@ private final class ChunkIterator: @unchecked Sendable {
 }
 
 extension LanguageModelSessionBackend {
+    /// Default ``respondWithoutReasoning(to:maxTokens:)``: a backend with no
+    /// control of reasoning calls ``respond(to:maxTokens:)``.
+    public func respondWithoutReasoning(to prompt: String, maxTokens: Int?) async throws -> String {
+        try await respond(to: prompt, maxTokens: maxTokens)
+    }
+
     /// Default ``streamResponseFragments(to:maxTokens:)``: every chunk of
     /// ``streamResponse(to:maxTokens:)`` becomes a continuing fragment.
     ///

@@ -536,9 +536,9 @@ struct TurnCancellationTests {
 
     /// The compaction prompt a compaction test vends its session with, so the mid-turn
     /// hook can tell a compaction's own **summarizer** call from an ordinary turn: the
-    /// prompt ``Summarization`` sends is this text followed by the rendered span
-    /// being condensed, so a prefix match on it fires for exactly the compaction's model
-    /// calls and for nothing else (see ``isSummarizerCall``).
+    /// prompt ``Summarization`` sends is the rendered span being condensed, a line of
+    /// three dashes, then this text. A match on the dashes and this text fires for
+    /// exactly the compaction's model calls and for nothing else (see ``isSummarizerCall``).
     private static let compactionSummarizerPrompt = CompactionPrompt(
         name: "turn-cancellation-compaction-suspend",
         text: "SUSPEND-INSIDE-THE-COMPACTION"
@@ -546,7 +546,7 @@ struct TurnCancellationTests {
 
     /// Whether the model call carrying `prompt` is a compaction's own summarizer call.
     private static let isSummarizerCall: @Sendable (String) -> Bool = {
-        $0.hasPrefix(compactionSummarizerPrompt.text)
+        $0.contains("\n\n---\n\n\(compactionSummarizerPrompt.text)\n\n")
     }
 
     /// Matches a compaction's **first** summarizer call and no later one — what every test

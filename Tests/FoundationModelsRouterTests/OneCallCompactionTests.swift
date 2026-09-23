@@ -57,8 +57,10 @@ struct OneCallCompactionTests {
 
         let prompt = try await Self.onlyPrompt(of: summarizer)
         let allowed = budget.targetTokens - characterCount(of: [TranscriptFixtures.makeInstructions()])
-        #expect(prompt.hasPrefix(CompactionPrompt.default.text))
+        #expect(prompt.hasPrefix("Instructions: you are a helpful assistant"))
+        #expect(prompt.contains("\n\n---\n\n\(CompactionPrompt.default.text)\n\n"))
         #expect(prompt.contains("Size budget: about \(allowed) tokens."))
+        #expect(prompt.hasSuffix(Summarization.contentFramingDirective))
         for line in [
             "Instructions: you are a helpful assistant", "User: distinct-question", "Tool call: search(",
             "Tool output (search): distinct-output", "Assistant: distinct-answer",
@@ -78,7 +80,7 @@ struct OneCallCompactionTests {
             prompt: custom)
 
         let prompt = try await Self.onlyPrompt(of: summarizer)
-        #expect(prompt.hasPrefix(custom.text))
+        #expect(prompt.contains("\n\n---\n\n\(custom.text)\n\n"))
         #expect(!prompt.contains(CompactionPrompt.default.text))
         let summaryEntry = try #require(Array(compacted).first { $0.id == result.summaryEntryId })
         #expect(try checkpointContent(of: summaryEntry)?.promptName == custom.name)

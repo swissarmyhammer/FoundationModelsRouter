@@ -152,8 +152,8 @@ private func makeSession(from profile: LanguageModelProfile) -> RoutedSession {
 /// Sends the suite's one prompt to `session`.
 ///
 /// Every turn states ``GatedRealModelBudget/responseTokenCeiling`` as its reply
-/// ceiling, so a `<think>` block that does not stop cannot take the turn past
-/// the budget.
+/// ceiling, so a `<think>` block that does not stop cannot make the turn run
+/// without end.
 ///
 /// - Parameter session: The session to answer.
 /// - Returns: The answer.
@@ -205,12 +205,11 @@ private func answer(on session: RoutedSession) async throws -> String {
 /// | 25.9 | 26.0 | a release from the first router keeps the second router's session alive |
 ///
 /// The first test pays two resolves and two turns, the second two resolves
-/// and one turn. The dearer test runs at 39 percent of
-/// ``integrationTestBudgetMinutes``.
+/// and one turn. The dearer test ran at 39 percent of the two-minute budget of
+/// that time. The suite has no time limit now.
 @Suite(
     "Gated real-model coverage: two live routers over one pool load a model one time",
     .serialized,
-    .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
 struct CrossRouterPoolIntegrationTests {

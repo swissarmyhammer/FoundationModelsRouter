@@ -294,49 +294,28 @@ constraints / critical context; summarize before quality degrades — hence the
 0.80 trigger). The default:
 
 ```
-You are compacting an agent conversation into a continuation summary. The
-summary will REPLACE the older conversation: whoever continues has no other
-memory of it, so anything you omit is lost. Be precise and dense. State only
-facts from the conversation — never invent, never infer beyond it.
+Summarize the conversation above. Whoever continues has no other memory of it.
+Write a short summary of the few points that matter to go on:
+- what the user wants;
+- what is decided, and what must not be done;
+- what is done, and what comes next;
+- any value the next step needs (a name, a path, a number), written exactly.
 
-Copy every name, identifier, code, number, path, date and value EXACTLY as it
-appears in the conversation — character for character, never paraphrased,
-never abbreviated, never re-derived. Write the value itself, never a
-description of it: give the number the conversation stated, never the fact
-that a number was stated.
-
-Each request states a size budget for the whole summary, as a word count.
-Aim near it without counting words: keep every section terse, and drop
-polish rather than stated facts. Text far past the budget is trimmed away
-and lost.
-
-Structure the summary exactly as:
-
-1. Intent — the user's request(s) and overall goal, in order given.
-2. Stated facts — every concrete fact stated in the conversation, each with
-   its value written out: names, identifiers, codes, numbers, locations,
-   paths, dates, settings, preferences.
-   Record WHAT was stated, never merely THAT something was stated: write
-   the place a thing is kept, never the fact that its place was given.
-3. Constraints & decisions — instructions, preferences, and decisions still
-   in force. Preserve safety- or security-relevant instructions VERBATIM
-   (files or data to avoid, operations not to perform, secret handling).
-4. Completed — work finished so far, with concrete outcomes.
-5. In progress — what is being worked on right now, and its exact state.
-6. Files & code — every file path touched or discussed, with the symbols,
-   commands, and short code fragments that matter. Exact paths and names.
-7. Errors & fixes — problems encountered and how they were (or were not)
-   resolved. Keep failed approaches so they are not repeated.
-8. Next steps — the immediate next actions, in order, detailed enough to
-   resume without re-deriving them.
-
-No praise, no padding, no meta-commentary. Omit a section only if truly
-empty. Never replace a stated value with a description of it. These
-instructions state no facts of their own: never copy a phrase out of them
-into the summary, and never write a line you have already written.
+Leave out small talk, and finished work that does not matter next. Use plain sentences or short bullets. Do not list facts for their own sake.
 ```
 
-`Stated facts` is section 2 because the other seven have nowhere to put a bare
+The prompt is named `router-default-v6`. The call puts the rendered
+conversation first, then a line of three dashes, then this prompt, the size
+budget in tokens, and one line that names the text before the dashes as the
+conversation to summarize.
+
+`router-default-v6` replaces `router-default-v5` (task `^dvyt1dx`). On
+Qwen3.8-27B, v5 made the summarizer spend the whole allowed summary size on
+its reasoning, and 5 of 7 seeds gave no summary text. The owner asked for a
+prompt that aims at a few salient points and does not count facts. The text
+below records the history of the sections that v6 removed.
+
+`Stated facts` was section 2 of v5 because the other seven have nowhere to put a bare
 fact the user simply told the assistant — a location, a code, a name, a number
 is not a constraint, a decision, a file, an error, or a next step. Measured on
 the gated `CompactionEvaluation` run of 2026-08-09, the seven-section form
@@ -344,7 +323,7 @@ compacted "the office printer's spare toner cartridges are kept in the third-flo
 supply closet" into `1. Intent — Inform the assistant about the location of
 spare toner cartridges.` with `2. Constraints & decisions — None.`: it recorded
 THAT a fact was communicated and discarded WHAT it was, and no answering turn
-could recover the location from that summary. The prompt is named
+could recover the location from that summary. That prompt was named
 `router-default-v4`. The verbatim-value demand and the size-budget paragraph
 are task `^xx02yn6`'s, measured on the 2-seed Qwen3.8-27B probe of 2026-08-20:
 where the demand was soft, the model abstracted values, and a model never
@@ -352,12 +331,12 @@ given a size wrote 2.2-3.0 KB answers whose fact sections the old per-call cut
 then discarded. The stage appends the concrete budget, as a word count, to
 each request.
 
-`router-default-v4` states every rule in the abstract and quotes nothing. It
-supersedes `router-default-v3`, which illustrated the verbatim-value demand
+`router-default-v4` stated every rule in the abstract and quoted nothing. It
+replaced `router-default-v3`, which illustrated the verbatim-value demand
 and the stated-facts section with quoted example facts. Task `^49dy082`
 measured what those examples cost: the real 1B model copied one of them into
 its answer sixty times, so the answer held no fact of the span, and the compaction
-stored it. The closing paragraph now states the rule outright as well — the
+stored it. The closing paragraph of v4 stated the rule outright as well — the
 instructions carry no facts, no phrase of them belongs in a summary, and no
 line is written twice. `router-default-v2` before it stated no size and
 demanded verbatim copies only for security-relevant instructions, and

@@ -93,21 +93,21 @@ private let clockDateFormat = "yyyy-MM-dd"
 /// red, and the model read the clock's date straight out of its own system
 /// header.
 ///
-/// The turn measures 26.2 to 26.3 seconds and the load 3.2, so the suite runs
-/// at 28 percent of ``integrationTestBudgetMinutes``. The render test needs no
-/// generation and measures 3.5.
+/// The turn measures 26.2 to 26.3 seconds and the load 3.2, so the suite ran
+/// at 28 percent of the two-minute budget of that time. The render test needs
+/// no generation and measures 3.5. The suite has no time limit now. A run ends
+/// when it ends, or when the caller stops it.
 @Suite(
     "Gated real-model coverage: the pinned chat-template date reaches Muse Glimmer (task ^g8rywv2)",
     .serialized,
-    .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
 struct PinnedChatTemplateDateIntegrationTests {
     /// The tag the answer test's wall-clock line opens with.
     ///
     /// Its own tag, and not the target's `gatedTest` one, so a grep that
-    /// collects the run table's per-test measurements never picks up a phase
-    /// line. See ``integrationTestBudgetMinutes`` for that table.
+    /// collects the per-test measurements of a run never picks up a phase
+    /// line.
     private static let phaseLabel = "pinnedDatePhase"
 
     /// Loads ``pinnedDateModel`` with the date pinned and argmax decoding.
@@ -167,7 +167,7 @@ struct PinnedChatTemplateDateIntegrationTests {
         var loadDuration: Duration = .zero
         var turnDuration: Duration = .zero
         defer {
-            // swiftlint:disable:next no_direct_standard_out_logs  the run table's grep reads this line from standard out
+            // swiftlint:disable:next no_direct_standard_out_logs  a grep of the run's output reads this line from standard out
             print("[\(Self.phaseLabel)] load=\(loadDuration) turn=\(turnDuration)")
         }
 

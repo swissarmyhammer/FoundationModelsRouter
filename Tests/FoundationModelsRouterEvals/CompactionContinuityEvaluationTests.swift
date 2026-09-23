@@ -247,10 +247,9 @@ struct CompactionContinuityEvaluationHermeticTests {
 /// that hit its own limit reported one bit — "not
 /// finished" — and no reading of its output could say whether the model load,
 /// one of a task's dozen-odd steps, or the final instruction had spent the time.
-/// The tier runs under `gatedEvalSuiteTimeLimitMinutes` of 2 against a 3B model
-/// now, over four tasks, measured at 30.9 and 29.7 seconds on 2026-08-21 (task
-/// ^mx4jqrn). The trail is what still names the step a red run stopped in,
-/// whatever the limit is.
+/// The tier runs against a 3B model now, over four tasks, with no time limit.
+/// It measured 30.9 and 29.7 seconds on 2026-08-21 (task ^mx4jqrn). The trail
+/// is what still names the step a run stopped in, when the caller stops it.
 ///
 /// These tests pin the lines that answer that question, and they pin the one
 /// property the two tiers share: ``CompactionEvalProgressLog/linePrefix`` and
@@ -431,8 +430,8 @@ struct CompactionContinuityEvalProgressLogTests {
 /// for the fact-retention tier's subset.
 ///
 /// The tier drives ``compactionContinuityFastTierSeeds`` and no longer every
-/// fast seed, because ten tasks under `CompactionContinuityRealModel` do not
-/// fit the two-minute budget with margin — see
+/// fast seed, because ten tasks under `CompactionContinuityRealModel` did not
+/// fit the two-minute budget of that time with margin — see
 /// ``compactionContinuityFastTierIDs`` for the measurement. These tests hold
 /// the list to the dataset and to the count the tier's wall clock and floors
 /// were measured against, so a task added to or dropped from the list fails a

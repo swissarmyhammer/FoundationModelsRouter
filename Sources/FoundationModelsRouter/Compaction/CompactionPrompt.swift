@@ -7,7 +7,7 @@ public struct CompactionPrompt: Sendable, Equatable, Codable {
     public var name: String
 
     /// The summarization instructions sent to the summarizer model verbatim,
-    /// immediately ahead of the stated size and the rendered live context.
+    /// after the rendered live context and ahead of the stated size.
     public var text: String
 
     /// Creates a compaction prompt.
@@ -20,51 +20,20 @@ public struct CompactionPrompt: Sendable, Equatable, Codable {
         self.text = text
     }
 
-    /// The router's default compaction prompt, `"router-default-v5"`: eight
-    /// numbered sections, verbatim values, and a size budget in tokens that
-    /// ``Summarization`` states per request.
+    /// The router's default compaction prompt, `"router-default-v6"`: a short
+    /// summary of the few points that matter to continue. ``Summarization``
+    /// adds the size budget in tokens to each request.
     public static let `default` = CompactionPrompt(
-        name: "router-default-v5",
+        name: "router-default-v6",
         text: """
-            You are compacting an agent conversation into a continuation summary. The
-            summary will REPLACE the older conversation: whoever continues has no other
-            memory of it, so anything you omit is lost. Be precise and dense. State only
-            facts from the conversation — never invent, never infer beyond it.
+            Summarize the conversation above. Whoever continues has no other memory of it.
+            Write a short summary of the few points that matter to go on:
+            - what the user wants;
+            - what is decided, and what must not be done;
+            - what is done, and what comes next;
+            - any value the next step needs (a name, a path, a number), written exactly.
 
-            Copy every name, identifier, code, number, path, date and value EXACTLY as it
-            appears in the conversation — character for character, never paraphrased,
-            never abbreviated, never re-derived. Write the value itself, never a
-            description of it: give the number the conversation stated, never the fact
-            that a number was stated.
-
-            Each request states a size budget for the whole summary, in tokens.
-            Aim near it without counting: keep every section terse, and drop polish
-            rather than stated facts.
-
-            Structure the summary exactly as:
-
-            1. Intent — the user's request(s) and overall goal, in order given.
-            2. Stated facts — every concrete fact stated in the conversation, each with
-               its value written out: names, identifiers, codes, numbers, locations,
-               paths, dates, settings, preferences.
-               Record WHAT was stated, never merely THAT something was stated: write
-               the place a thing is kept, never the fact that its place was given.
-            3. Constraints & decisions — instructions, preferences, and decisions still
-               in force. Preserve safety- or security-relevant instructions VERBATIM
-               (files or data to avoid, operations not to perform, secret handling).
-            4. Completed — work finished so far, with concrete outcomes.
-            5. In progress — what is being worked on right now, and its exact state.
-            6. Files & code — every file path touched or discussed, with the symbols,
-               commands, and short code fragments that matter. Exact paths and names.
-            7. Errors & fixes — problems encountered and how they were (or were not)
-               resolved. Keep failed approaches so they are not repeated.
-            8. Next steps — the immediate next actions, in order, detailed enough to
-               resume without re-deriving them.
-
-            No praise, no padding, no meta-commentary. Omit a section only if truly
-            empty. Never replace a stated value with a description of it. These
-            instructions state no facts of their own: never copy a phrase out of them
-            into the summary, and never write a line you have already written.
+            Leave out small talk, and finished work that does not matter next. Use plain sentences or short bullets. Do not list facts for their own sake.
             """
     )
 }

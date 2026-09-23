@@ -50,6 +50,7 @@ comments:
   timestamp: 2026-09-22T23:52:17.379601+00:00
 depends_on:
 - 01M35GXDMSN5FPXVKZT9AX82GR
+- 01M372QB7QSM58G9CSADVYT1DX
 position_column: doing
 position_ordinal: '80'
 title: 'Run the compaction eval tiers on the model we ship: Qwen3.8-27B'

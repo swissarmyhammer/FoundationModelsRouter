@@ -15,7 +15,7 @@ import Testing
 /// no tool, and three of its turns are filler turns whose reply nothing reads.
 /// The 30B writes a `<think>` block of 196 to 275 tokens before it answers a
 /// filler prompt, so the three fillers were 74 of the test's 112 seconds, and
-/// the test could not reach half of ``integrationTestBudgetMinutes`` on the
+/// the test could not reach half of the two-minute budget of that time on the
 /// 30B. The suite doc states the measurements and what the change no longer
 /// proves.
 ///
@@ -81,11 +81,11 @@ private let sessionTreeToolCallingModel: ModelRef = RealModels.standard
 /// process-global PRNG. The three runs of 2026-08-20 measured the fork-tree
 /// test at 94.1, then 114.1, then 116.4 seconds, and the tool-calling test at
 /// 54.4, then 61.7, then 58.5 seconds. The 116.4 was 97 percent of
-/// ``integrationTestBudgetMinutes``, the dearest test of the whole target, and
-/// a run alone decided the number: the 30B always writes a `<think>` block
+/// the two-minute budget of that time, the dearest test of the whole target,
+/// and a run alone decided the number: the 30B always writes a `<think>` block
 /// before its answer, that block is a different length on every run of
 /// identical code, and the box that measured it decodes near ten tokens a
-/// second. Three changes bring the suite inside the budget, and each one is
+/// second. Three changes brought the suite inside that budget, and each one is
 /// stated on the constant that carries it:
 ///
 /// - ``samplingMode`` pins argmax decoding on every container this suite
@@ -102,7 +102,7 @@ private let sessionTreeToolCallingModel: ModelRef = RealModels.standard
 ///   limit, so a cut filler is not a technique. With complete filler replies
 ///   the 30B's root turn, recall turn and two loads are 37 seconds before the
 ///   first filler, and no complete filler reply of the 30B is under 100 tokens,
-///   so the test cannot reach half the budget on the 30B. On the 3B the same
+///   so the test could not reach half that budget on the 30B. On the 3B the same
 ///   test measures 3.0 seconds.
 /// - ``sessionTreeToolCallingModel`` keeps the tool-calling test on the 30B,
 ///   because the 3B garbled its tool call. That test measured 51.6 seconds in
@@ -131,15 +131,16 @@ private let sessionTreeToolCallingModel: ModelRef = RealModels.standard
 /// byte-level assertion, the live recall, and the tool-calling round trip are
 /// exactly what they were.
 ///
-/// A test the limit cancels is worse than a plain red result. The cancellation
-/// lands mid-generation, and a cancellation on GPU work aborts the whole
-/// process on a Metal assertion (fork card ^3axg80k), which takes every other
-/// suite's results with it. See ``integrationTestBudgetMinutes`` for the whole
-/// run table.
+/// A test that a time limit cancels is worse than a plain red result. The
+/// cancellation lands mid-generation, and a cancellation on GPU work aborts
+/// the whole process on a Metal assertion (fork card ^3axg80k), which takes
+/// every other suite's results with it.
+///
+/// The suite has no time limit. A run ends when it ends, or when the caller
+/// stops it.
 @Suite(
     "Gated real-model end-to-end coverage: restoreSessionTree(root:) (task zcxnbst)",
     .serialized,
-    .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
 struct SessionTreeRestorationIntegrationTests {
@@ -213,8 +214,8 @@ struct SessionTreeRestorationIntegrationTests {
     /// the `<think>` block the 30B writes before each answer, and the wall
     /// clock with it, differed on every run of identical code. Argmax decoding
     /// consumes no randomness at all, which is what lets a red run here be
-    /// attributed to the change under test, and what lets the wall clock be
-    /// measured against the budget rather than against the run.
+    /// attributed to the change under test, and what lets the wall clock of
+    /// one run be compared with the wall clock of the next.
     private static let samplingMode: GenerationOptions.SamplingMode = .greedy
 
     /// Decodes every event from a session directory's `transcript.jsonl`, or

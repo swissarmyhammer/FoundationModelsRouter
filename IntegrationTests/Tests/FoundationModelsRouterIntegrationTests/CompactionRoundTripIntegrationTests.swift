@@ -56,8 +56,8 @@ private let compactionRoundTripModel: ModelRef = "mlx-community/Qwen2.5-3B-Instr
 ///
 /// The five steps above ran against `Muse-Glimmer-30B-4bit` until task
 /// ^k0d30s4, and the run of 2026-08-20 measured them at 541.6 seconds — 4.5
-/// times the two-minute budget every integration test now has.
-/// ``compactionRoundTripModel`` brings the loop inside it. What is no longer
+/// times the two-minute budget every integration test had then.
+/// ``compactionRoundTripModel`` brought the loop inside it. What is no longer
 /// proven is:
 ///
 /// - **The 30B model's summary quality.** Step 3 recalls `CRIMSON-77` out of a
@@ -94,13 +94,14 @@ private let compactionRoundTripModel: ModelRef = "mlx-community/Qwen2.5-3B-Instr
 /// out its binaries, and ``MetalLibraryTestBootstrap`` fixes it — see that
 /// type for the root cause. Nothing about the toolchain or the machine ever
 /// needed to change.
+///
+/// The suite has no time limit. A run ends when it ends, or when the caller
+/// stops it. The 40 minutes this suite once stated as its limit were the 30B
+/// model's cost: the run of 2026-08-20 measured 541.6 seconds.
+/// ``compactionRoundTripModel`` is what removed that cost.
 @Suite(
     "Gated real-model end-to-end coverage: RoutedSession.compact(prompt:budget:) round trip (task rjvrgt9)",
     .serialized,
-    // The whole target's budget. The 40 minutes this stated before were the
-    // 30B model's cost: the run of 2026-08-20 measured 541.6 seconds.
-    // ``compactionRoundTripModel`` is what removed that cost.
-    .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
 struct CompactionRoundTripIntegrationTests {

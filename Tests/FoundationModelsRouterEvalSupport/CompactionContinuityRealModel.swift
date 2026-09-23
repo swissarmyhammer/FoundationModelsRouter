@@ -32,7 +32,7 @@ import FoundationModelsRouter
 /// the tier was red on `main` against floors of 0.6 and 0.3. Under Qwen2.5-3B
 /// the same ten tasks kept their floors, but cost 219.1 seconds of suite wall
 /// clock on 2026-08-20 and 99.5 on 2026-08-21 — against task ^k0d30s4's
-/// two-minute budget, which `gatedEvalSuiteTimeLimitMinutes` states. So the
+/// two-minute budget of that time. So the
 /// tier moved to the 3B AND to a four-task shape, which
 /// ``compactionContinuityFastTierIDs`` states with its measurement, and the
 /// floors were re-derived from the 3B's own run over those four tasks — see
