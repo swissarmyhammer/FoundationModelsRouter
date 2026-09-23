@@ -102,10 +102,15 @@ struct Qwen38CompactionIntegrationTests {
     /// The small session window of the turn-start test, in tokens.
     private static let turnStartWindow = 2048
 
-    /// The budget of the turn-start test. The trigger is far under the
-    /// seeded context, so the context is over the trigger at the start of
-    /// the turn. The target is the trigger's own share.
-    private static let turnStartBudget = TokenBudget(limit: turnStartWindow, trigger: 0.1, target: 0.1)
+    /// The share of ``turnStartWindow`` at which the turn-start test
+    /// compacts. It is far under the seeded context, so the context is over
+    /// the trigger at the start of the turn.
+    private static let turnStartTriggerShare = 0.1
+
+    /// The budget of the turn-start test. The target is the trigger's own
+    /// share.
+    private static let turnStartBudget = TokenBudget(
+        limit: turnStartWindow, trigger: turnStartTriggerShare, target: turnStartTriggerShare)
 
     /// The prompt of the one turn of the turn-start test. It ends with the
     /// Qwen 3 switch that turns reasoning off for this turn, so the turn costs
@@ -153,7 +158,7 @@ struct Qwen38CompactionIntegrationTests {
         await actor.seed(liveContext: transcript, measuredTokens: seededTokens)
 
         let turn = try await Qwen38TurnRecord.drive(session, prompt: Self.turnStartPrompt)
-        turn.print(label: qwen38CompactionLabel, detail: "case 3 seededTokens=\(seededTokens)")
+        turn.report(label: qwen38CompactionLabel, detail: "case 3 seededTokens=\(seededTokens)")
 
         #expect(turn.textBeforeCompaction.isEmpty, "the turn wrote text before its compaction")
         try Self.expectOneCompactionAndAnAnswer(turn)
@@ -256,12 +261,12 @@ struct Qwen38TurnRecord {
         return record
     }
 
-    /// Prints the record for the card.
+    /// Writes the record for the card to the output of the gated run.
     ///
     /// - Parameters:
-    ///   - label: The tag of the printed lines.
+    ///   - label: The tag of the written lines.
     ///   - detail: The facts of the test that come before the record.
-    func print(label: String, detail: String) {
+    func report(label: String, detail: String) {
         // The gated run's record for the card: a reader copies these lines. This test target does not ship.
         // swiftlint:disable:next no_direct_standard_out_logs - the gated run's record; this target does not ship
         Swift.print(

@@ -26,16 +26,22 @@ extension Qwen38CompactionIntegrationTests {
     /// The small session window of the tool-result test, in tokens.
     private static let toolResultWindow = 2048
 
-    /// The budget of the tool-result test: its limit is the small window.
-    /// The short prompt is under the trigger, and the prompt with the tool
-    /// result is over it. The target is the trigger's own share. The
-    /// instructions carry the tool definition, and a smaller target left no
-    /// room for a summary after them (run of 2026-09-23: shortfall
-    /// `targetLeavesNoRoomForSummary` at a target of 0.1).
-    private static let toolResultBudget = TokenBudget(limit: toolResultWindow, trigger: 0.25, target: 0.25)
+    /// The share of ``toolResultWindow`` at which the tool-result test
+    /// compacts. The short prompt is under it, and the prompt with the tool
+    /// result is over it.
+    private static let toolResultTriggerShare = 0.25
 
-    /// The share of the window the tool result fills.
-    private static let resultShare = 0.25
+    /// The budget of the tool-result test: its limit is the small window.
+    /// The target is the trigger's own share. The instructions carry the tool
+    /// definition, and a smaller target left no room for a summary after them
+    /// (run of 2026-09-23: shortfall `targetLeavesNoRoomForSummary` at a
+    /// target of 0.1).
+    private static let toolResultBudget = TokenBudget(
+        limit: toolResultWindow, trigger: toolResultTriggerShare, target: toolResultTriggerShare)
+
+    /// The share of the window the tool result fills: the trigger's own
+    /// share, so the result alone reaches the trigger.
+    private static let resultShare = toolResultTriggerShare
 
     /// The key the tool result holds.
     private static let recordKey = "KESTREL-42"
@@ -85,7 +91,7 @@ extension Qwen38CompactionIntegrationTests {
             instructions: Self.instructions, tools: [tool], budget: Self.toolResultBudget)
 
         let turn = try await Qwen38TurnRecord.drive(session, prompt: Self.toolResultRequest)
-        turn.print(
+        turn.report(
             label: qwen38CompactionLabel,
             detail: """
                 case 2 toolCalls=\(tool.calls) resultTokens=\(counter.count(listing)) \
