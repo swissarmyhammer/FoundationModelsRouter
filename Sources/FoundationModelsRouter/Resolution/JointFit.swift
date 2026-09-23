@@ -250,22 +250,22 @@ enum JointFit {
     ) -> CandidateReport {
         switch footprint(ref, context) {
         case .failure(.metadataUnavailable(let reason)):
-            return makeUnsizedReport(ref, reason: reason)
+            return makeUnsizedReport(ref: ref, reason: reason)
         case .success(let wholeBytes):
             guard budget.chargedKeys.contains(ReservationKey(ref: ref, role: role)) else {
-                return makeSizedReport(ref, wholeBytes: wholeBytes, chargedBytes: wholeBytes, budget: budget)
+                return makeSizedReport(ref: ref, wholeBytes: wholeBytes, chargedBytes: wholeBytes, budget: budget)
             }
             switch sessionBytes(ref, context) {
             case .failure(.metadataUnavailable(let reason)):
-                return makeUnsizedReport(ref, reason: reason)
+                return makeUnsizedReport(ref: ref, reason: reason)
             case .success(let cacheBytes):
-                return makeSizedReport(ref, wholeBytes: wholeBytes, chargedBytes: cacheBytes, budget: budget)
+                return makeSizedReport(ref: ref, wholeBytes: wholeBytes, chargedBytes: cacheBytes, budget: budget)
             }
         }
     }
 
     /// The report for a candidate the injected closures could not size.
-    private static func makeUnsizedReport(_ ref: ModelRef, reason: String) -> CandidateReport {
+    private static func makeUnsizedReport(ref: ModelRef, reason: String) -> CandidateReport {
         CandidateReport(
             ref: ref,
             estimatedFootprintBytes: nil,
@@ -277,7 +277,7 @@ enum JointFit {
     /// The report for a sized candidate: its whole raw footprint estimate, the
     /// raw bytes it charges, and whether that charge fits what remains.
     private static func makeSizedReport(
-        _ ref: ModelRef,
+        ref: ModelRef,
         wholeBytes: Int64,
         chargedBytes: Int64,
         budget: SharedBudget
@@ -458,7 +458,7 @@ enum JointFit {
             candidates, budgetBytes: budgetBytes, context: native, footprint: footprint, sessionBytes: sessionBytes
         )
         if case .cofit(let winner) = atNative.outcome {
-            return makeFoundResult(winner, native: native, window: native)
+            return makeFoundResult(winner: winner, native: native, window: native)
         }
 
         let atSmallest = attemptTrio(
@@ -485,11 +485,11 @@ enum JointFit {
             footprint: footprint,
             sessionBytes: sessionBytes
         )
-        return makeFoundResult(largest.winner, native: native, window: largest.window)
+        return makeFoundResult(winner: largest.winner, native: native, window: largest.window)
     }
 
     /// The search result for a window at which the trio co-fit.
-    private static func makeFoundResult(_ winner: TrioWinner, native: Int, window: Int) -> WindowSearchResult {
+    private static func makeFoundResult(winner: TrioWinner, native: Int, window: Int) -> WindowSearchResult {
         let fit = WindowFit(
             nativeContextTokens: native,
             outcome: .fits(

@@ -31,6 +31,14 @@ comments:
     - fix: renamed `windowFailure` to `makeWindowFailure`. The same cause is removed from the whole file: `unsizedReport` → `makeUnsizedReport`, `sizedReport` → `makeSizedReport`, `found` → `makeFoundResult` (each constructs and returns a value). `chosenReport` (a lookup) and `verdict(blockedBy:)` (a mapping) are not factories and keep their names. Box checked. `swift test`: 1326 tests in 149 suites passed, 19 in 3, 1 in 1.
     - next: commit, review HEAD~1..HEAD again
   timestamp: 2026-09-23T16:39:44.311286+00:00
+- actor: claude-code
+  id: 01m37jf23zyw6vspb0v2dby17e
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (ad1c816): 3 findings — JointFit.swift:268, :279, :492 `swift/fluent-usage` (first argument label omitted on a factory method).
+    - fix: `makeUnsizedReport(ref:reason:)`, `makeSizedReport(ref:wholeBytes:chargedBytes:budget:)`, `makeFoundResult(winner:native:window:)`; every call site updated. No other `make` factory in the file omits its first label. All three boxes checked. `swift test`: 1326 tests in 149 suites passed, 19 in 3, 1 in 1.
+    - next: commit, review HEAD~1..HEAD again
+  timestamp: 2026-09-23T16:44:29.695168+00:00
 depends_on:
 - 01M34PGWP0GS427JNWAAMKPZPW
 position_column: review
@@ -74,3 +82,14 @@ Land after "Replace the context ladder with the largest window that fits". Both 
 > - `.kanban/ (from .reviewignore)` — 2 file(s)
 
 - [x] `Sources/FoundationModelsRouter/Resolution/JointFit.swift:730` `swift/fluent-usage` — Factory methods should begin with the `make` prefix. This static function constructs and returns a `ResolutionFailure` object, making it a factory method; it should be named `makeWindowFailure` instead of `windowFailure` to follow the fluent naming convention established in the Swift API Design Guidelines. Rename the function from `private static func windowFailure(...)` to `private static func makeWindowFailure(...)`, and update the call site at line 716 accordingly to `throw makeWindowFailure(...)`.
+
+## Review Findings (2026-09-23 11:39)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 1 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Resolution/JointFit.swift:268` `swift/fluent-usage` — First argument label should not be omitted for factory methods that are not value-preserving conversions. `makeUnsizedReport(_:reason:)` creates a new `CandidateReport` instance, not a type conversion, so the first parameter should be labeled. Label the first parameter: `private static func makeUnsizedReport(ref: ModelRef, reason: String) -> CandidateReport {`.
+- [x] `Sources/FoundationModelsRouter/Resolution/JointFit.swift:279` `swift/fluent-usage` — First argument label should not be omitted for factory methods that are not value-preserving conversions. `makeSizedReport(_:wholeBytes:chargedBytes:budget:)` creates a new `CandidateReport` instance, not a type conversion, so the first parameter should be labeled. Label the first parameter: `private static func makeSizedReport(ref: ModelRef, wholeBytes: Int64, chargedBytes: Int64, budget: SharedBudget) -> CandidateReport {`.
+- [x] `Sources/FoundationModelsRouter/Resolution/JointFit.swift:492` `swift/fluent-usage` — First argument label should not be omitted for factory methods that are not value-preserving conversions. `makeFoundResult(_:native:window:)` creates a new `WindowSearchResult` instance, not a type conversion, so the first parameter should be labeled. Label the first parameter: `private static func makeFoundResult(winner: TrioWinner, native: Int, window: Int) -> WindowSearchResult {`.
