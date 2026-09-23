@@ -26,8 +26,25 @@ comments:
       - AFTER: 0 template errors. 5 seeds: `the summarizer returned no text, so the compaction has no summary to store` (SummarizationError.emptySummary). 2 seeds: `CancellationError` (the suite time limit). Fact kept: no seed measured (0 of 7).
       - Cause of the empty summary is outside this card: the call ceiling is the allowed summary size (^35j2zfg, targetTokens 418 in this tier less the instructions), and the 27B reasoning model spends that ceiling on its thinking, so no answer text is left. I did not change a number, a floor or the prompt. A new card records it for the owner.
   timestamp: 2026-09-23T00:06:06.125872+00:00
-position_column: doing
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01m35sje9rnk584va59mhs86cf
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` — 0 findings, 0 confirmed, 0 refuted; 6 files reviewed, 8 `.kanban/` files excluded by `.reviewignore`. No prior findings on the card.
+    - next: done.
+  timestamp: 2026-09-23T00:10:11.640547+00:00
+- actor: claude-code
+  id: 01m35sjn118phrv6jzzbxhamkp
+  text: |-
+    ### finish iteration 1 — done
+    - implement: changed — Sources/FoundationModelsRouter/Compaction/Summarization.swift (cost(of:in:wholeTokens:counter:), nextTurnStandIn(in:), snapshot counted with the next-turn prompt), Tests/FoundationModelsRouterTests/Helpers/ScriptedChatTokenizer.swift, Tests/FoundationModelsRouterTests/CompactionPartCostTests.swift, Tests/FoundationModelsRouterTests/TokenizerTokenCounterTests.swift, and the two eval `ref` constants of ^jhb7x54
+    - test: green — `swift test`: 1304 tests in 146 suites passed (2 designed known issues), 1 and 83 tests in the other targets passed; `swift build --build-tests --package-path IntegrationTests` complete
+    - real-model: Llama recorded-transcript pass (2 of 2 tests); Qwen3.8-27B one seed: ran, no template error, fact kept no — 5 seeds `emptySummary`, 2 seeds cancelled by the 2-minute suite limit, 0 of 7 measured (new card 01M35SB6W4C1RD0P5B07Y1Z9NJ records the empty-summary fault for the owner)
+    - commit: 991a472
+    - review: clean — none
+  timestamp: 2026-09-23T00:10:18.529922+00:00
+position_column: done
+position_ordinal: ffffe980
 title: Count the parts of a compaction without rendering a chat template on a set that is not a conversation
 ---
 ## What happens
