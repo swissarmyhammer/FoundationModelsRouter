@@ -85,8 +85,17 @@ comments:
     - note: the real-model proof moved to ^9ddjkjm (done): one in-turn compaction 16070 -> 416, the summary kept the value, and the same turn answered.
     - next: commit, then review HEAD~1..HEAD.
   timestamp: 2026-09-23T14:25:37.816204+00:00
-position_column: review
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m37akx59rerpk7fax591jnq4
+  text: |-
+    ### finish iteration 2 — clean; done
+    - review: findings (1) on 549642c~1..549642c, fixed in 1115abf; review sha HEAD~1..HEAD: clean (0 findings).
+    - real-model proof: moved to ^9ddjkjm (done). One in-turn compaction 16070 -> 416 on Qwen3.8-27B, the summary kept the value, and the same turn answered.
+    - test: `swift test` green (1310 tests in 148 suites, 2 designed known issues; 1 and 83 in the other targets). `IntegrationTests` builds.
+    - commits: 549642c, 1115abf (local, not pushed).
+  timestamp: 2026-09-23T14:27:19.849796+00:00
+position_column: done
+position_ordinal: ffffeb80
 title: A salient-points compaction prompt (router-default-v6); no time limit on the gated real-model suites; re-measure on Qwen3.8-27B
 ---
 ## Decision (from the owner, 2026-09-23)
