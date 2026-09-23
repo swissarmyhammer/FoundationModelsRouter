@@ -30,7 +30,8 @@ struct JointResolution: Sendable, Equatable {
 /// Allocation runs in order against the shared budget: embedding, then
 /// standard, then flash. Each slot sees only what earlier slots left. In a slot,
 /// the candidates are tried in the author's preference order. The first
-/// candidate that fits wins. A candidate fits when `charge × 1.2 <= remaining`.
+/// candidate that fits wins. A candidate fits when its raw footprint estimate,
+/// the `charge`, is not more than the bytes that remain: `charge <= remaining`.
 ///
 /// Two slots that name one reference in one role share one resident container.
 /// The weights are charged one time. A later slot on the same container is
@@ -47,23 +48,9 @@ struct JointResolution: Sendable, Equatable {
 /// The allocation is pure. Footprints and native max contexts are injected as
 /// closures, so it does no I/O.
 enum JointFit {
-    /// The overhead margin numerator: footprints are scaled by `6 / 5` (`× 1.2`).
-    private static let marginNumerator: Int64 = 6
-
-    /// The overhead margin denominator.
-    private static let marginDenominator: Int64 = 5
-
     /// The smallest window a model can run at: one token. The window search
     /// looks for a fit in `smallestWindow...nativeMaxContext`.
     private static let smallestWindow = 1
-
-    /// Applies the `× 1.2` overhead margin to a raw footprint. Rounds up.
-    ///
-    /// - Parameter rawBytes: The raw footprint in bytes.
-    /// - Returns: `ceil(rawBytes × 1.2)`.
-    static func withMargin(_ rawBytes: Int64) -> Int64 {
-        (rawBytes * marginNumerator + marginDenominator - 1) / marginDenominator
-    }
 
     // MARK: - Reserving one resident container once
 
@@ -264,13 +251,13 @@ enum JointFit {
             return unsizedReport(ref, reason: reason)
         case .success(let wholeBytes):
             guard budget.chargedKeys.contains(ReservationKey(ref: ref, role: role)) else {
-                return sizedReport(ref, wholeBytes: wholeBytes, rawChargeBytes: wholeBytes, budget: budget)
+                return sizedReport(ref, wholeBytes: wholeBytes, chargedBytes: wholeBytes, budget: budget)
             }
             switch sessionBytes(ref, context) {
             case .failure(.metadataUnavailable(let reason)):
                 return unsizedReport(ref, reason: reason)
             case .success(let cacheBytes):
-                return sizedReport(ref, wholeBytes: wholeBytes, rawChargeBytes: cacheBytes, budget: budget)
+                return sizedReport(ref, wholeBytes: wholeBytes, chargedBytes: cacheBytes, budget: budget)
             }
         }
     }
@@ -285,20 +272,19 @@ enum JointFit {
         )
     }
 
-    /// The report for a sized candidate: its whole `× 1.2` footprint, the
-    /// `× 1.2` bytes it charges, and whether that charge fits what remains.
+    /// The report for a sized candidate: its whole raw footprint estimate, the
+    /// raw bytes it charges, and whether that charge fits what remains.
     private static func sizedReport(
         _ ref: ModelRef,
         wholeBytes: Int64,
-        rawChargeBytes: Int64,
+        chargedBytes: Int64,
         budget: SharedBudget
     ) -> CandidateReport {
-        let charged = withMargin(rawChargeBytes)
-        return CandidateReport(
+        CandidateReport(
             ref: ref,
-            estimatedFootprintBytes: withMargin(wholeBytes),
-            chargedBytes: charged,
-            verdict: charged <= budget.remainingBytes ? .chosen : .tooLarge
+            estimatedFootprintBytes: wholeBytes,
+            chargedBytes: chargedBytes,
+            verdict: chargedBytes <= budget.remainingBytes ? .chosen : .tooLarge
         )
     }
 
@@ -362,7 +348,7 @@ enum JointFit {
             )
         }
 
-        /// The standard-slot candidate's own `× 1.2` footprint in this
+        /// The standard-slot candidate's own raw footprint estimate in this
         /// attempt, or `nil` when it could not be sized.
         var standardFootprintBytes: Int64? {
             standard.considered.first?.estimatedFootprintBytes

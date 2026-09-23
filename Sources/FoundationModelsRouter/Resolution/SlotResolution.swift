@@ -30,13 +30,13 @@ struct WindowFit: Sendable, Equatable {
     /// What the window search found.
     enum Outcome: Sendable, Equatable {
         /// The whole trio co-fit at `contextTokens`, the largest window that
-        /// fits. `estimatedFootprintBytes` is this candidate's own `× 1.2`
-        /// footprint at that window, or `nil` when it could not be sized.
+        /// fits. `estimatedFootprintBytes` is this candidate's own raw
+        /// footprint estimate at that window, or `nil` when it could not be sized.
         case fits(contextTokens: Int, estimatedFootprintBytes: Int64?)
 
         /// No window fits: at a window of one token, `by` found no viable
-        /// candidate. `estimatedFootprintBytes` is this candidate's own
-        /// `× 1.2` footprint at that window, or `nil` when it could not be sized.
+        /// candidate. `estimatedFootprintBytes` is this candidate's own raw
+        /// footprint estimate at that window, or `nil` when it could not be sized.
         case blocked(by: ModelSlot, estimatedFootprintBytes: Int64?)
     }
 
@@ -54,12 +54,12 @@ package struct CandidateReport: Sendable, Equatable {
     /// The candidate model reference.
     package let ref: ModelRef
 
-    /// The candidate's whole resident footprint with the `× 1.2` margin
-    /// applied, or `nil` when the candidate was not sized.
+    /// The candidate's whole resident footprint, the raw estimate, or `nil`
+    /// when the candidate was not sized.
     let estimatedFootprintBytes: Int64?
 
-    /// The bytes this candidate charged the shared budget, with the `× 1.2`
-    /// margin applied, or `nil` when not sized. Smaller than
+    /// The raw bytes this candidate charged the shared budget, or `nil` when
+    /// not sized. Smaller than
     /// ``estimatedFootprintBytes`` when an earlier slot reserved the same container.
     package let chargedBytes: Int64?
 

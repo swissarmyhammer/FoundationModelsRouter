@@ -397,9 +397,9 @@ public actor Router {
     ///   - key: This candidate's exact residency identity.
     ///   - chosen: The chosen model reference.
     ///   - slot: The slot being acquired.
-    ///   - footprintBytes: This slot's whole margined footprint: the weights
+    ///   - footprintBytes: This slot's whole raw footprint estimate: the weights
     ///     plus this hold's own KV cache.
-    ///   - sessionBytes: The margined KV cache this hold adds on the model at
+    ///   - sessionBytes: The raw KV cache estimate this hold adds on the model at
     ///     its own context, and what its release gives back. Zero for an
     ///     embedder.
     ///   - newKeys: Accumulates `key` when this call inserted a fresh entry.
@@ -631,8 +631,8 @@ public actor Router {
         return metadataResult.map { $0.footprint.kvBytes(context: context) }
     }
 
-    /// The `× 1.2` margined KV cache one session of a chosen generation
-    /// candidate holds at `context`: the share its hold adds on the pooled
+    /// The raw KV cache estimate of one session of a chosen generation
+    /// candidate at `context`: the share its hold adds on the pooled
     /// container, and what the hold's release gives back.
     ///
     /// Traps when the candidate has no metadata, because ``JointFit`` chooses
@@ -642,15 +642,15 @@ public actor Router {
     ///   - ref: The chosen candidate.
     ///   - context: The working context its sessions decode at.
     ///   - metadataByRef: The sizing metadata fetched for every candidate.
-    /// - Returns: The margined KV cache bytes.
+    /// - Returns: The raw KV cache bytes.
     private static func chosenSessionBytes(
         for ref: ModelRef,
         context: Int,
         metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>]
     ) -> Int64 {
         switch sessionBytes(for: ref, context: context, metadataByRef: metadataByRef) {
-        case .success(let rawBytes):
-            return JointFit.withMargin(rawBytes)
+        case .success(let cacheBytes):
+            return cacheBytes
         case .failure:
             preconditionFailure("JointFit sizes every candidate it chooses; \(ref.stringValue) has no metadata")
         }
@@ -708,7 +708,7 @@ public actor Router {
     /// - Parameters:
     ///   - chosen: The model reference being loaded.
     ///   - slot: The slot the model fills.
-    ///   - footprintBytes: The chosen candidate's whole margined footprint.
+    ///   - footprintBytes: The chosen candidate's whole raw footprint estimate.
     ///   - body: The load work the span measures.
     /// - Returns: Whatever `body` produced.
     /// - Throws: Whatever `body` throws.
@@ -961,7 +961,7 @@ public actor Router {
         slotRes.considered.first { $0.verdict == .chosen }
     }
 
-    /// The chosen candidate's margined footprint estimate for a slot, or `0`.
+    /// The chosen candidate's raw footprint estimate for a slot, or `0`.
     private static func chosenFootprint(for slotRes: SlotResolution) -> Int64 {
         chosenReport(for: slotRes)?.estimatedFootprintBytes ?? 0
     }

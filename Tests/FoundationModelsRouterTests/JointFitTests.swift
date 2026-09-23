@@ -26,14 +26,14 @@ struct JointFitTests {
     /// The name shared by the portability profile and its diagnostics assertions.
     private static let coderProfileName = "coder"
 
-    // MARK: Raw footprints (multiples of 5 so the ×1.2 margin is exact)
+    // MARK: Raw footprints (the joint fit charges these bytes as they are)
 
     private static let raw: [ModelRef: Int64] = [
-        std32b8: 32_000,   // ×1.2 = 38_400
-        std32b4: 18_000,   // ×1.2 = 21_600
-        std14b4: 9_000,    // ×1.2 = 10_800
-        flash3b: 2_000,    // ×1.2 =  2_400
-        embBge: 500,       // ×1.2 =    600
+        std32b8: 32_000,
+        std32b4: 18_000,
+        std14b4: 9_000,
+        flash3b: 2_000,
+        embBge: 500,
     ]
 
     /// A footprint provider over an injected raw-byte table, surfacing
@@ -158,12 +158,12 @@ struct JointFitTests {
 
     @Test("embedding reservation reduces the budget standard sees")
     func embeddingReservationReducesStandardBudget() throws {
-        // 32B-8bit (×1.2 = 38_400) fits in 38_900 alone, but not after the
-        // embedding's 600 is reserved (remaining 38_300) — so standard falls to
+        // 32B-8bit (32_000) fits in 32_300 alone, but not after the
+        // embedding's 500 is reserved (remaining 31_800) — so standard falls to
         // 32B-4bit. Proves the budget is shared and reduced embedding-first.
         let result = try JointFit.resolve(
             profile: Self.portabilityProfile(),
-            budgetBytes: 38_900,
+            budgetBytes: 32_300,
             footprint: Self.provider(),
             sessionBytes: Self.neverCalledSessionBytes,
             nativeMaxContext: Self.neverCalledNativeMaxContext
@@ -172,14 +172,14 @@ struct JointFitTests {
 
         let emb = Self.resolution(result, for: .embedding)
         let std = Self.resolution(result, for: .standard)
-        #expect(emb.remainingBudgetBytes == 38_900)
-        #expect(std.remainingBudgetBytes == 38_300)
+        #expect(emb.remainingBudgetBytes == 32_300)
+        #expect(std.remainingBudgetBytes == 31_800)
     }
 
-    // MARK: ×1.2 margin
+    // MARK: Raw footprint estimate
 
-    @Test("estimatedFootprintBytes reflects the ×1.2 margin")
-    func reportFootprintIsScaledByMargin() throws {
+    @Test("estimatedFootprintBytes is the raw footprint estimate")
+    func reportFootprintIsTheRawEstimate() throws {
         let result = try JointFit.resolve(
             profile: Self.portabilityProfile(),
             budgetBytes: 50_000,
@@ -188,25 +188,24 @@ struct JointFitTests {
             nativeMaxContext: Self.neverCalledNativeMaxContext
         )
         let std = Self.resolution(result, for: .standard)
-        // 32_000 raw × 1.2 = 38_400.
-        #expect(std.considered[0].estimatedFootprintBytes == 38_400)
+        #expect(std.considered[0].estimatedFootprintBytes == 32_000)
         let emb = Self.resolution(result, for: .embedding)
-        #expect(emb.considered[0].estimatedFootprintBytes == 600)
+        #expect(emb.considered[0].estimatedFootprintBytes == 500)
     }
 
-    @Test("a candidate is viable iff footprint × 1.2 <= remaining, inclusive")
-    func marginBoundaryIsInclusive() throws {
+    @Test("a candidate is viable iff its raw footprint <= remaining, inclusive")
+    func fitBoundaryIsInclusive() throws {
         let profile = ProfileDefinition(
             name: "boundary",
             description: "exact-fit profile",
-            standard: [Self.std14b4],       // ×1.2 = 10_800
-            flash: [Self.flash3b],          // ×1.2 =  2_400
-            embedding: [Self.embBge]        // ×1.2 =    600
+            standard: [Self.std14b4],
+            flash: [Self.flash3b],
+            embedding: [Self.embBge]
         )
-        // Scaled sum is exactly 13_800. At the exact sum it resolves.
+        // The raw sum is exactly 11_500. At the exact sum it resolves.
         let exact = try JointFit.resolve(
             profile: profile,
-            budgetBytes: 13_800,
+            budgetBytes: 11_500,
             footprint: Self.provider(),
             sessionBytes: Self.neverCalledSessionBytes,
             nativeMaxContext: Self.neverCalledNativeMaxContext
@@ -217,7 +216,7 @@ struct JointFitTests {
         #expect(throws: ResolutionFailure.self) {
             try JointFit.resolve(
                 profile: profile,
-                budgetBytes: 13_799,
+                budgetBytes: 11_499,
                 footprint: Self.provider(),
                 sessionBytes: Self.neverCalledSessionBytes,
                 nativeMaxContext: Self.neverCalledNativeMaxContext
@@ -267,7 +266,7 @@ struct JointFitTests {
         #expect(text.contains(Self.coderProfileName))
         #expect(text.contains("5000"))
         #expect(text.contains(Self.std14b4.stringValue))
-        #expect(text.contains("10800"))   // a candidate's ×1.2 footprint
+        #expect(text.contains("9000"))   // a candidate's raw footprint
     }
 
     // MARK: metadataUnavailable
@@ -316,12 +315,12 @@ struct JointFitTests {
     private static let windowBigFootprint = Footprint(weightBytes: 0, layers: 1, kvHeads: 1, headDim: 100)
 
     /// A budget ``windowBig`` does not fit at its native window. The trio
-    /// charges `120 + 480 × window + 120` bytes, so the largest window that
-    /// fits is `(15_800_000 − 240) / 480`, floored: 32_916.
+    /// charges `100 + 400 × window + 100` bytes, so the largest window that
+    /// fits is `(15_800_000 − 200) / 400`, floored: 39_499.
     private static let windowBigBudget: Int64 = 15_800_000
 
     /// The largest window at which ``windowBig``'s trio co-fits ``windowBigBudget``.
-    private static let windowBigWindow = 32_916
+    private static let windowBigWindow = 39_499
 
     /// A footprint provider backed by real ``Footprint`` fixtures, so the
     /// byte figure scales with the context argument the window search passes
@@ -352,7 +351,7 @@ struct JointFitTests {
 
     /// Embedding/flash candidates with a flat, context-independent footprint
     /// (no KV cache: `layers: 0`) so every window scenario below reserves a
-    /// constant 120 bytes (`100 × 1.2`) for each, whatever the window.
+    /// constant 100 bytes for each, whatever the window.
     private static let windowEmbFlashFootprints: [ModelRef: Footprint] = [
         windowEmb: Footprint(weightBytes: 100, layers: 0, kvHeads: 0, headDim: 0),
         windowFlash: Footprint(weightBytes: 100, layers: 0, kvHeads: 0, headDim: 0),
@@ -396,7 +395,7 @@ struct JointFitTests {
     @Test("native max fits: the candidate resolves at its own native max context")
     func nativeMaxFitsResolvesAtNativeMax() throws {
         // weightBytes: 0, coefficient 4 bytes/token (layers 1 × kvHeads 1 × headDim 1).
-        // footprint(8192) = 32_768, × 1.2 = 39_322.
+        // footprint(8192) = 32_768.
         let nativeFitsFootprint = Footprint(weightBytes: 0, layers: 1, kvHeads: 1, headDim: 1)
         let footprints = Self.windowEmbFlashFootprints.merging(
             [Self.windowNativeFits: nativeFitsFootprint]
@@ -420,7 +419,7 @@ struct JointFitTests {
                     nativeContextTokens: 8_192,
                     outcome: .fits(
                         contextTokens: 8_192,
-                        estimatedFootprintBytes: JointFit.withMargin(nativeFitsFootprint.footprint(context: 8_192))
+                        estimatedFootprintBytes: nativeFitsFootprint.footprint(context: 8_192)
                     )
                 )
         )
@@ -451,9 +450,7 @@ struct JointFitTests {
                     nativeContextTokens: Self.windowBigNative,
                     outcome: .fits(
                         contextTokens: Self.windowBigWindow,
-                        estimatedFootprintBytes: JointFit.withMargin(
-                            Self.windowBigFootprint.footprint(context: Self.windowBigWindow)
-                        )
+                        estimatedFootprintBytes: Self.windowBigFootprint.footprint(context: Self.windowBigWindow)
                     )
                 )
         )
@@ -498,7 +495,7 @@ struct JointFitTests {
 
     @Test("a candidate that does not fit at one token is reported as not fitting")
     func notFittingAtOneTokenIsReportedAsNotFitting() throws {
-        // A budget of 1 byte cannot fit even the embedding candidate (120),
+        // A budget of 1 byte cannot fit even the embedding candidate (100),
         // so no standard candidate co-fits the trio at a window of one token.
         let error = try #require(throws: ResolutionFailure.self) {
             try JointFit.resolve(
@@ -525,7 +522,7 @@ struct JointFitTests {
                         nativeContextTokens: Self.windowBigNative,
                         outcome: .blocked(
                             by: .standard,
-                            estimatedFootprintBytes: JointFit.withMargin(footprint.footprint(context: 1))
+                            estimatedFootprintBytes: footprint.footprint(context: 1)
                         )
                     )
             )
@@ -591,12 +588,12 @@ struct JointFitTests {
     private static let sharedSessionRawBytes: Int64 = 2_000
 
     /// The budget that fits the trio once the shared weights are reserved a
-    /// single time: `(500 + 12_000 + 2_000) × 1.2`.
-    private static let sharedDedupedBudget: Int64 = 17_400
+    /// single time: `500 + 12_000 + 2_000`.
+    private static let sharedDedupedBudget: Int64 = 14_500
 
     /// The budget the trio needs when the two generation slots are charged for
-    /// two separate containers: `600 + 14_400 + 14_400`.
-    private static let sharedSeparateBudget: Int64 = 29_400
+    /// two separate containers: `500 + 12_000 + 12_000`.
+    private static let sharedSeparateBudget: Int64 = 24_500
 
     /// The footprint table the shared-reference profiles are sized against.
     private static let sharedFootprints: [ModelRef: Footprint] = [
@@ -643,8 +640,8 @@ struct JointFitTests {
         }
     }
 
-    @Test("the margin is applied once to the deduped total, not twice to the shared weights")
-    func marginIsAppliedOnceToTheDedupedTotal() throws {
+    @Test("the shared weights are charged once: the two charges sum to the deduped raw total")
+    func sharedWeightsAreChargedOnceInTheDedupedTotal() throws {
         let result = try JointFit.resolve(
             profile: Self.sharedProfile(standard: Self.sharedGeneration, flash: Self.sharedGeneration),
             budgetBytes: Self.sharedDedupedBudget,
@@ -660,19 +657,13 @@ struct JointFitTests {
         // Standard pays for the whole container. Flash pays for its own KV
         // cache alone, while its report still names the whole footprint, so a
         // reader sees the size of the model beside what it cost.
-        #expect(standardCharge == JointFit.withMargin(Self.sharedGenerationRawBytes))
-        #expect(flashCharge == JointFit.withMargin(Self.sharedSessionRawBytes))
-        #expect(
-            flash.considered[0].estimatedFootprintBytes
-                == JointFit.withMargin(Self.sharedGenerationRawBytes)
-        )
+        #expect(standardCharge == Self.sharedGenerationRawBytes)
+        #expect(flashCharge == Self.sharedSessionRawBytes)
+        #expect(flash.considered[0].estimatedFootprintBytes == Self.sharedGenerationRawBytes)
 
-        // The two charges together are one margin over the deduped raw total,
-        // so the shared weights carry the × 1.2 exactly once.
-        #expect(
-            standardCharge + flashCharge
-                == JointFit.withMargin(Self.sharedGenerationRawBytes + Self.sharedSessionRawBytes)
-        )
+        // The two charges together are the deduped raw total, so the shared
+        // weights are charged exactly once.
+        #expect(standardCharge + flashCharge == Self.sharedGenerationRawBytes + Self.sharedSessionRawBytes)
     }
 
     @Test("a slot reusing an earlier slot's container renders both its footprint and its charge")
@@ -686,13 +677,12 @@ struct JointFitTests {
                 nativeMaxContext: Self.neverCalledNativeMaxContext
             )
         }
-        let charge = JointFit.withMargin(Self.sharedSessionRawBytes)
         #expect(
             error.description.contains(
-                "\(charge) bytes charged; an earlier slot already reserved the weights"
+                "\(Self.sharedSessionRawBytes) bytes charged; an earlier slot already reserved the weights"
             )
         )
-        #expect(error.description.contains("\(JointFit.withMargin(Self.sharedGenerationRawBytes)) bytes"))
+        #expect(error.description.contains("\(Self.sharedGenerationRawBytes) bytes"))
     }
 
     @Test("two differently spelled references at one repository are reserved separately")
@@ -727,8 +717,8 @@ struct JointFitTests {
 
     /// The budget the trio needs when the router already holds the shared
     /// generation container: the embedding model, plus the second generation
-    /// session's own KV cache. `(500 × 1.2) + (2_000 × 1.2)`.
-    private static let sharedResidentBudget: Int64 = 3_000
+    /// session's own KV cache. `500 + 2_000`.
+    private static let sharedResidentBudget: Int64 = 2_500
 
     /// A footprint provider shaped like the router's own, which answers a
     /// *marginal* cost rather than an absolute one: a reference the pool
@@ -776,7 +766,7 @@ struct JointFitTests {
         // The second slot opens a session of its own, and that session
         // materializes a KV cache of its own. The pool holds no such cache, so
         // the second slot pays for it.
-        #expect(flash.considered[0].chargedBytes == JointFit.withMargin(Self.sharedSessionRawBytes))
+        #expect(flash.considered[0].chargedBytes == Self.sharedSessionRawBytes)
     }
 
     @Test("a pool-resident reference in two generation slots needs budget for the second KV cache")
@@ -812,8 +802,8 @@ struct JointFitTests {
     private static let crossRoleFlashRawBytes: Int64 = 100
 
     /// The budget the cross-role profile needs when the one reference pays for
-    /// two containers: `(12_000 × 1.2) × 2 + (100 × 1.2)`.
-    private static let crossRoleSeparateBudget: Int64 = 28_920
+    /// two containers: `12_000 × 2 + 100`.
+    private static let crossRoleSeparateBudget: Int64 = 24_100
 
     /// The footprint table the cross-role profile is sized against.
     private static let crossRoleFootprints: [ModelRef: Footprint] = [
@@ -853,8 +843,8 @@ struct JointFitTests {
         // An embedder and a generation model are different container types
         // under different pool keys. So the generation slot pays the whole
         // footprint, not the KV cache alone.
-        #expect(embeddingCharge == JointFit.withMargin(Self.sharedGenerationRawBytes))
-        #expect(standardCharge == JointFit.withMargin(Self.sharedGenerationRawBytes))
+        #expect(embeddingCharge == Self.sharedGenerationRawBytes)
+        #expect(standardCharge == Self.sharedGenerationRawBytes)
     }
 
     @Test("one reference across the embedding and generation roles does not fit on one container's budget")
@@ -882,14 +872,15 @@ struct JointFitTests {
     private static let multitoolEmbedding: ModelRef = "org/Qwen3-Embedding-0.6B-4bit-DWQ"
 
     /// The generation model's architecture, reconstructed from the report the
-    /// field printed. It reproduces every figure of that report to the byte:
-    /// 38872712722 at 262144 tokens down to 18578992248 at 4096.
+    /// field printed. The report printed each figure with an overhead factor
+    /// that the fit no longer applies. The raw figures are 32393927268 bytes
+    /// at 262144 tokens down to 15482493540 at 4096.
     private static let multitoolGenerationFootprint = Footprint(
         weightBytes: 15_214_058_084, layers: 64, kvHeads: 8, headDim: 32
     )
 
-    /// The embedding model's raw weight bytes, which margin to the 402356108
-    /// the field report printed.
+    /// The embedding model's raw weight bytes. The field report printed them
+    /// with the overhead factor that the fit no longer applies.
     private static let multitoolEmbeddingWeightBytes: Int64 = 335_296_756
 
     /// The host budget the field report failed against.
@@ -901,7 +892,7 @@ struct JointFitTests {
     /// The largest window at which the trio co-fits: the standard slot pays
     /// the weights and one KV cache, and the flash slot pays a second KV
     /// cache on the same container.
-    private static let multitoolResolvedContext = 51_761
+    private static let multitoolResolvedContext = 85_840
 
     /// The footprint table the `multitool-cli-demo` profile is sized against.
     private static let multitoolFootprints: [ModelRef: Footprint] = [
@@ -956,7 +947,7 @@ struct JointFitTests {
     /// the embedding slot blocks the trio at every window.
     private static let oversizedEmbedding: ModelRef = "org/oversized-emb"
 
-    /// The raw footprint of ``oversizedEmbedding``, which margins to 1_200_000.
+    /// The raw footprint of ``oversizedEmbedding``: more than ``blockedByEmbeddingBudget``.
     private static let oversizedEmbeddingRawBytes: Int64 = 1_000_000
 
     /// A budget the generation model fits comfortably and the embedding model

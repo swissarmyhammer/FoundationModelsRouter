@@ -146,16 +146,17 @@ struct SpyingModelLoader: ModelLoader {
 /// share. The canned metadata is ``RouterTestFixtures/rawMetadata``: a 2-layer
 /// attention shape with a single 10 MB weight shard, so footprints are the
 /// same well-understood magnitude every other suite in this target uses
-/// (`generationSlotMarginedFootprint` is about 14_516_583 bytes,
-/// `embeddingSlotMarginedFootprint` is 12_000_000 bytes at the default
-/// 8192-token context; see `ResolveTests`).
+/// (`generationSlotFootprint` is 12_097_152 bytes and
+/// `embeddingSlotFootprint` is 10_000_000 bytes at the default 8192-token
+/// context; see `ResolveTests`). Every figure is the raw footprint estimate
+/// that ``JointFit`` charges.
 enum ResidencyFixtures {
-    /// One generation model's margined footprint at the default context:
-    /// weights plus one session KV cache.
-    static let generationModelFootprint: Int64 = 14_516_583
+    /// One generation model's raw footprint at the default context: the
+    /// 10_000_000-byte weights plus one 2_097_152-byte session KV cache.
+    static let generationModelFootprint: Int64 = 12_097_152
 
-    /// One embedder's margined footprint: weights only.
-    static let embeddingModelFootprint: Int64 = 12_000_000
+    /// One embedder's raw footprint: weights only.
+    static let embeddingModelFootprint: Int64 = 10_000_000
 
     /// How many generation slots one trio profile has: standard and flash.
     static let generationSlotsPerTrio: Int64 = 2
@@ -163,43 +164,42 @@ enum ResidencyFixtures {
     /// How many models one trio profile (standard, flash, embedding) loads.
     static let modelsPerTrio = 3
 
-    /// One full trio's margined footprint at the default context: one
+    /// One full trio's raw footprint at the default context: one
     /// ``generationModelFootprint`` for each generation slot, plus the
     /// embedding model.
     static let oneTrioFootprint: Int64 =
         generationModelFootprint * generationSlotsPerTrio + embeddingModelFootprint
 
-    /// Headroom added on top of a whole number of trio footprints when sizing
-    /// a test router's simulated RAM, so a budget meant to fit exactly N
-    /// trios is not rejected by an off-by-a-few-bytes rounding difference
-    /// between this constant's footprint arithmetic and the joint fit's own.
+    /// Spare bytes added on top of a whole number of trio footprints when
+    /// sizing a test router's simulated RAM. The figure is smaller than any
+    /// charge, so a budget meant to fit exactly N trios has room for no more.
     static let headroomBufferBytes: Int64 = 1_000
 
-    /// The `× 1.2` margined KV cache of ONE generation session at the default
-    /// 8192-token context for the canned 2-layer config (raw 2_097_152 bytes):
-    /// the extra steady-state cost each generation slot beyond the first adds
-    /// on a shared resident model, and exactly what ``JointFit`` charges a
-    /// second generation slot naming an already-charged reference.
-    static let sessionKVMarginedBytes: Int64 = 2_516_583
+    /// The raw KV cache of ONE generation session at the default 8192-token
+    /// context for the canned 2-layer config: the extra steady-state cost
+    /// each generation slot beyond the first adds on a shared resident model,
+    /// and exactly what ``JointFit`` charges a second generation slot naming
+    /// an already-charged reference.
+    static let sessionKVBytes: Int64 = 2_097_152
 
     /// The whole reservation ``JointFit`` makes for a trio whose standard and
     /// flash slots name ONE reference: that reference's weights plus one KV
-    /// cache, the second slot's own KV cache (``sessionKVMarginedBytes``), and
-    /// the embedding model.
+    /// cache, the second slot's own KV cache (``sessionKVBytes``), and the
+    /// embedding model.
     static let sharedPairTrioFootprint: Int64 =
-        generationModelFootprint + sessionKVMarginedBytes + embeddingModelFootprint
+        generationModelFootprint + sessionKVBytes + embeddingModelFootprint
 
     /// The whole reservation a later profile is charged when it resolves an
     /// already-resident trio again: one session KV cache for each of its
     /// generation slots (its own new sessions materialize new caches on the
     /// shared containers) and zero for the reused embedder.
-    static let reusedTrioCharge: Int64 = sessionKVMarginedBytes * generationSlotsPerTrio
+    static let reusedTrioCharge: Int64 = sessionKVBytes * generationSlotsPerTrio
 
     /// The whole reservation a later profile is charged when it reuses a
     /// resident trio's generation model and embedder but brings its own flash
     /// model: one session KV cache on the reused generation model, its own
     /// flash model's whole footprint, and zero for the reused embedder.
-    static let reuseWithOwnFlashCharge: Int64 = sessionKVMarginedBytes + generationModelFootprint
+    static let reuseWithOwnFlashCharge: Int64 = sessionKVBytes + generationModelFootprint
 
     /// A working context below ``ProfileDefinition/defaultContext``, for the
     /// profile that names an already-resident repo at a second context. The
@@ -209,15 +209,14 @@ enum ResidencyFixtures {
     /// context.
     static let steppedDownContext = 4096
 
-    /// The `× 1.2` margined KV cache of ONE generation session at
-    /// ``steppedDownContext`` for the canned 2-layer config (raw 1_048_576
-    /// bytes): what a profile at that context is charged when it reuses a
-    /// resident generation model.
-    static let steppedDownSessionKVMarginedBytes: Int64 = 1_258_292
+    /// The raw KV cache of ONE generation session at ``steppedDownContext``
+    /// for the canned 2-layer config: what a profile at that context is
+    /// charged when it reuses a resident generation model.
+    static let steppedDownSessionKVBytes: Int64 = 1_048_576
 
-    /// One generation model's margined footprint at ``steppedDownContext``:
+    /// One generation model's raw footprint at ``steppedDownContext``:
     /// weights plus one session KV cache at that context.
-    static let steppedDownGenerationModelFootprint: Int64 = 13_258_292
+    static let steppedDownGenerationModelFootprint: Int64 = 11_048_576
 
     /// The whole reservation a profile at ``steppedDownContext`` is charged
     /// when it reuses a resident trio's generation model and embedder but
@@ -225,18 +224,17 @@ enum ResidencyFixtures {
     /// on the reused generation model, its own flash model's whole footprint
     /// at that context, and zero for the reused embedder.
     static let steppedDownReuseWithOwnFlashCharge: Int64 =
-        steppedDownSessionKVMarginedBytes + steppedDownGenerationModelFootprint
+        steppedDownSessionKVBytes + steppedDownGenerationModelFootprint
 
-    /// One generation model's `× 1.2` margined weights alone, with no KV
-    /// cache: the canned 10_000_000-byte shard × 1.2. It is the first load's
-    /// margined footprint less its own margined KV cache at either context
-    /// (`14_516_583 - 2_516_583` at the default context,
-    /// `13_258_292 - 1_258_292` at ``steppedDownContext``), and it is what a
-    /// resident generation model holds against the budget once every hold
-    /// that carries a KV cache has released.
-    static let generationWeightsMarginedBytes: Int64 = 12_000_000
+    /// One generation model's raw weights alone, with no KV cache: the canned
+    /// 10_000_000-byte shard. It is the first load's raw footprint less its
+    /// own raw KV cache at either context (`12_097_152 - 2_097_152` at the
+    /// default context, `11_048_576 - 1_048_576` at ``steppedDownContext``),
+    /// and it is what a resident generation model holds against the budget
+    /// once every hold that carries a KV cache has released.
+    static let generationWeightsBytes: Int64 = 10_000_000
 
-    /// One full trio's margined footprint at ``steppedDownContext``: one
+    /// One full trio's raw footprint at ``steppedDownContext``: one
     /// ``steppedDownGenerationModelFootprint`` for each generation slot, plus
     /// the embedding model.
     static let steppedDownTrioFootprint: Int64 =
@@ -248,16 +246,16 @@ enum ResidencyFixtures {
     /// model, its own flash model's whole footprint, and its own embedder's
     /// whole footprint.
     static let reuseWithOwnFlashAndEmbedderCharge: Int64 =
-        sessionKVMarginedBytes + generationModelFootprint + embeddingModelFootprint
+        sessionKVBytes + generationModelFootprint + embeddingModelFootprint
 
     /// What the pool holds after the profile that loaded a shared generation
     /// model at ``steppedDownContext`` releases while a profile at the default
     /// context still holds it: the weights one time
-    /// (``generationWeightsMarginedBytes``), the remaining profile's KV cache
-    /// at the default context (``sessionKVMarginedBytes``), and that profile's
-    /// own flash model and embedder. Nothing of the released KV cache remains.
+    /// (``generationWeightsBytes``), the remaining profile's KV cache at the
+    /// default context (``sessionKVBytes``), and that profile's own flash
+    /// model and embedder. Nothing of the released KV cache remains.
     static let wideHoldAfterNarrowRelease: Int64 =
-        generationWeightsMarginedBytes + sessionKVMarginedBytes + generationModelFootprint + embeddingModelFootprint
+        generationWeightsBytes + sessionKVBytes + generationModelFootprint + embeddingModelFootprint
 
     /// Builds a ``Router`` over a probe whose recommended working set is
     /// `recommendedMaxWorkingSetSize`, so the host budget every resolve

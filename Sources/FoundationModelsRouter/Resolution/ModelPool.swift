@@ -50,12 +50,12 @@ package struct PoolEntry: Sendable {
     /// How many slot acquisitions currently hold this model.
     var refcount: Int
 
-    /// This model's `× 1.2` margined weights alone: the first load's margined
-    /// footprint less that load's own margined KV cache at its context. The
+    /// This model's raw weights estimate alone: the first load's raw footprint
+    /// estimate less that load's own raw KV cache estimate at its context. The
     /// pool charges them one time, however many holds share the model.
     let baseWeightsBytes: Int64
 
-    /// The sum of the `× 1.2` margined KV cache bytes every live hold adds on
+    /// The sum of the raw KV cache estimates every live hold adds on
     /// this model, each at its own context. Each release gives back its own
     /// hold's share. An embedder carries no KV cache, so this stays zero.
     var acquiredChargeBytes: Int64
@@ -93,7 +93,7 @@ package struct SlotCharge: Sendable {
     /// The pooled model this charge references.
     let key: ResidencyKey
 
-    /// The `× 1.2` margined KV cache bytes this charge adds on the pooled
+    /// The raw KV cache estimate, in bytes, this charge adds on the pooled
     /// model at its own context, and what its release gives back. Zero for an
     /// embedder. The weights come back when the last charge releases and the
     /// model is evicted.
@@ -216,10 +216,10 @@ public actor ModelPool {
     ///
     /// - Parameters:
     ///   - key: This candidate's exact residency identity.
-    ///   - footprintBytes: This slot's whole margined footprint: the weights
+    ///   - footprintBytes: This slot's whole raw footprint estimate: the weights
     ///     plus this hold's own KV cache. A fresh entry's weights are this
     ///     figure less `sessionBytes`.
-    ///   - sessionBytes: The margined KV cache this hold adds at its own
+    ///   - sessionBytes: The raw KV cache estimate this hold adds at its own
     ///     context, and what its release gives back. Zero for an embedder.
     ///   - load: The loader call that produces a fresh resident container.
     ///     It is `@Sendable` because the pool, not the caller, runs it.

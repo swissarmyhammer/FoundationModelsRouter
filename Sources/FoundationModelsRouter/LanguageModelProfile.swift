@@ -22,7 +22,7 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// The chosen model reference.
     public let chosen: ModelRef
 
-    /// The chosen candidate's `× 1.2` footprint estimate in bytes.
+    /// The chosen candidate's raw footprint estimate in bytes.
     public let footprintBytes: Int64
 
     /// The resolved working context, in tokens.
@@ -132,7 +132,7 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// - Parameters:
     ///   - slot: The slot this model fills.
     ///   - chosen: The chosen model reference.
-    ///   - footprintBytes: The chosen candidate's `× 1.2` footprint estimate.
+    ///   - footprintBytes: The chosen candidate's raw footprint estimate.
     ///   - resolution: Why this model won its slot.
     ///   - container: The loaded, resident container.
     ///   - routerId: The resolving router's recording root id.

@@ -1,10 +1,31 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m37ghrky5qq5wn0zzsk912y1
+  text: |-
+    ### research and design choices
+
+    - Current sites (2026-09-23): `JointFit.swift` had `marginNumerator`, `marginDenominator` and `withMargin` at lines 50-66, and `sizedReport` at lines 288-303. `Router.chosenSessionBytes` at line 646 called `JointFit.withMargin`. The card named `sessionKVBytes`; that function is now `chosenSessionBytes`.
+    - Choice 1: `sizedReport` takes the raw charge as `chargedBytes` (the old name was `rawChargeBytes`). Its report carries the raw figures as they are. There is no other allowance and no new constant.
+    - Choice 2: every doc comment that said "× 1.2" or "margined" now says "raw footprint estimate" or "raw KV cache estimate". This includes `Footprint.swift`, which said "the fit step applies its own margin".
+    - Choice 3: test helpers renamed: `sessionKVMarginedBytes` became `sessionKVBytes`, `steppedDownSessionKVMarginedBytes` became `steppedDownSessionKVBytes`, `generationWeightsMarginedBytes` became `generationWeightsBytes`, and `generationSlotMarginedFootprint` / `embeddingSlotMarginedFootprint` became `generationSlotFootprint` / `embeddingSlotFootprint`. The expected figures are now the raw bytes: 12_097_152, 10_000_000, 2_097_152, 11_048_576, 1_048_576.
+    - Choice 4: the merge test in `ResolveTests` sets its budget to the midpoint of the two slot footprints, so it adds no new number. The window budgets and the windows were computed again from the raw formula: JointFitTests `windowBigWindow` is 39_499, the router window test budget is 13_107_500, and the multitool window is 85_840.
+    - Choice 5: the two tests that checked the margin are now tests of the raw figure: `reportFootprintIsTheRawEstimate` and `fitBoundaryIsInclusive`. The dedup test is now `sharedWeightsAreChargedOnceInTheDedupedTotal`.
+    - `headroomBufferBytes` (a test-only 1_000) stays. Its doc no longer says that it absorbs a rounding difference, because no rounding remains.
+  timestamp: 2026-09-23T16:11:01.118726+00:00
+- actor: claude-code
+  id: 01m37ghtq9dmvq145ngfq9bfpz
+  text: |-
+    ### implement — changed
+    - evidence: 10 files — Sources/FoundationModelsRouter/Resolution/JointFit.swift, Resolution/SlotResolution.swift, Resolution/ModelPool.swift, Router.swift, LanguageModelProfile.swift, Sizing/Footprint.swift, Tests/FoundationModelsRouterTests/JointFitTests.swift, ResolveTests.swift, Helpers/ResidencyStubs.swift. `swift test`: 1325 tests in 149 suites passed (2 known issues), 1 test in 1 suite passed, 19 tests in 3 suites passed. IntegrationTests build complete. The acceptance `rg` finds nothing in Sources, Tests or IntegrationTests.
+    - next: commit, then review
+  timestamp: 2026-09-23T16:11:03.273686+00:00
 depends_on:
 - 01M34PGWP0GS427JNWAAMKPZPW
-position_column: todo
-position_ordinal: '8980'
+position_column: doing
+position_ordinal: '80'
 title: Remove the × 1.2 footprint margin from the fit test
 ---
 ## Decision (from the owner, 2026-09-22)

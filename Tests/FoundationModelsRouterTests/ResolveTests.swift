@@ -515,14 +515,14 @@ struct ResolveTests {
 
     // MARK: - Candidate-sizing merge and failure paths
 
-    /// The generation-slot (`standard`/`flash`) margined footprint for
-    /// ``rawMetadata`` at the default context: raw `12_097_152` (10 MB weights
-    /// + a 2 MB KV cache at context 8192) × 1.2 = `14_516_583`.
-    private static let generationSlotMarginedFootprint: Int64 = 14_516_583
+    /// The generation-slot (`standard`/`flash`) raw footprint for
+    /// ``rawMetadata`` at the default context: 10 MB weights plus a 2 MB KV
+    /// cache at context 8192.
+    private static let generationSlotFootprint: Int64 = 12_097_152
 
-    /// The embedding-slot margined footprint for ``rawMetadata``: weights
-    /// alone (no KV cache), raw `10_000_000` × 1.2 = `12_000_000` exactly.
-    private static let embeddingSlotMarginedFootprint: Int64 = 12_000_000
+    /// The embedding-slot raw footprint for ``rawMetadata``: weights alone,
+    /// with no KV cache.
+    private static let embeddingSlotFootprint: Int64 = 10_000_000
 
     @Test(
         """
@@ -537,7 +537,7 @@ struct ResolveTests {
 
         // The same ref is the sole candidate for both `embedding` and
         // `standard`. Sized as an embedder it is only 10 MB (no KV cache);
-        // sized as a generation model at the default context it is ~11.5 MB
+        // sized as a generation model at the default context it is ~12.1 MB
         // (weights + KV cache). The merge in `sizeCandidates` must keep the
         // larger of the two for *both* slots' fit test.
         let shared: ModelRef = "org/shared-embed-std"
@@ -552,15 +552,15 @@ struct ResolveTests {
         let progress = ResolutionProgress()
         let source = ScriptedMetadataSource(scripts: [:], defaultRaw: Self.rawMetadata)
         let loader = StubModelLoader(progress: progress)
-        // A budget strictly between the embedding-only margined footprint
-        // (12_000_000) and the generation-slot margined footprint of the
-        // very same raw metadata (14_516_583): the shared candidate fits
-        // neither slot if the merge correctly kept the larger figure, but
-        // would fit both if it wrongly kept (or fell back to) the smaller
-        // embedding-only one.
+        // A budget halfway between the embedding-only footprint and the
+        // generation-slot footprint of the very same raw metadata: the shared
+        // candidate fits neither slot if the merge correctly kept the larger
+        // figure, but would fit both if it wrongly kept (or fell back to) the
+        // smaller embedding-only one.
+        let budget = (Self.embeddingSlotFootprint + Self.generationSlotFootprint) / 2
         let router = Router(
             cacheDir: dir,
-            probe: StubProbe(chip: "Apple Test", totalRAM: 13_000_000, recommendedMaxWorkingSetSize: 13_000_000),
+            probe: StubProbe(chip: "Apple Test", totalRAM: budget, recommendedMaxWorkingSetSize: budget),
             metadataSource: source,
             loader: loader,
             pool: ModelPool()
@@ -576,12 +576,12 @@ struct ResolveTests {
 
         let embeddingSlot = try #require(failure.slots.first { $0.slot == .embedding })
         let embeddingReport = try #require(embeddingSlot.considered.first { $0.ref == shared })
-        #expect(embeddingReport.estimatedFootprintBytes == Self.generationSlotMarginedFootprint)
+        #expect(embeddingReport.estimatedFootprintBytes == Self.generationSlotFootprint)
         #expect(embeddingReport.verdict == .tooLarge)
 
         let standardSlot = try #require(failure.slots.first { $0.slot == .standard })
         let standardReport = try #require(standardSlot.considered.first { $0.ref == shared })
-        #expect(standardReport.estimatedFootprintBytes == Self.generationSlotMarginedFootprint)
+        #expect(standardReport.estimatedFootprintBytes == Self.generationSlotFootprint)
         #expect(standardReport.verdict == .tooLarge)
     }
 
@@ -840,13 +840,13 @@ struct ResolveTests {
         let loader = StubModelLoader(progress: progress)
 
         // budget = recommendedMaxWorkingSetSize.
-        // Embedding (120) + flash (120) + big at window w (ceil(1.2 × (100 +
-        // 400 × w))) fits this budget up to w = 32_768 exactly: at 32_768 the
-        // trio charges 15_729_000 bytes, and one token more adds 480 bytes.
-        // So 32_768 is the largest window that fits.
+        // Embedding (100) + flash (100) + big at window w (100 + 400 × w) fits
+        // this budget up to w = 32_768 exactly: at 32_768 the trio charges
+        // 13_107_500 bytes, and one token more adds 400 bytes. So 32_768 is
+        // the largest window that fits.
         let router = Router(
             cacheDir: dir,
-            probe: StubProbe(chip: "Apple Test", totalRAM: 15_729_000, recommendedMaxWorkingSetSize: 15_729_000),
+            probe: StubProbe(chip: "Apple Test", totalRAM: 13_107_500, recommendedMaxWorkingSetSize: 13_107_500),
             metadataSource: source,
             loader: loader,
             pool: ModelPool()

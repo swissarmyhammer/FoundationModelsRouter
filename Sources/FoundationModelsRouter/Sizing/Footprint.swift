@@ -3,7 +3,7 @@ import Foundation
 /// The raw resident-memory estimate for one model: `weightBytes + kvBytes(context)`.
 ///
 /// The KV cache is fp16 regardless of weight quantization. Overhead is not
-/// modeled here; the fit step applies its own margin.
+/// modeled. The fit step compares this raw estimate with the budget.
 struct Footprint: Sendable, Equatable {
     /// Bytes per cached element (fp16).
     private static let cacheElementBytes: Int64 = 2
