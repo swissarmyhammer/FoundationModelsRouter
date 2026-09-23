@@ -19,8 +19,21 @@ comments:
     - evidence: 6 files — Sources/FoundationModelsRouter/Session/GenerationStall.swift, Session/RoutedSession.swift, Session/RoutedSessionActor.swift, Session/RoutedSessionActorForking.swift, Tests/FoundationModelsRouterTests/GenerationStallDiagnosticTests.swift, Tests/FoundationModelsRouterTests/Helpers/SessionPlumbingAccess.swift. `swift test`: "Test run with 1318 tests in 149 suites passed ... with 2 known issues" (the 2 known issues are in RealModelHarnessTests and BoundedWaitTests, which exist before this card), "Test run with 1 test in 1 suite passed", "Test run with 19 tests in 3 suites passed". `swift build --build-tests --package-path IntegrationTests`: Build complete. `rg defaultGenerationStallReportInterval` finds nothing.
     - next: commit, then review.
   timestamp: 2026-09-23T15:22:15.294286+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m37dx6q89jj5ya7afgsp7x6x
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` on 2826252: 0 findings, 0 confirmed, 0 refuted, 7 attempted, 0 failed. 6 files reviewed; the 2 .kanban files are excluded by .reviewignore.
+    - next: none. The card moved to done.
+
+    ### finish iteration 1 — done
+    - commits: 2826252 feat(session): turn the stall report off until the host installs an interval.
+    - `swift test`: "Test run with 1318 tests in 149 suites passed after 6.392 seconds with 2 known issues" (the known issues are in RealModelHarnessTests and BoundedWaitTests, which exist before this card), "Test run with 1 test in 1 suite passed", "Test run with 19 tests in 3 suites passed".
+    - `swift build --build-tests --package-path IntegrationTests`: Build complete.
+    - Acceptance: `rg defaultGenerationStallReportInterval` finds nothing.
+  timestamp: 2026-09-23T15:24:50.280189+00:00
+position_column: done
+position_ordinal: fffff080
 title: Make the stall report default off; a session reports stalls only when the host installs an interval
 ---
 ## Decision (from the owner, 2026-09-22)
