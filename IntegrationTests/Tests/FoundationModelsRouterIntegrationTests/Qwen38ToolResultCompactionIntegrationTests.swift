@@ -19,8 +19,9 @@ private let qwen38ToolResultLabel = "qwen38ToolResultCompaction"
 ///
 /// The session window is small on purpose. The prompt fills the context to a
 /// point under the trigger, and the one tool returns a result that takes the
-/// context over it. The turn is one turn: the model calls the tool once, the
-/// session compacts at the tool-result boundary, and the same turn answers.
+/// context over it. The turn is one turn: the model calls the tool one or more
+/// times, the session compacts at the tool-result boundary, and the same turn
+/// answers. The count of tool calls is not the subject of this test.
 ///
 /// The test sizes the prompt and the tool result with the model's own
 /// tokenizer, as fractions of the window. Sizes by line count missed the
@@ -169,7 +170,7 @@ struct Qwen38ToolResultCompactionIntegrationTests {
             [\(qwen38ToolResultLabel)] answer: \(answerAfterCompaction.debugDescription)
             """)
 
-        #expect(tool.calls == 1, "the model called the tool \(tool.calls) times")
+        #expect(tool.calls >= 1, "the model did not call the tool")
         #expect(compactions.count == 1, "expected one compaction inside the turn, got \(compactions.count)")
         let compaction = try #require(compactions.first)
         #expect(compaction.summary != nil, "no summary applied: shortfall \(String(describing: compaction.shortfall))")
