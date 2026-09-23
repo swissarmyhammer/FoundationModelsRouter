@@ -40,8 +40,32 @@ comments:
     - RecordedTranscriptCompactionIntegrationTests "the recorded transcript still carries the entry kinds": PASS.
     - RecordedTranscriptCompactionIntegrationTests "one compaction of the recorded transcript": FAIL, at RecordedTranscriptCompactionIntegrationTests.swift:259: `TemplateException("Cannot put tools in the first user message when there's no first user message!")`. The error comes before the summarizer writes output, so the ceiling does not cause it. New task ^9ax82gr records it.
   timestamp: 2026-09-22T21:39:11.794007+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m35gyw4xs2xkmreyve7w4r0g
+  text: |-
+    ### commit — changed
+    - evidence: 31a349f fix(compaction): cap the summarizer call's output at the allowed summary size
+    - next: review HEAD~1..HEAD
+  timestamp: 2026-09-22T21:39:41.853195+00:00
+- actor: claude-code
+  id: 01m35h827yw3k9v3nbgwv00jht
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD`: 0 findings (1 refuted), 8 files reviewed. No prior Review Findings on the card. The task moved to done.
+  timestamp: 2026-09-22T21:44:43.006307+00:00
+- actor: claude-code
+  id: 01m35h8dsmfw1yj4ras64r171m
+  text: |-
+    ### finish iteration 1 — review: clean
+    - implement: changed — 31a349f: `CompactionCall.outputCeiling(for:)` returns `min(allowedSummaryTokens, window − input)`; the runaway-summarizer test; the ceiling tests and the doc comments state the new ceiling
+    - test: green — `swift test`: 1298 unit tests in 145 suites (2 known issues, not new), 1 public-surface test, 83 eval tests: all pass. `swift build --package-path IntegrationTests --build-tests`: Build complete
+    - real-model: fact retention 4/7, answers 4/7, continuity 4/4, smoke fail (3 of 5 pass: the main smoke test and the auto-trigger test pass; the planted-fact test fails because the answer stops at the 332-token ceiling before "Kestrel"; the recorded-transcript compaction fails with a chat-template error, recorded on ^9ax82gr)
+    - commit: 31a349f
+    - review: clean — `review sha HEAD~1..HEAD`: 0 findings. The task is in done.
+    - For the owner: fact retention is under its floor of 5 of 7. Lost seeds: budget-cap-tool-and-owner, sesame-allergy, three-facts-support-escalation. Their summaries hold the small talk and the assistant's acknowledgements, not the planted fact. The floors and the compaction prompt are not changed.
+  timestamp: 2026-09-22T21:44:54.836265+00:00
+position_column: done
+position_ordinal: ffffe880
 title: Cap the summarizer call's output at the allowed summary size; re-measure the real-model tier
 ---
 ## Decision (from the owner, 2026-09-22)

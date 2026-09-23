@@ -59,6 +59,11 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// pending-runs rendering. The session's tokenizer (`counter`) measures
     /// each of them, and the call's input, before the call.
     ///
+    /// The instructions and the protected entries are parts of the live
+    /// context. Each part is counted as its cost inside the live context
+    /// (see ``cost(of:in:wholeTokens:counter:)``), and never as a set by
+    /// itself: a chat template can refuse a set that holds no user message.
+    ///
     /// - Parameters:
     ///   - transcript: The live context to compact.
     ///   - prompt: The compaction prompt.
@@ -80,7 +85,7 @@ public struct Summarization: Sendable, Equatable, Codable {
         let entries = Array(transcript)
         let tokensBefore = try counter.count(transcript)
         let kept = ProtectedToolOutputs(entries: entries, rule: protection).keptEntries
-        let protectedTokens = try Self.count(kept, counter: counter)
+        let protectedTokens = try Self.cost(of: kept, in: entries, wholeTokens: tokensBefore, counter: counter)
         guard tokensBefore > budget.targetTokens else {
             return .finished(
                 CompactionResult(
@@ -94,8 +99,8 @@ public struct Summarization: Sendable, Equatable, Codable {
         }
         let renderingTokens =
             pendingRuns.isEmpty ? 0 : counter.count(CompactionSegment.renderedPendingRuns(pendingRuns))
-        let allowedSummaryTokens =
-            budget.targetTokens - (try Self.count(instructions, counter: counter)) - protectedTokens - renderingTokens
+        let instructionsTokens = try Self.cost(of: instructions, in: entries, wholeTokens: tokensBefore, counter: counter)
+        let allowedSummaryTokens = budget.targetTokens - instructionsTokens - protectedTokens - renderingTokens
         let assembled = Self.assembledPrompt(
             prompt, allowedSummaryTokens: allowedSummaryTokens, content: Self.render(entries))
         let call = CompactionCall(
@@ -153,6 +158,50 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// - Throws: What `counter` throws.
     static func count(_ entries: [Transcript.Entry], counter: any TokenCounter) throws -> Int {
         entries.isEmpty ? 0 : try counter.count(Transcript(entries: entries))
+    }
+
+    /// The cost of `part` inside `whole`, in tokens: the size of `whole` less
+    /// the size of `whole` without the entries of `part`.
+    ///
+    /// The chat template renders `whole` and `whole` without `part`, and
+    /// never `part` by itself. A part of a conversation, such as the
+    /// instructions alone or the tool outputs alone, is not a conversation,
+    /// and a template that requires a user message refuses it. The two sets
+    /// this function renders hold the user messages of `whole`.
+    ///
+    /// - Parameters:
+    ///   - part: The entries to count. Each is an entry of `whole`, found by its id.
+    ///   - whole: The conversation that holds `part`.
+    ///   - wholeTokens: The size of `whole`, in tokens, as `counter` counts it.
+    ///   - counter: The counter the sizes are measured with.
+    /// - Returns: The cost of `part`, or `0` when `part` is empty.
+    /// - Throws: What `counter` throws.
+    static func cost(
+        of part: [Transcript.Entry], in whole: [Transcript.Entry], wholeTokens: Int, counter: any TokenCounter
+    ) throws -> Int {
+        guard !part.isEmpty else { return 0 }
+        let partIds = Set(part.map(\.id))
+        return wholeTokens - (try count(whole.filter { !partIds.contains($0.id) }, counter: counter))
+    }
+
+    /// The entries that stand in for the prompt entry the next model call
+    /// adds after the snapshot: the last prompt entry of `entries`, or none
+    /// when `entries` holds no prompt entry.
+    ///
+    /// A compaction runs before a turn, and the turn's call adds its prompt
+    /// entry after the snapshot. The text of that prompt is not known when
+    /// the compaction runs, so the last prompt the live context holds takes
+    /// its place. The snapshot's summary entry is a response, so the
+    /// snapshot alone holds no user message, and a chat template that
+    /// requires one refuses it.
+    ///
+    /// - Parameter entries: The live context the compaction reads.
+    /// - Returns: The stand-in entries, in order.
+    static func nextTurnStandIn(in entries: [Transcript.Entry]) -> [Transcript.Entry] {
+        entries.last {
+            if case .prompt = $0 { return true }
+            return false
+        }.map { [$0] } ?? []
     }
 
     // MARK: - Rendering
@@ -343,7 +392,13 @@ struct CompactionCall {
 
         // The size counts the boundary entry itself: a first pass with a
         // placeholder size, then the entry that states the measured size.
-        let tokensAfter = try counter.count(Transcript(entries: snapshotEntries(tokensAfter: 0)))
+        // The snapshot is counted as the model receives it: with the prompt
+        // entry the next call adds. The cost of that prompt entry comes off.
+        let placeholder = snapshotEntries(tokensAfter: 0)
+        let conversation = placeholder + Summarization.nextTurnStandIn(in: Array(transcript))
+        let tokensAfter = try Summarization.cost(
+            of: placeholder, in: conversation,
+            wholeTokens: try Summarization.count(conversation, counter: counter), counter: counter)
         guard tokensAfter < tokensBefore else {
             return (transcript, shortfallResult(.summaryDidNotShrinkContext(snapshotTokens: tokensAfter)))
         }

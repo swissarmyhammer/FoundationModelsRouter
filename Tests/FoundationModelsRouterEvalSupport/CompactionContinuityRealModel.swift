@@ -13,7 +13,14 @@ import FoundationModelsRouter
 /// tier names for itself. A later swap of either tier's subject then moves
 /// one constant and one set of floors, and never the other tier's.
 ///
-/// ## Why it is Qwen2.5-3B, and no longer the 1B Llama (task ^mx4jqrn)
+/// ## Why it is Qwen3.8-27B (task ^jhb7x54)
+///
+/// The product runs `mlx-community/Qwen3.8-27B-mxfp4` as its standard model.
+/// On 2026-09-22 the owner decided that both gated compaction tiers measure
+/// that model. Task ^jhb7x54 records the first measurements on this model.
+/// The section below is the history of the earlier subject.
+///
+/// ## Why it was Qwen2.5-3B, and no longer the 1B Llama (task ^mx4jqrn)
 ///
 /// This constant held `mlx-community/Llama-3.2-1B-Instruct-4bit` until task
 /// ^mx4jqrn, and the floors were that model's measured baselines of
@@ -39,17 +46,14 @@ import FoundationModelsRouter
 /// fast continuity budget states its `limit` from ``context``, and that
 /// budget is a value this module owns.
 enum CompactionContinuityRealModel {
-    /// The `mlx-community/Qwen2.5-3B-Instruct-4bit` HuggingFace model
-    /// reference the continuity tier resolves — 1.6 GB on disk, the same
-    /// family as the standard model the redesigned summarization prompt is
-    /// written for, and a real instruct model that writes no `<think>` block,
-    /// so its whole output ceiling goes to the answer. See the type's own doc
-    /// comment for the measured trail behind the choice.
+    /// The `mlx-community/Qwen3.8-27B-mxfp4` HuggingFace model reference
+    /// the continuity tier resolves: the standard model the product runs.
+    /// See the type's own doc comment for the decision (task ^jhb7x54).
     // Only `CompactionContinuityEvalRealSubjectRunner`, in the
     // IntegrationTests package, reads this. Periphery reads only this
     // package's index, thus it finds no reader.
     // periphery:ignore
-    static let ref: ModelRef = "mlx-community/Qwen2.5-3B-Instruct-4bit"
+    static let ref: ModelRef = "mlx-community/Qwen3.8-27B-mxfp4"
 
     /// The maximum context window, in tokens, to load ``ref`` with — passed
     /// straight through to ``LiveModelLoader/loadLLM(ref:slot:context:reporting:)``.
