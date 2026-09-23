@@ -21,12 +21,22 @@ comments:
     - evidence: Sources/.../Session/RoutedSessionActorCompactionYield.swift, RoutedSessionActorTurnExecution.swift, RoutedSessionActorRecording.swift, RoutedSessionActor.swift, RoutedSessionActorTurnGating.swift; Tests/.../CeilingStopCompactionTests.swift, Tests/.../Helpers/CeilingStopCompactionModel.swift
     - next: commit, then review HEAD~1..HEAD.
   timestamp: 2026-09-23T14:32:16.343099+00:00
+- actor: claude-code
+  id: 01m37bkcvjq95dy712xb27dyw8
+  text: |-
+    ### finish iteration 2 — clean; done
+    - implement: changed — 2f9f273 (compact and continue at a ceiling stop over the trigger; 2 unit tests); 71a3deb (the stopped attempt is built once; shared test helpers `compactionResults`, `streamedText`, `Transcript.promptTexts` in Tests/.../Helpers/SessionEventCollection.swift, used by both compaction suites).
+    - test: green — `swift test`: 1312 tests in 149 suites passed (2 designed known issues), 1 test and 83 eval tests passed. `IntegrationTests` builds.
+    - review: iteration 1 findings (5), all checked; iteration 2 `review sha HEAD~1..HEAD`: clean (0 findings).
+    - real-model: not run (per the dispatch).
+    - commits: 2f9f273, 71a3deb (local, not pushed).
+  timestamp: 2026-09-23T14:44:31.730852+00:00
 depends_on:
 - 01M34GC0FRM3175J7XJJ6B24GD
 - 01M34GCP8GJ5ACP29ZH9DDJKJM
 - 01M34H27HEABW92JPTM5E8G7PZ
-position_column: doing
-position_ordinal: '8180'
+position_column: done
+position_ordinal: ffffec80
 title: Compact and continue when an append stops at the token ceiling
 ---
 ## Problem
