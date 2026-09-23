@@ -11,7 +11,7 @@ import Testing
 /// correct: the dataset loads every hand-written task, `subject(from:)` runs
 /// against a fake closure with no real inference, and pointing the same
 /// evaluation at two different `CompactionPrompt`s yields per-prompt
-/// attributable outcomes — mirrors ``CompactionEvaluationHermeticTests``.
+/// attributable outcomes.
 @Suite("CompactionContinuityEvaluation hermetic wiring")
 struct CompactionContinuityEvaluationHermeticTests {
     @Test("the dataset loads at least 5 hand-written task samples")
@@ -107,7 +107,7 @@ struct CompactionContinuityEvaluationHermeticTests {
         // this test's own task — never from a spawned/concurrent task —
         // and both vars are read only after that await returns, so there
         // is never a concurrent access despite crossing the `@Sendable`
-        // closure boundary. Mirrors `CompactionEvaluationHermeticTests.subjectWiresUpAgainstFakeModel`.
+        // closure boundary.
         nonisolated(unsafe) var capturedSteps: [String] = []
         nonisolated(unsafe) var capturedFinalInstruction = ""
 
@@ -251,10 +251,7 @@ struct CompactionContinuityEvaluationHermeticTests {
 /// It measured 30.9 and 29.7 seconds on 2026-08-21 (task ^mx4jqrn). The trail
 /// is what still names the step a run stopped in, when the caller stops it.
 ///
-/// These tests pin the lines that answer that question, and they pin the one
-/// property the two tiers share: ``CompactionEvalProgressLog/linePrefix`` and
-/// ``CompactionEvalProgressLog/makeSecondsText(_:)`` are the same for both, so
-/// one `grep` reads either trail.
+/// These tests pin the lines that answer that question.
 @Suite("CompactionContinuityEvaluation progress lines")
 struct CompactionContinuityEvalProgressLogTests {
     /// Where in its tier the sample ``label`` names stands — the middle, so a
@@ -283,7 +280,7 @@ struct CompactionContinuityEvalProgressLogTests {
     /// The sample's elapsed total at the point a step returned.
     private static let elapsedSeconds = 173.45
 
-    @Test("a continuity line names the task, not a seed, and states its position in the tier")
+    @Test("a continuity line names the task and states its position in the tier")
     func continuityLineNamesTheTaskAndItsPositionInTheTier() {
         let line = CompactionEvalProgressLog.makeStepStartedLine(
             .step,
@@ -295,8 +292,6 @@ struct CompactionContinuityEvalProgressLogTests {
 
         #expect(line.contains("sample=\(Self.sampleOrdinal)/\(Self.tierTaskCount)"))
         #expect(line.contains("task=\(Self.sampleTaskID)"))
-        // The fact-retention tier's own key, which this tier must not borrow.
-        #expect(!line.contains("seed="))
     }
 
     @Test("a step's started line names which step of the task it is, so a hung run says where it stopped")
@@ -360,17 +355,9 @@ struct CompactionContinuityEvalProgressLogTests {
         #expect(line.contains("elapsed=\(CompactionEvalProgressLog.makeSecondsText(Self.elapsedSeconds))"))
     }
 
-    @Test("both gated tiers share one line prefix and one seconds rendering, so one grep reads either")
-    func bothTiersShareOnePrefixAndOneSecondsRendering() {
-        let factRetentionLine = CompactionEvalProgressLog.makeStepReturnedLine(
-            .compaction,
-            sample: CompactionEvalSampleLabel(
-                ordinal: 1, total: 1, fixture: .seed, fixtureID: "probe-seed"),
-            elapsedSeconds: Self.elapsedSeconds,
-            stepSeconds: Self.stepSeconds,
-            detail: ""
-        )
-        let continuityLine = CompactionEvalProgressLog.makeStepReturnedLine(
+    @Test("a step's returned line opens with the line prefix, so one grep reads the trail")
+    func stepReturnedLineOpensWithTheLinePrefix() {
+        let line = CompactionEvalProgressLog.makeStepReturnedLine(
             .step,
             sample: Self.label,
             elapsedSeconds: Self.elapsedSeconds,
@@ -378,10 +365,8 @@ struct CompactionContinuityEvalProgressLogTests {
             detail: ""
         )
 
-        for line in [factRetentionLine, continuityLine] {
-            #expect(line.hasPrefix(CompactionEvalProgressLog.linePrefix))
-            #expect(line.contains("took=\(CompactionEvalProgressLog.makeSecondsText(Self.stepSeconds))"))
-        }
+        #expect(line.hasPrefix(CompactionEvalProgressLog.linePrefix))
+        #expect(line.contains("took=\(CompactionEvalProgressLog.makeSecondsText(Self.stepSeconds))"))
     }
 
     @Test("every task's final instruction resolves to that task, so no line can mislabel the sample it names")
@@ -390,7 +375,7 @@ struct CompactionContinuityEvalProgressLogTests {
         // dictionary. The dictionary is a means; what a run cut short leaves
         // behind is the line, so the line is what has to name the right task. A
         // join that dropped a task renders
-        // `CompactionEvalFactRetentionReport.unmatchedSeedID` here and fails.
+        // `CompactionEvalSampleLabel.unmatchedFixtureID` here and fails.
         let tasks = compactionContinuitySeeds
         let keyed = CompactionContinuitySeed.keyedByFinalInstruction(tasks)
 
@@ -408,7 +393,7 @@ struct CompactionContinuityEvalProgressLogTests {
         }
     }
 
-    @Test("a label whose final instruction matches no task is still named, by the report's own marker")
+    @Test("a label whose final instruction matches no task is still named, by the label's own marker")
     func labelWhoseFinalInstructionMatchesNoTaskIsStillNamed() {
         let tasks = compactionContinuitySeeds
         let label = CompactionEvalSampleLabel(
@@ -418,7 +403,7 @@ struct CompactionContinuityEvalProgressLogTests {
             id: CompactionContinuitySeed.keyedByFinalInstruction(tasks)["an instruction no task asks"]?.id
         )
 
-        #expect(label.fixtureID == CompactionEvalFactRetentionReport.unmatchedSeedID)
+        #expect(label.fixtureID == CompactionEvalSampleLabel.unmatchedFixtureID)
     }
 }
 
@@ -426,8 +411,7 @@ struct CompactionContinuityEvalProgressLogTests {
 
 /// Hermetic proof that the task set the gated continuity tier drives is a
 /// stated subset of the dataset, built from the same fast seeds every other
-/// hermetic test here reads — mirrors `CompactionEvalRepresentativeSubsetTests`
-/// for the fact-retention tier's subset.
+/// hermetic test here reads.
 ///
 /// The tier drives ``compactionContinuityFastTierSeeds`` and no longer every
 /// fast seed, because ten tasks under `CompactionContinuityRealModel` did not

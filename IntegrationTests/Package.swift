@@ -93,11 +93,11 @@ let package = Package(
             ],
             path: "Tests/\(routerPackage)IntegrationTests"
         ),
-        // The evals' real-model tiers. A target of its own rather than suites
-        // inside the target above, because each `.xctest` runs in its own
-        // process and `GatedEvalSerialGate` bounds residency within a process —
-        // one target for the evals keeps that gate covering exactly the suites
-        // it was measured against.
+        // The compaction eval's real-model tier: the continuity tier. It is a
+        // target of its own and not a suite inside the target above. Each
+        // `.xctest` runs in its own process, and `GatedEvalSerialGate` bounds
+        // residency within one process. Thus one target for the eval keeps that
+        // gate over exactly the suites it was measured against.
         .testTarget(
             name: "\(routerPackage)EvalIntegrationTests",
             dependencies: routerProducts + [

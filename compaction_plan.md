@@ -318,7 +318,7 @@ below records the history of the sections that v6 removed.
 `Stated facts` was section 2 of v5 because the other seven have nowhere to put a bare
 fact the user simply told the assistant — a location, a code, a name, a number
 is not a constraint, a decision, a file, an error, or a next step. Measured on
-the gated `CompactionEvaluation` run of 2026-08-09, the seven-section form
+a gated compaction eval run of 2026-08-09, the seven-section form
 compacted "the office printer's spare toner cartridges are kept in the third-floor
 supply closet" into `1. Intent — Inform the assistant about the location of
 spare toner cartridges.` with `2. Constraints & decisions — None.`: it recorded
@@ -399,56 +399,25 @@ their own targets in the nested `IntegrationTests/` package
   contents.
 - **Gated round-trip** — real model: fill, compact, continue, restore,
   continue again.
-- **Evals — Apple's Evaluations framework (WWDC26)**, in a gated
-  `FoundationModelsRouterEvals` target. Compaction quality is exactly the
-  probabilistic property unit tests cannot pin down: *does the model still
-  know what happened before the compaction?*
+- **Evals — Apple's Evaluations framework (WWDC26).** Compaction quality is
+  the probabilistic property that unit tests cannot pin down: *can the
+  session still continue its work after the compaction?*
 
-  `CompactionEvaluation` plants facts in the head of long seed transcripts
-  ("the API key lives in `.env.example`", "we chose tabs over spaces"),
-  compacts with the prompt under test, then asks questions answerable only
-  from compacted content:
+  `CompactionContinuityEvaluation` is the compaction eval. It drives each
+  hand-written task through a real `RoutedSession` that compacts itself with
+  the prompt under test. Then it asks the task's final instruction. The
+  final instruction needs facts from the start of the task. All of its
+  metrics are mechanical: `CompactionOccurred`, `FactsSurvived`,
+  `AnswersCorrect`, `BudgetHeld` and `RecordingComplete`. The machinery is
+  in the `FoundationModelsRouterEvalSupport` target. The hermetic
+  `FoundationModelsRouterEvals` target holds it to its contract with no real
+  model. The gated `FoundationModelsRouterEvalIntegrationTests` target, in
+  the nested `IntegrationTests/` package, runs its continuity tier against a
+  real model.
 
-  ```swift
-  import Evaluations
-
-  struct CompactionEvaluation: Evaluation {
-      // Subject: compact the sample's transcript, resume a session over the
-      // result, ask the sample's question — return answer + CompactionResult.
-      func subject(from sample: ModelSample<PlantedFacts>) async throws
-          -> CompactionOutcome { ... }
-
-      // Dataset: 20–30 hand-written seed transcripts (varied lengths, tool
-      // traffic, multiple planted facts), scaled later with SampleGenerator.
-      var dataset: ArrayLoader<PlantedFacts> { ... }
-
-      var evaluators: Evaluators {
-          let retention = Metric("FactRetention")
-          Evaluator { sample, subject in           // quantitative: mechanical
-              subject.value.answer.contains(sample.expected.fact)
-                  ? retention.passing(rationale: "fact survived the compaction")
-                  : retention.failing(rationale: subject.value.answer)
-          }
-          let budget = Metric("UnderTarget")
-          Evaluator { _, subject in                // quantitative: mechanical
-              subject.value.result.tokensAfter <= subject.value.targetTokens
-                  ? budget.passing() : budget.failing()
-          }
-          ModelJudgeEvaluator(                     // qualitative: judged
-              judge: judgeModel,                   // ≥ as capable as subject
-              dimensions: [
-                  ScoreDimension(description: "Faithfulness — the summary states only facts present in the original conversation", scale: .numeric(fourPoint)),
-                  ScoreDimension(description: "Continuability — next steps and constraints survive well enough to resume work", scale: .numeric(fourPoint)),
-              ])
-      }
-  }
-
-  @Test("Compaction retains pre-compaction facts", .evaluates(evaluation, info: info))
-  func evaluateCompaction() async throws {
-      let result = EvaluationContext.current.result
-      #expect(result.aggregateValue(.mean(of: factRetention)) >= 0.9)
-  }
-  ```
+  Task `^k25d0xm` deleted the earlier fact-retention eval, because the
+  compaction prompt now keeps only the points that matter to go on (task
+  `^dvyt1dx`, `router-default-v6`).
 
   The same evaluation pointed at different `CompactionPrompt`s (the segment
   records the prompt name) is the hill-climbing loop for the default prompt
@@ -528,7 +497,7 @@ their own targets in the nested `IntegrationTests/` package
 7. **Checkpoint-aware reconstruction**: restore view + `fullHistory` view;
    sidecar compaction count.
 8. **`Examples/CompactionDemo`** (§4) + gated round-trip test.
-9. **Evals** (§5): `CompactionEvaluation`, prompt hill-climb.
+9. **Evals** (§5): `CompactionContinuityEvaluation`, prompt hill-climb.
 10. **DocC**: the proactive/reactive patterns as the inline example.
 
 ## 7. Decisions

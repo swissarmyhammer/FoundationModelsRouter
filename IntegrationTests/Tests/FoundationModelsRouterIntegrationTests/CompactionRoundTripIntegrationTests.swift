@@ -16,14 +16,10 @@ import Testing
 /// 541.6 seconds against the 30B — 4.5 times the budget, and the only test of
 /// this target that did not fit.
 ///
-/// `Qwen2.5-3B-Instruct-4bit` is 1.6 GB on disk, and it is the subject the
-/// gated fact-retention eval already measures this exact property against: see
-/// `CompactionEvalRealModel` for the trial order task ^m03heaa ran and for the
-/// 6 of 7 summaries of that tier, and 23 of 24 of the whole-dataset tier task
-/// ^k0d30s4 has since deleted, that this model carried through a compaction on
-/// 2026-08-20. Step 3 below is one instance of that
-/// same property, so the subject the evals measured it on is the subject to
-/// measure it on here.
+/// `Qwen2.5-3B-Instruct-4bit` is 1.6 GB on disk. Step 3 below checks that a
+/// planted fact travels through a compaction. The gated continuity tier
+/// measured that property on this model until task ^jhb7x54 moved the tier to
+/// Qwen3.8-27B. See `CompactionContinuityRealModel` for that history.
 ///
 /// It is the same family as Qwen3.8-27B, the standard model task ^xx02yn6
 /// designed the compaction prompt for, and it writes no `<think>` block, so
@@ -63,8 +59,6 @@ private let compactionRoundTripModel: ModelRef = "mlx-community/Qwen2.5-3B-Instr
 /// - **The 30B model's summary quality.** Step 3 recalls `CRIMSON-77` out of a
 ///   summary a 3B model wrote. That the 3B carries the fact says nothing about
 ///   the 30B, and a fact this subject lost might survive under the larger one.
-///   `CompactionEvalRealModel` records the same trade for the eval tiers, and
-///   the measured baseline this subject is held to there.
 ///
 /// Since task ^pke18c2 the compaction is one summarizer call over the whole
 /// live context. Since task ^35j2zfg the call's output ceiling is the allowed

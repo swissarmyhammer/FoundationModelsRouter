@@ -3,7 +3,7 @@
 /// whose correct completion requires combining the planted facts — answerable
 /// only if the session stayed *continuable* across whatever compactions its own
 /// small budget forced along the way, not merely if a single compaction's summary
-/// happened to be good (``CompactionEvaluation``'s own, narrower concern).
+/// happened to be good.
 ///
 /// Kept as plain authored data rather than one bespoke step sequence per
 /// fixture — the content (facts, final instruction) is what makes each
@@ -21,9 +21,9 @@ struct CompactionContinuityTaskSpec: Sendable {
 
     /// The short, distinctive value from each of ``facts`` a correct
     /// completion of ``finalInstruction`` should contain verbatim — parallel
-    /// to ``facts``. See ``CompactionEvalFixtureSpec/factKeyPhrase``'s own
-    /// doc comment for why a short key phrase, never the whole fact
-    /// sentence, is what gets checked.
+    /// to ``facts``. The metrics check a short key phrase and not the whole
+    /// fact sentence, because a correct answer can put the fact in different
+    /// words around the value.
     let factKeyPhrases: [String]
 
     /// How many filler steps pad the task between the setup steps and
@@ -31,8 +31,7 @@ struct CompactionContinuityTaskSpec: Sendable {
     /// cumulative length, against ``CompactionContinuityEvaluation/budget``,
     /// is impossible to complete without at least one live compaction along the
     /// way (this dataset's own "sized to be impossible without >=1 compaction"
-    /// requirement, distinct from ``CompactionEvalFixtureSpec``'s fixed
-    /// `recentTurnCount`, which only adds turns after the planted facts).
+    /// requirement).
     let fillerStepCount: Int
 
     /// The final step: an instruction whose correct completion requires
@@ -50,8 +49,7 @@ struct CompactionContinuityTaskSpec: Sendable {
 /// A small, reused pool of filler steps padding a task between its setup
 /// steps and its final instruction — content that pads the task but is
 /// never itself the subject of ``CompactionContinuityTaskSpec/finalInstruction``,
-/// so its variety (or lack of it) does not affect dataset diversity. Mirrors
-/// ``compactionEvalFillerTurns``'s own convention.
+/// so its variety (or lack of it) does not affect dataset diversity.
 ///
 /// Each step is a substantial paragraph rather than a one-line aside, and the
 /// length is the point, not decoration: a step's job here is to *consume
@@ -321,8 +319,7 @@ let compactionContinuityRecordedEntriesPerStep = 2
 ///
 /// Kept separate from ``CompactionContinuityOutcome`` (the `Codable` type
 /// that actually travels through the ``Evaluations`` framework's
-/// `ModelSample`/`ModelSubject`) for the same reason
-/// ``CompactionEvalSeed`` is: a sample only needs to carry ``id``, and
+/// `ModelSample`/`ModelSubject`), because a sample only needs to carry ``id``, and
 /// ``CompactionContinuityEvaluation`` looks the full seed back up from its
 /// own in-memory table.
 struct CompactionContinuitySeed: Sendable {
@@ -388,13 +385,11 @@ struct CompactionContinuitySeed: Sendable {
     /// with its task's own final instruction, and
     /// ``CompactionContinuityEvalRealSubjectRunner/run(steps:finalInstruction:prompt:budget:)``
     /// receives that same string, so this is what lets a live progress line name
-    /// the task a sample is running. Mirrors
-    /// ``CompactionEvalSeed/keyedByQuestion(_:)``.
+    /// the task a sample is running.
     ///
     /// Two tasks stating one final instruction would be a fixture defect rather
     /// than something to resolve here, so the first wins — see
-    /// ``Swift/Sequence/keyedByFirst(_:)``, the one body both tiers build their
-    /// join through.
+    /// ``Swift/Sequence/keyedByFirst(_:)``, the one body this join goes through.
     ///
     /// - Parameter tasks: The tasks to key.
     /// - Returns: One entry for each distinct final instruction.
@@ -471,12 +466,9 @@ let compactionContinuityFastPadding = """
 /// it paraphrased two exact identifiers. The instructions state the register,
 /// never any task's facts, so nothing here can leak an answer.
 ///
-/// Deliberately NOT shared with ``compactionEvalRecallInstructions``, the
-/// fact-retention seeds' own header. This tier's `AnswersCorrect` needs every
-/// key phrase word for word in one final answer, so the literal
-/// "state it exactly as it was given earlier" clause is load-bearing here.
-/// The fact-retention tiers measured that same clause AGAINST their metric —
-/// see the other constant for that run.
+/// This tier's `AnswersCorrect` needs every key phrase word for word in one
+/// final answer, so the literal "state it exactly as it was given earlier"
+/// clause is load-bearing here.
 // Only `CompactionContinuityRealModelTests`, in the IntegrationTests package,
 // reads this. Periphery reads only this package's index, thus it finds no
 // reader.
@@ -547,8 +539,8 @@ let compactionContinuityFastSeeds: [CompactionContinuitySeed] = compactionContin
 ///
 /// ## Why four tasks, and not all ten
 ///
-/// Task ^m03heaa moved the fact-retention tiers to Qwen2.5-3B-Instruct and
-/// measured this tier at 219.1 seconds of suite wall clock over all ten fast
+/// Task ^m03heaa moved the gated compaction tiers of that time to
+/// Qwen2.5-3B-Instruct and measured this tier at 219.1 seconds of suite wall clock over all ten fast
 /// seeds under the same model on 2026-08-20 — past task ^k0d30s4's two-minute
 /// budget of that time. The measurement run
 /// of 2026-08-21 over the same ten seeds under the same model, at greedy
@@ -592,9 +584,7 @@ let compactionContinuityFastTierIDs: [String] = [
 ///
 /// Filtered out of ``compactionContinuityFastSeeds`` rather than built from a
 /// second list of specs, so a task the gated tier drives is the same seed every
-/// hermetic sizing proof of the fast seeds reads, under one task id — the
-/// shape ``compactionEvalRepresentativeSeeds`` takes for the fact-retention
-/// tier.
+/// hermetic sizing proof of the fast seeds reads, under one task id.
 let compactionContinuityFastTierSeeds: [CompactionContinuitySeed] = compactionContinuityFastSeeds.filter {
     compactionContinuityFastTierIDs.contains($0.id)
 }

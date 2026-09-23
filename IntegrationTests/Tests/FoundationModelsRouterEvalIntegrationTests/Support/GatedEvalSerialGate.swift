@@ -9,46 +9,40 @@ import Testing
 ///
 /// ## Why a permit, and not one shared container
 ///
-/// Every gated eval suite resolves a real model — the fact-retention tier
-/// ``CompactionEvalRealModel/ref``, the continuity tier
-/// ``CompactionContinuityRealModel/ref`` — each through its own runner
-/// (``CompactionEvalRealSubjectRunner`` and
-/// ``CompactionContinuityEvalRealSubjectRunner``), and each caching its own
-/// container. Distinct `@Suite` types run concurrently by default in Swift
-/// Testing, so before this gate both containers could be resident at once —
-/// two copies of one model in one process, and two suites generating through
-/// them at once. The model was the ~15-20GB 30B when this gate was built;
-/// the double-residency and eviction arguments hold for the small model just
-/// the same.
+/// A gated eval suite resolves a real model through its own runner, and that
+/// runner caches its own container. The continuity tier resolves
+/// ``CompactionContinuityRealModel/ref`` through
+/// ``CompactionContinuityEvalRealSubjectRunner``. Distinct `@Suite` types run
+/// concurrently by default in Swift Testing. Thus, without this gate, two
+/// suites could keep two containers resident at the same time, and generate
+/// through them at the same time. The model was the ~15-20GB 30B when this
+/// gate was built. The double-residency and eviction arguments also apply to
+/// a smaller model.
 ///
-/// Two suites declare one, and an everyday command runs both in one process. A
-/// third declared one until task ^k0d30s4 deleted the whole-dataset
-/// fact-retention tier. The permit bounds any number of them, so a suite added
-/// back is bounded just the same.
+/// One suite declares a permit now: the continuity tier. The permit bounds
+/// any number of suites, so a suite that is added later is also bounded.
 ///
-/// Three mechanisms could close that, and only one of them is available here:
+/// Three mechanisms could prevent double residency. Only one of them is
+/// available here:
 ///
 /// - **One shared container** would make double residency impossible by
-///   construction, and it is rejected anyway — for eviction, not for decoding.
-///   Every suite's `.exclusiveResidentModel(of:)` evicts that suite's own
-///   runner's container as the suite
-///   ends, and a container two suites share belongs to neither: the first suite
-///   to end would evict the model out from under the second, and a container
-///   nobody owns is never evicted at all, so the whole model stays resident
-///   for the whole process.
+///   construction. It is rejected for eviction, not for decoding. Each suite's
+///   `.exclusiveResidentModel(of:)` evicts the container of that suite's own
+///   runner when the suite ends. A container that two suites share belongs to
+///   neither suite. The first suite to end would evict the model while the
+///   second suite uses it. A container that no suite owns is never evicted, so
+///   the whole model stays resident for the whole process.
 ///
-///   Decoding is not a reason to reject a shared container, and it never
-///   separates the two runners. The mode is per call, not per container
-///   (`model-pool.md` §2.5): the container stores no `samplingMode`, and each
-///   `makeSession(...samplingMode:)` call names the strategy the backend it
-///   makes decodes with, so one container can serve two strategies at the
-///   same time. ``CompactionContinuityEvalRealSubjectRunner`` has always pinned
-///   `.greedy`, because the provider default samples at temperature 0.6 from
-///   MLX's clock-seeded process-global PRNG and made that eval's score a coin
-///   flip across runs of identical code, and
-///   ``CompactionEvalRealSubjectRunner`` now pins it for the same measured
-///   reason (task ^xscp198). The gate stays for the GPU: the eviction
-///   argument above is what rejects one shared container, not the mode.
+///   Decoding is not a reason to reject a shared container. The mode is per
+///   call, not per container (`model-pool.md` §2.5). The container stores no
+///   `samplingMode`, and each `makeSession(...samplingMode:)` call names the
+///   strategy of the backend that it makes. Thus one container can serve two
+///   strategies at the same time. ``CompactionContinuityEvalRealSubjectRunner``
+///   pins `.greedy`, because the provider default samples at temperature 0.6
+///   from MLX's clock-seeded process-global PRNG. That default made the eval's
+///   score a coin flip across runs of identical code. The gate stays for the
+///   GPU: the eviction argument above rejects one shared container, not the
+///   mode.
 /// - **`.serialized`** cannot close it at all. Swift Testing's parallelization
 ///   trait serializes *within* a `@Suite`; two different suites still overlap.
 ///   That is the same sentence
@@ -85,10 +79,7 @@ import Testing
 /// `GatedSuiteSerialGate` for those two commands and for the guard that fails a
 /// run whose selectors matched nothing.
 ///
-/// This target held one selector of its own until task ^k0d30s4: the everyday
-/// real-model run stepped the whole-dataset fact-retention tier aside by name,
-/// because that tier measured a superset of this one's seeds. The tier is
-/// deleted, so the everyday run now asks for the nested package whole and skips
+/// The everyday real-model run asks for the nested package whole and skips
 /// nothing.
 ///
 /// ## Relationship to the integration target's gate

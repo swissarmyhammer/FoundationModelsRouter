@@ -5,14 +5,12 @@ import FoundationModelsRouter
 /// The shared ``Metric`` identities every ``CompactionContinuityEvaluation``
 /// instance's ``CompactionContinuityEvaluation/evaluators``,
 /// ``CompactionContinuityEvaluation/aggregateMetrics(using:)``, and the gated
-/// `@Test`'s own assertion all construct independently — see
-/// ``CompactionEvalMetric``'s own doc comment for why every call site must
-/// build an equal ``Metric`` from the same name rather than share a stored
+/// `@Test`'s own assertion all construct independently. Each call site
+/// builds an equal ``Metric`` from the same name. It does not share a stored
 /// instance.
 ///
 /// All five are mechanical (task 4ce0a1k specifies mechanical evaluators
-/// only for this evaluation, unlike ``CompactionEvaluation``'s additional
-/// `ModelJudgeEvaluator` dimensions) — each is computed directly from a
+/// only for this evaluation) — each is computed directly from a
 /// sample/subject pair, never judged.
 enum CompactionContinuityMetric {
     /// Whether the produced ``CompactionContinuityOutcome/finalAnswer``
@@ -38,8 +36,7 @@ enum CompactionContinuityMetric {
 
     /// Whether the produced ``CompactionContinuityOutcome/tokensAfter``
     /// stayed at or under the sample's
-    /// ``CompactionContinuityOutcome/targetTokens`` — mirrors
-    /// ``CompactionEvalMetric/underTarget``.
+    /// ``CompactionContinuityOutcome/targetTokens``.
     static let budgetHeld = Metric("BudgetHeld")
 
     /// Whether the produced ``CompactionContinuityOutcome/recordedEntryCount``
@@ -66,8 +63,7 @@ enum CompactionContinuityEvaluationError: Error {
     case missingExpectedValue
 
     /// A real model loader resolved something other than the expected
-    /// concrete container type — mirrors
-    /// ``CompactionEvaluationError/unexpectedContainerType``.
+    /// concrete container type.
     // Only `CompactionContinuityEvalRealSubjectRunner`, in the
     // IntegrationTests package, uses this case. Periphery reads only this
     // package's index, thus it finds no user.
@@ -196,25 +192,21 @@ let compactionContinuityFastAnswersCorrectFloor = 0.45
 /// session *remained usable and continuable* across whatever compactions its own
 /// budget forced along the way.
 ///
-/// This is a different concern than ``CompactionEvaluation``'s: that
-/// evaluation compacts one static, pre-built transcript exactly once and then
-/// asks a single question of the compaction's own summary quality (fact
-/// retention). This evaluation instead drives a live, multi-turn session
-/// end to end — the dataset is sized so at least one compaction is forced
-/// somewhere in the middle of the task, not staged as the whole point of a
-/// single call — and measures whether the *session itself* stayed
-/// continuable, not just whether one compaction's summary read well.
+/// This evaluation drives a live, multi-turn session end to end — the
+/// dataset is sized so at least one compaction is forced somewhere in the
+/// middle of the task, not staged as the whole point of a single call — and
+/// measures whether the *session itself* stayed continuable, not just
+/// whether one compaction's summary read well.
 ///
-/// ``prompt`` is a stored parameter, not baked into the type, for the exact
-/// same reason ``CompactionEvaluation/prompt`` is: pointing this evaluation
-/// at a different ``CompactionPrompt`` is constructing a different
+/// ``prompt`` is a stored parameter, not baked into the type: pointing this
+/// evaluation at a different ``CompactionPrompt`` is constructing a different
 /// `CompactionContinuityEvaluation` value from a differently-constructed
 /// session, never a different type — "comparing compaction prompts = same
 /// Evaluation, differently constructed sessions" (task 4ce0a1k).
 ///
 /// The actual multi-step session-driving work is injected via ``runSubject``
-/// rather than hardwired to a live model, mirroring
-/// ``CompactionEvaluation/runSubject``'s own hermetic/gated split.
+/// rather than hardwired to a live model, so the hermetic tests drive a fake
+/// closure and the gated tier drives a real model.
 struct CompactionContinuityEvaluation: Evaluation {
     /// The expected/ground-truth sample type the `Evaluation` protocol
     /// requires.
@@ -351,8 +343,7 @@ struct CompactionContinuityEvaluation: Evaluation {
 
     /// Rationale used by every mechanical evaluator below when a sample
     /// unexpectedly carries no `expected` value — extracted so the five
-    /// copies can't drift out of sync. Mirrors
-    /// `CompactionEvaluation.sampleCarriedNoExpectedValueMessage`.
+    /// copies can't drift out of sync.
     private static let sampleCarriedNoExpectedValueMessage = "sample carried no expected value"
 
     /// The five mechanical evaluators this evaluation registers — see

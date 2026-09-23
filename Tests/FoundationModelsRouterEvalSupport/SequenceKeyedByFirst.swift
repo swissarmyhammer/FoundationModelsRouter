@@ -1,22 +1,21 @@
-/// The one way the compaction evals build the join that names the fixture a
-/// running sample is measuring.
+/// The one way the compaction eval builds the join that names the fixture a
+/// running sample measures.
 extension Sequence {
     /// Keys every element by `key`, keeping the FIRST element of any collision.
     ///
-    /// Both gated eval tiers need this join, and each needs it twice over: once
-    /// while a run is still going, so a progress line can name the fixture a
-    /// sample is driving, and once after it ends, so a recorded sample can be
-    /// classified against the fixture it ran. The two readers of one tier must
-    /// never disagree about which fixture a sample ran, which is why each tier
-    /// builds its join in exactly one place —
-    /// ``CompactionEvalSeed/keyedByQuestion(_:)`` and
-    /// ``CompactionContinuitySeed/keyedByFinalInstruction(_:)`` — and why those
-    /// two now share this one body rather than each spelling it out.
+    /// The gated continuity tier needs this join two times. It needs it while a
+    /// run continues, so that a progress line can name the fixture that a
+    /// sample drives. It needs it again after the run ends, so that it can
+    /// classify a recorded sample against the fixture that it ran. These two
+    /// readers must always agree about which fixture a sample ran. Thus the
+    /// tier builds its join in one place only:
+    /// ``CompactionContinuitySeed/keyedByFinalInstruction(_:)``, which uses
+    /// this body.
     ///
-    /// Keeping the first of a collision is what both tiers have always taken. A
-    /// tier whose dataset states one join key twice has a fixture defect, and
-    /// each tier pins its own key as unique in a test of its own; resolving a
-    /// collision here would hide that defect rather than report it.
+    /// The tier always keeps the first element of a collision. When a dataset
+    /// states one join key two times, the fixture has a defect. The tier has a
+    /// test of its own that makes sure that each key is unique. If this method
+    /// resolved a collision, it would hide that defect and not report it.
     ///
     /// - Parameter key: The join key to read off each element.
     /// - Returns: One entry for each distinct key.

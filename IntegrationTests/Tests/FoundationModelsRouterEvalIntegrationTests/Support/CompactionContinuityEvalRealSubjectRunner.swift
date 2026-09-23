@@ -8,9 +8,8 @@ import FoundationModelsRouterTestSupport
 /// Loads ``CompactionContinuityRealModel`` at most once and reuses it across
 /// every sample's ``run(steps:finalInstruction:prompt:budget:)`` call, driving a
 /// real, full ``RoutedSession`` (task 8213x39's auto-compaction opt-in) per
-/// call rather than the bare `Compactor.compact` + one-shot session recipe
-/// ``CompactionEvalRealSubjectRunner`` uses — this evaluation needs the whole
-/// session surface (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:)``,
+/// call. It does not use a bare `Compactor.compact` call and a one-shot
+/// session. This evaluation needs the whole session surface (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:)``,
 /// ``RoutedSession/streamEvents(to:maxTokens:)``, and its durable recording)
 /// to drive a genuinely multi-step, auto-compacting conversation, not just
 /// one compact-then-ask call.
@@ -24,9 +23,9 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
 
     /// The tasks this runner's tier measures, in the order the tier states them.
     ///
-    /// Held here rather than passed beside the runner at every call site, for
-    /// the reason ``CompactionEvalRealSubjectRunner/seeds`` is: one tier cannot
-    /// evaluate one task set while its progress lines are read against another.
+    /// The runner holds them, and the call sites do not pass them. Thus the
+    /// tier cannot evaluate one task set while it reads its progress lines
+    /// against a different task set.
     private nonisolated let tasks: [CompactionContinuitySeed]
 
     /// ``tasks``, keyed by the final instruction a running sample carries — the
@@ -49,15 +48,12 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
     private var startedSampleCount = 0
 
     /// Grants one sample at a time the whole of
-    /// ``run(steps:finalInstruction:prompt:budget:)``, so the tier's dispatch
-    /// shape is a decision this runner holds rather than the framework's
-    /// default — the same permit, for the same reason, as
-    /// ``CompactionEvalRealSubjectRunner``'s own `samplePermit`: task ^23qeprz
-    /// recorded the framework dispatching the same eval code two different
-    /// ways across two runs, and every per-step figure in this runner's trail
-    /// is clean only when no other sample runs beside it. The hermetic
-    /// `CompactionEvalDispatchShapeTests` states what the framework itself
-    /// does today.
+    /// ``run(steps:finalInstruction:prompt:budget:)``. Thus this runner, not
+    /// the framework's default, decides the tier's dispatch shape. Task
+    /// ^23qeprz recorded that the framework dispatched the same eval code in
+    /// two different ways across two runs. Each per-step figure in this
+    /// runner's trail is clean only when no other sample runs at the same
+    /// time.
     private let samplePermit = AsyncSemaphore(value: 1)
 
     /// The system instructions every session this runner vends is created
@@ -346,8 +342,7 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
     }
 
     /// Evicts the resident model, if one was ever loaded — called once by
-    /// `.exclusiveResidentModel(of:)` as the gated suite ends, however it ended,
-    /// mirroring ``CompactionEvalRealSubjectRunner/evictIfLoaded()``.
+    /// `.exclusiveResidentModel(of:)` as the gated suite ends, however it ended.
     func evictIfLoaded() async {
         guard let loaded else { return }
         await loaded.container.model.evict()

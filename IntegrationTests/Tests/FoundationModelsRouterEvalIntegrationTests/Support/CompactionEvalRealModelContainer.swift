@@ -13,30 +13,25 @@ import Tokenizers
 /// a gated eval tier in this target puts its real model into a concrete
 /// ``MLXFoundationModelsContainer``.
 ///
-/// Both real-subject runners carried the same three-step body: build a
-/// ``LiveModelLoader`` over the fork's two Hub macros, load the `.standard`
-/// slot at the tier's own context, then narrow the returned
-/// `any LoadedLLMContainer` to the concrete type. What differed between them
-/// is this function's parameters — since task ^m03heaa that includes the
-/// model itself, because the fact-retention tier resolves
-/// ``CompactionEvalRealModel`` while the continuity tier resolves
-/// ``CompactionContinuityRealModel``. The load's own progress lines were a
-/// difference once, and they are no longer one: both tiers state the load
-/// now (task ^aktsp2e), so this function emits them.
+/// The load has three steps. It builds a ``LiveModelLoader`` over the fork's
+/// two Hub macros. It loads the `.standard` slot at the tier's own context.
+/// Then it narrows the returned `any LoadedLLMContainer` to the concrete
+/// type. The tier gives the model, the context, the mode and the error as
+/// parameters. The continuity tier gives ``CompactionContinuityRealModel``.
+/// This function also emits the two progress lines that state the load
+/// (task ^aktsp2e).
 ///
-/// Caching the loaded container is deliberately NOT here. That is per-runner
-/// state — each runner holds one model resident across its own samples — and it
-/// stays with the runner.
+/// This function does NOT cache the loaded container. The cache is state of
+/// the runner: the runner keeps one model resident across its own samples.
 ///
 /// ## Why the value carries the mode
 ///
 /// The container stores no decoding strategy (`model-pool.md` §2.5, step B).
 /// The mode belongs to the router, and each `makeSession(...samplingMode:)`
-/// call names it. The fact-retention runner calls `makeSession` on the bare
-/// ``container`` and has no router, so this value keeps the mode the tier
-/// passed to ``load(ref:context:samplingMode:unexpectedContainerType:)``, and
-/// the runner passes ``samplingMode`` into each call. The continuity runner
-/// builds a profile and gives the mode to
+/// call names it. Thus this value keeps the mode that the tier gave to
+/// ``load(ref:context:samplingMode:unexpectedContainerType:)``. A runner that
+/// calls `makeSession` on the bare ``container`` passes ``samplingMode`` into
+/// each call. The continuity runner builds a profile and gives the mode to
 /// ``RealModelHarness/make(model:context:container:samplingMode:cacheDir:recordingsDir:routerId:)``.
 ///
 /// ## Why this is not `RealModelContainer`
@@ -75,9 +70,9 @@ struct CompactionEvalRealModelContainer: Sendable {
     /// returned line, and that trail shows that the load did not end.
     ///
     /// - Parameters:
-    ///   - ref: The model to resolve — ``CompactionEvalRealModel/ref`` for the
-    ///     fact-retention tiers, ``CompactionContinuityRealModel/ref`` for the
-    ///     continuity tier. The load's two progress lines name it.
+    ///   - ref: The model to resolve. The continuity tier gives
+    ///     ``CompactionContinuityRealModel/ref``. The load's two progress lines
+    ///     name it.
     ///   - context: The maximum context window, in tokens, to load `ref`
     ///     with — the matching `context` constant beside each `ref`.
     ///   - samplingMode: The decoding strategy the tier pins. The value is
@@ -93,11 +88,10 @@ struct CompactionEvalRealModelContainer: Sendable {
     ///     randomness at all, which is what lets a red run be attributed to the
     ///     change under test.
     ///   - unexpectedContainerType: The error to throw when the loader resolves
-    ///     something other than an ``MLXFoundationModelsContainer``. Each tier
-    ///     owns a domain error of its own — see
-    ///     ``CompactionEvaluationError/unexpectedContainerType`` and
-    ///     ``CompactionContinuityEvaluationError/unexpectedContainerType`` — and
-    ///     passing one in keeps both cases with a thrower.
+    ///     something other than an ``MLXFoundationModelsContainer``. The tier
+    ///     owns this domain error. The continuity tier gives
+    ///     ``CompactionContinuityEvaluationError/unexpectedContainerType``.
+    ///     Because the tier gives the error, that case has a thrower.
     /// - Returns: The loaded container and the pinned mode.
     /// - Throws: `unexpectedContainerType` if what was loaded is not an
     ///   ``MLXFoundationModelsContainer``, or whatever

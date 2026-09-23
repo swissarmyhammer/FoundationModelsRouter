@@ -275,26 +275,23 @@ let package = Package(
             path: "Tools/RecordCompactionFixture",
             exclude: ["README.md"]
         ),
-        // The compaction evals' machinery (compaction_plan.md §5):
-        // `CompactionEvaluation` plants facts in the head of hand-written seed
-        // transcripts, compacts with the `CompactionPrompt` under test, resumes a
-        // session over the result, and asks a question answerable only from the
-        // compacted content — plus the datasets, the fact-retention report, the
-        // progress log and the measured tier limits.
+        // The compaction eval's machinery (compaction_plan.md §5):
+        // `CompactionContinuityEvaluation` drives each hand-written task through
+        // a session that compacts itself with the `CompactionPrompt` under
+        // test, then asks the task's final instruction and scores the answer.
+        // The target also holds the continuity dataset, the real model the
+        // gated tier resolves, the progress log and the measured tier floors.
         //
-        // A plain `.target` rather than part of either eval test target —
-        // the hermetic `FoundationModelsRouterEvals` below, or the real-model
-        // `FoundationModelsRouterEvalIntegrationTests` in the nested
-        // `IntegrationTests/` package — because BOTH of them read it: the
-        // hermetic tests hold the machinery to
-        // its own contract, and the real-model tier runs it against a model.
-        // SwiftPM refuses to share a source file between two targets
-        // (`has overlapping sources`), and a `.testTarget` that another target
-        // depends on is compiled by `swift build -c release`, where a
-        // `@testable import` cannot resolve — so a plain target is the only
-        // shape that serves both. Nothing here uses `@testable`. The one router
-        // symbol it needs beyond the public surface, the `CompactionSummarizer`
-        // protocol, is `package`, which stops at this package's own boundary.
+        // It is a plain `.target` and not part of an eval test target, because
+        // two targets read it: the hermetic `FoundationModelsRouterEvals` below
+        // and the real-model `FoundationModelsRouterEvalIntegrationTests` in the
+        // nested `IntegrationTests/` package. The hermetic tests hold the
+        // machinery to its own contract, and the real-model tier runs it against
+        // a model. SwiftPM refuses to share a source file between two targets
+        // (`has overlapping sources`). `swift build -c release` compiles a
+        // `.testTarget` that another target depends on, and a `@testable
+        // import` cannot resolve there. Thus a plain target is the only shape
+        // that serves both. Nothing here uses `@testable`.
         //
         // `import Evaluations` needs no extra linker/search-path configuration:
         // the toolchain's test-only framework search path reaches a plain
@@ -306,12 +303,11 @@ let package = Package(
             dependencies: [.target(name: packageName)],
             path: "Tests/\(packageName)EvalSupport"
         ),
-        // The evals' hermetic tests: they hold the machinery above to its own
-        // contract — the dataset's shape, the report's classification, the
-        // progress lines, the seed sizing and the tier thresholds — with no real
-        // model anywhere. They run on every `swift test`. TestSupport is a
-        // dependency for `ConcurrencyPeakObserver`, the one concurrency counter
-        // every suite that must measure overlap uses.
+        // The eval's hermetic tests: they hold the machinery above to its own
+        // contract — the dataset's shape, the metrics, the progress lines, the
+        // seed sizing and the tier's task set — with no real model anywhere.
+        // They run on every `swift test`. TestSupport is a dependency for
+        // `CharacterTokenCounter`, which the seed sizing tests use.
         .testTarget(
             name: "FoundationModelsRouterEvals",
             dependencies: [

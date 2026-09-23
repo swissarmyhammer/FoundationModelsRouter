@@ -5,24 +5,12 @@ import FoundationModelsRouter
 /// Which real model call a progress line reports.
 ///
 /// The raw value is the word a line states, so the whole vocabulary lives in one
-/// declaration rather than in a branch for each step. The two gated tiers spend
-/// their time in differently-shaped calls, and both vocabularies live here so
-/// one `grep` reads either trail.
+/// declaration rather than in a branch for each step.
 ///
-/// ``compaction`` and ``answer`` are the fact-retention tier's pair: a sample there
-/// pays for exactly two generations, and they are the only two places it can
-/// spend half an hour. ``step`` and ``finalInstruction`` are the continuity
-/// tier's: a sample there drives a LIST of steps through one live session before
-/// it asks its final instruction, so it pays for as many generations as its task
-/// has steps (task ^aktsp2e).
+/// A sample of the continuity tier drives a LIST of steps through one live
+/// session before it asks its final instruction, so it pays for as many
+/// generations as its task has steps (task ^aktsp2e).
 enum CompactionEvalProgressStep: String, Sendable, CaseIterable {
-    /// ``Compactor/compact(_:prompt:budget:counter:summarizers:summarization:pendingRuns:protection:abandoning:)``
-    /// over the seed's entries, its one summarizer call included.
-    case compaction
-
-    /// The resumed session's answer to the seed's question.
-    case answer
-
     /// One of the continuity task's steps — a setup step planting a fact, or a
     /// filler step pushing the session toward its budget's trigger — driven
     /// through the live session.
@@ -35,13 +23,8 @@ enum CompactionEvalProgressStep: String, Sendable, CaseIterable {
 
 /// What a tier calls the fixture one of its samples ran.
 ///
-/// The two tiers draw from differently-shaped fixtures, and a reader who greps
-/// one trail has to know which one a line names. The raw value is the key a line
-/// states in front of the id.
+/// The raw value is the key a line states in front of the id.
 enum CompactionEvalFixtureKind: String, Sendable {
-    /// A ``CompactionEvalSeed`` of the fact-retention tier.
-    case seed
-
     /// A ``CompactionContinuitySeed`` of the continuity tier — that tier's
     /// dataset, its evaluation and every one of its metrics call one a task.
     case task
@@ -53,6 +36,10 @@ enum CompactionEvalFixtureKind: String, Sendable {
 /// so a line has to name the sample without the table that never printed: which
 /// fixture it ran, and how far into the tier it stood when it stopped.
 struct CompactionEvalSampleLabel: Sendable, Equatable {
+    /// The ``fixtureID`` stamped on a sample whose join key matched no fixture
+    /// of the tier.
+    static let unmatchedFixtureID = "<unmatched>"
+
     /// Where this sample stands in the tier, counting from one in the order the
     /// samples started.
     let ordinal: Int
@@ -64,9 +51,8 @@ struct CompactionEvalSampleLabel: Sendable, Equatable {
     /// What this sample's tier calls the fixture it ran.
     let fixture: CompactionEvalFixtureKind
 
-    /// The ``CompactionEvalSeed/id`` or ``CompactionContinuitySeed/id`` this
-    /// sample ran, or ``CompactionEvalFactRetentionReport/unmatchedSeedID`` when
-    /// it matched no fixture of the tier.
+    /// The ``CompactionContinuitySeed/id`` this sample ran, or
+    /// ``unmatchedFixtureID`` when it matched no fixture of the tier.
     let fixtureID: String
 
     /// This label as a progress line states it.
@@ -79,11 +65,10 @@ extension CompactionEvalSampleLabel {
     /// Labels a sample whose tier has already resolved the fixture it is
     /// running.
     ///
-    /// Each tier joins a running sample back to its fixture on a key the sample
-    /// already carries — the question for the fact-retention tier (see
-    /// ``CompactionEvalFactRetentionReport/findings(for:seeds:)``), the final
-    /// instruction for the continuity tier — so the lookup stays with the runner
-    /// that owns the fixtures, and this initializer takes the answer.
+    /// The tier joins a running sample back to its fixture on a key the sample
+    /// already carries — the final instruction for the continuity tier — so the
+    /// lookup stays with the runner that owns the fixtures, and this initializer
+    /// takes the answer.
     ///
     /// - Parameters:
     ///   - ordinal: Where this sample stands in the tier, counting from one.
@@ -96,7 +81,7 @@ extension CompactionEvalSampleLabel {
             ordinal: ordinal,
             total: total,
             fixture: fixture,
-            fixtureID: id ?? CompactionEvalFactRetentionReport.unmatchedSeedID
+            fixtureID: id ?? Self.unmatchedFixtureID
         )
     }
 }
@@ -106,17 +91,16 @@ extension CompactionEvalSampleLabel {
 /// The tiers cost half an hour each and printed nothing until they ended, so a
 /// run that hit its own time limit reported one bit: "not finished". The gated
 /// run of 2026-08-18 measured 0 of 7 seeds that way (task ^h2xxsse), and no
-/// reading of its output could say whether the model load, one compaction, or one
-/// answering turn had taken the time — three explanations that each cost
-/// another half-hour run to tell apart.
+/// reading of its output could say whether the model load or one generation
+/// had taken the time — explanations that each cost another half-hour run to
+/// tell apart.
 ///
 /// Every line this renders is one fact stated as it happens: the model load
 /// timed apart from the samples, and each sample naming the step it entered and
 /// the step it left. A run cut short then stops mid-trail, and the last line it
 /// wrote names exactly where.
 ///
-/// Kept as functions over plain values, beside
-/// ``CompactionEvalFactRetentionReport``, so the trail a gated run is read from
+/// Kept as functions over plain values, so the trail a gated run is read from
 /// is itself covered by hermetic tests that need no model.
 enum CompactionEvalProgressLog {
     /// The marker every progress line opens with, so one `grep` separates the
@@ -133,7 +117,7 @@ enum CompactionEvalProgressLog {
     ///
     /// Deliberately not a ``CompactionEvalProgressStep``: the load happens once
     /// for a whole tier, on the first sample's own call, and stating it as a
-    /// step of that sample would charge one seed for work every seed shares.
+    /// step of that sample would charge one sample for work every sample shares.
     static let modelLoadStepName = "model load"
 
     /// How many places after the decimal point ``makeSecondsText(_:)`` states.
@@ -173,8 +157,8 @@ enum CompactionEvalProgressLog {
     /// Renders the line stating that one sample has entered a step.
     ///
     /// It carries no duration for the step, because the step has not finished.
-    /// This is the line a hung compaction or a hung answering turn leaves behind as
-    /// the last word of a run.
+    /// This is the line a hung generation leaves behind as the last word of a
+    /// run.
     ///
     /// - Parameters:
     ///   - step: The step the sample entered.
@@ -215,8 +199,7 @@ enum CompactionEvalProgressLog {
     ///   - sample: The sample leaving it.
     ///   - elapsedSeconds: How long the sample has run so far.
     ///   - stepSeconds: How long this step alone took.
-    ///   - detail: What the step produced — ``makeCompactionDetail(stagesApplied:summarizerCalls:)``
-    ///     or ``makeAnswerDetail(answer:)``.
+    ///   - detail: What the step produced — ``makeDrivenStepDetail(reply:compactionCount:)``.
     /// - Returns: The line.
     static func makeStepReturnedLine(
         _ step: CompactionEvalProgressStep,
@@ -229,41 +212,6 @@ enum CompactionEvalProgressLog {
             + " elapsed=\(makeSecondsText(elapsedSeconds))"
             + " took=\(makeSecondsText(stepSeconds))"
             + " \(detail)"
-    }
-
-    /// Renders what a compaction produced, for the compaction's own returned line.
-    ///
-    /// The three facts that separate the shapes a compaction can take while it is
-    /// still the only thing that ran: the stages it applied (empty for a compaction
-    /// `Compactor.compact` discarded), how many round trips its summarizer
-    /// made, and how large the summarizer's last answer was. The full
-    /// measurement of a discarded compaction stays in the table — see
-    /// ``CompactionEvalFactRetentionReport/discardedSummaryMarker``.
-    ///
-    /// - Parameters:
-    ///   - stagesApplied: The compaction's ``CompactionResult/stagesApplied``.
-    ///   - summarizerCalls: Every summarizer call the compaction made, in call order.
-    /// - Returns: The detail text.
-    static func makeCompactionDetail(
-        stagesApplied: [String],
-        summarizerCalls: [CompactionEvalSummarizerCall]
-    ) -> String {
-        // The LAST call, for the same reason
-        // `CompactionEvalSampleDiagnostic.discardedSummary` reads it: a
-        // compaction makes one call, and its answer is the one the boundary
-        // entry carries.
-        let summarizerBytes = summarizerCalls.last?.answer.utf8.count ?? 0
-        return "stages=\(stagesApplied.joined(separator: ","))"
-            + " summarizerCalls=\(summarizerCalls.count)"
-            + " summarizerBytes=\(summarizerBytes)"
-    }
-
-    /// Renders what an answering turn produced, for its own returned line.
-    ///
-    /// - Parameter answer: The resumed session's answer.
-    /// - Returns: The detail text.
-    static func makeAnswerDetail(answer: String) -> String {
-        "answerBytes=\(answer.utf8.count)"
     }
 
     /// Renders where in its task a continuity sample's step stands, for that

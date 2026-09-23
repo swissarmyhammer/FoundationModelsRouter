@@ -1,5 +1,5 @@
 /// The one type both sides of ``CompactionContinuityEvaluation``'s dataset
-/// use — mirrors ``CompactionEvaluationOutcome``'s own split:
+/// use. The type has two sides:
 ///
 /// - As a sample's `expected` (``CompactionContinuityEvaluation/dataset``):
 ///   only the ground-truth fields are populated (``taskID``,
@@ -31,8 +31,7 @@ struct CompactionContinuityOutcome: Codable, Sendable {
 
     /// Ground truth: the token ceiling ``CompactionContinuityMetric/budgetHeld``
     /// checks the produced ``tokensAfter`` against — `budget.limit *
-    /// budget.target`, rounded, the same arithmetic
-    /// ``CompactionEvaluationOutcome/targetTokens`` uses.
+    /// budget.target`, rounded.
     var targetTokens: Int
 
     /// Ground truth: the minimum number of recorded transcript entries a
@@ -45,7 +44,7 @@ struct CompactionContinuityOutcome: Codable, Sendable {
     /// stamped from ``CompactionContinuityEvaluation/prompt`` on every
     /// sample, so a run's produced outcome is always attributable to the
     /// exact prompt that produced it (compaction_plan.md §5's hill-climbing
-    /// loop, mirrored here for continuity rather than fact-retention quality).
+    /// loop, applied here to continuity).
     var promptName: String
 
     /// Produced: the resumed session's answer to the task's final

@@ -1,22 +1,16 @@
 import FoundationModelsRouter
 
-/// The real `mlx-community` model the gated CONTINUITY tier resolves against
-/// actual hardware — deliberately its own constant, even on a day it names
-/// the same model as ``CompactionEvalRealModel``.
+/// The real `mlx-community` model that the gated CONTINUITY tier resolves on
+/// actual hardware.
 ///
-/// ## Why it is its own constant
-///
-/// The continuity tier and the two fact-retention tiers shared one constant
-/// until task ^m03heaa moved the fact-retention canary to
-/// `mlx-community/Qwen2.5-3B-Instruct-4bit` and split this one off, so that
-/// each tier's floors and wall clock stay measured against a subject that
-/// tier names for itself. A later swap of either tier's subject then moves
-/// one constant and one set of floors, and never the other tier's.
+/// The tier's floors and wall clock are measured against this subject. When
+/// the tier changes its subject, it changes this constant and its floors
+/// together.
 ///
 /// ## Why it is Qwen3.8-27B (task ^jhb7x54)
 ///
 /// The product runs `mlx-community/Qwen3.8-27B-mxfp4` as its standard model.
-/// On 2026-09-22 the owner decided that both gated compaction tiers measure
+/// On 2026-09-22 the owner decided that the gated compaction eval measures
 /// that model. Task ^jhb7x54 records the first measurements on this model.
 /// The section below is the history of the earlier subject.
 ///
@@ -26,8 +20,8 @@ import FoundationModelsRouter
 /// ^mx4jqrn, and the floors were that model's measured baselines of
 /// 2026-08-19: 7 of 10 tasks with at least one fact in the answer and 4 of
 /// 10 with both. Task ^xx02yn6's redesign of the summarization prompt for
-/// Qwen3.8-27B took the 1B the other way, as it took the fact-retention
-/// canary: measured on 2026-08-20 under the redesigned prompt, the 1B
+/// Qwen3.8-27B made the 1B worse. Measured on 2026-08-20 under the
+/// redesigned prompt, the 1B
 /// answered 1 of 10 tasks with at least one fact and 0 of 10 with both, so
 /// the tier was red on `main` against floors of 0.6 and 0.3. Under Qwen2.5-3B
 /// the same ten tasks kept their floors, but cost 219.1 seconds of suite wall
@@ -39,12 +33,10 @@ import FoundationModelsRouter
 /// ``compactionContinuityFastFactsSurvivedFloor`` and
 /// ``compactionContinuityFastAnswersCorrectFloor``. Lowering the floors to the
 /// 1B's 0.1 and 0.0 was refused: a floor that low lets a change break almost
-/// every task and still pass, the defect ^m03heaa removed on the
-/// fact-retention side.
+/// every task and still pass.
 ///
-/// It stands beside ``CompactionEvalRealModel`` in this module because the
-/// fast continuity budget states its `limit` from ``context``, and that
-/// budget is a value this module owns.
+/// This type is in this module because the fast continuity budget states its
+/// `limit` from ``context``, and this module owns that budget.
 enum CompactionContinuityRealModel {
     /// The `mlx-community/Qwen3.8-27B-mxfp4` HuggingFace model reference
     /// the continuity tier resolves: the standard model the product runs.

@@ -5,9 +5,8 @@ import Testing
 @testable import FoundationModelsRouterEvalSupport
 
 /// Loads ``CompactionContinuityEvalRealSubjectRunner`` at most once for the
-/// real-model `@Test` below — declared at file scope for the same reason
-/// `compactionEvalRealSubjectRunner` is: it must be referenceable from the
-/// synchronously-evaluated `.evaluates(...)` trait argument.
+/// real-model `@Test` below. It is declared at file scope because the
+/// synchronously-evaluated `.evaluates(...)` trait argument must refer to it.
 ///
 /// The runner drives ``compactionContinuityFastTierSeeds`` under
 /// ``compactionContinuityFastInstructions`` — the gated tier's own task set
@@ -85,8 +84,9 @@ private let compactionContinuityEvalRealEvaluation = CompactionContinuityEvaluat
 /// target and the command that leaves it out.
 ///
 /// `.exclusiveResidentModel(of:)` holds this suite's real model exclusive
-/// against the other real-model eval suites, evicts it when the suite ends,
-/// and prints the suite's own wall clock, so each run states its measurement.
+/// against any other real-model eval suite in this target, evicts it when the
+/// suite ends, and prints the suite's own wall clock, so each run states its
+/// measurement.
 /// The suite has no time limit. A run ends when it ends, or when the caller
 /// stops it. Measured on 2026-08-21 with Qwen2.5-3B already in the Hugging
 /// Face cache, over the four tasks: 30.9 and 29.7 seconds of suite wall clock
