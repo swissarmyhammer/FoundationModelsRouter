@@ -75,17 +75,6 @@ struct ToolResultCompactionModel: LanguageModel {
             self.configuration = configuration
         }
 
-        /// The text of every `.prompt` entry of `transcript`, in order.
-        private static func promptTexts(in transcript: Transcript) -> [String] {
-            transcript.compactMap { entry in
-                guard case .prompt(let prompt) = entry else { return nil }
-                return prompt.segments.compactMap { segment -> String? in
-                    guard case .text(let text) = segment else { return nil }
-                    return text.content
-                }.joined()
-            }
-        }
-
         /// Whether `transcript` holds a `.toolCalls` entry.
         private static func holdsToolCall(in transcript: Transcript) -> Bool {
             transcript.contains { entry in
@@ -108,7 +97,7 @@ struct ToolResultCompactionModel: LanguageModel {
             model: ToolResultCompactionModel,
             streamingInto channel: LanguageModelExecutorGenerationChannel
         ) async throws {
-            let prompts = Self.promptTexts(in: request.transcript)
+            let prompts = request.transcript.promptTexts
             if prompts.contains(where: { $0.contains(CompactionPrompt.default.text) }) {
                 await Self.send(text: Self.summaryText, entryID: "summary", usage: Self.smallCall, into: channel)
                 return

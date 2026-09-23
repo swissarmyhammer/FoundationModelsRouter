@@ -47,40 +47,26 @@ struct CeilingStopCompactionTests {
 
     /// Builds a router and a session with ``budget`` over a
     /// ``CeilingStopCompactionModel`` whose cut call writes `cutLength`
-    /// characters and reports `cutUsage`.
+    /// characters and reports `cutUsage`, and runs one streamed turn with
+    /// ``ceiling``.
     ///
     /// - Parameters:
     ///   - cutLength: The size of the cut text, in characters.
     ///   - cutUsage: The usage the cut call reports.
-    /// - Returns: The session and the temp directory the router cached into.
-    private static func makeSession(
+    /// - Returns: The events of the turn, in order.
+    private static func turnEvents(
         cutLength: Int, cutUsage: MeteredGenerationCall
-    ) async throws -> (session: RoutedSession, directory: URL) {
+    ) async throws -> [SessionEvent] {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: directory) }
         let model = CeilingStopCompactionModel(cutText: cutText(length: cutLength), cutUsage: cutUsage)
-        let container = LiveBackendContainer(model: model)
         let router = RouterTestFixtures.makeRouter(
             cacheDir: directory, recorder: InMemoryRecorder(),
-            loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension))
+            loader: StubModelLoader(
+                container: LiveBackendContainer(model: model), dimension: RouterTestFixtures.stubDimension))
         let profile = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        return (profile.standard.makeSession(tools: [], budget: budget), directory)
-    }
-
-    /// Runs one streamed turn with ``ceiling`` and collects its events.
-    private static func streamedTurn(on session: RoutedSession) async throws -> [SessionEvent] {
-        var events: [SessionEvent] = []
-        for try await event in await session.streamEvents(to: prompt, maxTokens: ceiling) {
-            events.append(event)
-        }
-        return events
-    }
-
-    /// The compaction results among `events`, in order.
-    private static func compactions(in events: [SessionEvent]) -> [CompactionResult] {
-        events.compactMap { event in
-            guard case .compaction(let result) = event else { return nil }
-            return result
-        }
+        let session = profile.standard.makeSession(tools: [], budget: budget)
+        return try await collect(session.streamEvents(to: prompt, maxTokens: ceiling))
     }
 
     /// The finish reason of each ended attempt among `events`, in order.
@@ -99,43 +85,27 @@ struct CeilingStopCompactionTests {
         }.count
     }
 
-    /// The text the turn streamed, joined.
-    private static func streamedText(in events: [SessionEvent]) -> String {
-        events.compactMap { event in
-            guard case .textDelta(let text) = event else { return nil }
-            return text
-        }.joined()
-    }
-
     @Test("a ceiling stop over the trigger: one compaction, one more attempt, and one turn that answers")
     func ceilingStopOverTheTriggerCompactsAndGoesOn() async throws {
-        let (session, directory) = try await Self.makeSession(
-            cutLength: Self.largeCutLength, cutUsage: Self.overTriggerUsage)
-        defer { try? FileManager.default.removeItem(at: directory) }
+        let events = try await Self.turnEvents(cutLength: Self.largeCutLength, cutUsage: Self.overTriggerUsage)
 
-        let events = try await Self.streamedTurn(on: session)
-
-        let compactions = Self.compactions(in: events)
+        let compactions = events.compactionResults
         #expect(compactions.count == 1)
         let compaction = try #require(compactions.first)
         #expect(compaction.summaryEntryId != nil)
         #expect(compaction.tokensAfter < compaction.tokensBefore)
         #expect(Self.finishReasons(in: events) == [.maxTokens, .completed])
         #expect(Self.turnStarts(in: events) == 1)
-        #expect(Self.streamedText(in: events).contains(CeilingStopCompactionModel.Executor.answerText))
+        #expect(events.streamedText.contains(CeilingStopCompactionModel.Executor.answerText))
     }
 
     @Test("a ceiling stop under the trigger: no compaction, and the turn ends as truncated")
     func ceilingStopUnderTheTriggerEndsTruncated() async throws {
-        let (session, directory) = try await Self.makeSession(
-            cutLength: Self.smallCutLength, cutUsage: Self.underTriggerUsage)
-        defer { try? FileManager.default.removeItem(at: directory) }
+        let events = try await Self.turnEvents(cutLength: Self.smallCutLength, cutUsage: Self.underTriggerUsage)
 
-        let events = try await Self.streamedTurn(on: session)
-
-        #expect(Self.compactions(in: events).isEmpty)
+        #expect(events.compactionResults.isEmpty)
         #expect(Self.finishReasons(in: events) == [.maxTokens])
         #expect(Self.turnStarts(in: events) == 1)
-        #expect(!Self.streamedText(in: events).contains(CeilingStopCompactionModel.Executor.answerText))
+        #expect(!events.streamedText.contains(CeilingStopCompactionModel.Executor.answerText))
     }
 }

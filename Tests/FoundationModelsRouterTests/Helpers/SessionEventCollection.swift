@@ -1,3 +1,5 @@
+import FoundationModels
+
 @testable import FoundationModelsRouter
 
 /// Drains `stream` into an array, in order.
@@ -37,6 +39,37 @@ func collect(_ stream: AsyncStream<SessionEvent>) async -> [SessionEvent] {
 /// - Throws: Whatever the turn throws.
 func collectEvents(_ session: RoutedSession, prompt: String) async throws -> [SessionEvent] {
     try await collect(session.streamEvents(to: prompt))
+}
+
+extension Sequence<SessionEvent> {
+    /// The compaction results among these events, in order.
+    var compactionResults: [CompactionResult] {
+        compactMap { event in
+            guard case .compaction(let result) = event else { return nil }
+            return result
+        }
+    }
+
+    /// The text these events streamed, joined.
+    var streamedText: String {
+        compactMap { event in
+            guard case .textDelta(let text) = event else { return nil }
+            return text
+        }.joined()
+    }
+}
+
+extension Transcript {
+    /// The text of every `.prompt` entry of this transcript, in order.
+    var promptTexts: [String] {
+        compactMap { entry in
+            guard case .prompt(let prompt) = entry else { return nil }
+            return prompt.segments.compactMap { segment -> String? in
+                guard case .text(let text) = segment else { return nil }
+                return text.content
+            }.joined()
+        }
+    }
 }
 
 extension SessionEvent {

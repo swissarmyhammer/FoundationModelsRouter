@@ -50,3 +50,16 @@ A ceiling stop returns from the generate call. It does not throw. Thus the sessi
 - The same script under the trigger: no compaction, the turn ends as truncated as today.
 
 Requested by foundationmodelsacpagent-08. #compaction
+
+## Review Findings (2026-09-23 09:32)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 7 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnExecution.swift:425` `duplication/duplication` — The `StoppedAttempt` initialization at lines 425–430 is verbatim identical to the one at lines 405–410. When StoppedAttempt's fields change, both copies must be updated in lockstep or they drift out of sync. Extract a private helper method in this function to construct the `StoppedAttempt` once and call it from line 425. This removes the duplication and ensures future struct changes touch only one place.
+- [x] `Tests/FoundationModelsRouterTests/CeilingStopCompactionTests.swift:70` `reuse/reuse` — Test helper function `streamedTurn` reimplements an identical function already present in `ToolResultCompactionTests.swift:82`. Extract to shared test utilities or call the existing implementation instead. Extract `streamedTurn` and other identical test helpers (`compactions`, `streamedText`) to a shared test utility module, or create a test base protocol that both test suites conform to. Alternatively, both test suites can use the existing implementations.
+- [x] `Tests/FoundationModelsRouterTests/CeilingStopCompactionTests.swift:79` `reuse/reuse` — Test helper function `compactions` reimplements an identical function already present in `ToolResultCompactionTests.swift:91`. This duplicates filtering logic across test suites. Deduplicate by extracting to shared test utilities or reusing from the existing test suite.
+- [x] `Tests/FoundationModelsRouterTests/CeilingStopCompactionTests.swift:103` `reuse/reuse` — Test helper function `streamedText` reimplements an identical function already present in `ToolResultCompactionTests.swift:99`. This duplicates text joining logic across test suites. Deduplicate by extracting to shared test utilities or reusing from the existing test suite.
+- [x] `Tests/FoundationModelsRouterTests/Helpers/CeilingStopCompactionModel.swift:74` `reuse/reuse` — Test helper function `promptTexts` reimplements an identical function already present in `ToolResultCompactionModel.swift:78`. This duplicates transcript prompt extraction logic across test model implementations. Extract `promptTexts` to a shared test utility module or protocol extension, or have both test models delegate to the existing implementation.

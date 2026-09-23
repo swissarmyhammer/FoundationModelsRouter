@@ -81,27 +81,7 @@ struct ToolResultCompactionTests {
 
     /// Runs one streamed turn and collects its events.
     private static func streamedTurn(on session: RoutedSession) async throws -> [SessionEvent] {
-        var events: [SessionEvent] = []
-        for try await event in await session.streamEvents(to: prompt, maxTokens: nil) {
-            events.append(event)
-        }
-        return events
-    }
-
-    /// The compaction results among `events`, in order.
-    private static func compactions(in events: [SessionEvent]) -> [CompactionResult] {
-        events.compactMap { event in
-            guard case .compaction(let result) = event else { return nil }
-            return result
-        }
-    }
-
-    /// The text the turn streamed, joined.
-    private static func streamedText(in events: [SessionEvent]) -> String {
-        events.compactMap { event in
-            guard case .textDelta(let text) = event else { return nil }
-            return text
-        }.joined()
+        try await collect(session.streamEvents(to: prompt, maxTokens: nil))
     }
 
     @Test("the tool result crosses the trigger: one compaction, then the same turn answers")
@@ -111,7 +91,7 @@ struct ToolResultCompactionTests {
 
         let events = try await Self.streamedTurn(on: fixture.session)
 
-        let compactions = Self.compactions(in: events)
+        let compactions = events.compactionResults
         #expect(compactions.count == 1)
         let compaction = try #require(compactions.first)
         #expect(compaction.summaryEntryId != nil)
@@ -122,7 +102,7 @@ struct ToolResultCompactionTests {
             return true
         }
         #expect(turnStarts.count == 1)
-        #expect(Self.streamedText(in: events).contains(ToolResultCompactionModel.Executor.answerText))
+        #expect(events.streamedText.contains(ToolResultCompactionModel.Executor.answerText))
     }
 
     @Test("the record holds the stopped rounds, then the compaction boundary, then the continuation")
@@ -155,9 +135,9 @@ struct ToolResultCompactionTests {
 
         let events = try await Self.streamedTurn(on: fixture.session)
 
-        #expect(Self.compactions(in: events).count == 1)
+        #expect(events.compactionResults.count == 1)
         #expect(fixture.tool.calls == 1)
-        #expect(Self.streamedText(in: events).contains(ToolResultCompactionModel.Executor.answerText))
+        #expect(events.streamedText.contains(ToolResultCompactionModel.Executor.answerText))
     }
 
     @Test("a tool result under the trigger does not compact, and the turn answers")
@@ -167,8 +147,8 @@ struct ToolResultCompactionTests {
 
         let events = try await Self.streamedTurn(on: fixture.session)
 
-        #expect(Self.compactions(in: events).isEmpty)
-        #expect(Self.streamedText(in: events).contains(ToolResultCompactionModel.Executor.answerText))
+        #expect(events.compactionResults.isEmpty)
+        #expect(events.streamedText.contains(ToolResultCompactionModel.Executor.answerText))
     }
 
     @Test("a user stop during the tool call stays a user stop, not a compaction")
@@ -185,7 +165,7 @@ struct ToolResultCompactionTests {
             }
         }
 
-        #expect(Self.compactions(in: await collected.events).isEmpty)
+        #expect(await collected.events.compactionResults.isEmpty)
     }
 }
 

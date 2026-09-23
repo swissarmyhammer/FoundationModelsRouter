@@ -356,6 +356,14 @@ extension RoutedSessionActor {
         // Open for this attempt alone. `finishTurn` closes it on both exits.
         openGenerationCallLedger(usageBefore: usageBefore, responseTokenCeiling: responseTokenCeiling.resolved)
         toolResultWatch.composedPrompt = composedPrompt
+        // The facts a compaction inside the turn needs, when the attempt stops
+        // at a tool result or at its ceiling. The ledger above set the entry ids.
+        let attempt = StoppedAttempt(
+            grammar: grammar, composedPrompt: composedPrompt,
+            entryIdsBeforeAttempt: toolResultWatch.entryIdsBeforeAttempt, started: started,
+            usageBefore: usageBefore, responseTokenCeiling: responseTokenCeiling,
+            pendingEvents: pendingEvents, onEvent: onEvent, allowOverflowRetry: allowOverflowRetry,
+            rejectedCallRetries: rejectedCallRetries)
         let response: String
         let finishReason: FinishReason
         do {
@@ -402,12 +410,6 @@ extension RoutedSessionActor {
             ).finishReason
         } catch {
             if let yield = takeCompactionYield() {
-                let attempt = StoppedAttempt(
-                    grammar: grammar, composedPrompt: composedPrompt,
-                    entryIdsBeforeAttempt: toolResultWatch.entryIdsBeforeAttempt, started: started,
-                    usageBefore: usageBefore, responseTokenCeiling: responseTokenCeiling,
-                    pendingEvents: pendingEvents, onEvent: onEvent, allowOverflowRetry: allowOverflowRetry,
-                    rejectedCallRetries: rejectedCallRetries)
                 return try await continueAfterCompactionYield(yield, attempt: attempt, body: body)
             }
             await recordFailedTurn(
@@ -422,12 +424,6 @@ extension RoutedSessionActor {
         // Outside the `do`: the attempt is recorded, so a failure of the
         // compaction or of the next attempt must not record it a second time.
         guard compactsAfterCeilingStop(finishReason) else { return response }
-        let attempt = StoppedAttempt(
-            grammar: grammar, composedPrompt: composedPrompt,
-            entryIdsBeforeAttempt: toolResultWatch.entryIdsBeforeAttempt, started: started,
-            usageBefore: usageBefore, responseTokenCeiling: responseTokenCeiling,
-            pendingEvents: pendingEvents, onEvent: onEvent, allowOverflowRetry: allowOverflowRetry,
-            rejectedCallRetries: rejectedCallRetries)
         return try await continueAfterCeilingStop(attempt: attempt, body: body)
     }
 
