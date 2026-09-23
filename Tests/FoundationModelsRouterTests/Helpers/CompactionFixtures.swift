@@ -183,10 +183,7 @@ func summaryEntrySegments(of entry: Transcript.Entry) -> [Transcript.Segment]? {
 /// - Parameter entry: The summary entry.
 /// - Returns: The texts, or `nil` when `entry` is not a `.prompt`.
 func summaryEntryTexts(of entry: Transcript.Entry) -> [String]? {
-    summaryEntrySegments(of: entry)?.compactMap { segment -> String? in
-        guard case .text(let text) = segment else { return nil }
-        return text.content
-    }
+    summaryEntrySegments(of: entry).map { TranscriptEntryMapper.textContents($0.map(TranscriptEntryMapper.segmentPayload)) }
 }
 
 /// The compaction checkpoint a summary entry carries.

@@ -453,7 +453,10 @@ enum TranscriptEntryMapper {
     }
 
     /// One string per `.text` segment in `segments`, in order.
-    private static func textContents(_ segments: [SegmentPayload]) -> [String] {
+    ///
+    /// - Parameter segments: The segment payloads to read.
+    /// - Returns: The content of each `.text` segment, in order.
+    static func textContents(_ segments: [SegmentPayload]) -> [String] {
         segments.compactMap { segment -> String? in
             guard case .text(_, let content) = segment else { return nil }
             return content

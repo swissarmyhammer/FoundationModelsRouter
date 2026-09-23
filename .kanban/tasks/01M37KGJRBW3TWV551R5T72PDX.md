@@ -27,7 +27,19 @@ comments:
     - `swift test`: 1330 tests in 150 suites passed (2 designed known issues), 1 test passed, 19 tests passed. `swift build --build-tests --package-path IntegrationTests`: Build complete.
     - `swift test --package-path IntegrationTests --filter Qwen38CompactionIntegrationTests`: 3 of 3 pass. Model load 2.7 s. Case 1 5.9 s (load included), summary keeps "Key value: Port `6543`". Case 3 7.1 s, compaction 334 -> 74, answer "The staging database listens on port 6543." Case 2 16.6 s, compaction 919 -> 353, answer "The returned record key is KESTREL-42." Suite 29.6 s.
   timestamp: 2026-09-23T17:30:44.395106+00:00
-position_column: doing
+- actor: claude-code
+  id: 01m37nm8x1gzx6k763f5fyj94e
+  text: |-
+    ### finish iteration 1 — review: findings
+    - commit: 8a46799
+    - review: findings — CompactionSummaryRoleTests.swift:32 (swift/fluent-usage), RoutedSessionCompactTests.swift:612 (reuse/reuse)
+
+    ### implement — changed (iteration 2)
+    - `summaryEntry()` is now `makeSummaryEntry()`, with every call site.
+    - The private `textContents(of:)` of RoutedSessionCompactTests is deleted. `TranscriptEntryMapper.textContents(_:)` is now internal (no longer private), and the shared test helper `summaryEntryTexts(of:)` calls it through `TranscriptEntryMapper.segmentPayload`. The test calls `summaryEntryTexts(of: .prompt(boundary))`.
+    - test: green — `swift test`: 1330 tests in 150 suites passed (2 designed known issues), 1 test, 19 tests. IntegrationTests build complete.
+  timestamp: 2026-09-23T17:39:46.209530+00:00
+position_column: review
 position_ordinal: '80'
 title: After a turn-start compaction, Qwen3.8-27B does not use the summary to answer
 ---
@@ -44,3 +56,13 @@ The test passes, because it asserts only that the answer is not empty.
 3. Fix the cause, and add an assertion to the gated test that the answer holds "6543".
 
 #compaction
+
+## Review Findings (2026-09-23 12:30)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 10 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/CompactionSummaryRoleTests.swift:32` `swift/fluent-usage` — Factory methods should begin with `make`. The static function `summaryEntry()` returns a newly constructed `Transcript.Entry` and should be named `makeSummaryEntry()` to make its factory nature explicit at the call site. Rename `summaryEntry()` to `makeSummaryEntry()`. Update call sites from `Self.summaryEntry()` to `Self.makeSummaryEntry()`.
+- [x] `Tests/FoundationModelsRouterTests/RoutedSessionCompactTests.swift:612` `reuse/reuse` — textContents reimplements an existing shared function. This private helper extracts text segments from a Transcript.Prompt boundary by filtering the segments array. An existing function with identical logic already exists in TranscriptEntryMapper and is 0.94 similar—the test should call that instead of duplicating the capability. Call TranscriptEntryMapper.textContents directly instead of defining a local copy. If the function is not accessible from tests, check whether it can be made public, or verify the contracts match before reusing it.

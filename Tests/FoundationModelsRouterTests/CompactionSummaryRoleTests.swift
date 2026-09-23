@@ -29,7 +29,7 @@ struct CompactionSummaryRoleTests {
 
     /// A summary entry, as ``CompactionSegment/boundaryEntry(id:summaryText:content:)``
     /// builds it for an applied compaction.
-    private static func summaryEntry() -> Transcript.Entry {
+    private static func makeSummaryEntry() -> Transcript.Entry {
         CompactionSegment.boundaryEntry(
             id: entryId,
             summaryText: summary,
@@ -49,7 +49,7 @@ struct CompactionSummaryRoleTests {
             Transcript.Prompt(id: "question", segments: [.text(Transcript.TextSegment(content: "Which port?"))]))
 
         let messages = TranscriptChatMessages.messages(
-            for: Transcript(entries: [instructions, Self.summaryEntry(), question]))
+            for: Transcript(entries: [instructions, Self.makeSummaryEntry(), question]))
 
         #expect(messages.map { $0["role"] as? String } == ["system", "user", "user"])
         let content = try #require(messages[1]["content"] as? String)
@@ -58,7 +58,7 @@ struct CompactionSummaryRoleTests {
 
     @Test("a cold transcript reads the summary entry as one compaction row whose summary has no header")
     func coldTranscriptReadsTheSummaryEntryAsACompactionRow() {
-        let rows = SessionProjection.transcriptRows(from: [Self.summaryEntry()])
+        let rows = SessionProjection.transcriptRows(from: [Self.makeSummaryEntry()])
 
         guard case .compaction(let result)? = rows.first?.kind else {
             Issue.record("expected one compaction row")
@@ -76,7 +76,7 @@ struct CompactionSummaryRoleTests {
         let restatedTokensAfter = 10
 
         let restated = CompactionSegment.restatingSizes(
-            of: Self.summaryEntry(), tokensBefore: restatedTokensBefore, tokensAfter: restatedTokensAfter)
+            of: Self.makeSummaryEntry(), tokensBefore: restatedTokensBefore, tokensAfter: restatedTokensAfter)
 
         #expect(summaryEntryTexts(of: restated) == [CompactionSegment.summaryHeader, Self.summary])
         let content = try #require(try checkpointContent(of: restated))

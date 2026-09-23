@@ -608,13 +608,6 @@ struct RoutedSessionCompactTests {
         return (boundary, compactionSegment)
     }
 
-    /// The contents of every `.text` segment in `boundary`, in order.
-    private static func textContents(of boundary: Transcript.Prompt) -> [String] {
-        boundary.segments.compactMap { segment -> String? in
-            guard case .text(let text) = segment else { return nil }
-            return text.content
-        }
-    }
 
     @Test(
         "compact() with a background run records its completionToken, op, and latest progress in the boundary CompactionSegment and renders them into a model-visible text segment"
@@ -661,7 +654,7 @@ struct RoutedSessionCompactTests {
         // the summary text, and one more text segment carrying the pending-run
         // summary. It states the push contract — the session reports each
         // run when it settles — and names status/wait for an earlier look.
-        let texts = Self.textContents(of: boundary)
+        let texts = try #require(summaryEntryTexts(of: .prompt(boundary)))
         #expect(texts.first == CompactionSegment.summaryHeader)
         #expect(texts.count == 3)
         let rendering = try #require(texts.last)
@@ -703,7 +696,7 @@ struct RoutedSessionCompactTests {
         // Exactly the boundary shape with no runs: the header, one summary
         // text segment and the CompactionSegment — no pending-run carrier of
         // any kind.
-        #expect(Self.textContents(of: boundary) == [CompactionSegment.summaryHeader, Self.cannedText])
+        #expect(summaryEntryTexts(of: .prompt(boundary)) == [CompactionSegment.summaryHeader, Self.cannedText])
         #expect(boundary.segments.count == 3)
     }
 
