@@ -58,11 +58,21 @@ comments:
     - Decision: no floor changes (the card forbids it).
     - test: green — `swift test`: 1312 tests in 149 suites passed (2 designed known issues), 1 test, 19 eval tests passed. `IntegrationTests` builds.
   timestamp: 2026-09-23T15:00:40.915746+00:00
+- actor: claude-code
+  id: 01m37ctwmh5gt9tfm7g6k29cv6
+  text: |-
+    ### finish iteration 2 — clean; done
+    - iteration 1: 5dadd06 (comments name Qwen2.5-3B as the continuity eval subject of that time); review: 1 finding (CompactionContinuityRealModelTests.swift:69, completeness/invariant-propagation), checked.
+    - iteration 2: 5bd8deb (the name is Qwen2.5-3B-Instruct in each changed place); review sha HEAD~1..HEAD: clean (0 findings).
+    - test: green — `swift test`: 1312 tests in 149 suites passed (2 designed known issues), 1 test, 19 eval tests passed. `IntegrationTests` builds.
+    - The eval runs on the 27B are recorded on ^dvyt1dx and ^9ddjkjm, per the owner's dispatch. The `ref` switch was committed before this dispatch.
+    - commits: 5dadd06, 5bd8deb (local, not pushed).
+  timestamp: 2026-09-23T15:06:05.841063+00:00
 depends_on:
 - 01M35GXDMSN5FPXVKZT9AX82GR
 - 01M372QB7QSM58G9CSADVYT1DX
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffee80
 title: 'Run the compaction eval tiers on the model we ship: Qwen3.8-27B'
 ---
 ## Decision (from the owner, 2026-09-22)
