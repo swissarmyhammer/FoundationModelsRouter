@@ -404,6 +404,9 @@ struct CompactionContinuityEvalProgressLogTests {
         )
 
         #expect(label.fixtureID == CompactionEvalSampleLabel.unmatchedFixtureID)
+        // The progress line states the rendered label, so the marker must be
+        // in the rendered text too.
+        #expect(label.rendered.contains("task=\(CompactionEvalSampleLabel.unmatchedFixtureID)"))
     }
 }
 
