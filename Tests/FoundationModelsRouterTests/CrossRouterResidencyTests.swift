@@ -9,8 +9,8 @@ import Testing
 /// over two pools do not.
 ///
 /// Each test builds two routers. Each router has its own ``LoadSpy``, so a
-/// test can tell which router's loader ran. Both routers take the same probe
-/// and `headroomReserve: 0`, because `hostBudget()` stays per router and a
+/// test can tell which router's loader ran. Both routers take the same probe,
+/// because `hostBudget()` stays per router and a
 /// budget pin across two routers holds only when both price against one
 /// machine. Everything runs against stubs: no network, no GPU.
 @Suite("Cross-router residency")

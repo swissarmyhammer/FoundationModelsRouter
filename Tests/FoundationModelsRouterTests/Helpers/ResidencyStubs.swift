@@ -259,9 +259,9 @@ enum ResidencyFixtures {
     static let wideHoldAfterNarrowRelease: Int64 =
         generationWeightsMarginedBytes + sessionKVMarginedBytes + generationModelFootprint + embeddingModelFootprint
 
-    /// Builds a ``Router`` with `headroomReserve: 0` over a probe whose whole
-    /// budget is `recommendedMaxWorkingSetSize`, so the host budget every
-    /// resolve prices against is exactly that figure.
+    /// Builds a ``Router`` over a probe whose recommended working set is
+    /// `recommendedMaxWorkingSetSize`, so the host budget every resolve
+    /// prices against is exactly that figure.
     ///
     /// The probe is the shared ``StubProbe`` and the metadata source is the
     /// shared ``StubMetadataSource``, both from
@@ -292,7 +292,6 @@ enum ResidencyFixtures {
         releaseGate: AsyncSemaphore? = nil
     ) -> Router {
         Router(
-            headroomReserve: 0,
             cacheDir: cacheDir,
             recorder: InMemoryRecorder(),
             // The shared probe stub from `Helpers/RouterTestFixtures.swift`.

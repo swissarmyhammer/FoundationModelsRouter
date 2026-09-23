@@ -2,9 +2,6 @@ import Foundation
 import FoundationModels
 import Tracing
 
-/// The default headroom reserved out of the machine budget for OS and app use.
-public let defaultHeadroomReserveBytes: Int64 = 4 << 30
-
 /// Whether a session's activity is recorded: `off` or `full`.
 public enum RecordingLevel: String, Sendable, Codable, Equatable, CaseIterable {
     /// Record nothing.
@@ -34,9 +31,6 @@ public enum RecordingLevel: String, Sendable, Codable, Equatable, CaseIterable {
 public actor Router {
     /// The recording root id; sortable by construction time.
     public nonisolated let id: ULID
-
-    /// Bytes held out of the budget for OS/app headroom.
-    let headroomReserve: Int64
 
     /// The durable transcripts root, or `nil` when recording to memory/none.
     let recordingsDir: URL?
@@ -76,7 +70,6 @@ public actor Router {
     ///
     /// - Parameters:
     ///   - id: The recording root id. Pass one in to continue a prior root.
-    ///   - headroomReserve: Bytes held out of the budget.
     ///   - cacheDir: The disposable cache directory, or `nil` for the user caches directory.
     ///   - recordingsDir: The durable transcripts root, or `nil`.
     ///   - recorder: The recorder, or `nil` for a JSONL recorder under `recordingsDir` or ``NoneRecorder``.
@@ -97,7 +90,6 @@ public actor Router {
     ///     fresh ``ModelPool`` for a router that must not share residents.
     public init(
         id: ULID = .generate(),
-        headroomReserve: Int64 = defaultHeadroomReserveBytes,
         cacheDir: URL? = nil,
         recordingsDir: URL? = nil,
         recorder: (any TranscriptRecorder)? = nil,
@@ -111,7 +103,6 @@ public actor Router {
         pool: ModelPool = .shared
     ) {
         self.id = id
-        self.headroomReserve = headroomReserve
         let resolvedCacheDir = cacheDir ?? Self.defaultCacheDir()
         self.recordingsDir = recordingsDir
         let baseRecorder = recorder ?? Self.defaultRecorder(recordingsDir: recordingsDir)
@@ -504,11 +495,11 @@ public actor Router {
 
     /// The RAM budget for this machine, measured from a fresh probe read.
     ///
-    /// The three reads are cheap, so each resolve takes them again rather than
+    /// The reads are cheap, so each resolve takes them again rather than
     /// remember an earlier answer. A value the OS changes — the GPU working set
     /// after an OS update — therefore reaches the very next budget.
     private func hostBudget() -> Int64 {
-        HostProfile(probe: probe).budget(headroomReserve: headroomReserve)
+        HostProfile(probe: probe).budget()
     }
 
     // MARK: - Sizing

@@ -345,7 +345,6 @@ struct ResolveTests {
         let loader = StubModelLoader(progress: progress)
         // A tiny working set makes the budget far too small for any candidate.
         let router = Router(
-            headroomReserve: 0,
             cacheDir: dir,
             probe: StubProbe(chip: "Apple Tiny", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 1_000),
             metadataSource: source,
@@ -417,7 +416,6 @@ struct ResolveTests {
             recommendedMaxWorkingSetSize: Self.workingSetBeforeOSUpdate
         )
         let router = Router(
-            headroomReserve: 0,
             cacheDir: dir,
             probe: probe,
             metadataSource: source,
@@ -561,7 +559,6 @@ struct ResolveTests {
         // would fit both if it wrongly kept (or fell back to) the smaller
         // embedding-only one.
         let router = Router(
-            headroomReserve: 0,
             cacheDir: dir,
             probe: StubProbe(chip: "Apple Test", totalRAM: 13_000_000, recommendedMaxWorkingSetSize: 13_000_000),
             metadataSource: source,
@@ -842,12 +839,11 @@ struct ResolveTests {
         let progress = ResolutionProgress()
         let loader = StubModelLoader(progress: progress)
 
-        // budget = min(recommendedMaxWorkingSetSize, totalRAM - headroomReserve).
+        // budget = recommendedMaxWorkingSetSize.
         // Embedding (120) + flash (120) + big@32_768 (15_728_640, ×1.2 margin)
         // = 15_728_880, comfortably under this budget; big@65_536 would need
         // 31_457_520 (comfortably over), so 32_768 is the largest fitting rung.
         let router = Router(
-            headroomReserve: 0,
             cacheDir: dir,
             probe: StubProbe(chip: "Apple Test", totalRAM: 15_729_000, recommendedMaxWorkingSetSize: 15_729_000),
             metadataSource: source,

@@ -8,16 +8,17 @@ struct HostProfileTests {
     /// One gigabyte in bytes — the unit the budget arithmetic works in.
     private static let gb: Int64 = 1 << 30
 
-    /// Budget specs `(totalRAM, recommended, reserve, expected)` in bytes.
+    /// Probe specs `(totalRAM, recommended)` in bytes.
     ///
-    /// The first two cases let the recommended working set limit the budget; the
-    /// last two cross the boundary where `totalRAM - reserve < recommended`, so
-    /// the RAM headroom limits it instead.
-    private static let budgetCases: [(totalRAM: Int64, recommended: Int64, reserve: Int64, expected: Int64)] = [
-        (128 * gb, 96 * gb, 4 * gb, 96 * gb),
-        (32 * gb, 24 * gb, 4 * gb, 24 * gb),
-        (16 * gb, 12 * gb, 8 * gb, 8 * gb),
-        (8 * gb, 6 * gb, 4 * gb, 4 * gb),
+    /// The total RAM changes from case to case, and in the last case it is
+    /// only a little more than the working set. The budget is the working set
+    /// in each case, so the total RAM has no effect on it.
+    private static let budgetCases: [(totalRAM: Int64, recommended: Int64)] = [
+        (128 * gb, 96 * gb),
+        (32 * gb, 24 * gb),
+        (16 * gb, 12 * gb),
+        (8 * gb, 6 * gb),
+        (6 * gb + 1, 6 * gb),
     ]
 
     /// A `MachineProbe` returning fixed, injected values so profiling logic is
@@ -56,11 +57,10 @@ struct HostProfileTests {
         let profile = HostProfile(probe: probe)
 
         #expect(profile.chip == probe.chip)
-        #expect(profile.totalRAM == probe.totalRAM)
         #expect(profile.recommendedMaxWorkingSetSize == probe.recommendedMaxWorkingSetSize)
     }
 
-    @Test("HostProfile(probe:) copies the probed chip, RAM, and working set")
+    @Test("HostProfile(probe:) copies the probed chip and working set")
     func profileFromProbe() {
         let probe = StubMachineProbe(
             chip: "Apple M3 Max",
@@ -71,30 +71,30 @@ struct HostProfileTests {
         let profile = HostProfile(probe: probe)
 
         #expect(profile.chip == "Apple M3 Max")
-        #expect(profile.totalRAM == 128 * Self.gb)
         #expect(profile.recommendedMaxWorkingSetSize == 96 * Self.gb)
     }
 
     @Test(
-        "budget = min(recommended, totalRAM - reserve)",
+        "budget = recommendedMaxWorkingSetSize for any totalRAM",
         arguments: HostProfileTests.budgetCases
     )
-    func budget(spec: (totalRAM: Int64, recommended: Int64, reserve: Int64, expected: Int64)) {
-        let (totalRAM, recommended, reserve, expected) = spec
+    func budget(spec: (totalRAM: Int64, recommended: Int64)) {
+        let (totalRAM, recommended) = spec
         let profile = HostProfile(
-            chip: "Apple M2",
-            totalRAM: totalRAM,
-            recommendedMaxWorkingSetSize: recommended
+            probe: StubMachineProbe(
+                chip: "Apple M2",
+                totalRAM: totalRAM,
+                recommendedMaxWorkingSetSize: recommended
+            )
         )
 
-        #expect(profile.budget(headroomReserve: reserve) == expected)
+        #expect(profile.budget() == recommended)
     }
 
-    @Test("HostProfile Codable round-trips chip, RAM, and working set")
+    @Test("HostProfile Codable round-trips chip and working set")
     func codableRoundTrip() throws {
         let profile = HostProfile(
             chip: "Apple M4 Max",
-            totalRAM: 128 * Self.gb,
             recommendedMaxWorkingSetSize: 96 * Self.gb
         )
 

@@ -134,7 +134,6 @@ struct ResolveCancellationTests {
 
     private static func makeRouter(gate: StageGate, cacheDir: URL) -> Router {
         Router(
-            headroomReserve: 0,
             cacheDir: cacheDir,
             recorder: InMemoryRecorder(),
             probe: RouterTestFixtures.stubProbe,

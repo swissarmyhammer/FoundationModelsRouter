@@ -40,8 +40,7 @@ struct ResolveTracingTests {
     /// first resolve against: nothing is resident yet, so the effective
     /// budget is the whole machine budget.
     private static var freshRouterBudgetBytes: Int64 {
-        HostProfile(probe: RouterTestFixtures.stubProbe)
-            .budget(headroomReserve: defaultHeadroomReserveBytes)
+        HostProfile(probe: RouterTestFixtures.stubProbe).budget()
     }
 
     /// The loader every passing test resolves through: it vends stub
@@ -201,7 +200,6 @@ struct ResolveTracingTests {
 
         let tracer = InMemoryTracer()
         let router = Router(
-            headroomReserve: 0,
             cacheDir: dir,
             tracer: tracer,
             probe: StubProbe(

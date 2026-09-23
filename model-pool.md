@@ -267,10 +267,9 @@ un-ignored `Package.resolved`.
   a host see this. No `evictAll()`: an eviction while a profile still holds
   a reference would corrupt the accounting the plan sets out to fix.
 - **Budget: the pool holds the residents, each router keeps its budget.**
-  `hostBudget()` stays per router (its own probe and headroom). Two routers
-  with different headroom see two different effective budgets over one pool.
-  A test that pins a budget across two routers gives both the same probe and
-  the same headroom.
+  `hostBudget()` stays per router (its own probe). Two routers with
+  different probes see two different effective budgets over one pool.
+  A test that pins a budget across two routers gives both the same probe.
 
 ## 3. Testing
 

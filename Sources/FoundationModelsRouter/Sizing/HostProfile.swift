@@ -5,7 +5,9 @@ import Metal
 /// budget logic stays pure and testable with injected values.
 ///
 /// The live implementation is ``SystemMachineProbe``; tests supply a stub
-/// returning fixed numbers. Each property mirrors one field of ``HostProfile``.
+/// returning fixed numbers. ``HostProfile`` reads ``chip`` and
+/// ``recommendedMaxWorkingSetSize``; ``totalRAM`` is a measurement the probe
+/// reports to its host, and the budget does not use it.
 public protocol MachineProbe: Sendable {
     /// The chip / machine identifier, e.g. `"Apple M3 Max"`.
     var chip: String { get }
@@ -31,9 +33,6 @@ struct HostProfile: Sendable, Codable, Equatable {
     /// The chip / machine identifier.
     let chip: String
 
-    /// Total physical RAM in bytes.
-    let totalRAM: Int64
-
     /// The GPU working set in bytes; typically ≈ 70–75% of RAM on Apple Silicon.
     let recommendedMaxWorkingSetSize: Int64
 
@@ -41,11 +40,9 @@ struct HostProfile: Sendable, Codable, Equatable {
     ///
     /// - Parameters:
     ///   - chip: The chip / machine identifier.
-    ///   - totalRAM: Total physical RAM in bytes.
     ///   - recommendedMaxWorkingSetSize: The GPU working set in bytes.
-    init(chip: String, totalRAM: Int64, recommendedMaxWorkingSetSize: Int64) {
+    init(chip: String, recommendedMaxWorkingSetSize: Int64) {
         self.chip = chip
-        self.totalRAM = totalRAM
         self.recommendedMaxWorkingSetSize = recommendedMaxWorkingSetSize
     }
 
@@ -56,21 +53,18 @@ struct HostProfile: Sendable, Codable, Equatable {
     init(probe: MachineProbe) {
         self.init(
             chip: probe.chip,
-            totalRAM: probe.totalRAM,
             recommendedMaxWorkingSetSize: probe.recommendedMaxWorkingSetSize
         )
     }
 
     /// The RAM budget a resolved profile's resident models must fit within.
     ///
-    /// The budget is the smaller of what the GPU is willing to back and what
-    /// remains of physical RAM after holding out fixed OS/app slack:
-    /// `min(recommendedMaxWorkingSetSize, totalRAM - headroomReserve)`.
+    /// The budget is the GPU working set the machine states it backs,
+    /// `recommendedMaxWorkingSetSize`, with no other allowance held out.
     ///
-    /// - Parameter headroomReserve: Fixed slack in bytes held out of the budget.
     /// - Returns: The usable budget in bytes.
-    func budget(headroomReserve: Int64) -> Int64 {
-        min(recommendedMaxWorkingSetSize, totalRAM - headroomReserve)
+    func budget() -> Int64 {
+        recommendedMaxWorkingSetSize
     }
 }
 

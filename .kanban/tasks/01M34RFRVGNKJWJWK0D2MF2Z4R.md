@@ -1,8 +1,23 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: 8a80
+comments:
+- actor: claude-code
+  id: 01m37eyrk01d3f198x6h74gphz
+  text: |-
+    ### design choices
+    - `HostProfile.totalRAM` is deleted. After the change, no code in Sources reads it. `HostProfile.budget()` returns `recommendedMaxWorkingSetSize`.
+    - `MachineProbe.totalRAM` and `SystemMachineProbe.totalRAM` stay. They are public API, and the card tells to delete `totalRAM` only from the profile. The `MachineProbe` doc now says that the budget does not use `totalRAM`.
+    - `HostProfileTests`: the budget test now builds each profile from a stub probe, with a different `totalRAM` in each case, and asserts `budget() == recommendedMaxWorkingSetSize`. The Codable test uses the new two-field `HostProfile`.
+    - `model-pool.md` §2.7 said that each router has "its own probe and headroom". That text now says only "its own probe".
+    - No new limit and no new constant are added.
+
+    ### implement — changed
+    - evidence: Sources/FoundationModelsRouter/Router.swift, Sources/FoundationModelsRouter/Sizing/HostProfile.swift, Tests/FoundationModelsRouterTests/{HostProfileTests,ResolveTracingTests,ResolveTests,ResolveCancellationTests,CrossRouterResidencyTests,Helpers/ResidencyStubs}.swift, model-pool.md. `rg 'headroomReserve|HeadroomReserve'` finds nothing. `swift test`: Test run with 1323 tests in 149 suites passed (2 known issues, not new); 1 test; 19 tests. IntegrationTests build complete.
+    - next: commit, then review.
+  timestamp: 2026-09-23T15:43:09.920758+00:00
+position_column: doing
+position_ordinal: '80'
 title: Delete the headroom reserve; the memory budget is Metal's working-set figure
 ---
 ## Decision (from the owner, 2026-09-22)
