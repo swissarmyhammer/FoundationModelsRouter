@@ -66,7 +66,7 @@ private let compactionContinuityEvalRealEvaluation = CompactionContinuityEvaluat
 ///
 /// - **The 30B model's continuity, and its 0.8 whole-task bar.** The floors
 ///   here are the measured baselines of the small model of that time
-///   (Qwen2.5-3B), minus one task of margin; they are not derived again on
+///   (Qwen2.5-3B-Instruct), minus one task of margin; they are not derived again on
 ///   the current subject, Qwen3.8-27B —
 ///   see ``compactionContinuityFastAnswersCorrectFloor`` for the measurement
 ///   and for why the 0.8 bar cannot be held against this subject. The bars
@@ -91,7 +91,7 @@ private let compactionContinuityEvalRealEvaluation = CompactionContinuityEvaluat
 /// measurement.
 /// The suite has no time limit. A run ends when it ends, or when the caller
 /// stops it. The subject is now Qwen3.8-27B (task ^jhb7x54). Measured on
-/// 2026-08-21 with the subject of that time, Qwen2.5-3B, already in the Hugging
+/// 2026-08-21 with the subject of that time, Qwen2.5-3B-Instruct, already in the Hugging
 /// Face cache, over the four tasks: 30.9 and 29.7 seconds of suite wall clock
 /// across two runs, against the two-minute limit of that time — the four
 /// tasks cost 6.1 to 8.6 seconds each and the model loaded in 1.4. The bound

@@ -88,3 +88,12 @@ The gated compaction eval tiers measure the summarizer on `mlx-community/Qwen2.5
 - Both tiers run on the 27B.
 - The results are on the card.
 - All unit tests pass; `IntegrationTests` builds. #compaction
+
+## Review Findings (2026-09-23 10:00)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 2 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `IntegrationTests/Tests/FoundationModelsRouterEvalIntegrationTests/CompactionContinuityRealModelTests.swift:69` `completeness/invariant-propagation` — Model name is inconsistent across the changed files within this same update. Line 69 refers to the historical baseline model as 'Qwen2.5-3B', but CompactionContinuityEvaluation.swift (lines 140 and 170) refers to the same measurement as 'Qwen2.5-3B-Instruct'. Both reference the same evaluation date (2026-08-21) and the same time period ('subject of that time'), so they should use a consistent model name. Standardize the model name across both files. Given that the change title names 'Qwen2.5-3B', update lines 140 and 170 in CompactionContinuityEvaluation.swift to use 'Qwen2.5-3B' for consistency, unless the '-Instruct' suffix is material to evaluation, in which case update line 69 to 'Qwen2.5-3B-Instruct'.
