@@ -8,34 +8,40 @@ import Testing
 /// compaction renders each entry with.
 @Suite("CompactionPrompt.default and segment flattening")
 struct CompactionPromptTests {
-    @Test("CompactionPrompt.default has its name and asks for the few points that matter to go on")
+    @Test("CompactionPrompt.default has its name, a value line first, and the few points that matter to go on")
     func defaultPromptNameAndPoints() {
         let prompt = CompactionPrompt.default
-        #expect(prompt.name == "router-default-v6")
+        #expect(prompt.name == "router-default-v7")
 
         let text = prompt.text
+        // The value line comes before the points. Under v6 the 3B round-trip
+        // model dropped the code the user asked it to keep, and a value line
+        // at the end was lost when the summary ran long.
         #expect(
             text.hasPrefix(
                 "Summarize the conversation above. Whoever continues has no other memory of it.\n"
-                    + "Write a short summary of the few points that matter to go on:\n"
+                    + "Start with a line \"Values:\" that gives each code, name, path and number "
+                    + "the user asked to keep or the next step needs, copied exactly.\n"
+                    + "Then write a short summary of the few points that matter to go on:\n"
             ))
         for point in [
             "- what the user wants;",
             "- what is decided, and what must not be done;",
-            "- what is done, and what comes next;",
-            "- any value the next step needs (a name, a path, a number), written exactly.",
+            "- what is done, and what comes next.",
         ] {
             #expect(text.contains(point))
         }
     }
 
-    @Test("CompactionPrompt.default leaves out small talk and does not ask for a list of facts")
+    @Test("CompactionPrompt.default leaves out small talk and has no fact-counting sections")
     func defaultPromptLeavesOutSmallTalkAndFactLists() {
         // The owner replaced the fact-counting sections of v5: a reasoning
         // model spent its whole allowed size on them and wrote no summary.
         let text = CompactionPrompt.default.text
-        #expect(text.hasSuffix("Do not list facts for their own sake."))
-        #expect(text.contains("Leave out small talk, and finished work that does not matter next."))
+        #expect(
+            text.hasSuffix(
+                "Leave out small talk, and finished work that does not matter next. "
+                    + "Use plain sentences or short bullets."))
         #expect(text.contains("Stated facts") == false)
     }
 

@@ -190,6 +190,9 @@ struct CompactionRoundTripIntegrationTests {
                 + "saved=\(result.tokensBefore - result.tokensAfter) "
                 + "summarizerTier=\(String(describing: result.summarizerTier))"
         )
+        // The summary itself, on the record: when the recall in step 3 fails,
+        // this line shows whether the summary kept the fact.
+        print("[compactionRoundTrip] summary:\n\(result.summary ?? "<none>")")
         let fillAfterCompaction = await session.contextFill
         #expect(fillAfterCompaction < fillBeforeCompaction)
         #expect(session.id == sessionId)

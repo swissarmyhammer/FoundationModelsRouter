@@ -19,7 +19,7 @@ private let compactionSpikeTinyModel: ModelRef = RealModels.standard
 /// ``RoutedSession/compact(prompt:budget:)`` (compaction_plan.md §1.4) will
 /// rebuild the inner session over after a compaction — tolerates and completes a
 /// turn over a transcript containing entries no real turn ever produced in
-/// that order: a synthesized summary `.response` entry, next to a
+/// that order: a synthesized summary `.prompt` entry, next to a
 /// `.toolCalls` and `.toolOutput` pair that keeps its old ids.
 ///
 /// Builds directly over an already-loaded tiny model's
@@ -42,10 +42,10 @@ private let compactionSpikeTinyModel: ModelRef = RealModels.standard
 )
 struct CompactionSpikeIntegrationTests {
     /// A synthesized transcript of the entry kinds a compaction's new snapshot
-    /// holds: instructions, a `.toolCalls` entry and the `.toolOutput` entry
-    /// it made, both with their old ids (the new snapshot keeps a protected
-    /// tool output and its call word for word), and a synthesized summary
-    /// `.response` entry no real turn produced.
+    /// holds: instructions, a synthesized summary `.prompt` entry no real turn
+    /// produced, and a `.toolCalls` entry and the `.toolOutput` entry it made,
+    /// both with their old ids (the new snapshot keeps a protected tool output
+    /// and its call word for word).
     ///
     /// The tool output states no fact the test asks about, so the answer can
     /// come only from the summary entry.
@@ -80,22 +80,31 @@ struct CompactionSpikeIntegrationTests {
                 )
             ]
         )
-        let summary = Transcript.Response(
-            id: "summary-1",
-            segments: [
-                .text(
-                    Transcript.TextSegment(
-                        id: "summary-text-1",
-                        content: "Summary: earlier in the conversation the user said their favorite number is 42."
-                    )
-                )
-            ]
+        // The summary entry comes from the production builder, so it has the
+        // production shape: a user-role `.prompt` with the summary header, the
+        // summary text and the checkpoint (task ^5t72pdx).
+        let summaryEntryId = "summary-1"
+        let keptEntryIds = [oldToolCalls.id, keptToolOutput.id]
+        let summary = CompactionSegment.boundaryEntry(
+            id: summaryEntryId,
+            summaryText: "Earlier in the conversation the user said their favorite number is 42.",
+            content: CompactionSegment.Content(
+                liveWindowEntryIds: [instructions.id, summaryEntryId] + keptEntryIds,
+                compactedEntryIds: [],
+                tokensBefore: 0,
+                tokensAfter: 0,
+                stagesApplied: [Summarization.stageName],
+                promptName: CompactionPrompt.default.name
+            )
         )
+        // The production order of a compacted snapshot: the instructions,
+        // then the summary entry, then the kept entries (see
+        // `Summarization`'s snapshot builder).
         return Transcript(entries: [
             .instructions(instructions),
+            summary,
             .toolCalls(oldToolCalls),
             .toolOutput(keptToolOutput),
-            .response(summary),
         ])
     }
 

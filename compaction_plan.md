@@ -295,21 +295,29 @@ constraints / critical context; summarize before quality degrades — hence the
 
 ```
 Summarize the conversation above. Whoever continues has no other memory of it.
-Write a short summary of the few points that matter to go on:
+Start with a line "Values:" that gives each code, name, path and number the user asked to keep or the next step needs, copied exactly.
+Then write a short summary of the few points that matter to go on:
 - what the user wants;
 - what is decided, and what must not be done;
-- what is done, and what comes next;
-- any value the next step needs (a name, a path, a number), written exactly.
+- what is done, and what comes next.
 
-Leave out small talk, and finished work that does not matter next. Use plain sentences or short bullets. Do not list facts for their own sake.
+Leave out small talk, and finished work that does not matter next. Use plain sentences or short bullets.
 ```
 
-The prompt is named `router-default-v6`. The call puts the rendered
+The prompt is named `router-default-v7`. The call puts the rendered
 conversation first, then a line of three dashes, then this prompt, the size
 budget in tokens, and one line that names the text before the dashes as the
 conversation to summarize.
 
-`router-default-v6` replaces `router-default-v5` (task `^dvyt1dx`). On
+`router-default-v7` replaces `router-default-v6`. Under v6, the gated
+round trip on Qwen2.5-3B wrote a summary without the vault code `CRIMSON-77`
+that the user asked it to keep, and the recall after `compact()` failed. The
+summarizer input held the code. v6 put the values last among the points and
+said "Do not list facts for their own sake". v7 asks for a "Values:" line
+first, because a value line at the end was lost when the summary ran long.
+The points and the short, salient-points form stay as in v6.
+
+`router-default-v6` replaced `router-default-v5` (task `^dvyt1dx`). On
 Qwen3.8-27B, v5 made the summarizer spend the whole allowed summary size on
 its reasoning, and 5 of 7 seeds gave no summary text. The owner asked for a
 prompt that aims at a few salient points and does not count facts. The text

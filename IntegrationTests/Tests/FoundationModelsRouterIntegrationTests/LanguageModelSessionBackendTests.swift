@@ -515,11 +515,13 @@ struct LanguageModelSessionBackendIntegrationTests {
 
         let recorded = try recordedEvents(from: harness)
 
-        // The `.session` meta line is router-only and never enters Apple's own
-        // transcript; every other recorded kind must match, in order, the kind
-        // of the corresponding real `Transcript.Entry` the live session
-        // actually accumulated — the whole point of snapshot-diff persistence.
-        let recordedEntryKinds = recorded.filter { $0.kind != .session }.map(\.kind)
+        // The router-only kinds (the `.session` meta line and the
+        // `.generationCall` journal line) never enter Apple's own transcript,
+        // and `isEntryKind` is false for them. Every transcript entry kind that
+        // was recorded must match, in order, the kind of the corresponding real
+        // `Transcript.Entry` the live session actually accumulated — the whole
+        // point of snapshot-diff persistence.
+        let recordedEntryKinds = recorded.map(\.kind).filter(\.isEntryKind)
         let liveEntryKinds = harness.backend.session.transcript.map {
             TranscriptEntryMapper.event(from: $0).kind
         }
@@ -554,7 +556,8 @@ struct LanguageModelSessionBackendIntegrationTests {
 
         let recorded = try recordedEvents(from: harness)
 
-        let recordedEntryKinds = recorded.filter { $0.kind != .session }.map(\.kind)
+        // Transcript entry kinds only, as in the non-streaming test above.
+        let recordedEntryKinds = recorded.map(\.kind).filter(\.isEntryKind)
         let liveEntryKinds = harness.backend.session.transcript.map {
             TranscriptEntryMapper.event(from: $0).kind
         }
