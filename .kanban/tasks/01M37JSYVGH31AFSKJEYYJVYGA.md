@@ -77,8 +77,24 @@ comments:
     - test: green — `swift test`: 1327 tests in 149 suites passed (2 designed known issues), 1 test, 19 tests.
     - real-model: all 3 pass. Load 2.7 s; case 1 5.9 s (load included); case 3 8.6 s; case 2 13.3 s; suite 27.9 s.
   timestamp: 2026-09-23T17:08:19.062108+00:00
-position_column: review
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m37kz23744sjmybhh8x90eq9
+  text: |-
+    ### finish iteration 2 — review: clean
+    - implement: changed — c2b18b6: `report(label:detail:)` replaces `print(label:detail:)`; named trigger shares `turnStartTriggerShare` and `toolResultTriggerShare`. All four findings of iteration 1 are checked.
+    - test: green — `swift test`: 1327 tests in 149 suites (2 designed known issues), 1 test, 19 tests: all pass. IntegrationTests build complete.
+    - real-model: Qwen3.8-27B, `swift test --package-path IntegrationTests --filter Qwen38CompactionIntegrationTests`: 3 of 3 pass. Model load 2.7 s; case 1 (we can compact) 5.9 s with the load; case 3 (long context, turn start) 8.6 s; case 2 (tool call triggers) 13.3 s; suite 27.9 s.
+    - commit: 9dd8922, c2b18b6
+    - review: clean — `review sha HEAD~1..HEAD`: 0 findings, 0 refuted, 2 files reviewed. The task is in done.
+    - CI: the shared swift-ci workflow runs `swift test --package-path IntegrationTests` on the self-hosted macOS pool, so the three tests run there. The model cache is the Hugging Face cache of the runner.
+    - Open for the owner: task ^kgjrbw3 (new) — after the turn-start compaction the model does not use the summary to answer the port question.
+  timestamp: 2026-09-23T17:10:42.535073+00:00
+- actor: claude-code
+  id: 01m37kzcqd577d0cp13envxczt
+  text: 'Correction to the finish iteration 2 ledger: the new task id is ^5t72pdx, not ^kgjrbw3.'
+  timestamp: 2026-09-23T17:10:53.421653+00:00
+position_column: done
+position_ordinal: fffff880
 title: 'Compaction test suite: unit and gated integration tests for the three compaction cases, all run by the suites'
 ---
 ## Decision (from the owner, 2026-09-23)
