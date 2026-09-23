@@ -16,8 +16,20 @@ comments:
     - evidence: Sources/FoundationModelsRouter/Router.swift, Sources/FoundationModelsRouter/Sizing/HostProfile.swift, Tests/FoundationModelsRouterTests/{HostProfileTests,ResolveTracingTests,ResolveTests,ResolveCancellationTests,CrossRouterResidencyTests,Helpers/ResidencyStubs}.swift, model-pool.md. `rg 'headroomReserve|HeadroomReserve'` finds nothing. `swift test`: Test run with 1323 tests in 149 suites passed (2 known issues, not new); 1 test; 19 tests. IntegrationTests build complete.
     - next: commit, then review.
   timestamp: 2026-09-23T15:43:09.920758+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m37f30g9wn1dxv5bxq58ct3e
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` on a1bd1e2: 0 findings, 0 confirmed, 0 refuted; 7 files attempted, 0 failed. `model-pool.md` has no matching validator.
+    - next: done.
+
+    ### finish iteration 1 — done
+    - commits: a1bd1e2 (feat(sizing): delete the headroom reserve; the budget is the Metal working set), then the kanban ledger commit.
+    - `swift test`: Test run with 1323 tests in 149 suites passed (2 known issues, not new); Test run with 1 test in 1 suite passed; Test run with 19 tests in 3 suites passed.
+    - `swift build --build-tests --package-path IntegrationTests`: build complete.
+  timestamp: 2026-09-23T15:45:29.097809+00:00
+position_column: done
+position_ordinal: fffff380
 title: Delete the headroom reserve; the memory budget is Metal's working-set figure
 ---
 ## Decision (from the owner, 2026-09-22)
