@@ -33,8 +33,22 @@ comments:
     - evidence: 7 files — Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift, Sources/FoundationModelsRouter/Sizing/RepoMetadata.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnExecution.swift, Tests/FoundationModelsRouterTests/Helpers/LiveBackendContainer.swift, Tests/FoundationModelsRouterTests/TurnTokenCeilingTests.swift, Tests/FoundationModelsRouterTests/RepoMetadataTests.swift. `swift test`: 1333 tests in 150 suites passed (2 known issues, expected); 1 test in 1 suite passed; 19 tests in 3 suites passed. `swift build --build-tests --package-path IntegrationTests`: exit 0. `swift test --package-path IntegrationTests --filter Qwen38CompactionIntegrationTests`: 3 tests in 1 suite passed (the live load read the window from config.json).
     - next: commit, then review.
   timestamp: 2026-09-23T18:09:52.778448+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m37qgr7a25vx2vc7pa79c17m
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` on 0bb3bb5 — 0 findings, 0 confirmed, 0 refuted; 6 files reviewed, 2 .kanban files excluded by .reviewignore.
+    - next: done.
+
+    ### finish iteration 1 — done
+    - commits: 0bb3bb5 feat(session): send the window of the model when a call names no ceiling
+    - `swift test`: Test run with 1333 tests in 150 suites passed (2 known issues, expected); Test run with 1 test in 1 suite passed; Test run with 19 tests in 3 suites passed.
+    - `swift build --build-tests --package-path IntegrationTests`: exit 0.
+    - `swift test --package-path IntegrationTests --filter Qwen38CompactionIntegrationTests`: Test run with 3 tests in 1 suite passed after 29.520 seconds.
+    - The fork mlx-swift-lm did not change. Its `defaultMaxTokens = 4096` stays for direct callers of the engine and never applies to a Router call.
+  timestamp: 2026-09-23T18:12:47.978252+00:00
+position_column: done
+position_ordinal: fffffa80
 title: Decide the 4096 defaultMaxTokens of the mlx-swift-lm executor
 ---
 ## Finding (from ^wn4zecb)
