@@ -39,10 +39,22 @@ comments:
     - fix: `makeUnsizedReport(ref:reason:)`, `makeSizedReport(ref:wholeBytes:chargedBytes:budget:)`, `makeFoundResult(winner:native:window:)`; every call site updated. No other `make` factory in the file omits its first label. All three boxes checked. `swift test`: 1326 tests in 149 suites passed, 19 in 3, 1 in 1.
     - next: commit, review HEAD~1..HEAD again
   timestamp: 2026-09-23T16:44:29.695168+00:00
+- actor: claude-code
+  id: 01m37jjhs4cn2ywz1s4p7gh5x9
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (a210cb9): 0 findings. All 4 prior finding boxes are checked.
+
+    ### finish iteration 3 — done
+    - commits: fe97590 feat(sizing): make the model's window the default context of a profile; ad1c816 refactor(sizing): give the factory helpers of JointFit the make prefix; a210cb9 refactor(sizing): label the first argument of the JointFit factory helpers.
+    - swift test: "Test run with 1326 tests in 149 suites passed after 7.001 seconds with 2 known issues", "Test run with 19 tests in 3 suites passed", "Test run with 1 test in 1 suite passed".
+    - swift build --build-tests --package-path IntegrationTests: Build complete.
+    - acceptance: `rg defaultContext Sources` finds nothing; a profile made with no `context:` has `context == nil` and resolves at the model's window (JointFitTests); the one test number is `ScriptedSessionContext.tokens`.
+  timestamp: 2026-09-23T16:46:24.036548+00:00
 depends_on:
 - 01M34PGWP0GS427JNWAAMKPZPW
-position_column: review
-position_ordinal: '80'
+position_column: done
+position_ordinal: fffff680
 title: Make the model's window the default context of a profile
 ---
 ## Decision (from the owner, 2026-09-22)
