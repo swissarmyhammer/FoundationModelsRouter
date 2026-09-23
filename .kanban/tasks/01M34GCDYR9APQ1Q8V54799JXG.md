@@ -15,7 +15,14 @@ comments:
     - Tests in `GenerationStallDiagnosticTests`: tool calls with no text for longer than the interval give no stall; a stream that stops after a tool result gives a stall that names the tool result; a `respond` turn measures from the last invocation record; the report text. The existing log test now looks for "generation has made no progress".
     - Evidence: `swift test` 1316 + 1 + 19 tests pass (2 known issues are old). `swift build --build-tests --package-path IntegrationTests` completes.
   timestamp: 2026-09-23T15:12:31.998513+00:00
-position_column: doing
+- actor: claude-code
+  id: 01m37ddssa9j21k2r62v90h0a0
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (627ec7e): 2 findings — GenerationStallDiagnosticTests.swift:137, :220 (no_unchecked_sendable).
+    - next: make `ToolTurnBackend` and `ToolTurnLLMContainer` plain `Sendable`; all their stored properties are `let` and `Sendable`.
+  timestamp: 2026-09-23T15:16:25.514816+00:00
+position_column: review
 position_ordinal: '80'
 title: Count tool calls and snapshots as progress in the stall watchdog
 ---
@@ -39,3 +46,13 @@ The stall watchdog (`Session/GenerationStall.swift`) counts only text fragments 
 - A test where the backend stops after a tool result gets a stall report that names the tool result.
 
 Requested by foundationmodelsacpagent-08. Depends on no other task. #compaction
+
+## Review Findings (2026-09-23 10:12)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 7 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [ ] `Tests/FoundationModelsRouterTests/GenerationStallDiagnosticTests.swift:137` `code-hygiene/disallowed-constructs-swift` — no_unchecked_sendable: Instead of @unchecked Sendable, write a plain Sendable conformance or a @preconcurrency import. If the type really must be @unchecked Sendable, write // swiftlint:disable:next no_unchecked_sendable above it with the synchronization invariant that makes the type thread-safe.
+- [ ] `Tests/FoundationModelsRouterTests/GenerationStallDiagnosticTests.swift:220` `code-hygiene/disallowed-constructs-swift` — no_unchecked_sendable: Instead of @unchecked Sendable, write a plain Sendable conformance or a @preconcurrency import. If the type really must be @unchecked Sendable, write // swiftlint:disable:next no_unchecked_sendable above it with the synchronization invariant that makes the type thread-safe.

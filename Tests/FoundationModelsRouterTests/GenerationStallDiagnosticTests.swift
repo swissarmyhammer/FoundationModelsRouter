@@ -133,8 +133,8 @@ struct GenerationStallDiagnosticTests {
     /// either writes one line of text and finishes, or suspends until a test
     /// releases it.
     ///
-    /// `@unchecked Sendable` on the same terms as ``StallingBackend``.
-    private final class ToolTurnBackend: LanguageModelSessionBackend, @unchecked Sendable {
+    /// Plain `Sendable`: every stored property is a `let` of a `Sendable` type.
+    private final class ToolTurnBackend: LanguageModelSessionBackend, Sendable {
         /// The plain stub every behaviour other than the stream delegates to.
         private let inner = StubSessionBackend()
 
@@ -216,8 +216,8 @@ struct GenerationStallDiagnosticTests {
 
     /// Vends one retained ``ToolTurnBackend`` per session.
     ///
-    /// `@unchecked Sendable` on the same terms as ``StallingLLMContainer``.
-    private final class ToolTurnLLMContainer: PlainTranscriptStubContainer, @unchecked Sendable {
+    /// Plain `Sendable`: its one stored property is a `let` of a `Sendable` type.
+    private final class ToolTurnLLMContainer: PlainTranscriptStubContainer, Sendable {
         /// The backend this container vends.
         let backend: ToolTurnBackend
 
