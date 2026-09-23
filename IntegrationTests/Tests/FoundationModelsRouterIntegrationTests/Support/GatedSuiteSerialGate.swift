@@ -42,6 +42,11 @@ import Testing
 ///   runs the three compaction smoke suites alone — the seconds-long tier that
 ///   answers "does compaction work at all against a real model" without the
 ///   other real-model suites beside it.
+/// - `swift test --package-path IntegrationTests --filter Qwen38CompactionIntegrationTests`
+///   runs the three compaction cases on Qwen 3.8 27B alone, over one load of
+///   the model: one compaction of a built context, a tool result that
+///   triggers a compaction inside its turn, and a context over the trigger
+///   that compacts at the start of a turn.
 ///
 /// The package boundary needs no guard script: a run of this package executes
 /// every suite in it, so a green run always measured something.
@@ -77,15 +82,31 @@ extension Trait where Self == GatedRealModelSuiteTrait {
     ///
     /// The clock is per test rather than per suite. A suite of this target
     /// holds many tests, so a per-test clock shows which test costs the time.
-    /// No suite here asks for teardown as it ends: each gated `@Test` body
-    /// evicts whatever it loaded for itself.
+    /// This trait asks for no teardown as the suite ends: each `@Test` body
+    /// of a suite that carries it evicts whatever it loaded for itself. A
+    /// suite that shares one load across its tests carries
+    /// ``exclusiveRealModel(whenSuiteEnds:)`` instead.
     ///
     /// - Returns: The trait.
     static var exclusiveRealModel: Self {
+        exclusiveRealModel(whenSuiteEnds: nil)
+    }
+
+    /// The same trait as ``exclusiveRealModel``, with a teardown that runs as
+    /// the suite ends.
+    ///
+    /// A suite whose tests share one resident model evicts that model here,
+    /// before the permit goes to the next suite. The eviction then runs one
+    /// time for the suite, however the suite ended.
+    ///
+    /// - Parameter whenSuiteEnds: The teardown of the suite, or `nil` for none.
+    /// - Returns: The trait.
+    static func exclusiveRealModel(whenSuiteEnds: (@Sendable () async -> Void)?) -> Self {
         GatedRealModelSuiteTrait(
             measurementLabel: integrationMeasurementLabel,
             measuring: .eachTest,
-            holding: GatedSuiteSerialGate.shared
+            holding: GatedSuiteSerialGate.shared,
+            whenSuiteEnds: whenSuiteEnds
         )
     }
 }

@@ -35,8 +35,36 @@ comments:
     - Shrink the existing ^9ddjkjm test to this shape, or replace it. Do not keep a 16,000-token version.
     - CI: make the three tests run where CI runs the gated suites, with the model cached. If CI cannot hold the 27B, record the reason, and give one documented command that runs them.
   timestamp: 2026-09-23T16:51:36.679499+00:00
-position_column: todo
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01m37k4d22nw0dnrcgpwa0v7ce
+  text: |-
+    ### implement — research and design decisions
+    - Unit tests: case 1 is `OneCallCompactionTests`, case 2 is `ToolResultCompactionTests`. Case 3: `AutoCompactionTests.proactiveCompactionPrefersFlashSummarizer` asserts the compaction before the turn and the answer, but not a smaller snapshot and not "one compaction". I add one short test that asserts all four.
+    - One suite for the three integration tests: `Qwen38CompactionIntegrationTests`. Case 1 and case 3 are in its file. Case 2 is an extension of the same suite type, in `Qwen38ToolResultCompactionIntegrationTests.swift`, so one filter selects all three and the suite owns one load.
+    - One load: a new actor `Qwen38ResidentModel` (IntegrationTests Support) loads `mlx-community/Qwen3.8-27B-mxfp4` at the first use, prints the load time, and evicts in the suite trait's `whenSuiteEnds`. New trait factory `exclusiveRealModel(whenSuiteEnds:)` beside the existing `exclusiveRealModel`; it uses the same permit and the same tag.
+    - Case 3 seeds the context directly: the test casts the vended `RoutedSession` to `RoutedSessionActor` (`@testable`), and a test-only extension replaces the backend transcript with the built context and sets `usageState` to the tokenizer count of that context. No change in `Sources/`. No priming turn.
+    - Case 2 shape: a small window and a tool result of a few hundred tokens, sized with the model tokenizer. The 16 070-token version is removed.
+    - CI: `.github/workflows/ci.yml` calls the shared swift-ci workflow with `integration-package-path: IntegrationTests`. Its integration job runs `swift test --package-path IntegrationTests` on the self-hosted macOS pool, so the three tests run there with every other gated suite. The model cache is the runner's own Hugging Face cache.
+  timestamp: 2026-09-23T16:56:09.026055+00:00
+- actor: claude-code
+  id: 01m37kgdw7ys5xh7w6f7xb5jk5
+  text: |-
+    ### implement — changed
+    - evidence: IntegrationTests/.../Qwen38CompactionIntegrationTests.swift (one suite, case 1 and case 3, shared assertions, `Qwen38SessionHarness`, `Qwen38TurnRecord`, test-only `RoutedSessionActor.seed(liveContext:measuredTokens:)`), IntegrationTests/.../Qwen38ToolResultCompactionIntegrationTests.swift (case 2 as an extension of the same suite; the 16 070-token shape is removed), IntegrationTests/.../Support/Qwen38ResidentModel.swift (new: one load, evicted as the suite ends), IntegrationTests/.../Support/GatedSuiteSerialGate.swift (`exclusiveRealModel(whenSuiteEnds:)`; the documented command), Tests/FoundationModelsRouterTests/AutoCompactionTests.swift (unit case 3: `contextOverTheTriggerCompactsOnceBeforeTheTurn`). No change in `Sources/`.
+    - Sizing fault found and fixed: case 2 at target 0.1 stopped with shortfall `targetLeavesNoRoomForSummary(allowedSummaryTokens: -70)`, because the instructions carry the tool definition. The target is now the trigger's own share (0.25).
+    - Case 3 turn prompt ends with the Qwen 3 `/no_think` switch: the turn fell from 22.5-33.1 s to 8.5-8.7 s. Case 2 does not use it: with it the test took 32.4 s, without it 20.7-25.4 s.
+    - Discovery: in case 3 the summary keeps "Port 6543", but the model answers "I do not have access to your specific infrastructure configuration...". The answer is not empty, so the test passes. The model does not use the summary for the answer. I record this as a new task.
+
+    ### test — green
+    - evidence: `swift test`: 1327 tests in 149 suites passed (2 known issues, the designed `withKnownIssue` tests), 1 test passed, 19 tests passed. `swift build --build-tests --package-path IntegrationTests`: Build complete.
+
+    ### real-model — Qwen3.8-27B, `swift test --package-path IntegrationTests --filter Qwen38CompactionIntegrationTests`
+    - Final run: all 3 pass. Model load 2.2 s (warm Hugging Face cache). Case 1 5.5 s (load included), case 3 8.7 s, case 2 25.4 s. Suite 39.6 s.
+    - Case 1: 334 -> 66 tokens, one summarizer call, summary keeps "Port 6543". Case 3: seeded 334 tokens over the trigger of 204; one compaction 334 -> 70 before the turn; answer written. Case 2: tool result 523 tokens, trigger 512; one compaction 1489 -> 376 inside the turn; answer "The record key is KESTREL-42."
+    - CI: the shared swift-ci workflow runs `swift test --package-path IntegrationTests` on the self-hosted macOS pool (`integration-package-path: IntegrationTests` in `.github/workflows/ci.yml`), so the three tests run there with the other gated suites. The model cache is the Hugging Face cache of the runner.
+  timestamp: 2026-09-23T17:02:43.079540+00:00
+position_column: doing
+position_ordinal: '80'
 title: 'Compaction test suite: unit and gated integration tests for the three compaction cases, all run by the suites'
 ---
 ## Decision (from the owner, 2026-09-23)

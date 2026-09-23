@@ -122,6 +122,33 @@ struct AutoCompactionTests {
         #expect(events.contains(.textDelta(Self.cannedText)))
     }
 
+    // MARK: - A long context compacts at turn start (task ^yyjvyga)
+
+    @Test(
+        "a context over the trigger at turn start: one compaction before the turn, the turn answers, and the snapshot is smaller"
+    )
+    @MainActor
+    func contextOverTheTriggerCompactsOnceBeforeTheTurn() async throws {
+        let (session, _, _) = try await Self.makeTriggeredSession(budget: Self.fixedBudget)
+        #expect(await session.contextFill >= Self.fixedBudget.trigger)
+
+        let events = eventsAfterTurnFrame(try await collectEvents(session, prompt: "turn 6"))
+        let compactions = events.compactMap { event -> CompactionResult? in
+            guard case .compaction(let result) = event else { return nil }
+            return result
+        }
+
+        #expect(compactions.count == 1, "expected one compaction, got \(compactions.count)")
+        guard case .compaction(let result) = events.first else {
+            Issue.record("expected the first event to be .compaction, got \(String(describing: events.first))")
+            return
+        }
+        #expect(
+            result.tokensAfter < result.tokensBefore,
+            "the snapshot counts \(result.tokensAfter) tokens against \(result.tokensBefore) before")
+        #expect(events.contains(.textDelta(Self.cannedText)))
+    }
+
     // MARK: - Fallback to the session's own model
 
     @Test(
