@@ -89,7 +89,7 @@ struct FailureDeliveringTextTool<
     func call(arguments: Arguments) async throws -> String {
         let text = try await ToolCallResult { try await wrapped.call(arguments: arguments) }.text
         await ToolResultAppendBoundary.current?.deliver(
-            ToolResultAppend(toolName: name, arguments: arguments, text: text))
+            result: ToolResultAppend(toolName: name, arguments: arguments, text: text))
         return text
     }
 }
@@ -121,7 +121,7 @@ struct FailureDeliveringResultTool<
     func call(arguments: Arguments) async throws -> ToolCallResult<WrappedOutput> {
         let result = try await ToolCallResult { try await wrapped.call(arguments: arguments) }
         await ToolResultAppendBoundary.current?.deliver(
-            ToolResultAppend(toolName: name, arguments: arguments, result: result))
+            result: ToolResultAppend(toolName: name, arguments: arguments, result: result))
         return result
     }
 }

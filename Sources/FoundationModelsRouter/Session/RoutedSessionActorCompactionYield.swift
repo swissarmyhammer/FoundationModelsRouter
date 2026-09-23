@@ -92,8 +92,8 @@ extension RoutedSessionActor {
         if let snapshot, snapshot.contextTokens > 0 {
             return snapshot.contextTokens
         }
-        let known = InFlightTranscript.withAttemptPrompt(
-            InFlightTranscript.merging(liveEntries, with: [snapshot?.entries ?? []]),
+        let known = InFlightTranscript.addingAttemptPrompt(
+            to: InFlightTranscript.merging(liveEntries, with: [snapshot?.entries ?? []]),
             entryIdsBeforeAttempt: toolResultWatch.entryIdsBeforeAttempt, text: toolResultWatch.composedPrompt)
         return (try? tokenCounter.count(Transcript(entries: known))) ?? 0
     }

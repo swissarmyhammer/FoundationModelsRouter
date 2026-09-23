@@ -87,7 +87,7 @@ struct ToolResultCompactionModel: LanguageModel {
         }
 
         /// Whether `transcript` holds a `.toolCalls` entry.
-        private static func holdsToolCall(_ transcript: Transcript) -> Bool {
+        private static func holdsToolCall(in transcript: Transcript) -> Bool {
             transcript.contains { entry in
                 guard case .toolCalls = entry else { return false }
                 return true
@@ -110,20 +110,20 @@ struct ToolResultCompactionModel: LanguageModel {
         ) async throws {
             let prompts = Self.promptTexts(in: request.transcript)
             if prompts.contains(where: { $0.contains(CompactionPrompt.default.text) }) {
-                await Self.sendText(Self.summaryText, entryID: "summary", usage: Self.smallCall, into: channel)
+                await Self.send(text: Self.summaryText, entryID: "summary", usage: Self.smallCall, into: channel)
                 return
             }
             let continues = prompts.contains { $0.contains(RoutedSessionActor.compactionContinuationPrompt) }
-            if continues || Self.holdsToolCall(request.transcript) {
-                await Self.sendText(Self.answerText, entryID: "answer", usage: Self.smallCall, into: channel)
+            if continues || Self.holdsToolCall(in: request.transcript) {
+                await Self.send(text: Self.answerText, entryID: "answer", usage: Self.smallCall, into: channel)
                 return
             }
             await sendToolCall(into: channel)
         }
 
         /// Sends one text response and its usage.
-        private static func sendText(
-            _ text: String, entryID: String, usage: MeteredGenerationCall,
+        private static func send(
+            text: String, entryID: String, usage: MeteredGenerationCall,
             into channel: LanguageModelExecutorGenerationChannel
         ) async {
             await channel.send(

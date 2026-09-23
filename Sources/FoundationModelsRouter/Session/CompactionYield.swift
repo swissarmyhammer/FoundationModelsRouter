@@ -102,7 +102,8 @@ enum InFlightTranscript {
         composedPrompt: String
     ) -> [Transcript.Entry] {
         let merged = merging(settledEntries, with: [yield.liveEntries, yield.snapshotEntries])
-        let prompted = withAttemptPrompt(merged, entryIdsBeforeAttempt: entryIdsBeforeAttempt, text: composedPrompt)
+        let prompted = addingAttemptPrompt(
+            to: merged, entryIdsBeforeAttempt: entryIdsBeforeAttempt, text: composedPrompt)
         let paired = appendingOutputs(of: yield.results, to: prompted)
         return removingUnansweredCalls(from: paired, entryIdsBeforeAttempt: entryIdsBeforeAttempt)
     }
@@ -131,11 +132,11 @@ enum InFlightTranscript {
     ///   - entryIdsBeforeAttempt: The ids of the entries from before the attempt.
     ///   - text: The composed prompt of the attempt.
     /// - Returns: The entries with the attempt's prompt.
-    static func withAttemptPrompt(
-        _ entries: [Transcript.Entry], entryIdsBeforeAttempt: Set<String>, text: String
+    static func addingAttemptPrompt(
+        to entries: [Transcript.Entry], entryIdsBeforeAttempt: Set<String>, text: String
     ) -> [Transcript.Entry] {
         let attemptEntries = entries.filter { !entryIdsBeforeAttempt.contains($0.id) }
-        guard !attemptEntries.contains(where: isPrompt) else { return entries }
+        guard !attemptEntries.contains(where: { isPrompt(entry: $0) }) else { return entries }
         let firstAttemptIndex = entries.firstIndex { !entryIdsBeforeAttempt.contains($0.id) } ?? entries.endIndex
         var prompted = entries
         prompted.insert(
@@ -145,7 +146,7 @@ enum InFlightTranscript {
     }
 
     /// Whether `entry` is a `.prompt` entry.
-    private static func isPrompt(_ entry: Transcript.Entry) -> Bool {
+    private static func isPrompt(entry: Transcript.Entry) -> Bool {
         guard case .prompt = entry else { return false }
         return true
     }

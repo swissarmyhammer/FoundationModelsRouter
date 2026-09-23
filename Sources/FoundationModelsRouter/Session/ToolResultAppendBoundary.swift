@@ -92,7 +92,7 @@ final class ToolResultAppendBoundary: Sendable {
     /// Gives one tool result to the session.
     ///
     /// - Parameter result: The result that the model reads next.
-    func deliver(_ result: ToolResultAppend) async {
+    func deliver(result: ToolResultAppend) async {
         await session.noteToolResult(result)
     }
 }

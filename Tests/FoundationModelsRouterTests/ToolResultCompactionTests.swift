@@ -234,7 +234,7 @@ struct InFlightTranscriptTests {
 
         #expect(rebuilt.count == 4)
         #expect(rebuilt[0].id == Self.earlierEntry.id)
-        #expect(Self.isPrompt(rebuilt[1]))
+        #expect(Self.isPrompt(entry: rebuilt[1]))
         let calls = try #require(Self.toolCalls(of: rebuilt[2]))
         let output = try #require(Self.toolOutput(of: rebuilt[3]))
         #expect(calls.first?.id == output.id)
@@ -242,7 +242,7 @@ struct InFlightTranscriptTests {
     }
 
     /// Whether `entry` is a `.prompt` entry.
-    private static func isPrompt(_ entry: Transcript.Entry) -> Bool {
+    private static func isPrompt(entry: Transcript.Entry) -> Bool {
         if case .prompt = entry { return true }
         return false
     }

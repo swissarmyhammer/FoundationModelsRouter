@@ -239,7 +239,6 @@ extension RoutedSessionActor {
         defer { currentTurnEventSink = nil }
 
         emit(.turnStarted(TurnStart(turnId: turnId, promptId: promptId)))
-        compactionYieldsStopped = false
 
         // Compared in tokens against ``TokenBudget/triggerTokens``, never as
         // `contextFill >= budget.trigger` — see the matching note on the
