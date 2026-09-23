@@ -1,8 +1,22 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8180'
+comments:
+- actor: claude-code
+  id: 01m37d6nqy2f91t2gx59zcbxy0
+  text: |-
+    ### implement — changed
+    Design choices (recorded here, made without a question):
+    - New public enum `GenerationProgressKind` (callStart, fragment, reasoning, toolCall, toolResult, transcriptEntry) in `Session/GenerationStall.swift`. `GenerationStall` has a new field `lastProgress`. The report text is now "generation has made no progress for Ns since the last tool result (K fragments so far, Ms in flight)".
+    - `noteGenerationFragment()` is replaced by `noteGenerationProgress(_:)`. Each append restarts the interval. Only a `.fragment` append adds to the fragment count.
+    - Snapshot path: `ResponseFragment` has a new field `progress` (default `.fragment`). `SnapshotDeltaIterator` in `Resolution/LiveModelLoader.swift` now also reads `transcriptEntries`. A snapshot that adds entries and no text gives a fragment with empty text and the kind of the newest entry. Empty text makes no `.textDelta` and no String chunk, so callers see no change.
+    - Tool path: `RoutedSessionActor.deliver(invocation:)` (the session end of the `ToolRun` open and close records) notes `.toolCall` for an open record and `.toolResult` for a close record. This also covers a `respond` turn, which has no fragments.
+    - Known limit: a close record of a background run that settles while a different model call is in flight also counts as progress for that call. The record does not name the model call.
+    - Tests in `GenerationStallDiagnosticTests`: tool calls with no text for longer than the interval give no stall; a stream that stops after a tool result gives a stall that names the tool result; a `respond` turn measures from the last invocation record; the report text. The existing log test now looks for "generation has made no progress".
+    - Evidence: `swift test` 1316 + 1 + 19 tests pass (2 known issues are old). `swift build --build-tests --package-path IntegrationTests` completes.
+  timestamp: 2026-09-23T15:12:31.998513+00:00
+position_column: doing
+position_ordinal: '80'
 title: Count tool calls and snapshots as progress in the stall watchdog
 ---
 ## Problem

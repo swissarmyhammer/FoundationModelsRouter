@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModels
 import os
 
 /// The logger a session reports a stalled generation to.
@@ -6,14 +7,78 @@ private let generationStallLogger = makeModuleLogger(category: "Generation")
 
 /// What a session could observe about a generation's progress.
 public enum GenerationProgressVisibility: Sendable, Equatable {
-    /// The turn streams. `observed` is how many fragments arrived before the
-    /// stall. ``GenerationStall/timeWithoutProgress`` is measured from the last
-    /// fragment, or from the start of the call before the first.
+    /// The turn streams. `observed` is how many text fragments arrived before
+    /// the stall. ``GenerationStall/timeWithoutProgress`` is measured from the
+    /// last append of any ``GenerationProgressKind``.
     case fragments(observed: Int)
 
-    /// The turn returns one whole `String`, so
-    /// ``GenerationStall/timeWithoutProgress`` is measured from the call start.
+    /// The turn returns one whole `String`, so there is no text fragment to
+    /// count. ``GenerationStall/timeWithoutProgress`` is measured from the last
+    /// tool call or tool result, or from the start of the call before the first.
     case wholeAnswer
+}
+
+/// The kind of the last append a model call made. Each append restarts the
+/// interval a ``GenerationStall`` is measured over, and the report names the
+/// kind of the last one.
+public enum GenerationProgressKind: Sendable, Equatable {
+    /// No append yet. The report is measured from the start of the call.
+    case callStart
+
+    /// A text fragment of the response.
+    case fragment
+
+    /// A reasoning entry in the transcript.
+    case reasoning
+
+    /// A tool call: a tool-calls entry in the transcript, or an open tool
+    /// invocation.
+    case toolCall
+
+    /// A tool result: a tool-output entry in the transcript, or a closed tool
+    /// invocation.
+    case toolResult
+
+    /// A transcript entry of a different kind: instructions, a prompt, or a
+    /// response.
+    case transcriptEntry
+
+    /// The kind of append that `entry` is, when a snapshot adds it to the
+    /// transcript.
+    ///
+    /// - Parameter entry: The transcript entry a snapshot added.
+    init(appending entry: FoundationModels.Transcript.Entry) {
+        switch entry {
+        case .toolCalls:
+            self = .toolCall
+        case .toolOutput:
+            self = .toolResult
+        case .reasoning:
+            self = .reasoning
+        case .instructions, .prompt, .response:
+            self = .transcriptEntry
+        @unknown default:
+            self = .transcriptEntry
+        }
+    }
+
+    /// The words a report writes after "since" for this kind.
+    var reportPhrase: String {
+        switch self {
+        case .callStart:
+            "the start of the call"
+        case .fragment:
+            "the last fragment"
+        case .reasoning:
+            "the last reasoning entry"
+        case .toolCall:
+            "the last tool call"
+        case .toolResult:
+            "the last tool result"
+        case .transcriptEntry:
+            "the last transcript entry"
+        }
+    }
 }
 
 /// A report that a generation in flight has produced nothing the session can
@@ -29,31 +94,34 @@ public struct GenerationStall: Sendable, Equatable, CustomStringConvertible {
     /// What the session could observe about this generation's progress.
     public let visibility: GenerationProgressVisibility
 
+    /// The kind of the last append, which ``timeWithoutProgress`` is measured
+    /// from.
+    public let lastProgress: GenerationProgressKind
+
     /// Creates a stall report.
     public init(
         timeWithoutProgress: Duration,
         timeInFlight: Duration,
-        visibility: GenerationProgressVisibility
+        visibility: GenerationProgressVisibility,
+        lastProgress: GenerationProgressKind
     ) {
         self.timeWithoutProgress = timeWithoutProgress
         self.timeInFlight = timeInFlight
         self.visibility = visibility
+        self.lastProgress = lastProgress
     }
 
     /// A one-line rendering of this report, also used as the session's log line.
     public var description: String {
         let without = Self.secondsText(timeWithoutProgress)
         let inFlight = Self.secondsText(timeInFlight)
+        let stalled = "generation has made no progress for \(without)s since \(lastProgress.reportPhrase)"
         switch visibility {
         case .fragments(let observed):
-            return """
-                generation has produced no fragment in \(without)s \
-                (\(observed) so far, \(inFlight)s in flight)
-                """
+            return "\(stalled) (\(observed) fragments so far, \(inFlight)s in flight)"
         case .wholeAnswer:
             return """
-                generation has produced nothing observable in \(without)s \
-                (this turn returns one whole answer, so there is no fragment to time; \
+                \(stalled) (this turn returns one whole answer, so there is no fragment to count; \
                 \(inFlight)s in flight)
                 """
         }
@@ -90,10 +158,14 @@ struct GenerationStallWatch: Sendable {
     let startedAt: ContinuousClock.Instant
 
     /// When this call last made observable progress. The start of the call
-    /// until a fragment arrives.
+    /// until the first append.
     var lastProgressAt: ContinuousClock.Instant
 
-    /// How many fragments the session has counted for this call.
+    /// The kind of the last append, or ``GenerationProgressKind/callStart``
+    /// before the first.
+    var lastProgressKind: GenerationProgressKind = .callStart
+
+    /// How many text fragments the session has counted for this call.
     var fragmentsObserved: Int = 0
 
     /// Whether this call produces fragments the session counts. Declared by
@@ -151,12 +223,18 @@ extension RoutedSessionActor {
         generationStallWatch?.producesFragments = true
     }
 
-    /// Notes that the model call in flight produced one fragment, which
-    /// restarts the interval a report is measured over.
-    func noteGenerationFragment() {
+    /// Notes that the model call in flight made one append, which restarts the
+    /// interval a report is measured over. A text fragment also adds one to
+    /// the fragment count.
+    ///
+    /// - Parameter kind: The kind of the append.
+    func noteGenerationProgress(_ kind: GenerationProgressKind) {
         guard var watch = generationStallWatch else { return }
-        watch.fragmentsObserved += 1
+        if kind == .fragment {
+            watch.fragmentsObserved += 1
+        }
         watch.lastProgressAt = ContinuousClock.now
+        watch.lastProgressKind = kind
         generationStallWatch = watch
     }
 
@@ -174,7 +252,8 @@ extension RoutedSessionActor {
         let stall = GenerationStall(
             timeWithoutProgress: withoutProgress,
             timeInFlight: watch.startedAt.duration(to: now),
-            visibility: watch.visibility
+            visibility: watch.visibility,
+            lastProgress: watch.lastProgressKind
         )
         generationStallLogger.warning(
             "session \(self.id.description, privacy: .public): \(stall.description, privacy: .public)"

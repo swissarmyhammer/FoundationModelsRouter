@@ -124,6 +124,115 @@ struct GenerationStallDiagnosticTests {
         }
     }
 
+    // MARK: - Tool-using backend
+
+    /// A ``LanguageModelSessionBackend`` whose stream reports appends with no
+    /// text, as the snapshots of a tool-using turn do: each append is a
+    /// fragment with empty text and a ``GenerationProgressKind`` such as
+    /// ``GenerationProgressKind/toolCall``. After the last append the stream
+    /// either writes one line of text and finishes, or suspends until a test
+    /// releases it.
+    ///
+    /// `@unchecked Sendable` on the same terms as ``StallingBackend``.
+    private final class ToolTurnBackend: LanguageModelSessionBackend, @unchecked Sendable {
+        /// The plain stub every behaviour other than the stream delegates to.
+        private let inner = StubSessionBackend()
+
+        /// The appends the stream reports, in order.
+        let appends: [GenerationProgressKind]
+
+        /// The pause before each append.
+        let pause: Duration
+
+        /// Whether the stream suspends on ``release`` after its last append.
+        let holdsAfterLastAppend: Bool
+
+        /// Awaited after the last append when ``holdsAfterLastAppend`` is set.
+        let release = AsyncSemaphore(value: 0)
+
+        /// The text the stream writes after its last append, when it does not hold.
+        static let answer = "tool turn answer"
+
+        /// Creates a tool-using backend.
+        ///
+        /// - Parameters:
+        ///   - appends: The appends the stream reports, in order.
+        ///   - pause: The pause before each append.
+        ///   - holdsAfterLastAppend: Whether the stream suspends after its last append.
+        init(appends: [GenerationProgressKind], pause: Duration, holdsAfterLastAppend: Bool) {
+            self.appends = appends
+            self.pause = pause
+            self.holdsAfterLastAppend = holdsAfterLastAppend
+        }
+
+        func respond(to prompt: String, maxTokens: Int?) async throws -> String {
+            try await inner.respond(to: prompt, maxTokens: maxTokens)
+        }
+
+        func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
+            inner.streamResponse(to: prompt, maxTokens: maxTokens)
+        }
+
+        func streamResponseFragments(
+            to prompt: String, maxTokens: Int?
+        ) -> AsyncThrowingStream<ResponseFragment, Error> {
+            let appends = appends
+            let pause = pause
+            let holdsAfterLastAppend = holdsAfterLastAppend
+            let release = release
+            return AsyncThrowingStream { continuation in
+                let task = Task {
+                    for kind in appends {
+                        try await Task.sleep(for: pause)
+                        continuation.yield(ResponseFragment(text: "", progress: kind))
+                    }
+                    if holdsAfterLastAppend {
+                        await release.wait()
+                    } else {
+                        continuation.yield(ResponseFragment(text: Self.answer))
+                    }
+                    continuation.finish()
+                }
+                continuation.onTermination = { @Sendable _ in task.cancel() }
+            }
+        }
+
+        func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws -> String {
+            try await respond(to: prompt, maxTokens: maxTokens)
+        }
+
+        func makeFork() -> any LanguageModelSessionBackend {
+            inner.makeFork()
+        }
+
+        func transcriptEntries() -> [Transcript.Entry] {
+            inner.transcriptEntries()
+        }
+
+        func usageTokenCounts() -> (input: Int, output: Int)? {
+            inner.usageTokenCounts()
+        }
+    }
+
+    /// Vends one retained ``ToolTurnBackend`` per session.
+    ///
+    /// `@unchecked Sendable` on the same terms as ``StallingLLMContainer``.
+    private final class ToolTurnLLMContainer: PlainTranscriptStubContainer, @unchecked Sendable {
+        /// The backend this container vends.
+        let backend: ToolTurnBackend
+
+        /// Creates a container that vends `backend`.
+        ///
+        /// - Parameter backend: The backend to vend.
+        init(backend: ToolTurnBackend) {
+            self.backend = backend
+        }
+
+        func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
+            backend
+        }
+    }
+
     // MARK: - Collector
 
     /// Collects the events a session-wide subscription delivered, so the test
@@ -189,8 +298,25 @@ struct GenerationStallDiagnosticTests {
         fragmentsBeforeStall: Int = 0,
         reportInterval: Duration = testReportInterval
     ) async throws -> (session: RoutedSession, backend: StallingBackend, dir: URL) {
-        let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let container = StallingLLMContainer(fragmentsBeforeStall: fragmentsBeforeStall)
+        let (session, dir) = try await makeSession(over: container, reportInterval: reportInterval)
+        let backend = try #require(container.lastBackend)
+        return (session, backend, dir)
+    }
+
+    /// Builds a fresh router, resolved profile, and vended session over
+    /// `container`, with `reportInterval` installed.
+    ///
+    /// - Parameters:
+    ///   - container: The container the router loads.
+    ///   - reportInterval: The stall reporting interval to install on the
+    ///     vended session.
+    /// - Returns: The session, and the temp directory to remove.
+    private static func makeSession(
+        over container: some LoadedLLMContainer,
+        reportInterval: Duration
+    ) async throws -> (session: RoutedSession, dir: URL) {
+        let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let router = RouterTestFixtures.makeRouter(
             cacheDir: dir,
             loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension)
@@ -199,8 +325,7 @@ struct GenerationStallDiagnosticTests {
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let session = profile.standard.makeSession()
         await session.installGenerationStallReportInterval(reportInterval)
-        let backend = try #require(container.lastBackend)
-        return (session, backend, dir)
+        return (session, dir)
     }
 
     /// Subscribes to `session`'s session-wide feed and drains it into a log.
@@ -361,6 +486,114 @@ struct GenerationStallDiagnosticTests {
         _ = try await turn.value
         drain.cancel()
 
-        try assertLogged(containing: "generation has produced", since: start)
+        try assertLogged(containing: "generation has made no progress", since: start)
+    }
+
+    // MARK: - Tool calls and snapshots are progress (task ^4799jxg)
+
+    @Test(
+        "a turn that makes tool calls with no text for longer than the interval reports no stall",
+        .timeLimit(.minutes(1)))
+    @MainActor
+    func toolCallsWithNoTextReportNoStall() async throws {
+        // The appends are close together and the interval is far wider than
+        // one pause, but the whole run of appends outlasts the interval. A
+        // watchdog that timed only text fragments reports a stall here.
+        let reportInterval: Duration = .milliseconds(400)
+        let pause: Duration = .milliseconds(20)
+        let appendCount = 40
+        let appends = (0..<appendCount).map { $0.isMultiple(of: 2) ? GenerationProgressKind.toolCall : .toolResult }
+        let backend = ToolTurnBackend(appends: appends, pause: pause, holdsAfterLastAppend: false)
+        let (session, dir) = try await Self.makeSession(
+            over: ToolTurnLLMContainer(backend: backend), reportInterval: reportInterval)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let start = ContinuousClock.now
+        var stalls: [GenerationStall] = []
+        var text = ""
+        for try await event in await session.streamEvents(to: Self.prompt) {
+            switch event {
+            case .generationStalled(let stall):
+                stalls.append(stall)
+            case .textDelta(let delta):
+                text += delta
+            default:
+                continue
+            }
+        }
+
+        #expect(start.duration(to: .now) > reportInterval)
+        #expect(stalls.isEmpty)
+        #expect(text == ToolTurnBackend.answer)
+    }
+
+    @Test(
+        "a turn that stops after a tool result reports a stall that names the tool result",
+        .timeLimit(.minutes(1)))
+    @MainActor
+    func aTurnThatStopsAfterAToolResultNamesIt() async throws {
+        let backend = ToolTurnBackend(
+            appends: [.toolCall, .toolResult], pause: .zero, holdsAfterLastAppend: true)
+        let (session, dir) = try await Self.makeSession(
+            over: ToolTurnLLMContainer(backend: backend), reportInterval: Self.testReportInterval)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // A report made before the tool result reached the watch names an
+        // earlier append. The report this test is about names the tool result,
+        // and a stalled generation reports again on each interval, so it follows.
+        var stall: GenerationStall?
+        for try await event in await session.streamEvents(to: Self.prompt) {
+            guard case .generationStalled(let reported) = event,
+                stall == nil, reported.lastProgress == .toolResult
+            else { continue }
+            stall = reported
+            backend.release.signal()
+        }
+
+        let reported = try #require(stall)
+        #expect(reported.visibility == .fragments(observed: 0))
+        #expect(reported.description.contains("since the last tool result"))
+    }
+
+    @Test(
+        "a respond turn measures its stall from the last tool invocation record",
+        .timeLimit(.minutes(1)))
+    @MainActor
+    func aRespondTurnMeasuresFromTheLastToolInvocation() async throws {
+        let (session, backend, dir) = try await Self.makeStallingSession()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let actor = try #require(session as? RoutedSessionActor)
+
+        let (log, drain) = await Self.watchSessionEvents(on: session)
+        let turn = Task { try await session.respond(to: Self.prompt) }
+        try await BoundedWait.awaitSignal(backend.suspended, named: "the model call suspended")
+
+        let open = ToolInvocationRecord(
+            tool: "search", op: "search", correlationID: "tool-run", sessionID: session.id, openedAt: Date())
+        await actor.deliver(invocation: open)
+        await actor.deliver(invocation: open.closed(at: Date()))
+
+        let reported = await BoundedWait.conditionReached("a stall report that names the tool result") {
+            await log.stalls.contains { $0.lastProgress == .toolResult }
+        }
+        backend.release.signal()
+        _ = try await turn.value
+        drain.cancel()
+
+        #expect(reported)
+        let stall = try #require(await log.stalls.first { $0.lastProgress == .toolResult })
+        #expect(stall.visibility == .wholeAnswer)
+        #expect(stall.timeInFlight > stall.timeWithoutProgress)
+    }
+
+    @Test("a stall report names the kind of its last append")
+    func aStallReportNamesItsLastAppend() {
+        let stall = GenerationStall(
+            timeWithoutProgress: .seconds(45), timeInFlight: .seconds(90),
+            visibility: .fragments(observed: 3), lastProgress: .toolResult)
+        #expect(
+            stall.description
+                == "generation has made no progress for 45.0s since the last tool result (3 fragments so far, 90.0s in flight)"
+        )
     }
 }

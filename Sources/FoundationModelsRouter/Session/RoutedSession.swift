@@ -183,7 +183,8 @@ public protocol RoutedSession: Actor {
     /// before the turn's events for a proactive compaction, and after the failed
     /// attempt's ``SessionEvent/turnEnded(_:)`` for a reactive compaction.
     /// ``SessionEvent/generationStalled(_:)`` is emitted on each interval
-    /// without a fragment.
+    /// without progress: no text fragment, no transcript entry, and no tool
+    /// call or tool result.
     ///
     /// Abandoning this stream cancels the turn. This surface does not drain the
     /// run plane. A run that settles before the stream ends is reported as

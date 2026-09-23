@@ -213,12 +213,14 @@ extension RoutedSessionActor {
         // This turn's stall watch counts real increments (task ^z6xcmnh):
         // declared here so a streaming turn that has produced nothing yet is
         // still reported as one the session can see fragments on, and noted per
-        // fragment below so the report is measured from the last one.
+        // append below so the report is measured from the last one. A fragment
+        // with no text still reports an append: a tool call, a tool result, or
+        // a reasoning entry (task ^4799jxg).
         observeGenerationFragments()
         for try await fragment in backend.streamResponseFragments(
             to: composedPrompt, maxTokens: maxTokens)
         {
-            noteGenerationFragment()
+            noteGenerationProgress(fragment.progress)
             for element in wrapFragment(fragment) {
                 continuation.yield(element)
             }

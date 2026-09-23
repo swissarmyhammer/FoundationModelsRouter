@@ -110,8 +110,13 @@ extension RoutedSessionActor: ToolInvocationObserver {
     /// that call's usage is reported first (see
     /// ``reportGenerationCallAtToolOpen()``).
     ///
+    /// Each record is progress for the stall watch of the model call in
+    /// flight: an open record is a tool call, and a close record is a tool
+    /// result (task ^4799jxg).
+    ///
     /// - Parameter record: The record the outbox forwarded.
     func deliver(invocation record: ToolInvocationRecord) async {
+        noteGenerationProgress(record.closedAt == nil ? .toolCall : .toolResult)
         if record.closedAt == nil {
             await reportGenerationCallAtToolOpen()
         }

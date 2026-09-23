@@ -414,6 +414,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
         let fragments = SnapshotDeltaIterator(
             liveSession.streamResponse(to: prompt, options: options),
             content: { $0.content },
+            entries: { $0.transcriptEntries },
             observe: { [self] snapshot in
                 recordLastGenerationCall(usage: snapshot.usage, entries: snapshot.transcriptEntries)
                 keepNewestSnapshot(usage: snapshot.usage, entries: snapshot.transcriptEntries)
@@ -423,6 +424,11 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
 
     /// Pulls cumulative snapshots and returns the fragment each one adds.
     /// ``next()`` must not be called concurrently.
+    ///
+    /// A snapshot that adds transcript entries and no text gives a fragment
+    /// with empty text, whose ``ResponseFragment/progress`` names the newest
+    /// entry. A tool-using turn thus reports its tool calls and tool results
+    /// to the stall watch (task ^4799jxg).
     private final class SnapshotDeltaIterator<Snapshots: AsyncSequence>: @unchecked Sendable {
         /// The snapshot stream's own iterator, driven by ``next()``'s caller.
         private var iterator: Snapshots.AsyncIterator
@@ -430,25 +436,34 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
         /// Reads a snapshot's cumulative text.
         private let content: (Snapshots.Element) -> String
 
+        /// Reads the transcript entries a snapshot's method appended so far.
+        private let entries: (Snapshots.Element) -> ArraySlice<FoundationModels.Transcript.Entry>
+
         /// Receives each snapshot the stream gives, before its text is read.
         private let observe: (Snapshots.Element) -> Void
 
         /// The snapshot before the current one, or the empty string at the start.
         private var previous = ""
 
+        /// How many transcript entries the snapshot before the current one held.
+        private var previousEntryCount = 0
+
         /// Creates an iterator that pulls from `snapshots`.
         ///
         /// - Parameters:
         ///   - snapshots: The snapshot stream to pull from.
         ///   - content: Reads the cumulative text of a snapshot.
+        ///   - entries: Reads the transcript entries a snapshot holds.
         ///   - observe: Receives each snapshot, a repeated one included.
         init(
             _ snapshots: Snapshots,
             content: @escaping (Snapshots.Element) -> String,
+            entries: @escaping (Snapshots.Element) -> ArraySlice<FoundationModels.Transcript.Entry>,
             observe: @escaping (Snapshots.Element) -> Void
         ) {
             self.iterator = snapshots.makeAsyncIterator()
             self.content = content
+            self.entries = entries
             self.observe = observe
         }
 
@@ -460,9 +475,24 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
                 let current = content(snapshot)
                 let fragment = MLXFoundationModelsSessionBackend.fragment(of: current, after: previous)
                 previous = current
+                let appended = appendedEntryProgress(in: snapshot)
                 if let fragment { return fragment }
+                if let appended { return ResponseFragment(text: "", progress: appended) }
             }
             return nil
+        }
+
+        /// The kind of the newest entry `snapshot` added to the transcript, or
+        /// `nil` when it added none. Records the entry count of `snapshot`.
+        ///
+        /// - Parameter snapshot: The snapshot just pulled.
+        /// - Returns: The progress kind of the newest added entry, or `nil`.
+        private func appendedEntryProgress(in snapshot: Snapshots.Element) -> GenerationProgressKind? {
+            let current = entries(snapshot)
+            let previousCount = previousEntryCount
+            previousEntryCount = current.count
+            guard current.count > previousCount, let newest = current.last else { return nil }
+            return GenerationProgressKind(appending: newest)
         }
     }
 

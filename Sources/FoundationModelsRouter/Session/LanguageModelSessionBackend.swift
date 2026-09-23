@@ -7,6 +7,11 @@ import FoundationModels
 /// The element type of ``LanguageModelSessionBackend/streamResponseFragments(to:maxTokens:)``.
 /// A tool-using turn can close one response and start a new one. An
 /// accumulator uses ``restartsResponse`` to drop the superseded text.
+///
+/// A fragment can also report progress with no new text: a snapshot that adds
+/// a tool call, a tool result, or a reasoning entry to the transcript. That
+/// fragment has an empty ``text`` and a ``progress`` other than
+/// ``GenerationProgressKind/fragment``.
 public struct ResponseFragment: Sendable, Equatable {
     /// The new text this fragment adds.
     public let text: String
@@ -15,10 +20,19 @@ public struct ResponseFragment: Sendable, Equatable {
     /// fragment delivered so far this turn.
     public let restartsResponse: Bool
 
+    /// The kind of append this fragment reports to the stall watch.
+    public let progress: GenerationProgressKind
+
     /// Creates a fragment.
-    public init(text: String, restartsResponse: Bool = false) {
+    ///
+    /// - Parameters:
+    ///   - text: The new text this fragment adds.
+    ///   - restartsResponse: `true` when this fragment begins a new response.
+    ///   - progress: The kind of append this fragment reports.
+    public init(text: String, restartsResponse: Bool = false, progress: GenerationProgressKind = .fragment) {
         self.text = text
         self.restartsResponse = restartsResponse
+        self.progress = progress
     }
 }
 
