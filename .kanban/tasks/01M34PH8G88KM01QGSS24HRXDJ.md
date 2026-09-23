@@ -23,9 +23,17 @@ comments:
     - files: Sources Core/ProfileDefinition.swift, Resolution/JointFit.swift, Resolution/SlotResolution.swift, Resolution/LiveModelLoader.swift, Router.swift, Session/RoutedSessionActor.swift; Tests TestSupport/ScriptedSessionContext.swift (new) and the unit and integration sites.
     - next: commit, then review
   timestamp: 2026-09-23T16:26:07.071301+00:00
+- actor: claude-code
+  id: 01m37j6bdq0efn4nckkznnk7th
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (fe97590): 1 finding — Sources/FoundationModelsRouter/Resolution/JointFit.swift:730 `swift/fluent-usage`.
+    - fix: renamed `windowFailure` to `makeWindowFailure`. The same cause is removed from the whole file: `unsizedReport` → `makeUnsizedReport`, `sizedReport` → `makeSizedReport`, `found` → `makeFoundResult` (each constructs and returns a value). `chosenReport` (a lookup) and `verdict(blockedBy:)` (a mapping) are not factories and keep their names. Box checked. `swift test`: 1326 tests in 149 suites passed, 19 in 3, 1 in 1.
+    - next: commit, review HEAD~1..HEAD again
+  timestamp: 2026-09-23T16:39:44.311286+00:00
 depends_on:
 - 01M34PGWP0GS427JNWAAMKPZPW
-position_column: doing
+position_column: review
 position_ordinal: '80'
 title: Make the model's window the default context of a profile
 ---
@@ -57,3 +65,12 @@ About 20 sites in `Tests/` and `IntegrationTests/` state `ProfileDefinition.defa
 ## Order
 
 Land after "Replace the context ladder with the largest window that fits". Both edit `JointFit.swift`. #compaction #limits
+
+## Review Findings (2026-09-23 11:26)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 29 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Resolution/JointFit.swift:730` `swift/fluent-usage` — Factory methods should begin with the `make` prefix. This static function constructs and returns a `ResolutionFailure` object, making it a factory method; it should be named `makeWindowFailure` instead of `windowFailure` to follow the fluent naming convention established in the Swift API Design Guidelines. Rename the function from `private static func windowFailure(...)` to `private static func makeWindowFailure(...)`, and update the call site at line 716 accordingly to `throw makeWindowFailure(...)`.
