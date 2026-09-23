@@ -1,8 +1,26 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '9680'
+comments:
+- actor: claude-code
+  id: 01m37dpeg2s5g4ws0w9yzqx9xz
+  text: |-
+    ### research and design choices
+    - The two constants were at `GenerationStall.swift:183-189`; the stored interval at `RoutedSessionActor.swift:436-437`. The only test that used the default was `defaultReportIntervalIsThirtySeconds`. No doc or markdown file names the 30 s default.
+    - Discovery: `setGenerationStallReportInterval(_:)` was internal on `RoutedSessionActor`. With the default off, no host could turn the report on. Choice: add `setGenerationStallReportInterval(_:)` to the public `RoutedSession` protocol, so the host can install an interval. `RoutedSessionActor` is the one conformer.
+    - Discovery: a fork did not inherit the interval. Choice: `performFork` sets the interval of the parent on the child after construction. No new parameter on `makeRoutedSessionActor`.
+    - Choice: the stored interval starts at `.zero` (off). `watchGenerationForStalls` already returns at once for a non-positive interval, so no new code path.
+    - Tests: the test helper `installGenerationStallReportInterval` is replaced by the public method, and a read accessor `installedGenerationStallReportInterval` is added. New tests: no interval reports nothing after 5 s of silence; `.seconds(1)` reports after 1 s; a fork starts with the interval of its parent. The numbers are local to each test.
+  timestamp: 2026-09-23T15:21:08.866984+00:00
+- actor: claude-code
+  id: 01m37drfbymvvbesxtc19wqpax
+  text: |-
+    ### implement — changed
+    - evidence: 6 files — Sources/FoundationModelsRouter/Session/GenerationStall.swift, Session/RoutedSession.swift, Session/RoutedSessionActor.swift, Session/RoutedSessionActorForking.swift, Tests/FoundationModelsRouterTests/GenerationStallDiagnosticTests.swift, Tests/FoundationModelsRouterTests/Helpers/SessionPlumbingAccess.swift. `swift test`: "Test run with 1318 tests in 149 suites passed ... with 2 known issues" (the 2 known issues are in RealModelHarnessTests and BoundedWaitTests, which exist before this card), "Test run with 1 test in 1 suite passed", "Test run with 19 tests in 3 suites passed". `swift build --build-tests --package-path IntegrationTests`: Build complete. `rg defaultGenerationStallReportInterval` finds nothing.
+    - next: commit, then review.
+  timestamp: 2026-09-23T15:22:15.294286+00:00
+position_column: doing
+position_ordinal: '80'
 title: Make the stall report default off; a session reports stalls only when the host installs an interval
 ---
 ## Decision (from the owner, 2026-09-22)

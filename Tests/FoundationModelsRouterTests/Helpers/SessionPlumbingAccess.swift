@@ -29,16 +29,9 @@ extension RoutedSession {
         get async { await (self as! RoutedSessionActor).isSuspendedOnRunPlaneDrainWait }
     }
 
-    /// Installs how long a model call on this session may run with no
-    /// observable progress before it reports a ``GenerationStall`` — see
-    /// ``RoutedSessionActor/setGenerationStallReportInterval(_:)``.
-    ///
-    /// Named differently from the actor's own method on purpose: an extension
-    /// member of this protocol that shares the name wins overload resolution
-    /// against the concrete type too, and calls itself forever.
-    ///
-    /// - Parameter interval: The reporting interval to install.
-    func installGenerationStallReportInterval(_ interval: Duration) async {
-        await (self as! RoutedSessionActor).setGenerationStallReportInterval(interval)
+    /// The stall report interval the session holds now — see
+    /// ``RoutedSessionActor/generationStallReportInterval``.
+    var installedGenerationStallReportInterval: Duration {
+        get async { await (self as! RoutedSessionActor).generationStallReportInterval }
     }
 }

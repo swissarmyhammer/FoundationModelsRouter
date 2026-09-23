@@ -200,7 +200,7 @@ extension RoutedSessionActor {
         // beside it, and needs no sidecar call of its own to say so (see
         // ``SessionSidecarOrigin``).
 
-        return makeRoutedSessionActor(
+        let child = makeRoutedSessionActor(
             profile: profile,
             routerId: routerId,
             id: childId,
@@ -265,6 +265,10 @@ extension RoutedSessionActor {
             // reach the same backend.
             tracer: tracer
         )
+        // The stall report interval is a host setting, as the other settings
+        // above are, so the child starts with the interval of this session.
+        await child.setGenerationStallReportInterval(generationStallReportInterval)
+        return child
     }
 
     /// See ``RoutedSession/close()``.

@@ -278,13 +278,6 @@ struct GenerationStallDiagnosticTests {
     /// The prompt every test turn sends.
     private static let prompt = "generate something"
 
-    /// The seconds ``defaultReportIntervalIsThirtySeconds()`` expects the
-    /// shipped default to be built from.
-    ///
-    /// Stated here as its own number, and never read from the source it
-    /// checks, so a change to that source makes the test fail.
-    private static let expectedDefaultReportIntervalSeconds = 30
-
     /// Builds a fresh router, resolved profile, and vended session over a
     /// ``StallingBackend``.
     ///
@@ -292,11 +285,11 @@ struct GenerationStallDiagnosticTests {
     ///   - fragmentsBeforeStall: How many stream chunks the backend produces
     ///     before suspending.
     ///   - reportInterval: The stall reporting interval to install on the
-    ///     vended session.
+    ///     vended session, or `nil` to install none.
     /// - Returns: The session, its backend, and the temp directory to remove.
     private static func makeStallingSession(
         fragmentsBeforeStall: Int = 0,
-        reportInterval: Duration = testReportInterval
+        reportInterval: Duration? = testReportInterval
     ) async throws -> (session: RoutedSession, backend: StallingBackend, dir: URL) {
         let container = StallingLLMContainer(fragmentsBeforeStall: fragmentsBeforeStall)
         let (session, dir) = try await makeSession(over: container, reportInterval: reportInterval)
@@ -305,16 +298,16 @@ struct GenerationStallDiagnosticTests {
     }
 
     /// Builds a fresh router, resolved profile, and vended session over
-    /// `container`, with `reportInterval` installed.
+    /// `container`, with `reportInterval` installed when it is not `nil`.
     ///
     /// - Parameters:
     ///   - container: The container the router loads.
     ///   - reportInterval: The stall reporting interval to install on the
-    ///     vended session.
+    ///     vended session, or `nil` to install none.
     /// - Returns: The session, and the temp directory to remove.
     private static func makeSession(
         over container: some LoadedLLMContainer,
-        reportInterval: Duration
+        reportInterval: Duration?
     ) async throws -> (session: RoutedSession, dir: URL) {
         let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let router = RouterTestFixtures.makeRouter(
@@ -324,7 +317,9 @@ struct GenerationStallDiagnosticTests {
         let profile = try await router.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let session = profile.standard.makeSession()
-        await session.installGenerationStallReportInterval(reportInterval)
+        if let reportInterval {
+            await session.setGenerationStallReportInterval(reportInterval)
+        }
         return (session, dir)
     }
 
@@ -458,14 +453,65 @@ struct GenerationStallDiagnosticTests {
         #expect(await log.stalls.isEmpty)
     }
 
-    // MARK: - The cadence a session starts with
+    // MARK: - Off until the host installs an interval (task ^m8pcyck)
 
-    @Test("the shipped default reporting interval is thirty seconds")
-    func defaultReportIntervalIsThirtySeconds() {
-        #expect(
-            RoutedSessionActor.defaultGenerationStallReportInterval
-                == .seconds(Self.expectedDefaultReportIntervalSeconds)
-        )
+    @Test(
+        "a session with no interval installed reports nothing after five seconds of silence",
+        .timeLimit(.minutes(1)))
+    @MainActor
+    func aSessionWithNoIntervalReportsNothing() async throws {
+        let silence: Duration = .seconds(5)
+        let (session, backend, dir) = try await Self.makeStallingSession(reportInterval: nil)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let (log, drain) = await Self.watchSessionEvents(on: session)
+        let turn = Task { try await session.respond(to: Self.prompt) }
+        try await BoundedWait.awaitSignal(backend.suspended, named: "the model call suspended")
+        try await Task.sleep(for: silence)
+        let stallsDuringSilence = await log.stalls
+
+        backend.release.signal()
+        _ = try await turn.value
+        drain.cancel()
+
+        #expect(await session.installedGenerationStallReportInterval == .zero)
+        #expect(stallsDuringSilence.isEmpty)
+    }
+
+    @Test(
+        "a session with a one-second interval reports a stall after one second",
+        .timeLimit(.minutes(1)))
+    @MainActor
+    func aOneSecondIntervalReportsAfterOneSecond() async throws {
+        let reportInterval: Duration = .seconds(1)
+        let (session, backend, dir) = try await Self.makeStallingSession(reportInterval: reportInterval)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let (log, drain) = await Self.watchSessionEvents(on: session)
+        let turn = Task { try await session.respond(to: Self.prompt) }
+        try await BoundedWait.awaitSignal(backend.suspended, named: "the model call suspended")
+        let reported = await BoundedWait.conditionReached("a stall report") { await !log.stalls.isEmpty }
+
+        backend.release.signal()
+        _ = try await turn.value
+        drain.cancel()
+
+        #expect(reported)
+        let stall = try #require(await log.stalls.first)
+        #expect(stall.timeWithoutProgress >= reportInterval)
+    }
+
+    @Test("a fork starts with the stall report interval of its parent")
+    @MainActor
+    func aForkStartsWithTheIntervalOfItsParent() async throws {
+        let reportInterval: Duration = .seconds(1)
+        let (session, dir) = try await Self.makeSession(
+            over: StallingLLMContainer(fragmentsBeforeStall: 0), reportInterval: reportInterval)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let child = try await session.fork(workingDirectory: nil)
+
+        #expect(await child.installedGenerationStallReportInterval == reportInterval)
     }
 
     // MARK: - The log a consumer with no subscription still sees

@@ -431,10 +431,11 @@ actor RoutedSessionActor: RoutedSession {
     var lastGenerationStallWatchId: UInt64 = 0
 
     /// How long a model call may run with no observable progress before it
-    /// reports a ``GenerationStall``. Change it through
-    /// ``setGenerationStallReportInterval(_:)``.
-    var generationStallReportInterval: Duration = RoutedSessionActor
-        .defaultGenerationStallReportInterval
+    /// reports a ``GenerationStall``. It is `.zero`, which means off, until the
+    /// host installs an interval through
+    /// ``setGenerationStallReportInterval(_:)``. A fork starts with its
+    /// parent's interval.
+    var generationStallReportInterval: Duration = .zero
 
     /// The `correlationID` of every background run whose ending this session has
     /// already journaled. A second write for one run is a no-op. See

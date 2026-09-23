@@ -180,17 +180,7 @@ struct GenerationStallWatch: Sendable {
 }
 
 extension RoutedSessionActor {
-    /// The seconds ``defaultGenerationStallReportInterval`` is built from.
-    private static let defaultGenerationStallReportIntervalSeconds = 30
-
-    /// How long a model call runs with no observable progress before a session
-    /// reports a ``GenerationStall``, unless the session is told otherwise.
-    static let defaultGenerationStallReportInterval: Duration =
-        .seconds(defaultGenerationStallReportIntervalSeconds)
-
-    /// Installs how long a model call on this session may run with no
-    /// observable progress before it reports a ``GenerationStall``.
-    /// Takes effect on the next model call.
+    /// See ``RoutedSession/setGenerationStallReportInterval(_:)``.
     ///
     /// - Parameter interval: The interval to install. A non-positive interval
     ///   turns reporting off for later calls.

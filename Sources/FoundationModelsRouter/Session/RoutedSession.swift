@@ -279,6 +279,19 @@ public protocol RoutedSession: Actor {
     ///   when the call comes from inside a tool call of this session's own turn.
     func fork(workingDirectory: URL?) async throws -> RoutedSession
 
+    /// Installs how long a model call on this session may run with no
+    /// observable progress before it reports
+    /// ``SessionEvent/generationStalled(_:)``. The change takes effect on the
+    /// next model call.
+    ///
+    /// Stall reports are off until the host calls this. The session has no
+    /// interval of its own: the host that shows the report names the interval.
+    /// A ``fork(workingDirectory:)`` child starts with this session's interval.
+    ///
+    /// - Parameter interval: The interval to install. A non-positive interval
+    ///   turns reporting off for later calls.
+    func setGenerationStallReportInterval(_ interval: Duration)
+
     /// Tears the session down: runs `SessionMailbox.sweep()`, which cancels
     /// every background run and rejects every pending elicitation, and journals
     /// the resulting terminal events before it returns. It also finishes every
