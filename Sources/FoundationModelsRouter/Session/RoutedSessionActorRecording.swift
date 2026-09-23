@@ -21,8 +21,8 @@ extension RoutedSessionActor {
     ///   - pendingEvents: The events this turn drained from the outbox.
     ///   - onEvent: A sink for derived ``SessionEvent``s, or `nil`.
     /// - Returns: Whether the diff included a `.response` entry, the turn's
-    ///   usage delta (`nil` when unknown), and whether `pendingEvents` were
-    ///   attached to a persisted `.prompt` entry.
+    ///   usage delta (`nil` when unknown), whether `pendingEvents` were
+    ///   attached to a persisted `.prompt` entry, and why the attempt stopped.
     private func finishTurn(
         grammar: Grammar?,
         since: Date,
@@ -30,7 +30,10 @@ extension RoutedSessionActor {
         responseTokenCeiling: Int?,
         pendingEvents: [OperationEvent],
         onEvent: ((SessionEvent) -> Void)? = nil
-    ) async -> (diffIncludedResponse: Bool, usage: (input: Int, output: Int)?, pendingEventsAttached: Bool) {
+    ) async -> (
+        diffIncludedResponse: Bool, usage: (input: Int, output: Int)?, pendingEventsAttached: Bool,
+        finishReason: FinishReason
+    ) {
         let usage = Self.usageDelta(before: usageBefore, after: backend.usageTokenCounts())
         // Read before the diff below, which moves the baseline past this
         // attempt's entries.
@@ -76,7 +79,7 @@ extension RoutedSessionActor {
                         tokensIn: usage.input, tokensOut: usage.output, contextFill: contextFill,
                         finishReason: finishReason)))
         }
-        return (diffIncludedResponse, usage, pendingEventsAttached)
+        return (diffIncludedResponse, usage, pendingEventsAttached, finishReason)
     }
 
     /// The entries of the backend transcript that ``persistedBaseline`` does
@@ -102,8 +105,8 @@ extension RoutedSessionActor {
     ///     or `nil` when it gave none.
     ///   - pendingEvents: The events drained from ``outbox`` for this turn.
     ///   - onEvent: A sink for derived ``SessionEvent``s, or `nil`.
-    /// - Returns: Whether the diff included a `.response` entry, and the
-    ///   turn's usage delta.
+    /// - Returns: Whether the diff included a `.response` entry, the turn's
+    ///   usage delta, and why the attempt stopped.
     func finishTurnAndRequeueIfUnattached(
         grammar: Grammar?,
         since started: Date,
@@ -111,8 +114,8 @@ extension RoutedSessionActor {
         responseTokenCeiling: Int?,
         pendingEvents: [OperationEvent],
         onEvent: ((SessionEvent) -> Void)? = nil
-    ) async -> (diffIncludedResponse: Bool, usage: (input: Int, output: Int)?) {
-        let (diffIncludedResponse, usage, pendingEventsAttached) = await finishTurn(
+    ) async -> (diffIncludedResponse: Bool, usage: (input: Int, output: Int)?, finishReason: FinishReason) {
+        let (diffIncludedResponse, usage, pendingEventsAttached, finishReason) = await finishTurn(
             grammar: grammar, since: started, usageBefore: usageBefore,
             responseTokenCeiling: responseTokenCeiling, pendingEvents: pendingEvents, onEvent: onEvent)
         // `drainForDispatch()` already destructively removed `pendingEvents`
@@ -128,7 +131,7 @@ extension RoutedSessionActor {
         if !pendingEventsAttached {
             await requeueUnattachedPendingEvents(events: pendingEvents)
         }
-        return (diffIncludedResponse, usage)
+        return (diffIncludedResponse, usage, finishReason)
     }
 
     /// Re-posts `events` onto ``outbox`` through `SessionOutbox.requeue(event:)`.

@@ -417,10 +417,10 @@ actor RoutedSessionActor: RoutedSession {
     /// boundaries. See ``ToolResultWatch`` and ``noteToolResult(_:)``.
     var toolResultWatch = ToolResultWatch()
 
-    /// Whether the turn in flight stops yielding at a tool result: set when
-    /// a yield's compaction applied no summary
-    /// (``continueAfterCompactionYield(_:attempt:body:)``), and cleared by
-    /// ``beginTurn()`` for each new turn.
+    /// Whether the turn in flight stops compacting inside the turn, at a tool
+    /// result or at a ceiling stop: set when such a compaction applied no
+    /// summary (``compactAndContinue(attempt:continuationPrompt:body:)``), and
+    /// cleared by ``beginTurn()`` for each new turn.
     var compactionYieldsStopped = false
 
     /// The stall watch over the one model call in flight, or `nil` between

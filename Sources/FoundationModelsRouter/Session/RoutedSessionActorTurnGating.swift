@@ -56,8 +56,9 @@ extension RoutedSessionActor {
         // that did not exist yet.
         lastTurnId += 1
         currentTurnId = lastTurnId
-        // A new turn may yield at a tool result again, whatever the last
-        // turn's yield did (see ``compactionYieldsStopped``).
+        // A new turn may compact inside the turn again, at a tool result or
+        // at a ceiling stop, whatever the last turn's compaction did (see
+        // ``compactionYieldsStopped``).
         compactionYieldsStopped = false
         return TurnID(lastTurnId)
     }

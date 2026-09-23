@@ -2,11 +2,13 @@ import Foundation
 import FoundationModels
 import os
 
-/// The logger for a compaction at a tool-result boundary.
+/// The logger for a compaction inside a turn: at a tool-result boundary or
+/// at a ceiling stop.
 private let compactionYieldLogger = makeModuleLogger(category: "CompactionYield")
 
-/// ``RoutedSessionActor``'s compaction at a tool-result boundary inside a
-/// turn.
+/// ``RoutedSessionActor``'s compaction inside a turn: at a tool-result
+/// boundary, and after an attempt that stopped at its output token ceiling
+/// (``compactsAfterCeilingStop(_:)``).
 ///
 /// A tool-using turn grows at each tool result, while the model call is in
 /// flight. The turn-start check sees none of that growth. So each tool result
@@ -145,20 +147,102 @@ extension RoutedSessionActor {
             responseTokenCeiling: attempt.responseTokenCeiling.resolved, pendingEvents: attempt.pendingEvents,
             onEvent: attempt.onEvent)
         usageState = .measured(input: yield.measuredTokens, output: 0)
+        return try await compactAndContinue(
+            attempt: attempt, continuationPrompt: Self.compactionContinuationPrompt, body: body)
+    }
+
+    /// Compacts the transcript, and runs one more attempt of the same turn
+    /// with `continuationPrompt`.
+    ///
+    /// ``performAutoCompaction(prompt:budget:)`` compacts, and the turn emits
+    /// ``SessionEvent/compaction(_:)``. When the compaction applied no
+    /// summary, the turn does not compact inside the turn again
+    /// (``compactionYieldsStopped``): the next attempt would cross the same
+    /// trigger at once. This is the one stop rule. It is not a count.
+    ///
+    /// - Parameters:
+    ///   - attempt: The attempt that stopped.
+    ///   - continuationPrompt: The prompt of the next attempt.
+    ///   - body: The model work to run.
+    /// - Returns: The response text of the next attempt.
+    /// - Throws: What the compaction or the next attempt throws.
+    private func compactAndContinue(
+        attempt: StoppedAttempt,
+        continuationPrompt: String,
+        body: @escaping @Sendable (String) async throws -> String
+    ) async throws -> String {
         if let budget = autoCompactionBudget {
             let result = try await performAutoCompaction(prompt: autoCompactionPrompt, budget: budget)
             attempt.onEvent?(.compaction(result))
             compactionYieldsStopped = result.summaryEntryId == nil
         }
         return try await runTurnAttempt(
-            grammar: attempt.grammar, pendingEvents: [], ownPrompt: Self.compactionContinuationPrompt,
+            grammar: attempt.grammar, pendingEvents: [], ownPrompt: continuationPrompt,
             responseTokenCeiling: attempt.responseTokenCeiling, onEvent: attempt.onEvent,
             allowOverflowRetry: attempt.allowOverflowRetry, rejectedCallRetries: attempt.rejectedCallRetries, body)
     }
+
+    /// Whether an attempt that ended with `finishReason` compacts and goes on
+    /// in the same turn (task ^46bz58k).
+    ///
+    /// An attempt that stops at its output token ceiling returns: it does not
+    /// throw, and the session keeps its entries. When the measured context is
+    /// at or over ``TokenBudget/triggerTokens``, a compaction makes room, and
+    /// the turn goes on. When the context is under the trigger, a compaction
+    /// does not help a cut output, and the turn ends as truncated.
+    ///
+    /// Nothing compacts when the session has no ``autoCompactionBudget``, when
+    /// a stop is outstanding against the turn, or when an earlier compaction
+    /// of the turn applied no summary (``compactionYieldsStopped``).
+    ///
+    /// - Parameter finishReason: Why the attempt stopped.
+    /// - Returns: `true` when the attempt stopped at the ceiling over the trigger.
+    func compactsAfterCeilingStop(_ finishReason: FinishReason) -> Bool {
+        guard finishReason == .maxTokens, let budget = autoCompactionBudget,
+            !isTurnCancelled, !compactionYieldsStopped,
+            let measuredTokens = usageState.measuredTokens
+        else { return false }
+        return measuredTokens >= budget.triggerTokens
+    }
+
+    /// Compacts after an attempt that stopped at its output token ceiling
+    /// over the trigger, and runs one more attempt of the same turn with
+    /// ``ceilingStopContinuationPrompt``.
+    ///
+    /// The attempt is already recorded, so the next attempt carries no
+    /// pending events.
+    ///
+    /// - Parameters:
+    ///   - attempt: The attempt that stopped at the ceiling.
+    ///   - body: The model work to run.
+    /// - Returns: The response text of the next attempt.
+    /// - Throws: What the compaction or the next attempt throws.
+    func continueAfterCeilingStop(
+        attempt: StoppedAttempt,
+        body: @escaping @Sendable (String) async throws -> String
+    ) async throws -> String {
+        compactionYieldLogger.notice(
+            """
+            session \(self.id.description, privacy: .public): an attempt stopped at its output token \
+            ceiling with the context at or over the trigger; the turn compacts and goes on
+            """
+        )
+        return try await compactAndContinue(
+            attempt: attempt, continuationPrompt: Self.ceilingStopContinuationPrompt, body: body)
+    }
+
+    /// The prompt of the attempt that goes on after a compaction at a
+    /// ceiling stop.
+    ///
+    /// The compacted transcript already holds the original prompt and the
+    /// cut output, so the attempt does not send the original prompt again.
+    static let ceilingStopContinuationPrompt =
+        "The context was compacted. Your last output was cut off at the token ceiling. Continue the task."
 }
 
-/// The facts of a generate attempt that a compaction yield stopped: what
-/// the recording of the attempt and the next attempt of the turn need.
+/// The facts of a generate attempt that a compaction yield or a ceiling stop
+/// stopped: what the recording of the attempt and the next attempt of the
+/// turn need.
 struct StoppedAttempt {
     /// The grammar in force for the turn.
     let grammar: Grammar?

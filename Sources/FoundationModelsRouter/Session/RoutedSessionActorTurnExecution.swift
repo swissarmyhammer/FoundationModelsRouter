@@ -323,7 +323,10 @@ extension RoutedSessionActor {
     ///
     /// A model call that a tool result stopped for a compaction
     /// (``noteToolResult(_:)``) is not a failure. The attempt goes on in
-    /// ``continueAfterCompactionYield(_:attempt:body:)``.
+    /// ``continueAfterCompactionYield(_:attempt:body:)``. An attempt that
+    /// stopped at its output token ceiling over the trigger
+    /// (``compactsAfterCeilingStop(_:)``) goes on in
+    /// ``continueAfterCeilingStop(attempt:body:)``.
     ///
     /// - Parameters:
     ///   - grammar: The grammar in force for this turn.
@@ -353,6 +356,8 @@ extension RoutedSessionActor {
         // Open for this attempt alone. `finishTurn` closes it on both exits.
         openGenerationCallLedger(usageBefore: usageBefore, responseTokenCeiling: responseTokenCeiling.resolved)
         toolResultWatch.composedPrompt = composedPrompt
+        let response: String
+        let finishReason: FinishReason
         do {
             // The hard-ceiling pre-check (compaction_plan.md §1.7, task g2hcm36):
             // when the budget opts into ``TokenBudget/hardCeiling``, measured
@@ -385,16 +390,16 @@ extension RoutedSessionActor {
                 throw ContextBudgetError.hardCeilingExceeded(
                     fill: budget.fill(measuredTokens: measuredTokens), ceiling: hardCeiling)
             }
-            let response = try await runCancellableModelCall(composedPrompt: composedPrompt, body)
+            response = try await runCancellableModelCall(composedPrompt: composedPrompt, body)
             // A turn can succeed (return a response) yet still leave the SDK's
             // transcript unchanged for some future conformer — attach-or-requeue
             // applies uniformly on both exits (see the catch branch's matching
             // comment), not just the throwing one; that uniform check lives in
             // ``finishTurnAndRequeueIfUnattached(grammar:since:usageBefore:responseTokenCeiling:pendingEvents:onEvent:)``.
-            _ = await finishTurnAndRequeueIfUnattached(
+            finishReason = await finishTurnAndRequeueIfUnattached(
                 grammar: grammar, since: started, usageBefore: usageBefore,
-                responseTokenCeiling: responseTokenCeiling.resolved, pendingEvents: pendingEvents, onEvent: onEvent)
-            return response
+                responseTokenCeiling: responseTokenCeiling.resolved, pendingEvents: pendingEvents, onEvent: onEvent
+            ).finishReason
         } catch {
             if let yield = takeCompactionYield() {
                 let attempt = StoppedAttempt(
@@ -414,6 +419,16 @@ extension RoutedSessionActor {
                 allowOverflowRetry: allowOverflowRetry, rejectedCallRetries: rejectedCallRetries, body
             )
         }
+        // Outside the `do`: the attempt is recorded, so a failure of the
+        // compaction or of the next attempt must not record it a second time.
+        guard compactsAfterCeilingStop(finishReason) else { return response }
+        let attempt = StoppedAttempt(
+            grammar: grammar, composedPrompt: composedPrompt,
+            entryIdsBeforeAttempt: toolResultWatch.entryIdsBeforeAttempt, started: started,
+            usageBefore: usageBefore, responseTokenCeiling: responseTokenCeiling,
+            pendingEvents: pendingEvents, onEvent: onEvent, allowOverflowRetry: allowOverflowRetry,
+            rejectedCallRetries: rejectedCallRetries)
+        return try await continueAfterCeilingStop(attempt: attempt, body: body)
     }
 
     /// Runs the attempt again after a failed attempt that one of the two
@@ -514,7 +529,7 @@ extension RoutedSessionActor {
         pendingEvents: [OperationEvent],
         onEvent: ((SessionEvent) -> Void)? = nil
     ) async {
-        let (diffIncludedResponse, usage) = await finishTurnAndRequeueIfUnattached(
+        let (diffIncludedResponse, usage, _) = await finishTurnAndRequeueIfUnattached(
             grammar: grammar, since: started, usageBefore: usageBefore,
             responseTokenCeiling: responseTokenCeiling, pendingEvents: pendingEvents, onEvent: onEvent)
         guard !diffIncludedResponse else { return }
