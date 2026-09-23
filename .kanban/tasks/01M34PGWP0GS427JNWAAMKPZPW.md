@@ -19,9 +19,17 @@ comments:
     - `rg 'ladderStepDowns|contextLadder|walkLadder|LadderAttempt|ladderAttempts'` finds nothing.
     - next: commit, review.
   timestamp: 2026-09-23T15:57:21.978201+00:00
+- actor: claude-code
+  id: 01m37g4jqhd4dmzdgjxr3svg9x
+  text: |-
+    ### review — findings
+    - evidence: review sha e8d7601 (HEAD~1..HEAD): 1 finding — `SlotResolution.swift:50` `code-hygiene/idioms-swift` UseSynthesizedInitializer.
+    - fix: removed the explicit `WindowFit` initializer, and removed the same cause from the whole file: the `ResolutionFailure` initializer was also identical to the synthesized one. The finding box is checked.
+    - next: test, commit, review HEAD~1..HEAD again.
+  timestamp: 2026-09-23T16:03:49.105809+00:00
 depends_on:
 - 01M34PDQHD1WEJ2QBYPJ0P7ZN0
-position_column: doing
+position_column: review
 position_ordinal: '80'
 title: Replace the context ladder with the largest window that fits
 ---
@@ -53,3 +61,12 @@ title: Replace the context ladder with the largest window that fits
 ## Order
 
 After ^j0p7zn0 (it edits the `contextLadder` cap line this card deletes). Before ^24hrxdj (Make the model's window the default context of a profile). All three edit `JointFit.swift`. #compaction #limits
+
+## Review Findings (2026-09-23 10:57)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 10 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Resolution/SlotResolution.swift:50` `code-hygiene/idioms-swift` — UseSynthesizedInitializer: remove this explicit initializer, which is identical to the compiler-synthesized initializer.

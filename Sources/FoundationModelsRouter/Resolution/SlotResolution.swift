@@ -45,12 +45,6 @@ struct WindowFit: Sendable, Equatable {
 
     /// What the window search found.
     let outcome: Outcome
-
-    /// Creates a window-search record.
-    init(nativeContextTokens: Int, outcome: Outcome) {
-        self.nativeContextTokens = nativeContextTokens
-        self.outcome = outcome
-    }
 }
 
 /// One candidate's contribution to a slot's resolution: the reference, its
@@ -138,13 +132,6 @@ struct ResolutionFailure: Error, Equatable, CustomStringConvertible {
 
     /// Every slot's resolution, in allocation order (embedding, standard, flash).
     let slots: [SlotResolution]
-
-    /// Creates a resolution failure.
-    init(profileName: String, budgetBytes: Int64, slots: [SlotResolution]) {
-        self.profileName = profileName
-        self.budgetBytes = budgetBytes
-        self.slots = slots
-    }
 
     /// A multi-line rendering of the failure: each slot, its candidates, and
     /// their footprints.
