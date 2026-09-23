@@ -22,10 +22,23 @@ comments:
     - evidence: 7 files — Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift, Sources/FoundationModelsRouter/Session/ResponseTokenCeiling.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnExecution.swift, Tests/FoundationModelsRouterTests/TurnTokenCeilingTests.swift, Tests/FoundationModelsRouterTests/Helpers/CeilingProbeLanguageModel.swift, Examples/MultiModelGeneration/main.swift, IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/IntegrationTests.swift. `rg 'responseTokenFloor|appliedCeiling'` finds nothing. `swift test`: 1326 tests in 149 suites passed (2 known issues, expected), 1 test in 1 suite passed, 19 tests in 3 suites passed. `swift build --build-tests --package-path IntegrationTests`: exit 0.
     - next: commit, then review.
   timestamp: 2026-09-23T16:50:00.273839+00:00
+- actor: claude-code
+  id: 01m37jxhyty9kpcnp9xg95shzz
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` on 53586c8 — 0 findings, 0 confirmed, 0 refuted; 7 files reviewed.
+    - next: done.
+
+    ### finish iteration 1 — done
+    - commits: 53586c8 refactor(session): delete responseTokenFloor; a call with no ceiling sends none
+    - `swift test`: Test run with 1326 tests in 149 suites passed (2 known issues, expected); Test run with 1 test in 1 suite passed; Test run with 19 tests in 3 suites passed.
+    - `swift build --build-tests --package-path IntegrationTests`: exit 0.
+    - New card for the owner: the 4096 `defaultMaxTokens` of the mlx-swift-lm executor.
+  timestamp: 2026-09-23T16:52:24.666842+00:00
 depends_on:
 - 01M34PH8G88KM01QGSS24HRXDJ
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: fffff780
 title: Remove responseTokenFloor; a call with no ceiling decodes to the model's window
 ---
 ## Decision (from the owner, 2026-09-22)
