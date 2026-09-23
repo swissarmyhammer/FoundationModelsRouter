@@ -38,9 +38,13 @@ import Synchronization
 /// Builds a session backend over a new `LanguageModelSession` seeded from
 /// `transcript`.
 ///
-/// - Parameter instructions: The new backend's instructions. The outer `nil` derives them from the leading `.instructions` entry of `transcript`. A non-`nil` outer value, including `.some(nil)`, is used as given.
+/// - Parameters:
+///   - contextWindow: The window of `model`, in tokens. See
+///     ``MLXFoundationModelsSessionBackend/init(session:model:contextWindow:instructions:tools:samplingMode:)``.
+///   - instructions: The new backend's instructions. The outer `nil` derives them from the leading `.instructions` entry of `transcript`. A non-`nil` outer value, including `.some(nil)`, is used as given.
 private func makeSessionBackend(
     model: any FoundationModels.LanguageModel,
+    contextWindow: Int,
     transcript: FoundationModels.Transcript,
     tools: [any FoundationModels.Tool],
     samplingMode: GenerationOptions.SamplingMode?,
@@ -50,6 +54,7 @@ private func makeSessionBackend(
     return MLXFoundationModelsSessionBackend(
         session: session,
         model: model,
+        contextWindow: contextWindow,
         instructions: instructions ?? TranscriptDiffer.leadingInstructionsText(of: transcript),
         tools: tools,
         samplingMode: samplingMode
@@ -67,6 +72,11 @@ private func makeSessionBackend(
 package struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     /// The `LanguageModel` conformance wrapping this slot's resident MLX model.
     let model: MLXLanguageModel
+
+    /// The window of ``model``, in tokens: the native max context its
+    /// `config.json` declares. Each backend this container makes sends it
+    /// as the ceiling of a call that names none.
+    let contextWindow: Int
 
     /// The counter over the loaded model's own tokenizer. See
     /// ``LoadedLLMContainer/tokenCounter``.
@@ -119,8 +129,8 @@ package struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     ) -> any LanguageModelSessionBackend {
         let session = LanguageModelSession(model: model, tools: tools, instructions: instructions)
         return MLXFoundationModelsSessionBackend(
-            session: session, model: model, instructions: instructions, tools: tools,
-            samplingMode: samplingMode)
+            session: session, model: model, contextWindow: contextWindow, instructions: instructions,
+            tools: tools, samplingMode: samplingMode)
     }
 
     /// Makes a live session backend seeded from `transcript`, with no tools,
@@ -141,7 +151,9 @@ package struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
         tools: [any FoundationModels.Tool],
         samplingMode: GenerationOptions.SamplingMode?
     ) -> any LanguageModelSessionBackend {
-        makeSessionBackend(model: model, transcript: transcript, tools: tools, samplingMode: samplingMode)
+        makeSessionBackend(
+            model: model, contextWindow: contextWindow, transcript: transcript, tools: tools,
+            samplingMode: samplingMode)
     }
 }
 
@@ -164,6 +176,10 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// The decoding strategy every generation call requests, or `nil` for the
     /// provider default.
     private let samplingMode: GenerationOptions.SamplingMode?
+
+    /// The window of ``model``, in tokens. A call that names no ceiling sends
+    /// it as `maximumResponseTokens`.
+    private let contextWindow: Int
 
     /// The output token count of one generation call, with the id of the last
     /// transcript entry that call left.
@@ -194,18 +210,19 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// stream path always decode with the same ``samplingMode`` and the same
     /// ceiling.
     ///
-    /// The backend adds no ceiling of its own. A routed session gives every
-    /// call the ceiling it derives from the resolved context of its model (see
-    /// ``RoutedSessionActor/responseTokenCeiling(requested:contextTokens:)``),
-    /// and that context is the window of the model. A caller that names no
-    /// ceiling sends `nil` to the engine, and the engine then applies its own
-    /// default.
+    /// A routed session gives every call the ceiling it derives from the
+    /// resolved context of its model (see
+    /// ``RoutedSessionActor/responseTokenCeiling(requested:contextTokens:)``).
+    /// A caller that names no ceiling gets ``contextWindow``, the window of
+    /// the model. The backend never sends `nil`, so the default ceiling of the
+    /// engine never applies to a call of the router.
     ///
     /// - Parameter maxTokens: The ceiling the caller named, or `nil` when the
     ///   caller named none.
-    /// - Returns: The options that carry ``samplingMode`` and `maxTokens`.
+    /// - Returns: The options that carry ``samplingMode`` and `maxTokens`, or
+    ///   ``contextWindow`` when `maxTokens` is `nil`.
     private func makeGenerationOptions(maxTokens: Int?) -> GenerationOptions {
-        GenerationOptions(samplingMode: samplingMode, maximumResponseTokens: maxTokens)
+        GenerationOptions(samplingMode: samplingMode, maximumResponseTokens: maxTokens ?? contextWindow)
     }
 
     /// Test-only accessor onto ``liveSession``. Not part of the protocol.
@@ -213,15 +230,26 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     internal var session: LanguageModelSession { liveSession }
 
     /// Creates a backend over an existing session.
+    ///
+    /// - Parameters:
+    ///   - session: The live session every call runs through.
+    ///   - model: The `LanguageModel` conformance of `session`.
+    ///   - contextWindow: The window of `model`, in tokens. A call that names
+    ///     no ceiling sends it as `maximumResponseTokens`.
+    ///   - instructions: The system instructions of `session`, or `nil`.
+    ///   - tools: The tools of `session`.
+    ///   - samplingMode: The decoding strategy, or `nil` for the provider default.
     init(
         session: LanguageModelSession,
         model: any FoundationModels.LanguageModel,
+        contextWindow: Int,
         instructions: String? = nil,
         tools: [any FoundationModels.Tool] = [],
         samplingMode: GenerationOptions.SamplingMode? = nil
     ) {
         self.liveSession = session
         self.model = model
+        self.contextWindow = contextWindow
         self.instructions = instructions
         self.tools = tools
         self.samplingMode = samplingMode
@@ -500,6 +528,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     func makeFork(tools: [any FoundationModels.Tool]) -> any LanguageModelSessionBackend {
         makeSessionBackend(
             model: model,
+            contextWindow: contextWindow,
             transcript: liveSession.transcript,
             tools: tools,
             samplingMode: samplingMode,
@@ -510,7 +539,9 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// Makes a new backend over ``model`` seeded from `transcript`, with this
     /// backend's ``tools``.
     func replacingTranscript(_ transcript: FoundationModels.Transcript) -> any LanguageModelSessionBackend {
-        makeSessionBackend(model: model, transcript: transcript, tools: tools, samplingMode: samplingMode)
+        makeSessionBackend(
+            model: model, contextWindow: contextWindow, transcript: transcript, tools: tools,
+            samplingMode: samplingMode)
     }
 
     /// Returns the current transcript of ``liveSession``. Call it under the turn lock.
@@ -686,8 +717,34 @@ public struct LiveModelLoader: ModelLoader {
         // The tokenizer the model was loaded with counts every token the
         // router counts before a call (see ``TokenCounter``).
         let tokenizer = await container.tokenizer
+        let contextWindow = try await Self.contextWindow(of: container, repo: ref.repo)
         return MLXFoundationModelsContainer(
-            model: model, tokenCounter: TokenizerTokenCounter(tokenizer: tokenizer))
+            model: model, contextWindow: contextWindow,
+            tokenCounter: TokenizerTokenCounter(tokenizer: tokenizer))
+    }
+
+    /// The file name of the model configuration in a model directory.
+    private static let modelConfigurationFileName = "config.json"
+
+    /// Reads the window of a loaded model: the native max context that the
+    /// `config.json` in its local model directory declares.
+    ///
+    /// - Parameters:
+    ///   - container: The loaded MLX container. Its configuration names the
+    ///     local model directory.
+    ///   - repo: The repository id the error names.
+    /// - Returns: The native max context of the model, unchanged.
+    /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)`` when the
+    ///   configuration names no local directory or `config.json` declares no
+    ///   positive context length, or the error of the file read.
+    private static func contextWindow(of container: ModelContainer, repo: String) async throws -> Int {
+        guard case .directory(let directory) = await container.configuration.id else {
+            throw RepoMetadataError.metadataUnavailable(
+                "the loaded model \(repo) names no local model directory")
+        }
+        let configJSON = try Data(
+            contentsOf: directory.appendingPathComponent(modelConfigurationFileName, isDirectory: false))
+        return try RepoMetadata.nativeMaxContext(configJSON: configJSON, repo: repo)
     }
 
     /// Downloads and loads an embedding model. One probe embedding finds the

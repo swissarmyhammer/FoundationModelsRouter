@@ -9,8 +9,9 @@ import Testing
 ///
 /// A routed session knows the working context its profile resolved to. A turn
 /// that names no `maxTokens` generates under that context. A turn that names
-/// one keeps it. The live backend adds no ceiling of its own: a caller that
-/// gives it no ceiling at all makes it request none from the engine.
+/// one keeps it. A caller that gives the live backend no ceiling at all makes
+/// it request the window of its model, so the default ceiling of the engine
+/// never applies.
 ///
 /// Each rule is proven on the respond path and on each stream path, because
 /// each path gives the backend its ceiling through a different call.
@@ -71,14 +72,16 @@ struct TurnTokenCeilingTests {
         /// Runs one generation call on `backend` through this surface, and
         /// consumes the whole stream of the stream surface.
         ///
-        /// - Parameter backend: The backend to run the call on.
+        /// - Parameters:
+        ///   - backend: The backend to run the call on.
+        ///   - maxTokens: The ceiling the call names, or `nil`.
         /// - Throws: Whatever the call throws.
-        func runCall(on backend: any LanguageModelSessionBackend) async throws {
+        func runCall(on backend: any LanguageModelSessionBackend, maxTokens: Int?) async throws {
             switch self {
             case .respond:
-                _ = try await backend.respond(to: TurnTokenCeilingTests.prompt, maxTokens: nil)
+                _ = try await backend.respond(to: TurnTokenCeilingTests.prompt, maxTokens: maxTokens)
             case .streamResponse:
-                for try await _ in backend.streamResponse(to: TurnTokenCeilingTests.prompt, maxTokens: nil) {}
+                for try await _ in backend.streamResponse(to: TurnTokenCeilingTests.prompt, maxTokens: maxTokens) {}
             }
         }
     }
@@ -113,15 +116,30 @@ struct TurnTokenCeilingTests {
     }
 
     @Test(
-        "the live backend requests no ceiling when the caller gives no ceiling",
+        "the live backend requests the window of its model when the caller gives no ceiling",
         arguments: BackendSurface.allCases)
-    func liveBackendRequestsNoCeiling(surface: BackendSurface) async throws {
+    func liveBackendRequestsModelWindow(surface: BackendSurface) async throws {
         let log = CeilingProbeLog()
-        let container = LiveBackendContainer(model: CeilingProbeLanguageModel(ending: .finished, log: log))
+        let container = LiveBackendContainer(
+            model: CeilingProbeLanguageModel(ending: .finished, log: log), contextWindow: Self.resolvedContext)
         let backend = container.makeSession(instructions: nil)
 
-        try await surface.runCall(on: backend)
+        try await surface.runCall(on: backend, maxTokens: nil)
 
-        #expect(log.requestedCeilings == [nil])
+        #expect(log.requestedCeilings == [Self.resolvedContext])
+    }
+
+    @Test(
+        "the live backend requests the ceiling the caller gives",
+        arguments: BackendSurface.allCases)
+    func liveBackendKeepsGivenCeiling(surface: BackendSurface) async throws {
+        let log = CeilingProbeLog()
+        let container = LiveBackendContainer(
+            model: CeilingProbeLanguageModel(ending: .finished, log: log), contextWindow: Self.resolvedContext)
+        let backend = container.makeSession(instructions: nil)
+
+        try await surface.runCall(on: backend, maxTokens: Self.requestedCeiling)
+
+        #expect(log.requestedCeilings == [Self.requestedCeiling])
     }
 }

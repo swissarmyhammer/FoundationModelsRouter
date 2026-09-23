@@ -108,14 +108,7 @@ struct RepoMetadata: Sendable, Equatable, Codable {
         guard let configJSON = raw.configJSON else {
             throw RepoMetadataError.metadataUnavailable("config.json is not present in the repo")
         }
-        guard let config = try? JSONDecoder().decode(RepoConfig.self, from: configJSON) else {
-            throw RepoMetadataError.metadataUnavailable("config.json could not be parsed")
-        }
-        guard let sizing = config.sizingSource else {
-            throw RepoMetadataError.metadataUnavailable(
-                "config.json is missing num_hidden_layers or num_attention_heads"
-            )
-        }
+        let sizing = try Self.sizingSource(configJSON: configJSON)
         guard sizing.headDim != nil || sizing.hiddenSize != nil else {
             throw RepoMetadataError.metadataUnavailable(
                 "config.json has neither head_dim nor hidden_size to size a head"
@@ -140,6 +133,41 @@ struct RepoMetadata: Sendable, Equatable, Codable {
             numFullAttentionLayers: numFullAttentionLayers,
             nativeMaxContext: nativeMaxContext
         )
+    }
+
+    /// The native max context that the bytes of one `config.json` declare.
+    ///
+    /// It reads the same sizing source as ``init(raw:repo:)``: the top level
+    /// when it is complete, else `text_config`. The value is not changed.
+    ///
+    /// - Parameters:
+    ///   - configJSON: The bytes of `config.json`.
+    ///   - repo: The repository id the error names.
+    /// - Returns: The first context-length field present, unchanged.
+    /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)`` when
+    ///   `config.json` does not parse, lacks the layer or head count, or has no
+    ///   positive context-length field.
+    static func nativeMaxContext(configJSON: Data, repo: String) throws -> Int {
+        try nativeMaxContext(from: sizingSource(configJSON: configJSON), repo: repo)
+    }
+
+    /// Decodes `config.json` and returns its sizing source.
+    ///
+    /// - Parameter configJSON: The bytes of `config.json`.
+    /// - Returns: The top level when it is complete, else `text_config`.
+    /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)`` when the bytes
+    ///   do not parse, or when neither level has `num_hidden_layers` and
+    ///   `num_attention_heads`.
+    private static func sizingSource(configJSON: Data) throws -> ResolvedSizing {
+        guard let config = try? JSONDecoder().decode(RepoConfig.self, from: configJSON) else {
+            throw RepoMetadataError.metadataUnavailable("config.json could not be parsed")
+        }
+        guard let sizing = config.sizingSource else {
+            throw RepoMetadataError.metadataUnavailable(
+                "config.json is missing num_hidden_layers or num_attention_heads"
+            )
+        }
+        return sizing
     }
 
     /// The native max context `config.json` declares, as-is.

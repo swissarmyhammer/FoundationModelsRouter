@@ -145,6 +145,32 @@ struct RepoMetadataTests {
         #expect(metadata.nativeMaxContext == 32768)
     }
 
+    @Test("the config-only reader gives the same window as the full parse, with no tree")
+    func nativeMaxContextFromConfigJSONAlone() throws {
+        let fromConfig = try RepoMetadata.nativeMaxContext(configJSON: Self.fullConfigJSON, repo: "org/model")
+        let fromFullParse = try RepoMetadata(
+            raw: RawRepoMetadata(configJSON: Self.fullConfigJSON, treeJSON: Self.weightTreeJSON), repo: "org/model"
+        ).nativeMaxContext
+
+        #expect(fromConfig == fromFullParse)
+    }
+
+    @Test("the config-only reader fails on a config.json with no context-length field")
+    func nativeMaxContextFromConfigJSONAloneMissingFieldIsAnError() {
+        let config = Data("""
+            {"num_hidden_layers": 4, "num_attention_heads": 32, "head_dim": 128}
+            """.utf8)
+
+        #expect(
+            throws: RepoMetadataError.metadataUnavailable(
+                "config.json for org/model has none of the context-length fields "
+                    + "max_position_embeddings, n_positions, max_seq_len, seq_length"
+            )
+        ) {
+            _ = try RepoMetadata.nativeMaxContext(configJSON: config, repo: "org/model")
+        }
+    }
+
     @Test("nativeMaxContext falls back to n_positions when max_position_embeddings is absent")
     func nativeMaxContextFromNPositions() throws {
         let config = Data("""

@@ -13,6 +13,10 @@ struct LiveBackendContainer<Model: FoundationModels.LanguageModel>: LoadedLLMCon
     /// The scripted model every backend of this container runs over.
     let model: Model
 
+    /// The window of ``model``, in tokens. Each backend sends it as the
+    /// ceiling of a call that names none. The fixture window by default.
+    var contextWindow: Int = ScriptedSessionContext.tokens
+
     /// The scripted counter of this container: one token per `Character`.
     let tokenCounter: any TokenCounter = CharacterTokenCounter()
 
@@ -36,6 +40,7 @@ struct LiveBackendContainer<Model: FoundationModels.LanguageModel>: LoadedLLMCon
         MLXFoundationModelsSessionBackend(
             session: LanguageModelSession(model: model, tools: tools, instructions: instructions),
             model: model,
+            contextWindow: contextWindow,
             instructions: instructions,
             tools: tools
         )
@@ -61,6 +66,7 @@ struct LiveBackendContainer<Model: FoundationModels.LanguageModel>: LoadedLLMCon
         MLXFoundationModelsSessionBackend(
             session: LanguageModelSession(model: model, tools: tools, transcript: transcript),
             model: model,
+            contextWindow: contextWindow,
             instructions: TranscriptDiffer.leadingInstructionsText(of: transcript),
             tools: tools
         )
