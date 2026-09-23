@@ -178,30 +178,54 @@ actor SessionMailbox {
         }
     }
 
-    /// Awaits a run's settlement with a deadline.
+    /// Awaits a run's settlement, with a deadline or with none.
     ///
     /// A run that already settled resolves immediately. An unknown token is a safe no-op.
+    /// A cancellation of the calling task ends the wait with ``WaitOutcome/cancelled``.
     ///
     /// - Parameters:
     ///   - completionToken: The run's completion token.
-    ///   - seconds: The deadline. NaN and negative values floor to zero; values
-    ///     above ``ToolContext/deadlineSecondsCeiling`` are capped there.
+    ///   - seconds: The deadline, honored as given. NaN and negative values
+    ///     floor to zero. `nil` sets no deadline: the wait ends at settlement or
+    ///     at the cancellation of the calling task.
     /// - Returns: The ``WaitOutcome``.
-    func wait(completionToken: String, seconds: Double) async -> WaitOutcome {
+    func wait(completionToken: String, seconds: Double?) async -> WaitOutcome {
         if let terminal = settledTerminalEvents[completionToken] {
             return .settled(terminal)
         }
         guard runsByToken[completionToken] != nil else {
             return .unknownToken
         }
-        let deadline = Self.boundedNanoseconds(clamping: seconds)
         let waiterID = UUID()
-        return await withCheckedContinuation { continuation in
-            waiters[completionToken, default: [:]][waiterID] = continuation
-            Task { [weak self] in
-                try? await Task.sleep(nanoseconds: deadline)
-                await self?.expireWaiter(completionToken: completionToken, waiterID: waiterID)
+        // The cancellation handler hops onto this actor, and this actor
+        // registers the waiter before its first suspension, so the handler
+        // always finds the waiter it ends.
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                waiters[completionToken, default: [:]][waiterID] = continuation
+                if let seconds {
+                    scheduleExpiry(completionToken: completionToken, waiterID: waiterID, seconds: seconds)
+                }
             }
+        } onCancel: {
+            Task { [weak self] in
+                await self?.endWaiter(completionToken: completionToken, waiterID: waiterID, with: .cancelled)
+            }
+        }
+    }
+
+    /// Starts the task that ends one waiter with ``WaitOutcome/deadlineElapsed``
+    /// when its deadline passes first.
+    ///
+    /// - Parameters:
+    ///   - completionToken: The run's completion token.
+    ///   - waiterID: The waiter to end.
+    ///   - seconds: The deadline the caller named.
+    private func scheduleExpiry(completionToken: String, waiterID: UUID, seconds: Double) {
+        let deadline = Self.boundedNanoseconds(clamping: seconds)
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: deadline)
+            await self?.endWaiter(completionToken: completionToken, waiterID: waiterID, with: .deadlineElapsed)
         }
     }
 
@@ -398,20 +422,34 @@ actor SessionMailbox {
         settledTerminalEvents[completionToken] = terminal
     }
 
-    /// Clamps a seconds value to a safe nanosecond count: NaN and negative values
-    /// floor to zero; values above ``ToolContext/deadlineSecondsCeiling`` cap there.
+    /// Converts a seconds value to the `UInt64` nanosecond count
+    /// `Task.sleep(nanoseconds:)` takes, with no bound of its own.
+    ///
+    /// The one guard is the arithmetic of the type: NaN and negative values
+    /// give zero, and a value whose nanosecond count `UInt64` cannot hold
+    /// (infinity among them) gives `UInt64.max`. Every other value converts as is.
+    ///
+    /// - Parameter seconds: The duration, in seconds.
+    /// - Returns: The duration, in nanoseconds.
     static func boundedNanoseconds(clamping seconds: Double) -> UInt64 {
-        guard !seconds.isNaN else { return 0 }
-        let clamped = min(max(seconds, 0), ToolContext.deadlineSecondsCeiling)
-        return UInt64(clamped * nanosecondsPerSecond)
+        guard !seconds.isNaN, seconds > 0 else { return 0 }
+        let nanoseconds = seconds * nanosecondsPerSecond
+        guard nanoseconds < Double(UInt64.max) else { return UInt64.max }
+        return UInt64(nanoseconds)
     }
 
-    /// Resumes one still-suspended waiter with ``WaitOutcome/deadlineElapsed``.
-    private func expireWaiter(completionToken: String, waiterID: UUID) {
+    /// Resumes one still-suspended waiter with `outcome`. A waiter that
+    /// already resumed is a safe no-op.
+    ///
+    /// - Parameters:
+    ///   - completionToken: The run's completion token.
+    ///   - waiterID: The waiter to end.
+    ///   - outcome: ``WaitOutcome/deadlineElapsed`` or ``WaitOutcome/cancelled``.
+    private func endWaiter(completionToken: String, waiterID: UUID, with outcome: WaitOutcome) {
         guard let continuation = waiters[completionToken]?.removeValue(forKey: waiterID) else {
             return
         }
-        continuation.resume(returning: .deadlineElapsed)
+        continuation.resume(returning: outcome)
     }
 
     /// Resumes every waiter suspended on `completionToken` with `result`.

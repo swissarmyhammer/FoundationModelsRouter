@@ -21,10 +21,9 @@ extension RoutedSessionActor {
     /// in `SessionMailbox` and runs a further turn with the settled results.
     /// Each further turn that starts new background work starts one more
     /// round. The drain ends when a round finds no background run to await.
-    /// No count bounds the rounds. The drain ends early when a run outlasts
-    /// ``ToolContext/deadlineSecondsCeiling`` or when a cancellation reaches
-    /// this call; it then answers with the last turn's answer. It does not
-    /// sweep.
+    /// No count bounds the rounds, and no deadline bounds a wait. The drain
+    /// ends early only when a cancellation reaches this call; it then answers
+    /// with the last turn's answer. It does not sweep.
     ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
@@ -85,8 +84,7 @@ extension RoutedSessionActor {
     /// - Parameter cancellationsBefore: The ``cancelRequestCount`` the
     ///   ``respond(to:maxTokens:)`` call started from, checked before each wait.
     /// - Returns: `true` when at least one run was tracked and every one left
-    ///   the run plane. `false` when the run plane was empty, when a run
-    ///   outlasted ``ToolContext/deadlineSecondsCeiling``, or when a
+    ///   the run plane. `false` when the run plane was empty, or when a
     ///   cancellation reached this call.
     private func settleBackgroundRuns(cancellationsBefore: UInt64) async -> Bool {
         let running = await mailbox.backgroundRuns()
@@ -97,9 +95,9 @@ extension RoutedSessionActor {
             // is seen here or finds the gate to resume.
             guard cancelRequestCount == cancellationsBefore, !Task.isCancelled else { return false }
             switch await awaitSettlement(of: run.completionToken) {
-            case .mailbox(.deadlineElapsed), .cancelled:
+            case .cancelled:
                 return false
-            case .mailbox:
+            case .settled:
                 continue
             }
         }
@@ -110,6 +108,9 @@ extension RoutedSessionActor {
     /// against task cancellation and against the gate registered in
     /// ``runPlaneDrainWaitGates`` for ``RoutedSession/cancelCurrentTurn()``.
     ///
+    /// The mailbox wait has no deadline. When a cancellation wins the race,
+    /// this call cancels the wait, so no waiter stays in the mailbox.
+    ///
     /// - Parameter completionToken: The background run's completion token.
     /// - Returns: Whichever answer arrived first.
     private func awaitSettlement(of completionToken: String) async -> RunPlaneDrainWaitOutcome {
@@ -118,11 +119,14 @@ extension RoutedSessionActor {
         runPlaneDrainWaitGates[waiterID] = gate
         defer { runPlaneDrainWaitGates.removeValue(forKey: waiterID) }
         let mailbox = self.mailbox
-        Task {
-            let outcome = await mailbox.wait(
-                completionToken: completionToken, seconds: ToolContext.deadlineSecondsCeiling)
-            gate.resume(with: .mailbox(outcome))
+        // A settled run and an unknown token both mean the run left the run
+        // plane. The wait ends another way only when `waiting.cancel()` below
+        // cancels it, after the gate already resolved, so that resume is a no-op.
+        let waiting = Task {
+            _ = await mailbox.wait(completionToken: completionToken, seconds: nil)
+            gate.resume(with: .settled)
         }
+        defer { waiting.cancel() }
         return await withTaskCancellationHandler {
             await withCheckedContinuation { gate.register(continuation: $0) }
         } onCancel: {
@@ -385,9 +389,9 @@ extension RoutedSessionActor {
 /// The outcome of one run-plane drain wait: the run's settlement or a
 /// cancellation, whichever arrives first.
 enum RunPlaneDrainWaitOutcome: Sendable {
-    /// The mailbox answered the wait: the run settled, its token was unknown,
-    /// or the run plane's deadline elapsed.
-    case mailbox(WaitOutcome)
+    /// The run left the run plane: it settled, or the mailbox no longer knows
+    /// its token.
+    case settled
 
     /// A cancellation reached the draining call first, by the caller's task or
     /// by ``RoutedSession/cancelCurrentTurn()``. The run stays running.

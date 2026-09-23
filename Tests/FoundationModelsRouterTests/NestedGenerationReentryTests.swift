@@ -494,7 +494,7 @@ struct NestedGenerationReentryTests {
         switch outcome {
         case .settled(let terminal):
             return terminal
-        case .deadlineElapsed, .unknownToken:
+        case .deadlineElapsed, .cancelled, .unknownToken:
             Issue.record(
                 """
                 \(run) did not settle within \(runSettlementTimeoutSeconds) seconds (\(outcome)). A \

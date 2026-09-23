@@ -11,12 +11,6 @@ public struct ToolContext: Sendable {
     /// The context bound to the current task, or `nil` outside any binding.
     @TaskLocal public static var current: ToolContext?
 
-    // MARK: - Run-plane bounds
-
-    /// The largest deadline the run plane honors, in seconds (one day). A larger
-    /// or infinite deadline is clamped to this value.
-    public static let deadlineSecondsCeiling: Double = 86_400
-
     // MARK: - Session scope
 
     /// The owning session's identity — ``RoutedSession/id``.
@@ -221,16 +215,18 @@ public struct ToolContext: Sendable {
         await mailbox.backgroundRuns()
     }
 
-    /// Awaits a background run's settlement with a deadline. The result is the
-    /// run's terminal event. Its `detail` is the tool's report, as the tool
-    /// returned it (see ``BackgroundTool``).
+    /// Awaits a background run's settlement, with a deadline or with none. The
+    /// result is the run's terminal event. Its `detail` is the tool's report,
+    /// as the tool returned it (see ``BackgroundTool``). A cancellation of the
+    /// calling task ends the wait with ``WaitOutcome/cancelled``.
     ///
     /// - Parameters:
     ///   - completionToken: The run's completion token.
-    ///   - seconds: The deadline. NaN and negative values floor to zero; values
-    ///     above ``deadlineSecondsCeiling`` are capped there.
+    ///   - seconds: The deadline, honored as given. NaN and negative values
+    ///     floor to zero. `nil` sets no deadline: the wait ends at settlement or
+    ///     at the cancellation of the calling task.
     /// - Returns: The ``WaitOutcome``.
-    public func wait(completionToken: String, seconds: Double) async -> WaitOutcome {
+    public func wait(completionToken: String, seconds: Double?) async -> WaitOutcome {
         await mailbox.wait(completionToken: completionToken, seconds: seconds)
     }
 

@@ -82,37 +82,80 @@ struct SessionMailboxTests {
         _ = await mailbox.wait(completionToken: token, seconds: 5)
     }
 
-    // MARK: - The run plane's deadline ceiling
+    // MARK: - Deadlines honored as given
 
     /// Nanoseconds in one second — the unit
     /// `SessionMailbox.boundedNanoseconds(clamping:)` reports in.
     private static let nanosecondsPerSecond: Double = 1_000_000_000
 
-    /// The run plane's ceiling, in the nanoseconds the clamp reports.
-    private static let ceilingNanoseconds = UInt64(
-        ToolContext.deadlineSecondsCeiling * nanosecondsPerSecond
-    )
+    /// A deadline longer than one day. The run plane once cut such a deadline
+    /// short; now it converts as is.
+    private static let longerThanOneDaySeconds: Double = 90_000
 
-    /// A requested deadline plainly over the ceiling.
-    private static let overCeilingSeconds = ToolContext.deadlineSecondsCeiling + 1
+    /// How long the fake run of the no-deadline test takes to settle.
+    private static let settleAfterSeconds: Double = 2
+
+    /// A deadline that elapses before the fake run of the no-deadline test settles.
+    private static let shorterDeadlineSeconds: Double = 1
 
     @Test(
-        "boundedNanoseconds caps every deadline the run plane is given at its ceiling",
-        arguments: [
-            ToolContext.deadlineSecondsCeiling,
-            Self.overCeilingSeconds,
-            Double.infinity,
-        ]
+        "boundedNanoseconds gives UInt64.max for a deadline whose nanoseconds UInt64 cannot hold",
+        arguments: [Double.infinity, Double.greatestFiniteMagnitude]
     )
-    func boundedNanosecondsCapsAtTheCeiling(seconds: Double) {
-        #expect(SessionMailbox.boundedNanoseconds(clamping: seconds) == Self.ceilingNanoseconds)
+    func boundedNanosecondsSaturatesAtTheTypeLimit(seconds: Double) {
+        #expect(SessionMailbox.boundedNanoseconds(clamping: seconds) == UInt64.max)
     }
 
-    @Test("boundedNanoseconds converts a deadline under the ceiling rather than capping it")
-    func boundedNanosecondsConvertsUnderTheCeiling() {
+    @Test("boundedNanoseconds converts a deadline longer than one day as is")
+    func boundedNanosecondsConvertsALongDeadlineAsIs() {
         #expect(
-            SessionMailbox.boundedNanoseconds(clamping: 1) == UInt64(Self.nanosecondsPerSecond)
+            SessionMailbox.boundedNanoseconds(clamping: Self.longerThanOneDaySeconds)
+                == UInt64(Self.longerThanOneDaySeconds * Self.nanosecondsPerSecond)
         )
+    }
+
+    @Test(
+        "boundedNanoseconds gives zero for NaN and for a negative deadline",
+        arguments: [-1.0, -Double.infinity, Double.nan]
+    )
+    func boundedNanosecondsFloorsAtZero(seconds: Double) {
+        #expect(SessionMailbox.boundedNanoseconds(clamping: seconds) == 0)
+    }
+
+    @Test("wait() with no deadline returns the settlement; a shorter named deadline elapses first")
+    func waitWithNoDeadlineReturnsTheSettlement() async throws {
+        let mailbox = SessionMailbox()
+        let latch = RunLatch()
+        let token = await trackFakeRun(on: mailbox, latch: latch)
+        let settleAfter = UInt64(Self.settleAfterSeconds * Self.nanosecondsPerSecond)
+        let opener = Task {
+            try await Task.sleep(nanoseconds: settleAfter)
+            await latch.open()
+        }
+
+        #expect(await mailbox.wait(completionToken: token, seconds: Self.shorterDeadlineSeconds) == .deadlineElapsed)
+        let result = await mailbox.wait(completionToken: token, seconds: nil)
+        if case .settled(let terminal) = result {
+            #expect(terminal.correlationID == token)
+        } else {
+            Issue.record("expected .settled, got \(result)")
+        }
+        try await opener.value
+    }
+
+    @Test("a cancelled wait() with no deadline returns .cancelled and leaves the run tracked")
+    func cancelledWaitWithNoDeadlineReturnsCancelled() async {
+        let mailbox = SessionMailbox()
+        let latch = RunLatch()
+        let token = await trackFakeRun(on: mailbox, latch: latch)
+
+        let waiting = Task { await mailbox.wait(completionToken: token, seconds: nil) }
+        waiting.cancel()
+        #expect(await waiting.value == .cancelled)
+        #expect(await mailbox.backgroundRuns().count == 1)
+
+        await latch.open()
+        _ = await mailbox.wait(completionToken: token, seconds: nil)
     }
 
     @Test("a settled run resolves wait() immediately even with a clamped-to-zero deadline")

@@ -36,6 +36,9 @@ public enum WaitOutcome: Sendable, Equatable {
     /// The deadline elapsed before the run settled; the run stays running.
     case deadlineElapsed
 
+    /// The waiting task was cancelled before the run settled; the run stays running.
+    case cancelled
+
     /// No run, running or settled, is known under this token. A safe no-op.
     case unknownToken
 }
