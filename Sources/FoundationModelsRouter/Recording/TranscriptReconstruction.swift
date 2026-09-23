@@ -91,8 +91,13 @@ extension TranscriptTree {
     /// segment. Returns `nil` when `event` has no compaction segment, or when
     /// its content is stripped or corrupt. Mapping the event later still
     /// throws for a stripped or corrupt payload.
+    ///
+    /// The checkpoint is a `.prompt` event. A checkpoint recorded before task
+    /// ^5t72pdx is a `.response` event, and this reads both.
     private static func compactionSegmentContent(in event: TranscriptEvent) -> CompactionSegment.Content? {
-        guard event.kind == .response, let segments = event.entry?.segments else { return nil }
+        guard event.kind == .prompt || event.kind == .response, let segments = event.entry?.segments else {
+            return nil
+        }
         for segment in segments {
             guard let structure = segment.persistedStructure,
                 structure.schemaName == CompactionSegment.schemaName,

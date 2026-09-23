@@ -392,8 +392,13 @@ public final class SessionProjection {
             let (kind, payload, text) = TranscriptEntryMapper.event(from: entry)
             switch kind {
             case .prompt:
-                dispatchedToolCallIds.removeAll()
-                completedToolCallIds.removeAll()
+                // A compaction boundary is a row, not the start of a turn.
+                if let boundary = compactionRow(from: entry, entryId: payload.entryId) {
+                    rows.append(boundary)
+                } else {
+                    dispatchedToolCallIds.removeAll()
+                    completedToolCallIds.removeAll()
+                }
             case .toolCalls:
                 for call in payload.toolCalls ?? [] {
                     dispatchedToolCallIds.append(call.id)
@@ -443,29 +448,40 @@ public final class SessionProjection {
 
     /// The ``TranscriptEntry/Kind/compaction(_:)`` row for a compaction
     /// boundary entry, keyed on the persisted ``CompactionSegment/id``, or
-    /// `nil` for an ordinary `.response`.
+    /// `nil` for an ordinary `.prompt` or `.response`.
+    ///
+    /// The boundary entry is a `.prompt`. A checkpoint recorded before task
+    /// ^5t72pdx holds it as a `.response`, and this reads both. The summary
+    /// is the text segment with the id
+    /// ``CompactionSegment/summaryTextSegmentId(of:)``, so the model-visible
+    /// ``CompactionSegment/summaryHeader`` is not part of it.
     ///
     /// - Parameters:
-    ///   - entry: The `.response` entry to inspect.
+    ///   - entry: The `.prompt` or `.response` entry to inspect.
     ///   - entryId: That entry's own id.
-    /// - Returns: The compaction row, or `nil` for an ordinary response.
+    /// - Returns: The compaction row, or `nil` for an ordinary entry.
     private nonisolated static func compactionRow(
         from entry: Transcript.Entry, entryId: String
     ) -> TranscriptEntry? {
-        guard case .response(let response) = entry else { return nil }
-        var segment: CompactionSegment?
-        var summaryText: String?
-        for candidate in response.segments {
-            if segment == nil, case .structure(let structured) = candidate,
-                let compaction = try? CompactionSegment(structuredSegment: structured)
-            {
-                segment = compaction
-            }
-            if summaryText == nil, case .text(let textSegment) = candidate {
-                summaryText = textSegment.content
-            }
+        let segments: [Transcript.Segment]
+        switch entry {
+        case .prompt(let prompt):
+            segments = prompt.segments
+        case .response(let response):
+            segments = response.segments
+        default:
+            return nil
         }
+        let segment = segments.lazy.compactMap { candidate -> CompactionSegment? in
+            guard case .structure(let structured) = candidate else { return nil }
+            return (try? CompactionSegment(structuredSegment: structured)) ?? nil
+        }.first
         guard let segment else { return nil }
+        let summaryTextId = CompactionSegment.summaryTextSegmentId(of: entryId)
+        let summaryText = segments.lazy.compactMap { candidate -> String? in
+            guard case .text(let textSegment) = candidate, textSegment.id == summaryTextId else { return nil }
+            return textSegment.content
+        }.first
         let summary = summaryText.flatMap { $0.isEmpty ? nil : $0 }
         let result = CompactionResult(
             id: segment.id,
@@ -565,6 +581,8 @@ public final class SessionProjection {
             let (kind, payload, _) = TranscriptEntryMapper.event(from: entry)
             switch kind {
             case .prompt:
+                // A compaction boundary is not the start of a turn.
+                guard compactionRow(from: entry, entryId: payload.entryId) == nil else { break }
                 turnTextEntryIds.removeAll()
             case .response:
                 guard compactionRow(from: entry, entryId: payload.entryId) == nil else { break }

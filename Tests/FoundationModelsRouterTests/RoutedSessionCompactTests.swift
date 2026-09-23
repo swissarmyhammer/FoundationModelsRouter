@@ -356,11 +356,11 @@ struct RoutedSessionCompactTests {
 
         // The appended entry carries a CompactionSegment.
         let appended = try #require(afterEvents.last)
-        #expect(appended.kind == .response)
+        #expect(appended.kind == .prompt)
         #expect(appended.sessionId == sessionId)
         let entryPayload = try #require(appended.entry)
         let rebuilt = try TranscriptEntryMapper.entry(from: entryPayload, kind: appended.kind)
-        guard case .response(let response) = rebuilt, case .structure(let segment)? = response.segments.last,
+        guard case .prompt(let boundary) = rebuilt, case .structure(let segment)? = boundary.segments.last,
             let compactionSegment = try CompactionSegment(structuredSegment: segment)
         else {
             Issue.record("expected the appended entry to carry a .custom CompactionSegment")
@@ -448,13 +448,14 @@ struct RoutedSessionCompactTests {
         let appended = try #require(events.last)
         let entryPayload = try #require(appended.entry)
         let rebuilt = try TranscriptEntryMapper.entry(from: entryPayload, kind: appended.kind)
-        guard case .response(let response) = rebuilt, case .structure(let segment)? = response.segments.last,
+        guard case .prompt(let boundary) = rebuilt, case .structure(let segment)? = boundary.segments.last,
             let compactionSegment = try CompactionSegment(structuredSegment: segment)
         else {
             Issue.record("expected the appended entry to carry a .structure CompactionSegment")
             return
         }
         #expect(compactionSegment.content.promptName == CompactionPrompt.default.name)
+        #expect(boundary.id == result.summaryEntryId)
     }
 
     // MARK: - Custom prompt threads through
@@ -484,7 +485,7 @@ struct RoutedSessionCompactTests {
         let appended = try #require(events.last)
         let entryPayload = try #require(appended.entry)
         let rebuilt = try TranscriptEntryMapper.entry(from: entryPayload, kind: appended.kind)
-        guard case .response(let response) = rebuilt, case .structure(let segment)? = response.segments.last,
+        guard case .prompt(let boundary) = rebuilt, case .structure(let segment)? = boundary.segments.last,
             let compactionSegment = try CompactionSegment(structuredSegment: segment)
         else {
             Issue.record("expected the appended entry to carry a .structure CompactionSegment")
@@ -588,28 +589,28 @@ struct RoutedSessionCompactTests {
 
     // MARK: - Live completionTokens cross the compaction boundary (task ^6e7h2q6)
 
-    /// The last recorded event's rebuilt boundary `.response` — the entry
+    /// The last recorded event's rebuilt boundary `.prompt` — the entry
     /// every applied compaction appends, carrying its ``CompactionSegment``
     /// checkpoint — or records an issue.
     private static func lastRecordedBoundary(
         in recorder: InMemoryRecorder
-    ) async throws -> (response: Transcript.Response, segment: CompactionSegment) {
+    ) async throws -> (boundary: Transcript.Prompt, segment: CompactionSegment) {
         let events = await recorder.events
         let appended = try #require(events.last)
         let entryPayload = try #require(appended.entry)
         let rebuilt = try TranscriptEntryMapper.entry(from: entryPayload, kind: appended.kind)
-        guard case .response(let response) = rebuilt, case .structure(let segment)? = response.segments.last,
+        guard case .prompt(let boundary) = rebuilt, case .structure(let segment)? = boundary.segments.last,
             let compactionSegment = try CompactionSegment(structuredSegment: segment)
         else {
             Issue.record("expected the appended entry to carry a .structure CompactionSegment")
             throw StubSessionBackend.StubError.boom
         }
-        return (response, compactionSegment)
+        return (boundary, compactionSegment)
     }
 
-    /// The contents of every `.text` segment in `response`, in order.
-    private static func textContents(of response: Transcript.Response) -> [String] {
-        response.segments.compactMap { segment -> String? in
+    /// The contents of every `.text` segment in `boundary`, in order.
+    private static func textContents(of boundary: Transcript.Prompt) -> [String] {
+        boundary.segments.compactMap { segment -> String? in
             guard case .text(let text) = segment else { return nil }
             return text.content
         }
@@ -643,7 +644,7 @@ struct RoutedSessionCompactTests {
         let result = try await session.compact(budget: budget)
         #expect(result.stagesApplied.contains("Summarization"))
 
-        let (response, compactionSegment) = try await Self.lastRecordedBoundary(in: recorder)
+        let (boundary, compactionSegment) = try await Self.lastRecordedBoundary(in: recorder)
 
         // Run plane only — token, op, latest progress — recorded in the
         // boundary segment at the moment the boundary was written.
@@ -656,12 +657,13 @@ struct RoutedSessionCompactTests {
                 )
             ])
 
-        // The rendered boundary the post-compaction model reads: the summary
-        // text plus one additional text segment carrying the pending-run
+        // The rendered boundary the post-compaction model reads: the header,
+        // the summary text, and one more text segment carrying the pending-run
         // summary. It states the push contract — the session reports each
         // run when it settles — and names status/wait for an earlier look.
-        let texts = Self.textContents(of: response)
-        #expect(texts.count == 2)
+        let texts = Self.textContents(of: boundary)
+        #expect(texts.first == CompactionSegment.summaryHeader)
+        #expect(texts.count == 3)
         let rendering = try #require(texts.last)
         #expect(rendering.contains(token))
         #expect(rendering.contains(FakeRun.op))
@@ -695,13 +697,14 @@ struct RoutedSessionCompactTests {
         let result = try await session.compact(budget: budget)
         #expect(result.stagesApplied == [Summarization.stageName])
 
-        let (response, compactionSegment) = try await Self.lastRecordedBoundary(in: recorder)
+        let (boundary, compactionSegment) = try await Self.lastRecordedBoundary(in: recorder)
 
         #expect(compactionSegment.content.pendingRuns == nil)
-        // Exactly the pre-existing boundary shape: one summary text segment
-        // and the CompactionSegment — no pending-run carrier of any kind.
-        #expect(Self.textContents(of: response).count == 1)
-        #expect(response.segments.count == 2)
+        // Exactly the boundary shape with no runs: the header, one summary
+        // text segment and the CompactionSegment — no pending-run carrier of
+        // any kind.
+        #expect(Self.textContents(of: boundary) == [CompactionSegment.summaryHeader, Self.cannedText])
+        #expect(boundary.segments.count == 3)
     }
 
     // MARK: - The one own-model call of a caller compaction
@@ -793,10 +796,10 @@ struct RoutedSessionCompactTests {
         // That entry carries this compaction's decodable CompactionSegment
         // checkpoint, and the checkpoint names its own entry in the live
         // window so a restore keeps the boundary itself.
-        let (response, compactionSegment) = try await Self.lastRecordedBoundary(in: recorder)
+        let (boundary, compactionSegment) = try await Self.lastRecordedBoundary(in: recorder)
         #expect(compactionSegment.content.stagesApplied == result.stagesApplied)
         #expect(!compactionSegment.content.compactedEntryIds.isEmpty)
-        #expect(compactionSegment.content.liveWindowEntryIds.contains(response.id))
+        #expect(compactionSegment.content.liveWindowEntryIds.contains(boundary.id))
 
         // The checkpoint's token counts are on the measured scale — the same
         // numbers the live session now reports through `contextFill` — so a
@@ -868,8 +871,8 @@ struct RoutedSessionCompactTests {
         let restoredEntries = restoredBackend.transcriptEntries()
         #expect(Array(restoredEntries.dropLast()) == expectedWindow)
         #expect(restoredEntries.count < preCompactionEntries.count)
-        guard case .response(let boundary)? = restoredEntries.last,
-            case .text(let summaryText)? = boundary.segments.first,
+        guard case .prompt(let boundary)? = restoredEntries.last,
+            let summaryText = summaryEntryTexts(of: .prompt(boundary))?.dropFirst().first,
             case .structure(let segment)? = boundary.segments.last,
             let compactionSegment = try CompactionSegment(structuredSegment: segment)
         else {
@@ -877,7 +880,7 @@ struct RoutedSessionCompactTests {
             return
         }
         #expect(boundary.id == result.summaryEntryId)
-        #expect(summaryText.content == summary)
+        #expect(summaryText == summary)
         #expect(compactionSegment.content.stagesApplied == result.stagesApplied)
 
         // `contextFill` restores to the compaction's own post-compaction measurement,

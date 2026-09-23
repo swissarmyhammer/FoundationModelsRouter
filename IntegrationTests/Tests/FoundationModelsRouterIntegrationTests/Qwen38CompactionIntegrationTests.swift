@@ -6,8 +6,8 @@ import Testing
 @testable import FoundationModelsRouter
 @testable import FoundationModelsRouterRealModelSupport
 
-/// The value the built context plants in its tool output. The summary is
-/// printed, so a reader can see whether it kept this value.
+/// The value the built context plants in its tool output. The answer of the
+/// turn after the compaction must hold it.
 private let qwen38CompactionPlantedValue = "6543"
 
 /// The tag every printed line of this suite carries.
@@ -32,7 +32,7 @@ let qwen38CompactionLabel = "qwen38Compaction"
 ///
 /// Each test asserts the same four facts about its compaction: one
 /// compaction, a summary with text, a snapshot smaller than the context it
-/// replaced, and (for a turn) an answer.
+/// replaced, and (for a turn) an answer that holds the planted value.
 @Suite(
     "Gated real-model tests: the three compaction cases on Qwen 3.8 27B over one load (task ^yyjvyga)",
     .serialized,
@@ -161,21 +161,29 @@ struct Qwen38CompactionIntegrationTests {
         turn.report(label: qwen38CompactionLabel, detail: "case 3 seededTokens=\(seededTokens)")
 
         #expect(turn.textBeforeCompaction.isEmpty, "the turn wrote text before its compaction")
-        try Self.expectOneCompactionAndAnAnswer(turn)
+        try Self.expectOneCompactionAndAnAnswer(turn, holding: qwen38CompactionPlantedValue)
     }
 
     // MARK: - The shared assertions
 
-    /// Asserts that `turn` holds one applied compaction and an answer after it.
+    /// Asserts that `turn` holds one applied compaction, and an answer after
+    /// it that holds `plantedValue`.
     ///
-    /// - Parameter turn: The record of the turn.
+    /// An answer that is not empty is not enough: before task ^5t72pdx, the
+    /// summary kept the planted value, but the answer after the compaction
+    /// said "I do not have access to your specific infrastructure
+    /// configuration". The answer must use the compacted context.
+    ///
+    /// - Parameters:
+    ///   - turn: The record of the turn.
+    ///   - plantedValue: The value the context planted, which the answer must hold.
     /// - Throws: When the turn holds no compaction.
-    static func expectOneCompactionAndAnAnswer(_ turn: Qwen38TurnRecord) throws {
+    static func expectOneCompactionAndAnAnswer(_ turn: Qwen38TurnRecord, holding plantedValue: String) throws {
         #expect(turn.compactions.count == 1, "expected one compaction in the turn, got \(turn.compactions.count)")
         try expectAppliedCompaction(try #require(turn.compactions.first))
         #expect(
-            !turn.answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-            "the turn wrote no answer after the compaction")
+            turn.answer.contains(plantedValue),
+            "the answer after the compaction does not hold \(plantedValue): \(turn.answer.debugDescription)")
     }
 
     /// Asserts that `result` applied a summary with text and made the

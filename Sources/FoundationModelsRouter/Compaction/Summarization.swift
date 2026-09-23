@@ -194,9 +194,8 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// A compaction runs before a turn, and the turn's call adds its prompt
     /// entry after the snapshot. The text of that prompt is not known when
     /// the compaction runs, so the last prompt the live context holds takes
-    /// its place. The snapshot's summary entry is a response, so the
-    /// snapshot alone holds no user message, and a chat template that
-    /// requires one refuses it.
+    /// its place. The size of the snapshot is then the size that the next
+    /// call sees.
     ///
     /// - Parameter entries: The live context the compaction reads.
     /// - Returns: The stand-in entries, in order.

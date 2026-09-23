@@ -163,10 +163,30 @@ package struct CompactionSegment: PersistableStructuredSegment, Equatable, Custo
             """
     }
 
-    /// Builds the summary entry of an applied compaction: a `.response` with
-    /// a text segment for `summaryText` (id `<entryId>-text`), a pending-runs
-    /// text segment (id `<entryId>-pending-runs`) when `content.pendingRuns`
-    /// is not `nil`, and the `.structure` ``CompactionSegment`` manifest.
+    /// The model-visible header that comes before the summary text in the
+    /// summary entry.
+    internal static let summaryHeader = "Summary of the conversation so far:"
+
+    /// The id of the summary text segment of the summary entry `entryId`.
+    ///
+    /// - Parameter entryId: The summary entry's `Transcript.Entry.id`.
+    /// - Returns: The segment id.
+    internal static func summaryTextSegmentId(of entryId: String) -> String {
+        "\(entryId)-text"
+    }
+
+    /// Builds the summary entry of an applied compaction: a `.prompt` with a
+    /// text segment for ``summaryHeader`` (id `<entryId>-header`), a text
+    /// segment for `summaryText` (id `<entryId>-text`), a pending-runs text
+    /// segment (id `<entryId>-pending-runs`) when `content.pendingRuns` is not
+    /// `nil`, and the `.structure` ``CompactionSegment`` manifest.
+    ///
+    /// The entry is a `.prompt`, so the chat template renders it as a user
+    /// message. The model reads a user message as context that it received.
+    /// The model does not read an assistant message that it did not write,
+    /// with no user message before it, as context: after a compaction, a
+    /// summary in an assistant message did not answer a question about a
+    /// fact the summary kept (task ^5t72pdx).
     ///
     /// - Parameters:
     ///   - entryId: The boundary entry's `Transcript.Entry.id`.
@@ -179,7 +199,8 @@ package struct CompactionSegment: PersistableStructuredSegment, Equatable, Custo
         content: Content
     ) -> Transcript.Entry {
         var segments: [Transcript.Segment] = [
-            .text(Transcript.TextSegment(id: "\(entryId)-text", content: summaryText))
+            .text(Transcript.TextSegment(id: "\(entryId)-header", content: summaryHeader)),
+            .text(Transcript.TextSegment(id: summaryTextSegmentId(of: entryId), content: summaryText)),
         ]
         // A session with no background runs adds nothing; one with background runs
         // carries their rendering as an additional text segment — the only
@@ -196,38 +217,48 @@ package struct CompactionSegment: PersistableStructuredSegment, Equatable, Custo
             )
         }
         segments.append(CompactionSegment(content: content).transcriptSegment)
-        return .response(
-            Transcript.Response(id: entryId, segments: segments)
-        )
+        return .prompt(Transcript.Prompt(id: entryId, segments: segments))
     }
 
     /// Returns `entry` with the sizes of its checkpoint set to `tokensBefore`
-    /// and `tokensAfter`. Every other segment, and the checkpoint's own id,
-    /// stay as they are. An entry that carries no checkpoint returns
-    /// unchanged.
+    /// and `tokensAfter`. Every other segment, the entry's kind, and the
+    /// checkpoint's own id stay as they are. An entry that carries no
+    /// checkpoint returns unchanged.
     ///
     /// A session calls this to put its checkpoint on the measured scale, the
     /// scale its context fill reads, so that a restore reports the same fill
     /// as the live session.
     ///
     /// - Parameters:
-    ///   - entry: The summary entry of a compaction.
+    ///   - entry: The summary entry of a compaction: a `.prompt`, or the
+    ///     `.response` of a checkpoint recorded before task ^5t72pdx.
     ///   - tokensBefore: The size before the compaction, on the new scale.
     ///   - tokensAfter: The size after the compaction, on the new scale.
     /// - Returns: The entry with the new sizes.
     internal static func restatingSizes(
         of entry: Transcript.Entry, tokensBefore: Int, tokensAfter: Int
     ) -> Transcript.Entry {
-        guard case .response(let response) = entry else { return entry }
-        let segments = response.segments.map { segment -> Transcript.Segment in
-            guard case .structure(let structured) = segment,
-                let checkpoint = (try? CompactionSegment(structuredSegment: structured)) ?? nil
-            else { return segment }
-            var content = checkpoint.content
-            content.tokensBefore = tokensBefore
-            content.tokensAfter = tokensAfter
-            return CompactionSegment(id: checkpoint.id, content: content).transcriptSegment
+        func restated(_ segments: [Transcript.Segment]) -> [Transcript.Segment] {
+            segments.map { segment -> Transcript.Segment in
+                guard case .structure(let structured) = segment,
+                    let checkpoint = (try? CompactionSegment(structuredSegment: structured)) ?? nil
+                else { return segment }
+                var content = checkpoint.content
+                content.tokensBefore = tokensBefore
+                content.tokensAfter = tokensAfter
+                return CompactionSegment(id: checkpoint.id, content: content).transcriptSegment
+            }
         }
-        return .response(Transcript.Response(id: response.id, segments: segments))
+        switch entry {
+        case .prompt(let prompt):
+            return .prompt(
+                Transcript.Prompt(
+                    id: prompt.id, segments: restated(prompt.segments), options: prompt.options,
+                    responseFormat: prompt.responseFormat))
+        case .response(let response):
+            return .response(Transcript.Response(id: response.id, segments: restated(response.segments)))
+        default:
+            return entry
+        }
     }
 }

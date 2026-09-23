@@ -99,7 +99,7 @@ extension Qwen38CompactionIntegrationTests {
                 """)
 
         #expect(tool.calls >= 1, "the model did not call the tool")
-        try Self.expectOneCompactionAndAnAnswer(turn)
+        try Self.expectOneCompactionAndAnAnswer(turn, holding: Self.recordKey)
     }
 }
 

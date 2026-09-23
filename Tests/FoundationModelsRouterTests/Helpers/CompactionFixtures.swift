@@ -166,14 +166,37 @@ enum SizedEntries {
     }
 }
 
+/// The segments of a summary entry: the segments of a `.prompt` entry, or
+/// `nil` for an entry of any other kind. A summary entry is a `.prompt`, so
+/// the model reads the summary as a user message (task ^5t72pdx).
+///
+/// - Parameter entry: The summary entry.
+/// - Returns: The segments, or `nil` when `entry` is not a `.prompt`.
+func summaryEntrySegments(of entry: Transcript.Entry) -> [Transcript.Segment]? {
+    guard case .prompt(let prompt) = entry else { return nil }
+    return prompt.segments
+}
+
+/// The text of each `.text` segment of a summary entry, in order: the
+/// header, the summary, then the pending-runs rendering when there is one.
+///
+/// - Parameter entry: The summary entry.
+/// - Returns: The texts, or `nil` when `entry` is not a `.prompt`.
+func summaryEntryTexts(of entry: Transcript.Entry) -> [String]? {
+    summaryEntrySegments(of: entry)?.compactMap { segment -> String? in
+        guard case .text(let text) = segment else { return nil }
+        return text.content
+    }
+}
+
 /// The compaction checkpoint a summary entry carries.
 ///
 /// - Parameter entry: The summary entry.
 /// - Returns: The checkpoint content, or `nil` when `entry` carries none.
 /// - Throws: What `CompactionSegment(structuredSegment:)` throws.
 func checkpointContent(of entry: Transcript.Entry) throws -> CompactionSegment.Content? {
-    guard case .response(let response) = entry else { return nil }
-    for case .structure(let segment) in response.segments {
+    guard let segments = summaryEntrySegments(of: entry) else { return nil }
+    for case .structure(let segment) in segments {
         if let compaction = try CompactionSegment(structuredSegment: segment) {
             return compaction.content
         }

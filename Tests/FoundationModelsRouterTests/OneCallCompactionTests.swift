@@ -158,7 +158,9 @@ struct OneCallCompactionTests {
             transcript, budget: summarizingCompactionBudget(for: Array(transcript)),
             summarizer: RecordingSummarizer(summary: longSummary))
 
-        let snapshotTokens = characterCount(of: [TranscriptFixtures.makeInstructions()]) + longSummary.count
+        let snapshotTokens =
+            characterCount(of: [TranscriptFixtures.makeInstructions()]) + CompactionSegment.summaryHeader.count
+            + longSummary.count
         #expect(result.shortfall == .summaryDidNotShrinkContext(snapshotTokens: snapshotTokens))
         #expect(compacted == transcript)
         #expect(result.stagesApplied.isEmpty)
@@ -197,11 +199,7 @@ struct OneCallCompactionTests {
         #expect(entries[1].id == summaryEntryId)
         let kept = [try ProtectedToolOutputFixtures.skillCallsEntry(), ProtectedToolOutputFixtures.skillOutputEntry]
         #expect(Array(entries.dropFirst(2)) == kept)
-        guard case .response(let response) = entries[1], case .text(let text) = response.segments.first else {
-            Issue.record("the summary entry must be a response whose first segment is the summary text")
-            return
-        }
-        #expect(text.content == summary)
+        #expect(summaryEntryTexts(of: entries[1]) == [CompactionSegment.summaryHeader, summary])
     }
 
     @Test("the summary entry carries the pending-runs rendering as a second text segment")
@@ -215,15 +213,9 @@ struct OneCallCompactionTests {
             pendingRuns: Self.pendingRuns)
 
         let summaryEntry = try #require(Array(compacted).first { $0.id == result.summaryEntryId })
-        guard case .response(let response) = summaryEntry else {
-            Issue.record("the summary entry must be a response")
-            return
-        }
-        let texts = response.segments.compactMap { segment -> String? in
-            guard case .text(let text) = segment else { return nil }
-            return text.content
-        }
-        #expect(texts == ["summary", CompactionSegment.renderedPendingRuns(Self.pendingRuns)])
+        #expect(
+            summaryEntryTexts(of: summaryEntry)
+                == [CompactionSegment.summaryHeader, "summary", CompactionSegment.renderedPendingRuns(Self.pendingRuns)])
         #expect(try checkpointContent(of: summaryEntry)?.pendingRuns == Self.pendingRuns)
     }
 
