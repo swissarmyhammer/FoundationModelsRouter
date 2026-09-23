@@ -240,7 +240,7 @@ struct BackgroundToolRunnerTests {
             sessionID: ULID.generate(),
             mailbox: mailbox,
             sink: outbox,
-            timeout: ToolMount.defaultTimeoutSeconds
+            timeout: nil
         )
 
         let rendered = try await inline.call(arguments: MountArguments(value: "inline"))
@@ -258,7 +258,7 @@ struct BackgroundToolRunnerTests {
             sessionID: ULID.generate(),
             mailbox: mailbox,
             sink: outbox,
-            timeout: ToolMount.defaultTimeoutSeconds
+            timeout: nil
         )
 
         let pendingRendered = try await pendingRun.call(arguments: MountArguments(value: "held"))

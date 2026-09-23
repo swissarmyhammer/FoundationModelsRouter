@@ -166,7 +166,7 @@ struct ToolInvocationLivenessTests {
         let wrapped = MarkerEmittingTool()
         let tool = RunToCompletionRunner(
             wrapping: wrapped, sessionID: .generate(), mailbox: SessionMailbox(), sink: sink,
-            timeout: ToolMount.defaultTimeoutSeconds)
+            timeout: nil)
 
         let output = try await tool.call(arguments: AmbientToolArguments(value: "ONE"))
         #expect(output == ScriptedToolFixture.marker(for: "ONE"))

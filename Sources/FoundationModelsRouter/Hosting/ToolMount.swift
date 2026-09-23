@@ -12,16 +12,11 @@ public struct ToolMount: Sendable, Equatable {
         case runToCompletion
     }
 
-    /// The stock per-call timeout, in seconds.
-    public static let defaultTimeoutSeconds: TimeInterval = 120
-
-    /// The synchronous mount: run to completion under ``defaultTimeoutSeconds``.
+    /// The synchronous mount: run to completion with no timeout.
+    ///
+    /// A tool has a timeout only when the host's mount or the tool's own
+    /// ``BackgroundTool`` declaration states one. This mount states none.
     public static let synchronous = ToolMount(
-        mode: .runToCompletion, timeout: defaultTimeoutSeconds
-    )
-
-    /// The mount that runs to completion with no timeout.
-    public static let synchronousUnbounded = ToolMount(
         mode: .runToCompletion, timeout: nil
     )
 
@@ -32,8 +27,8 @@ public struct ToolMount: Sendable, Equatable {
     /// A pending elicitation suspends it. Expiry settles the run as ``OperationOutcome/timedOut``.
     public var timeout: TimeInterval?
 
-    /// Creates a mount.
-    public init(mode: Mode, timeout: TimeInterval? = Self.defaultTimeoutSeconds) {
+    /// Creates a mount. With no `timeout` stated, the mount has no timeout.
+    public init(mode: Mode, timeout: TimeInterval? = nil) {
         self.mode = mode
         self.timeout = timeout
     }

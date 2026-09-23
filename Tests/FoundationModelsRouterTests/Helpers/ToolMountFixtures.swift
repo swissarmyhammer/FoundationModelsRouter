@@ -66,7 +66,7 @@ enum MountFixtures {
     /// Mounts `tool` in a ``BackgroundToolRunner`` over a fresh mailbox and sink.
     static func backgroundHarness<Arguments: ConvertibleFromGeneratedContent & Sendable>(
         wrapping tool: any Tool<Arguments, String>,
-        timeout: TimeInterval? = ToolMount.defaultTimeoutSeconds
+        timeout: TimeInterval? = nil
     ) -> Harness<BackgroundToolRunner<Arguments>> {
         let mailbox = SessionMailbox()
         let sink = RecordingSink()
@@ -79,7 +79,7 @@ enum MountFixtures {
     /// Mounts `tool` in a ``RunToCompletionRunner`` over a fresh mailbox and sink.
     static func runToCompletionHarness<Arguments: ConvertibleFromGeneratedContent & Sendable>(
         wrapping tool: any Tool<Arguments, String>,
-        timeout: TimeInterval? = ToolMount.defaultTimeoutSeconds
+        timeout: TimeInterval? = nil
     ) -> Harness<RunToCompletionRunner<Arguments>> {
         let mailbox = SessionMailbox()
         let sink = RecordingSink()
@@ -110,7 +110,7 @@ enum MountFixtures {
             mailbox: SessionMailbox(),
             sink: sink,
             op: nil,
-            mountTimeout: ToolMount.defaultTimeoutSeconds
+            mountTimeout: nil
         )
     }
 
@@ -309,13 +309,25 @@ enum MountFixtures {
         }
     }
 
-    /// Blocks on a gate and declares ``ToolMount/synchronousUnbounded``.
+    /// Sleeps for `duration` seconds and posts no progress, then returns.
+    struct QuietTool: Tool {
+        let name = "quiet_tool"
+        let description = "runs for a time with no progress, then returns"
+        let duration: TimeInterval
+
+        func call(arguments: MountArguments) async throws -> String {
+            try await Task.sleep(for: .seconds(duration))
+            return "quiet: \(arguments.value)"
+        }
+    }
+
+    /// Blocks on a gate and declares ``ToolMount/synchronous``.
     struct DeclaredRunToCompletionRunner: Tool, BackgroundTool {
         let name = "declared_run_to_completion_tool"
         let description = "declares the mount it cannot work without"
         let gate: RunLatch
 
-        var mount: ToolMount? { .synchronousUnbounded }
+        var mount: ToolMount? { .synchronous }
 
         func call(arguments: MountArguments) async throws -> String {
             await gate.waitUntilOpen()

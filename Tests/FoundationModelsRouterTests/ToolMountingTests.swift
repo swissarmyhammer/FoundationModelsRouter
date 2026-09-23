@@ -18,6 +18,14 @@ struct ToolMountingTests {
     /// timed out.
     private static let declaredMountHoldWindows: Double = 3
 
+    /// How long, in seconds, the tool with no stated timeout runs with no
+    /// progress. Task ^50c8zer names this length.
+    private static let quietRunSeconds: TimeInterval = 3
+
+    /// The timeout, in seconds, that the host's mount states in the test of
+    /// a stated timeout. Task ^50c8zer names this value.
+    private static let statedTimeoutSeconds: TimeInterval = 1
+
     /// Mounts `tool` through the one session-mount composition every
     /// session tool-instancing site shares, and returns the mount layer
     /// beneath its outermost ``ToolFailureDelivery`` decorator — the layer
@@ -48,7 +56,7 @@ struct ToolMountingTests {
         )
 
         let mounted = try #require(wrapped as? BackgroundToolRunner<MountArguments>)
-        #expect(mounted.timeout == ToolMount.defaultTimeoutSeconds)
+        #expect(mounted.timeout == nil)
         let rendered = try await mounted.call(arguments: MountArguments(value: "factory"))
         let envelope = try Fixtures.decodeEnvelope(rendered)
         #expect(envelope.pending)
@@ -194,7 +202,7 @@ struct ToolMountingTests {
 
     // MARK: - The mount a tool declares for itself
 
-    @Test("a tool that declares nothing mounts run-to-completion under the stock timeout, and its slow call stays in band")
+    @Test("a tool that declares nothing mounts run-to-completion with no timeout, and its slow call stays in band")
     func undeclaredToolMountsRunToCompletion() async throws {
         let gate = RunLatch()
         let mailbox = SessionMailbox()
@@ -205,7 +213,7 @@ struct ToolMountingTests {
             ) as? RunToCompletionRunner<MountArguments>
         )
 
-        #expect(mounted.timeout == ToolMount.defaultTimeoutSeconds)
+        #expect(mounted.timeout == nil)
 
         let calling = Task {
             try await mounted.call(arguments: MountArguments(value: "edit"))
@@ -218,6 +226,39 @@ struct ToolMountingTests {
         let rendered = try await calling.value
         #expect(rendered == "gated: edit")
         #expect(await mailbox.backgroundRuns().isEmpty)
+    }
+
+    @Test("a tool with no stated timeout that runs with no progress completes")
+    func unstatedTimeoutLetsAQuietRunComplete() async throws {
+        let mounted = Self.makeSessionMounted(
+            Fixtures.QuietTool(duration: Self.quietRunSeconds), sessionID: ULID.generate(),
+            mailbox: SessionMailbox(), sink: Fixtures.RecordingSink()
+        )
+        let quiet = try #require(mounted as? RunToCompletionRunner<MountArguments>)
+
+        let rendered = try await quiet.call(arguments: MountArguments(value: "slow"))
+
+        #expect(rendered == "quiet: slow")
+    }
+
+    @Test("a mount that states a timeout times out a run with no progress")
+    func statedTimeoutTimesOutAQuietRun() async throws {
+        let sink = Fixtures.RecordingSink()
+        let wrapped = ToolMounting.makeWrapped(
+            tool: Fixtures.SleepingTool(),
+            sessionID: ULID.generate(),
+            mailbox: SessionMailbox(),
+            sink: sink,
+            configuration: ToolMount(mode: .runToCompletion, timeout: Self.statedTimeoutSeconds)
+        )
+        let mounted = try #require(wrapped as? RunToCompletionRunner<MountArguments>)
+
+        await #expect(
+            throws: ToolMountError.timedOut(tool: "sleeping_tool", timeoutSeconds: Self.statedTimeoutSeconds)
+        ) {
+            _ = try await mounted.call(arguments: MountArguments(value: "x"))
+        }
+        #expect(await sink.events.last?.outcome == .timedOut)
     }
 
     @Test("a tool that declares background mounts in the background layer under its own declaration, and its call is handed back as a token at once")

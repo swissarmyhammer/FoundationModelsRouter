@@ -125,10 +125,10 @@ extension ToolMounting {
     /// The per-tool session-mount composition every session tool-instancing
     /// site shares.
     ///
-    /// The mount is the default for every tool: run to completion, bounded by
-    /// ``ToolMount/defaultTimeoutSeconds``, so a synchronous tool that hangs is
-    /// reported as ``ToolMountError/timedOut(tool:timeoutSeconds:)`` instead of
-    /// holding the turn forever. No timer and no race decide whether a call
+    /// The mount is the default for every tool: run to completion with no
+    /// timeout. A tool has a timeout only when the tool's own declaration
+    /// states one, through ``BackgroundTool/mount`` or
+    /// ``BackgroundTool/timeout(from:)``. No timer and no race decide whether a call
     /// goes to the background. A tool known ahead of time to run long declares
     /// ``ToolMount/Mode/background`` for itself through ``BackgroundTool/mount``,
     /// and that declaration wins over the ``ToolMount/synchronous`` passed

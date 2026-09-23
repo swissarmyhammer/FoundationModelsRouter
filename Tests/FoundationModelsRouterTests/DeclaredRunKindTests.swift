@@ -148,7 +148,7 @@ struct DeclaredRunKindTests {
       sessionID: sessionID,
       mailbox: mailbox,
       sink: sink,
-      timeout: ToolMount.defaultTimeoutSeconds
+      timeout: nil
     )
     let context = ToolContext(
       sessionID: sessionID,

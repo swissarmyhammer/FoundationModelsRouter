@@ -250,22 +250,16 @@ struct RunToCompletionRunnerTests {
 
     // MARK: - The clockless mount
 
-    @Test("the run-to-completion mount carries no timeout at all")
-    func synchronousUnboundedCarriesNoTimeout() {
-        #expect(ToolMount.synchronousUnbounded.mode == .runToCompletion)
-        #expect(ToolMount.synchronousUnbounded.timeout == nil)
+    @Test("the synchronous mount runs to completion and carries no timeout at all")
+    func synchronousMountCarriesNoTimeout() {
+        #expect(ToolMount.synchronous.mode == .runToCompletion)
+        #expect(ToolMount.synchronous.timeout == nil)
     }
 
-    @Test("the stock timeout stays a plain TimeInterval, and the native session mount runs to completion under it")
-    func stockTimeoutStaysNonOptional() {
-        // The binding itself is the assertion about the type: a
-        // `TimeInterval?` does not compile here.
-        let stockTimeout: TimeInterval = ToolMount.defaultTimeoutSeconds
-
-        #expect(
-            ToolMount.synchronous
-                == ToolMount(mode: .runToCompletion, timeout: stockTimeout)
-        )
+    @Test("a mount that states no timeout has no timeout")
+    func unstatedTimeoutIsNil() {
+        #expect(ToolMount(mode: .runToCompletion).timeout == nil)
+        #expect(ToolMount(mode: .background).timeout == nil)
     }
 
     @Test("under no timeout a call blocks until the tool finishes, never backgrounds, and reports no timeout")
