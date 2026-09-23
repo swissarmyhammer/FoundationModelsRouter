@@ -39,8 +39,19 @@ comments:
     - The private `textContents(of:)` of RoutedSessionCompactTests is deleted. `TranscriptEntryMapper.textContents(_:)` is now internal (no longer private), and the shared test helper `summaryEntryTexts(of:)` calls it through `TranscriptEntryMapper.segmentPayload`. The test calls `summaryEntryTexts(of: .prompt(boundary))`.
     - test: green — `swift test`: 1330 tests in 150 suites passed (2 designed known issues), 1 test, 19 tests. IntegrationTests build complete.
   timestamp: 2026-09-23T17:39:46.209530+00:00
-position_column: review
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m37nrf635j09vyr67n9ytnhg
+  text: |-
+    ### finish iteration 2 — review: clean
+    - implement: changed — 8a46799 (the summary entry is a `.prompt` with the header "Summary of the conversation so far:"; readers accept `.prompt` and old `.response` checkpoints; the gated suite asserts the planted values), 0450ed4 (`makeSummaryEntry()`; `summaryEntryTexts(of:)` reuses `TranscriptEntryMapper.textContents`). Both findings of iteration 1 are checked.
+    - Fix chosen and why: the summary is a user-role message with a header. The MLX `TranscriptConverter` renders a `.response` as an assistant message; the model did not read an assistant turn that it did not write as context. The router cannot change the converter, but it can choose the entry kind. The instructions option was not chosen: the restore rebuilds the live window from recorded ids, and the instructions entry is recorded once, before the compaction.
+    - test: green — `swift test`: 1330 tests in 150 suites passed (2 designed known issues), 1 test, 19 tests. IntegrationTests build complete.
+    - real-model: Qwen3.8-27B, `swift test --package-path IntegrationTests --filter Qwen38CompactionIntegrationTests`: 3 of 3 pass. Load 2.7 s. Case 1 5.9 s (load included). Case 3 7.1 s, answer "The staging database listens on port 6543." Case 2 16.6 s, answer "The returned record key is KESTREL-42." Suite 29.6 s.
+    - commit: 8a46799, 0450ed4
+    - review: clean — `review sha HEAD~1..HEAD`: 0 findings, 0 refuted, 4 files reviewed. The task is in done.
+  timestamp: 2026-09-23T17:42:03.715521+00:00
+position_column: done
+position_ordinal: fffff980
 title: After a turn-start compaction, Qwen3.8-27B does not use the summary to answer
 ---
 ## Finding (from ^yyjvyga, 2026-09-23)
