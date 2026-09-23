@@ -186,6 +186,12 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// drives the stream while the session reads it from its own actor.
     private let lastGenerationCall = Mutex<GenerationCallUsage?>(nil)
 
+    /// What the newest snapshot of the stream in flight held, or `nil` before
+    /// the stream gave one. See ``inFlightResponse()``.
+    ///
+    /// A lock guards it for the same reason as ``lastGenerationCall``.
+    private let newestSnapshot = Mutex<InFlightResponse?>(nil)
+
     /// The token ceiling for a generation call whose caller gives no
     /// `maxTokens`.
     ///
@@ -329,6 +335,31 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// method.
     private func forgetLastGenerationCall() {
         lastGenerationCall.withLock { $0 = nil }
+        newestSnapshot.withLock { $0 = nil }
+    }
+
+    /// Keeps what one stream snapshot holds: a copy of its transcript
+    /// entries, and the usage of its generation call.
+    ///
+    /// The entries are copied into an `Array`. The slice's indices point into
+    /// the session's transcript, and a call that throws leaves no entry
+    /// there, so the bounds would not stay valid.
+    ///
+    /// - Parameters:
+    ///   - usage: The usage of the snapshot's generation call.
+    ///   - entries: The transcript entries the method appended so far.
+    private func keepNewestSnapshot(
+        usage: LanguageModelSession.Usage, entries: ArraySlice<FoundationModels.Transcript.Entry>
+    ) {
+        let snapshot = InFlightResponse(
+            entries: Array(entries), inputTokens: usage.input.totalTokenCount,
+            outputTokens: usage.output.totalTokenCount)
+        newestSnapshot.withLock { $0 = snapshot }
+    }
+
+    /// Returns what the newest snapshot of the stream in flight held.
+    func inFlightResponse() -> InFlightResponse? {
+        newestSnapshot.withLock { $0 }
     }
 
     /// Records the usage of the last generation call of a generating method.
@@ -385,6 +416,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
             content: { $0.content },
             observe: { [self] snapshot in
                 recordLastGenerationCall(usage: snapshot.usage, entries: snapshot.transcriptEntries)
+                keepNewestSnapshot(usage: snapshot.usage, entries: snapshot.transcriptEntries)
             })
         return AsyncThrowingStream { try await fragments.next() }
     }

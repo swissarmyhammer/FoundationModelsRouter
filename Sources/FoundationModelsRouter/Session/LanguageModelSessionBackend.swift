@@ -22,6 +22,41 @@ public struct ResponseFragment: Sendable, Equatable {
     }
 }
 
+/// What the newest stream snapshot of a generating method held: the
+/// transcript entries the method appended so far, and the usage of its
+/// newest generation call.
+///
+/// The value of ``LanguageModelSessionBackend/inFlightResponse()``. The
+/// entries are a copy, not the bounds of a slice of the session's transcript,
+/// so they stay valid after the session drops them.
+public struct InFlightResponse: Sendable {
+    /// The entries the method appended so far, in transcript order.
+    public let entries: [Transcript.Entry]
+
+    /// The input token count of the newest generation call.
+    public let inputTokens: Int
+
+    /// The output token count of the newest generation call.
+    public let outputTokens: Int
+
+    /// Makes the value.
+    ///
+    /// - Parameters:
+    ///   - entries: The entries the method appended so far.
+    ///   - inputTokens: The input token count of the newest generation call.
+    ///   - outputTokens: The output token count of the newest generation call.
+    public init(entries: [Transcript.Entry], inputTokens: Int, outputTokens: Int) {
+        self.entries = entries
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+    }
+
+    /// The context of the newest generation call: its input and its output.
+    var contextTokens: Int {
+        inputTokens + outputTokens
+    }
+}
+
 /// A live session object that a ``LoadedLLMContainer`` makes through
 /// ``LoadedLLMContainer/makeSession(instructions:)``.
 ///
@@ -124,6 +159,16 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// There is a default implementation that gives `nil`.
     func lastGenerationCallOutputTokenCount() -> Int?
 
+    /// What the newest stream snapshot of the generating method in flight
+    /// held, or `nil` when the backend has no snapshot of it.
+    ///
+    /// `LanguageModelSession` keeps no entry of a call that throws. A session
+    /// that stops a model call at a tool result reads the entries of that
+    /// call here, before and after the stop.
+    ///
+    /// There is a default implementation that gives `nil`.
+    func inFlightResponse() -> InFlightResponse?
+
     /// Produces a new backend over the same underlying model, seeded from
     /// `transcript` instead of this backend's own history. An empty
     /// `transcript` gives a blank-slate backend.
@@ -174,6 +219,12 @@ extension LanguageModelSessionBackend {
     /// Default ``lastGenerationCallOutputTokenCount()``: `nil`, because a
     /// backend that does not override it has no count of one call.
     public func lastGenerationCallOutputTokenCount() -> Int? {
+        nil
+    }
+
+    /// Default ``inFlightResponse()``: `nil`, because a backend that does not
+    /// override it keeps no snapshot.
+    public func inFlightResponse() -> InFlightResponse? {
         nil
     }
 

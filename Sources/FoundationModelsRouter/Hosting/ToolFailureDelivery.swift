@@ -80,11 +80,17 @@ struct FailureDeliveringTextTool<
 
     /// Calls `wrapped`, and gives its failure to the model as the output.
     ///
+    /// The output then goes to the tool-result append boundary of the model
+    /// call (``ToolResultAppendBoundary``), before the model reads it.
+    ///
     /// - Returns: The output of `wrapped`, or the text of the failure that
     ///   ended the call.
     /// - Throws: A `CancellationError` that ended the call, unmodified.
     func call(arguments: Arguments) async throws -> String {
-        try await ToolCallResult { try await wrapped.call(arguments: arguments) }.text
+        let text = try await ToolCallResult { try await wrapped.call(arguments: arguments) }.text
+        await ToolResultAppendBoundary.current?.deliver(
+            ToolResultAppend(toolName: name, arguments: arguments, text: text))
+        return text
     }
 }
 
@@ -106,11 +112,17 @@ struct FailureDeliveringResultTool<
 
     /// Calls `wrapped`, and gives its failure to the model as the output.
     ///
+    /// The output then goes to the tool-result append boundary of the model
+    /// call (``ToolResultAppendBoundary``), before the model reads it.
+    ///
     /// - Returns: The output of `wrapped`, or the text of the failure that
     ///   ended the call.
     /// - Throws: A `CancellationError` that ended the call, unmodified.
     func call(arguments: Arguments) async throws -> ToolCallResult<WrappedOutput> {
-        try await ToolCallResult { try await wrapped.call(arguments: arguments) }
+        let result = try await ToolCallResult { try await wrapped.call(arguments: arguments) }
+        await ToolResultAppendBoundary.current?.deliver(
+            ToolResultAppend(toolName: name, arguments: arguments, result: result))
+        return result
     }
 }
 

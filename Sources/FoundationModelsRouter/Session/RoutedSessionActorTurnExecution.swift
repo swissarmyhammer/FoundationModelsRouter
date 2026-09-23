@@ -239,6 +239,7 @@ extension RoutedSessionActor {
         defer { currentTurnEventSink = nil }
 
         emit(.turnStarted(TurnStart(turnId: turnId, promptId: promptId)))
+        compactionYieldsStopped = false
 
         // Compared in tokens against ``TokenBudget/triggerTokens``, never as
         // `contextFill >= budget.trigger` — see the matching note on the
@@ -321,6 +322,10 @@ extension RoutedSessionActor {
     /// target ``OverflowRetryTarget`` chooses and retries once when
     /// `allowOverflowRetry` is set.
     ///
+    /// A model call that a tool result stopped for a compaction
+    /// (``noteToolResult(_:)``) is not a failure. The attempt goes on in
+    /// ``continueAfterCompactionYield(_:attempt:body:)``.
+    ///
     /// - Parameters:
     ///   - grammar: The grammar in force for this turn.
     ///   - pendingEvents: The events this attempt carries in its preamble.
@@ -332,7 +337,7 @@ extension RoutedSessionActor {
     ///   - body: The model work to run.
     /// - Returns: The response text `body` produced.
     /// - Throws: Whatever `body` throws, or the retry's own outcome when a retry ran.
-    private func runTurnAttempt(
+    func runTurnAttempt(
         grammar: Grammar?,
         pendingEvents: [OperationEvent],
         ownPrompt: String,
@@ -348,6 +353,7 @@ extension RoutedSessionActor {
         let usageBefore = backend.usageTokenCounts()
         // Open for this attempt alone. `finishTurn` closes it on both exits.
         openGenerationCallLedger(usageBefore: usageBefore, responseTokenCeiling: responseTokenCeiling.resolved)
+        toolResultWatch.composedPrompt = composedPrompt
         do {
             // The hard-ceiling pre-check (compaction_plan.md §1.7, task g2hcm36):
             // when the budget opts into ``TokenBudget/hardCeiling``, measured
@@ -391,6 +397,15 @@ extension RoutedSessionActor {
                 responseTokenCeiling: responseTokenCeiling.resolved, pendingEvents: pendingEvents, onEvent: onEvent)
             return response
         } catch {
+            if let yield = takeCompactionYield() {
+                let attempt = StoppedAttempt(
+                    grammar: grammar, composedPrompt: composedPrompt,
+                    entryIdsBeforeAttempt: toolResultWatch.entryIdsBeforeAttempt, started: started,
+                    usageBefore: usageBefore, responseTokenCeiling: responseTokenCeiling,
+                    pendingEvents: pendingEvents, onEvent: onEvent, allowOverflowRetry: allowOverflowRetry,
+                    rejectedCallRetries: rejectedCallRetries)
+                return try await continueAfterCompactionYield(yield, attempt: attempt, body: body)
+            }
             await recordFailedTurn(
                 grammar: grammar, since: started, usageBefore: usageBefore,
                 responseTokenCeiling: responseTokenCeiling.resolved, pendingEvents: pendingEvents, onEvent: onEvent)
@@ -623,10 +638,15 @@ extension RoutedSessionActor {
             stallWatchdog.cancel()
             endGenerationStallWatch(id: stallWatchId)
         }
+        // The tool-result append boundary of this model call: each tool result
+        // the model reads next goes through it (see ``noteToolResult(_:)``).
+        let resultBoundary = ToolResultAppendBoundary(session: self)
         let modelCall = Task {
             try await GenerationPermitLoan.$current.withValue(permitLoan) {
-                try await ToolContext.$current.withValue(turnContext) {
-                    try await body(composedPrompt)
+                try await ToolResultAppendBoundary.$current.withValue(resultBoundary) {
+                    try await ToolContext.$current.withValue(turnContext) {
+                        try await body(composedPrompt)
+                    }
                 }
             }
         }

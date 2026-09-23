@@ -413,6 +413,15 @@ actor RoutedSessionActor: RoutedSession {
     /// ``GenerationCallLedger``.
     var generationCallLedger: GenerationCallLedger?
 
+    /// What the generate attempt in flight saw at its tool-result
+    /// boundaries. See ``ToolResultWatch`` and ``noteToolResult(_:)``.
+    var toolResultWatch = ToolResultWatch()
+
+    /// Whether the turn in flight stops yielding at a tool result: set when
+    /// a yield's compaction applied no summary, cleared when a turn starts.
+    /// See ``continueAfterCompactionYield(_:attempt:body:)``.
+    var compactionYieldsStopped = false
+
     /// The stall watch over the one model call in flight, or `nil` between
     /// calls. See ``beginGenerationStallWatch()`` and ``GenerationStall``.
     var generationStallWatch: GenerationStallWatch?
