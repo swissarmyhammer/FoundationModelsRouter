@@ -48,6 +48,16 @@ comments:
     - commit: no-change
     - review: not run — the task stays in doing for the owner's decision
   timestamp: 2026-09-22T23:52:17.379601+00:00
+- actor: claude-code
+  id: 01m37cgzaksfb8vzzc7hn6cmmr
+  text: |-
+    ### implement — changed (owner's dispatch of 2026-09-23)
+    - Scope from the owner: the purpose of this card (run the evals on the 27B) is now covered by ^dvyt1dx (continuity tier on Qwen3.8-27B: 2/4, 0 empty summaries) and ^9ddjkjm (one in-turn compaction 16070 -> 416; the summary kept the value; the same turn answered). The `ref` constant switch is committed. The fact-retention tier is deleted (^k25d0xm). The remaining work: the comments that still name Qwen2.5-3B as the eval model.
+    - Changed: Tests/FoundationModelsRouterEvalSupport/CompactionContinuityEvaluation.swift (both floor comments now say the 3B was the subject of that time, the subject is now Qwen3.8-27B, and the floors are not derived again on it); IntegrationTests/.../CompactionContinuityRealModelTests.swift (the suite comment says the same).
+    - Kept as dated history: CompactionContinuityRealModel.swift ("Why it was Qwen2.5-3B" section, under a section that names the 27B), CompactionContinuityDataset.swift:543 ("the gated compaction tiers of that time"), CompactionEvalMeasuredBytesPerToken.swift (a measurement table row). Other Qwen2.5 names (ExamplesTests, JointFitTests, round-trip and session-tree integration tests, README, ModelRef docs) are not the eval model.
+    - Decision: no floor changes (the card forbids it).
+    - test: green — `swift test`: 1312 tests in 149 suites passed (2 designed known issues), 1 test, 19 eval tests passed. `IntegrationTests` builds.
+  timestamp: 2026-09-23T15:00:40.915746+00:00
 depends_on:
 - 01M35GXDMSN5FPXVKZT9AX82GR
 - 01M372QB7QSM58G9CSADVYT1DX

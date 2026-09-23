@@ -132,9 +132,12 @@ let compactionContinuityFastBudget = TokenBudget(
 /// The mean `FactsSurvived` the gated continuity tier must reach: at least
 /// one planted fact in the final answer, after a real compaction.
 ///
-/// The subject's measured baseline, minus one task of margin — the standing
-/// rule every gated eval floor follows. The gated run of 2026-08-21 under
-/// ``CompactionContinuityRealModel`` (Qwen2.5-3B-Instruct), at greedy
+/// The measured baseline of the subject of that time, minus one task of
+/// margin — the standing rule every gated eval floor follows. The subject is
+/// now Qwen3.8-27B (``CompactionContinuityRealModel``, task ^jhb7x54); this
+/// floor is not derived again on it. Its first result is on task ^dvyt1dx.
+/// The gated run of 2026-08-21 under the subject of that time,
+/// Qwen2.5-3B-Instruct, at greedy
 /// decoding, under task ^xx02yn6's `router-default-v3` prompt (a run that
 /// predates task ^pke18c2's one-call compaction), over the four
 /// tasks ``compactionContinuityFastTierIDs`` names, measured 4 of 4 tasks
@@ -161,9 +164,11 @@ let compactionContinuityFastFactsSurvivedFloor = 0.7
 /// The mean `AnswersCorrect` the gated continuity tier must reach: BOTH
 /// planted facts in the final answer, word for word, after a real compaction.
 ///
-/// The subject's measured baseline, minus one task of margin, exactly as
+/// The measured baseline of the subject of that time, minus one task of
+/// margin, exactly as
 /// ``compactionContinuityFastFactsSurvivedFloor`` is derived: the gated run
-/// of 2026-08-21 under Qwen2.5-3B-Instruct, over the same four tasks,
+/// of 2026-08-21 under the subject of that time, Qwen2.5-3B-Instruct, over
+/// the same four tasks,
 /// measured 3 of 4. The one miss was `migration-script-and-rollback`, whose
 /// compaction summary carried both paths verbatim and whose answering turn wrote
 /// `rollback_2266_07` for `rollback_2026_07` — the answer's loss, not the
