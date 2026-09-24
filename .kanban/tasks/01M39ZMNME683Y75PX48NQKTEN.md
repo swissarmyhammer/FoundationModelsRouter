@@ -36,6 +36,13 @@ comments:
   id: 01m3a5n4321ndw0rxmjw2f60a6
   text: 'Double-check fix: the doc comment of `slowConsumerPause` in `ExecutorPassBoundaryIntegrationTests.swift` said "A real turn gives hundreds of snapshots". The measured run gave 4. The comment now states the measurement and what this test cannot show. `swift build --package-path IntegrationTests --build-tests`: Build complete, no warning. The design link of this card now points to `generation-queue.md` (repository root), not to the peer session''s temporary scratchpad.'
   timestamp: 2026-09-24T16:58:20.130438+00:00
+- actor: claude-code
+  id: 01m3aeg1f40qw79mapzmkvdx4q
+  text: |-
+    ### commit — changed
+    - evidence: a818fcc test(queue): prove an executor pass ends before the SDK runs its tool body (^8nqkten); pushed 294dd23..a818fcc to origin/main. Committed at the user's request before /review.
+    - next: /review
+  timestamp: 2026-09-24T19:32:50.788682+00:00
 position_column: doing
 position_ordinal: '80'
 title: Prove that one executor call ends before the SDK runs the tool body of that call
