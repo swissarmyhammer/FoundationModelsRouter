@@ -91,8 +91,34 @@ comments:
     - note: A SourceKit-based diagnostic flagged `RepetitionDetection` as unknown at `SessionTreeRestoration.swift`. This is a false report. `sourcekit-lsp` is not installed in this workspace, so code intelligence runs on tree-sitter only, which cannot fully resolve cross-file types. `RepetitionDetection` is a real public struct in `RepetitionDetection.swift`, and `swift build`/`swift test` compiled and ran it with no error.
     - next: none. The build is clean.
   timestamp: 2026-09-24T15:05:31.786043+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m39z7qz5xkwrgp8vfa7kwqy2
+  text: |-
+    ### commit — changed
+    - evidence: 94a5723 refactor(recording): merge the entry-event readers and share test directories (^gg49g5e)
+    - next: none
+  timestamp: 2026-09-24T15:06:10.277960+00:00
+- actor: claude-code
+  id: 01m39zgmdb1rhvvks9dsr3e715
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 94a5723). counts: 0 findings, 0 confirmed, 0 refuted; 14 attempted, 0 failed, 0 skipped. 11 files reviewed; 2 `.kanban/` files not reviewed because `.reviewignore` excludes them. All 5 items in `## Review Findings (2026-09-24 09:33)` are checked.
+    - decision 1 (accepted): the overload `TranscriptEntryMapper.segmentPayload(_ segment: some PersistableStructuredSegment) -> SegmentPayload` in Recording/TranscriptEntryMapper.swift. It sends the segment to the `Transcript.Segment` overload through `segment.transcriptSegment`, so the payload bytes do not change. `RepeatedPartRemovalSegment.eventPayload` now passes `self`, as the finding says. The finding text did not compile without this overload. The overload makes the finding compile, and the behavior stays the same. Thus it is not a true conflict. The engine gave no finding on the overload.
+    - decision 2 (accepted): `TestDirectories` is in Tests/FoundationModelsRouterTests/Helpers/TestDirectories.swift, not in `FoundationModelsRouterTestSupport`. `RouterTestFixtures.makeTempDir(prefix:)` is in the unit target (Tests/FoundationModelsRouterTests/Helpers/RouterTestFixtures.swift), and that file imports `FoundationModelsRouterTestSupport`. The dependency goes from the unit target to the support module, so the support module cannot see `RouterTestFixtures`. All users of `TestDirectories` are in the unit target. The finding says "a shared test support module (e.g., ...)". The Helpers folder is the shared location of the unit target, so the finding is satisfied. The engine gave no finding on this placement.
+    - out of scope: the FoundationModelsACPAgent side.
+    - next: none. Task moved to done.
+  timestamp: 2026-09-24T15:11:01.547753+00:00
+- actor: claude-code
+  id: 01m39zh4hraw52kvp7wsf03311
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 12 files; 5 findings fixed and checked; 1 guard test added
+    - test: green — swift test, 1395 passed, 0 failed, 0 skipped; IntegrationTests builds
+    - commit: 94a5723
+    - review: clean — 0 findings; segmentPayload overload and TestDirectories placement accepted; task in done
+  timestamp: 2026-09-24T15:11:18.072930+00:00
+position_column: done
+position_ordinal: ffffff80
 title: Keep the repeated part out of the render of a restored session after a repetition stop
 ---
 ## Problem
