@@ -131,19 +131,31 @@ extension ContextUsageState {
     }
 }
 
-/// Returns the newest stamped `.response` event's `(tokensIn, tokensOut)`
-/// in `events`, or `nil` when none carries a stamp. Skips an event with no
-/// entry (a v1 line) and the close of a failed turn
-/// (``TranscriptEvent/isFailedTurnClose``): neither stamp is a real
-/// measurement.
-func newestStampedUsage(in events: [TranscriptEvent]) -> (input: Int, output: Int)? {
-    guard
-        let stamped = events.last(where: {
-            $0.kind == .response && $0.entry != nil && !$0.isFailedTurnClose && $0.tokensIn != nil
-                && $0.tokensOut != nil
-        })
-    else {
-        return nil
+extension TranscriptEvent {
+    /// The `(tokensIn, tokensOut)` usage stamp of a turn, or `nil` when this
+    /// event carries none.
+    ///
+    /// Only a `.response` event with an entry carries a stamp that is a real
+    /// measurement. An event with no entry (a v1 line) and the close of a
+    /// failed turn (``isFailedTurnClose``) give `nil`. The stamp is the sum of
+    /// the generation calls of the attempt: the cost of the attempt, not the
+    /// size of the render.
+    var turnUsageStamp: (input: Int, output: Int)? {
+        guard kind == .response, entry != nil, !isFailedTurnClose, let tokensIn, let tokensOut else {
+            return nil
+        }
+        return (tokensIn, tokensOut)
     }
-    return (stamped.tokensIn!, stamped.tokensOut!)
+
+    /// The `(tokensIn, tokensOut)` counts of one generation call, or `nil`
+    /// when this event is not a ``Kind/generationCall`` event with both counts.
+    ///
+    /// The two counts together are the size of the render after that call
+    /// (task ^tpsc0nf).
+    var generationCallCounts: (input: Int, output: Int)? {
+        guard kind == .generationCall, let tokensIn, let tokensOut else {
+            return nil
+        }
+        return (tokensIn, tokensOut)
+    }
 }

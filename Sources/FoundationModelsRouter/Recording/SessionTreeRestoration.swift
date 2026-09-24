@@ -269,8 +269,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             }
 
             // This node's span opens here, before the transcript read below,
-            // rather than around the construction alone: `effectiveTranscript`
-            // and `effectiveEntryEvents` re-read this node's own and every
+            // rather than around the construction alone: `effectiveTranscript`,
+            // `effectiveUsageEvents` and `effectiveEntryEvents` re-read this node's own and every
             // ancestor's `transcript.jsonl` from disk, and that read is what a
             // restore really costs. `withSessionSpan` is the one helper all
             // three shapes open their span through, and its own doc comment
@@ -369,28 +369,32 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             )
             let backend = routedLLM.container.makeSession(
                 transcript: seedTranscript, tools: instancedTools, samplingMode: routedLLM.samplingMode)
-            // ``RoutedSession/contextFill``'s restored numerator
-            // (compaction_plan.md §1.5, checkpoint-aware restore
-            // precedence): the newest stamped `.response` event's usage
-            // recorded *after* the newest ``CompactionSegment`` checkpoint
-            // among this session's *effective* recorded events (its own
-            // file plus, for a fork, the inherited prefix of its
-            // ancestors' — the same span `effectiveTranscript` above
-            // reconstructs); when that checkpoint is itself the newest
-            // thing, its own ``CompactionSegment/Content/tokensAfter``; when
-            // there is no checkpoint at all, the newest stamp anywhere in
-            // the effective stream (the pre-compaction behavior,
-            // unchanged); else unknown — never a guess. See
+            // ``RoutedSession/contextFill``'s restored numerator: the counter
+            // the live session had at the end of its recording (task
+            // ^tcep2pc). It is the size of the render after the newest turn
+            // that recorded a stamped `.response` after the newest
+            // ``CompactionSegment`` checkpoint: the fed and generated tokens
+            // of the `.generationCall` event that closed that turn, not the
+            // sum on the `.response` stamp (task ^tpsc0nf). When no such turn
+            // follows the checkpoint, the checkpoint's own
+            // ``CompactionSegment/Content/tokensAfter``. With no checkpoint at
+            // all, the same turn anywhere in the stream; else unknown, never
+            // a guess. An old journal with no `.generationCall` event gives
+            // the `.response` stamp. See
             // ``TranscriptTree/restoredUsageState(in:)``.
             //
-            // Deliberately ancestor-inclusive, not scoped to this node's own
-            // file alone: a freshly restored fork with no turns of its own
-            // yet should inherit its parent's last known fill rather than
-            // report unknown, mirroring live `fork()`'s own choice to
-            // inherit `usageState` from the session it forked from (see
+            // The events are this session's *effective* ones (its own file
+            // plus, for a fork, the inherited prefix of its ancestors'), with
+            // the `.generationCall` events kept. Deliberately
+            // ancestor-inclusive, not scoped to this node's own file alone: a
+            // freshly restored fork with no turns of its own yet should
+            // inherit its parent's last known fill rather than report
+            // unknown, mirroring live `fork()`'s own choice to inherit
+            // `usageState` from the session it forked from (see
             // ``RoutedSessionActor/fork(workingDirectory:)``).
+            let usageState = TranscriptTree.restoredUsageState(
+                in: try tree.effectiveUsageEvents(forSession: node.id))
             let effectiveEvents = try tree.effectiveEntryEvents(forSession: node.id)
-            let usageState = TranscriptTree.restoredUsageState(in: effectiveEvents)
             // `SessionSidecar.grammar` is only the grammar's `source`
             // string — it does not distinguish `.jsonSchema(_:)` from
             // `.ebnf(_:)`, which share that representation — so a session

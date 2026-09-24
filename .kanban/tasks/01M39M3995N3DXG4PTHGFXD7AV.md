@@ -118,8 +118,31 @@ comments:
     - evidence: `swift build --build-tests` — build complete, 0 errors, 0 warnings in project code (one pre-existing SwiftPM diagnostic from the third-party `mlx-swift` binary resource bundle, not our code, unchanged by this diff). `swift test` — 1344 tests in 151 suites passed (2 known issues, both from `BoundedWaitTests`, an existing test that checks the timeout-report path on purpose), plus 1 test in 1 suite passed, plus 19 tests in 3 suites passed. No failures. No skipped or disabled tests found in the test tree.
     - next: ready for review of the `^gfxd7av` diff (`FinishReason.endedInsideReasoning`, `.maxTokens` ceiling-only rule).
   timestamp: 2026-09-24T12:32:21.224736+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m39pff0bwbzba608j3djgwcn
+  text: |-
+    ### commit — changed
+    - evidence: b3b3d72 fix(session): label an output that ends inside the reasoning, not as a ceiling stop (^gfxd7av)
+    - next: none, local commit only, no push
+  timestamp: 2026-09-24T12:33:06.059081+00:00
+- actor: claude-code
+  id: 01m39pn63rr79wx1bqhejny0t6
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit b3b3d72). 0 findings (confirmed 0, refuted 0, attempted 7, failed 0, skipped 0). 9 files reviewed; 8 `.kanban/` files not reviewed because of `.reviewignore`. The description has no prior `## Review Findings` section.
+    - next: none. The task moved to done. The ACP agent mapping is follow-up ^0g8hv5x.
+  timestamp: 2026-09-24T12:36:13.560197+00:00
+- actor: claude-code
+  id: 01m39pnkn0qwknvxj0htxpnj4a
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 9 files; new FinishReason.endedInsideReasoning; 6 new or changed tests
+    - test: green — swift test, 1344 passed, 0 failed, 0 skipped
+    - commit: b3b3d72
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-09-24T12:36:27.424887+00:00
+position_column: done
+position_ordinal: fffffc80
 title: One generate call can generate tens of thousands of tokens before it stops at the ceiling
 ---
 ## Evidence

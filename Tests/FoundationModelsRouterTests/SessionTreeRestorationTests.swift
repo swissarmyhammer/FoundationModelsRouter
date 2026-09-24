@@ -761,7 +761,7 @@ struct SessionTreeRestorationTests {
         // only way to make the exact array-slice boundary
         // (`events[(checkpoint.index + 1)...]`, not `events[checkpoint.index...]`)
         // observable rather than merely documented. If that boundary ever
-        // regressed to include the checkpoint's own index, `newestStampedUsage`
+        // regressed to include the checkpoint's own index, the stamp reader
         // would find this event's stamp (111/222) instead of falling back to
         // its `tokensAfter` (300).
         let sessionId = ULID.generate()

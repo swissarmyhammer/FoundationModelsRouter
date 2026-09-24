@@ -162,22 +162,57 @@ extension TranscriptTree {
         return try restoreFilteredEvents(rawEvents, checkpoint: checkpoint)
     }
 
-    /// The restored ``ContextUsageState`` that `events` implies, in this order:
-    /// the newest stamped `.response` event after the newest checkpoint; else
-    /// the checkpoint's own ``CompactionSegment/Content/tokensAfter``; else,
-    /// with no checkpoint, the newest stamped `.response` event; else
+    /// The restored ``ContextUsageState`` that `events` implies: the counter
+    /// the live session had at the end of `events` (task ^tcep2pc).
+    ///
+    /// The live counter is the size of the render, and a compaction restarts
+    /// it (task ^tpsc0nf). So the order is: the render size of the newest
+    /// measured turn after the newest checkpoint (see
+    /// ``newestTurnRenderSize(in:)``); else the checkpoint's own
+    /// ``CompactionSegment/Content/tokensAfter``; else, with no checkpoint,
+    /// the render size of the newest measured turn; else
     /// ``ContextUsageState/unknown``.
     ///
-    /// - Parameter events: A session's raw effective events, unfiltered.
+    /// - Parameter events: A session's effective events, in `seq` order. They
+    ///   must hold the ``TranscriptEvent/Kind/generationCall`` events (see
+    ///   ``effectiveUsageEvents(forSession:)``). Other router-only kinds are
+    ///   not read.
     static func restoredUsageState(in events: [TranscriptEvent]) -> ContextUsageState {
         guard let checkpoint = newestCompactionCheckpoint(in: events) else {
-            return newestStampedUsage(in: events).map { .measured(input: $0.input, output: $0.output) } ?? .unknown
+            return newestTurnRenderSize(in: events).map { .measured(input: $0.input, output: $0.output) } ?? .unknown
         }
         let afterCheckpoint = Array(events[(checkpoint.index + 1)...])
-        if let stamped = newestStampedUsage(in: afterCheckpoint) {
-            return .measured(input: stamped.input, output: stamped.output)
+        if let size = newestTurnRenderSize(in: afterCheckpoint) {
+            return .measured(input: size.input, output: size.output)
         }
         return .measured(input: checkpoint.content.tokensAfter, output: 0)
+    }
+
+    /// The size of the render after the newest measured turn in `events`, as
+    /// `(fed, generated)` tokens, or `nil` when no turn in `events` recorded a
+    /// stamped `.response` (``TranscriptEvent/turnUsageStamp``).
+    ///
+    /// The live session sets its counter only when an attempt records a
+    /// `.response`, and it sets it to the newest call of that attempt. The
+    /// session records that call after the entries of the attempt. The calls
+    /// that asked for a tool come before those entries. So the call that
+    /// closed the newest stamped `.response` is the first
+    /// ``TranscriptEvent/Kind/generationCall`` event after it. A later call
+    /// belongs to a turn that recorded no `.response` (a failed turn, or a
+    /// turn that stopped with the process), and the live counter never read
+    /// it.
+    ///
+    /// An old journal records no `.generationCall` event. Then the size is the
+    /// `.response` stamp: the sum of the calls of the attempt, which is the
+    /// best measure such a journal holds.
+    ///
+    /// - Parameter events: The events to read, in `seq` order.
+    private static func newestTurnRenderSize(in events: [TranscriptEvent]) -> (input: Int, output: Int)? {
+        guard let responseIndex = events.lastIndex(where: { $0.turnUsageStamp != nil }) else {
+            return nil
+        }
+        let closingCall = events[(responseIndex + 1)...].lazy.compactMap(\.generationCallCounts).first
+        return closingCall ?? events[responseIndex].turnUsageStamp
     }
 }
 

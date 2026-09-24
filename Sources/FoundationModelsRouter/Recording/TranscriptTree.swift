@@ -263,17 +263,54 @@ package struct TranscriptTree: Sendable {
     /// - Throws: ``TranscriptTreeError/sessionNotFound(_:)`` or
     ///   ``TranscriptTreeError/forkCutPointMissing(session:directory:)``.
     func effectiveEntryEvents(forSession id: ULID) throws -> [TranscriptEvent] {
+        try effectiveEvents(forSession: id, keeping: \.isEntryKind)
+    }
+
+    /// This session's effective entry-kind events and its effective
+    /// ``TranscriptEvent/Kind/generationCall`` events, oldest first: the
+    /// events ``restoredUsageState(in:)`` reads the context counter from.
+    ///
+    /// A fork keeps its parent's events up to the parent's next entry-kind
+    /// event after the fork cut point. So the fork keeps the call that closed
+    /// the parent's last turn before the fork, which the session records
+    /// after the entries of that turn. The kept events can also hold the
+    /// calls that asked for a tool in the parent's next turn, which come
+    /// before that turn's entries. The reader never reads those calls (see
+    /// ``restoredUsageState(in:)``).
+    ///
+    /// - Throws: ``TranscriptTreeError/sessionNotFound(_:)`` or
+    ///   ``TranscriptTreeError/forkCutPointMissing(session:directory:)``.
+    func effectiveUsageEvents(forSession id: ULID) throws -> [TranscriptEvent] {
+        try effectiveEvents(forSession: id) { $0.isEntryKind || $0 == .generationCall }
+    }
+
+    /// This session's effective events of the kinds `isKept` keeps, oldest
+    /// first: the parent's effective events cut at this session's fork cut
+    /// point (see ``forkPrefix(of:entryCount:)``), then this session's own
+    /// events.
+    ///
+    /// - Parameters:
+    ///   - id: The session's span id.
+    ///   - isKept: Returns `true` for each event kind to keep. It must keep
+    ///     every entry kind, because the cut point counts entry-kind events.
+    /// - Throws: ``TranscriptTreeError/sessionNotFound(_:)`` or
+    ///   ``TranscriptTreeError/forkCutPointMissing(session:directory:)``.
+    private func effectiveEvents(
+        forSession id: ULID, keeping isKept: (TranscriptEvent.Kind) -> Bool
+    ) throws -> [TranscriptEvent] {
         guard let node = nodesById[id] else {
             throw TranscriptTreeError.sessionNotFound(id)
         }
-        return try effectiveEntryEvents(for: node)
+        return try effectiveEvents(for: node, keeping: isKept)
     }
 
-    /// The recursive worker behind ``effectiveEntryEvents(forSession:)``.
-    private func effectiveEntryEvents(for node: SessionNode) throws -> [TranscriptEvent] {
-        let ownEntries = try entryKindEvents(for: node)
+    /// The recursive worker behind ``effectiveEvents(forSession:keeping:)``.
+    private func effectiveEvents(
+        for node: SessionNode, keeping isKept: (TranscriptEvent.Kind) -> Bool
+    ) throws -> [TranscriptEvent] {
+        let ownEvents = try Self.decodeEvents(in: node.directory, forSession: node.id).filter { isKept($0.kind) }
         guard let parentId = node.parentId else {
-            return ownEntries
+            return ownEvents
         }
         // Total by construction: ``load(under:)`` only records a `parentId` for
         // a session nested under a *discovered* session directory, and every
@@ -289,13 +326,25 @@ package struct TranscriptTree: Sendable {
         guard let cut = node.sidecar.forkedAtHistoryOrdinal ?? node.sidecar.forkedAtEntryCount else {
             throw TranscriptTreeError.forkCutPointMissing(session: node.id, directory: node.directory)
         }
-        let parentEffective = try effectiveEntryEvents(for: parent)
-        return Array(parentEffective.prefix(cut)) + ownEntries
+        let parentEffective = try effectiveEvents(for: parent, keeping: isKept)
+        return Self.forkPrefix(of: parentEffective, entryCount: cut) + ownEvents
     }
 
-    /// `node`'s own recorded events, filtered by ``TranscriptEvent/Kind/isEntryKind``.
-    private func entryKindEvents(for node: SessionNode) throws -> [TranscriptEvent] {
-        try Self.decodeEvents(in: node.directory, forSession: node.id).filter(\.kind.isEntryKind)
+    /// The events of `events` before its entry-kind event at position `cut`
+    /// among the entry-kind events: the first `cut` entry-kind events and
+    /// each other event before the next entry-kind event. All of `events`
+    /// when it holds `cut` entry-kind events or fewer.
+    ///
+    /// For a list of entry-kind events only, this is the first `cut` events.
+    ///
+    /// - Parameters:
+    ///   - events: A parent's effective events, oldest first.
+    ///   - cut: The fork cut point, as a count of entry-kind events.
+    /// - Returns: The events the fork inherits.
+    private static func forkPrefix(of events: [TranscriptEvent], entryCount cut: Int) -> [TranscriptEvent] {
+        let entryIndices = events.indices.lazy.filter { events[$0].kind.isEntryKind }
+        let end = entryIndices.dropFirst(cut).first ?? events.endIndex
+        return Array(events[..<end])
     }
 
     // MARK: - Event decoding

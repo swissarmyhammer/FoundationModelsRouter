@@ -121,8 +121,8 @@ struct GenerationCallUsageTests {
         let stamped = try #require(journal.last { $0.kind == .response })
         #expect(stamped.tokensIn == 600)
         #expect(stamped.tokensOut == 150)
-        #expect(newestStampedUsage(in: journal)?.input == 600)
-        #expect(newestStampedUsage(in: journal)?.output == 150)
+        #expect(stamped.turnUsageStamp?.input == 600)
+        #expect(stamped.turnUsageStamp?.output == 150)
     }
 
     @Test("a tool-asking call is reported before its tool opens, and the last call before the turn ends")

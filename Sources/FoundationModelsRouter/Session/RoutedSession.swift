@@ -74,8 +74,11 @@ public protocol RoutedSession: Actor {
     /// the fed and generated tokens of the newest generation call, not the sum
     /// of the calls of a tool loop. A compaction restarts it from the
     /// instructions and the new snapshot. `0` before the first turn. A restored
-    /// session reports its last stamped `.response` usage, or
-    /// ``unknownContextFill`` when there is no stamp.
+    /// session reports the fill the live session had at the end of its
+    /// recording: the newest generation call of its newest recorded turn, or
+    /// the snapshot size of a newer compaction. A recording with no generation
+    /// call events reports the usage on its last stamped `.response`. It
+    /// reports ``unknownContextFill`` when the recording holds no stamp.
     var contextFill: Double { get async }
 
     /// The SDK transcript this session has accumulated so far, read under the
