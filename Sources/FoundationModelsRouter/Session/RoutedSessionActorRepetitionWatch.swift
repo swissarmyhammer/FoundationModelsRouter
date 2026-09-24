@@ -258,7 +258,10 @@ extension RoutedSessionActor {
     /// and records it with the finish reason ``FinishReason/repeatedLines``.
     ///
     /// The usage of the attempt is read before the backend is replaced,
-    /// because a replaced backend starts a usage count of its own.
+    /// because a replaced backend starts a usage count of its own. The
+    /// baseline given to the finish is the count of the replaced backend
+    /// minus the usage of the attempt, so the finish records the usage of
+    /// the attempt.
     ///
     /// - Parameters:
     ///   - marker: The stop marker of the stopped attempt.
@@ -272,7 +275,7 @@ extension RoutedSessionActor {
         backend = backend.replacingTranscript(Transcript(entries: rebuilt))
         _ = await finishTurnAndRequeueIfUnattached(
             grammar: attempt.grammar, since: attempt.started,
-            usageBefore: Self.usage(before: usageOfAttempt, endingAt: backend.usageTokenCounts()),
+            usageBefore: Self.usageDelta(before: usageOfAttempt, after: backend.usageTokenCounts()),
             responseTokenCeiling: attempt.responseTokenCeiling.resolved, pendingEvents: attempt.pendingEvents,
             onEvent: attempt.onEvent, stopReason: .repeatedLines)
         return rebuilt
@@ -288,20 +291,6 @@ extension RoutedSessionActor {
         backend = backend.replacingTranscript(render)
         persistedEntryCount = render.count
         persistedBaseline = TranscriptDiffer.Baseline(transcript: render)
-    }
-
-    /// The usage snapshot that gives `usage` as the delta to `after`, or
-    /// `nil` when either is unknown.
-    ///
-    /// - Parameters:
-    ///   - usage: The usage the delta must give.
-    ///   - after: The usage snapshot the delta ends at.
-    /// - Returns: `after` minus `usage`.
-    private static func usage(
-        before usage: (input: Int, output: Int)?, endingAt after: (input: Int, output: Int)?
-    ) -> (input: Int, output: Int)? {
-        guard let usage, let after else { return nil }
-        return (after.input - usage.input, after.output - usage.output)
     }
 
     /// The joined text of the `.response` entries of the attempt in `entries`.

@@ -81,6 +81,65 @@ comments:
     - Note: `sourcekit-lsp` reported stale errors for the new files (`RepetitionDetection`, `RepetitionStop`, `RoutedSessionActorRepetitionWatch`, and callers). Each named symbol exists in the source. The real Swift compiler build shows 0 errors. The LSP index had not picked up the new files. No code change was needed for this.
     - next: none. The build is clean. No files were changed by this step.
   timestamp: 2026-09-24T13:39:47.711374+00:00
+- actor: claude-code
+  id: 01m39tarth21dvgc86fg5jwgmz
+  text: |-
+    ### commit — changed
+    - evidence: b848dea feat(session): stop a generation call that repeats itself, with options and defaults (^1hcwaqy)
+    - next: none
+  timestamp: 2026-09-24T13:40:26.577830+00:00
+- actor: claude-code
+  id: 01m39v1233p31xb3f46qbdk441
+  text: |-
+    ### review — findings
+    - evidence: `review sha HEAD~1..HEAD` (commit b848dea). Counts: 1 finding, 1 confirmed, 2 refuted. Sources/FoundationModelsRouter/Session/RoutedSessionActorRepetitionWatch.swift:300 (`duplication/duplication`: the `usage` function repeats `usageDelta` of RoutedSessionActorRecording.swift).
+    - check of the user requirement: each value (`isEnabled`, `windowTokens`, `minimumLineLength`, `recoveriesPerTurn`) is a public `var` of `RepetitionDetection` with a public `init` that uses the named defaults (true, 2_048, 20, 2). A host passes it through `SessionConfiguration.repetitionDetection` and the `repetitionDetection:` parameter of `makeSession(...)`. This requirement is met.
+    - not counted, by the user's decision: the restore path (^gg49g5e) and the FoundationModelsACPAgent handling of the new enum cases.
+    - next: remove the `usage` function, use `usageDelta`, then /review ^1hcwaqy again. The task stays in review.
+  timestamp: 2026-09-24T13:52:36.963196+00:00
+- actor: claude-code
+  id: 01m39v1j7hcy5z5ca2h9febkvn
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 3 new source files, many changed; 9 + 6 + 1 new tests
+    - test: green — swift test, 1387 passed, 0 failed, 0 skipped; IntegrationTests builds
+    - commit: b848dea
+    - review: findings — Sources/FoundationModelsRouter/Session/RoutedSessionActorRepetitionWatch.swift:300 (duplication: `usage` duplicates `usageDelta`)
+  timestamp: 2026-09-24T13:52:53.489772+00:00
+- actor: claude-code
+  id: 01m39v4t3vmh1xwjbmyyyqss4m
+  text: |-
+    ### Finding fixed: `usage` repeated `usageDelta`
+
+    - Removed the private static function `usage(before:endingAt:)` from RoutedSessionActorRepetitionWatch.swift. `recordStoppedAttempt` now calls `Self.usageDelta(before: usageOfAttempt, after: backend.usageTokenCounts())` from RoutedSessionActorRecording.swift. The calculation is the same (after minus before), so the behavior does not change.
+    - The doc comment of `recordStoppedAttempt` now tells why the call gives a baseline: the count of the replaced backend minus the usage of the attempt, so the finish records the usage of the attempt.
+    - I searched the diff of b848dea for more copies of the tuple subtraction. This commit added no other copy.
+    - No new test: this is a refactor with the same calculation. The suite "A generate call that repeats itself is stopped and recovered" runs this path, and it passes.
+  timestamp: 2026-09-24T13:54:39.867103+00:00
+- actor: claude-code
+  id: 01m39v4w4fyqr33fnakdcz8fss
+  text: |-
+    ### implement — changed
+    - evidence: 1 source file changed: Sources/FoundationModelsRouter/Session/RoutedSessionActorRepetitionWatch.swift. `swift build --build-tests`: 0 errors, 0 warnings in this project's code (the known mlx-swift plugin warning only). `swift test`: 1367 tests in 155 suites pass (2 known issues from before), 1 test in 1 suite pass, 19 tests in 3 suites pass; 0 fail. Finding checkbox is now `- [x]`.
+    - next: /review ^1hcwaqy
+  timestamp: 2026-09-24T13:54:41.935574+00:00
+- actor: claude-code
+  id: 01m39w1mrbgw7b9c7xazx9h61z
+  text: |-
+    ### test — green
+    - command: `swift build --build-tests` in the package root. Result: build OK, no warning in our own `Sources/` or `Tests/` files. (Warnings seen were only in the third-party `mlx-swift` dependency's C++ metal kernel headers, under `.build/checkouts/`, out of our source tree.)
+    - command: `swift test`. Result: 3 test runs, all green.
+      - 1367 tests in 155 suites passed (2 known issues — pre-existing `withKnownIssue` markers in `BoundedWaitTests.swift` and `RealModelHarnessTests.swift`, not new, not skips)
+      - 1 test in 1 suite passed
+      - 19 tests in 3 suites passed
+      - 0 failures, 0 skipped
+    - command: `swift build --build-tests` in `IntegrationTests/`. Result: build OK, no warning in our own code (only the same third-party mlx-swift bundle notice).
+    - The uncommitted fix in `RoutedSessionActorRepetitionWatch.swift` (call `Self.usageDelta` in place of the duplicate `usage` function, now removed) builds and tests clean.
+    - Checked `swiftformat`/`swiftlint` as due diligence. No `.swiftformat` or `.swift-format` file is in the repo. `swiftformat --lint` with the stated default options finds pre-existing style gaps in 312 of 371 files repo-wide, not caused by this fix. `swiftlint` on the changed file finds 2 warnings (a line-length line and an `optional_data_string_conversion` line); both are confirmed identical at `HEAD`, so they pre-date this fix. None of these are `swift build`/`swift test` failures or warnings, so they are out of scope for this test pass.
+    - next: ready for commit and review.
+
+    evidence: `swift build --build-tests` clean; `swift test` — 1387 tests total, 0 failed, 0 skipped, 2 pre-existing known issues; `IntegrationTests` `swift build --build-tests` clean.
+  timestamp: 2026-09-24T14:10:24.651118+00:00
 position_column: doing
 position_ordinal: '80'
 title: Stop a generate call that repeats itself, with a configurable detector and a default
@@ -142,3 +201,12 @@ Before the implementation, measure the defaults on more runs, write the measurem
 ## Source
 
 A peer session (foundationmodelsacpagent-e5) asked for this card on behalf of the owner. FoundationModelsACPAgent will show the setting in its config.yaml when the Router API exists.
+
+## Review Findings (2026-09-24 08:40)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 35 file(s) reviewed, 10 not reviewed.
+
+> 10 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 10 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorRepetitionWatch.swift:300` `duplication/duplication` — The `usage` function duplicates the logic of `usageDelta` from `RoutedSessionActorRecording.swift`. Both calculate the difference between two usage tuples: (after - before). The implementations are nearly identical and should be unified. Remove the `usage` function and call `usageDelta` from `RoutedSessionActorRecording` instead. At line 275, replace `Self.usage(before: usageOfAttempt, endingAt: backend.usageTokenCounts())` with `Self.usageDelta(before: usageOfAttempt, after: backend.usageTokenCounts())` (adjusting parameter names to match the existing function's signature).
