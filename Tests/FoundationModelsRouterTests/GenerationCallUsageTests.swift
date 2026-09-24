@@ -238,4 +238,15 @@ struct GenerationCallUsageTests {
         #expect(usage.contextTokens == 16)
         #expect(usage.description == "fed 12 tokens, generated 4 tokens, stopped at the token ceiling, left text, context 16 tokens")
     }
+
+    @Test("the description of an output that ended inside the reasoning does not name the ceiling as the stop")
+    func descriptionNamesTheStopInsideTheReasoning() {
+        let usage = GenerationCallUsage(
+            tokensIn: 12, tokensOut: 4, finishReason: .endedInsideReasoning, entryKind: .text, contextFill: 0.5)
+
+        #expect(
+            usage.description
+                == "fed 12 tokens, generated 4 tokens, ended inside the reasoning before the ceiling, left text, context 16 tokens"
+        )
+    }
 }

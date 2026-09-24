@@ -191,6 +191,12 @@ extension RoutedSessionActor {
     /// the turn goes on. When the context is under the trigger, a compaction
     /// does not help a cut output, and the turn ends as truncated.
     ///
+    /// Only ``FinishReason/maxTokens`` is a ceiling stop. An output that ended
+    /// inside the reasoning before the ceiling
+    /// (``FinishReason/endedInsideReasoning``) had room left, so it does not
+    /// compact and does not get ``ceilingStopContinuationPrompt`` (task
+    /// ^gfxd7av).
+    ///
     /// Nothing compacts when the session has no ``autoCompactionBudget``, when
     /// a stop is outstanding against the turn, or when an earlier compaction
     /// of the turn applied no summary (``compactionYieldsStopped``).

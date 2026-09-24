@@ -45,9 +45,15 @@ enum CeilingProbeCallEnding: Sendable, Hashable {
     /// The model closes its thought and gives a short answer.
     case finished
 
-    /// The model runs out of budget inside its thought. The executor then
-    /// sends the `incompleteOutput` metadata the MLX executor sends.
+    /// The output of the model ends inside its thought before the ceiling.
+    /// The executor then sends the `incompleteOutput` metadata the MLX
+    /// executor sends, and no usage.
     case truncatedInsideReasoning
+
+    /// The model runs out of budget inside its thought. The executor sends
+    /// the `incompleteOutput` metadata and a usage whose output is equal to
+    /// the ceiling, as the MLX executor does at its length stop.
+    case truncatedInsideReasoningAtCeiling
 
     /// The model closes its thought and runs out of budget inside its answer
     /// text. The executor sends part of the answer and a usage whose output is
@@ -73,6 +79,9 @@ enum CeilingProbeEnding: Sendable, Hashable {
 
     /// Each call ends as ``CeilingProbeCallEnding/truncatedInsideReasoning``.
     case truncatedInsideReasoning
+
+    /// Each call ends as ``CeilingProbeCallEnding/truncatedInsideReasoningAtCeiling``.
+    case truncatedInsideReasoningAtCeiling
 
     /// Each call ends as ``CeilingProbeCallEnding/truncatedInAnswerText``.
     case truncatedInAnswerText
@@ -103,6 +112,8 @@ enum CeilingProbeEnding: Sendable, Hashable {
             return .finished
         case .truncatedInsideReasoning:
             return .truncatedInsideReasoning
+        case .truncatedInsideReasoningAtCeiling:
+            return .truncatedInsideReasoningAtCeiling
         case .truncatedInAnswerText:
             return .truncatedInAnswerText
         case .truncatedOnFirstCallOnly:
@@ -123,7 +134,8 @@ enum CeilingProbeEnding: Sendable, Hashable {
 /// Each truncated ending sends the same channel actions as the MLX executor of
 /// `MLXFoundationModels`. When generation stops inside a reasoning block, the
 /// call sends reasoning text, then `["incompleteOutput": true]` as metadata on
-/// the response entry, with no response text. When generation stops inside the
+/// the response entry, with no response text. At the ceiling the call also
+/// sends a usage whose output is equal to the ceiling. When generation stops inside the
 /// answer text, the call sends reasoning text, part of the answer, and a usage
 /// whose output is equal to the ceiling, with no metadata. A call that asks for
 /// a tool sends the tool call and then its usage on the response entry, as the
@@ -261,7 +273,7 @@ struct CeilingProbeLanguageModel: LanguageModel {
             "ceiling-probe-reasoning-\(callIndex)"
         }
 
-        /// The metadata key the MLX executor sends when the budget ends inside
+        /// The metadata key the MLX executor sends when the output ends inside
         /// a thought. Spelled here as the upstream literal, so the test proves
         /// the wire contract and not a shared constant.
         private static let incompleteOutputKey = "incompleteOutput"
@@ -311,10 +323,12 @@ struct CeilingProbeLanguageModel: LanguageModel {
                         entryID: responseEntryID,
                         action: .appendText(Self.answerText, tokenCount: Self.emittedTokenCount)))
             case .truncatedInsideReasoning:
-                await channel.send(
-                    .response(
-                        entryID: responseEntryID,
-                        action: .updateMetadata([Self.incompleteOutputKey: true])))
+                await Self.sendIncompleteOutput(entryID: responseEntryID, into: channel)
+            case .truncatedInsideReasoningAtCeiling:
+                await Self.sendIncompleteOutput(entryID: responseEntryID, into: channel)
+                await Self.sendUsageSpendingCeiling(
+                    request.generationOptions.maximumResponseTokens,
+                    scriptedTokenCount: Self.emittedTokenCount, entryID: responseEntryID, into: channel)
             case .truncatedInAnswerText:
                 await Self.sendAnswerTruncatedAtCeiling(
                     request.generationOptions.maximumResponseTokens, entryID: responseEntryID, into: channel)
@@ -327,6 +341,19 @@ struct CeilingProbeLanguageModel: LanguageModel {
                         entryID: responseEntryID,
                         action: .updateMetadata([Self.modelIDKey: Self.modelID])))
             }
+        }
+
+        /// Sends the `incompleteOutput` metadata on the response entry, with no
+        /// response text, as the MLX executor does when the output ends inside
+        /// a thought.
+        ///
+        /// - Parameters:
+        ///   - entryID: The response entry id of the call.
+        ///   - channel: The generation channel this call emits into.
+        private static func sendIncompleteOutput(
+            entryID: String, into channel: LanguageModelExecutorGenerationChannel
+        ) async {
+            await channel.send(.response(entryID: entryID, action: .updateMetadata([incompleteOutputKey: true])))
         }
 
         /// Sends part of the answer, then one usage whose output is equal to

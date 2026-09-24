@@ -179,17 +179,20 @@ public struct TokenUsage: Sendable, Equatable {
     public let contextFill: Double
 
     /// Why this attempt stopped. ``FinishReason/maxTokens`` when the response
-    /// reached the token ceiling before the model ended it.
+    /// reached the token ceiling before the model ended it, and
+    /// ``FinishReason/endedInsideReasoning`` when the output ended inside the
+    /// reasoning before the ceiling.
     ///
-    /// The session finds this value in two ways. The backend can mark the
-    /// response entry as incomplete. Or the last generation call of the
-    /// attempt can spend an output token count equal to or more than the
-    /// ceiling the attempt gave the backend. An attempt that called a tool
-    /// made more than one generation call, and its ``tokensOut`` is their sum.
-    /// The session reads the count of the last call from
+    /// The session reports ``FinishReason/maxTokens`` only when the last
+    /// generation call of the attempt spent an output token count equal to or
+    /// more than the ceiling the attempt gave the backend. An attempt that
+    /// called a tool made more than one generation call, and its
+    /// ``tokensOut`` is their sum. The session reads the count of the last
+    /// call from
     /// ``LanguageModelSessionBackend/lastGenerationCallOutputTokenCount()``.
-    /// When a backend gives no such count, only the mark of the backend can
-    /// report the stop of a tool-calling attempt at the ceiling.
+    /// When the backend marks the response entry as incomplete and the count
+    /// does not reach the ceiling, or is not known, the session reports
+    /// ``FinishReason/endedInsideReasoning``.
     public let finishReason: FinishReason
 
     /// Creates a token usage value.

@@ -25,7 +25,9 @@ public struct GenerationCallUsage: Sendable, Equatable {
     public let tokensOut: Int
 
     /// Why the call stopped. ``FinishReason/maxTokens`` when the call spent
-    /// its token ceiling, ``FinishReason/completed`` when the model ended it.
+    /// its token ceiling, ``FinishReason/endedInsideReasoning`` when its
+    /// output ended inside the reasoning before the ceiling, and
+    /// ``FinishReason/completed`` when the model ended it.
     public let finishReason: FinishReason
 
     /// What the call left in the transcript.
@@ -79,6 +81,8 @@ extension GenerationCallUsage: CustomStringConvertible {
             return "ended by the model"
         case .maxTokens:
             return "stopped at the token ceiling"
+        case .endedInsideReasoning:
+            return "ended inside the reasoning before the ceiling"
         }
     }
 

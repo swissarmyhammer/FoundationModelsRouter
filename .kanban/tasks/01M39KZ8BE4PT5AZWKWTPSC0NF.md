@@ -40,8 +40,33 @@ comments:
     - one build-system note is present, not a compiler warning: `warning: missing creator for mutated node: (.../mlx-swift_Cmlx.bundle/Contents/MacOS)`. This comes from the mlx-swift-lm dependency's bundle target, not from FoundationModelsRouter code, and is not new from this task's files.
     - next: none. The build is clean.
   timestamp: 2026-09-24T12:12:05.615579+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m39na5m29gcg9hewtb6k85tp
+  text: |-
+    ### commit — changed
+    - evidence: 0a19051 fix(session): count the context from the newest call, not the sum of the attempt (^tpsc0nf)
+    - next: review
+  timestamp: 2026-09-24T12:12:44.034980+00:00
+- actor: claude-code
+  id: 01m39nhvs9pyzj9xq7bx0wnth6
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 0a19051). 10 files reviewed, 8 `.kanban/` files not reviewed (`.reviewignore`). Counts: 0 findings, 0 confirmed, 0 refuted, 7 attempted, 0 failed.
+    - span change: accepted. The `tokens.in` / `tokens.out` span attributes now show the fed and generated tokens of the newest generation call. This is the context counter of decisions 1 and 2, and the card says that each consumer reads this counter. The `turnEnded.tokensIn` / `tokensOut` values and the `.response` stamp stay the sum of the attempt, because they record the cost of the attempt.
+    - scope note: the restore path is not part of this task. Task ^tcep2pc covers it.
+    - next: the task goes to done.
+  timestamp: 2026-09-24T12:16:56.105805+00:00
+- actor: claude-code
+  id: 01m39njb47hwswhdw8t6kk4b90
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 10 files; 6 new tests in CompactionRenderCounterTests.swift
+    - test: green — swift test, 1359 passed, 0 failed, 0 skipped
+    - commit: 0a19051
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-09-24T12:17:11.815043+00:00
+position_column: done
+position_ordinal: fffffb80
 title: The context sent to the model and its token counter must restart at each compaction
 ---
 ## Decisions (user, 2026-09-24)

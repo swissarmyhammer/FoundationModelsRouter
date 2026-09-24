@@ -8,10 +8,12 @@ import Testing
 /// finished.
 ///
 /// The MLX executor sends `["incompleteOutput": true]` as metadata on the
-/// response entry when the budget ends inside a thought. When the budget ends
+/// response entry when the output ends inside a thought. The output can end
+/// there at the ceiling, or below the ceiling (task ^gfxd7av), and only the
+/// output token count of the call tells the two apart. When the budget ends
 /// inside the answer text, the unconstrained MLX path sends no metadata, and
 /// the output token count of the call is equal to the ceiling. These tests
-/// prove that ``TokenUsage/finishReason`` carries both facts to the host, first
+/// prove that ``TokenUsage/finishReason`` carries these facts to the host, first
 /// over hand built transcript entries, then over a real `LanguageModelSession`
 /// whose executor sends the same channel actions as MLX. A tool loop makes more
 /// than one generation call in one turn, so the tests of a tool loop prove that
@@ -82,11 +84,33 @@ struct TurnFinishReasonTests {
 
     // MARK: - The reading of the entries of one turn
 
-    @Test("a last response that carries incompleteOutput ends the turn at the token ceiling")
-    func flaggedLastResponseIsMaxTokens() {
-        let entries = [Self.reasoning("thinking"), Self.response("", metadata: ["incompleteOutput": true])]
+    /// The entries of an attempt whose output ended inside its reasoning: a
+    /// thought, then an empty response that carries `incompleteOutput`.
+    private static let endedInsideReasoningEntries = [
+        prompt("fix the bug"), reasoning("thinking"), response("", metadata: ["incompleteOutput": true]),
+    ]
 
-        #expect(Self.metadataOnlyReason(entries) == .maxTokens)
+    @Test("a last response that carries incompleteOutput, with no known count, ends inside the reasoning")
+    func flaggedLastResponseIsEndedInsideReasoning() {
+        #expect(Self.metadataOnlyReason(Self.endedInsideReasoningEntries) == .endedInsideReasoning)
+    }
+
+    @Test("an output that ends inside the reasoning below the ceiling does not end at the token ceiling")
+    func flaggedOutputBelowCeilingIsEndedInsideReasoning() {
+        let reason = FinishReason(
+            turnEntries: Self.endedInsideReasoningEntries, outputTokens: Self.outputBelowCeiling,
+            lastCallOutputTokens: Self.outputBelowCeiling, responseTokenCeiling: Self.requestedCeiling)
+
+        #expect(reason == .endedInsideReasoning)
+    }
+
+    @Test("an output that ends inside the reasoning when its count reaches the ceiling ends at the token ceiling")
+    func flaggedOutputAtCeilingIsMaxTokens() {
+        let reason = FinishReason(
+            turnEntries: Self.endedInsideReasoningEntries, outputTokens: Self.requestedCeiling,
+            lastCallOutputTokens: Self.requestedCeiling, responseTokenCeiling: Self.requestedCeiling)
+
+        #expect(reason == .maxTokens)
     }
 
     @Test("a last response with no metadata ends the turn as completed")
@@ -225,13 +249,25 @@ struct TurnFinishReasonTests {
 
     // MARK: - The whole turn over a live session backend
 
-    @Test("a turn whose backend reports incompleteOutput closes with finishReason maxTokens")
-    func truncatedTurnReportsMaxTokens() async throws {
+    @Test("a turn whose backend reports incompleteOutput below the ceiling closes with finishReason endedInsideReasoning")
+    func turnEndedInsideReasoningReportsEndedInsideReasoning() async throws {
         let fixture = try await CeilingProbeSessionFixture.make(
             ending: .truncatedInsideReasoning, tempDirPrefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
         let outcome: TurnOutcome = try await fixture.session.respond(to: "fix the bug", maxTokens: nil)
+
+        let usage = try #require(outcome.usage)
+        #expect(usage.finishReason == .endedInsideReasoning)
+    }
+
+    @Test("a turn whose backend reports incompleteOutput at the ceiling closes with finishReason maxTokens")
+    func reasoningTruncatedAtCeilingReportsMaxTokens() async throws {
+        let fixture = try await CeilingProbeSessionFixture.make(
+            ending: .truncatedInsideReasoningAtCeiling, tempDirPrefix: Self.tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let outcome: TurnOutcome = try await fixture.session.respond(to: "fix the bug", maxTokens: Self.requestedCeiling)
 
         let usage = try #require(outcome.usage)
         #expect(usage.finishReason == .maxTokens)
@@ -259,7 +295,7 @@ struct TurnFinishReasonTests {
         let first: TurnOutcome = try await fixture.session.respond(to: "first", maxTokens: nil)
         let second: TurnOutcome = try await fixture.session.respond(to: "second", maxTokens: nil)
 
-        #expect(try #require(first.usage).finishReason == .maxTokens)
+        #expect(try #require(first.usage).finishReason == .endedInsideReasoning)
         #expect(try #require(second.usage).finishReason == .completed)
     }
 

@@ -9,40 +9,56 @@ public enum FinishReason: Sendable, Equatable {
     /// The model ended its response itself.
     case completed
 
-    /// The response reached the token ceiling before the model ended it.
+    /// The last generation call of the attempt spent its whole token ceiling
+    /// before the model ended the response.
     case maxTokens
+
+    /// The output ended inside the reasoning before the ceiling.
+    ///
+    /// The backend marked the output as incomplete, but the last generation
+    /// call did not spend its token ceiling, or its count is not known. The
+    /// reasoning ends without a close, and the response can be empty. The
+    /// stop came from the model or from the engine, not from the ceiling. A
+    /// session does not compact after this stop and does not send a
+    /// continuation prompt, because more room does not help this output.
+    case endedInsideReasoning
 }
 
 extension FinishReason {
     /// The response-entry metadata key a backend sets to `true` when the
-    /// token budget ended before the output was complete.
+    /// output ended before it was complete.
     ///
     /// The MLX executor of `MLXFoundationModels` sets it when generation
     /// stops inside a reasoning block, and when a guided decode runs out of
-    /// budget. `LanguageModelSession` keeps it in `Transcript.Response.metadata`.
+    /// budget. The flag does not tell why the generation stopped: at the
+    /// ceiling, or below it at a stop token. `LanguageModelSession` keeps it
+    /// in `Transcript.Response.metadata`.
     static let incompleteOutputMetadataKey = "incompleteOutput"
 
     /// Reads the finish reason of one attempt from the transcript entries the
     /// attempt appended and from the output token counts of the attempt.
     ///
-    /// The attempt ends at the token ceiling when one of these is true:
+    /// The attempt ends at the token ceiling (``maxTokens``) only when the
+    /// last generation call of the attempt spent an output token count equal
+    /// to or more than the ceiling the attempt gave the backend. The MLX
+    /// executor stops at the ceiling inside the answer text and sends no
+    /// metadata, on the unconstrained path and on the tool path, so the count
+    /// is the only sign of that stop.
     ///
-    /// - The last `.response` entry carries the `incompleteOutput` metadata.
-    ///   Only the last response decides. A truncated generation ends the
-    ///   attempt, so a flag on an earlier response that a later response
-    ///   follows does not describe how the attempt stopped.
-    /// - The last generation call of the attempt spent an output token count
-    ///   equal to or more than the ceiling the attempt gave the backend. The
-    ///   MLX executor stops at the ceiling inside the answer text and sends no
-    ///   metadata, on the unconstrained path and on the tool path, so the
-    ///   count is the only sign of that stop.
+    /// Otherwise the attempt ends inside the reasoning
+    /// (``endedInsideReasoning``) when the last `.response` entry carries the
+    /// `incompleteOutput` metadata. Only the last response decides. A
+    /// truncated generation ends the attempt, so a flag on an earlier
+    /// response that a later response follows does not describe how the
+    /// attempt stopped. All other attempts are ``completed``.
     ///
     /// The count of the last call comes from `lastCallOutputTokens`. When the
     /// backend gives no such count, an attempt with one generation call uses
     /// its own output token count, because that one call is the whole attempt.
     /// An attempt that called a tool made more than one call, and its own
     /// count is the sum of all those calls. That sum does not tell which call
-    /// stopped, so for such an attempt only the metadata then decides.
+    /// stopped, so such an attempt does not end at the ceiling, and only the
+    /// metadata then decides.
     ///
     /// - Parameters:
     ///   - entries: The entries the attempt appended, in transcript order.
@@ -61,10 +77,13 @@ extension FinishReason {
     ) {
         let lastCallTokens = Self.lastCallOutputTokens(
             entries, outputTokens: outputTokens, reportedLastCallTokens: lastCallOutputTokens)
-        let stoppedAtCeiling =
-            Self.lastResponseReportsIncompleteOutput(entries)
-            || Self.lastCallSpentCeiling(lastCallTokens, responseTokenCeiling: responseTokenCeiling)
-        self = stoppedAtCeiling ? .maxTokens : .completed
+        if Self.lastCallSpentCeiling(lastCallTokens, responseTokenCeiling: responseTokenCeiling) {
+            self = .maxTokens
+        } else if Self.lastResponseReportsIncompleteOutput(entries) {
+            self = .endedInsideReasoning
+        } else {
+            self = .completed
+        }
     }
 
     /// Whether the last `.response` entry of `entries` carries an

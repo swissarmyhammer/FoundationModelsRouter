@@ -1,6 +1,22 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m39nzmvqex441tmf9pg5ynsf
+  text: |-
+    ### Default values — approval reported by a peer session (2026-09-24)
+
+    The peer session foundationmodelsacpagent-e5 reports that the owner approved these three defaults as configurable starting points. The owner's words, as the peer quoted them: "those seem fine as configurable starting points".
+
+    - window with no new line: 2,048 generated tokens;
+    - minimum line length that counts in the test: 20 characters;
+    - recoveries per turn: 2.
+
+    Each value stays a configuration value that a host can change. Name each constant in the log.
+
+    Status: this approval came through a peer session, not directly from the user of this session. The user of this session must confirm it before the implementation starts.
+  timestamp: 2026-09-24T12:24:27.767396+00:00
 position_column: todo
 position_ordinal: '8380'
 title: Stop a generate call that repeats itself, with a configurable detector and a default

@@ -53,13 +53,16 @@ struct CeilingStopCompactionTests {
     /// - Parameters:
     ///   - cutLength: The size of the cut text, in characters.
     ///   - cutUsage: The usage the cut call reports.
+    ///   - cutEndsInsideReasoning: Whether the cut call ends inside its
+    ///     thought instead of inside its response text.
     /// - Returns: The events of the turn, in order.
     private static func turnEvents(
-        cutLength: Int, cutUsage: MeteredGenerationCall
+        cutLength: Int, cutUsage: MeteredGenerationCall, cutEndsInsideReasoning: Bool = false
     ) async throws -> [SessionEvent] {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let model = CeilingStopCompactionModel(cutText: cutText(length: cutLength), cutUsage: cutUsage)
+        let model = CeilingStopCompactionModel(
+            cutText: cutText(length: cutLength), cutUsage: cutUsage, cutEndsInsideReasoning: cutEndsInsideReasoning)
         let router = RouterTestFixtures.makeRouter(
             cacheDir: directory, recorder: InMemoryRecorder(),
             loader: StubModelLoader(
@@ -105,6 +108,20 @@ struct CeilingStopCompactionTests {
 
         #expect(events.compactionResults.isEmpty)
         #expect(Self.finishReasons(in: events) == [.maxTokens])
+        #expect(Self.turnStarts(in: events) == 1)
+        #expect(!events.streamedText.contains(CeilingStopCompactionModel.Executor.answerText))
+    }
+
+    @Test("an output that ends inside the reasoning below the ceiling, over the trigger: no compaction and no continuation")
+    func endedInsideReasoningOverTheTriggerDoesNotCompact() async throws {
+        let usage = MeteredGenerationCall(tokensIn: Self.overTriggerUsage.tokensIn, tokensOut: Self.ceiling - 1)
+        #expect(usage.tokensIn + usage.tokensOut >= Self.budget.triggerTokens)
+
+        let events = try await Self.turnEvents(
+            cutLength: Self.largeCutLength, cutUsage: usage, cutEndsInsideReasoning: true)
+
+        #expect(events.compactionResults.isEmpty)
+        #expect(Self.finishReasons(in: events) == [.endedInsideReasoning])
         #expect(Self.turnStarts(in: events) == 1)
         #expect(!events.streamedText.contains(CeilingStopCompactionModel.Executor.answerText))
     }
