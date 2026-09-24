@@ -301,6 +301,15 @@ enum TranscriptEntryMapper {
 
     // MARK: - Segment mapping
 
+    /// Maps one router structured segment to its on-disk payload, through its
+    /// ``PersistableStructuredSegment/transcriptSegment``.
+    ///
+    /// - Parameter segment: The segment to write.
+    /// - Returns: The `.structure` payload that carries `segment`.
+    static func segmentPayload(_ segment: some PersistableStructuredSegment) -> SegmentPayload {
+        segmentPayload(segment.transcriptSegment)
+    }
+
     /// Maps one transcript segment to its on-disk payload.
     static func segmentPayload(_ segment: Transcript.Segment) -> SegmentPayload {
         switch segment {

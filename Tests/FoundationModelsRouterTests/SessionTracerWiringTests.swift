@@ -18,27 +18,8 @@ import Tracing
 /// suite needs no network, no GPU and no bootstrapped tracing backend.
 @Suite("Session tracer wiring")
 struct SessionTracerWiringTests {
-    /// The temp directories one test's routers work under.
-    private struct Workspace {
-        /// The routers' cache directory.
-        let cacheDir: URL
-
-        /// The durable transcripts root a restore reads back.
-        let recordingsDir: URL
-
-        /// Creates a fresh pair of temp directories.
-        init() {
-            cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTracerWiringTests-cache")
-            recordingsDir = RouterTestFixtures.makeTempDir(
-                prefix: "SessionTracerWiringTests-recordings")
-        }
-
-        /// Removes both directories.
-        func remove() {
-            try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: recordingsDir)
-        }
-    }
+    /// The suite's temp-directory prefix.
+    private static let tempDirPrefix = "SessionTracerWiringTests"
 
     /// A ``LoadedLLMContainer`` whose sessions answer every prompt with the
     /// stub backend's canned line, so a turn leaves a transcript on disk that a
@@ -64,7 +45,7 @@ struct SessionTracerWiringTests {
     /// - Returns: The router.
     private static func makeRouter(
         id: ULID = .generate(),
-        workspace: Workspace,
+        workspace: TestDirectories,
         tracer: any Tracer
     ) -> Router {
         RouterTestFixtures.makeRouter(
@@ -101,7 +82,7 @@ struct SessionTracerWiringTests {
 
     @Test("a vended root session holds the tracer its handle carries")
     func vendedRootHoldsTheHandlesTracer() async throws {
-        let workspace = Workspace()
+        let workspace = TestDirectories(prefix: Self.tempDirPrefix)
         defer { workspace.remove() }
 
         let tracer = InMemoryTracer()
@@ -115,7 +96,7 @@ struct SessionTracerWiringTests {
 
     @Test("a forked child holds the same tracer as its parent")
     func forkedChildHoldsTheParentsTracer() async throws {
-        let workspace = Workspace()
+        let workspace = TestDirectories(prefix: Self.tempDirPrefix)
         defer { workspace.remove() }
 
         let tracer = InMemoryTracer()
@@ -130,7 +111,7 @@ struct SessionTracerWiringTests {
 
     @Test("a restored session holds the tracer of the handle that restored it")
     func restoredNodeHoldsTheRestoringHandlesTracer() async throws {
-        let workspace = Workspace()
+        let workspace = TestDirectories(prefix: Self.tempDirPrefix)
         defer { workspace.remove() }
 
         let tracer = InMemoryTracer()

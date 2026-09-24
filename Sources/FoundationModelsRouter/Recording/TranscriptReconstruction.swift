@@ -178,7 +178,7 @@ extension TranscriptTree {
     ///
     /// - Parameter events: A session's effective events, in `seq` order. They
     ///   must hold the ``TranscriptEvent/Kind/generationCall`` events (see
-    ///   ``effectiveUsageEvents(forSession:)``). Other router-only kinds are
+    ///   ``effectiveEntryEvents(forSession:alongWith:)``). Other router-only kinds are
     ///   not read.
     static func restoredUsageState(in events: [TranscriptEvent]) -> ContextUsageState {
         guard let checkpoint = newestCompactionCheckpoint(in: events) else {
@@ -239,7 +239,7 @@ extension TranscriptTree {
         forSession id: ULID,
         view: TranscriptReconstructionView = .restore
     ) throws -> Transcript {
-        let renderEvents = try effectiveRenderEvents(forSession: id)
+        let renderEvents = try effectiveEntryEvents(forSession: id, alongWith: .repeatedPartRemoval)
         let entries = try Self.entries(
             of: Self.reconstructableEvents(renderEvents.filter(\.kind.isEntryKind), view: view))
         guard view == .restore else { return Transcript(entries: entries) }

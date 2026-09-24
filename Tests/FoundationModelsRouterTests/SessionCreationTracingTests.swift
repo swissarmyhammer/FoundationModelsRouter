@@ -57,27 +57,6 @@ struct SessionCreationTracingTests {
         }
     }
 
-    /// The temp directories one test's routers work under.
-    private struct Workspace {
-        /// The routers' cache directory.
-        let cacheDir: URL
-
-        /// The durable transcripts root a restore reads back.
-        let recordingsDir: URL
-
-        /// Creates a fresh pair of temp directories.
-        init() {
-            cacheDir = RouterTestFixtures.makeTempDir(prefix: "\(tempDirPrefix)-cache")
-            recordingsDir = RouterTestFixtures.makeTempDir(prefix: "\(tempDirPrefix)-recordings")
-        }
-
-        /// Removes both directories.
-        func remove() {
-            try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: recordingsDir)
-        }
-    }
-
     /// Resolves a profile over the stub hardware and the stub loader, wired to
     /// report every span to `tracer`.
     ///
@@ -90,7 +69,7 @@ struct SessionCreationTracingTests {
     /// - Throws: Whatever profile resolution throws.
     private static func makeProfile(
         id: ULID = .generate(),
-        workspace: Workspace,
+        workspace: TestDirectories,
         tracer: any Tracer
     ) async throws -> LanguageModelProfile {
         let router = RouterTestFixtures.makeRouter(
@@ -143,7 +122,7 @@ struct SessionCreationTracingTests {
 
     @Test("a vended session opens one internal span naming the router, the model and itself")
     func vendedSessionOpensOneSpanNamingItself() async throws {
-        let workspace = Workspace()
+        let workspace = TestDirectories(prefix: Self.tempDirPrefix)
         defer { workspace.remove() }
 
         let tracer = InMemoryTracer()
@@ -168,7 +147,7 @@ struct SessionCreationTracingTests {
 
     @Test("a forked child opens its own session span, naming its parent, inside the fork span")
     func forkedChildOpensItsOwnSessionSpanInsideTheForkSpan() async throws {
-        let workspace = Workspace()
+        let workspace = TestDirectories(prefix: Self.tempDirPrefix)
         defer { workspace.remove() }
 
         let tracer = InMemoryTracer()
@@ -201,7 +180,7 @@ struct SessionCreationTracingTests {
 
     @Test("restoring a recorded tree opens one session span per node, each naming its origin")
     func restoredTreeOpensOneSpanPerNodeNamingTheRestoredOrigin() async throws {
-        let workspace = Workspace()
+        let workspace = TestDirectories(prefix: Self.tempDirPrefix)
         defer { workspace.remove() }
 
         let recordedTracer = InMemoryTracer()

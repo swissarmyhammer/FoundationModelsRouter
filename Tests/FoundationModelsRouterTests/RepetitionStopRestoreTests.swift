@@ -63,21 +63,6 @@ struct RepetitionStopRestoreTests {
         (newLines + cycle).map { $0 + "\n" }.joined()
     }
 
-    /// The temp directories of one test, which the test removes.
-    private struct Directories {
-        /// The directory the routers cache into.
-        let cache = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
-
-        /// The directory the recorder writes the transcripts into.
-        let recordings = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
-
-        /// Removes both directories.
-        func remove() {
-            try? FileManager.default.removeItem(at: cache)
-            try? FileManager.default.removeItem(at: recordings)
-        }
-    }
-
     /// Resolves a profile over a ``RepeatingReasoningModel`` that plays
     /// `script`, recorded under `directories`.
     ///
@@ -90,14 +75,14 @@ struct RepetitionStopRestoreTests {
     /// - Returns: The router and its resolved profile.
     /// - Throws: Whatever profile resolution throws.
     private static func resolveProfile(
-        routerId: ULID, script: RepeatingReasoningScript, log: RenderProbeLog, directories: Directories
+        routerId: ULID, script: RepeatingReasoningScript, log: RenderProbeLog, directories: TestDirectories
     ) async throws -> (router: Router, profile: LanguageModelProfile) {
         let model = RepeatingReasoningModel(log: log, script: script, repeatsAfterStop: false)
         let router = RouterTestFixtures.makeRouter(
             id: routerId,
-            cacheDir: directories.cache,
-            recordingsDir: directories.recordings,
-            recorder: JSONLRecorder(directory: directories.recordings),
+            cacheDir: directories.cacheDir,
+            recordingsDir: directories.recordingsDir,
+            recorder: JSONLRecorder(directory: directories.recordingsDir),
             loader: StubModelLoader(
                 container: LiveBackendContainer(model: model), dimension: RouterTestFixtures.stubDimension))
         let profile = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
@@ -123,7 +108,7 @@ struct RepetitionStopRestoreTests {
     /// - Parameter directories: The cache and recording directories.
     /// - Returns: The live session and its router.
     /// - Throws: Whatever the turn throws, or a failed requirement.
-    private static func runStoppedTurn(directories: Directories) async throws -> StoppedSession {
+    private static func runStoppedTurn(directories: TestDirectories) async throws -> StoppedSession {
         let (router, profile) = try await resolveProfile(
             routerId: .generate(), script: liveScript, log: RenderProbeLog(), directories: directories)
         let session = try #require(
@@ -148,7 +133,7 @@ struct RepetitionStopRestoreTests {
     /// - Returns: The restored tree, and the profile that keeps it alive.
     /// - Throws: Whatever the restore throws.
     private static func restore(
-        _ stopped: StoppedSession, log: RenderProbeLog, directories: Directories
+        _ stopped: StoppedSession, log: RenderProbeLog, directories: TestDirectories
     ) async throws -> (tree: RestoredSessionTree, profile: LanguageModelProfile) {
         let (_, profile) = try await resolveProfile(
             routerId: stopped.router.id, script: restoredScript, log: log, directories: directories)
@@ -189,7 +174,7 @@ struct RepetitionStopRestoreTests {
     ///   - directories: The cache and recording directories.
     /// - Returns: The recorded reasoning texts, in order.
     /// - Throws: Whatever loading the recorded tree throws.
-    private static func recordedReasoning(of stopped: StoppedSession, directories: Directories) throws -> [String] {
+    private static func recordedReasoning(of stopped: StoppedSession, directories: TestDirectories) throws -> [String] {
         try TranscriptTree.load(under: routerDirectory(of: stopped, directories: directories))
             .events(forSession: stopped.session.id)
             .filter { $0.kind == .reasoning }
@@ -202,8 +187,8 @@ struct RepetitionStopRestoreTests {
     ///   - stopped: The live session and its router.
     ///   - directories: The cache and recording directories.
     /// - Returns: The directory ``TranscriptTree/load(under:)`` reads.
-    private static func routerDirectory(of stopped: StoppedSession, directories: Directories) -> URL {
-        RouterTestFixtures.routerDirectory(routerId: stopped.router.id, recordingsDir: directories.recordings)
+    private static func routerDirectory(of stopped: StoppedSession, directories: TestDirectories) -> URL {
+        RouterTestFixtures.routerDirectory(routerId: stopped.router.id, recordingsDir: directories.recordingsDir)
     }
 
     /// Writes the recorded transcript of the live session again, with each
@@ -216,7 +201,7 @@ struct RepetitionStopRestoreTests {
     ///   - transform: The change to make to each recorded event.
     /// - Throws: Whatever reading or writing the transcript throws.
     private static func rewriteJournal(
-        of stopped: StoppedSession, directories: Directories,
+        of stopped: StoppedSession, directories: TestDirectories,
         _ transform: (TranscriptEvent) throws -> TranscriptEvent?
     ) throws {
         let routerDirectory = routerDirectory(of: stopped, directories: directories)
@@ -239,7 +224,7 @@ struct RepetitionStopRestoreTests {
     /// - Returns: The reconstructed transcript.
     /// - Throws: Whatever loading or reconstructing throws.
     private static func reconstructed(
-        _ stopped: StoppedSession, directories: Directories, view: TranscriptReconstructionView
+        _ stopped: StoppedSession, directories: TestDirectories, view: TranscriptReconstructionView
     ) throws -> Transcript {
         try TranscriptTree.load(under: routerDirectory(of: stopped, directories: directories))
             .effectiveTranscript(forSession: stopped.session.id, view: view)
@@ -247,7 +232,7 @@ struct RepetitionStopRestoreTests {
 
     @Test("the full-history view keeps the full entry of a stopped call")
     func fullHistoryViewKeepsTheFullEntry() async throws {
-        let directories = Directories()
+        let directories = TestDirectories(prefix: Self.tempDirPrefix)
         defer { directories.remove() }
         let stopped = try await Self.runStoppedTurn(directories: directories)
 
@@ -260,7 +245,7 @@ struct RepetitionStopRestoreTests {
 
     @Test("a journal with no record of the cut restores the full entry, as a journal recorded before the cut did")
     func journalWithNoCutRestoresAsBefore() async throws {
-        let directories = Directories()
+        let directories = TestDirectories(prefix: Self.tempDirPrefix)
         defer { directories.remove() }
         let stopped = try await Self.runStoppedTurn(directories: directories)
         let fullHistory = try Self.reconstructed(stopped, directories: directories, view: .fullHistory)
@@ -275,7 +260,7 @@ struct RepetitionStopRestoreTests {
 
     @Test("a record of the cut that does not decode refuses the restore, and names the event")
     func undecodableCutRefusesTheRestore() async throws {
-        let directories = Directories()
+        let directories = TestDirectories(prefix: Self.tempDirPrefix)
         defer { directories.remove() }
         let stopped = try await Self.runStoppedTurn(directories: directories)
         var cutSeq: Int?
@@ -305,7 +290,7 @@ struct RepetitionStopRestoreTests {
 
     @Test("the next call of a restored session does not receive the repeated part, and the record keeps the full entry")
     func restoredSessionKeepsTheRepeatedPartOutOfItsNextCall() async throws {
-        let directories = Directories()
+        let directories = TestDirectories(prefix: Self.tempDirPrefix)
         defer { directories.remove() }
         let stopped = try await Self.runStoppedTurn(directories: directories)
 
@@ -327,7 +312,7 @@ struct RepetitionStopRestoreTests {
 
     @Test("a restored session holds the render the live session held after the stop")
     func restoredRenderEqualsTheLiveRender() async throws {
-        let directories = Directories()
+        let directories = TestDirectories(prefix: Self.tempDirPrefix)
         defer { directories.remove() }
         let stopped = try await Self.runStoppedTurn(directories: directories)
         let liveRender = await stopped.session.backend.transcriptEntries()
@@ -342,7 +327,7 @@ struct RepetitionStopRestoreTests {
 
     @Test("a restored session reports the context counter the live session had after the stop")
     func restoredCounterEqualsTheLiveCounter() async throws {
-        let directories = Directories()
+        let directories = TestDirectories(prefix: Self.tempDirPrefix)
         defer { directories.remove() }
         let stopped = try await Self.runStoppedTurn(directories: directories)
         let liveUsage = await stopped.session.usageState
@@ -358,7 +343,7 @@ struct RepetitionStopRestoreTests {
 
     @Test("a restored fork of a session that had a stop holds the render the live fork held")
     func restoredForkRenderEqualsTheLiveForkRender() async throws {
-        let directories = Directories()
+        let directories = TestDirectories(prefix: Self.tempDirPrefix)
         defer { directories.remove() }
         let stopped = try await Self.runStoppedTurn(directories: directories)
         let fork = try #require(try await stopped.session.fork(workingDirectory: nil) as? RoutedSessionActor)
@@ -371,5 +356,18 @@ struct RepetitionStopRestoreTests {
         withExtendedLifetime(profile) {}
 
         #expect(Self.renderLines(of: restoredForkRender) == Self.renderLines(of: liveForkRender))
+    }
+
+    @Test("the cut record travels under the schema name that an earlier build wrote, and its payload decodes back to the segment")
+    func cutRecordKeepsItsSchemaNameAndRoundTrips() throws {
+        let segment = RepeatedPartRemovalSegment(content: .init(keptUTF8Lengths: ["entry-1": 42]))
+        let payload = segment.eventPayload
+        let structure = try #require(payload.segments?.first?.persistedStructure)
+
+        #expect(RepeatedPartRemovalSegment.schemaName == String(reflecting: RepeatedPartRemovalSegment.self))
+        #expect(structure.schemaName == RepeatedPartRemovalSegment.schemaName)
+        let decoded = try RepeatedPartRemovalSegment(
+            schemaName: structure.schemaName, contentJSON: structure.contentJSON, id: payload.entryId)
+        #expect(decoded == segment)
     }
 }

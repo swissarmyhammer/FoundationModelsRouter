@@ -21,6 +21,9 @@ struct ToolOutputProtectionSessionTests {
     /// The fixtures every test here reads.
     private typealias Fixtures = ProtectedToolOutputFixtures
 
+    /// The suite's temp-directory prefix.
+    private static let tempDirPrefix = "ToolOutputProtectionSessionTests"
+
     // MARK: - Stub container
 
     /// Vends a ``StubSessionBackend`` per session. A fresh session starts with
@@ -52,21 +55,6 @@ struct ToolOutputProtectionSessionTests {
         }
     }
 
-    /// The temp directories one test owns.
-    private struct Directories {
-        /// The router's cache directory.
-        let cache = RouterTestFixtures.makeTempDir(prefix: "ToolOutputProtectionSessionTests")
-
-        /// The durable recordings root.
-        let recordings = RouterTestFixtures.makeTempDir(prefix: "ToolOutputProtectionSessionTests")
-
-        /// Removes both directories.
-        func remove() {
-            try? FileManager.default.removeItem(at: cache)
-            try? FileManager.default.removeItem(at: recordings)
-        }
-    }
-
     // MARK: - Fixtures
 
     /// Resolves a profile over a fresh router that records into `directories`.
@@ -77,16 +65,16 @@ struct ToolOutputProtectionSessionTests {
     ///     first recorded.
     /// - Returns: The resolved profile.
     /// - Throws: What profile resolution throws.
-    private static func resolveProfile(in directories: Directories, routerId: ULID) async throws
+    private static func resolveProfile(in directories: TestDirectories, routerId: ULID) async throws
         -> LanguageModelProfile {
         let container = SeededLLMContainer(
             seedEntries: [TranscriptFixtures.makeInstructions()] + (try Fixtures.skillTurn())
                 + (try Fixtures.searchTurn()))
         let router = RouterTestFixtures.makeRouter(
             id: routerId,
-            cacheDir: directories.cache,
-            recordingsDir: directories.recordings,
-            recorder: JSONLRecorder(directory: directories.recordings),
+            cacheDir: directories.cacheDir,
+            recordingsDir: directories.recordingsDir,
+            recorder: JSONLRecorder(directory: directories.recordingsDir),
             loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension))
         return try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
     }
@@ -116,7 +104,7 @@ struct ToolOutputProtectionSessionTests {
 
     @Test("a session vended with the rule keeps the protected output through a compaction and reports its size")
     func vendedSessionKeepsTheProtectedOutputThroughACompaction() async throws {
-        let directories = Directories()
+        let directories = TestDirectories(prefix: Self.tempDirPrefix)
         defer { directories.remove() }
         let profile = try await Self.resolveProfile(in: directories, routerId: .generate())
         let session = profile.standard.makeSession(toolOutputProtection: Fixtures.rule)
@@ -132,7 +120,7 @@ struct ToolOutputProtectionSessionTests {
 
     @Test("a session configured with the rule keeps the protected output through a compaction")
     func configuredSessionKeepsTheProtectedOutputThroughACompaction() async throws {
-        let directories = Directories()
+        let directories = TestDirectories(prefix: Self.tempDirPrefix)
         defer { directories.remove() }
         let profile = try await Self.resolveProfile(in: directories, routerId: .generate())
         let session = profile.standard.makeSession(
@@ -147,7 +135,7 @@ struct ToolOutputProtectionSessionTests {
 
     @Test("a session vended with no rule keeps no tool output: the summary replaces the skill output")
     func vendedSessionWithoutARuleKeepsNoToolOutput() async throws {
-        let directories = Directories()
+        let directories = TestDirectories(prefix: Self.tempDirPrefix)
         defer { directories.remove() }
         let profile = try await Self.resolveProfile(in: directories, routerId: .generate())
         let session = profile.standard.makeSession()
@@ -164,7 +152,7 @@ struct ToolOutputProtectionSessionTests {
 
     @Test("a fork inherits the rule and keeps the protected output through its own compaction")
     func forkInheritsTheRule() async throws {
-        let directories = Directories()
+        let directories = TestDirectories(prefix: Self.tempDirPrefix)
         defer { directories.remove() }
         let profile = try await Self.resolveProfile(in: directories, routerId: .generate())
         let session = profile.standard.makeSession(
@@ -181,7 +169,7 @@ struct ToolOutputProtectionSessionTests {
 
     @Test("a session restored with the rule keeps the protected output through its own compaction")
     func restoredSessionKeepsTheRule() async throws {
-        let directories = Directories()
+        let directories = TestDirectories(prefix: Self.tempDirPrefix)
         defer { directories.remove() }
         let routerId = ULID.generate()
         let original = try await Self.resolveProfile(in: directories, routerId: routerId)
@@ -200,7 +188,7 @@ struct ToolOutputProtectionSessionTests {
 
     @Test("the restore of a session compacted with the rule rebuilds the protected output word for word")
     func restoreAfterACompactionKeepsTheProtectedOutput() async throws {
-        let directories = Directories()
+        let directories = TestDirectories(prefix: Self.tempDirPrefix)
         defer { directories.remove() }
         let routerId = ULID.generate()
         let original = try await Self.resolveProfile(in: directories, routerId: routerId)

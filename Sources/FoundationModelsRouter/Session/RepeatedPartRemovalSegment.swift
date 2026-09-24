@@ -13,6 +13,14 @@ import FoundationModels
 /// as it reads a ``CompactionSegment`` checkpoint. The segment travels under
 /// the schema name `FoundationModelsRouter.RepeatedPartRemovalSegment`.
 struct RepeatedPartRemovalSegment: PersistableStructuredSegment, Equatable, CustomStringConvertible, Sendable {
+    /// The stable name that identifies this segment on disk. The write side
+    /// (``eventPayload``) writes it, and the read side
+    /// (``PersistableStructuredSegment/init(schemaName:contentJSON:id:)``)
+    /// reads only a segment that carries it. It is the same value as the
+    /// default of ``PersistableStructuredSegment/schemaName``, so a journal
+    /// that an earlier build wrote stays readable.
+    static let schemaName = "FoundationModelsRouter.RepeatedPartRemovalSegment"
+
     /// The cut that one repetition stop made.
     struct Content: Codable, Equatable, Sendable {
         /// For each watched entry id, the UTF-8 length of its text that the
@@ -46,8 +54,9 @@ struct RepeatedPartRemovalSegment: PersistableStructuredSegment, Equatable, Cust
 
     /// The payload of the ``TranscriptEvent/Kind/repeatedPartRemoval`` event
     /// that records this segment. The payload's entry id is the segment id,
-    /// because the event mirrors no transcript entry.
+    /// because the event mirrors no transcript entry. The one segment of the
+    /// payload is this segment itself, under ``schemaName``.
     var eventPayload: TranscriptEntryPayload {
-        TranscriptEntryPayload(entryId: id, segments: [TranscriptEntryMapper.segmentPayload(transcriptSegment)])
+        TranscriptEntryPayload(entryId: id, segments: [TranscriptEntryMapper.segmentPayload(self)])
     }
 }

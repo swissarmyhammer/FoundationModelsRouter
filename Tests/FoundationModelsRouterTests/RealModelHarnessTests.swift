@@ -65,15 +65,9 @@ struct RealModelHarnessTests {
     /// - Returns: Whatever `body` returned.
     /// - Throws: Whatever `body` throws.
     private static func withTemporaryDirectories<T>(_ body: (URL, URL) throws -> T) rethrows -> T {
-        let cacheDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("RealModelHarnessTests-cache-\(UUID().uuidString)", isDirectory: true)
-        let recordingsDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("RealModelHarnessTests-recordings-\(UUID().uuidString)", isDirectory: true)
-        defer {
-            try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: recordingsDir)
-        }
-        return try body(cacheDir, recordingsDir)
+        let directories = TestDirectories(prefix: "RealModelHarnessTests")
+        defer { directories.remove() }
+        return try body(directories.cacheDir, directories.recordingsDir)
     }
 
     // MARK: - The resolution each hand-built copy produced

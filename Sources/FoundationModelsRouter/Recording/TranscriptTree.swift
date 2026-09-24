@@ -256,47 +256,37 @@ package struct TranscriptTree: Sendable {
     /// This session's whole effective conversation, oldest first: the
     /// parent's effective entry-kind events truncated to this session's fork
     /// cut point, then this session's own entry-kind events. Only kinds with
-    /// ``TranscriptEvent/Kind/isEntryKind`` appear. The cut point is
+    /// ``TranscriptEvent/Kind/isEntryKind`` appear, and the events of
+    /// `routerKind` when the caller names one. The cut point is
     /// ``SessionSidecar/forkedAtHistoryOrdinal`` or the legacy
     /// ``SessionSidecar/forkedAtEntryCount``.
     ///
+    /// A router-only kind that a caller names:
+    /// - ``TranscriptEvent/Kind/generationCall``: the events
+    ///   ``restoredUsageState(in:)`` reads the context counter from. A fork
+    ///   keeps its parent's events up to the parent's next entry-kind event
+    ///   after the fork cut point. So the fork keeps the call that closed the
+    ///   parent's last turn before the fork, which the session records after
+    ///   the entries of that turn. The kept events can also hold the calls
+    ///   that asked for a tool in the parent's next turn, which come before
+    ///   that turn's entries. The reader never reads those calls (see
+    ///   ``restoredUsageState(in:)``).
+    /// - ``TranscriptEvent/Kind/repeatedPartRemoval``: the events
+    ///   ``effectiveTranscript(forSession:view:)`` rebuilds the render from
+    ///   (task ^gg49g5e). The session records a cut after the entries it cuts,
+    ///   and before the next entry. So a fork keeps each cut of its parent's
+    ///   entries before the fork cut point, and no cut of a later entry.
+    ///
+    /// - Parameters:
+    ///   - id: The session's span id.
+    ///   - routerKind: A router-only kind to keep with the entry kinds, or
+    ///     `nil` to keep the entry kinds only.
     /// - Throws: ``TranscriptTreeError/sessionNotFound(_:)`` or
     ///   ``TranscriptTreeError/forkCutPointMissing(session:directory:)``.
-    func effectiveEntryEvents(forSession id: ULID) throws -> [TranscriptEvent] {
-        try effectiveEvents(forSession: id, keeping: \.isEntryKind)
-    }
-
-    /// This session's effective entry-kind events and its effective
-    /// ``TranscriptEvent/Kind/generationCall`` events, oldest first: the
-    /// events ``restoredUsageState(in:)`` reads the context counter from.
-    ///
-    /// A fork keeps its parent's events up to the parent's next entry-kind
-    /// event after the fork cut point. So the fork keeps the call that closed
-    /// the parent's last turn before the fork, which the session records
-    /// after the entries of that turn. The kept events can also hold the
-    /// calls that asked for a tool in the parent's next turn, which come
-    /// before that turn's entries. The reader never reads those calls (see
-    /// ``restoredUsageState(in:)``).
-    ///
-    /// - Throws: ``TranscriptTreeError/sessionNotFound(_:)`` or
-    ///   ``TranscriptTreeError/forkCutPointMissing(session:directory:)``.
-    func effectiveUsageEvents(forSession id: ULID) throws -> [TranscriptEvent] {
-        try effectiveEvents(forSession: id) { $0.isEntryKind || $0 == .generationCall }
-    }
-
-    /// This session's effective entry-kind events and its effective
-    /// ``TranscriptEvent/Kind/repeatedPartRemoval`` events, oldest first: the
-    /// events ``effectiveTranscript(forSession:view:)`` rebuilds the render
-    /// from (task ^gg49g5e).
-    ///
-    /// The session records a cut after the entries it cuts, and before the
-    /// next entry. So a fork keeps each cut of its parent's entries before
-    /// the fork cut point, and no cut of a later entry.
-    ///
-    /// - Throws: ``TranscriptTreeError/sessionNotFound(_:)`` or
-    ///   ``TranscriptTreeError/forkCutPointMissing(session:directory:)``.
-    func effectiveRenderEvents(forSession id: ULID) throws -> [TranscriptEvent] {
-        try effectiveEvents(forSession: id) { $0.isEntryKind || $0 == .repeatedPartRemoval }
+    func effectiveEntryEvents(
+        forSession id: ULID, alongWith routerKind: TranscriptEvent.Kind? = nil
+    ) throws -> [TranscriptEvent] {
+        try effectiveEvents(forSession: id) { $0.isEntryKind || $0 == routerKind }
     }
 
     /// This session's effective events of the kinds `isKept` keeps, oldest

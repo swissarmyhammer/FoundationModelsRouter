@@ -269,8 +269,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             }
 
             // This node's span opens here, before the transcript read below,
-            // rather than around the construction alone: `effectiveTranscript`,
-            // `effectiveUsageEvents` and `effectiveEntryEvents` re-read this node's own and every
+            // rather than around the construction alone: `effectiveTranscript`
+            // and `effectiveEntryEvents` re-read this node's own and every
             // ancestor's `transcript.jsonl` from disk, and that read is what a
             // restore really costs. `withSessionSpan` is the one helper all
             // three shapes open their span through, and its own doc comment
@@ -393,7 +393,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // `usageState` from the session it forked from (see
             // ``RoutedSessionActor/fork(workingDirectory:)``).
             let usageState = TranscriptTree.restoredUsageState(
-                in: try tree.effectiveUsageEvents(forSession: node.id))
+                in: try tree.effectiveEntryEvents(forSession: node.id, alongWith: .generationCall))
             let effectiveEvents = try tree.effectiveEntryEvents(forSession: node.id)
             // `SessionSidecar.grammar` is only the grammar's `source`
             // string — it does not distinguish `.jsonSchema(_:)` from
