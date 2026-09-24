@@ -224,7 +224,9 @@ extension RoutedSessionActor {
     ///    ``backend``, and the ordinary diff records its entries, whole. The
     ///    attempt closes with ``FinishReason/repeatedLines``.
     /// 3. ``RepeatedPartRemoval`` cuts the repeated part out of ``backend``.
-    ///    The record keeps it.
+    ///    The record keeps it, and one
+    ///    ``TranscriptEvent/Kind/repeatedPartRemoval`` event records the cut,
+    ///    so a restore makes the same cut (task ^gg49g5e).
     /// 4. With a recovery left, the next attempt sends
     ///    ``repetitionStopContinuationPrompt``. With none, the turn ends with
     ///    the response text of the stopped attempt.
@@ -244,6 +246,7 @@ extension RoutedSessionActor {
         attempt.onEvent?(.repetitionStopped(marker.report))
         let rebuilt = await recordStoppedAttempt(marker, attempt: attempt)
         replaceRender(with: RepeatedPartRemoval.render(of: rebuilt, keeping: marker.keptUTF8Lengths))
+        await recordRepeatedPartRemoval(keeping: marker.keptUTF8Lengths, grammar: attempt.grammar)
         guard let recovery = marker.report.recovery else {
             return Self.responseText(of: rebuilt, excluding: attempt.entryIdsBeforeAttempt)
         }
@@ -291,6 +294,25 @@ extension RoutedSessionActor {
         backend = backend.replacingTranscript(render)
         persistedEntryCount = render.count
         persistedBaseline = TranscriptDiffer.Baseline(transcript: render)
+    }
+
+    /// Records the cut that ``replaceRender(with:)`` made as one
+    /// ``TranscriptEvent/Kind/repeatedPartRemoval`` event, after the entries
+    /// of the stopped attempt (task ^gg49g5e).
+    ///
+    /// The recorded entries stay whole. A restore reads this event and makes
+    /// the same cut of the rebuilt render, so a restored session gives the
+    /// model the render that this session gives it.
+    ///
+    /// - Parameters:
+    ///   - keptUTF8Lengths: For each watched entry id, the UTF-8 length that
+    ///     the render keeps.
+    ///   - grammar: The grammar in force for the turn.
+    private func recordRepeatedPartRemoval(keeping keptUTF8Lengths: [String: Int], grammar: Grammar?) async {
+        let segment = RepeatedPartRemovalSegment(content: .init(keptUTF8Lengths: keptUTF8Lengths))
+        await append(
+            partial: makePartialEvent(
+                kind: .repeatedPartRemoval, grammar: grammar, text: segment.description, entry: segment.eventPayload))
     }
 
     /// The joined text of the `.response` entries of the attempt in `entries`.

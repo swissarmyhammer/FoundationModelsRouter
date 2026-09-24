@@ -428,7 +428,8 @@ public final class SessionProjection {
                 rows.append(
                     TranscriptEntry(
                         id: payload.entryId, kind: .reasoning(text ?? ""), sourceEntryId: payload.entryId))
-            case .session, .instructions, .embedding, .divergence, .generationCall, .toolCall, .unknown:
+            case .session, .instructions, .embedding, .divergence, .generationCall, .repeatedPartRemoval, .toolCall,
+                .unknown:
                 break
             }
         }
@@ -591,7 +592,7 @@ public final class SessionProjection {
                 superseded.formUnion(turnTextEntryIds)
                 turnTextEntryIds.append(payload.entryId)
             case .toolCalls, .toolOutput, .reasoning, .session, .instructions, .embedding, .divergence,
-                .generationCall, .toolCall, .unknown:
+                .generationCall, .repeatedPartRemoval, .toolCall, .unknown:
                 break
             }
         }

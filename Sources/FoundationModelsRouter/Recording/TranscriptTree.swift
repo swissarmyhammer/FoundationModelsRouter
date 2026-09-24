@@ -284,6 +284,21 @@ package struct TranscriptTree: Sendable {
         try effectiveEvents(forSession: id) { $0.isEntryKind || $0 == .generationCall }
     }
 
+    /// This session's effective entry-kind events and its effective
+    /// ``TranscriptEvent/Kind/repeatedPartRemoval`` events, oldest first: the
+    /// events ``effectiveTranscript(forSession:view:)`` rebuilds the render
+    /// from (task ^gg49g5e).
+    ///
+    /// The session records a cut after the entries it cuts, and before the
+    /// next entry. So a fork keeps each cut of its parent's entries before
+    /// the fork cut point, and no cut of a later entry.
+    ///
+    /// - Throws: ``TranscriptTreeError/sessionNotFound(_:)`` or
+    ///   ``TranscriptTreeError/forkCutPointMissing(session:directory:)``.
+    func effectiveRenderEvents(forSession id: ULID) throws -> [TranscriptEvent] {
+        try effectiveEvents(forSession: id) { $0.isEntryKind || $0 == .repeatedPartRemoval }
+    }
+
     /// This session's effective events of the kinds `isKept` keeps, oldest
     /// first: the parent's effective events cut at this session's fork cut
     /// point (see ``forkPrefix(of:entryCount:)``), then this session's own

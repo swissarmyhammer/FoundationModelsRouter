@@ -55,11 +55,14 @@ enum TranscriptReconstructionError: Error, Equatable, LocalizedError {
 package enum TranscriptReconstructionView: Sendable, Equatable {
     /// The newest ``CompactionSegment`` checkpoint's live window plus every
     /// entry recorded after it. A session with no checkpoint reconstructs in
-    /// full. This is the default.
+    /// full. Each cut that a ``TranscriptEvent/Kind/repeatedPartRemoval``
+    /// event records applies, so the view is the render that the live
+    /// session gave the model (task ^gg49g5e). This is the default.
     case restore
 
-    /// Every recorded entry, in `seq` order. The compaction entry appears as
-    /// a compaction marker among the entries it replaced.
+    /// Every recorded entry, whole, in `seq` order. The compaction entry
+    /// appears as a compaction marker among the entries it replaced. No cut
+    /// of a repetition stop applies.
     case fullHistory
 }
 
@@ -222,6 +225,12 @@ extension TranscriptTree {
     /// Content recorded at ``RecordingLevel/full`` round-trips. Some fields
     /// degrade as documented on ``TranscriptEntryMapper``.
     ///
+    /// The ``TranscriptReconstructionView/restore`` view cuts each entry that
+    /// a ``TranscriptEvent/Kind/repeatedPartRemoval`` event names, as the
+    /// live session cut its render after a repetition stop
+    /// (``RepeatedPartRemoval``). The recorded events stay whole. A journal
+    /// with no such event restores as before.
+    ///
     /// - Parameters:
     ///   - id: The session's span id.
     ///   - view: Which view to reconstruct. Defaults to ``TranscriptReconstructionView/restore``.
@@ -230,7 +239,74 @@ extension TranscriptTree {
         forSession id: ULID,
         view: TranscriptReconstructionView = .restore
     ) throws -> Transcript {
-        let events = try Self.reconstructableEvents(effectiveEntryEvents(forSession: id), view: view)
+        let renderEvents = try effectiveRenderEvents(forSession: id)
+        let entries = try Self.entries(
+            of: Self.reconstructableEvents(renderEvents.filter(\.kind.isEntryKind), view: view))
+        guard view == .restore else { return Transcript(entries: entries) }
+        return Transcript(
+            entries: RepeatedPartRemoval.render(of: entries, keeping: try Self.keptUTF8Lengths(in: renderEvents)))
+    }
+
+    /// The cut of the render that the ``TranscriptEvent/Kind/repeatedPartRemoval``
+    /// events among `events` record: for each cut entry id, the UTF-8 length
+    /// that the render keeps. A later cut of one entry id replaces an earlier
+    /// one. Empty for a journal recorded before the kind existed.
+    ///
+    /// - Parameter events: A session's effective events, in `seq` order.
+    /// - Returns: The UTF-8 length to keep, keyed by entry id.
+    /// - Throws: ``TranscriptReconstructionError`` when a cut event holds no
+    ///   ``RepeatedPartRemovalSegment`` that decodes.
+    private static func keptUTF8Lengths(in events: [TranscriptEvent]) throws -> [String: Int] {
+        var kept: [String: Int] = [:]
+        for event in events where event.kind == .repeatedPartRemoval {
+            kept.merge(try repeatedPartRemoval(in: event).content.keptUTF8Lengths) { _, newer in newer }
+        }
+        return kept
+    }
+
+    /// The ``RepeatedPartRemovalSegment`` that `event` records.
+    ///
+    /// - Parameter event: A ``TranscriptEvent/Kind/repeatedPartRemoval`` event.
+    /// - Returns: The segment.
+    /// - Throws: ``TranscriptReconstructionError/contentRemoved(session:seq:)``
+    ///   for a stripped payload, and
+    ///   ``TranscriptReconstructionError/entryReconstructionFailed(session:seq:underlying:)``
+    ///   when the payload holds no segment that decodes.
+    private static func repeatedPartRemoval(in event: TranscriptEvent) throws -> RepeatedPartRemovalSegment {
+        let schemaName = RepeatedPartRemovalSegment.schemaName
+        guard let payload = event.entry else {
+            throw TranscriptReconstructionError.entryReconstructionFailed(
+                session: event.sessionId, seq: event.seq,
+                underlying: .missingRequiredField(entryId: "", field: schemaName))
+        }
+        guard !payload.contentRemoved else {
+            throw TranscriptReconstructionError.contentRemoved(session: event.sessionId, seq: event.seq)
+        }
+        do {
+            for segment in payload.segments ?? [] {
+                guard let structure = segment.persistedStructure,
+                    let removal = try RepeatedPartRemovalSegment(
+                        schemaName: structure.schemaName, contentJSON: structure.contentJSON, id: payload.entryId)
+                else { continue }
+                return removal
+            }
+        } catch let underlying as TranscriptEntryReconstructionError {
+            throw TranscriptReconstructionError.entryReconstructionFailed(
+                session: event.sessionId, seq: event.seq, underlying: underlying)
+        }
+        throw TranscriptReconstructionError.entryReconstructionFailed(
+            session: event.sessionId, seq: event.seq,
+            underlying: .missingRequiredField(entryId: payload.entryId, field: schemaName))
+    }
+
+    /// Rebuilds one `Transcript.Entry` for each event of `events` that
+    /// mirrors an entry, in order.
+    ///
+    /// - Parameter events: Reconstructable events, in `seq` order.
+    /// - Returns: The rebuilt entries.
+    /// - Throws: ``TranscriptReconstructionError`` for an event that does not
+    ///   rebuild.
+    private static func entries(of events: [TranscriptEvent]) throws -> [Transcript.Entry] {
         var entries: [Transcript.Entry] = []
         entries.reserveCapacity(events.count)
         for event in events {
@@ -262,6 +338,6 @@ extension TranscriptTree {
                 )
             }
         }
-        return Transcript(entries: entries)
+        return entries
     }
 }

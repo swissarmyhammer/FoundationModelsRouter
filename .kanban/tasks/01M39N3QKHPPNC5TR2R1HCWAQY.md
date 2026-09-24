@@ -140,8 +140,32 @@ comments:
 
     evidence: `swift build --build-tests` clean; `swift test` — 1387 tests total, 0 failed, 0 skipped, 2 pre-existing known issues; `IntegrationTests` `swift build --build-tests` clean.
   timestamp: 2026-09-24T14:10:24.651118+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m39w2fa12apps6kg8d1mwgzs
+  text: |-
+    ### commit — changed
+    - evidence: 9484e8c refactor(session): reuse usageDelta in the repetition watch (^1hcwaqy)
+    - next: none
+  timestamp: 2026-09-24T14:10:51.841772+00:00
+- actor: claude-code
+  id: 01m39w5xmbstce54snc8mk4dky
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 9484e8c). Counts: 0 findings, 0 confirmed, 0 refuted; 7 attempted, 0 failed. 1 file reviewed; 2 `.kanban/` files not reviewed (.reviewignore). The one prior item (`RoutedSessionActorRepetitionWatch.swift:300`, `duplication/duplication`) is checked.
+    - not counted, by the user's decision: the restore path (^gg49g5e) and the FoundationModelsACPAgent handling of the new enum cases.
+    - next: none. The task moved from review to done.
+  timestamp: 2026-09-24T14:12:44.811304+00:00
+- actor: claude-code
+  id: 01m39w6c8mymvv80vpc6sgc7e0
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 1 file; RoutedSessionActorRepetitionWatch.swift uses usageDelta; finding checked
+    - test: green — swift test, 1387 passed, 0 failed, 0 skipped; IntegrationTests builds
+    - commit: 9484e8c
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-09-24T14:12:59.796839+00:00
+position_column: done
+position_ordinal: fffffe80
 title: Stop a generate call that repeats itself, with a configurable detector and a default
 ---
 ## The measurement
