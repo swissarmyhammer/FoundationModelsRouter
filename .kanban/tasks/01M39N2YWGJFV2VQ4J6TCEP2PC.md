@@ -36,8 +36,32 @@ comments:
     - No failures and no fixes were needed. `RestoredRenderCounterTests.swift` (new for this task) ran in the suite "Restored render counter: the newest generation call, not the sum on the response stamp" and passed. A `diagnostics check working` call showed 3 stale SourceKit errors in `GenerationCallUsageTests.swift` for `turnUsageStamp` and `.endedInsideReasoning`; both symbols exist in source (`TokenBudget.swift`, `FinishReason.swift`), and a forced recompile of the three touched files (`touch` + `swift build --build-tests`) still built clean, so this was a stale LSP index, not a real error.
     - next: none. The build is clean.
   timestamp: 2026-09-24T12:50:25.296517+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m39qgbt155nyx6rrf0z1q9es
+  text: |-
+    ### commit — changed
+    - evidence: 27f2cc6 fix(recording): restore the context counter from the closing call, not the sum on the stamp (^tcep2pc)
+    - next: none
+  timestamp: 2026-09-24T12:51:04.129320+00:00
+- actor: claude-code
+  id: 01m39qrbc1z3sv48wcw9rm612h
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 27f2cc6). 8 files reviewed. 4 `.kanban/` files not reviewed (.reviewignore). counts: 0 findings, 0 confirmed, 0 refuted, 7 attempted, 0 failed, 0 skipped.
+    - decision: ACCEPTED. The card says "the newest `.generationCall` after the newest checkpoint". The implementer reads the call that closes the newest stamped `.response` after the newest checkpoint. Reason: a failed turn, or a turn that a crash stopped, records tool-open calls but no `.response`, and the live counter does not change for such a turn. The user rule from ^tpsc0nf is that the restored counter must equal the live counter at the same point. The card words do not obey that rule after a failed turn, so the deviation is correct. In the normal flow the two rules give the same call. `newestTurnRenderSize(in:)` in Recording/TranscriptReconstruction.swift does this. The three acceptance tests of the card are in RestoredRenderCounterTests.swift, with 4 more tests for the later-call and fork cases. The ^tpsc0nf decisions hold: the counter restarts at each compaction (`tokensAfter` when no stamped `.response` follows the checkpoint), and the recorded transcript is not changed.
+    - next: none. The task moves to done.
+  timestamp: 2026-09-24T12:55:25.825558+00:00
+- actor: claude-code
+  id: 01m39qrxbabcnb20ea1d7ea7p8
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 7 files; 7 new tests in RestoredRenderCounterTests.swift
+    - test: green — swift test, 1371 passed, 0 failed, 0 skipped
+    - commit: 27f2cc6
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-09-24T12:55:44.234313+00:00
+position_column: done
+position_ordinal: fffffd80
 title: A restored session must restore the context counter from the newest generation call, not from the sum on the response stamp
 ---
 ## Problem

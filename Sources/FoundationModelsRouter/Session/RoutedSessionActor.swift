@@ -198,6 +198,7 @@ func makeRoutedSessionActor(
     agentSpawn: SessionSidecar.AgentSpawn? = nil,
     discoveryPriming: DiscoveryPriming? = nil,
     toolOutputProtection: ToolOutputProtection? = nil,
+    repetitionDetection: RepetitionDetection = RepetitionDetection(),
     recordingRoot: URL? = nil,
     tokenCounter: any TokenCounter,
     tracer: (any Tracer)?
@@ -234,6 +235,7 @@ func makeRoutedSessionActor(
             agentSpawn: agentSpawn,
             discoveryPriming: discoveryPriming,
             toolOutputProtection: toolOutputProtection,
+            repetitionDetection: repetitionDetection,
             recordingRoot: recordingRoot,
             tokenCounter: tokenCounter,
             tracer: tracer
@@ -423,6 +425,16 @@ actor RoutedSessionActor: RoutedSession {
     /// cleared by ``beginTurn()`` for each new turn.
     var compactionYieldsStopped = false
 
+    /// The repetition watch of this session: the watch of the model call in
+    /// flight, its stop marker, and the recoveries of the turn in flight.
+    /// See ``runWatchedModelCall(composedPrompt:_:)``.
+    var repetitionWatch = RepetitionWatchState()
+
+    /// The settings of the repetition watch this session was vended,
+    /// forked or restored with. A fork carries it forward, and the sidecar
+    /// records it. See ``RepetitionDetection``.
+    nonisolated let repetitionDetection: RepetitionDetection
+
     /// The stall watch over the one model call in flight, or `nil` between
     /// calls. See ``beginGenerationStallWatch()`` and ``GenerationStall``.
     var generationStallWatch: GenerationStallWatch?
@@ -565,11 +577,13 @@ actor RoutedSessionActor: RoutedSession {
         agentSpawn: SessionSidecar.AgentSpawn? = nil,
         discoveryPriming: DiscoveryPriming? = nil,
         toolOutputProtection: ToolOutputProtection? = nil,
+        repetitionDetection: RepetitionDetection = RepetitionDetection(),
         recordingRoot: URL? = nil,
         tokenCounter: any TokenCounter,
         tracer: (any Tracer)?
     ) {
         self.toolOutputProtection = toolOutputProtection
+        self.repetitionDetection = repetitionDetection
         self.tokenCounter = tokenCounter
         self.profile = profile
         self.routerId = routerId
@@ -634,7 +648,8 @@ actor RoutedSessionActor: RoutedSession {
                 summarization: summarization,
                 agentSpawn: agentSpawn,
                 discoveryPriming: discoveryPriming,
-                grammar: grammar
+                grammar: grammar,
+                repetitionDetection: repetitionDetection
             ).persistable,
             to: recordingDirectory
         )

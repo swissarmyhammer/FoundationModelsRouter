@@ -926,7 +926,37 @@ struct SessionTreeRestorationTests {
         #expect(restoredRoot.autoCompactionPrompt == .default)
         #expect(restoredRoot.summarization == Summarization())
         #expect(restoredRoot.discoveryPriming == nil)
+        #expect(restoredRoot.repetitionDetection == RepetitionDetection())
         #expect(restored.configurationReport.missingTools.isEmpty)
+    }
+
+    @Test("a session made with a repetition detection keeps it in a fork and after a restore (task ^1hcwaqy)")
+    @MainActor
+    func restoredTreeReappliesRecordedRepetitionDetection() async throws {
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let detection = RepetitionDetection(isEnabled: false, windowTokens: 512, minimumLineLength: 8, recoveriesPerTurn: 1)
+        let root = profile1.standard.makeSession(configuration: SessionConfiguration(repetitionDetection: detection))
+        _ = try await root.respond(to: "hello")
+        let fork = try #require(try await root.fork(workingDirectory: nil) as? RoutedSessionActor)
+        #expect(fork.repetitionDetection == detection)
+
+        let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+
+        let restoredRoot = try #require(restored.root as? RoutedSessionActor)
+        #expect(restoredRoot.repetitionDetection == detection)
+        let restoredFork = try #require(restored.session(fork.id) as? RoutedSessionActor)
+        #expect(restoredFork.repetitionDetection == detection)
     }
 
     // MARK: - Decided restore losses (task ^xky3j8w)

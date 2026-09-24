@@ -71,7 +71,8 @@ struct CompactionYield: Sendable {
     let snapshotEntries: [Transcript.Entry]
 }
 
-/// Rebuilds the transcript of an attempt that a compaction yield stopped.
+/// Rebuilds the transcript of an attempt that a compaction yield or a
+/// repetition stop stopped.
 ///
 /// `LanguageModelSession` keeps no entry of a call that throws, and Apple
 /// does not state which entries a snapshot slice holds. So the rebuild merges
@@ -101,10 +102,36 @@ enum InFlightTranscript {
         entryIdsBeforeAttempt: Set<String>,
         composedPrompt: String
     ) -> [Transcript.Entry] {
-        let merged = merging(settledEntries, with: [yield.liveEntries, yield.snapshotEntries])
+        rebuilt(
+            settledEntries: settledEntries, sources: [yield.liveEntries, yield.snapshotEntries],
+            results: yield.results, entryIdsBeforeAttempt: entryIdsBeforeAttempt, composedPrompt: composedPrompt)
+    }
+
+    /// The transcript of a stopped attempt, whole and in order, from any
+    /// sources of its entries: the steps of
+    /// ``rebuilt(settledEntries:yield:entryIdsBeforeAttempt:composedPrompt:)``.
+    ///
+    /// A repetition stop (task ^1hcwaqy) has no tool results, and its one
+    /// source is the live transcript that its watch read last.
+    ///
+    /// - Parameters:
+    ///   - settledEntries: The backend transcript after the stop.
+    ///   - sources: The other sources of entries, in order of preference.
+    ///   - results: The tool results the rebuilt transcript ends with.
+    ///   - entryIdsBeforeAttempt: The ids of the entries from before the attempt.
+    ///   - composedPrompt: The composed prompt of the attempt.
+    /// - Returns: The rebuilt transcript entries.
+    static func rebuilt(
+        settledEntries: [Transcript.Entry],
+        sources: [[Transcript.Entry]],
+        results: [ToolResultAppend] = [],
+        entryIdsBeforeAttempt: Set<String>,
+        composedPrompt: String
+    ) -> [Transcript.Entry] {
+        let merged = merging(settledEntries, with: sources)
         let prompted = addingAttemptPrompt(
             to: merged, entryIdsBeforeAttempt: entryIdsBeforeAttempt, text: composedPrompt)
-        let paired = appendingOutputs(of: yield.results, to: prompted)
+        let paired = appendingOutputs(of: results, to: prompted)
         return removingUnansweredCalls(from: paired, entryIdsBeforeAttempt: entryIdsBeforeAttempt)
     }
 

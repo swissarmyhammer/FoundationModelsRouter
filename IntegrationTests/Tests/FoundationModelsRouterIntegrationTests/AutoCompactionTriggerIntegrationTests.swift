@@ -120,7 +120,7 @@ private let autoCompactionTriggerChatTemplateDate =
 /// No production code changed to make this suite possible, and none needed to.
 /// ``TokenBudget`` is public, its initializer takes `limit`, `trigger` and
 /// `target` as ordinary parameters, and
-/// ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:)``
+/// ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:)``
 /// takes the budget. Every knob this suite sets is one a caller outside the
 /// package can set.
 ///

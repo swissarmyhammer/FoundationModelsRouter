@@ -1,6 +1,14 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m39qs0ea2090r2c5912rpjjr
+  text: |-
+    ### finish — skipped
+    - reason: the work is in the FoundationModelsACPAgent repo, not in FoundationModelsRouter. The /finish run in this repo does not edit another repo.
+    - next: do this card in a FoundationModelsACPAgent session, or move it to that board.
+  timestamp: 2026-09-24T12:55:47.402973+00:00
 position_column: todo
 position_ordinal: '8480'
 title: 'FoundationModelsACPAgent: map FinishReason.endedInsideReasoning to a stop reason'

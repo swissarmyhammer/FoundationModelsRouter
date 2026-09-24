@@ -60,6 +60,9 @@ extension RoutedSessionActor {
         // at a ceiling stop, whatever the last turn's compaction did (see
         // ``compactionYieldsStopped``).
         compactionYieldsStopped = false
+        // Each turn has its own count of recoveries after a repetition stop
+        // (see ``RepetitionDetection/recoveriesPerTurn``).
+        repetitionWatch.recoveriesThisTurn = 0
         return TurnID(lastTurnId)
     }
 

@@ -59,6 +59,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - discoveryPriming: The pre-discovery seeding opt-in, or `nil` to leave it off.
     ///   - toolOutputProtection: The host rule whose protected tool outputs
     ///     every compaction keeps word for word, or `nil` to protect nothing.
+    ///   - repetitionDetection: The settings of the watch that stops a
+    ///     generate call that repeats itself. A value the host does not pass
+    ///     keeps its named default. See ``RepetitionDetection``.
     /// - Returns: A new ``RoutedSession`` over this model.
     public func makeSession(
         instructions: String? = nil,
@@ -70,7 +73,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         summarization: Summarization = Summarization(),
         agentSpawn: SessionSidecar.AgentSpawn? = nil,
         discoveryPriming: DiscoveryPriming? = nil,
-        toolOutputProtection: ToolOutputProtection? = nil
+        toolOutputProtection: ToolOutputProtection? = nil,
+        repetitionDetection: RepetitionDetection = RepetitionDetection()
     ) -> RoutedSession {
         makeSession(
             configuration: SessionConfiguration(
@@ -83,7 +87,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 summarization: summarization,
                 agentSpawn: agentSpawn,
                 discoveryPriming: discoveryPriming,
-                toolOutputProtection: toolOutputProtection))
+                toolOutputProtection: toolOutputProtection,
+                repetitionDetection: repetitionDetection))
     }
 
     /// Vends a new session over this resident model, configured by one
@@ -91,7 +96,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///
     /// A configuration with a ``SessionConfiguration/grammar`` vends a guided
     /// session. The precondition of
-    /// ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:)``
+    /// ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:)``
     /// applies.
     ///
     /// - Parameter configuration: The value that describes the session.
@@ -108,16 +113,20 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             summarization: configuration.summarization,
             agentSpawn: configuration.agentSpawn,
             discoveryPriming: configuration.discoveryPriming,
-            toolOutputProtection: configuration.toolOutputProtection)
+            toolOutputProtection: configuration.toolOutputProtection,
+            repetitionDetection: configuration.repetitionDetection)
     }
 
     /// The shared builder behind the plain and guided session surfaces.
     ///
     /// A non-`nil` `grammar` constrains every `respond` on the vended session
     /// and is stamped onto each recorded turn. The other parameters match
-    /// ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:)``.
+    /// ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:)``.
     ///
-    /// - Parameter grammar: The grammar that constrains the session, or `nil`.
+    /// - Parameters:
+    ///   - grammar: The grammar that constrains the session, or `nil`.
+    ///   - repetitionDetection: The settings of the repetition watch of the
+    ///     session. See ``RepetitionDetection``.
     /// - Returns: A new ``RoutedSession`` over this model.
     func makeSession(
         grammar: Grammar?,
@@ -130,7 +139,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         summarization: Summarization = Summarization(),
         agentSpawn: SessionSidecar.AgentSpawn? = nil,
         discoveryPriming: DiscoveryPriming? = nil,
-        toolOutputProtection: ToolOutputProtection? = nil
+        toolOutputProtection: ToolOutputProtection? = nil,
+        repetitionDetection: RepetitionDetection = RepetitionDetection()
     ) -> RoutedSession {
         let owningProfile = requireOwningProfile(apiName: "makeSession")
 
@@ -221,6 +231,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             agentSpawn: agentSpawn,
             discoveryPriming: discoveryPriming,
             toolOutputProtection: toolOutputProtection,
+            repetitionDetection: repetitionDetection,
             // Threaded only into the sidecar's configuration envelope (task
             // ^ne5g9jn), so the recorded configuration names the recording
             // root the session was actually vended with.

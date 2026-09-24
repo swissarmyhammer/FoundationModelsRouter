@@ -83,6 +83,8 @@ extension GenerationCallUsage: CustomStringConvertible {
             return "stopped at the token ceiling"
         case .endedInsideReasoning:
             return "ended inside the reasoning before the ceiling"
+        case .repeatedLines:
+            return "stopped by the session because it repeated its lines"
         }
     }
 

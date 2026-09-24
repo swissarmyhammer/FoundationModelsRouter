@@ -327,7 +327,9 @@ extension RoutedSessionActor {
     /// ``continueAfterCompactionYield(_:attempt:body:)``. An attempt that
     /// stopped at its output token ceiling over the trigger
     /// (``compactsAfterCeilingStop(_:)``) goes on in
-    /// ``continueAfterCeilingStop(attempt:body:)``.
+    /// ``continueAfterCeilingStop(attempt:body:)``. A model call that the
+    /// repetition watch stopped (``runWatchedModelCall(composedPrompt:_:)``)
+    /// goes on in ``continueAfterRepetitionStop(_:attempt:body:)``.
     ///
     /// - Parameters:
     ///   - grammar: The grammar in force for this turn.
@@ -399,7 +401,7 @@ extension RoutedSessionActor {
                 throw ContextBudgetError.hardCeilingExceeded(
                     fill: budget.fill(measuredTokens: measuredTokens), ceiling: hardCeiling)
             }
-            response = try await runCancellableModelCall(composedPrompt: composedPrompt, body)
+            response = try await runWatchedModelCall(composedPrompt: composedPrompt, body)
             // A turn can succeed (return a response) yet still leave the SDK's
             // transcript unchanged for some future conformer — attach-or-requeue
             // applies uniformly on both exits (see the catch branch's matching
@@ -412,6 +414,9 @@ extension RoutedSessionActor {
         } catch {
             if let yield = takeCompactionYield() {
                 return try await continueAfterCompactionYield(yield, attempt: attempt, body: body)
+            }
+            if let repetitionStop = takeRepetitionStop() {
+                return try await continueAfterRepetitionStop(repetitionStop, attempt: attempt, body: body)
             }
             await recordFailedTurn(
                 grammar: grammar, since: started, usageBefore: usageBefore,

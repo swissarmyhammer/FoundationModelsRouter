@@ -63,6 +63,12 @@ public enum SessionEvent: Sendable, Equatable {
     /// ``GenerationStall/visibility`` says what the report can claim.
     case generationStalled(GenerationStall)
 
+    /// The session stopped the generate call in flight because the call no
+    /// longer wrote new lines. The event comes before the
+    /// ``turnEnded(_:)`` of the stopped attempt, whose finish reason is
+    /// ``FinishReason/repeatedLines``. See ``RepetitionDetection``.
+    case repetitionStopped(RepetitionStop)
+
     /// A background run of this session settled: its one terminal ``OperationEvent``.
     /// Always on ``RoutedSession/streamSessionEvents()``; on the turn's stream when it settles inside a turn.
     case runSettled(OperationEvent)
@@ -192,7 +198,9 @@ public struct TokenUsage: Sendable, Equatable {
     /// ``LanguageModelSessionBackend/lastGenerationCallOutputTokenCount()``.
     /// When the backend marks the response entry as incomplete and the count
     /// does not reach the ceiling, or is not known, the session reports
-    /// ``FinishReason/endedInsideReasoning``.
+    /// ``FinishReason/endedInsideReasoning``. When the session stopped the
+    /// attempt because it no longer wrote new lines, the session reports
+    /// ``FinishReason/repeatedLines``.
     public let finishReason: FinishReason
 
     /// Creates a token usage value.

@@ -159,8 +159,8 @@ public final class SessionProjection {
             phase = .compacting
             transcript.append(
                 TranscriptEntry(id: result.id, kind: .compaction(result), sourceEntryId: result.summaryEntryId))
-        case .discoveryPrimingFailed, .generationStalled, .runSettled, .toolCallReport, .elicitationRequested,
-            .generationCall:
+        case .discoveryPrimingFailed, .generationStalled, .repetitionStopped, .runSettled, .toolCallReport,
+            .elicitationRequested, .generationCall:
             // Handled explicitly, and deliberately changes nothing. A settled
             // run's terminal reaches this mirror as the recorded tool output
             // of the turn that next carries it. A turn whose
@@ -168,7 +168,9 @@ public final class SessionProjection {
             // turn does (see ``SessionEvent/discoveryPrimingFailed(_:)``), and a
             // stall report bounds nothing at all — the turn is still running and
             // will still produce whatever it was going to produce (see
-            // ``SessionEvent/generationStalled(_:)``). A tool call report
+            // ``SessionEvent/generationStalled(_:)``). A repetition stop
+            // report comes with the recorded entries of the stopped attempt,
+            // and its ``SessionEvent/turnEnded(_:)`` names the stop. A tool call report
             // carries records for a host to decode, and the call's phase is
             // already mirrored from its ``SessionEvent/toolInvocation(_:)``
             // records. An elicitation request names a question only a host

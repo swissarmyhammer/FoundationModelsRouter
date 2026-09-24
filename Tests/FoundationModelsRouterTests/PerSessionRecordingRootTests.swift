@@ -5,7 +5,7 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises task ke41yth: a per-session recording root override
-/// (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:)``)
+/// (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:)``)
 /// and the omittable ``routerId`` path segment it unlocks.
 ///
 /// A single resident model handle vends every session under one Router-level

@@ -7,7 +7,7 @@ import Testing
 
 /// Exercises task 1334fk3: ``TokenBudget/toolOutputLimit`` and the capping it
 /// drives in Router's own tool-instancing pipeline
-/// (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:)``/
+/// (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:)``/
 /// ``RoutedSessionActor/fork(workingDirectory:)``) — ``ToolOutputCapping``'s
 /// truncation rule and dynamic wrapping, plus the wiring that threads a
 /// capped tool to the model-facing container/backend boundary exactly the

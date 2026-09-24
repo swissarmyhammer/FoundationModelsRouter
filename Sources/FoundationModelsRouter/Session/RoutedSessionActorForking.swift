@@ -98,7 +98,7 @@ extension RoutedSessionActor {
         // for this session. This site's chain is fork →
         // mount → cap (task ^k4nygqa; the root and restore sites each
         // have their own deliberately distinct chain — see
-        // ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:)``
+        // ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:)``
         // and `restoreSessionTree`). Composition order matters: a tool is
         // forked first via its own `forked()` (falling back to sharing the
         // original unchanged when it doesn't conform to `ForkableTool`),
@@ -258,6 +258,9 @@ extension RoutedSessionActor {
             // A compaction on a fork keeps what a compaction on its parent keeps: the
             // same host rule protects the same tool outputs.
             toolOutputProtection: toolOutputProtection,
+            // A fork continues its parent's conversation, so the same watch
+            // stops a call of the fork that repeats itself.
+            repetitionDetection: repetitionDetection,
             // Same model, so the same tokenizer counts for the child.
             tokenCounter: tokenCounter,
             // The parent's own tracer: a fork continues its parent's

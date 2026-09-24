@@ -183,6 +183,22 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// There is a default implementation that gives `nil`.
     func inFlightResponse() -> InFlightResponse?
 
+    /// The transcript of this backend each time it changes, from the moment
+    /// of the call, while the stream is iterated.
+    ///
+    /// The stream snapshots of `LanguageModelSession` show no reasoning while
+    /// the reasoning grows, but the observable transcript of the session does.
+    /// A session that watches a call in flight for repetition reads the
+    /// reasoning and the text here (task ^1hcwaqy). The values come from the
+    /// task that generates, so a backend must guard its transcript, as
+    /// ``transcriptEntries()`` states. Values that come faster than the reader
+    /// reads can merge into one value.
+    ///
+    /// There is a default implementation that finishes at once, with no
+    /// value. A backend with no observable transcript gives no update, and
+    /// its calls are not watched.
+    func transcriptUpdates() -> AsyncStream<[FoundationModels.Transcript.Entry]>
+
     /// Produces a new backend over the same underlying model, seeded from
     /// `transcript` instead of this backend's own history. An empty
     /// `transcript` gives a blank-slate backend.
@@ -240,6 +256,13 @@ extension LanguageModelSessionBackend {
     /// override it keeps no snapshot.
     public func inFlightResponse() -> InFlightResponse? {
         nil
+    }
+
+    /// Default ``transcriptUpdates()``: a stream that finishes at once,
+    /// because a backend that does not override it has no observable
+    /// transcript.
+    public func transcriptUpdates() -> AsyncStream<[FoundationModels.Transcript.Entry]> {
+        AsyncStream { $0.finish() }
     }
 
     /// Default ``makeFork(tools:)``: ignores `tools` and forwards to

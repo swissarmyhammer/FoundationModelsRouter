@@ -20,6 +20,8 @@ extension RoutedSessionActor {
     ///     or `nil` when it gave none.
     ///   - pendingEvents: The events this turn drained from the outbox.
     ///   - onEvent: A sink for derived ``SessionEvent``s, or `nil`.
+    ///   - stopReason: The reason of a stop that the session made itself, or
+    ///     `nil` to read the reason from the entries of the attempt.
     /// - Returns: Whether the diff included a `.response` entry, the turn's
     ///   usage delta (`nil` when unknown), whether `pendingEvents` were
     ///   attached to a persisted `.prompt` entry, and why the attempt stopped.
@@ -29,7 +31,8 @@ extension RoutedSessionActor {
         usageBefore: (input: Int, output: Int)?,
         responseTokenCeiling: Int?,
         pendingEvents: [OperationEvent],
-        onEvent: ((SessionEvent) -> Void)? = nil
+        onEvent: ((SessionEvent) -> Void)? = nil,
+        stopReason: FinishReason? = nil
     ) async -> (
         diffIncludedResponse: Bool, usage: (input: Int, output: Int)?, pendingEventsAttached: Bool,
         finishReason: FinishReason
@@ -38,10 +41,12 @@ extension RoutedSessionActor {
         // Read before the diff below, which moves the baseline past this
         // attempt's entries.
         let turnEntries = unrecordedTranscriptEntries()
-        let finishReason = FinishReason(
-            turnEntries: turnEntries, outputTokens: usage?.output,
-            lastCallOutputTokens: backend.lastGenerationCallOutputTokenCount(),
-            responseTokenCeiling: responseTokenCeiling)
+        let finishReason =
+            stopReason
+            ?? FinishReason(
+                turnEntries: turnEntries, outputTokens: usage?.output,
+                lastCallOutputTokens: backend.lastGenerationCallOutputTokenCount(),
+                responseTokenCeiling: responseTokenCeiling)
         // The last generation call of the attempt. Taken before the diff for
         // the same reason, and reported after it, so its journal event
         // follows the entries the call left.
@@ -116,6 +121,8 @@ extension RoutedSessionActor {
     ///     or `nil` when it gave none.
     ///   - pendingEvents: The events drained from ``outbox`` for this turn.
     ///   - onEvent: A sink for derived ``SessionEvent``s, or `nil`.
+    ///   - stopReason: The reason of a stop that the session made itself, or
+    ///     `nil` to read the reason from the entries of the attempt.
     /// - Returns: Whether the diff included a `.response` entry, the turn's
     ///   usage delta, and why the attempt stopped.
     func finishTurnAndRequeueIfUnattached(
@@ -124,11 +131,13 @@ extension RoutedSessionActor {
         usageBefore: (input: Int, output: Int)?,
         responseTokenCeiling: Int?,
         pendingEvents: [OperationEvent],
-        onEvent: ((SessionEvent) -> Void)? = nil
+        onEvent: ((SessionEvent) -> Void)? = nil,
+        stopReason: FinishReason? = nil
     ) async -> (diffIncludedResponse: Bool, usage: (input: Int, output: Int)?, finishReason: FinishReason) {
         let (diffIncludedResponse, usage, pendingEventsAttached, finishReason) = await finishTurn(
             grammar: grammar, since: started, usageBefore: usageBefore,
-            responseTokenCeiling: responseTokenCeiling, pendingEvents: pendingEvents, onEvent: onEvent)
+            responseTokenCeiling: responseTokenCeiling, pendingEvents: pendingEvents, onEvent: onEvent,
+            stopReason: stopReason)
         // `drainForDispatch()` already destructively removed `pendingEvents`
         // from `outbox` before `body()` ran. When this turn's diff produced no
         // `.prompt`-kind partial to attach them to — every `.ebnf`-guided
@@ -163,7 +172,7 @@ extension RoutedSessionActor {
     ///   - after: The snapshot taken after the turn returned or threw.
     /// - Returns: The turn's `(input, output)` token counts, or `nil` when
     ///   either snapshot is `nil`.
-    private static func usageDelta(
+    static func usageDelta(
         before: (input: Int, output: Int)?,
         after: (input: Int, output: Int)?
     ) -> (input: Int, output: Int)? {

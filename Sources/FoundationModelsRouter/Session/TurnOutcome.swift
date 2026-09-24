@@ -77,9 +77,11 @@ struct TurnOutcomeReducer {
             // attempt's usage with the retry's — the closing value.
             usage = attemptUsage
         case .turnStarted, .reasoningDelta, .entryRecorded, .discoveryPrimingFailed,
-            .generationStalled, .runSettled, .toolCallReport, .elicitationRequested, .generationCall:
+            .generationStalled, .repetitionStopped, .runSettled, .toolCallReport, .elicitationRequested,
+            .generationCall:
             // Deliberately not carried by the outcome: the frame, the priming
-            // report, the stall report, a background run's settlement, a
+            // report, the stall report, the repetition stop report (the
+            // stopped attempt's `turnEnded` names it), a background run's settlement, a
             // call's attachments, a pending elicitation, and one generation
             // call's usage are live-driver concerns — the closing `usage`
             // sums every generation call, a stall report says the turn is still running and

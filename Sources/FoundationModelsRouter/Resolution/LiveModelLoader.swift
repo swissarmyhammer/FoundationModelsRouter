@@ -358,6 +358,25 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
         newestSnapshot.withLock { $0 }
     }
 
+    /// Gives the transcript of ``liveSession`` each time it changes.
+    ///
+    /// `LanguageModelSession` is `Observable`, and its transcript grows while
+    /// a call is in flight, reasoning included. `Observations` reads it at
+    /// each change. The relay task ends when the reader ends the stream.
+    func transcriptUpdates() -> AsyncStream<[FoundationModels.Transcript.Entry]> {
+        let session = liveSession
+        let observations = Observations { Array(session.transcript) }
+        return AsyncStream { continuation in
+            let relay = Task {
+                for await entries in observations {
+                    continuation.yield(entries)
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in relay.cancel() }
+        }
+    }
+
     /// Records the usage of the last generation call of a generating method.
     ///
     /// `LanguageModelSession.Response.usage` and the usage of a

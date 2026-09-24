@@ -22,6 +22,15 @@ public enum FinishReason: Sendable, Equatable {
     /// session does not compact after this stop and does not send a
     /// continuation prompt, because more room does not help this output.
     case endedInsideReasoning
+
+    /// The session stopped the call because the call no longer wrote new
+    /// lines (task ^1hcwaqy).
+    ///
+    /// One window of generated tokens held no new line, so the session
+    /// cancelled the call. ``SessionEvent/repetitionStopped(_:)`` gives the
+    /// counts of the stop. The ceiling did not stop the call, so the session
+    /// does not compact for it and does not send a ceiling continuation.
+    case repeatedLines
 }
 
 extension FinishReason {

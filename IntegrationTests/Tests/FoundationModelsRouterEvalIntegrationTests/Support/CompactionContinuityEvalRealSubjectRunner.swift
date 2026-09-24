@@ -9,7 +9,7 @@ import FoundationModelsRouterTestSupport
 /// every sample's ``run(steps:finalInstruction:prompt:budget:)`` call, driving a
 /// real, full ``RoutedSession`` (task 8213x39's auto-compaction opt-in) per
 /// call. It does not use a bare `Compactor.compact` call and a one-shot
-/// session. This evaluation needs the whole session surface (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:)``,
+/// session. This evaluation needs the whole session surface (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:)``,
 /// ``RoutedSession/streamEvents(to:maxTokens:)``, and its durable recording)
 /// to drive a genuinely multi-step, auto-compacting conversation, not just
 /// one compact-then-ask call.

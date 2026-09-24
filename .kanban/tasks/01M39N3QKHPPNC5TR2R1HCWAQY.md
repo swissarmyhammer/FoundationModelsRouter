@@ -17,8 +17,72 @@ comments:
 
     Status: this approval came through a peer session, not directly from the user of this session. The user of this session must confirm it before the implementation starts.
   timestamp: 2026-09-24T12:24:27.767396+00:00
-position_column: todo
-position_ordinal: '8380'
+- actor: claude-code
+  id: 01m39qrz03ay1tjw3b3mrqjdan
+  text: |-
+    ### finish — skipped
+    - reason: the three default values (2,048 tokens, 20 characters, 2 recoveries) came through a peer session. The user of this session has not confirmed them yet. Each hard-coded limit is the user's decision.
+    - next: when the user confirms, run /finish ^1hcwaqy.
+  timestamp: 2026-09-24T12:55:45.923910+00:00
+- actor: claude-code
+  id: 01m39rs3cef9c9rdn4ajekrtac
+  text: |-
+    ### Default values — confirmed by the user (2026-09-24)
+
+    The user of this session confirmed the three values as DEFAULTS:
+    - window with no new line: 2,048 generated tokens;
+    - minimum line length that counts in the test: 20 characters;
+    - recoveries per turn: 2.
+
+    Requirement from the user: each value must be passable as an option. A host sets each value through the Router API (for example, a configuration struct next to `TokenBudget`, passed where the session is made). A value that the host does not pass uses the default. `enabled` is an option too, with default true.
+  timestamp: 2026-09-24T13:13:18.990959+00:00
+- actor: claude-code
+  id: 01m39s6k2tzz1n1a7z5td6sdy9
+  text: |-
+    ### Research — what the code shows (implement step)
+
+    - The stream snapshots of `LanguageModelSession` do NOT show the reasoning while it grows. A probe (a scripted executor that sends 5 reasoning lines, then 1 answer) gave 3 snapshots, all after the answer text. So `ResponseFragment` and `inFlightResponse()` cannot see a call that is in its reasoning.
+    - `LanguageModelSession.transcript` is `Observable`, and it grows while the call is in flight: `Observations { session.transcript }` gave one value per reasoning line (entries 2, text "line 0", "line 0 line 1", ...). This works for the `respond` path and for the stream path. So the detector reads the live transcript through observation, not through a poll interval (a poll interval would be a new constant).
+    - The engine drops the entries of a call that throws. So the stopped attempt must be rebuilt from the entries that the watch saw last, as `InFlightTranscript.rebuilt` does for a compaction yield.
+    - The recording diff is positional and checks the boundary entry. When the render changes after the record, `persistedEntryCount` and `persistedBaseline` must move to the new render, as a compaction does. Then the record keeps the full entry and no divergence marker is written.
+    - A restore rebuilds the render from the record, so a restored session gets the full reasoning entry back. This is outside the card; I will add a separate task.
+    - Line rule chosen: a line counts when its trimmed length is at least `minimumLineLength`. Only the tokens of counted lines that repeat fill the window; short lines (```, """, ")") add nothing and cannot stop a call. The render keeps the text of each watched entry up to the end of the last new line, and drops what follows (the repeated part).
+  timestamp: 2026-09-24T13:20:41.050939+00:00
+- actor: claude-code
+  id: 01m39t38d7spagq9axp3r2e69b
+  text: |-
+    ### Implementation landed (not committed)
+
+    What the code does now:
+    - `RepetitionDetection` (public, Codable, next to the session settings) has `isEnabled`, `windowTokens`, `minimumLineLength`, `recoveriesPerTurn`. Each default is a named constant: `defaultIsEnabled = true`, `defaultWindowTokens = 2_048`, `defaultMinimumLineLength = 20`, `defaultRecoveriesPerTurn = 2`. A host passes it through `SessionConfiguration.repetitionDetection` or the new last parameter `repetitionDetection:` of `RoutedModel.makeSession(...)`. A value that the host does not pass keeps its default. A fork inherits it. The sidecar records it, and a restore applies it again (an old sidecar gives the default).
+    - `LanguageModelSessionBackend.transcriptUpdates()` (default: finishes at once). The live backend reads `Observations { liveSession.transcript }`. This works on the `respond` path and on the stream path, because the stream snapshots do not show the reasoning.
+    - `RepetitionDetector` reads the reasoning and response entries of the attempt line by line. Only counted lines (trimmed length >= minimumLineLength) that repeat fill the window. A new line empties the window.
+    - When the window fills, `noteRepetition` logs one line (category `RepetitionStop`). The line gives the generated tokens, the new lines of the counted lines, the share, the tokens with no new line, and each value by name (`repetitionDetection: isEnabled = ..., windowTokens = ..., minimumLineLength = ..., recoveriesPerTurn = ...`). Then it cancels `inFlightModelCall`.
+    - `continueAfterRepetitionStop` has the shape of the ceiling-stop recovery. It emits `SessionEvent.repetitionStopped(RepetitionStop)`, rebuilds the attempt from the entries that the watch read (`InFlightTranscript.rebuilt(settledEntries:sources:...)`), and records it whole with `FinishReason.repeatedLines`. It then cuts the repeated part out of the render (`RepeatedPartRemoval`: each watched entry keeps its text up to the end of its last new line) and moves `persistedBaseline` to the render. When a recovery is left, it runs one more attempt with `repetitionStopContinuationPrompt`, up to `recoveriesPerTurn` per turn. A stop after the last recovery ends the turn.
+    - No compaction is part of this recovery: the repeated part leaves the render in its own step.
+
+    Limits of this work:
+    - A restore rebuilds the render from the record, so a restored session gives the repeated part to the model again. New task ^gg49g5e.
+    - The host FoundationModelsACPAgent switches over `SessionEvent` and `FinishReason`. It must add the new cases `.repetitionStopped` and `.repeatedLines`.
+
+    ### implement — changed
+    - evidence: new Sources/.../Session/RepetitionDetection.swift, RepetitionDetector.swift, RoutedSessionActorRepetitionWatch.swift. Changed: LiveModelLoader.swift, LanguageModelSessionBackend.swift, FinishReason.swift, SessionEvent.swift, SessionConfiguration.swift, RoutedLLM.swift, RoutedSessionActor.swift, RoutedSessionActorTurnExecution.swift, RoutedSessionActorTurnGating.swift, RoutedSessionActorRecording.swift, RoutedSessionActorForking.swift, CompactionYield.swift, SessionTreeRestoration.swift, GenerationCallUsage.swift, TurnOutcome.swift, SessionProjection.swift, Examples/MultiModelGeneration/main.swift, plus doc links. Tests added: RepetitionStopTests.swift (5 acceptance + 4 default tests), RepetitionDetectorTests.swift (6), Helpers/RepeatingReasoningModel.swift, one restore/fork test in SessionTreeRestorationTests. `swift build --build-tests`: 0 errors, 0 warnings. `swift test`: 1367 tests in 155 suites passed (2 known issues from before this work). IntegrationTests package builds.
+    - next: /review ^1hcwaqy
+  timestamp: 2026-09-24T13:36:20.391060+00:00
+- actor: claude-code
+  id: 01m39t9jvzbwe9hb3d3etnpva6
+  text: |-
+    ### test — green
+    - command: `swift build --build-tests` in the main package. Result: 0 errors, 0 warnings in this project's code.
+    - command: `swift test` in the main package. Result: 1367 tests in 155 suites pass (2 known issues, expected, not new). 1 test in 1 suite pass. 19 tests in 3 suites pass. Total: 1387 tests pass, 0 fail, 0 skip.
+    - command: `swift build --build-tests` in the `IntegrationTests` package. Result: 0 errors, 0 warnings in this project's code.
+    - The one warning in each build comes from the `mlx-swift` dependency plugin ("missing creator for mutated node"). It is not in this project's code and is not new.
+    - The new repetition-detector tests ran and passed: suite "The repetition detector reads the share of new lines" and suite "A generate call that repeats itself is stopped and recovered".
+    - Note: `sourcekit-lsp` reported stale errors for the new files (`RepetitionDetection`, `RepetitionStop`, `RoutedSessionActorRepetitionWatch`, and callers). Each named symbol exists in the source. The real Swift compiler build shows 0 errors. The LSP index had not picked up the new files. No code change was needed for this.
+    - next: none. The build is clean. No files were changed by this step.
+  timestamp: 2026-09-24T13:39:47.711374+00:00
+position_column: doing
+position_ordinal: '80'
 title: Stop a generate call that repeats itself, with a configurable detector and a default
 ---
 ## The measurement

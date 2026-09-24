@@ -60,8 +60,9 @@ let demoReplyTokenCeiling = 160
 ///
 /// The remaining cases stay silent by construction: these sessions carry no
 /// tools, no `budget:`, and no discovery priming, so the tool-lifecycle,
-/// compaction, and priming events never fire, and a stall report would only
-/// say the machine is busy.
+/// compaction, and priming events never fire, a stall report would only
+/// say the machine is busy, and the demo's short replies never fill the
+/// window of a repetition stop.
 ///
 /// - Parameters:
 ///   - session: The session to drive the turn on.
@@ -108,8 +109,8 @@ func runObservedTurn(
                 "[\(label)] turnEnded tokensIn=\(usage.tokensIn) tokensOut=\(usage.tokensOut) contextFill=\(percent)%"
             )
         case .reasoningDelta, .toolCall, .toolStatus, .toolInvocation, .toolCallReport,
-            .compaction, .discoveryPrimingFailed, .generationStalled, .runSettled, .elicitationRequested,
-            .generationCall:
+            .compaction, .discoveryPrimingFailed, .generationStalled, .repetitionStopped, .runSettled,
+            .elicitationRequested, .generationCall:
             // Silent by construction — see this function's documentation.
             break
         }

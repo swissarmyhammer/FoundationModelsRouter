@@ -48,6 +48,12 @@ public struct SessionConfiguration: Sendable {
     /// gives the tools. A fork inherits it. See ``ToolOutputProtection``.
     public var toolOutputProtection: ToolOutputProtection?
 
+    /// The settings of the detector that stops a generate call that repeats
+    /// itself. The default is on, with the named defaults of
+    /// ``RepetitionDetection``. The sidecar records it, a restore applies it
+    /// again, and a fork inherits it.
+    public var repetitionDetection: RepetitionDetection
+
     /// Creates a session configuration. Every parameter defaults to the
     /// matching default of `RoutedModel.makeSession`.
     public init(
@@ -61,7 +67,8 @@ public struct SessionConfiguration: Sendable {
         agentSpawn: SessionSidecar.AgentSpawn? = nil,
         discoveryPriming: DiscoveryPriming? = nil,
         grammar: Grammar? = nil,
-        toolOutputProtection: ToolOutputProtection? = nil
+        toolOutputProtection: ToolOutputProtection? = nil,
+        repetitionDetection: RepetitionDetection = RepetitionDetection()
     ) {
         self.instructions = instructions
         self.workingDirectory = workingDirectory
@@ -74,6 +81,7 @@ public struct SessionConfiguration: Sendable {
         self.discoveryPriming = discoveryPriming
         self.grammar = grammar
         self.toolOutputProtection = toolOutputProtection
+        self.repetitionDetection = repetitionDetection
     }
 
     /// The `Codable` slice of this configuration, persisted in the session sidecar.
@@ -90,7 +98,8 @@ public struct SessionConfiguration: Sendable {
             summarization: summarization,
             agentSpawn: agentSpawn,
             discoveryPriming: discoveryPriming,
-            grammar: grammar
+            grammar: grammar,
+            repetitionDetection: repetitionDetection
         )
     }
 
@@ -130,5 +139,9 @@ public struct SessionConfiguration: Sendable {
 
         /// The constraining grammar, or `nil`.
         let grammar: Grammar?
+
+        /// The repetition detection settings, or `nil` in a sidecar written
+        /// before the setting existed. A restore reads `nil` as the default.
+        let repetitionDetection: RepetitionDetection?
     }
 }

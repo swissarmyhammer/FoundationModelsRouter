@@ -484,6 +484,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 // Not in the envelope, because it is a closure: the rule this
                 // call's host supplied, for every node, as `tools` is.
                 toolOutputProtection: toolOutputProtection,
+                // In the envelope since task ^1hcwaqy. A sidecar written
+                // before it carries `nil` and gets the default.
+                repetitionDetection: configuration?.repetitionDetection ?? RepetitionDetection(),
                 // Not in the envelope either: the counter comes from the
                 // container the node is restored over, as a vended session
                 // takes it.
