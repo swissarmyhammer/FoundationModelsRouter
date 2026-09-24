@@ -164,6 +164,8 @@ struct MeteredToolLoopSessionFixture {
     /// - Parameters:
     ///   - calls: The usage of each generation call, in call order.
     ///   - context: The working context the profile resolves at.
+    ///   - budget: The auto-compaction opt-in of the session, or `nil` (the
+    ///     default) for manual compaction only.
     ///   - tempDirPrefix: The calling suite's name, so a leaked temp directory
     ///     is attributable.
     /// - Returns: The fixture.
@@ -171,6 +173,7 @@ struct MeteredToolLoopSessionFixture {
     static func make(
         calls: [MeteredGenerationCall],
         context: Int,
+        budget: TokenBudget? = nil,
         tempDirPrefix: String
     ) async throws -> MeteredToolLoopSessionFixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
@@ -184,7 +187,7 @@ struct MeteredToolLoopSessionFixture {
         let profile = try await router.resolve(
             profile: RouterTestFixtures.profile(context: context), reporting: ResolutionProgress())
         return MeteredToolLoopSessionFixture(
-            session: profile.standard.makeSession(tools: [tool]),
+            session: profile.standard.makeSession(tools: [tool], budget: budget),
             tool: tool,
             recorder: recorder,
             directory: directory)

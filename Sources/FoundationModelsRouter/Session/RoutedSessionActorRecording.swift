@@ -46,21 +46,32 @@ extension RoutedSessionActor {
         // the same reason, and reported after it, so its journal event
         // follows the entries the call left.
         let lastGenerationCall = takeGenerationCall(leaving: GenerationCallEntryKind(leftBy: turnEntries))
+        // The newest call of the attempt is the size of the render. Read it
+        // before the ledger closes. An open ledger with no ended call gives
+        // the delta of the attempt, which is then zero.
+        let renderedContext = generationCallLedger?.newestCall ?? usage
         closeGenerationCallLedger()
         let (diffIncludedResponse, pendingEventsAttached) = await recordTranscriptDelta(
             grammar: grammar, since: since, usage: usage, pendingEvents: pendingEvents, onEvent: onEvent)
         if let lastGenerationCall {
             await report(generationCall: lastGenerationCall)
         }
-        // Only a turn whose diff actually included a `.response`-kind entry
-        // measured the whole transcript (generation is stateless, so that
-        // turn's own delta *is* the whole transcript's size) — a turn
-        // rejected before ever touching `backend` (e.g. a guided turn whose
-        // grammar validation throws pre-flight) leaves the last known fill
-        // untouched instead of resetting it to a meaningless zero delta. See
-        // ``usageState``.
+        // The counter is the size of the render that the session sends to
+        // the model: the instructions, the latest compaction snapshot, and
+        // the messages since that snapshot (task ^tpsc0nf). Each generation
+        // call receives the whole render, so the fed and generated tokens of
+        // the newest call are that size. The delta of the attempt is not: a
+        // tool loop sends the whole render again at each call, and the delta
+        // adds each of them. A compaction restarts the counter
+        // (``runCompaction(prompt:budget:summarizers:)``).
+        //
+        // Only a turn whose diff included a `.response`-kind entry measured
+        // the render. A turn rejected before it touched `backend` (for
+        // example, a guided turn whose grammar validation throws pre-flight)
+        // keeps the last known counter, and does not set it to a meaningless
+        // zero. See ``usageState``.
         if diffIncludedResponse {
-            usageState = usage.map { .measured(input: $0.input, output: $0.output) } ?? .unknown
+            usageState = renderedContext.map { .measured(input: $0.input, output: $0.output) } ?? .unknown
         }
         // Mirrors the `tokensIn`/`tokensOut` stamping gate everywhere else in
         // this chokepoint: emitted whenever the backend could report usage at

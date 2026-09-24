@@ -99,7 +99,7 @@ struct GenerationCallUsageTests {
         #expect(fixture.tool.calledSteps == [toolName.toolStep(callIndex: 0), toolName.toolStep(callIndex: 1)])
     }
 
-    @Test("the turn-level usage stamp stays the sum of the calls")
+    @Test("the turn-level usage stamp stays the sum of the calls, and the fill is the context of the last call")
     func turnStampStaysTheSum() async throws {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -112,7 +112,11 @@ struct GenerationCallUsageTests {
         }
         #expect(usage.tokensIn == 600)
         #expect(usage.tokensOut == 150)
-        #expect(usage.contextFill == Self.fill(afterContextOf: 750))
+        // The fill is the context of the render, which the last call read and
+        // wrote to: 300 fed and 70 generated. It is not the sum of the calls
+        // (task ^tpsc0nf).
+        #expect(usage.contextFill == Self.fill(afterContextOf: 370))
+        #expect(await fixture.session.contextFill == Self.fill(afterContextOf: 370))
         let journal = await fixture.recorder.events
         let stamped = try #require(journal.last { $0.kind == .response })
         #expect(stamped.tokensIn == 600)

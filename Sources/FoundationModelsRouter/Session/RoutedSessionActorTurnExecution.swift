@@ -188,7 +188,8 @@ extension RoutedSessionActor {
     /// Writes this turn's measured token counts onto `span`.
     ///
     /// A turn whose diff carried a `.response` entry leaves ``usageState``
-    /// measured, and those two numbers are what the span reports. A turn the
+    /// measured: the fed and generated tokens of the newest generation call.
+    /// Those two numbers are what the span reports. A turn the
     /// backend could not meter leaves the state unmeasured, and the span then
     /// carries no token attribute at all rather than a guess.
     ///

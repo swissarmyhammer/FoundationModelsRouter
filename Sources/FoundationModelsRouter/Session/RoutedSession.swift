@@ -69,9 +69,12 @@ public protocol RoutedSession: Actor {
     /// ``streamResponse(to:)`` is not constrained.
     nonisolated var grammar: Grammar? { get }
 
-    /// Context fill, 0...1: the newest turn's measured `(tokensIn + tokensOut)`
-    /// against the profile's resolved working context. `0` before the first
-    /// turn. A restored session reports its last stamped `.response` usage, or
+    /// Context fill, 0...1: the size of the render that the session sends to
+    /// the model, against the profile's resolved working context. The size is
+    /// the fed and generated tokens of the newest generation call, not the sum
+    /// of the calls of a tool loop. A compaction restarts it from the
+    /// instructions and the new snapshot. `0` before the first turn. A restored
+    /// session reports its last stamped `.response` usage, or
     /// ``unknownContextFill`` when there is no stamp.
     var contextFill: Double { get async }
 
@@ -143,8 +146,11 @@ public protocol RoutedSession: Actor {
     /// | `model.ref` | The model the turn ran on, in canonical string form. |
     /// | `turn.id` | The turn's own id, unique inside this session. |
     /// | `turn.entry_point` | `respond` for this surface. |
-    /// | `tokens.in` | The turn's measured input tokens, on a metered turn. |
-    /// | `tokens.out` | The turn's measured output tokens, on a metered turn. |
+    /// | `tokens.in` | The fed tokens of the newest generation call of the turn, on a metered turn. |
+    /// | `tokens.out` | The generated tokens of the newest generation call of the turn, on a metered turn. |
+    ///
+    /// The two token attributes are the context counter of the session (see
+    /// ``contextFill``), not the sum of the generation calls of a tool loop.
     ///
     /// A turn the backend could not meter carries neither token attribute. No
     /// prompt text and no response text ever reaches the span: a span leaves

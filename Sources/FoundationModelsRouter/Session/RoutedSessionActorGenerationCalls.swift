@@ -17,6 +17,15 @@ struct GenerationCallLedger {
     /// The usage of the calls reported so far, summed.
     var reported: (input: Int, output: Int) = (0, 0)
 
+    /// The usage of the newest call that ended, or `nil` before one ended.
+    ///
+    /// Its fed tokens are the whole render that the session sent to the model
+    /// for that call. Its generated tokens are what the call added to that
+    /// render. So the two together are the size of the render after the call.
+    /// A tool loop sends the whole render again at each call, so the sum of
+    /// the calls is not a size of the render (task ^tpsc0nf).
+    var newestCall: (input: Int, output: Int)?
+
     /// The usage of the call that ended since the last report.
     ///
     /// - Parameter usageAfter: The cumulative usage of the backend now.
@@ -99,6 +108,7 @@ extension RoutedSessionActor {
             return nil
         }
         generationCallLedger?.reported = (ledger.reported.input + call.input, ledger.reported.output + call.output)
+        generationCallLedger?.newestCall = call
         toolResultWatch.noteEndedCall(tokens: call.input + call.output)
         let finishReason = FinishReason(
             turnEntries: unrecordedTranscriptEntries(), outputTokens: call.output,

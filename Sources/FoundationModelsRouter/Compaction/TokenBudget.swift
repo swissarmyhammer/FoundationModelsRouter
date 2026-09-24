@@ -95,7 +95,9 @@ enum ContextUsageState: Sendable, Equatable {
     /// No turn has completed and no persisted stamp was found.
     case none
 
-    /// The most recently measured usage.
+    /// The most recently measured size of the render: the fed and generated
+    /// tokens of the newest generation call, or the size of a new compaction
+    /// snapshot.
     case measured(input: Int, output: Int)
 
     /// Restored with no stamped `.response` event. Reports ``unknownContextFill``.

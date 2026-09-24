@@ -473,9 +473,16 @@ actor RoutedSessionActor: RoutedSession {
     /// its numerator by.
     nonisolated let contextTokens: Int
 
-    /// The state ``contextFill`` derives its numerator from. See
-    /// ``ContextUsageState``. ``finishTurn(grammar:since:usageBefore:responseTokenCeiling:pendingEvents:onEvent:)``
-    /// updates it only when the turn's diff included a `.response` entry.
+    /// The context token counter of the session: the size of the render that
+    /// the session sends to the model (the instructions, the latest compaction
+    /// snapshot, and the messages since that snapshot). ``contextFill`` derives
+    /// its numerator from it. See ``ContextUsageState``.
+    ///
+    /// ``finishTurn(grammar:since:usageBefore:responseTokenCeiling:pendingEvents:onEvent:)``
+    /// sets it to the fed and generated tokens of the newest generation call of
+    /// the attempt, never to the sum of the calls, and only when the turn's diff
+    /// included a `.response` entry. A compaction restarts it from the
+    /// instructions and the new snapshot (task ^tpsc0nf).
     var usageState: ContextUsageState
 
     /// The auto-compaction opt-in, or `nil` for manual-only compaction. When
