@@ -72,10 +72,26 @@ comments:
     - note: the `files` edit op did one replacement even with `replace_all: true`; check the count after each edit.
     - next: /review
   timestamp: 2026-09-25T17:01:29.712257+00:00
+- actor: claude-code
+  id: 01m3crp19dd5nr2hv92wxbrn6y
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (121107f). 0 findings, 0 confirmed, 0 refuted. 8 files reviewed. The prior finding at `SharedGenerationQueueContentionTests.swift:47` (reuse: `PassProbe` duplicated `Fixture`) is checked. The commit replaces the two fixtures with one shared `Helpers/PassObservingFixture.swift`. The rules that declined an item named `Helpers/ToolLoopPassModel.swift`. This commit deletes that file.
+    - next: The task is in done. No work remains.
+  timestamp: 2026-09-25T17:09:21.837525+00:00
+- actor: claude-code
+  id: 01m3crshfdg06ev0xbvvr54y7c
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 8 test files (one shared PassObservingFixture; ToolLoopPassModel removed)
+    - test: green — swift test, 1419 passed (1398+2+19), 0 failed, 0 skipped; touched suites 3 extra runs clean; IntegrationTests build clean
+    - commit: 121107f
+    - review: clean — 0 findings
+  timestamp: 2026-09-25T17:11:16.717838+00:00
 depends_on:
 - 01M39ZNAJWMVZ291SCH8CSJ2HW
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffff8480
 title: Stop holding the generation gate for the whole turn; make a turn that waits for the GPU cancellable
 ---
 ## Why
