@@ -18,7 +18,7 @@ title: 'R2: key the prompt cache by the Router session id, and release it when t
 ---
 ## Why
 
-Now the fork keys the cache by `(modelID, id of the first transcript entry)` (`sessionCacheKey(for:modelID:)` in the fork's `MLXLanguageModel.swift`). Results:
+Without a scope, the fork keys the cache by `(modelID, id of the first transcript entry)`. Results:
 
 - A fork has the first entry of its parent, so the two share one key and take the one entry from each other.
 - A compaction or repetition rebuild that drops the first entry orphans the old key.
@@ -26,30 +26,33 @@ Now the fork keys the cache by `(modelID, id of the first transcript entry)` (`s
 
 Decision (accepted by the FoundationModelsAgents and mlx-swift-lm sessions, 2026-09-24): the Router gives each session its own key through the fork's task-local, and releases it on close. No count of holders is necessary. Design: `generation-queue.md`, sections 2 and 3.
 
-## External dependencies (tag `needs-fork`)
+## Fork dependency (done)
 
-Fork tasks on the mlx-swift-lm board: ^2mk47nr (the task-local key) and ^zcys2qw (the release). Do not start until both are merged on the fork's `stable` branch. Then remove the `needs-fork` tag.
+Fork tasks ^2mk47nr (the task-local key) and ^zcys2qw (the release) are merged on the fork's `stable` branch at `ffac55d` (2026-09-25).
 
 ## Fork API this task uses
 
+Verified against `MLXLanguageModel.swift` and `MLXLanguageModel+PromptCacheScope.swift` at `ffac55d`:
+
 ```swift
-public enum PromptCacheScope: Sendable, Hashable { case session(String); case none }
+public enum PromptCacheScope: Sendable, Hashable { case session(String); case uncached }
 @TaskLocal public static var promptCacheScope: PromptCacheScope?   // nil = first-entry-id rule
 public func releasePromptCache(sessionID: String) async            // memory + spilling + disk; no-op if unknown
 ```
 
 ## What to do
 
-1. Bump the fork pin in the root package and in `IntegrationTests` (`swift package update mlx-swift-lm` in both; write the resolved revision in a comment). Skip this step if R1 ^tv2yt7s already moved the pin to a revision that has both fork tasks.
-2. In the executor `respond` of the per-session queued wrapper (^8csj2hw), bind `MLXLanguageModel.$promptCacheScope` to `.session(<the session ULID>)` around the call of the inner executor, on the same task. LIMIT (verified by the mlx session): the binding reaches the fork's executor only when the host calls `Executor.respond` directly on the same task. A binding made on the session actor, above `LanguageModelSession`, does not reach it, because the SDK can run the executor on another task.
-3. The per-session wrapper state of ^8csj2hw thus carries the session ULID. A fork gets the ULID of the fork, not of its parent.
-4. `RoutedSessionActor.close()` (`Session/RoutedSessionActorForking.swift`) calls `releasePromptCache(sessionID:)` with the same ULID string. Put the call BEFORE the `guard !terminalEvents.isEmpty else { return }` early return, or the release is skipped for most sessions.
-5. A session that is dropped without `close()` is still limited: the fork's byte LRU and disk budget remove it later. Write this in the doc comment of `close()`.
+1. Bump the fork pin to `ffac55d` or later in the root package and in `IntegrationTests` (`swift package update mlx-swift-lm` in both; write the resolved revision in a comment). Skip this step if R1 ^tv2yt7s already moved the pin to `ffac55d` or later.
+2. In the executor `respond` of the per-session queued wrapper (^8csj2hw), bind `MLXLanguageModel.$promptCacheScope` to `.session(<the session ULID>)` around the call of the inner executor, on the same task, on every pass. LIMIT (verified by the mlx session): the binding reaches the fork's executor only when the host calls `Executor.respond` directly on the same task. A binding made on the session actor, above `LanguageModelSession`, does not reach it, because the SDK can run the executor on another task.
+3. The per-session wrapper state of ^8csj2hw thus carries the session ULID. A fork gets the ULID of the fork, not of its parent. Thus a fork has its own key, and no count of holders is necessary.
+4. `RoutedSessionActor.close()` (`Session/RoutedSessionActorForking.swift`) calls `releasePromptCache(sessionID:)` with the same ULID string, on each model that the session used. Put the call BEFORE the `guard !terminalEvents.isEmpty else { return }` early return, or the release is skipped for most sessions.
+5. A compaction that drops the first entry keeps the key, because the key is the session ULID. There is nothing to release on a compaction.
+6. A session that is dropped without `close()` is still limited: the fork's byte LRU and disk budget remove it later. Write this in the doc comment of `close()`.
 
 ## Acceptance Criteria
 
 - [ ] A fork and its parent use two different keys (test with a model that records the key of each pass).
-- [ ] A closed session releases its key. The close of a fork does not release the key of its open parent.
+- [ ] A closed session releases its key on each model it used. The close of a fork does not release the key of its open parent.
 - [ ] A compaction keeps the key of the session (no new key in the store).
 - [ ] A session closed with no mailbox events still releases its key.
-- [ ] `secondTurnReusesFirstTurnsKVCache` (`IntegrationTests/.../LanguageModelSessionBackendTests.swift`) stays green. #generation-queue #prompt-cache #needs-fork
+- [ ] `secondTurnReusesFirstTurnsKVCache` (`IntegrationTests/.../LanguageModelSessionBackendTests.swift`) stays green. #generation-queue #prompt-cache
