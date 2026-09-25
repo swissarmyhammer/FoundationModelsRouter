@@ -84,10 +84,26 @@ comments:
     - evidence: 2 files — Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift, Tests/FoundationModelsRouterTests/GenerationQueueTests.swift. `swift test` at root: 1396 tests in 159 suites passed (2 known issues), plus 2 and 19 tests in the other test bundles; `--filter GenerationQueueTests`: 6 tests passed; `swift build --build-tests` in IntegrationTests/: Build complete (178.57 sec, recompiled). 3 of 3 findings checked.
     - next: review
   timestamp: 2026-09-25T14:31:14.747489+00:00
+- actor: claude-code
+  id: 01m3chrqshpb7bfzjaqzzx7hd8
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 8b8a5e1) gave 0 findings (0 confirmed, 0 refuted, 7 attempted, 0 failed). The engine reviewed 2 files. It did not review 2 files in `.kanban/` because of `.reviewignore`. The 3 prior findings are all checked, and the code resolves them. The two convenience `init` methods in `LiveModelLoader.swift` now call one private designated `init`. That `init` makes the `QueuedLanguageModel` wrapper and receives a `makeSession` closure. The tautological assertion is removed from `GenerationQueueTests.swift`.
+    - next: The task is in done. The blocked tasks ^93kjn94 and ^cc2tezn can start.
+  timestamp: 2026-09-25T15:08:30.385032+00:00
+- actor: claude-code
+  id: 01m3chw1fjmrkwgj6kp5bth4te
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 2 files (one designated init builds the queued wrapper; tautology removed)
+    - test: green — swift test, 1417 passed (1396+2+19), 0 failed, 0 skipped; concurrency suites 3 extra runs clean; IntegrationTests build clean
+    - commit: 8b8a5e1
+    - review: clean — 0 findings
+  timestamp: 2026-09-25T15:10:18.610731+00:00
 depends_on:
 - 01M39ZMNME683Y75PX48NQKTEN
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffff8380
 title: Add the per-model generation queue at the executor seam and move Recording to its own lock
 ---
 ## Why
