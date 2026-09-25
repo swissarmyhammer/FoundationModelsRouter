@@ -120,10 +120,8 @@ struct ContextBindingTool<
             let outcome: Result<Output, any Error>
             do {
                 outcome = .success(
-                    try await withGenerationLent(across: .toolCall) {
-                        try await ToolContext.$current.withValue(context) {
-                            try await wrapped.call(arguments: arguments)
-                        }
+                    try await ToolContext.$current.withValue(context) {
+                        try await wrapped.call(arguments: arguments)
                     })
             } catch {
                 outcome = .failure(error)

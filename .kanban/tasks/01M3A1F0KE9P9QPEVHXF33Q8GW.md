@@ -6,6 +6,10 @@ comments:
   id: 01m3a3nymrdd81rbzjcytnee5w
   text: 'Consumer note from FoundationModelsACPAgent (2026-09-24, user decision): the Router agent works only in the Router. Do NOT edit ../FoundationModelsACPAgent in this change set. The ACP agent adopts the rename on its own board (card ^tz867gz there). Step 5 still applies to the other consumers unless their boards say the same. Please write the final event choice (a) or (b) and the new names in a comment here: the ACP card reads them.'
   timestamp: 2026-09-24T16:23:50.168869+00:00
+- actor: claude-code
+  id: 01m3cw3692jndf9sgkvnnq9ffg
+  text: '2026-09-25, from the user (answer to a question during ^44y6ba4): "i just wanted you to eliminate this ''turn'' concept as i think it is confusing". Remove the word "turn" from the Router API, events, errors and code names (for example `sameSessionTurnInFlight`, `forkDuringSameSessionTurn`, `turnLock`, `SessionEvent` turn cases). Decide the new names yourself; the user does not want to choose API names. Write each rename on this task.'
+  timestamp: 2026-09-25T18:08:58.658139+00:00
 depends_on:
 - 01M39ZP766H4S63AR4R44Y6BA4
 position_column: todo

@@ -93,10 +93,6 @@ struct RunToCompletionRunner<
             mountTimeout: timeout
         )
         await run.open()
-        // The model is suspended on this call, so the call is marked as a
-        // tool call of the turn (see ``GenerationPermitLoan``).
-        return await withGenerationLent(across: .toolCall) {
-            await run.execute(arguments: arguments)
-        }
+        return await run.execute(arguments: arguments)
     }
 }

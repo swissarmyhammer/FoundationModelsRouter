@@ -57,20 +57,22 @@ extension RoutedSessionActor {
         return TurnID(lastTurnId)
     }
 
-    /// Refuses a turn asked for from inside a tool of this session's own turn.
+    /// Refuses a turn asked for from a task of a model call of this session:
+    /// a tool of this session's own turn, or a background run that such a
+    /// tool started. See ``ModelCallMark``.
     ///
     /// - Throws: ``SessionReentryError/sameSessionTurnInFlight(sessionID:)``.
     private func refuseReentryOntoThisSession() throws {
-        guard let loan = GenerationPermitLoan.current, loan.sessionID == id else { return }
+        guard let mark = ModelCallMark.current, mark.sessionID == id else { return }
         throw SessionReentryError.sameSessionTurnInFlight(sessionID: id)
     }
 
     /// Whether this call arrived from inside a tool call of this session's own
-    /// turn, which holds ``turnLock``. Every site that would take the lock
-    /// asks this first. See
-    /// ``GenerationPermitLoan/isSuspendedInToolCall(ofSession:)``.
+    /// turn, which holds ``turnLock``: a task of the open model call of this
+    /// session. Every site that would take the lock asks this first. See
+    /// ``ModelCallMark/isOpenModelCall(of:)``.
     nonisolated var isInsideOwnTurnToolCall: Bool {
-        GenerationPermitLoan.current?.isSuspendedInToolCall(ofSession: id) ?? false
+        ModelCallMark.current?.isOpenModelCall(of: id) ?? false
     }
 
     /// Releases the ``turnLock`` that ``beginTurn()`` took. Synchronous, so it

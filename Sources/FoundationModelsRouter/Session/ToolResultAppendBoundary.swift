@@ -72,8 +72,8 @@ struct ToolResultAppend: Sendable {
 /// flight, so the session checks the compaction trigger there (see
 /// ``RoutedSessionActor/noteToolResult(_:)``).
 ///
-/// A task-local reaches `Tool.call`: the re-entry refusal of
-/// ``GenerationPermitLoan`` depends on the same fact.
+/// A task-local reaches `Tool.call`: the re-entry refusal that reads
+/// ``ModelCallMark`` depends on the same fact.
 final class ToolResultAppendBoundary: Sendable {
     /// The boundary of the model call that the current task runs in, or
     /// `nil` outside a model call.

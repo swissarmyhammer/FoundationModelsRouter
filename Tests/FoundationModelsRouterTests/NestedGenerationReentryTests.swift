@@ -843,37 +843,48 @@ struct NestedGenerationReentryTests {
         withExtendedLifetime(harness) {}
     }
 
-    // MARK: - The loan itself
+    // MARK: - The model-call mark itself
 
-    @Test("a tool-call window marks its own session as suspended in a tool call, and no other session")
-    func aToolCallWindowMarksItsOwnSessionOnly() async {
+    @Test("a model-call mark names its own session, and no other, until the call closes it")
+    func aModelCallMarkNamesItsOwnSessionUntilItCloses() {
         let sessionID = ULID.generate()
-        let loan = GenerationPermitLoan(sessionID: sessionID)
-        #expect(!loan.isSuspendedInToolCall(ofSession: sessionID))
+        let mark = ModelCallMark(sessionID: sessionID)
 
-        await GenerationPermitLoan.$current.withValue(loan) {
-            await withGenerationLent(across: .toolCall) {
-                #expect(loan.isSuspendedInToolCall(ofSession: sessionID))
-                #expect(!loan.isSuspendedInToolCall(ofSession: ULID.generate()))
-            }
-        }
-        #expect(!loan.isSuspendedInToolCall(ofSession: sessionID))
+        #expect(mark.isOpenModelCall(of: sessionID))
+        #expect(!mark.isOpenModelCall(of: ULID.generate()))
+
+        // The model call returns and closes its mark. A task that outlives the
+        // call, and still carries the mark, is then in no model call.
+        mark.close()
+        #expect(!mark.isOpenModelCall(of: sessionID))
     }
 
-    @Test("a closed mark reports no tool call, whatever window is still open on it")
-    func aClosedMarkReportsNoToolCall() async {
+    @Test("a background run keeps the session of the model call that started it, but is in no model call")
+    func aBackgroundRunKeepsTheSessionButIsInNoModelCall() async throws {
         let sessionID = ULID.generate()
-        let loan = GenerationPermitLoan(sessionID: sessionID)
+        let mark = ModelCallMark(sessionID: sessionID)
 
-        // The turn's model call returns — and closes its mark — while a tool
-        // call window is still open on it.
-        await GenerationPermitLoan.$current.withValue(loan) {
-            await withGenerationLent(across: .toolCall) {
-                loan.close()
-                #expect(!loan.isSuspendedInToolCall(ofSession: sessionID))
+        let seen = await ModelCallMark.$current.withValue(mark) {
+            await ModelCallMark.withBackgroundRunMark {
+                ModelCallMark.current.map { ($0.sessionID, $0.isOpenModelCall(of: sessionID)) }
             }
         }
-        #expect(!loan.isSuspendedInToolCall(ofSession: sessionID))
+
+        // The session stays, so the run is refused a turn of that session. The
+        // run is no tool call the model is suspended in, so it reads and forks
+        // that session under the turn lock.
+        let (runSessionID, runIsInTheCall) = try #require(seen)
+        #expect(runSessionID == sessionID)
+        #expect(!runIsInTheCall)
+        // The background run leaves the model call that started it open.
+        #expect(mark.isOpenModelCall(of: sessionID))
+    }
+
+    @Test("a background run started outside any model call carries no mark")
+    func aBackgroundRunOutsideAModelCallCarriesNoMark() async {
+        let seen = await ModelCallMark.withBackgroundRunMark { ModelCallMark.current }
+
+        #expect(seen == nil)
     }
 
     // MARK: - A turn that waits for a queue place

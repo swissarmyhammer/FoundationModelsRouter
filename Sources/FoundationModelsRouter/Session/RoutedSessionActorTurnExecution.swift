@@ -626,11 +626,11 @@ extension RoutedSessionActor {
         // The mark of this model call, published for exactly this call. A tool
         // the model invokes from inside the call reads it, so a turn or a fork
         // that tool asks of this same session is refused rather than parked on
-        // the turn lock this turn holds. Closed in the `defer` below, so a run
-        // that went to the background and outlived the call is not in a tool
-        // call of this turn. See ``GenerationPermitLoan``.
-        let permitLoan = GenerationPermitLoan(sessionID: id)
-        defer { permitLoan.close() }
+        // the turn lock this turn holds. Closed in the `defer` below, so a task
+        // that outlives the call is in no model call of this session. See
+        // ``ModelCallMark``.
+        let modelCallMark = ModelCallMark(sessionID: id)
+        defer { modelCallMark.close() }
         // The stall watch (task ^z6xcmnh), opened before the call and closed
         // by its own `defer`. It bounds nothing: the watchdog only reports a
         // ``GenerationStall`` on each interval the call goes without observable
@@ -653,7 +653,7 @@ extension RoutedSessionActor {
         // the model reads next goes through it (see ``noteToolResult(_:)``).
         let resultBoundary = ToolResultAppendBoundary(session: self)
         let modelCall = Task {
-            try await GenerationPermitLoan.$current.withValue(permitLoan) {
+            try await ModelCallMark.$current.withValue(modelCallMark) {
                 try await ToolResultAppendBoundary.$current.withValue(resultBoundary) {
                     try await ToolContext.$current.withValue(turnContext) {
                         try await body(composedPrompt)

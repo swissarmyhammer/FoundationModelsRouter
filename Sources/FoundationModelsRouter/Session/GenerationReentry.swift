@@ -38,109 +38,82 @@ enum SessionReentryError: Error, Equatable, LocalizedError {
     }
 }
 
-/// The mark of one model call of a turn in flight, published to that model
+/// The mark of one model call of a session, published to the tasks of that
 /// call as a task local.
 ///
 /// A turn holds no generation place outside its passes, so the mark lends
 /// nothing. It says which session the model call belongs to, and whether that
-/// call is suspended in a tool call. ``RoutedSessionActor`` reads it to refuse
-/// a turn or a fork that a tool asks of the same session, whose turn holds
-/// ``RoutedSessionActor/turnLock``, and to serve a transcript read from inside
-/// that tool call without the lock.
+/// call is still open. The model is suspended in a tool call whenever a tool
+/// body runs in the call, so "in the open model call of this session" is "in a
+/// tool call of this session's own turn". ``RoutedSessionActor`` reads the
+/// mark to refuse a turn or a fork that a tool asks of the same session, whose
+/// turn holds ``RoutedSessionActor/turnLock``, and to serve a transcript read
+/// from inside that tool call without the lock.
 ///
-/// A ``Window/toolCall`` is the in-band await the model is suspended on, and
-/// ``withGenerationLent(across:_:)`` opens it. Once the model call returns,
-/// the mark is closed (``close()``), so a run that outlives the call is not in
-/// a tool call of the turn. Task ^44y6ba4 replaces this type with a lighter
-/// task local.
-final class GenerationPermitLoan: Sendable {
-    /// The mark bound to the current task, or `nil` outside any turn's model
-    /// call. A task that inherits no task-locals does not see it.
-    @TaskLocal static var current: GenerationPermitLoan?
-
-    /// The kind of window a turn opens on its mark.
-    enum Window: Sendable {
-        /// An in-band tool call the turn is awaiting: the model is suspended.
-        case toolCall
-    }
+/// ``RoutedSessionActor/runCancellableModelCall(composedPrompt:_:)`` binds
+/// one mark around each model call, and closes it (``close()``) when the call
+/// returns. A task that outlives the call is then in no model call. A declared
+/// background run gets a closed mark of the same session
+/// (``withBackgroundRunMark(_:)``): it runs beside the call, not in it.
+final class ModelCallMark: Sendable {
+    /// The mark bound to the current task, or `nil` outside any model call. A
+    /// task that inherits no task-locals does not see it.
+    @TaskLocal static var current: ModelCallMark?
 
     /// The identity of the session whose model call this is.
     let sessionID: ULID
 
-    /// State that can change while the model call runs, guarded as a unit.
-    private struct State {
-        /// How many tool calls the turn is awaiting.
-        var toolCallDepth = 0
+    /// Whether the model call is still in flight.
+    private let isOpen: Atomic<Bool>
 
-        /// Whether the mark has been closed.
-        var isClosed = false
-    }
-
-    /// The state, behind the lock that the tasks of the model call share.
-    private let state = Mutex(State())
-
-    /// Creates the mark for one model call.
+    /// Creates the mark of one model call. The mark is open.
     ///
     /// - Parameter sessionID: The identity of the session whose model call
     ///   this is.
     init(sessionID: ULID) {
         self.sessionID = sessionID
+        isOpen = Atomic(true)
     }
 
-    /// Whether the turn belongs to `sessionID` and is suspended in a tool
-    /// call.
+    /// Creates a closed mark of the session that `call` belongs to.
+    ///
+    /// - Parameter call: The mark of the model call a background run started
+    ///   from.
+    private init(backgroundRunOf call: ModelCallMark) {
+        sessionID = call.sessionID
+        isOpen = Atomic(false)
+    }
+
+    /// Whether this is the mark of a model call of `sessionID` that is still
+    /// in flight.
     ///
     /// - Parameter sessionID: The session the caller asks about.
-    /// - Returns: `true` when this mark's turn is that session's own and is
-    ///   awaiting a tool call.
-    func isSuspendedInToolCall(ofSession sessionID: ULID) -> Bool {
-        guard sessionID == self.sessionID else { return false }
-        return state.withLock { !$0.isClosed && $0.toolCallDepth > 0 }
+    /// - Returns: `true` when the model call belongs to that session and has
+    ///   not returned.
+    func isOpenModelCall(of sessionID: ULID) -> Bool {
+        sessionID == self.sessionID && isOpen.load(ordering: .acquiring)
     }
 
-    /// Records that the turn has opened one more `window`.
-    ///
-    /// - Parameter window: The kind of window that opened.
-    func enter(_ window: Window) {
-        switch window {
-        case .toolCall: state.withLock { $0.toolCallDepth += 1 }
-        }
-    }
-
-    /// Records that one `window` the turn had open has closed.
-    ///
-    /// - Parameter window: The kind of window that closed.
-    func leave(_ window: Window) {
-        switch window {
-        case .toolCall: state.withLock { $0.toolCallDepth -= 1 }
-        }
-    }
-
-    /// Ends the mark, so nothing that outlives the model call is in a tool
-    /// call of the turn.
+    /// Ends the mark, so nothing that outlives the model call is in that call.
     func close() {
-        state.withLock { $0.isClosed = true }
+        isOpen.store(false, ordering: .releasing)
     }
-}
 
-/// Runs `body` inside a `window` of the enclosing model call's mark. Outside
-/// any model call there is no mark, and `body` simply runs.
-///
-/// No generation place is lent across `body`: the turn holds none while its
-/// tool runs. The name stays until task ^44y6ba4 replaces the mark.
-///
-/// - Parameters:
-///   - window: The kind of window `body` runs inside.
-///   - body: The work the window is open across.
-/// - Returns: Whatever `body` returns.
-/// - Throws: Rethrows any error thrown by `body`.
-func withGenerationLent<T>(
-    across window: GenerationPermitLoan.Window, _ body: () async throws -> T
-) async rethrows -> T {
-    guard let loan = GenerationPermitLoan.current else {
-        return try await body()
+    /// Runs `body`, the body of a declared background run, under a closed mark
+    /// of the session whose model call started the run. Outside any model call
+    /// there is no mark, and `body` runs with none.
+    ///
+    /// The run keeps the session, so a turn it asks of that session is refused
+    /// with a clear error: the turn that started the run can still hold the
+    /// turn lock, and a turn parked on it would stall without a sound. The run is no tool call the model is
+    /// suspended in, so a transcript read or a fork of that session waits for
+    /// the turn lock.
+    ///
+    /// - Parameter body: The work of the background run.
+    /// - Returns: Whatever `body` returns.
+    static func withBackgroundRunMark<T>(_ body: () async -> T) async -> T {
+        await $current.withValue(current.map(ModelCallMark.init(backgroundRunOf:))) {
+            await body()
+        }
     }
-    loan.enter(window)
-    defer { loan.leave(window) }
-    return try await body()
 }

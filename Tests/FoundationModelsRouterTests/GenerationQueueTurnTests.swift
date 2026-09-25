@@ -15,6 +15,9 @@ import Testing
 /// holds no place. The cancellation of a turn whose pass waits for a place is
 /// held by `NestedGenerationReentryTests`.
 ///
+/// Task ^44y6ba4 removed the permit loan: a tool body, a nested turn and a
+/// background run hold nothing, so each generates through the queue alone.
+///
 /// No wait here is a bare `await` on a turn that can stay suspended. Each turn
 /// signals a semaphore when it ends, and the test observes that signal under
 /// the bound of ``BoundedWait``. A test then opens every latch and releases
@@ -41,11 +44,51 @@ struct GenerationQueueTurnTests {
         }
     }
 
+    /// A tool whose body asks a child session for a whole turn and answers
+    /// with the answer of the child: the shape of an agent tool.
+    private struct ChildTurnTool: Tool {
+        let name = "child_turn_tool"
+        let description = "asks a child session for a turn, and answers with its answer"
+
+        /// The session the body asks for a turn.
+        let child: any RoutedSession
+
+        func call(arguments: MountArguments) async throws -> String {
+            try await child.respond(to: GenerationQueueTurnTests.secondPrompt)
+        }
+    }
+
+    /// A declared background tool whose body waits on a latch, and then asks
+    /// a child session for a whole turn.
+    private struct BackgroundChildTurnTool: Tool, BackgroundTool {
+        let name = "background_child_turn_tool"
+        let description = "in the background, waits for its latch, then asks a child session for a turn"
+
+        /// The session the body asks for a turn.
+        let child: any RoutedSession
+
+        /// The latch the body waits on before it asks for the turn.
+        let start: RunLatch
+
+        /// Every call goes to the background at once.
+        var mount: ToolMount? { ToolMount(mode: .background) }
+
+        func call(arguments: MountArguments) async throws -> String {
+            await start.waitUntilOpen()
+            return try await child.respond(to: GenerationQueueTurnTests.secondPrompt)
+        }
+    }
+
     /// The prompt of the first session of a test.
     private static let firstPrompt = "a"
 
     /// The prompt of the second session of a test.
     private static let secondPrompt = "b"
+
+    /// The upper bound a background run is allowed before it settles. The run
+    /// makes one stubbed pass, so only a real stall reaches it, and the bound
+    /// makes such a stall fail the test instead of hanging it.
+    private static let runSettlementSeconds: TimeInterval = 30
 
     /// How many passes of one turn call a tool in the alternation test.
     private static let alternatingToolRounds = 3
@@ -67,6 +110,20 @@ struct GenerationQueueTurnTests {
         Task {
             defer { finished.signal() }
             return try await turn()
+        }
+    }
+
+    /// The text of each response in the transcript of `session`, in order.
+    ///
+    /// - Parameter session: The session to read. No turn of it may be in
+    ///   flight, so the read does not wait.
+    /// - Returns: The response texts.
+    private static func responseTexts(of session: any RoutedSession) async -> [String] {
+        Array(await session.transcript).compactMap { entry in
+            if case .response(let response) = entry {
+                return WatchedText.text(of: response.segments)
+            }
+            return nil
         }
     }
 
@@ -158,6 +215,80 @@ struct GenerationQueueTurnTests {
         #expect(await BoundedWait.signalArrived(firstFinished, named: "the end of the first loop"))
         #expect(await BoundedWait.signalArrived(secondFinished, named: "the end of the second loop"))
         #expect(queue.availablePlaces == 1)
+        withExtendedLifetime(resolved) {}
+    }
+
+    @Test("a parent waits in a tool body for a child turn on the same model: the child completes, then the parent")
+    func aParentWaitsInAToolBodyForAChildTurnOnTheSameModel() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "GenerationQueueTurnTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fixture = PassObservingFixture(toolRounds: 1)
+        await fixture.latch.open()
+        let resolved = try await RouterTestFixtures.resolveStandardProfile(over: fixture.container, cacheDir: dir)
+        let child = resolved.profile.standard.makeSession()
+        let parent = resolved.profile.standard.makeSession(tools: [ChildTurnTool(child: child)])
+
+        let parentFinished = AsyncSemaphore(value: 0)
+        let parentTurn = Self.startTurn(signalling: parentFinished) {
+            try await parent.respond(to: Self.firstPrompt)
+        }
+        // Bounded, so a regression that parks the child fails here and does
+        // not hang the run.
+        try #require(
+            await BoundedWait.signalArrived(
+                parentFinished, named: "the parent turn, after the child turn in its tool body"))
+        let parentAnswer = try await parentTurn.value
+
+        // The pass of the child runs between the two passes of the parent: the
+        // child turn completes inside the tool body, then the parent answers.
+        #expect(fixture.passes.recorded.map(\.prompt) == [Self.firstPrompt, Self.secondPrompt, Self.firstPrompt])
+        #expect(await Self.responseTexts(of: child) == [PassObservingModel.answer(to: Self.secondPrompt)])
+        #expect(parentAnswer == PassObservingModel.answer(to: Self.firstPrompt))
+        #expect(fixture.queue.availablePlaces == 1)
+        withExtendedLifetime(resolved) {}
+    }
+
+    @Test("a background run generates on the same model after the turn that started it ended")
+    func aBackgroundRunGeneratesOnTheSameModelAfterItsTurnEnded() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "GenerationQueueTurnTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fixture = PassObservingFixture(toolRounds: 1)
+        await fixture.latch.open()
+        let resolved = try await RouterTestFixtures.resolveStandardProfile(over: fixture.container, cacheDir: dir)
+        let runStart = RunLatch()
+        let child = resolved.profile.standard.makeSession()
+        let parent = resolved.profile.standard.makeSession(
+            tools: [BackgroundChildTurnTool(child: child, start: runStart)])
+
+        // A stream of events ends with its turn, and does not wait for the
+        // background runs of that turn.
+        let parentFinished = AsyncSemaphore(value: 0)
+        let parentTurn = Task {
+            defer { parentFinished.signal() }
+            for try await _ in await parent.streamEvents(to: Self.firstPrompt) {}
+        }
+        let turnEndedBeforeTheRun = await BoundedWait.signalArrived(
+            parentFinished, named: "the end of the turn that started the run")
+        let runs = await parent.mailbox.backgroundRuns()
+
+        // Only now does the run ask the child for a turn.
+        await runStart.open()
+        #expect(turnEndedBeforeTheRun)
+        #expect(runs.count == 1)
+        let token = try #require(runs.first?.completionToken)
+        let outcome = await parent.mailbox.wait(completionToken: token, seconds: Self.runSettlementSeconds)
+        try await parentTurn.value
+
+        var terminal: OperationEvent?
+        if case .settled(let settled) = outcome {
+            terminal = settled
+        }
+        #expect(terminal?.outcome == .succeeded)
+        #expect(terminal?.detail == PassObservingModel.answer(to: Self.secondPrompt))
+        // The two passes of the ended turn, then the pass of the run on the
+        // child.
+        #expect(fixture.passes.recorded.map(\.prompt) == [Self.firstPrompt, Self.firstPrompt, Self.secondPrompt])
+        #expect(fixture.queue.availablePlaces == 1)
         withExtendedLifetime(resolved) {}
     }
 }

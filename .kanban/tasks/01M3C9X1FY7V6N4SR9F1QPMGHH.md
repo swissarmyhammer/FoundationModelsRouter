@@ -1,6 +1,11 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m3cwaxq2260c4qb08n5nbhd3
+  text: '2026-09-25: the timeout occurred again after ^93kjn94. ^93kjn94 renamed the test to `HumanWaitGateTests.turnEndingDuringAnOutOfTurnWaitStrandsNothing` and said the re-acquire race is gone. During the test step of ^44y6ba4, one full `swift test` run failed this test with `SignalNeverArrived()`. It passed in 4 later runs (1 full run, 3 filtered runs). Thus the cause is not only the old re-acquire. This task is still valid.'
+  timestamp: 2026-09-25T18:13:12.034922+00:00
 position_column: todo
 position_ordinal: 8c80
 title: Investigate a timeout of HumanWaitGateTests turnEndingDuringAReAcquireStrandsNoPermit under full-suite load

@@ -116,11 +116,14 @@ struct BackgroundToolRunner<
             )
         )
         // The body waits on the start gate until the run is tracked, so it
-        // can never settle before the mailbox knows it.
+        // can never settle before the mailbox knows it. It runs beside the
+        // model call that started it, not in it (see ``ModelCallMark``).
         let start = RaceGate<Void>()
         let work = Task {
             await withCheckedContinuation { start.register(continuation: $0) }
-            return await run.execute(arguments: arguments)
+            return await ModelCallMark.withBackgroundRunMark {
+                await run.execute(arguments: arguments)
+            }
         }
         await mailbox.track(
             tool: run.context.tool,
