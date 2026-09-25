@@ -28,6 +28,16 @@ public protocol LoadedModelContainer: Sendable {}
 
 /// A loaded generation (`standard`/`flash`) model container. Every generation
 /// call a ``RoutedSession`` performs runs through a backend this container makes.
+///
+/// The live container owns a ``GenerationQueue``, and each backend it makes
+/// runs its `LanguageModelSession` over a per-session wrapper that takes that
+/// queue for each executor pass (`generation-queue.md`, section 2). A
+/// container with no executor seam (a backend that is not a
+/// `LanguageModelSession` over a `LanguageModel`, as a test stub or a
+/// third-party container) gets no pass-level gating from the Router. It still
+/// gets the turn-long ``RoutedModel/generationGate``. Such a container can own
+/// a ``GenerationQueue`` of its own and run each scripted pass in
+/// ``GenerationQueue/runPass(isolation:_:)``.
 public protocol LoadedLLMContainer: LoadedModelContainer {
     /// Makes a new session backend over this resident model.
     ///
@@ -98,8 +108,13 @@ public protocol LoadedLLMContainer: LoadedModelContainer {
         transcript: FoundationModels.Transcript, tools: [any Tool], samplingMode: GenerationOptions.SamplingMode?
     ) -> any LanguageModelSessionBackend
 
-    /// The raw `FoundationModels.LanguageModel` this container wraps. The
-    /// default traps. Only a container that supports ``RoutedModel/makeLanguageModel()`` must override it.
+    /// The `FoundationModels.LanguageModel` that ``RoutedModel/makeLanguageModel()``
+    /// wraps in each recording handle. The default traps. Only a container
+    /// that supports ``RoutedModel/makeLanguageModel()`` must override it.
+    ///
+    /// The live container gives a new per-session wrapper over its raw model
+    /// and its ``GenerationQueue`` on each read, so each handle takes the
+    /// queue for each pass. The recording handle itself takes no GPU queue.
     var languageModel: any FoundationModels.LanguageModel { get }
 
     /// The counter that counts tokens the way this container's model counts

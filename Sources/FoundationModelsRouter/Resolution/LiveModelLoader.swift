@@ -35,32 +35,6 @@ import Synchronization
 // invoked by FoundationModels, not called directly here. See plan.md's
 // "Backends" and "Guided generation" sections.
 
-/// Builds a session backend over a new `LanguageModelSession` seeded from
-/// `transcript`.
-///
-/// - Parameters:
-///   - contextWindow: The window of `model`, in tokens. See
-///     ``MLXFoundationModelsSessionBackend/init(session:model:contextWindow:instructions:tools:samplingMode:)``.
-///   - instructions: The new backend's instructions. The outer `nil` derives them from the leading `.instructions` entry of `transcript`. A non-`nil` outer value, including `.some(nil)`, is used as given.
-private func makeSessionBackend(
-    model: any FoundationModels.LanguageModel,
-    contextWindow: Int,
-    transcript: FoundationModels.Transcript,
-    tools: [any FoundationModels.Tool],
-    samplingMode: GenerationOptions.SamplingMode?,
-    instructions: String?? = nil
-) -> MLXFoundationModelsSessionBackend {
-    let session = LanguageModelSession(model: model, tools: tools, transcript: transcript)
-    return MLXFoundationModelsSessionBackend(
-        session: session,
-        model: model,
-        contextWindow: contextWindow,
-        instructions: instructions ?? TranscriptDiffer.leadingInstructionsText(of: transcript),
-        tools: tools,
-        samplingMode: samplingMode
-    )
-}
-
 /// The live ``LoadedLLMContainer``. Wraps an `MLXLanguageModel` and makes the
 /// ``LanguageModelSessionBackend`` every generation call runs through.
 ///
@@ -69,9 +43,21 @@ private func makeSessionBackend(
 /// the backend it makes the mode that call names, so two routers over one
 /// pooled container each decode with their own mode. A call that names no
 /// mode gets the provider default.
+///
+/// The container owns the ``GenerationQueue`` of its model. One resident
+/// container is one pool entry, so this is the queue of the pool entry. Each
+/// backend the container makes, and each read of ``languageModel``, runs over
+/// a new per-session ``QueuedLanguageModel`` on that queue
+/// (`generation-queue.md`, section 2).
 package struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
-    /// The `LanguageModel` conformance wrapping this slot's resident MLX model.
+    /// The raw `LanguageModel` conformance of this slot's resident MLX model.
+    /// The eviction of the loader and the thinking control of a backend read
+    /// it; generation runs over a ``QueuedLanguageModel`` that wraps it.
     let model: MLXLanguageModel
+
+    /// The queue every per-session wrapper of this container shares. It is a
+    /// class, so each copy of this container holds the same queue.
+    let generationQueue = GenerationQueue()
 
     /// The window of ``model``, in tokens: the native max context its
     /// `config.json` declares. Each backend this container makes sends it
@@ -82,8 +68,12 @@ package struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     /// ``LoadedLLMContainer/tokenCounter``.
     package let tokenCounter: any TokenCounter
 
-    /// The `FoundationModels.LanguageModel` this container wraps.
-    package var languageModel: any FoundationModels.LanguageModel { model }
+    /// A new per-session ``QueuedLanguageModel`` over ``model`` and
+    /// ``generationQueue``. Each read gives a new wrapper, so each handle
+    /// that reads it gets its own executor.
+    package var languageModel: any FoundationModels.LanguageModel {
+        QueuedLanguageModel(wrapping: model, queue: generationQueue)
+    }
 
     /// Makes a live session backend over ``model`` that decodes with the
     /// provider default.
@@ -127,10 +117,9 @@ package struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     package func makeSession(
         instructions: String?, tools: [any FoundationModels.Tool], samplingMode: GenerationOptions.SamplingMode?
     ) -> any LanguageModelSessionBackend {
-        let session = LanguageModelSession(model: model, tools: tools, instructions: instructions)
-        return MLXFoundationModelsSessionBackend(
-            session: session, model: model, contextWindow: contextWindow, instructions: instructions,
-            tools: tools, samplingMode: samplingMode)
+        MLXFoundationModelsSessionBackend(
+            model: model, generationQueue: generationQueue, contextWindow: contextWindow,
+            instructions: instructions, tools: tools, samplingMode: samplingMode)
     }
 
     /// Makes a live session backend seeded from `transcript`, with no tools,
@@ -151,9 +140,9 @@ package struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
         tools: [any FoundationModels.Tool],
         samplingMode: GenerationOptions.SamplingMode?
     ) -> any LanguageModelSessionBackend {
-        makeSessionBackend(
-            model: model, contextWindow: contextWindow, transcript: transcript, tools: tools,
-            samplingMode: samplingMode)
+        MLXFoundationModelsSessionBackend(
+            model: model, generationQueue: generationQueue, contextWindow: contextWindow,
+            transcript: transcript, tools: tools, samplingMode: samplingMode)
     }
 }
 
@@ -161,8 +150,14 @@ package struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
 /// for the lifetime of the backend. The caller must not make two calls on one
 /// backend at the same time.
 final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unchecked Sendable {
-    /// The `LanguageModel` conformance a fork builds its session over.
+    /// The raw `LanguageModel` conformance. The session of this backend runs
+    /// over a per-session ``QueuedLanguageModel`` that wraps it, and a fork
+    /// builds a new wrapper over it.
     private let model: any FoundationModels.LanguageModel
+
+    /// The queue of the container of ``model``. Each wrapper this backend
+    /// and its forks make shares it.
+    private let generationQueue: GenerationQueue
 
     /// The live session every call on this backend runs through.
     private let liveSession: LanguageModelSession
@@ -232,27 +227,89 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// Creates a backend over an existing session.
     ///
     /// - Parameters:
-    ///   - session: The live session every call runs through.
-    ///   - model: The `LanguageModel` conformance of `session`.
+    ///   - session: The live session every call runs through. It runs over a
+    ///     ``QueuedLanguageModel`` of its own that wraps `model`.
+    ///   - model: The raw `LanguageModel` conformance that the session's
+    ///     wrapper wraps.
+    ///   - generationQueue: The queue of the container of `model`.
     ///   - contextWindow: The window of `model`, in tokens. A call that names
     ///     no ceiling sends it as `maximumResponseTokens`.
     ///   - instructions: The system instructions of `session`, or `nil`.
     ///   - tools: The tools of `session`.
     ///   - samplingMode: The decoding strategy, or `nil` for the provider default.
-    init(
+    private init(
         session: LanguageModelSession,
         model: any FoundationModels.LanguageModel,
+        generationQueue: GenerationQueue,
         contextWindow: Int,
-        instructions: String? = nil,
-        tools: [any FoundationModels.Tool] = [],
-        samplingMode: GenerationOptions.SamplingMode? = nil
+        instructions: String?,
+        tools: [any FoundationModels.Tool],
+        samplingMode: GenerationOptions.SamplingMode?
     ) {
         self.liveSession = session
         self.model = model
+        self.generationQueue = generationQueue
         self.contextWindow = contextWindow
         self.instructions = instructions
         self.tools = tools
         self.samplingMode = samplingMode
+    }
+
+    /// Creates a backend over a new session with `instructions`, which runs
+    /// over a new per-session ``QueuedLanguageModel`` that wraps `model`.
+    ///
+    /// - Parameters:
+    ///   - model: The raw `LanguageModel` conformance.
+    ///   - generationQueue: The queue of the container of `model`.
+    ///   - contextWindow: The window of `model`, in tokens. A call that names
+    ///     no ceiling sends it as `maximumResponseTokens`.
+    ///   - instructions: The system instructions of the session, or `nil`.
+    ///   - tools: The tools of the session.
+    ///   - samplingMode: The decoding strategy, or `nil` for the provider default.
+    convenience init(
+        model: any FoundationModels.LanguageModel,
+        generationQueue: GenerationQueue,
+        contextWindow: Int,
+        instructions: String?,
+        tools: [any FoundationModels.Tool],
+        samplingMode: GenerationOptions.SamplingMode? = nil
+    ) {
+        let queued = QueuedLanguageModel(wrapping: model, queue: generationQueue)
+        self.init(
+            session: LanguageModelSession(model: queued, tools: tools, instructions: instructions),
+            model: model, generationQueue: generationQueue, contextWindow: contextWindow,
+            instructions: instructions, tools: tools, samplingMode: samplingMode)
+    }
+
+    /// Creates a backend over a new session seeded from `transcript`, which
+    /// runs over a new per-session ``QueuedLanguageModel`` that wraps `model`.
+    ///
+    /// - Parameters:
+    ///   - model: The raw `LanguageModel` conformance.
+    ///   - generationQueue: The queue of the container of `model`.
+    ///   - contextWindow: The window of `model`, in tokens.
+    ///   - transcript: The transcript to seed the session from.
+    ///   - tools: The tools of the session.
+    ///   - samplingMode: The decoding strategy, or `nil` for the provider default.
+    ///   - instructions: The instructions of the backend. The outer `nil`
+    ///     derives them from the leading `.instructions` entry of
+    ///     `transcript`. A non-`nil` outer value, including `.some(nil)`, is
+    ///     used as given.
+    convenience init(
+        model: any FoundationModels.LanguageModel,
+        generationQueue: GenerationQueue,
+        contextWindow: Int,
+        transcript: FoundationModels.Transcript,
+        tools: [any FoundationModels.Tool],
+        samplingMode: GenerationOptions.SamplingMode? = nil,
+        instructions: String?? = nil
+    ) {
+        let queued = QueuedLanguageModel(wrapping: model, queue: generationQueue)
+        self.init(
+            session: LanguageModelSession(model: queued, tools: tools, transcript: transcript),
+            model: model, generationQueue: generationQueue, contextWindow: contextWindow,
+            instructions: instructions ?? TranscriptDiffer.leadingInstructionsText(of: transcript),
+            tools: tools, samplingMode: samplingMode)
     }
 
     /// Generates a complete text response through ``liveSession``.
@@ -286,13 +343,18 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
             contextOptions: ContextOptions(reasoningLevel: Self.thinkingOffReasoningLevel))
     }
 
+    /// The raw ``model`` as an `MLXLanguageModel`, or `nil` for any other
+    /// model. It reads the raw model, never the per-session wrapper of the
+    /// session, so the cast finds the MLX model behind the queue.
+    var mlxLanguageModel: MLXLanguageModel? { model as? MLXLanguageModel }
+
     /// Whether ``model`` is an `MLXLanguageModel` whose loaded configuration
     /// turns thinking on and off with a chat template flag.
     ///
     /// - Returns: `true` for a template-flag reasoning strategy, else `false`.
     /// - Throws: What loading the model's container throws.
     private func modelTurnsThinkingOffByTemplateFlag() async throws -> Bool {
-        guard let mlxModel = model as? MLXLanguageModel else { return false }
+        guard let mlxModel = mlxLanguageModel else { return false }
         let configuration = await (try await mlxModel.loadContainer()).configuration
         guard case .templateFlag = configuration.reasoningConfig?.promptStrategy else { return false }
         return true
@@ -543,10 +605,13 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     }
 
     /// Makes a new backend seeded from the accumulated transcript of this
-    /// session, with `tools` in place of this backend's own.
+    /// session, with `tools` in place of this backend's own. A fork is a new
+    /// session, so its session runs over a new per-session wrapper on the
+    /// same queue.
     func makeFork(tools: [any FoundationModels.Tool]) -> any LanguageModelSessionBackend {
-        makeSessionBackend(
+        MLXFoundationModelsSessionBackend(
             model: model,
+            generationQueue: generationQueue,
             contextWindow: contextWindow,
             transcript: liveSession.transcript,
             tools: tools,
@@ -556,11 +621,12 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     }
 
     /// Makes a new backend over ``model`` seeded from `transcript`, with this
-    /// backend's ``tools``.
+    /// backend's ``tools``. Its session runs over a new per-session wrapper on
+    /// the same queue.
     func replacingTranscript(_ transcript: FoundationModels.Transcript) -> any LanguageModelSessionBackend {
-        makeSessionBackend(
-            model: model, contextWindow: contextWindow, transcript: transcript, tools: tools,
-            samplingMode: samplingMode)
+        MLXFoundationModelsSessionBackend(
+            model: model, generationQueue: generationQueue, contextWindow: contextWindow,
+            transcript: transcript, tools: tools, samplingMode: samplingMode)
     }
 
     /// Returns the current transcript of ``liveSession``. Call it under the turn lock.

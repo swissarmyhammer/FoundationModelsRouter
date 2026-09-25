@@ -8,6 +8,11 @@
 /// The set holds the generation gate only. A fork is not counted: any number
 /// of forks over one container can exist at once, and they serialize on the
 /// generation gate when they generate.
+///
+/// The per-pass ``GenerationQueue`` is not in this set: the container makes
+/// and owns it, and one resident container is one pool entry. It is a
+/// different semaphore from ``generation``, because a turn holds this gate
+/// while each of its passes waits in the queue.
 package struct ResidentModelGates: Sendable {
     /// The per-container generation gate, a fair FIFO ``AsyncSemaphore`` at
     /// value `1`. Every session and fork over the container waits on it.

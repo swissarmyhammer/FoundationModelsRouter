@@ -17,10 +17,46 @@ comments:
   id: 01m3a3nzjwwsw3ptc4mssg9gcw
   text: 'Consumer need from FoundationModelsACPAgent (2026-09-24), for step 4: the ACP agent tests its queue behavior with a `LoadedLLMContainer` whose sessions are `LanguageModelSessionBackend` stubs (no executor seam). It needs one of: (a) stub containers take the queue for each scripted pass, as step 4 recommends, or (b) a public executor-level scripted model helper that the consumer can use. Please write the decision in a comment here. Consumer card: ^sj4hczd on the ACP board.'
   timestamp: 2026-09-24T16:23:51.132140+00:00
+- actor: claude-code
+  id: 01m3cc18jw691vktapagysah9z
+  text: |-
+    Research done. Findings:
+    - `ResidentModelGates()` is made in `ModelPool.acquire` after `load()` returns. `MLXFoundationModelsContainer` is a struct that `LiveModelLoader.loadLLM` makes one time for each pool entry. Thus option (a): the container makes and owns one `GenerationQueue` (a class, so struct copies share it). The pool does not need to read the queue in this task, so no `LoadedLLMContainer` requirement is added.
+    - `MLXFoundationModelsSessionBackend` keeps `model` for forks and for the `as? MLXLanguageModel` cast. Plan: the backend keeps the RAW model and the queue, and builds each `LanguageModelSession` (first session, fork, replaced transcript) over a NEW per-session wrapper. The cast then still finds the raw model.
+    - `LiveModelLoader.evict(container:)` reads `container.model` (raw). No change there.
+    - `RoutedModel.makeRecordingLanguageModelHandle` is the only production site of `RecordingLanguageModelState(...)`; it reads `container.languageModel`. The live container will return a new queued wrapper on each read.
+    - `RecordingLanguageModelTests.generationGateSerializesAcrossHandles` is the test that pins the gate.
+    - `StubSessionBackend` does not script a tool loop. The stubs that script a tool loop are the scripted `LanguageModel`s behind `LiveBackendContainer` (production backend), so they get the queue through the production backend.
+  timestamp: 2026-09-25T13:28:18.268350+00:00
+- actor: claude-code
+  id: 01m3ccx2m0n1jd6thxz4d1a0kh
+  text: |-
+    Implementation landed (not committed). What changed:
+    - New `Concurrency/GenerationQueue.swift`: `public final class GenerationQueue` over `AsyncSemaphore(value: 1)`, with `public func runPass(isolation:_:)` (= `withPermitUnlessCancelled`: waitUnlessCancelled, body, signal in a defer). It is a different semaphore from `generationGate`.
+    - New `Concurrency/QueuedLanguageModel.swift`: `QueuedLanguageModel` + `QueuedLanguageModelState` (final class: `wrapped`, `queue`; R2 can add the session ULID here). `Executor.Configuration` compares and hashes by the identity of the state. The executor runs one pass of the inner executor inside `queue.runPass`, on the same task.
+    - New `Core/ExecutorPassthrough.swift`: the build-the-inner-executor-once helper, MOVED out of `RecordingLanguageModelState.makePassthrough` so Recording and the queued wrapper share one copy.
+    - `MLXFoundationModelsContainer` owns `let generationQueue = GenerationQueue()` (option (a)). `languageModel` gives a NEW per-session `QueuedLanguageModel` on each read. The backend keeps the RAW model and the queue; its two convenience inits (instructions / transcript) build each `LanguageModelSession` over a new wrapper. `makeFork(tools:)` and `replacingTranscript(_:)` make a new wrapper on the same queue. The file-private `makeSessionBackend` function is gone (the transcript init took its `String??` instructions rule). `mlxLanguageModel` reads the raw model for `respondWithoutReasoning`. `evict(container:)` still reads the raw `container.model`.
+    - Recording: `RecordingLanguageModelState` has no `generationGate` now. It has its own `recordingLock` for each handle, held around diff-and-record only (generate, sync, noteCompaction). The inner executor call runs outside the lock; the queue is the job of the wrapped `container.languageModel`.
+    - No `LoadedLLMContainer` requirement was added. `beginTurn`/`endTurn` are unchanged.
+
+    Step 4 decision (answer for the ACP consumer ^sj4hczd): option (a). A container with no executor seam gets no pass-level gating from the Router; it still gets the turn-long `generationGate`. `GenerationQueue` is PUBLIC, so a consumer's stub container owns its own queue and runs each scripted pass in `queue.runPass { ... }`. A compile-proof test over a plain import is in `Tests/FoundationModelsRouterPublicSurfaceTests/GenerationQueuePublicSurfaceTests.swift`. Inside this repo, the test `LiveBackendContainer` owns a queue and uses the production backend, so every scripted tool loop behind it takes the queue for each pass. `StubSessionBackend` scripts no tool loop and gets no queue. The decision is also written in the docs of `LoadedLLMContainer` and `GenerationQueue`.
+
+    Discovery (important for R2 ^cc2tezn and ^ake8sax): with this SDK, two `LanguageModelSession`s do NOT share an executor even over the SAME model value with EQUAL executor configurations (probe: two sessions over one `PassObservingModel` instance recorded two executor identities). The SDK builds executors per session, and reuses one executor across the turns of one session. Thus the identity key of the wrapper is a defense for a future SDK that caches across sessions; the session-level test "each session gets its own executor" cannot be made to fail by a key-only mutation. The key contract is pinned directly by `wrappersOverOneQueueCompareByTheirOwnState`.
+
+    Mutation checks done: (1) remove `runPass` from the wrapper executor: the no-overlap test, the cancellation test and the Recording queue test fail; (2) make `runPass` skip the wait: the public-surface test fails; (3) key by queue only: the configuration test fails.
+  timestamp: 2026-09-25T13:43:29.664974+00:00
+- actor: claude-code
+  id: 01m3ccx88vnck8e30tznqpnqwe
+  text: |-
+    ### implement — changed
+    - evidence: files — Sources/FoundationModelsRouter/Concurrency/GenerationQueue.swift (new), Sources/FoundationModelsRouter/Concurrency/QueuedLanguageModel.swift (new), Sources/FoundationModelsRouter/Core/ExecutorPassthrough.swift (new), Sources/FoundationModelsRouter/Concurrency/ResidentModelGates.swift, Sources/FoundationModelsRouter/Recording/RecordingLanguageModel.swift, Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift, Sources/FoundationModelsRouter/Resolution/ModelLoader.swift, Sources/FoundationModelsRouter/RoutedLLM.swift, Tests/FoundationModelsRouterTests/GenerationQueueTests.swift (new, 6 tests), Tests/FoundationModelsRouterTests/Helpers/PassObservingModel.swift (new), Tests/FoundationModelsRouterTests/Helpers/LiveBackendContainer.swift, Tests/FoundationModelsRouterTests/RecordingLanguageModelTests.swift, Tests/FoundationModelsRouterPublicSurfaceTests/GenerationQueuePublicSurfaceTests.swift (new, 1 test).
+    - tests: `swift build --build-tests` 0 compiler warnings (only the known mlx bundle line); `swift test` root: 1396 tests in 159 suites passed (2 known issues, both pre-existing withKnownIssue), plus 2 and 19 tests in the other targets passed; GenerationQueueTests + RecordingLanguageModelTests 16/16, and 8 parallel processes x 200 repetitions all passed; IntegrationTests package builds; gated `LanguageModelSessionBackendIntegrationTests` + `ExecutorPassBoundaryIntegrationTests`: 14 tests in 2 suites passed over real MLX (the KV-cache reuse test passes through the wrapper).
+    - next: /review
+  timestamp: 2026-09-25T13:43:35.451013+00:00
 depends_on:
 - 01M39ZMNME683Y75PX48NQKTEN
-position_column: todo
-position_ordinal: '8180'
+position_column: doing
+position_ordinal: '80'
 title: Add the per-model generation queue at the executor seam and move Recording to its own lock
 ---
 ## Why
@@ -48,9 +84,9 @@ In this task the queue MUST be a semaphore different from the turn-long `generat
 
 ## Acceptance Criteria
 
-- [ ] Two `LanguageModelSession`s over the same pool entry never run two executor passes at the same time (test with an executor-level scripted model that counts concurrent passes, for example with `ConcurrencyPeakObserver`).
-- [ ] Two sessions over one container get two executors: the executor of one session never runs a pass of the other (test that records the per-session state each pass sees).
-- [ ] A pass that waits for a queue place and is cancelled throws `CancellationError` and does not leave a place taken (the permit count is 1 after).
-- [ ] `respondWithoutReasoning` still turns thinking off for a template-flag model (test that the raw model is found).
-- [ ] The Recording path records the same events as before. `RecordingLanguageModelTests` stay green, except the test that pins the gate, which changes to the new lock.
-- [ ] Nothing in this task changes `beginTurn`/`endTurn`. The full suite is green. #generation-queue
+- [x] Two `LanguageModelSession`s over the same pool entry never run two executor passes at the same time (test with an executor-level scripted model that counts concurrent passes, for example with `ConcurrencyPeakObserver`).
+- [x] Two sessions over one container get two executors: the executor of one session never runs a pass of the other (test that records the per-session state each pass sees).
+- [x] A pass that waits for a queue place and is cancelled throws `CancellationError` and does not leave a place taken (the permit count is 1 after).
+- [x] `respondWithoutReasoning` still turns thinking off for a template-flag model (test that the raw model is found).
+- [x] The Recording path records the same events as before. `RecordingLanguageModelTests` stay green, except the test that pins the gate, which changes to the new lock.
+- [x] Nothing in this task changes `beginTurn`/`endTurn`. The full suite is green. #generation-queue

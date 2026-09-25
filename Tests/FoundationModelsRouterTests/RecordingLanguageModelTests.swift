@@ -22,8 +22,8 @@ struct RecordingLanguageModelTests {
     // MARK: - Concurrency observation
 
     /// Tracks how many stub-model calls are concurrently "in flight" (suspended
-    /// on ``releaseGate``, below), so a test can assert the model's shared
-    /// generation gate never lets two calls overlap.
+    /// on ``releaseGate``, below), so a test can assert the container's shared
+    /// generation queue never lets two calls overlap.
     private actor SerialObserver {
         private(set) var active = 0
         private(set) var maxActive = 0
@@ -62,8 +62,8 @@ struct RecordingLanguageModelTests {
     ///
     /// When ``observer``/``releaseGate`` are set, every call suspends on the
     /// release gate after recording entry into ``observer`` — the seam
-    /// ``generationGateSerializesAcrossHandles()`` uses to prove two concurrent
-    /// calls sharing one model's generation gate never overlap.
+    /// ``recordingLockLeavesGenerationToTheQueue()`` uses to prove two
+    /// concurrent calls sharing one container's generation queue never overlap.
     private struct StubUnderlyingModel: LanguageModel {
         let cannedResponseText: String
         let toolName: String?
@@ -211,16 +211,24 @@ struct RecordingLanguageModelTests {
     /// A ``LoadedLLMContainer`` exposing a ``StubUnderlyingModel`` as its
     /// ``LoadedLLMContainer/languageModel`` — the seam
     /// ``RoutedModel/makeLanguageModel()`` wraps. `makeSession(instructions:)`
-    /// is never driven by this suite (only the raw `languageModel` surface
+    /// is never driven by this suite (only the `languageModel` surface
     /// is), so it returns a bare, unused ``StubSessionBackend``.
+    ///
+    /// Like the live container, it owns one ``GenerationQueue`` and gives a
+    /// new ``QueuedLanguageModel`` over it on each read of `languageModel`.
     private struct StubLanguageModelContainer: PlainTranscriptStubContainer {
         let model: StubUnderlyingModel
+
+        /// The queue every wrapper of this container shares.
+        let generationQueue = GenerationQueue()
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
             StubSessionBackend()
         }
 
-        var languageModel: any LanguageModel { model }
+        var languageModel: any LanguageModel {
+            QueuedLanguageModel(wrapping: model, queue: generationQueue)
+        }
     }
 
     // MARK: - Stubs (probe, embedder, metadata, loader)
@@ -481,11 +489,11 @@ struct RecordingLanguageModelTests {
         #expect(afterSecondSync == afterFirstSync)
     }
 
-    // MARK: - Serial gate
+    // MARK: - Recording lock and generation queue
 
-    @Test("generate acquires the model's shared generation gate; two handles over the same model never overlap")
+    @Test("generate holds only the handle's own recording lock; the container's queue keeps two handles apart")
     @MainActor
-    func generationGateSerializesAcrossHandles() async throws {
+    func recordingLockLeavesGenerationToTheQueue() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -498,8 +506,9 @@ struct RecordingLanguageModelTests {
             observer: observer,
             releaseGate: releaseGate
         )
+        let container = StubLanguageModelContainer(model: model)
         let router = Self.makeRouter(
-            container: StubLanguageModelContainer(model: model),
+            container: container,
             recorder: InMemoryRecorder(),
             cacheDir: dir
         )
@@ -508,18 +517,24 @@ struct RecordingLanguageModelTests {
         let handleA = profile.standard.makeLanguageModel()
         let handleB = profile.standard.makeLanguageModel()
         let generationGate = profile.standard.generationGate
+        let queue = container.generationQueue
 
         let sessionA = LanguageModelSession(model: handleA, tools: [])
         let sessionB = LanguageModelSession(model: handleB, tools: [])
 
         let taskA = Task { _ = try await sessionA.respond(to: "a") }
         await Self.spin(until: { await observer.active == 1 })
-        #expect(generationGate.availablePermits == 0)
+        // The pass of handleA is in the model. The handle took no permit of
+        // the turn-long generation gate, it gave its own recording lock back
+        // after the diff, and the pass holds the one place of the queue.
+        #expect(generationGate.availablePermits == 1)
+        #expect(handleA.state.recordingLock.availablePermits == 1)
+        #expect(queue.availablePlaces == 0)
 
-        // handleB's call queues on the shared gate rather than reaching the
-        // model concurrently with handleA's still-running call.
+        // handleB's pass waits in the queue of the container rather than
+        // reaching the model concurrently with handleA's still-running pass.
         let taskB = Task { _ = try await sessionB.respond(to: "b") }
-        await Self.spin(until: { generationGate.waiterCount == 1 })
+        await Self.spin(until: { queue.waiterCount == 1 })
         #expect(await observer.active == 1)
         #expect(await observer.maxActive == 1)
 

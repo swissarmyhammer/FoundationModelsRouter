@@ -5,9 +5,10 @@ import os
 /// The logger that reports a non-append divergence of a synced transcript.
 private let recordingLanguageModelLogger = makeModuleLogger(category: "Recording")
 
-/// A `FoundationModels.LanguageModel` that records, gates, and supports tool
-/// calls. A caller builds a `LanguageModelSession(model:tools:instructions:)`
-/// over it directly.
+/// A `FoundationModels.LanguageModel` that records and supports tool calls.
+/// A caller builds a `LanguageModelSession(model:tools:instructions:)` over it
+/// directly. The wrapped model (the ``LoadedLLMContainer/languageModel`` of
+/// the container) takes the generation queue for each pass.
 ///
 /// Only ``RoutedModel/makeLanguageModel()`` creates a handle. Each handle has
 /// its own session ULID, recording directory, and last-seen transcript.
@@ -90,15 +91,12 @@ struct RecordingLanguageModel: LanguageModel, Sendable {
         private let state: RecordingLanguageModelState
 
         /// The wrapped model's own executor, built once and reused.
-        private let innerRespond: @Sendable (
-            LanguageModelExecutorGenerationRequest, LanguageModelExecutorGenerationChannel
-        ) async throws -> Void
+        private let innerRespond: ExecutorPassthrough.Respond
 
         /// Stores `configuration` and builds the wrapped model's executor once.
         init(configuration: Configuration) throws {
             self.state = configuration.state
-            self.innerRespond = try RecordingLanguageModelState.makePassthrough(
-                wrapped: configuration.state.wrapped)
+            self.innerRespond = try ExecutorPassthrough.make(wrapping: configuration.state.wrapped)
         }
 
         /// Diffs and records, then passes the request through to the wrapped
@@ -117,10 +115,12 @@ struct RecordingLanguageModel: LanguageModel, Sendable {
 /// its session identity, recording directory, last-seen transcript, and the
 /// wrapped model.
 ///
-/// Both entry points acquire the shared ``RoutedModel/generationGate`` around
-/// their diff-and-record work, so a `generate` and a `sync` on the same handle
-/// never interleave, and generation serializes with any ``RoutedSession``
-/// over the same model.
+/// Every entry point acquires this handle's own ``recordingLock`` around its
+/// diff-and-record work, so a `generate`, a `sync`, and a `noteCompaction` on
+/// the same handle never interleave. The lock does not cover the call of the
+/// wrapped executor: the GPU queue of the model is the job of the
+/// ``QueuedLanguageModel`` that the container gives as
+/// ``LoadedLLMContainer/languageModel`` (`generation-queue.md`, section 2).
 actor RecordingLanguageModelState {
     /// The recording root id.
     nonisolated let routerId: ULID
@@ -134,8 +134,10 @@ actor RecordingLanguageModelState {
     nonisolated let model: ModelRef
     /// The recorder every diffed event is appended through.
     nonisolated let recorder: any TranscriptRecorder
-    /// The owning model's shared serial generation gate.
-    nonisolated let generationGate: AsyncSemaphore
+    /// This handle's own lock around its diff-and-record work: a fair FIFO
+    /// ``AsyncSemaphore`` at value `1`. The actor alone does not serialize
+    /// that work, because each recorder append suspends it.
+    nonisolated let recordingLock = AsyncSemaphore(value: 1)
     /// The writer for this handle's own `session.json`, or `nil`.
     nonisolated let sessionSidecarWriter: SessionSidecarWriter?
     /// The raw model this handle passes generation through to.
@@ -175,7 +177,6 @@ actor RecordingLanguageModelState {
         slot: ModelSlot,
         model: ModelRef,
         recorder: any TranscriptRecorder,
-        generationGate: AsyncSemaphore,
         sessionSidecarWriter: SessionSidecarWriter?,
         wrapped: any LanguageModel,
         profile: LanguageModelProfile,
@@ -190,7 +191,6 @@ actor RecordingLanguageModelState {
         self.slot = slot
         self.model = model
         self.recorder = recorder
-        self.generationGate = generationGate
         self.sessionSidecarWriter = sessionSidecarWriter
         self.wrapped = wrapped
         self.profile = profile
@@ -200,9 +200,12 @@ actor RecordingLanguageModelState {
         self.lastSeen = initialTranscript
     }
 
-    /// Diffs and records `request.transcript` inside the gate, then passes
-    /// the request through to `innerRespond` over the same `channel`, and
-    /// releases the gate.
+    /// Diffs and records `request.transcript` inside this handle's
+    /// ``recordingLock``, releases the lock, and then passes the request
+    /// through to `innerRespond` over the same `channel`.
+    ///
+    /// The lock does not cover `innerRespond`, so a long pass never holds it.
+    /// The queue of the model is the job of the wrapped model.
     ///
     /// - Parameters:
     ///   - request: The generation request.
@@ -212,59 +215,58 @@ actor RecordingLanguageModelState {
     func generate(
         request: LanguageModelExecutorGenerationRequest,
         channel: LanguageModelExecutorGenerationChannel,
-        innerRespond: @Sendable (
-            LanguageModelExecutorGenerationRequest, LanguageModelExecutorGenerationChannel
-        ) async throws -> Void
+        innerRespond: ExecutorPassthrough.Respond
     ) async throws {
-        await enterGateAndDiff(request.transcript)
-        defer { generationGate.signal() }
+        await diffAndRecordUnderLock(request.transcript)
         try await innerRespond(request, channel)
     }
 
-    /// Diffs `transcript` against the last-seen transcript inside the gate,
-    /// records what is new, and releases the gate. The call is idempotent.
+    /// Diffs `transcript` against the last-seen transcript inside this
+    /// handle's ``recordingLock``, and records what is new. The call is
+    /// idempotent.
     ///
     /// - Parameters:
     ///   - transcript: The transcript to sync against the last-seen one.
     ///   - usage: This turn's `(input, output)` token usage, stamped onto the
     ///     diff's turn-final `.response` event, or `nil`.
     func sync(_ transcript: Transcript, usage: (input: Int, output: Int)? = nil) async {
-        await enterGateAndDiff(transcript, usage: usage)
-        generationGate.signal()
+        await diffAndRecordUnderLock(transcript, usage: usage)
     }
 
-    /// Carries this handle's recording forward across a compaction. It records
-    /// the compaction's new entries by `Transcript.Entry.id` and resets
-    /// ``lastSeen`` to `compacted`.
+    /// Carries this handle's recording forward across a compaction, inside
+    /// this handle's ``recordingLock``. It records the compaction's new
+    /// entries by `Transcript.Entry.id` and resets ``lastSeen`` to
+    /// `compacted`.
     ///
     /// - Parameter compacted: The transcript compaction produced.
     func noteCompaction(_ compacted: Transcript) async {
-        await enterGateAndRecordMeta(compacted)
+        await enterLockAndRecordMeta(compacted)
         await diffAndRecordCompaction(compacted: compacted)
-        generationGate.signal()
+        recordingLock.signal()
     }
 
-    /// Writes the sidecar on first use, acquires the generation gate, and
+    /// Writes the sidecar on first use, acquires ``recordingLock``, and
     /// records the session meta event on first use. It does not release the
-    /// gate. The caller signals the gate when its own work completes.
+    /// lock. The caller signals the lock when its own work completes.
     ///
     /// - Parameter transcript: The transcript the first-use sidecar is
     ///   written from.
-    private func enterGateAndRecordMeta(_ transcript: Transcript) async {
+    private func enterLockAndRecordMeta(_ transcript: Transcript) async {
         writeSidecarIfNeeded(transcript: transcript)
-        await generationGate.wait()
+        await recordingLock.wait()
         await recordSessionMetaIfNeeded()
     }
 
-    /// Acquires the generation gate and diffs `transcript` against
-    /// ``lastSeen``. It does not release the gate.
+    /// Acquires ``recordingLock``, diffs `transcript` against ``lastSeen``,
+    /// records what is new, and releases the lock.
     ///
     /// - Parameters:
     ///   - transcript: The transcript to diff against ``lastSeen``.
     ///   - usage: This turn's `(input, output)` token usage, or `nil`.
-    private func enterGateAndDiff(_ transcript: Transcript, usage: (input: Int, output: Int)? = nil) async {
-        await enterGateAndRecordMeta(transcript)
+    private func diffAndRecordUnderLock(_ transcript: Transcript, usage: (input: Int, output: Int)? = nil) async {
+        await enterLockAndRecordMeta(transcript)
         await diffAndRecord(current: transcript, usage: usage)
+        recordingLock.signal()
     }
 
     /// Diffs `current` against ``lastSeen``, records what is new, and sets
@@ -401,34 +403,4 @@ actor RecordingLanguageModelState {
         )
     }
 
-    /// Builds the wrapped model's own executor once and returns a closure
-    /// that calls it over the outer channel unmodified.
-    ///
-    /// - Parameter wrapped: The raw model to wrap, type-erased.
-    /// - Returns: A closure that calls the wrapped model's executor.
-    /// - Throws: What `Wrapped.Executor.init(configuration:)` throws.
-    static func makePassthrough(
-        wrapped: any LanguageModel
-    ) throws -> @Sendable (
-        LanguageModelExecutorGenerationRequest, LanguageModelExecutorGenerationChannel
-    ) async throws -> Void {
-        try makePassthroughGeneric(wrapped: wrapped)
-    }
-
-    /// Opens the existential of `wrapped` so `Wrapped.Executor` can be
-    /// built once, then closes over that executor and model.
-    ///
-    /// - Parameter wrapped: The raw model to wrap.
-    /// - Returns: A closure that calls the executor of `wrapped`.
-    /// - Throws: What `Wrapped.Executor.init(configuration:)` throws.
-    private static func makePassthroughGeneric<Wrapped: LanguageModel>(
-        wrapped: Wrapped
-    ) throws -> @Sendable (
-        LanguageModelExecutorGenerationRequest, LanguageModelExecutorGenerationChannel
-    ) async throws -> Void {
-        let executor = try Wrapped.Executor(configuration: wrapped.executorConfiguration)
-        return { request, channel in
-            try await executor.respond(to: request, model: wrapped, streamingInto: channel)
-        }
-    }
 }

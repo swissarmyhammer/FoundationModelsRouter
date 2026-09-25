@@ -333,7 +333,6 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             slot: slot,
             model: chosen,
             recorder: recorder,
-            generationGate: generationGate,
             sessionSidecarWriter: sessionSidecarWriter,
             wrapped: container.languageModel,
             profile: owningProfile,

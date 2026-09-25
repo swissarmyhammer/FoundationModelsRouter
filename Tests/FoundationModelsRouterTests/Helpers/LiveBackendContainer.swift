@@ -9,9 +9,17 @@ import FoundationModelsRouterTestSupport
 ///
 /// It is generic over the model, so a suite that brings a new scripted model
 /// does not write one more copy of the four factory methods.
+///
+/// Like the live container, it owns one ``GenerationQueue``, and each backend
+/// it vends runs over its own ``QueuedLanguageModel`` on that queue. A
+/// scripted tool loop thus takes the queue for each of its passes, with no
+/// MLX.
 struct LiveBackendContainer<Model: FoundationModels.LanguageModel>: LoadedLLMContainer {
     /// The scripted model every backend of this container runs over.
     let model: Model
+
+    /// The queue every backend of this container shares.
+    let generationQueue = GenerationQueue()
 
     /// The window of ``model``, in tokens. Each backend sends it as the
     /// ceiling of a call that names none. The fixture window by default.
@@ -38,8 +46,8 @@ struct LiveBackendContainer<Model: FoundationModels.LanguageModel>: LoadedLLMCon
     /// - Returns: A live backend over ``model``.
     func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
         MLXFoundationModelsSessionBackend(
-            session: LanguageModelSession(model: model, tools: tools, instructions: instructions),
             model: model,
+            generationQueue: generationQueue,
             contextWindow: contextWindow,
             instructions: instructions,
             tools: tools
@@ -64,10 +72,10 @@ struct LiveBackendContainer<Model: FoundationModels.LanguageModel>: LoadedLLMCon
     /// - Returns: A live backend over ``model``.
     func makeSession(transcript: Transcript, tools: [any Tool]) -> any LanguageModelSessionBackend {
         MLXFoundationModelsSessionBackend(
-            session: LanguageModelSession(model: model, tools: tools, transcript: transcript),
             model: model,
+            generationQueue: generationQueue,
             contextWindow: contextWindow,
-            instructions: TranscriptDiffer.leadingInstructionsText(of: transcript),
+            transcript: transcript,
             tools: tools
         )
     }
