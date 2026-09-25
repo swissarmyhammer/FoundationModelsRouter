@@ -278,7 +278,14 @@ actor RoutedSessionActor: RoutedSession {
 
     /// The backend every generation and fork runs through. Never vended to
     /// callers. ``compact(prompt:budget:)`` replaces it after a compaction.
-    var backend: any LanguageModelSessionBackend
+    /// Each replacement reports its passes to ``generationPassObserver``.
+    var backend: any LanguageModelSessionBackend {
+        didSet { observeGenerationPasses(of: backend) }
+    }
+
+    /// The observer every backend of this session reports its passes to
+    /// (task ^ake8sax). See ``drainGenerationPassPhases()``.
+    nonisolated let generationPassObserver = GenerationPassObserver()
 
     /// See ``RoutedSession/transcript``. Reads under ``turnLock``, except from
     /// a tool call of this session's own turn (``isInsideOwnTurnToolCall``).
@@ -588,6 +595,9 @@ actor RoutedSessionActor: RoutedSession {
         self.discoveryPriming = discoveryPriming
         self.agentSpawn = agentSpawn
         self.tracer = tracer
+        // The initializer does not run the `didSet` of `backend`, so the
+        // first backend gets this session's pass observer here.
+        observeGenerationPasses(of: backend)
 
         // The session's own directory is brought into existence here, by its
         // write-once sidecar, before the session exists to record anything into

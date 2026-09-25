@@ -125,6 +125,38 @@ struct GenerationQueueTests {
         #expect(fixture.passes.executors(servingPrompt: "waiter").isEmpty)
     }
 
+    @Test("a pass reports that it waits only when another pass holds the place (task ^ake8sax)")
+    func aPassReportsItsWaitOnlyWhenThePlaceIsTaken() async throws {
+        let queue = GenerationQueue()
+        let entered = AsyncSemaphore(value: 0)
+        let release = AsyncSemaphore(value: 0)
+        let holderWaits = AsyncSemaphore(value: 0)
+        let waiterWaits = AsyncSemaphore(value: 0)
+
+        let holdingPass = Task {
+            try await queue.runPass(onQueued: { holderWaits.signal() }) {
+                entered.signal()
+                await release.wait()
+            }
+        }
+        let holderInside = await BoundedWait.signalArrived(entered, named: "the holding pass took the place")
+        let waitingPass = Task {
+            try await queue.runPass(onQueued: { waiterWaits.signal() }) {}
+        }
+        let waiterQueued = await BoundedWait.conditionReached("the second pass waited for the place") {
+            queue.waiterCount == 1
+        }
+        release.signal()
+        try await holdingPass.value
+        try await waitingPass.value
+
+        #expect(holderInside)
+        #expect(waiterQueued)
+        #expect(holderWaits.availablePermits == 0)
+        #expect(waiterWaits.availablePermits == 1)
+        #expect(queue.availablePlaces == 1)
+    }
+
     @Test("two wrappers over one model and one queue are two executor cache keys")
     func wrappersOverOneQueueCompareByTheirOwnState() {
         let queue = GenerationQueue()

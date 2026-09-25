@@ -149,6 +149,21 @@ public final class AsyncSemaphore: Sendable {
     /// - Throws: `CancellationError` when the calling task is cancelled before
     ///   the permit is acquired.
     package func waitUnlessCancelled() async throws {
+        try await waitUnlessCancelled(onQueued: {})
+    }
+
+    /// ``waitUnlessCancelled()``, which also calls `onQueued` when the caller
+    /// must wait: no permit is free, and the caller joins the FIFO queue.
+    ///
+    /// `onQueued` runs one time at most, on the calling task, after the caller
+    /// joined the queue and before the wait ends. A caller that takes a free
+    /// permit at once, or that is cancelled before it joins the queue, never
+    /// calls it.
+    ///
+    /// - Parameter onQueued: Called when the caller joins the queue.
+    /// - Throws: `CancellationError` when the calling task is cancelled before
+    ///   the permit is acquired.
+    package func waitUnlessCancelled(onQueued: @Sendable () -> Void) async throws {
         try Task.checkCancellation()
         let ticket = state.withLock { state -> Int in
             let ticket = state.takeTicket()
@@ -177,7 +192,7 @@ public final class AsyncSemaphore: Sendable {
                 case .cancelled:
                     continuation.resume(throwing: CancellationError())
                 case .queued:
-                    break
+                    onQueued()
                 }
             }
         } onCancel: {
@@ -256,7 +271,27 @@ public final class AsyncSemaphore: Sendable {
         isolation: isolated (any Actor)? = #isolation,
         _ body: () async throws -> T
     ) async throws -> T {
-        try await waitUnlessCancelled()
+        try await withPermitUnlessCancelled(isolation: isolation, onQueued: {}, body)
+    }
+
+    /// ``withPermitUnlessCancelled(isolation:_:)``, which also calls
+    /// `onQueued` when the caller must wait for the permit. See
+    /// ``waitUnlessCancelled(onQueued:)``.
+    ///
+    /// - Parameters:
+    ///   - isolation: The caller's actor isolation, which defaults to the
+    ///     caller's own. `body` runs there.
+    ///   - onQueued: Called when the caller joins the queue.
+    ///   - body: The work to run while holding a permit.
+    /// - Returns: Whatever `body` returns.
+    /// - Throws: `CancellationError` when the calling task is cancelled before
+    ///   the permit is acquired, or any error thrown by `body`.
+    package func withPermitUnlessCancelled<T>(
+        isolation: isolated (any Actor)? = #isolation,
+        onQueued: @Sendable () -> Void,
+        _ body: () async throws -> T
+    ) async throws -> T {
+        try await waitUnlessCancelled(onQueued: onQueued)
         defer { signal() }
         return try await body()
     }

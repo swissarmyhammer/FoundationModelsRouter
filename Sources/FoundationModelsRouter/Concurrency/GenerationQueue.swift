@@ -50,6 +50,29 @@ public final class GenerationQueue: Sendable {
         try await place.withPermitUnlessCancelled(isolation: isolation, body)
     }
 
+    /// ``runPass(isolation:_:)``, which also calls `onQueued` when the pass
+    /// must wait: a pass of another session holds the place (task ^ake8sax).
+    ///
+    /// A pass that finds the place free never calls `onQueued`. The
+    /// per-session ``QueuedLanguageModel`` uses it to report the wait to its
+    /// session.
+    ///
+    /// - Parameters:
+    ///   - isolation: The caller's actor isolation, which defaults to the
+    ///     caller's own. `body` runs there, on the calling task.
+    ///   - onQueued: Called on the calling task when the pass joins the queue.
+    ///   - body: One generation pass.
+    /// - Returns: What `body` returns.
+    /// - Throws: `CancellationError` when the calling task is cancelled before
+    ///   it gets the place, or what `body` throws.
+    func runPass<T>(
+        isolation: isolated (any Actor)? = #isolation,
+        onQueued: @Sendable () -> Void,
+        _ body: () async throws -> T
+    ) async throws -> T {
+        try await place.withPermitUnlessCancelled(isolation: isolation, onQueued: onQueued, body)
+    }
+
     /// The number of free places, `0` or `1`.
     ///
     /// Exposed for observability and deterministic testing; not part of the

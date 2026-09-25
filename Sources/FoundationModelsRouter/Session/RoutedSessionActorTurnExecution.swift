@@ -636,10 +636,16 @@ extension RoutedSessionActor {
         // ``GenerationStall`` on each interval the call goes without observable
         // progress, so a decode that stops making progress becomes visible
         // while it is still running instead of only when it finally ends. See
-        // ``RoutedSessionActor/reportGenerationStall(id:)``.
+        // ``RoutedSessionActor/reportGenerationStall(id:)``. The pass reports
+        // of this call (task ^ake8sax) feed the same watch, so it counts only
+        // the time a pass holds its queue place, and they tell the consumer
+        // about a wait for a place. They close first, so the last reports
+        // reach the watch and the turn before the watch ends.
         let stallWatchId = beginGenerationStallWatch()
+        let passReports = openGenerationPassReports(callID: stallWatchId)
         let stallWatchdog = Task { await self.watchGenerationForStalls(id: stallWatchId) }
         defer {
+            closeGenerationPassReports(callID: stallWatchId, reader: passReports)
             stallWatchdog.cancel()
             endGenerationStallWatch(id: stallWatchId)
         }

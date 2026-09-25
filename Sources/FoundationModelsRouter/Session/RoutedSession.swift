@@ -131,7 +131,11 @@ public protocol RoutedSession: Actor {
     /// Nothing bounds a decode: there is no timeout. A generation with no
     /// observable progress reports ``SessionEvent/generationStalled(_:)`` on
     /// ``streamSessionEvents()`` with ``GenerationProgressVisibility/wholeAnswer``
-    /// visibility, and one line in this module's log.
+    /// visibility, and one line in this module's log. Only the time a pass
+    /// holds its place in the ``GenerationQueue`` of the model counts: a wait
+    /// for a queue place and a tool body give no report. A wait for a queue
+    /// place reports ``SessionEvent/passQueued`` and then
+    /// ``SessionEvent/passStarted`` on ``streamSessionEvents()``.
     ///
     /// Every turn this call runs — its own turn, and each further turn of the
     /// run-plane drain — opens one OpenTelemetry span named
@@ -176,6 +180,8 @@ public protocol RoutedSession: Actor {
     /// run plane; it finishes while a backgrounded run is in flight. A stall
     /// reports ``SessionEvent/generationStalled(_:)`` on ``streamSessionEvents()``
     /// with ``GenerationProgressVisibility/fragments(observed:)`` visibility.
+    /// A wait for a generation queue place is not a stall; it reports
+    /// ``SessionEvent/passQueued`` and ``SessionEvent/passStarted`` there.
     ///
     /// The turn opens one span, exactly as ``respond(to:maxTokens:)`` states,
     /// with `turn.entry_point` reading `stream`.
@@ -195,7 +201,11 @@ public protocol RoutedSession: Actor {
     /// attempt's ``SessionEvent/turnEnded(_:)`` for a reactive compaction.
     /// ``SessionEvent/generationStalled(_:)`` is emitted on each interval
     /// without progress: no text fragment, no transcript entry, and no tool
-    /// call or tool result.
+    /// call or tool result. Only the time a pass holds its place in the
+    /// ``GenerationQueue`` of the model counts, so a wait for a queue place
+    /// and a tool body between two passes emit no stall. A pass that must
+    /// wait for its place emits ``SessionEvent/passQueued``, and
+    /// ``SessionEvent/passStarted`` when it takes the place.
     ///
     /// Abandoning this stream cancels the turn. This surface does not drain the
     /// run plane. A run that settles before the stream ends is reported as
@@ -224,7 +234,8 @@ public protocol RoutedSession: Actor {
     /// ``SessionEvent/elicitationRequested(_:)``,
     /// ``SessionEvent/entryRecorded(id:kind:)``,
     /// ``SessionEvent/compaction(_:)``, ``SessionEvent/discoveryPrimingFailed(_:)``,
-    /// ``SessionEvent/generationStalled(_:)``, and ``SessionEvent/turnEnded(_:)``.
+    /// ``SessionEvent/generationStalled(_:)``, ``SessionEvent/passQueued``,
+    /// ``SessionEvent/passStarted``, and ``SessionEvent/turnEnded(_:)``.
     /// ``SessionEvent/textDelta(_:)`` and ``SessionEvent/textReset`` travel only
     /// on ``streamEvents(to:maxTokens:)``. Every event belongs to the turn named
     /// by the most recent ``SessionEvent/turnStarted(_:)``. A run's
@@ -294,7 +305,9 @@ public protocol RoutedSession: Actor {
     /// Installs how long a model call on this session may run with no
     /// observable progress before it reports
     /// ``SessionEvent/generationStalled(_:)``. The change takes effect on the
-    /// next model call.
+    /// next model call. The interval counts only the time a pass holds its
+    /// place in the ``GenerationQueue`` of the model; ``GenerationStall``
+    /// states the meaning of each field of a report.
     ///
     /// Stall reports are off until the host calls this. The session has no
     /// interval of its own: the host that shows the report names the interval.

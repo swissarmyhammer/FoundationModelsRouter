@@ -61,7 +61,30 @@ public enum SessionEvent: Sendable, Equatable {
     /// The generation in flight has produced nothing observable for a whole reporting interval.
     /// This is a report, not a bound. It repeats once per further interval without progress.
     /// ``GenerationStall/visibility`` says what the report can claim.
+    ///
+    /// The session measures only the time a pass of the call holds its place
+    /// in the ``GenerationQueue`` of its model. A wait for a queue place (see
+    /// ``passQueued``) and a tool body between two passes give no report.
+    /// A backend with no executor seam reports no pass, and its whole call is
+    /// measured. ``GenerationStall`` states the meaning of each field.
     case generationStalled(GenerationStall)
+
+    /// A generation pass of the turn in flight waits for the place of the
+    /// ``GenerationQueue`` of its model, because a pass of another session
+    /// holds the place. A consumer can show "waiting for the model".
+    ///
+    /// The session sends it only when the pass must wait. A pass that finds
+    /// the place free sends none. ``passStarted`` follows when the pass takes
+    /// the place. A cancelled wait sends no ``passStarted``, and the turn ends.
+    /// Only a backend that runs over the per-session queued wrapper of the
+    /// live container reports passes; a backend with no executor seam sends
+    /// neither event.
+    case passQueued
+
+    /// The pass that sent ``passQueued`` took the place of the
+    /// ``GenerationQueue`` of its model, and generates now. The session sends
+    /// it only after a ``passQueued``.
+    case passStarted
 
     /// The session stopped the generate call in flight because the call no
     /// longer wrote new lines. The event comes before the

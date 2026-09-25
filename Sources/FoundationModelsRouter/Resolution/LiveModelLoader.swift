@@ -162,6 +162,11 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// The live session every call on this backend runs through.
     private let liveSession: LanguageModelSession
 
+    /// The per-session state of the ``QueuedLanguageModel`` that
+    /// ``liveSession`` runs over. The session that owns this backend installs
+    /// its pass observer here (``reportPasses(to:)``).
+    private let queuedState: QueuedLanguageModelState
+
     /// The system instructions ``liveSession`` was created with, or `nil`.
     private let instructions: String?
 
@@ -248,7 +253,9 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
         samplingMode: GenerationOptions.SamplingMode?,
         makeSession: (QueuedLanguageModel) -> LanguageModelSession
     ) {
-        self.liveSession = makeSession(QueuedLanguageModel(wrapping: model, queue: generationQueue))
+        let queued = QueuedLanguageModel(wrapping: model, queue: generationQueue)
+        self.liveSession = makeSession(queued)
+        self.queuedState = queued.state
         self.model = model
         self.generationQueue = generationQueue
         self.contextWindow = contextWindow
@@ -656,6 +663,19 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
         guard let call = lastGenerationCall.withLock({ $0 }) else { return nil }
         guard call.lastEntryID == liveSession.transcript.last?.id else { return nil }
         return call.outputTokens
+    }
+}
+
+extension MLXFoundationModelsSessionBackend: GenerationPassReporting {
+    /// Gives `observer` the passes of ``liveSession``, through the
+    /// per-session state of its wrapper (task ^ake8sax). A fork and a
+    /// replaced transcript are new backends with a new wrapper, so each
+    /// reports to the observer its own session installs.
+    ///
+    /// - Parameter observer: The observer of the session that owns this
+    ///   backend.
+    func reportPasses(to observer: GenerationPassObserver) {
+        queuedState.reportPasses(to: observer)
     }
 }
 

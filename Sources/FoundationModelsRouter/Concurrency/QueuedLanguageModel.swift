@@ -1,4 +1,5 @@
 import FoundationModels
+import Synchronization
 
 /// A `FoundationModels.LanguageModel` that runs each executor pass of a
 /// wrapped model inside one place of a ``GenerationQueue``
@@ -89,6 +90,12 @@ struct QueuedLanguageModel: LanguageModel, Sendable {
         /// executor on this task over the same `channel`, and gives the place
         /// back on every exit.
         ///
+        /// The pass reports to the observer of its session, when the session
+        /// installed one (task ^ake8sax): that the pass joins the queue, that
+        /// it takes the place, and that it leaves the queue. The last report
+        /// comes on every exit, just after the place is given back, and also
+        /// after a wait that a cancellation ended.
+        ///
         /// - Parameters:
         ///   - request: The generation request, passed through unchanged.
         ///   - model: This wrapper. Unread: the state arrives through the
@@ -101,7 +108,10 @@ struct QueuedLanguageModel: LanguageModel, Sendable {
             model: QueuedLanguageModel,
             streamingInto channel: LanguageModelExecutorGenerationChannel
         ) async throws {
-            try await state.queue.runPass {
+            let observer = state.passObserver
+            defer { observer?.passEnded() }
+            try await state.queue.runPass(onQueued: { observer?.passQueued() }) {
+                observer?.passStarted()
                 try await innerRespond(request, channel)
             }
         }
@@ -121,6 +131,24 @@ final class QueuedLanguageModelState: Sendable {
     /// The queue of the container of ``wrapped``, which every wrapper of that
     /// container shares.
     let queue: GenerationQueue
+
+    /// The observer that the session of this wrapper installed, or `nil`
+    /// before it installs one. A lock guards it, because the session writes
+    /// it from its actor while an executor reads it from the task of a pass.
+    private let installedPassObserver = Mutex<GenerationPassObserver?>(nil)
+
+    /// The observer each pass of this wrapper reports to, or `nil` when the
+    /// session installed none.
+    var passObserver: GenerationPassObserver? {
+        installedPassObserver.withLock { $0 }
+    }
+
+    /// Gives `observer` the passes of this wrapper from the next pass on.
+    ///
+    /// - Parameter observer: The observer of the session of this wrapper.
+    func reportPasses(to observer: GenerationPassObserver) {
+        installedPassObserver.withLock { $0 = observer }
+    }
 
     /// Stores the raw model and the queue.
     ///

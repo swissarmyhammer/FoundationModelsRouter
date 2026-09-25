@@ -233,30 +233,6 @@ struct GenerationStallDiagnosticTests {
         }
     }
 
-    // MARK: - Collector
-
-    /// Collects the events a session-wide subscription delivered, so the test
-    /// task can read them while the turn producing them is still in flight.
-    private actor EventLog {
-        /// Every event delivered so far, in delivery order.
-        private(set) var events: [SessionEvent] = []
-
-        /// Appends one delivered event.
-        ///
-        /// - Parameter event: The event just delivered.
-        func append(_ event: SessionEvent) {
-            events.append(event)
-        }
-
-        /// Every stall report delivered so far, in delivery order.
-        var stalls: [GenerationStall] {
-            events.compactMap { event in
-                guard case .generationStalled(let stall) = event else { return nil }
-                return stall
-            }
-        }
-    }
-
     // MARK: - Fixtures
 
     /// The suite's temp-directory prefix, handed to
@@ -323,24 +299,6 @@ struct GenerationStallDiagnosticTests {
         return (session, dir)
     }
 
-    /// Subscribes to `session`'s session-wide feed and drains it into a log.
-    ///
-    /// - Parameter session: The session to watch.
-    /// - Returns: The log, and the draining task to cancel once the test is
-    ///   done reading it.
-    private static func watchSessionEvents(
-        on session: RoutedSession
-    ) async -> (log: EventLog, drain: Task<Void, Never>) {
-        let log = EventLog()
-        let stream = await session.streamSessionEvents()
-        let drain = Task {
-            for await event in stream {
-                await log.append(event)
-            }
-        }
-        return (log, drain)
-    }
-
     // MARK: - The signal a `respond` caller can see
 
     @Test("a respond turn that stops progressing reports a stall on the session-wide feed")
@@ -349,7 +307,7 @@ struct GenerationStallDiagnosticTests {
         let (session, backend, dir) = try await Self.makeStallingSession()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let (log, drain) = await Self.watchSessionEvents(on: session)
+        let (log, drain) = await SessionEventLog.watch(session)
         let turn = Task { try await session.respond(to: Self.prompt) }
         try await BoundedWait.awaitSignal(backend.suspended, named: "the model call suspended")
 
@@ -375,7 +333,7 @@ struct GenerationStallDiagnosticTests {
         let (session, backend, dir) = try await Self.makeStallingSession()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let (log, drain) = await Self.watchSessionEvents(on: session)
+        let (log, drain) = await SessionEventLog.watch(session)
         let turn = Task { try await session.respond(to: Self.prompt) }
         try await BoundedWait.awaitSignal(backend.suspended, named: "the model call suspended")
         _ = await BoundedWait.conditionReached("a stall report") { await !log.stalls.isEmpty }
@@ -443,7 +401,7 @@ struct GenerationStallDiagnosticTests {
             reportInterval: Self.unreachableReportInterval)
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let (log, drain) = await Self.watchSessionEvents(on: session)
+        let (log, drain) = await SessionEventLog.watch(session)
         // Released up front, so the backend never suspends and the turn runs
         // straight through.
         backend.release.signal()
@@ -464,7 +422,7 @@ struct GenerationStallDiagnosticTests {
         let (session, backend, dir) = try await Self.makeStallingSession(reportInterval: nil)
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let (log, drain) = await Self.watchSessionEvents(on: session)
+        let (log, drain) = await SessionEventLog.watch(session)
         let turn = Task { try await session.respond(to: Self.prompt) }
         try await BoundedWait.awaitSignal(backend.suspended, named: "the model call suspended")
         try await Task.sleep(for: silence)
@@ -487,7 +445,7 @@ struct GenerationStallDiagnosticTests {
         let (session, backend, dir) = try await Self.makeStallingSession(reportInterval: reportInterval)
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let (log, drain) = await Self.watchSessionEvents(on: session)
+        let (log, drain) = await SessionEventLog.watch(session)
         let turn = Task { try await session.respond(to: Self.prompt) }
         try await BoundedWait.awaitSignal(backend.suspended, named: "the model call suspended")
         let reported = await BoundedWait.conditionReached("a stall report") { await !log.stalls.isEmpty }
@@ -523,7 +481,7 @@ struct GenerationStallDiagnosticTests {
         let (session, backend, dir) = try await Self.makeStallingSession()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let (log, drain) = await Self.watchSessionEvents(on: session)
+        let (log, drain) = await SessionEventLog.watch(session)
         let turn = Task { try await session.respond(to: Self.prompt) }
         try await BoundedWait.awaitSignal(backend.suspended, named: "the model call suspended")
         _ = await BoundedWait.conditionReached("a stall report") { await !log.stalls.isEmpty }
@@ -610,7 +568,7 @@ struct GenerationStallDiagnosticTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let actor = try #require(session as? RoutedSessionActor)
 
-        let (log, drain) = await Self.watchSessionEvents(on: session)
+        let (log, drain) = await SessionEventLog.watch(session)
         let turn = Task { try await session.respond(to: Self.prompt) }
         try await BoundedWait.awaitSignal(backend.suspended, named: "the model call suspended")
 
