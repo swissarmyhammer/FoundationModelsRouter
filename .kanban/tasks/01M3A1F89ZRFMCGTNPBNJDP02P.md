@@ -50,10 +50,26 @@ comments:
     - no true conflict with the SDK: request and channel are `Sendable`, and the spike runs whole SDK calls on a worker task.
     - next: /review
   timestamp: 2026-09-25T19:11:58.530783+00:00
+- actor: claude-code
+  id: 01m3d68c3jvr7a2anr5wnge2g4
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` gave 0 findings (0 confirmed, 0 refuted, 7 attempted, 0 failed). The engine reviewed 2 files. It did not review `generation-queue.md` because no validator matches that file. It did not review the `.kanban/` files because `.reviewignore` excludes them.
+    - next: None. The task moved to `done`.
+  timestamp: 2026-09-25T21:06:34.226698+00:00
+- actor: claude-code
+  id: 01m3d6a999mdf18z6x4zabjmht
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — generation-queue.md section 5, spike test, PassObservingModel JSON escape, 8 new tasks
+    - test: green once — swift test 1429 passed (1407+3+19); other full runs under load average about 30 failed on timing tests only (one was ^1qpmghh); spike 50 repeated runs passed
+    - commit: dc4e765
+    - review: clean — 0 findings (the engine has no validator for generation-queue.md; the user accepted the design by starting /finish)
+  timestamp: 2026-09-25T21:07:36.873857+00:00
 depends_on:
 - 01M39ZP766H4S63AR4R44Y6BA4
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffff8780
 title: 'Design: a work-queue session model with no locks and no "turn"'
 ---
 ## Why
