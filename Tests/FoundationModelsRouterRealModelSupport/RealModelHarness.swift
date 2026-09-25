@@ -25,7 +25,7 @@ import Testing
 /// so a change here cannot be proved by running them. It is proved instead by
 /// ``RealModelHarnessTests``, which builds a whole profile over a stub container
 /// and reads back every fact this function stamps: the definition name, each
-/// slot's resolution, the router id every handle carries, the one gate set the
+/// slot's resolution, the router id every handle carries, the one container the
 /// two generation handles share, and the `session.json` the durable recording
 /// actually writes to disk. That is why ``make(model:context:container:samplingMode:cacheDir:recordingsDir:routerId:)``
 /// takes `any LoadedLLMContainer` rather than the concrete MLX type: the
@@ -140,9 +140,8 @@ public enum RealModelHarness {
     ///
     /// The `.standard` and the `.flash` slots both wrap `container`, so a compaction
     /// that prefers the flash tier generates over the same resident model. Both
-    /// slots also share one ``ResidentModelGates`` set, as they would from a
-    /// pool entry: two sets would let two generations run inside the one
-    /// container at the same time.
+    /// slots thus share the one generation queue that `container` owns, as they
+    /// would from a pool entry.
     ///
     /// - Parameters:
     ///   - model: The model reference to stamp every slot with. This is a
@@ -190,7 +189,6 @@ public enum RealModelHarness {
             makeDurableRecording(
                 slot: slot, model: model, context: context, recordingsDir: recordingsDir, routerId: router.id)
         }
-        let generationGates = ResidentModelGates()
         func makeRoutedLLM(_ slot: ModelSlot) -> RoutedLLM {
             RoutedLLM(
                 slot: slot,
@@ -201,7 +199,6 @@ public enum RealModelHarness {
                 routerId: router.id,
                 recorder: recorder,
                 durableRecording: durableRecording(slot),
-                gates: generationGates,
                 samplingMode: samplingMode
             )
         }
@@ -213,8 +210,7 @@ public enum RealModelHarness {
             container: UnusedEmbeddingContainer(),
             routerId: router.id,
             recorder: recorder,
-            durableRecording: durableRecording(.embedding),
-            gates: ResidentModelGates()
+            durableRecording: durableRecording(.embedding)
         )
         return LanguageModelProfile(
             definitionName: definitionName,

@@ -198,7 +198,7 @@ public actor Router {
         reporting progress: ResolutionProgress,
         span: any Span
     ) async throws -> LanguageModelProfile {
-        // The cancellable acquire, unlike the one every session gate takes: a
+        // The cancellable acquire, unlike the one a session turn lock takes: a
         // resolve queued behind another resolve holds nothing yet, so a caller
         // the user cancels leaves the queue at once instead of waiting for a
         // permit it no longer wants. See ``AsyncSemaphore/waitUnlessCancelled()``.
@@ -865,8 +865,8 @@ public actor Router {
     }
 
     /// Builds a routed model handle for `slot` from its pool entry, with
-    /// this router's id, recorder, tracer, sampling mode, transcripts root,
-    /// and the entry's gates.
+    /// this router's id, recorder, tracer, sampling mode, and transcripts
+    /// root.
     ///
     /// - Parameters:
     ///   - slot: The slot this handle fills.
@@ -905,7 +905,6 @@ public actor Router {
                 resolution: resolution,
                 resolvedProfile: resolvedProfile
             ),
-            gates: entry.gates,
             tracer: tracer,
             samplingMode: samplingMode,
             residencyHold: hold

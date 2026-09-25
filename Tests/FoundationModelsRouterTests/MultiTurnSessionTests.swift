@@ -118,7 +118,7 @@ struct MultiTurnSessionTests {
         }
     }
 
-    // MARK: - Suspendable stub backend (generation-gate race proof)
+    // MARK: - Suspendable stub backend (turn-lock race proof)
 
     /// A synchronized event log a test polls without sleeping, recording the
     /// order generation and fork work actually ran in.

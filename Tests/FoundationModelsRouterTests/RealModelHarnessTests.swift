@@ -38,12 +38,8 @@ import Testing
 ///
 /// ## What this suite does not reach
 ///
-/// Two things. ``ResidentModelGates`` is a `struct`, so the fact that
-/// `.standard` and `.flash` share ONE set is not observable from outside the
-/// build — it is held by the one `let` inside the harness and by that comment
-/// alone. And no assertion here concerns the real model's own behavior: a
-/// session generating real text over a real container stays the gated suites'
-/// work.
+/// No assertion here concerns the real model's own behavior: a session
+/// generating real text over a real container stays the gated suites' work.
 @Suite("RealModelHarness profile shape (ungated)")
 struct RealModelHarnessTests {
     /// The model every profile built here is stamped with. Never loaded — the

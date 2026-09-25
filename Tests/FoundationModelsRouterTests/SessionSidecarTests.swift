@@ -629,7 +629,6 @@ struct SessionSidecarTests {
             recorder: standard.recorder,
             instructions: instructions,
             grammar: nil,
-            generationGate: standard.generationGate,
             persistedEntryCount: 0,
             historyOrdinal: 0,
             sidecarOrigin: .new(under: standard.durableRecording),

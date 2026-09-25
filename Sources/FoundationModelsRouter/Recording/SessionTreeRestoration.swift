@@ -450,7 +450,6 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 originalTools: tools,
                 outbox: outbox,
                 mailbox: mailbox,
-                generationGate: routedLLM.generationGate,
                 // The transcript the backend really holds, which an
                 // instructions override can make one entry longer. The next
                 // turn's diff must treat every entry of it as persisted, or

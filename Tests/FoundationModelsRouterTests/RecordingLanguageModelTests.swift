@@ -516,7 +516,6 @@ struct RecordingLanguageModelTests {
 
         let handleA = profile.standard.makeLanguageModel()
         let handleB = profile.standard.makeLanguageModel()
-        let generationGate = profile.standard.generationGate
         let queue = container.generationQueue
 
         let sessionA = LanguageModelSession(model: handleA, tools: [])
@@ -524,10 +523,9 @@ struct RecordingLanguageModelTests {
 
         let taskA = Task { _ = try await sessionA.respond(to: "a") }
         await Self.spin(until: { await observer.active == 1 })
-        // The pass of handleA is in the model. The handle took no permit of
-        // the turn-long generation gate, it gave its own recording lock back
-        // after the diff, and the pass holds the one place of the queue.
-        #expect(generationGate.availablePermits == 1)
+        // The pass of handleA is in the model. The handle gave its own
+        // recording lock back after the diff, and the pass holds the one place
+        // of the queue.
         #expect(handleA.state.recordingLock.availablePermits == 1)
         #expect(queue.availablePlaces == 0)
 

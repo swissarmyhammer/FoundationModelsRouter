@@ -45,7 +45,7 @@ package enum PooledContainer: Sendable {
 
 /// One resident model in the pool, reference-counted across every slot
 /// acquisition that holds it. Every ``RoutedModel`` built over this entry
-/// shares its ``ResidentModelGates``.
+/// shares its container, and so the ``GenerationQueue`` that container owns.
 package struct PoolEntry: Sendable {
     /// How many slot acquisitions currently hold this model.
     var refcount: Int
@@ -67,9 +67,6 @@ package struct PoolEntry: Sendable {
 
     /// The loaded container.
     let container: PooledContainer
-
-    /// The gates every handle built over this entry reuses.
-    let gates: ResidentModelGates
 
     /// Evicts ``container`` through the loader that loaded it. The pool calls
     /// it at zero references, whichever router releases last.
@@ -112,9 +109,8 @@ package struct SlotCharge: Sendable {
 /// ``shared`` is that instance; a router names it when it is given no pool.
 ///
 /// The first loader wins a key. The router that first loads a key makes the
-/// container with its own loader and mints the entry's ``ResidentModelGates``.
-/// A later router that names the same key gets that container and those
-/// gates, whatever its own loader would have made.
+/// container with its own loader. A later router that names the same key gets
+/// that container, whatever its own loader would have made.
 ///
 /// Residency is reference-counted per ``ResidencyKey`` across every profile
 /// that holds it. A resolve prices a resident candidate at its marginal cost
@@ -269,7 +265,6 @@ public actor ModelPool {
             baseWeightsBytes: footprintBytes - sessionBytes,
             acquiredChargeBytes: sessionBytes,
             container: container,
-            gates: ResidentModelGates(),
             evict: evict,
             promptCache: promptCache
         )

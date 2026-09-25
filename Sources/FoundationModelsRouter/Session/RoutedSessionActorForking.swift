@@ -25,8 +25,8 @@ extension RoutedSessionActor {
     /// writes the child it produced onto it.
     ///
     /// The span opens before `body` runs, so it covers every part of the call
-    /// that can refuse or suspend: the reentry guard, which throws before any
-    /// gate is touched, and the ``turnLock`` wait that reads the parent's
+    /// that can refuse or suspend: the reentry guard, which throws before the
+    /// turn lock is touched, and the ``turnLock`` wait that reads the parent's
     /// state. A refused fork therefore still leaves a span carrying its
     /// refusal.
     ///
@@ -80,7 +80,7 @@ extension RoutedSessionActor {
     /// - Returns: The forked child session.
     /// - Throws: ``SessionReentryError/forkDuringSameSessionTurn(sessionID:)``
     ///   when this call came from inside a tool call of this same session's own
-    ///   turn — refused before any gate is touched, so nothing is acquired and
+    ///   turn — refused before the turn lock is touched, so nothing is acquired and
     ///   nothing has to be unwound. Otherwise nothing — see the protocol doc's
     ///   ``RoutedSession/fork(workingDirectory:)`` `Throws:` note.
     private func performFork(workingDirectory: URL?) async throws -> RoutedSession {
@@ -165,12 +165,12 @@ extension RoutedSessionActor {
         // data race; releasing it immediately after capturing the forked backend
         // keeps the hold no longer than necessary.
         //
-        // The turn lock rather than the per-model generation gate, deliberately:
-        // a turn suspended in ``awaitingUser(_:)`` has handed the generation gate
-        // back to let other sessions generate, but it is still very much in
-        // flight and its `backend` is still mid-turn.
+        // The turn lock, deliberately: a turn holds it for its whole length,
+        // tool bodies and waits for a person included, and its `backend` is
+        // mid-turn for all of that time. A generation place is held only for
+        // one pass, so it cannot protect this read.
         await turnLock.wait()
-        // Captured in the same gate window as `makeFork(tools:)`, so it names
+        // Captured in the same lock window as `makeFork(tools:)`, so it names
         // exactly the entry count the child's seeded backend starts holding —
         // the child's own `persistedEntryCount` baseline, so the parent's history
         // inherited into the fork is never re-persisted into the child's
@@ -217,7 +217,6 @@ extension RoutedSessionActor {
             originalTools: originalTools,
             outbox: childOutbox,
             mailbox: childMailbox,
-            generationGate: generationGate,
             persistedEntryCount: entryCountAtFork,
             // The child's history starts where the parent's recorded history
             // stood at fork time — this initial ordinal is also the cut point

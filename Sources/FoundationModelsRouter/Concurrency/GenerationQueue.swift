@@ -20,9 +20,9 @@
 /// each scripted pass in ``runPass(isolation:_:)``, so its queue behavior is
 /// testable without MLX.
 ///
-/// This queue is a different semaphore from the turn-long
-/// ``RoutedModel/generationGate``. A turn holds that gate and then each of its
-/// passes waits here. One semaphore for both would deadlock on the first pass.
+/// A turn holds no place outside its passes. A pass that waits here belongs to
+/// a turn with an identity, so ``RoutedSession/cancelCurrentTurn()`` ends the
+/// wait at once: the wait is cancellable, and a cancelled wait takes no place.
 public final class GenerationQueue: Sendable {
     /// The one place of the queue: a fair FIFO semaphore at value `1`.
     private let place = AsyncSemaphore(value: 1)

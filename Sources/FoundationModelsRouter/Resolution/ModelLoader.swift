@@ -34,8 +34,8 @@ public protocol LoadedModelContainer: Sendable {}
 /// queue for each executor pass (`generation-queue.md`, section 2). A
 /// container with no executor seam (a backend that is not a
 /// `LanguageModelSession` over a `LanguageModel`, as a test stub or a
-/// third-party container) gets no pass-level gating from the Router. It still
-/// gets the turn-long ``RoutedModel/generationGate``. Such a container can own
+/// third-party container) gets no generation gating from the Router: two
+/// sessions over it can generate at the same time. Such a container can own
 /// a ``GenerationQueue`` of its own and run each scripted pass in
 /// ``GenerationQueue/runPass(isolation:_:)``.
 public protocol LoadedLLMContainer: LoadedModelContainer {

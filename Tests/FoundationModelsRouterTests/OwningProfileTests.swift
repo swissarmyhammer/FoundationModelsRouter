@@ -62,12 +62,9 @@ struct OwningProfileTests {
     /// Builds one bare generation handle, with no profile over it.
     ///
     /// ``HandBuiltProfileFixtures`` builds a handle of this shape too, but its
-    /// helper is `private` on purpose: it mints one ``ResidentModelGates`` set
-    /// for the one container and hands it to both generation handles, which is
-    /// the one-gate rule card ^fmet68k closed a defect to establish. A suite
-    /// that could reach the helper could mint a second gate set over an
-    /// already-resident container. So this suite calls ``RoutedLLM``'s
-    /// initializer itself, and takes no handle out of that factory.
+    /// helper is `private`: it builds both generation handles of one profile
+    /// over one container. So this suite calls ``RoutedLLM``'s initializer
+    /// itself, and takes no handle out of that factory.
     ///
     /// A hand-built slot resolves nothing, so it carries no footprint and
     /// leaves no budget.
@@ -88,8 +85,7 @@ struct OwningProfileTests {
             ),
             container: UndrivenLanguageModelContainer(),
             routerId: router.id,
-            recorder: InMemoryRecorder(),
-            gates: ResidentModelGates()
+            recorder: InMemoryRecorder()
         )
     }
 

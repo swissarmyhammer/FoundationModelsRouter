@@ -52,7 +52,9 @@ extension RoutedSessionActor {
 
     /// The single recorder-bracketed generation chokepoint every public method runs through.
     ///
-    /// The bracket holds ``turnLock`` and a ``RoutedModel/generationGate`` permit. It drains
+    /// The bracket holds ``turnLock`` for the whole turn. It holds no generation place: each
+    /// pass of `body` waits for a place of the model's ``GenerationQueue`` and holds that
+    /// place for that pass only, so a tool body between two passes holds nothing. It drains
     /// pending events from ``outbox`` into the prompt, runs `body`, then records the transcript delta.
     ///
     /// - Parameters:
@@ -77,13 +79,13 @@ extension RoutedSessionActor {
         onEvent: ((SessionEvent) -> Void)? = nil,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
-        // Acquire both gates for the whole bracket, releasing them on every path
-        // with a `defer` (the recording bracket stays in this actor's isolation
-        // region, so the gated work is not sent across an isolation boundary as a
-        // `withPermit` closure would be). `beginTurn()`/`endTurn()` pair exactly
-        // like `withPermit`, so no permit can leak. A refusal throws before
-        // either gate is touched, so the `defer` is installed only once there is
-        // something to release.
+        // Acquire the turn lock for the whole bracket, and release it on every
+        // path with a `defer` (the recording bracket stays in this actor's
+        // isolation region, so the locked work is not sent across an isolation
+        // boundary as a `withPermit` closure would be). `beginTurn()`/`endTurn()`
+        // pair exactly like `withPermit`, so no permit can leak. A refusal throws
+        // before the lock is touched, so the `defer` is installed only once there
+        // is something to release.
         let turnId = try await beginTurn()
         defer { endTurn() }
 
@@ -136,7 +138,7 @@ extension RoutedSessionActor {
         }
     }
 
-    /// Runs one turn inside that turn's own span. The caller must hold both turn gates.
+    /// Runs one turn inside that turn's own span. The caller must hold ``turnLock``.
     ///
     /// Every generation surface reaches this one method, so the span it opens
     /// covers all of them: ``RoutedSession/respond(to:maxTokens:)``,
@@ -200,7 +202,7 @@ extension RoutedSessionActor {
         span.attributes[RouterTracing.AttributeKey.tokensOut] = output
     }
 
-    /// Runs one turn's model work and recording. The caller must hold both turn gates.
+    /// Runs one turn's model work and recording. The caller must hold ``turnLock``.
     ///
     /// When ``autoCompactionBudget`` is set and measured usage has reached
     /// ``TokenBudget/triggerTokens``, the turn compacts first. A compaction that throws
@@ -621,27 +623,14 @@ extension RoutedSessionActor {
             completionToken: SessionMailbox.makeCompletionToken(),
             isCancelled: { cancellationProbe.isCancelled }
         )
-        // The permit this turn is running on, published for exactly this model
-        // call (task ^1zt7vyg). A tool the model invokes from inside the call
-        // reads it, and a turn that tool starts on *another* session over the
-        // same resident container runs on this permit instead of waiting for
-        // one that only comes back when this turn ends. Closed in the `defer`
-        // below, so a run that went to the background and outlived the call cannot borrow on
-        // it. See ``GenerationPermitLoan``.
-        let permitLoan = GenerationPermitLoan(
-            gate: generationGate,
-            sessionID: id,
-            holdsPermit: holdsGenerationPermit || borrowsGenerationPermit
-        )
-        currentPermitLoan = permitLoan
-        // Identity-matched for the same reason the model call below is: a later
-        // attempt's own loan is never cleared by an earlier one's unwind.
-        defer {
-            if currentPermitLoan === permitLoan {
-                currentPermitLoan = nil
-            }
-            permitLoan.close()
-        }
+        // The mark of this model call, published for exactly this call. A tool
+        // the model invokes from inside the call reads it, so a turn or a fork
+        // that tool asks of this same session is refused rather than parked on
+        // the turn lock this turn holds. Closed in the `defer` below, so a run
+        // that went to the background and outlived the call is not in a tool
+        // call of this turn. See ``GenerationPermitLoan``.
+        let permitLoan = GenerationPermitLoan(sessionID: id)
+        defer { permitLoan.close() }
         // The stall watch (task ^z6xcmnh), opened before the call and closed
         // by its own `defer`. It bounds nothing: the watchdog only reports a
         // ``GenerationStall`` on each interval the call goes without observable
@@ -735,7 +724,7 @@ extension RoutedSessionActor {
     /// See ``RoutedSession/dispatchNextPrompt()`` for the full contract.
     ///
     /// Dequeues the front prompt and any pending events in one atomic
-    /// `SessionOutbox.drainForDispatch()` call, inside the same two gates
+    /// `SessionOutbox.drainForDispatch()` call, inside the same turn lock
     /// ``generate(grammar:entryPoint:prompt:responseTokenCeiling:onEvent:_:)`` uses. Honors ``grammar``. The
     /// prompt's id is reported in ``SessionEvent/turnStarted(_:)``.
     ///

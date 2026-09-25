@@ -8,15 +8,15 @@ import Synchronization
 /// ``wait()`` is non-throwing, so acquisition runs to completion even when
 /// the task is cancelled while suspended. Cancellation is observed at the
 /// surrounding `await` boundaries and by the body of ``withPermit(isolation:_:)``.
-/// Every session gate — the turn lock and the per-model generation gate —
-/// takes this acquire, because a cancelled waiter that walked away
-/// from those queues would leave a gate count that no later release ever
-/// balances.
+/// The turn lock of a session takes this acquire, because a cancelled waiter
+/// that walked away from that queue would leave a lock count that no later
+/// release ever balances.
 ///
 /// ``waitUnlessCancelled()`` throws `CancellationError` instead, and a caller
 /// the user cancels leaves the queue at once. ``Router/resolve(profile:reporting:)``
-/// takes this acquire for the pool's resolve lock, where a queued resolve holds
-/// nothing yet and can be abandoned safely.
+/// takes this acquire for the pool's resolve lock, and each pass takes it for
+/// its place in the ``GenerationQueue``: a queued resolve or pass holds nothing
+/// yet and can be abandoned safely.
 ///
 /// One arrival order serves both kinds of waiter, so the queue stays fair
 /// whichever acquire each caller took, and each continuation is resumed

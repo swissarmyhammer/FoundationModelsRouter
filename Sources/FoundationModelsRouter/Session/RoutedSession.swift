@@ -37,10 +37,12 @@ public enum PromptCancellationResult: Sendable, Equatable {
 /// generation surface.
 ///
 /// Every generation method records the turn's new transcript entries, whether
-/// the model returns or throws. One session never has two turns in flight
-/// (``RoutedSessionActor/turnLock``), and model work over one model does not
-/// overlap (``RoutedModel/generationGate``). The generation gate is released
-/// for ``awaitingUser(_:)`` and lent through ``GenerationPermitLoan``.
+/// the model returns or throws. One session never has two turns in flight:
+/// a turn holds ``RoutedSessionActor/turnLock`` for its whole length. Model
+/// work over one model does not overlap: each generation pass of a turn waits
+/// for the one place of that model's ``GenerationQueue``, and holds it for
+/// that pass only. A turn in a tool body, or in a wait for a person, holds no
+/// place, so another session over the same model can generate meanwhile.
 public protocol RoutedSession: Actor {
     /// The resolved profile this session runs against.
     nonisolated var profile: LanguageModelProfile { get }
@@ -248,8 +250,10 @@ public protocol RoutedSession: Actor {
     /// returns its response. A cancellation that lands before any model call
     /// starts makes the turn throw without calling the model. The transcript
     /// records a cancelled turn as a failed turn, with one close. The outbox
-    /// follows the attach-or-requeue rule. The gates stay balanced, including
-    /// for a turn suspended in ``awaitingUser(_:)``.
+    /// follows the attach-or-requeue rule. The turn lock is released, and the
+    /// generation queue keeps its one place. A turn whose pass still waits for
+    /// a place in the generation queue is a turn in flight: the cancellation
+    /// ends that wait at once, and the turn takes no place.
     ///
     /// Only the turn in flight is affected. A compaction's summarizer call is
     /// cancelled where it stands.
@@ -258,18 +262,17 @@ public protocol RoutedSession: Actor {
     @discardableResult
     func cancelCurrentTurn() async -> TurnCancellationResult
 
-    /// Runs `body` with the per-model generation gate released, and re-acquires
-    /// it before returning. Use it for a wait on a person, never on the model.
+    /// Runs `body`, a wait on a person, and returns what it returns.
     ///
-    /// A tool that awaits a person mid-turn would otherwise hold
-    /// ``RoutedModel/generationGate`` and block every other session over that
-    /// model. This session keeps its own turn lock throughout. A tool that
-    /// generates on the model uses ``GenerationPermitLoan`` instead.
+    /// The wait holds no generation place: a turn holds a place of the model's
+    /// ``GenerationQueue`` only for each of its passes, and a tool body runs
+    /// between two passes. So another session over the same model generates
+    /// while a person is being waited on. This session keeps its own turn lock
+    /// throughout, so no second turn of this session starts during the wait.
     ///
-    /// The re-acquire happens on every exit from `body`, including a throw and
-    /// a cancellation. Overlapping calls in one turn release once, on the
-    /// outermost, and re-acquire once, when the last of them finishes. A wait
-    /// with no turn in flight releases nothing.
+    /// The call releases nothing and acquires nothing, so a throw or a
+    /// cancellation from `body` leaves every lock as it was, and overlapping
+    /// calls, or a call with no turn in flight, need no bookkeeping.
     ///
     /// - Precondition: Call this from inside a tool the SDK invoked for this
     ///   session's own in-flight turn, and do not let the wait outlive that tool call.

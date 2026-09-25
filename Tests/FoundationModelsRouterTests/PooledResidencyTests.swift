@@ -18,7 +18,7 @@ import Testing
 /// `CrossRouterResidencyTests`.
 @Suite("Pooled model residency")
 struct PooledResidencyTests {
-    // MARK: - Concurrency-observing container (shared-gate test)
+    // MARK: - Concurrency-observing container (shared-queue test)
 
     /// Tracks how many bodies are concurrently inside a suspended `respond`
     /// call, so the shared-model concurrency test can assert non-overlap
@@ -42,19 +42,30 @@ struct PooledResidencyTests {
     /// A generation backend that suspends on a release gate while inside
     /// `respond`, so a test can observe whether two concurrent calls
     /// serialize (never overlap) or interleave.
+    ///
+    /// The backend has no executor seam, so the Router gives it no generation
+    /// gating. Each call runs as one pass in the ``GenerationQueue`` of its
+    /// container instead, through ``GenerationQueue/runPass(isolation:_:)``:
+    /// the pattern a consumer's own stub container follows.
     private final class SuspendingSessionBackend: LanguageModelSessionBackend, @unchecked Sendable {
         private let observer: ConcurrencyObserver
         private let releaseGate: AsyncSemaphore
 
-        init(observer: ConcurrencyObserver, releaseGate: AsyncSemaphore) {
+        /// The queue of the container, which each call takes for its one pass.
+        private let generationQueue: GenerationQueue
+
+        init(observer: ConcurrencyObserver, releaseGate: AsyncSemaphore, generationQueue: GenerationQueue) {
             self.observer = observer
             self.releaseGate = releaseGate
+            self.generationQueue = generationQueue
         }
 
         func respond(to prompt: String, maxTokens: Int?) async throws -> String {
-            await observer.enter(prompt)
-            await releaseGate.wait()
-            await observer.exit()
+            try await generationQueue.runPass {
+                await observer.enter(prompt)
+                await releaseGate.wait()
+                await observer.exit()
+            }
             return "ok-\(prompt)"
         }
 
@@ -80,11 +91,15 @@ struct PooledResidencyTests {
 
         let observer: ConcurrencyObserver
         let releaseGate: AsyncSemaphore
+
+        /// The queue every backend of this container shares.
+        let generationQueue = GenerationQueue()
+
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            SuspendingSessionBackend(observer: observer, releaseGate: releaseGate)
+            SuspendingSessionBackend(observer: observer, releaseGate: releaseGate, generationQueue: generationQueue)
         }
         func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
-            SuspendingSessionBackend(observer: observer, releaseGate: releaseGate)
+            SuspendingSessionBackend(observer: observer, releaseGate: releaseGate, generationQueue: generationQueue)
         }
     }
 
@@ -309,7 +324,7 @@ struct PooledResidencyTests {
         withExtendedLifetime(reresolved) {}
     }
 
-    // MARK: - Concurrent generation on a shared model serializes on the model's generationGate.
+    // MARK: - Concurrent generation on a shared model serializes on the model's generation queue.
 
     @Test("concurrent generation from two profiles over the same resident model never overlaps")
     @MainActor
@@ -336,16 +351,18 @@ struct PooledResidencyTests {
         let first = try await router.resolve(profile: shared, reporting: ResolutionProgress())
         let second = try await router.resolve(profile: shared, reporting: ResolutionProgress())
 
+        // One pool entry, so one container, so one queue for both profiles.
+        let queue = try #require(first.standard.container as? SuspendingLLMContainer).generationQueue
+        #expect(try #require(second.standard.container as? SuspendingLLMContainer).generationQueue === queue)
+
         async let firstReply: String = first.standard.makeSession(instructions: nil).respond(to: "0")
         async let secondReply: String = second.standard.makeSession(instructions: nil).respond(to: "1")
 
-        // Let both calls actually reach (and suspend inside) the shared model
-        // before releasing them, so the gate — not scheduling luck — is what
-        // is under test.
-        while await observer.active == 0 { await Task.yield() }
-        // A second caller must be unable to enter while the first still
-        // holds the gate: give it a beat, then confirm it never overlapped.
-        for _ in 0..<5 { await Task.yield() }
+        // Let one call reach (and suspend inside) the shared model, and the
+        // other wait in the shared queue, before releasing them, so the queue
+        // — not scheduling luck — is what is under test.
+        #expect(await BoundedWait.conditionReached("one pass inside the shared model") { await observer.active == 1 })
+        #expect(await BoundedWait.conditionReached("the other pass waiting in the shared queue") { queue.waiterCount == 1 })
         #expect(await observer.maxActive == 1)
 
         releaseGate.signal()

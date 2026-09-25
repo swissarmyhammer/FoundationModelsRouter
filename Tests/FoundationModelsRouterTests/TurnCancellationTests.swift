@@ -17,7 +17,7 @@ import Testing
 /// the `Task` that owns the model call a tool runs inside. These tests prove
 /// cancellation reaches *inside* the model call (the regression the work exists
 /// for), that a cancelled turn is recorded exactly like any other failed turn
-/// rather than half-written, that gate accounting survives it, and that the
+/// rather than half-written, that turn-lock accounting survives it, and that the
 /// documented no-op cases really are no-ops.
 ///
 /// Everything runs against stubs with no network and no GPU: a backend whose
@@ -428,8 +428,8 @@ struct TurnCancellationTests {
     }
 
     /// A ``ModelLoader`` returning the identical, test-supplied container for
-    /// every generation slot — so every session in a test shares one model, and
-    /// therefore one generation gate. No download, no GPU.
+    /// every generation slot — so every session in a test shares one model. No
+    /// download, no GPU.
     private struct StubModelLoader: ModelLoader {
         let container: HookedLLMContainer
         let dimension: Int
@@ -692,8 +692,8 @@ struct TurnCancellationTests {
     /// observed through `observer` under a bounded spin rather than by awaiting
     /// the turn.
     ///
-    /// The indirection is the point: a regression that strands a generation permit
-    /// blocks every later turn over that model forever, so awaiting such a turn
+    /// The indirection is the point: a regression that strands a turn lock
+    /// blocks every later turn on that session forever, so awaiting such a turn
     /// directly would hang the whole suite instead of failing an assertion in the
     /// test that caught it.
     private static func followUpTurnCompletes(
@@ -704,7 +704,7 @@ struct TurnCancellationTests {
         let task = Task { try await session.respond(to: prompt) }
         await BoundedWait.spin(until: { await observer.exited.contains(prompt) })
         guard await observer.exited.contains(prompt) else {
-            // Never admitted to the model at all — suspended on a gate. Cancelling
+            // Never admitted to the model at all — suspended on the turn lock. Cancelling
             // will not resume it (``AsyncSemaphore/wait()`` ignores cancellation
             // by design), but the suite must not await it either.
             task.cancel()
@@ -719,8 +719,7 @@ struct TurnCancellationTests {
     /// ``followUpTurnCompletes(on:observer:prompt:)`` for a test that has to *see*
     /// what the next turn did — its own ``SessionEvent/compaction(_:)``, say — and
     /// bounded by the same spin for the same reason: a regression that stranded a
-    /// generation permit would hang the suite rather than fail the test that caught
-    /// it.
+    /// turn lock would hang the suite rather than fail the test that caught it.
     ///
     /// Unlike that method, this one *does* await the task on its give-up path, and
     /// the difference is deliberate — do not "fix" the two to match. This task
@@ -772,8 +771,7 @@ struct TurnCancellationTests {
         /// owning profile weakly, so dropping this would make `makeSession` trap.
         let profile: LanguageModelProfile
 
-        /// The one resident model every session in a test is vended from, and so
-        /// the one generation gate they all share.
+        /// The one resident model every session in a test is vended from.
         var model: RoutedLLM { profile.standard }
     }
 
@@ -826,11 +824,10 @@ struct TurnCancellationTests {
     ///     tool call, so a test cancels at a known point rather than racing to
     ///     get there.
     ///   - humanWait: The session to suspend inside ``RoutedSession/awaitingUser(_:)``
-    ///     on — the tool-awaiting-a-person shape, which hands the generation permit
-    ///     back for the duration — or `nil` to suspend directly in the tool call. The
-    ///     wait itself is identical either way, which is the point of the
-    ///     parameter: the gate-accounting test must exercise the same suspension as the
-    ///     others, not a copy of it.
+    ///     on — the tool-awaiting-a-person shape — or `nil` to suspend directly in
+    ///     the tool call. The wait itself is identical either way, which is the
+    ///     point of the parameter: the lock-accounting test must exercise the same
+    ///     suspension as the others, not a copy of it.
     /// - Returns: The event the tool signals once it has observed the cancellation,
     ///   so a test waits on that moment instead of polling for it.
     private static func suspendInsideCancellationAwareTool(
@@ -1026,39 +1023,34 @@ struct TurnCancellationTests {
         #expect(afterEvents.last?.text == "ok-after")
     }
 
-    // MARK: - Gate accounting
+    // MARK: - Lock accounting
 
-    @Test("cancelling a turn suspended in awaitingUser leaves both gates balanced and blocks no other session")
+    @Test("cancelling a turn suspended in awaitingUser leaves the turn lock balanced and blocks no other session")
     @MainActor
-    func cancellingATurnSuspendedInAwaitingUserKeepsGatesBalanced() async throws {
+    func cancellingATurnSuspendedInAwaitingUserKeepsTheTurnLockBalanced() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
-        let generationGate = fixture.model.generationGate
         let sessionA = fixture.model.makeSession()
         let sessionB = fixture.model.makeSession()
         let turnLockA = try #require(sessionA as? RoutedSessionActor).turnLock
 
-        // The turn suspends on a person from inside `awaitingUser`, so its
-        // generation permit has been lent back to the model when the
-        // cancellation arrives — the interaction between in-flight cancellation
-        // and the split gate.
+        // The turn suspends on a person from inside `awaitingUser`, which holds
+        // no generation place, when the cancellation arrives: the interaction
+        // between in-flight cancellation and a wait inside a tool body.
         let insideWait = AsyncSemaphore(value: 0)
         let sawCancellation = Self.suspendInsideCancellationAwareTool(
             fixture, prompt: "cancel-in-wait", insideTool: insideWait, humanWait: sessionA)
 
         let turnTask = Task { try await sessionA.respond(to: "cancel-in-wait") }
         await insideWait.wait()
-        #expect(generationGate.availablePermits == 1)
+        #expect(turnLockA.availablePermits == 0)
 
         #expect(await sessionA.cancelCurrentTurn() == .requested)
         try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
 
-        // Exactly one permit is back — not two (a permit minted by a release the
-        // cancelled wait never balanced) and not none (one stranded by it).
-        #expect(generationGate.availablePermits == 1)
-        #expect(generationGate.waiterCount == 0)
+        // Exactly one permit of the turn lock is back — not two and not none.
         #expect(turnLockA.availablePermits == 1)
         #expect(turnLockA.waiterCount == 0)
 
@@ -1066,7 +1058,7 @@ struct TurnCancellationTests {
         // generates, and so does the cancelled one.
         #expect(await Self.followUpTurnCompletes(on: sessionB, observer: fixture.observer, prompt: "other-session"))
         #expect(await Self.followUpTurnCompletes(on: sessionA, observer: fixture.observer))
-        #expect(generationGate.availablePermits == 1)
+        #expect(turnLockA.availablePermits == 1)
     }
 
     // MARK: - The outbox rule
@@ -1306,7 +1298,7 @@ struct TurnCancellationTests {
         await BoundedWait.spin(until: { turnLock.waiterCount == 1 })
         #expect(turnLock.waiterCount == 1)
 
-        // Cancelled while suspended on a gate. Gate acquisition ignores cancellation by
+        // Cancelled while suspended on the turn lock. Its acquisition ignores cancellation by
         // design, so this turn still takes its place in line — what it does once it
         // gets there is the question.
         queuedTask.cancel()
@@ -1597,7 +1589,7 @@ struct TurnCancellationTests {
         #expect(await fixture.observer.entered.filter(Self.isSummarizerCall).count == 1)
         #expect(await fixture.observer.entered.contains("compacts-first") == false)
 
-        // And this path gave its gates back too, fault and stop together.
+        // And this path gave its turn lock back too, fault and stop together.
         fixture.hook.midTurn = nil
         #expect(await Self.followUpTurnCompletes(on: session, observer: fixture.observer))
     }
@@ -1644,7 +1636,7 @@ struct TurnCancellationTests {
         try await Self.awaitCancelledUnwind(compactTask, sawCancellation: sawCancellation)
         #expect(await fixture.observer.toolSawCancellation)
 
-        // And it gave its gates back on the way out, so the session still generates.
+        // And it gave its turn lock back on the way out, so the session still generates.
         fixture.hook.midTurn = nil
         #expect(await Self.followUpTurnCompletes(on: session, observer: fixture.observer))
     }

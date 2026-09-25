@@ -68,7 +68,7 @@ extension RoutedSessionActor {
     /// See ``RoutedSession/compact(prompt:budget:)``.
     ///
     /// Summarizes with a fresh backend over this session's own model. Takes the
-    /// turn lock and a generation permit for the duration (``beginTurn()``),
+    /// turn lock for the duration (``beginTurn()``),
     /// then runs ``runCompaction(prompt:budget:summarizers:)`` inside the
     /// span ``withCompactionSpan(trigger:_:)`` opens.
     ///
@@ -87,8 +87,7 @@ extension RoutedSessionActor {
     }
 
     /// Auto-compaction's entry point. The caller must already hold
-    /// ``turnLock`` and a ``generationGate`` permit; this method acquires
-    /// neither.
+    /// ``turnLock``; this method does not acquire it.
     ///
     /// Offers two summarizer tiers: the profile's ``LanguageModelProfile/flash``
     /// slot (not offered when this session is the flash slot), then this
@@ -215,7 +214,7 @@ extension RoutedSessionActor {
     /// over ``backend``'s transcript, counted by this session's ``tokenCounter``.
     /// When a summary applied, records the compaction's new entries by id and
     /// replaces ``backend`` with one seeded from the new snapshot. Otherwise
-    /// leaves the session unchanged. The caller must hold both gates.
+    /// leaves the session unchanged. The caller must hold ``turnLock``.
     ///
     /// - Parameters:
     ///   - prompt: The compaction prompt sent to the summarizer.

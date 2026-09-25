@@ -138,7 +138,6 @@ struct EmbedTracingTests {
             container: ThrowingEmbeddingContainer(dimension: RouterTestFixtures.stubDimension),
             routerId: router.id,
             recorder: InMemoryRecorder(),
-            gates: ResidentModelGates(),
             tracer: tracer
         )
 

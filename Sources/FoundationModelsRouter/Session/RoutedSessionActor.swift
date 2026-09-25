@@ -185,7 +185,6 @@ func makeRoutedSessionActor(
     originalTools: [any Tool] = [],
     outbox: SessionOutbox = SessionOutbox(),
     mailbox: SessionMailbox = SessionMailbox(),
-    generationGate: AsyncSemaphore,
     persistedEntryCount: Int,
     historyOrdinal: Int,
     sidecarOrigin: SessionSidecarOrigin,
@@ -223,7 +222,6 @@ func makeRoutedSessionActor(
             originalTools: originalTools,
             outbox: outbox,
             mailbox: mailbox,
-            generationGate: generationGate,
             persistedEntryCount: persistedEntryCount,
             historyOrdinal: historyOrdinal,
             sidecarOrigin: sidecarOrigin,
@@ -342,35 +340,12 @@ actor RoutedSessionActor: RoutedSession {
     /// `private` so a test can observe its ``AsyncSemaphore/waiterCount``.
     nonisolated let turnLock = AsyncSemaphore(value: 1)
 
-    /// The per-model generation gate, shared with the owning model's other
-    /// sessions. Released mid-turn for ``awaitingUser(_:)``.
-    nonisolated let generationGate: AsyncSemaphore
-
-    /// Whether the turn in flight holds a ``generationGate`` permit.
-    var holdsGenerationPermit = false
-
-    /// Whether the turn in flight runs on a permit lent by an enclosing turn
-    /// (``GenerationPermitLoan``). Such a turn releases no permit at ``endTurn()``.
-    var borrowsGenerationPermit = false
-
-    /// The loan the turn in flight publishes to its model call, or `nil`
-    /// between model calls. See ``GenerationPermitLoan``.
-    var currentPermitLoan: GenerationPermitLoan?
-
-    /// How many ``awaitingUser(_:)`` calls are outstanding. Only the outermost
-    /// releases the permit and only the last to finish re-acquires it.
-    var humanWaitDepth = 0
-
     /// The id of the turn holding ``turnLock``, or `nil` between turns. Ids
     /// are monotonic.
     var currentTurnId: UInt64?
 
     /// The last id ``beginTurn()`` handed out.
     var lastTurnId: UInt64 = 0
-
-    /// The turn the outermost outstanding ``awaitingUser(_:)`` borrowed this
-    /// session's generation permit from, or `nil` when no loan is open.
-    var humanWaitLenderTurnId: UInt64?
 
     /// The in-flight turn's model call, the task ``cancelCurrentTurn()``
     /// cancels, or `nil` when no model call is outstanding. Only the model call
@@ -565,7 +540,6 @@ actor RoutedSessionActor: RoutedSession {
         originalTools: [any Tool] = [],
         outbox: SessionOutbox = SessionOutbox(),
         mailbox: SessionMailbox = SessionMailbox(),
-        generationGate: AsyncSemaphore,
         persistedEntryCount: Int,
         historyOrdinal: Int,
         sidecarOrigin: SessionSidecarOrigin,
@@ -601,7 +575,6 @@ actor RoutedSessionActor: RoutedSession {
         self.originalTools = originalTools
         self.outbox = outbox
         self.mailbox = mailbox
-        self.generationGate = generationGate
         self.persistedEntryCount = persistedEntryCount
         self.persistedBaseline = TranscriptDiffer.Baseline(
             transcript: Transcript(entries: backend.transcriptEntries().prefix(persistedEntryCount)))

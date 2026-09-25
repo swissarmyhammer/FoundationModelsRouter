@@ -458,7 +458,6 @@ struct LanguageModelSessionBackendIntegrationTests {
             recorder: standard.recorder,
             instructions: nil,
             grammar: nil,
-            generationGate: standard.generationGate,
             persistedEntryCount: 0,
             historyOrdinal: 0,
             // A new root under the vending handle's durable recording, exactly

@@ -106,11 +106,6 @@ public final class RoutedModel<Container: Sendable>: Sendable {
         owningProfileSlot.withLock { $0.profile = profile }
     }
 
-    /// The per-model generation gate, a fair FIFO ``AsyncSemaphore`` at value
-    /// `1`. Every session vended from this handle shares it, so generations
-    /// serialize. A turn can hand it back while it waits on a person.
-    let generationGate: AsyncSemaphore
-
     /// The shared claim on the residency this handle's container belongs to,
     /// or `nil` for a hand-built handle that resolved nothing.
     ///
@@ -138,7 +133,6 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     ///   - routerId: The resolving router's recording root id.
     ///   - recorder: The recorder a vended session or embed call is born holding.
     ///   - durableRecording: The durable recording root and sidecar writer, or `nil`.
-    ///   - gates: The gates `container` carries.
     ///   - tracer: The tracer an embed call opens its span through, or `nil`
     ///     (the default) to read `InstrumentationSystem.tracer` at call time.
     ///   - samplingMode: The decoding strategy every backend made through
@@ -156,7 +150,6 @@ public final class RoutedModel<Container: Sendable>: Sendable {
         routerId: ULID,
         recorder: any TranscriptRecorder,
         durableRecording: DurableRecording? = nil,
-        gates: ResidentModelGates,
         tracer: (any Tracer)? = nil,
         samplingMode: GenerationOptions.SamplingMode? = nil,
         residencyHold: ResidencyHold? = nil
@@ -171,7 +164,6 @@ public final class RoutedModel<Container: Sendable>: Sendable {
         self.tracer = tracer
         self.durableRecording = durableRecording
         self.samplingMode = samplingMode
-        generationGate = gates.generation
         self.residencyHold = residencyHold
     }
 }

@@ -6,26 +6,27 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises milestone 9: the ``RoutedSession/fork(workingDirectory:)`` primitive
-/// over the persistent ``LanguageModelSessionBackend`` plus the two
-/// ``AsyncSemaphore``-backed concurrency gates.
+/// over the persistent ``LanguageModelSessionBackend``, plus the per-model
+/// ``GenerationQueue`` its passes wait in.
 ///
 /// Everything runs against stubs with no network and no GPU:
 /// - a ``TrackingSessionBackend`` that records call count and prompt history
 ///   like the shared ``StubSessionBackend``, so a fork's ``makeFork()``-seeded
 ///   transcript inheritance and independent divergence are observed exactly;
 /// - the same backend, when wired with a test-controlled ``SerialObserver`` +
-///   release gate, can suspend `respond` on it, so the per-model generation gate's
-///   non-overlap and FIFO order are made deterministic through the semaphore's
-///   `waiterCount` observability rather than sleeps.
+///   release gate, runs `respond` as one pass in its container's queue and can
+///   suspend that pass, so the queue's non-overlap and FIFO order are made
+///   deterministic through the queue's `waiterCount` observability rather than
+///   sleeps.
 ///
 /// Real prefix reuse (no recompute) is gated to the milestone 7 integration
 /// suite; here the abstraction is asserted through the stub.
-@Suite("Session fork + per-model concurrency gates")
+@Suite("Session fork + per-model generation queue")
 struct ForkConcurrencyTests {
-    // MARK: - Serial-gate observability
+    // MARK: - Serial-queue observability
 
     /// Tracks the order `respond` bodies enter the model and the peak concurrency,
-    /// so the generation gate's non-overlap and FIFO order can be asserted.
+    /// so the generation queue's non-overlap and FIFO order can be asserted.
     private actor SerialObserver {
         private(set) var entryOrder: [Int] = []
         private(set) var active = 0
@@ -65,6 +66,12 @@ struct ForkConcurrencyTests {
     /// observer/gate-wired backend still suspends the same way and a fork of a
     /// guided-probe-wired backend still records into the same probe —
     /// mirroring how a fork shares its parent's underlying model.
+    ///
+    /// A backend with no executor seam gets no generation gating from the
+    /// Router, so an observed call runs as one pass in the
+    /// ``GenerationQueue`` its container owns, through
+    /// ``GenerationQueue/runPass(isolation:_:)``: the pattern a consumer's own
+    /// stub container follows.
     private final class TrackingSessionBackend: LanguageModelSessionBackend, @unchecked Sendable {
         private(set) var callCount = 0
         private(set) var receivedPrompts: [String]
@@ -74,12 +81,18 @@ struct ForkConcurrencyTests {
         private let releaseGate: AsyncSemaphore?
         private let guidedProbe: GuidedProbe?
 
+        /// The queue of the container, which each observed call takes for its
+        /// one pass.
+        private let generationQueue: GenerationQueue
+
         init(
+            generationQueue: GenerationQueue,
             observer: SerialObserver? = nil,
             releaseGate: AsyncSemaphore? = nil,
             guidedProbe: GuidedProbe? = nil,
             receivedPrompts: [String] = []
         ) {
+            self.generationQueue = generationQueue
             self.observer = observer
             self.releaseGate = releaseGate
             self.guidedProbe = guidedProbe
@@ -91,9 +104,11 @@ struct ForkConcurrencyTests {
             receivedPrompts.append(prompt)
             if let observer, let releaseGate {
                 let id = Int(prompt) ?? -1
-                await observer.enter(id)
-                await releaseGate.wait()
-                await observer.exit()
+                try await generationQueue.runPass {
+                    await observer.enter(id)
+                    await releaseGate.wait()
+                    await observer.exit()
+                }
                 return "ok-\(id)"
             }
             return "ok"
@@ -117,24 +132,25 @@ struct ForkConcurrencyTests {
         }
 
         /// No synthetic transcript is tracked here — this suite exercises
-        /// call-count/prompt-history/generation-gate behavior, not
+        /// call-count/prompt-history/generation-queue behavior, not
         /// transcript accumulation, so there is nothing meaningful to report.
         func transcriptEntries() -> [Transcript.Entry] {
             []
         }
 
         /// No usage is tracked here — this suite exercises call-count/prompt-
-        /// history/generation-gate behavior, not token metering.
+        /// history/generation-queue behavior, not token metering.
         func usageTokenCounts() -> (input: Int, output: Int)? {
             nil
         }
 
-        /// Returns a new backend sharing this one's observer/gate/probe wiring
-        /// and pre-seeded with a copy of ``receivedPrompts`` as of this call,
-        /// and records the child so a test holding this (parent) backend can
-        /// reach it via ``lastFork``.
+        /// Returns a new backend sharing this one's queue/observer/gate/probe
+        /// wiring and pre-seeded with a copy of ``receivedPrompts`` as of this
+        /// call, and records the child so a test holding this (parent) backend
+        /// can reach it via ``lastFork``.
         func makeFork() -> any LanguageModelSessionBackend {
             let fork = TrackingSessionBackend(
+                generationQueue: generationQueue,
                 observer: observer,
                 releaseGate: releaseGate,
                 guidedProbe: guidedProbe,
@@ -149,9 +165,15 @@ struct ForkConcurrencyTests {
     /// with this suite's optional observer/release-gate/guided-probe, and
     /// tracks the most recently manufactured one so a test can assert on its
     /// call history directly. No MLX.
+    ///
+    /// It owns one ``GenerationQueue``, and every backend it vends, and every
+    /// fork of those, runs its observed calls in that one queue.
     private final class InstrumentedLLMContainer: LoadedLLMContainer, @unchecked Sendable {
         /// The scripted counter of this container: one token per `Character`.
         let tokenCounter: any TokenCounter = CharacterTokenCounter()
+
+        /// The queue every backend of this container shares.
+        let generationQueue = GenerationQueue()
 
         private let observer: SerialObserver?
         private let releaseGate: AsyncSemaphore?
@@ -165,21 +187,25 @@ struct ForkConcurrencyTests {
         }
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            let backend = TrackingSessionBackend(observer: observer, releaseGate: releaseGate, guidedProbe: guidedProbe)
+            let backend = TrackingSessionBackend(
+                generationQueue: generationQueue, observer: observer, releaseGate: releaseGate,
+                guidedProbe: guidedProbe)
             lastBackend = backend
             return backend
         }
 
-        /// Mirrors ``makeSession(instructions:)``'s observer/gate/probe wiring
+        /// Mirrors ``makeSession(instructions:)``'s queue/observer/gate/probe wiring
         /// and ``lastBackend`` tracking invariant instead of the shared plain
         /// default. `TrackingSessionBackend` never models a synthetic
         /// transcript (its ``TrackingSessionBackend/transcriptEntries()``
         /// always reports empty, by design — this suite exercises
-        /// call-count/prompt-history/generation-gate behavior, not transcript
+        /// call-count/prompt-history/generation-queue behavior, not transcript
         /// accumulation), so `transcript`'s entries have nothing to seed; only
         /// the tracking invariant itself needs to be preserved here.
         func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
-            let backend = TrackingSessionBackend(observer: observer, releaseGate: releaseGate, guidedProbe: guidedProbe)
+            let backend = TrackingSessionBackend(
+                generationQueue: generationQueue, observer: observer, releaseGate: releaseGate,
+                guidedProbe: guidedProbe)
             lastBackend = backend
             return backend
         }
@@ -407,11 +433,11 @@ struct ForkConcurrencyTests {
         _ = parent
     }
 
-    // MARK: - Per-model generation gate
+    // MARK: - Per-model generation queue
 
-    @Test("concurrent respond() on one model never overlap and run FIFO")
+    @Test("concurrent passes on one model never overlap and take the queue first in first out")
     @MainActor
-    func generationGateSerializesAndIsFIFO() async throws {
+    func generationQueueSerializesPassesAndIsFIFO() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -424,36 +450,37 @@ struct ForkConcurrencyTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         // Four callers over the SAME model: a root session and three forks. They
-        // share the model's generation gate, so their respond calls must serialize.
+        // share the container's one generation queue, so their passes must
+        // serialize, each pass in the order it joined the queue.
         let root = profile.standard.makeSession()
         let fork1 = try await root.fork(workingDirectory: nil)
         let fork2 = try await root.fork(workingDirectory: nil)
         let fork3 = try await root.fork(workingDirectory: nil)
         let callers: [RoutedSession] = [root, fork1, fork2, fork3]
 
-        let generationGate = profile.standard.generationGate
+        let queue = container.generationQueue
 
-        // Launch call 0; it takes the only generation permit and suspends in respond.
+        // Launch call 0; its pass takes the one place of the queue and suspends.
         let task0 = Task { try await callers[0].respond(to: "0") }
-        await Self.spin(until: { generationGate.availablePermits == 0 })
+        await Self.spin(until: { queue.availablePlaces == 0 })
         await Self.spin(until: { await observer.entryOrder == [0] })
 
-        // Launch calls 1, 2, 3 one at a time, each only after the previous has
-        // actually suspended on the generation gate — establishing a deterministic FIFO
+        // Launch calls 1, 2, 3 one at a time, each only after the previous pass
+        // has actually joined the queue — establishing a deterministic FIFO
         // arrival order without sleeping.
         let task1 = Task { try await callers[1].respond(to: "1") }
-        await Self.spin(until: { generationGate.waiterCount == 1 })
+        await Self.spin(until: { queue.waiterCount == 1 })
         let task2 = Task { try await callers[2].respond(to: "2") }
-        await Self.spin(until: { generationGate.waiterCount == 2 })
+        await Self.spin(until: { queue.waiterCount == 2 })
         let task3 = Task { try await callers[3].respond(to: "3") }
-        await Self.spin(until: { generationGate.waiterCount == 3 })
+        await Self.spin(until: { queue.waiterCount == 3 })
 
-        // Only one body has entered so far — the gate held the rest out.
+        // Only one pass has entered so far — the queue held the rest out.
         #expect(await observer.entryOrder == [0])
         #expect(await observer.maxActive == 1)
 
         // Release the chain; FIFO must admit them 1, 2, 3 in turn.
-        for _ in 0..<4 { releaseGate.signal() }
+        for _ in 0..<callers.count { releaseGate.signal() }
 
         _ = try await task0.value
         _ = try await task1.value
@@ -462,6 +489,7 @@ struct ForkConcurrencyTests {
 
         #expect(await observer.entryOrder == [0, 1, 2, 3])
         #expect(await observer.maxActive == 1)
+        #expect(queue.availablePlaces == 1)
 
         _ = callers
     }

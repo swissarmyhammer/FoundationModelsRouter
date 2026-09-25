@@ -120,9 +120,7 @@ struct BackgroundToolRunner<
         let start = RaceGate<Void>()
         let work = Task {
             await withCheckedContinuation { start.register(continuation: $0) }
-            return await withGenerationLent(across: .backgroundRun) {
-                await run.execute(arguments: arguments)
-            }
+            return await run.execute(arguments: arguments)
         }
         await mailbox.track(
             tool: run.context.tool,

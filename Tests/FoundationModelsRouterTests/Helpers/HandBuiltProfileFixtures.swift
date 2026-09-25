@@ -18,21 +18,16 @@ import FoundationModelsRouterTestSupport
 /// ``RoutedModel`` and ``LanguageModelProfile`` construct through `@testable`
 /// access alone: card ^fmet68k took both initializers off the public surface,
 /// because a hand-built profile is a test shape and not a consumer shape. This
-/// factory is the entry point that shape goes through, and it is what holds the
-/// one-gate rule for a hand-built graph.
+/// factory is the entry point that shape goes through.
 enum HandBuiltProfileFixtures {
     /// Builds a profile whose three slots all name one model reference.
     ///
-    /// Both generation handles wrap the one `container`, so both take the one
-    /// ``ResidentModelGates`` this factory mints for it. The two handles
-    /// therefore contend on one generation gate, exactly as two handles over
-    /// one pool entry do. There is no argument that changes this: a hand-built
-    /// pair with two gates ran two concurrent generations inside one container,
-    /// which is the condition the gate exists to prevent, so the shape is not
-    /// offered.
+    /// Both generation handles wrap the one `container`, so both share the
+    /// ``GenerationQueue`` that container owns, exactly as two handles over
+    /// one pool entry do. A container with no queue gives its handles no
+    /// generation gating, however the profile is built.
     ///
-    /// The embedding slot wraps its own stub container, and takes its own gate
-    /// set for that reason. The embedding handle acquires neither gate.
+    /// The embedding slot wraps its own stub container.
     ///
     /// - Parameters:
     ///   - definitionName: The name the profile reports as its definition.
@@ -48,7 +43,6 @@ enum HandBuiltProfileFixtures {
         router: Router
     ) -> LanguageModelProfile {
         let recorder = InMemoryRecorder()
-        let generationGates = ResidentModelGates()
         return LanguageModelProfile(
             definitionName: definitionName,
             standard: makeGenerationHandle(
@@ -56,16 +50,14 @@ enum HandBuiltProfileFixtures {
                 chosen: chosen,
                 container: container,
                 router: router,
-                recorder: recorder,
-                gates: generationGates
+                recorder: recorder
             ),
             flash: makeGenerationHandle(
                 slot: .flash,
                 chosen: chosen,
                 container: container,
                 router: router,
-                recorder: recorder,
-                gates: generationGates
+                recorder: recorder
             ),
             embedding: RoutedEmbedder(
                 slot: .embedding,
@@ -74,8 +66,7 @@ enum HandBuiltProfileFixtures {
                 resolution: slotResolution(slot: .embedding, chosen: chosen),
                 container: StubEmbeddingContainer(dimension: RouterTestFixtures.stubDimension),
                 routerId: router.id,
-                recorder: recorder,
-                gates: ResidentModelGates()
+                recorder: recorder
             ),
             residencyToken: .generate()
         )
@@ -102,16 +93,13 @@ enum HandBuiltProfileFixtures {
     ///   - container: The container the handle wraps.
     ///   - router: The router the handle stamps its recording root from.
     ///   - recorder: The recorder a vended session is born holding.
-    ///   - gates: The gates `container` carries, which every handle over it
-    ///     takes.
     /// - Returns: The generation handle.
     private static func makeGenerationHandle(
         slot: ModelSlot,
         chosen: ModelRef,
         container: any LoadedLLMContainer,
         router: Router,
-        recorder: any TranscriptRecorder,
-        gates: ResidentModelGates
+        recorder: any TranscriptRecorder
     ) -> RoutedLLM {
         RoutedLLM(
             slot: slot,
@@ -120,8 +108,7 @@ enum HandBuiltProfileFixtures {
             resolution: slotResolution(slot: slot, chosen: chosen),
             container: container,
             routerId: router.id,
-            recorder: recorder,
-            gates: gates
+            recorder: recorder
         )
     }
 }

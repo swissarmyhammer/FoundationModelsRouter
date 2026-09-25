@@ -52,8 +52,8 @@ struct TranscriptReconstructionTests {
     /// `respond`/`streamResponse`/`recordResponse()` invoked through
     /// `RoutedSessionActor`'s chokepoint — and both paths are driven one call
     /// at a time by this suite's single awaited `@MainActor` test method,
-    /// with any actor-internal access further serialized by the model's
-    /// per-model generation gate (``RoutedModel/generationGate``). Nothing ever
+    /// with any actor-internal access further serialized by the session's
+    /// turn lock (``RoutedSessionActor/turnLock``). Nothing ever
     /// touches an instance concurrently.
     private final class TrackedStubBackend: LanguageModelSessionBackend, @unchecked Sendable {
         enum StubError: Error, Equatable { case boom }

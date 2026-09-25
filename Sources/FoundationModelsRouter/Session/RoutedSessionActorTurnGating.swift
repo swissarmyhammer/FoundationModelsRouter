@@ -1,19 +1,10 @@
-/// ``RoutedSessionActor``'s turn gating: the turn lock, turn cancellation,
-/// the generation permit a human wait hands back, and the permit a turn lends
-/// to a nested turn.
+/// ``RoutedSessionActor``'s turn gating: the turn lock, turn cancellation, and
+/// the refusal of a turn that a tool of the same session's own turn asks for.
 extension RoutedSessionActor {
-    /// See ``RoutedSession/awaitingUser(_:)``. Hands the generation permit
-    /// back around `body` and re-acquires it on every exit.
+    /// See ``RoutedSession/awaitingUser(_:)``. Runs `body` and holds nothing
+    /// for it: a turn holds a generation place only for each of its passes.
     func awaitingUser<T: Sendable>(_ body: @Sendable () async throws -> T) async rethrows -> T {
-        beginHumanWait()
-        do {
-            let value = try await body()
-            await endHumanWait()
-            return value
-        } catch {
-            await endHumanWait()
-            throw error
-        }
+        try await body()
     }
 
     /// See ``RoutedSession/cancelCurrentTurn()``. A turn is in flight when
@@ -37,8 +28,10 @@ extension RoutedSessionActor {
         return .requested
     }
 
-    /// Admits a turn through both gates: ``turnLock`` first, then the
-    /// ``generationGate``, always in that order. Paired with one ``endTurn()``.
+    /// Admits a turn through ``turnLock``, which the turn keeps until its
+    /// ``endTurn()``. The turn takes no generation place here: each pass of
+    /// the turn takes a place of the model's ``GenerationQueue`` for that pass
+    /// only.
     ///
     /// - Returns: The identity of the turn that just began. See ``TurnID``.
     /// - Throws: ``SessionReentryError/sameSessionTurnInFlight(sessionID:)``
@@ -48,12 +41,10 @@ extension RoutedSessionActor {
         try refuseReentryOntoThisSession()
         await turnLock.wait()
         await attachOutboxJournalIfNeeded()
-        await admitToGenerationGate()
-        // Minted only once this turn is through both gates. A turn still
-        // waiting for a permit has started nothing to cancel, and claiming an
-        // identity before then made ``cancelCurrentTurn()`` answer
-        // ``TurnCancellationResult/requested`` and then cancel a model call
-        // that did not exist yet.
+        // Minted once this turn holds the turn lock. A pass of this turn that
+        // then waits for a queue place thus belongs to a turn with an
+        // identity, and ``cancelCurrentTurn()`` cancels ``inFlightModelCall``,
+        // which ends that wait at once.
         lastTurnId += 1
         currentTurnId = lastTurnId
         // A new turn may compact inside the turn again, at a tool result or
@@ -82,9 +73,8 @@ extension RoutedSessionActor {
         GenerationPermitLoan.current?.isSuspendedInToolCall(ofSession: id) ?? false
     }
 
-    /// Releases what ``beginTurn()`` acquired, innermost first. Synchronous,
-    /// so it can run from a `defer`. The permit is released only if this turn
-    /// still holds it; a turn on a borrowed permit signals nothing.
+    /// Releases the ``turnLock`` that ``beginTurn()`` took. Synchronous, so it
+    /// can run from a `defer`.
     func endTurn() {
         currentTurnId = nil
         // The request only ever applied to the turn now ending, and turn ids are
@@ -92,61 +82,6 @@ extension RoutedSessionActor {
         // keeps "is a cancellation outstanding?" answerable without also knowing
         // which turn is in flight.
         cancelRequestedTurnId = nil
-        borrowsGenerationPermit = false
-        if holdsGenerationPermit {
-            releaseGenerationPermit()
-        }
         turnLock.signal()
-    }
-
-    /// Admits a starting turn to the ``generationGate``: on a permit an
-    /// enclosing turn lends, otherwise on one of its own. See
-    /// ``GenerationPermitLoan``.
-    private func admitToGenerationGate() async {
-        if let loan = GenerationPermitLoan.current, loan.lends(over: generationGate) {
-            borrowsGenerationPermit = true
-            return
-        }
-        await acquireGenerationPermit()
-    }
-
-    /// Takes a ``generationGate`` permit and records that this session holds
-    /// it. Also tells the model call in flight that its turn holds a permit.
-    private func acquireGenerationPermit() async {
-        await generationGate.wait()
-        holdsGenerationPermit = true
-        currentPermitLoan?.setHoldsPermit(to: true)
-    }
-
-    /// Hands this session's ``generationGate`` permit back. Also tells the
-    /// model call in flight that its turn has no permit to lend.
-    private func releaseGenerationPermit() {
-        holdsGenerationPermit = false
-        currentPermitLoan?.setHoldsPermit(to: false)
-        generationGate.signal()
-    }
-
-    /// Enters a human wait. Releases the generation permit only when this is
-    /// the outermost wait and a turn holds a permit.
-    private func beginHumanWait() {
-        humanWaitDepth += 1
-        guard humanWaitDepth == 1 else { return }
-        guard holdsGenerationPermit, let lender = currentTurnId else { return }
-        humanWaitLenderTurnId = lender
-        releaseGenerationPermit()
-    }
-
-    /// Leaves a human wait. Re-acquires the permit the outermost wait released
-    /// and keeps it only if the lending turn is still in flight. The lender is
-    /// checked after the acquire, and the depth drops only after that.
-    private func endHumanWait() async {
-        if humanWaitDepth == 1, let lender = humanWaitLenderTurnId {
-            humanWaitLenderTurnId = nil
-            await acquireGenerationPermit()
-            if currentTurnId != lender {
-                releaseGenerationPermit()
-            }
-        }
-        humanWaitDepth -= 1
     }
 }

@@ -16,10 +16,13 @@ import Testing
 /// so the suite needs no network and no GPU.
 ///
 /// Every handle comes from ``Router/resolve(profile:reporting:)``, never from a
-/// hand-built ``RoutedLLM``. Only the handles a resolve vends share the pool
-/// entry's one ``RoutedModel/generationGate``, and only handles that share a
-/// gate can contend for it; a hand-built handle mints a gate of its own and
-/// would hide the defect this suite exists to catch.
+/// hand-built ``RoutedLLM``, so each session is the shape a consumer holds.
+///
+/// A turn holds its session's turn lock for its whole length, and a place of
+/// the model's ``GenerationQueue`` only for each of its passes (task
+/// ^93kjn94). So a tool body that generates on another session holds nothing
+/// that session needs, and a tool body that asks its own session for a turn
+/// or a fork must be refused, because that session's turn lock is held.
 @Suite("Nested generation from inside a tool body")
 struct NestedGenerationReentryTests {
     // MARK: - Test tool
@@ -179,17 +182,10 @@ struct NestedGenerationReentryTests {
         /// The session's own composed tool list.
         private let tools: [any Tool]
 
-        /// A latch every turn waits on before it answers, or `nil` for a
-        /// backend that answers at once. It is how a test holds one session's
-        /// turn — and with it the container's one generation permit — open
-        /// while it looks at another session.
-        private let latch: RunLatch?
-
         /// A latch the tool-calling turn waits on after its tool call
         /// returned and before it answers, or `nil` to answer at once. It is
-        /// how a test keeps the turn that started a background run open —
-        /// still generating, still holding its permit — while the run is
-        /// looked at.
+        /// how a test keeps the turn that started a background run open while
+        /// the run is looked at.
         private let turnHold: RunLatch?
 
         /// Where the tool-calling turn records what its tool call handed back,
@@ -200,18 +196,15 @@ struct NestedGenerationReentryTests {
         private var hasCalledTool = false
 
         init(
-            tools: [any Tool], latch: RunLatch? = nil, turnHold: RunLatch? = nil,
-            handedBack: HandedBackRecord? = nil
+            tools: [any Tool], turnHold: RunLatch? = nil, handedBack: HandedBackRecord? = nil
         ) {
             self.tools = tools
-            self.latch = latch
             self.turnHold = turnHold
             self.handedBack = handedBack
         }
 
         func respond(to prompt: String, maxTokens: Int?) async throws -> String {
             _ = try await inner.respond(to: prompt, maxTokens: maxTokens)
-            await latch?.waitUntilOpen()
             guard !hasCalledTool, let mounted = composedFixtureTool else {
                 return Self.answerPrefix + prompt
             }
@@ -262,10 +255,6 @@ struct NestedGenerationReentryTests {
         /// The scripted counter of this container: one token per `Character`.
         let tokenCounter: any TokenCounter = CharacterTokenCounter()
 
-        /// The latch every backend this container vends waits on, or `nil` for
-        /// backends that answer at once.
-        var latch: RunLatch?
-
         /// The latch every backend this container vends holds its tool-calling
         /// turn open on, or `nil` for backends that answer at once.
         var turnHold: RunLatch?
@@ -279,7 +268,7 @@ struct NestedGenerationReentryTests {
         }
 
         func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
-            ToolCallingBackend(tools: tools, latch: latch, turnHold: turnHold, handedBack: handedBack)
+            ToolCallingBackend(tools: tools, turnHold: turnHold, handedBack: handedBack)
         }
 
         func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
@@ -426,9 +415,8 @@ struct NestedGenerationReentryTests {
                 """
                 \(turn) did not finish within \(turnTimeout). Work a tool body asks of a \
                 routed session has to settle in band: a turn holds its own session's turn \
-                lock and the container's one generation permit for its whole length, tool \
-                call included, so a call that waits on either suspends for as long as the turn \
-                it is part of.
+                lock for its whole length, tool call included, so a call that waits on that \
+                lock suspends for as long as the turn it is part of.
                 """)
             return nil
         case .failed(_, let description):
@@ -529,19 +517,6 @@ struct NestedGenerationReentryTests {
         }
     }
 
-    /// Asserts that `gate` is back to the one permit it was minted with, with
-    /// nobody queued on it.
-    ///
-    /// A borrowing turn that signalled a permit it never took would show here
-    /// as an inflated count, which is the failure mode `AsyncSemaphore` has no
-    /// ceiling to absorb.
-    ///
-    /// - Parameter gate: The pool entry's generation gate.
-    private static func expectUntouched(_ gate: AsyncSemaphore) {
-        #expect(gate.availablePermits == 1)
-        #expect(gate.waiterCount == 0)
-    }
-
     // MARK: - A different session over the same container
 
     @Test(
@@ -554,7 +529,6 @@ struct NestedGenerationReentryTests {
 
         let target = NestedTarget()
         let profile = try await Self.makeProfile(container: ToolCallingLLMContainer(), dir: dir)
-        let gate = profile.standard.generationGate
 
         let caller = profile.standard.makeSession(
             tools: [NestedGeneratingTool(target: target, label: "caller")])
@@ -566,20 +540,18 @@ struct NestedGenerationReentryTests {
 
         Self.expectFinished(
             outcome, is: Self.chainedAnswer(through: ["caller"]), describing: "The outer turn")
-        Self.expectUntouched(gate)
         withExtendedLifetime(profile) {}
     }
 
-    @Test("a borrowed permit carries a second level of nesting, so a chain of tool bodies all generate")
+    @Test("a second level of nesting holds nothing the next level needs, so a chain of tool bodies all generate")
     @MainActor
-    func aBorrowedPermitCarriesASecondLevelOfNesting() async throws {
+    func aChainOfNestedGenerationsAllFinish() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let outerTarget = NestedTarget()
         let middleTarget = NestedTarget()
         let profile = try await Self.makeProfile(container: ToolCallingLLMContainer(), dir: dir)
-        let gate = profile.standard.generationGate
 
         let outer = profile.standard.makeSession(
             tools: [NestedGeneratingTool(target: outerTarget, label: "outer")])
@@ -592,13 +564,12 @@ struct NestedGenerationReentryTests {
         let outcome = await Self.outcome(
             of: { try await outer.respond(to: Self.outerPrompt) }, within: Self.turnTimeout)
 
-        // Reading the labels outermost-first proves all three turns ran, and that
-        // the middle turn — itself running on a borrowed permit — could lend that
-        // same permit on again.
+        // Reading the labels outermost-first proves all three turns ran: the
+        // middle turn, itself started from a tool body, holds nothing the
+        // innermost turn needs while its own tool body runs.
         Self.expectFinished(
             outcome, is: Self.chainedAnswer(through: ["outer", "middle"]),
             describing: "The outermost turn")
-        Self.expectUntouched(gate)
         withExtendedLifetime(profile) {}
     }
 
@@ -612,7 +583,6 @@ struct NestedGenerationReentryTests {
 
         let target = NestedTarget()
         let profile = try await Self.makeProfile(container: ToolCallingLLMContainer(), dir: dir)
-        let gate = profile.standard.generationGate
 
         let caller = profile.standard.makeSession(
             tools: [NestedGeneratingTool(target: target, label: "caller")])
@@ -628,7 +598,6 @@ struct NestedGenerationReentryTests {
             outcome, with: .sameSessionTurnInFlight(sessionID: caller.id),
             describing: "a tool body that generates on its own session")
 
-        Self.expectUntouched(gate)
         withExtendedLifetime(profile) {}
     }
 
@@ -641,7 +610,6 @@ struct NestedGenerationReentryTests {
 
         let target = NestedTarget()
         let profile = try await Self.makeProfile(container: ToolCallingLLMContainer(), dir: dir)
-        let gate = profile.standard.generationGate
 
         let caller = profile.standard.makeSession(tools: [ForkingTool(target: target)])
         // The tool forks the very session whose turn invoked it. That turn holds
@@ -656,7 +624,6 @@ struct NestedGenerationReentryTests {
             outcome, with: .forkDuringSameSessionTurn(sessionID: caller.id),
             describing: "a tool body that forks its own session")
 
-        Self.expectUntouched(gate)
         withExtendedLifetime(profile) {}
     }
 
@@ -667,7 +634,6 @@ struct NestedGenerationReentryTests {
 
         let target = NestedTarget()
         let profile = try await Self.makeProfile(container: ToolCallingLLMContainer(), dir: dir)
-        let gate = profile.standard.generationGate
 
         let caller = profile.standard.makeSession(tools: [ForkingTool(target: target)])
         let forked = profile.standard.makeSession()
@@ -680,7 +646,6 @@ struct NestedGenerationReentryTests {
         // the caller's own session and no other.
         Self.expectFinished(
             outcome, is: forked.id.description, describing: "The forking turn")
-        Self.expectUntouched(gate)
         withExtendedLifetime(profile) {}
     }
 
@@ -693,7 +658,6 @@ struct NestedGenerationReentryTests {
 
         let target = NestedTarget()
         let profile = try await Self.makeProfile(container: ToolCallingLLMContainer(), dir: dir)
-        let gate = profile.standard.generationGate
 
         let caller = profile.standard.makeSession(tools: [TranscriptReadingTool(target: target)])
         // The tool reads the very session whose turn invoked it. That turn holds
@@ -710,7 +674,6 @@ struct NestedGenerationReentryTests {
         Self.expectFinished(
             outcome, is: String(Self.entriesBeforeTheToolCall),
             describing: "The transcript-reading turn")
-        Self.expectUntouched(gate)
         withExtendedLifetime(profile) {}
     }
 
@@ -731,9 +694,6 @@ struct NestedGenerationReentryTests {
 
         /// The session the fixture tool's body acts on.
         let target: NestedTarget
-
-        /// The pool entry's one generation gate.
-        var gate: AsyncSemaphore { profile.standard.generationGate }
 
         /// Builds the harness over a fresh router that caches under `dir`.
         ///
@@ -787,22 +747,18 @@ struct NestedGenerationReentryTests {
         let turn = harness.startTurn(on: caller)
         let token = await Self.handedBackToken(from: harness.handedBack)
 
-        // The turn is still generating, on the container's one permit — and the
-        // run it started settles all the same, on that same permit: it borrows,
-        // it never takes, so the count does not move.
-        #expect(harness.gate.availablePermits == 0)
+        // The turn is still open, and the run it started settles all the same:
+        // the turn holds nothing the run's own turn on the other session needs.
         if let token {
             let terminal = await Self.settledTerminal(of: token, on: caller, describing: "The background run")
             #expect(terminal?.outcome == .succeeded)
             #expect(terminal?.detail == Self.chainedAnswer(through: ["caller"]))
         }
-        #expect(harness.gate.availablePermits == 0)
 
         // The run settled before its turn ended, so the drain found nothing to
         // wait for and the turn answers with the handle it was handed.
         Self.expectFinished(
             await harness.endTurn(turn), is: harness.handedBack.value ?? "", describing: "The outer turn")
-        Self.expectUntouched(harness.gate)
         withExtendedLifetime(harness) {}
     }
 
@@ -829,7 +785,6 @@ struct NestedGenerationReentryTests {
 
         Self.expectFinished(
             await harness.endTurn(turn), is: harness.handedBack.value ?? "", describing: "The outer turn")
-        Self.expectUntouched(harness.gate)
         withExtendedLifetime(harness) {}
     }
 
@@ -860,7 +815,6 @@ struct NestedGenerationReentryTests {
             #expect(terminal?.outcome == .succeeded)
             #expect(terminal?.detail == caller.id.description)
         }
-        Self.expectUntouched(harness.gate)
         withExtendedLifetime(harness) {}
     }
 
@@ -891,84 +845,101 @@ struct NestedGenerationReentryTests {
             #expect(terminal?.outcome == .succeeded)
             #expect(terminal?.detail == String(Self.entriesBeforeTheToolCall))
         }
-        Self.expectUntouched(harness.gate)
         withExtendedLifetime(harness) {}
     }
 
     // MARK: - The loan itself
 
-    @Test("a background-run window lends the permit, and says nothing about the model being suspended")
-    func aBackgroundRunWindowLendsThePermitWithoutClaimingSuspension() async {
-        let gate = AsyncSemaphore(value: 1)
+    @Test("a tool-call window marks its own session as suspended in a tool call, and no other session")
+    func aToolCallWindowMarksItsOwnSessionOnly() async {
         let sessionID = ULID.generate()
-        let loan = GenerationPermitLoan(gate: gate, sessionID: sessionID, holdsPermit: true)
-        #expect(!loan.lends(over: gate))
+        let loan = GenerationPermitLoan(sessionID: sessionID)
+        #expect(!loan.isSuspendedInToolCall(ofSession: sessionID))
 
         await GenerationPermitLoan.$current.withValue(loan) {
-            await withGenerationLent(across: .backgroundRun) {
-                #expect(loan.lends(over: gate))
+            await withGenerationLent(across: .toolCall) {
+                #expect(loan.isSuspendedInToolCall(ofSession: sessionID))
+                #expect(!loan.isSuspendedInToolCall(ofSession: ULID.generate()))
+            }
+        }
+        #expect(!loan.isSuspendedInToolCall(ofSession: sessionID))
+    }
+
+    @Test("a closed mark reports no tool call, whatever window is still open on it")
+    func aClosedMarkReportsNoToolCall() async {
+        let sessionID = ULID.generate()
+        let loan = GenerationPermitLoan(sessionID: sessionID)
+
+        // The turn's model call returns — and closes its mark — while a tool
+        // call window is still open on it.
+        await GenerationPermitLoan.$current.withValue(loan) {
+            await withGenerationLent(across: .toolCall) {
+                loan.close()
                 #expect(!loan.isSuspendedInToolCall(ofSession: sessionID))
             }
         }
-        #expect(!loan.lends(over: gate))
+        #expect(!loan.isSuspendedInToolCall(ofSession: sessionID))
     }
 
-    @Test("a closed loan lends nothing, whatever window is still open on it")
-    func aClosedLoanLendsNothing() async {
-        let gate = AsyncSemaphore(value: 1)
-        let loan = GenerationPermitLoan(gate: gate, sessionID: ULID.generate(), holdsPermit: true)
+    // MARK: - A turn that waits for a queue place
 
-        // The turn's model call returns — and closes its loan — while the
-        // background run it started is still going.
-        await GenerationPermitLoan.$current.withValue(loan) {
-            await withGenerationLent(across: .backgroundRun) {
-                loan.close()
-                #expect(!loan.lends(over: gate))
-            }
-        }
-        #expect(!loan.lends(over: gate))
-    }
-
-    // MARK: - A turn still waiting for a permit
-
-    @Test("cancelCurrentTurn() on a session still waiting for a generation permit reports that it cannot cancel")
-    @MainActor
-    func cancelOnASessionWaitingForAPermitReportsItCannot() async throws {
+    @Test("cancelCurrentTurn() on a session whose pass waits for a queue place cancels that turn at once")
+    func cancelOnASessionWaitingForAQueuePlaceCancelsItAtOnce() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
+        let observer = ConcurrencyPeakObserver()
         let latch = RunLatch()
-        let profile = try await Self.makeProfile(
-            container: ToolCallingLLMContainer(latch: latch), dir: dir)
-        let gate = profile.standard.generationGate
+        let passes = ObservedPassLog()
+        let container = LiveBackendContainer(
+            model: PassObservingModel(observer: observer, latch: latch, passes: passes))
+        let queue = container.generationQueue
+        let profile = try await Self.makeProfile(container: container, dir: dir)
 
         let holder = profile.standard.makeSession()
         let waiter = profile.standard.makeSession()
 
-        // The holder's turn takes the container's one permit and stays inside
-        // its own model call until the latch opens.
+        // The holder's pass takes the one place of the queue and stays inside
+        // the model until the latch opens.
         let holderTurn = Task { try await holder.respond(to: Self.outerPrompt) }
         #expect(
-            await BoundedWait.conditionReached("the holder's turn taking the one permit") {
-                gate.availablePermits == 0
+            await BoundedWait.conditionReached("the holder's pass in the model") {
+                await observer.enteredCount == 1
             })
 
-        // The waiter's turn now suspends in `beginTurn()`, on the gate.
-        let waiterTurn = Task { try await waiter.respond(to: Self.outerPrompt) }
+        // The waiter's turn holds its own turn lock and has an identity; only
+        // its pass waits, in the queue.
+        let waiterFinished = AsyncSemaphore(value: 0)
+        let waiterTurn = Task {
+            defer { waiterFinished.signal() }
+            return try await waiter.respond(to: Self.nestedPrompt)
+        }
         #expect(
-            await BoundedWait.conditionReached("the waiter's turn suspending on the gate") {
-                gate.waiterCount == 1
+            await BoundedWait.conditionReached("the waiter's pass waiting in the queue") {
+                queue.waiterCount == 1
             })
 
-        // Nothing has started on the waiter, so there is nothing to cancel and
-        // this says so — rather than reporting a request that would reach no
-        // model call at all.
-        #expect(await waiter.cancelCurrentTurn() == .noTurnInFlight)
+        // So the request reaches that wait, and the turn ends at once, while the
+        // holder still has the place.
+        #expect(await waiter.cancelCurrentTurn() == .requested)
+        #expect(
+            await BoundedWait.signalArrived(
+                waiterFinished, named: "the end of the cancelled turn, while the holder still has the place"))
+        #expect(queue.waiterCount == 0)
 
         await latch.open()
-        #expect(try await holderTurn.value == ToolCallingBackend.answerPrefix + Self.outerPrompt)
-        #expect(try await waiterTurn.value == ToolCallingBackend.answerPrefix + Self.outerPrompt)
-        Self.expectUntouched(gate)
+        #expect(try await holderTurn.value == PassObservingModel.answer(to: Self.outerPrompt))
+        await #expect(throws: CancellationError.self) { try await waiterTurn.value }
+        #expect(passes.executors(servingPrompt: Self.nestedPrompt).isEmpty)
+        #expect(queue.availablePlaces == 1)
+        #expect(queue.waiterCount == 0)
+
+        // The cancelled session still generates: its turn lock and the queue
+        // are both free.
+        let followUp = await Self.outcome(
+            of: { try await waiter.respond(to: Self.outerPrompt) }, within: Self.turnTimeout)
+        Self.expectFinished(
+            followUp, is: PassObservingModel.answer(to: Self.outerPrompt), describing: "The follow-up turn")
         withExtendedLifetime(profile) {}
     }
 }
