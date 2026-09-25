@@ -46,10 +46,26 @@ comments:
     - evidence: new Sources/FoundationModelsRouter/Concurrency/GenerationWorker.swift, Tests/FoundationModelsRouterTests/GenerationQueueWorkerTests.swift (8 tests); changed GenerationQueue.swift, QueuedLanguageModel.swift, GenerationPassObserver.swift, AsyncSemaphore.swift (doc), ExecutorPassthrough.swift (doc), ModelLoader.swift (doc), LiveModelLoader.swift (doc), SessionEvent.swift (doc), and 8 test files for `isRunning` / `waitingCount`. `swift test`: 1415 + 3 + 19 = 1437 passed, 3 runs, 0 new warnings after a forced recompile of the root package. Stress with parallel repetitions as recorded above.
     - next: review. Follow-up task ^zr22hpd records the stress failures that also occur at HEAD.
   timestamp: 2026-09-25T21:57:24.953112+00:00
+- actor: claude-code
+  id: 01m3d9yfxhhjthze60sawxj5qb
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 10cae0b). 0 findings, 0 confirmed, 0 refuted. The engine examined 18 files. It did not examine 4 .kanban files because .reviewignore excludes them.
+    - next: The task is in done. Task 01M3CYJ4VS4VF5EEHA01PSQDM9 was blocked by this task. It can start now.
+  timestamp: 2026-09-25T22:11:04.753880+00:00
+- actor: claude-code
+  id: 01m3da10cx7j1ne4qaezp8793j
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — GenerationWorker actor (FIFO, one worker task, no semaphore); 8 new tests
+    - test: green — swift test, 1437 passed (1415+3+19), 0 failed, 0 skipped; queue and cancel suites 3 extra runs clean; IntegrationTests build clean
+    - commit: 10cae0b (fixture and Package.swift exclude: f87c7e8)
+    - review: clean — 0 findings
+  timestamp: 2026-09-25T22:12:27.165656+00:00
 depends_on:
 - 01M3A1F89ZRFMCGTNPBNJDP02P
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffff8880
 title: Run the generation queue on one worker task for each model, not on a semaphore
 ---
 ## Why
