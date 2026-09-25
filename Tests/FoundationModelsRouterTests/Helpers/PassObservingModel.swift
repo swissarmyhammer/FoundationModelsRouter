@@ -45,9 +45,15 @@ final class ObservedPassLog: Sendable {
 ///
 /// Each pass records which executor instance ran it and which prompt it got,
 /// reports its entry and its exit to a ``ConcurrencyPeakObserver``, and stays
-/// inside the call until a ``RunLatch`` opens. Then it answers with
-/// ``answer(to:)``. A test thus sees whether two passes overlapped, and which
-/// executor ran each pass, with no GPU and no clock.
+/// inside the call until a ``RunLatch`` opens. When ``step`` is set, the pass
+/// then also waits for one signal of that semaphore, so a test releases the
+/// passes one at a time and sees which pass the queue admits next. A test thus
+/// sees whether two passes overlapped, and which executor ran each pass, with
+/// no GPU and no clock.
+///
+/// A session that mounts a tool gets ``toolRounds`` passes that each call the
+/// first mounted tool, and then one pass that answers with ``answer(to:)``. A
+/// session that mounts no tool gets one pass that answers.
 struct PassObservingModel: LanguageModel {
     /// The observer each pass reports its entry and its exit to.
     let observer: ConcurrencyPeakObserver
@@ -58,30 +64,63 @@ struct PassObservingModel: LanguageModel {
     /// The log each pass records into.
     let passes: ObservedPassLog
 
+    /// The semaphore each pass waits on after the latch, or `nil` for passes
+    /// that go on when the latch opens.
+    let step: AsyncSemaphore?
+
+    /// How many passes of one turn call a tool, in a session that mounts one.
+    let toolRounds: Int
+
     /// The text an answer opens with.
     static let answerPrefix = "answered: "
 
-    /// The answer a pass gives to a prompt.
+    /// Stores the parts every pass uses.
     ///
-    /// - Parameter prompt: The prompt of the pass.
+    /// - Parameters:
+    ///   - observer: The observer each pass reports to.
+    ///   - latch: The latch each pass waits on.
+    ///   - passes: The log each pass records into.
+    ///   - step: The semaphore each pass waits on after the latch, or `nil`
+    ///     (the default) for no step.
+    ///   - toolRounds: How many passes of one turn call a tool. The default
+    ///     is none, so each turn is one pass that answers.
+    init(
+        observer: ConcurrencyPeakObserver, latch: RunLatch, passes: ObservedPassLog,
+        step: AsyncSemaphore? = nil, toolRounds: Int = 0
+    ) {
+        self.observer = observer
+        self.latch = latch
+        self.passes = passes
+        self.step = step
+        self.toolRounds = toolRounds
+    }
+
+    /// The answer the last pass of a turn gives to a prompt.
+    ///
+    /// - Parameter prompt: The prompt of the turn.
     /// - Returns: The answer text.
     static func answer(to prompt: String) -> String {
         answerPrefix + prompt
     }
 
-    /// The model declares no capability. A pass only answers text.
-    var capabilities: LanguageModelCapabilities { LanguageModelCapabilities([]) }
+    /// Declares tool calling only for a model that plays a tool loop, which a
+    /// tool-mounted session requires. A model with no tool rounds only answers
+    /// text.
+    var capabilities: LanguageModelCapabilities {
+        LanguageModelCapabilities(toolRounds > 0 ? [.toolCalling] : [])
+    }
 
-    /// The executor cache key: the identities of the observer, the latch, and
-    /// the log.
+    /// The executor cache key: the identities of the parts and the loop
+    /// length.
     var executorConfiguration: Executor.Configuration {
-        Executor.Configuration(observer: observer, latch: latch, passes: passes)
+        Executor.Configuration(
+            observer: observer, latch: latch, passes: passes, step: step, toolRounds: toolRounds)
     }
 
     /// The executor that serves one observable pass for each call.
     struct Executor: LanguageModelExecutor {
-        /// The SDK's executor cache key. It compares by the identities of the
-        /// reference-typed parts, which have no value equality of their own.
+        /// The SDK's executor cache key. It compares the reference-typed parts
+        /// by identity, because they have no value equality of their own.
         struct Configuration: Sendable, Hashable {
             /// The observer each pass reports to.
             let observer: ConcurrencyPeakObserver
@@ -92,28 +131,50 @@ struct PassObservingModel: LanguageModel {
             /// The log each pass records into.
             let passes: ObservedPassLog
 
-            /// Equal when all three parts are the same objects.
+            /// The semaphore each pass waits on after the latch, or `nil`.
+            let step: AsyncSemaphore?
+
+            /// How many passes of one turn call a tool.
+            let toolRounds: Int
+
+            /// Equal when the loop lengths are equal and the parts are the
+            /// same objects.
             ///
             /// - Parameters:
             ///   - lhs: One configuration.
             ///   - rhs: The other configuration.
-            /// - Returns: `true` when the parts are the same objects.
+            /// - Returns: `true` when both configurations name the same parts
+            ///   and the same loop.
             static func == (lhs: Self, rhs: Self) -> Bool {
                 lhs.observer === rhs.observer && lhs.latch === rhs.latch && lhs.passes === rhs.passes
+                    && lhs.step === rhs.step && lhs.toolRounds == rhs.toolRounds
             }
 
-            /// Hashes the identities that ``==(_:_:)`` compares.
+            /// Hashes what ``==(_:_:)`` compares.
             ///
             /// - Parameter hasher: The hasher to feed.
             func hash(into hasher: inout Hasher) {
                 hasher.combine(ObjectIdentifier(observer))
                 hasher.combine(ObjectIdentifier(latch))
                 hasher.combine(ObjectIdentifier(passes))
+                hasher.combine(step.map(ObjectIdentifier.init))
+                hasher.combine(toolRounds)
             }
         }
 
         /// The model type this executor serves.
         typealias Model = PassObservingModel
+
+        /// The prompt of the turn a transcript ends in, and how many tool
+        /// rounds that turn has played so far.
+        private struct Turn {
+            /// The joined text of the last `.prompt` entry, or the empty
+            /// string when the transcript holds no prompt.
+            let prompt: String
+
+            /// The count of `.toolCalls` entries after that prompt.
+            let toolRounds: Int
+        }
 
         /// A marker object that gives this executor instance its own identity.
         private final class Identity: Sendable {}
@@ -130,47 +191,83 @@ struct PassObservingModel: LanguageModel {
 
         /// Stores `configuration`.
         ///
-        /// - Parameter configuration: The observer, the latch, and the log.
+        /// - Parameter configuration: The parts and the loop length.
         /// - Throws: Never. `throws` comes from the protocol requirement.
         init(configuration: Configuration) throws {
             self.configuration = configuration
         }
 
-        /// Records the pass, holds it until the latch opens, and answers the
-        /// last prompt of the transcript.
+        /// Records the pass, holds it until the latch opens and its step
+        /// arrives, and then calls the first mounted tool or answers the
+        /// prompt of the turn.
         ///
         /// - Parameters:
         ///   - request: The generation request.
         ///   - model: The model. Unread: the parts arrive through the
         ///     configuration.
-        ///   - channel: The channel the answer is sent into.
+        ///   - channel: The channel the pass emits into.
         /// - Throws: Never. `throws` comes from the protocol requirement.
         func respond(
             to request: LanguageModelExecutorGenerationRequest,
             model: PassObservingModel,
             streamingInto channel: LanguageModelExecutorGenerationChannel
         ) async throws {
-            let prompt = Self.lastPromptText(in: request.transcript)
-            configuration.passes.record(ObservedPass(executor: ObjectIdentifier(identity), prompt: prompt))
+            let turn = Self.currentTurn(of: request.transcript)
+            configuration.passes.record(ObservedPass(executor: ObjectIdentifier(identity), prompt: turn.prompt))
             await configuration.observer.enter()
             await configuration.latch.waitUntilOpen()
+            await configuration.step?.wait()
             await configuration.observer.exit()
-            await channel.send(
-                .response(
-                    action: .appendText(PassObservingModel.answer(to: prompt), tokenCount: Self.emittedTokenCount)))
+            guard let tool = request.enabledToolDefinitions.first, turn.toolRounds < configuration.toolRounds
+            else {
+                await channel.send(
+                    .response(
+                        action: .appendText(
+                            PassObservingModel.answer(to: turn.prompt), tokenCount: Self.emittedTokenCount)))
+                return
+            }
+            await Self.callTool(named: tool.name, in: turn, into: channel)
         }
 
-        /// The text of the last `.prompt` entry of `transcript`.
+        /// Emits one call of the tool `name`, whose one argument names the
+        /// round of `turn`.
+        ///
+        /// - Parameters:
+        ///   - name: The name of the tool to call.
+        ///   - turn: The turn the call belongs to.
+        ///   - channel: The channel the call is sent into.
+        private static func callTool(
+            named name: String, in turn: Turn, into channel: LanguageModelExecutorGenerationChannel
+        ) async {
+            let round = "\(turn.prompt)-\(turn.toolRounds)"
+            await channel.send(
+                .toolCalls(
+                    entryID: round,
+                    action: .toolCall(
+                        id: round,
+                        name: name,
+                        action: .appendArguments(#"{"value":"\#(round)"}"#, tokenCount: emittedTokenCount))))
+        }
+
+        /// The turn `transcript` ends in.
         ///
         /// - Parameter transcript: The transcript of the pass.
-        /// - Returns: The joined text segments of that entry, or the empty
-        ///   string when the transcript holds no prompt.
-        private static func lastPromptText(in transcript: Transcript) -> String {
-            let prompts = transcript.compactMap { entry -> Transcript.Prompt? in
-                guard case .prompt(let prompt) = entry else { return nil }
-                return prompt
+        /// - Returns: The text of the last `.prompt` entry, and the count of
+        ///   `.toolCalls` entries after it.
+        private static func currentTurn(of transcript: Transcript) -> Turn {
+            let entries = Array(transcript)
+            let lastPromptIndex = entries.lastIndex { entry in
+                guard case .prompt = entry else { return false }
+                return true
             }
-            return WatchedText.text(of: prompts.last?.segments ?? [])
+            guard let lastPromptIndex, case .prompt(let prompt) = entries[lastPromptIndex] else {
+                return Turn(prompt: "", toolRounds: 0)
+            }
+            let roundsSincePrompt = entries[lastPromptIndex...].filter { entry in
+                guard case .toolCalls = entry else { return false }
+                return true
+            }
+            return Turn(prompt: WatchedText.text(of: prompt.segments), toolRounds: roundsSincePrompt.count)
         }
     }
 }

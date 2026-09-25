@@ -19,31 +19,6 @@ import Testing
 /// over the scripted model, through ``LiveBackendContainer``.
 @Suite("Generation queue: one executor pass at a time for each container (task ^8csj2hw)")
 struct GenerationQueueTests {
-    /// The parts one test observes, and the container whose backends run over
-    /// them.
-    private struct Fixture {
-        /// The observer each pass reports its entry and its exit to.
-        let observer = ConcurrencyPeakObserver()
-
-        /// The latch each pass waits on.
-        let latch = RunLatch()
-
-        /// The log of the passes.
-        let passes = ObservedPassLog()
-
-        /// The container whose backends share one queue.
-        let container: LiveBackendContainer<PassObservingModel>
-
-        /// Makes a fixture with a closed latch.
-        init() {
-            container = LiveBackendContainer(
-                model: PassObservingModel(observer: observer, latch: latch, passes: passes))
-        }
-
-        /// The queue of the container.
-        var queue: GenerationQueue { container.generationQueue }
-    }
-
     /// The repository id of the raw MLX model the wrapper tests build. The
     /// model is never loaded.
     private static let rawModelRepository = "org/raw-model"
@@ -69,7 +44,7 @@ struct GenerationQueueTests {
 
     @Test("two sessions over one container never run two executor passes at the same time")
     func twoSessionsOverOneContainerNeverOverlapTheirPasses() async throws {
-        let fixture = Fixture()
+        let fixture = PassObservingFixture()
         let first = fixture.container.makeSession(instructions: nil)
         let second = fixture.container.makeSession(instructions: nil)
 
@@ -96,7 +71,7 @@ struct GenerationQueueTests {
 
     @Test("two sessions and a fork over one container each get their own executor")
     func eachSessionOverOneContainerGetsItsOwnExecutor() async throws {
-        let fixture = Fixture()
+        let fixture = PassObservingFixture()
         await fixture.latch.open()
         let first = fixture.container.makeSession(instructions: nil)
         let second = fixture.container.makeSession(instructions: nil)
@@ -125,7 +100,7 @@ struct GenerationQueueTests {
 
     @Test("a pass cancelled while it waits for a queue place throws CancellationError and takes no place")
     func cancelledWaitingPassLeavesNoPlaceTaken() async throws {
-        let fixture = Fixture()
+        let fixture = PassObservingFixture()
         let holder = fixture.container.makeSession(instructions: nil)
         let waiter = fixture.container.makeSession(instructions: nil)
 

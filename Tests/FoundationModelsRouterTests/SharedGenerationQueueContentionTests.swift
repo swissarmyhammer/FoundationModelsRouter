@@ -43,23 +43,6 @@ struct SharedGenerationQueueContentionTests {
 
     // MARK: - Fixtures
 
-    /// The parts every pass of one test reports to.
-    private struct PassProbe {
-        /// The observer each pass reports its entry and its exit to.
-        let observer = ConcurrencyPeakObserver()
-
-        /// The latch each pass waits on.
-        let latch = RunLatch()
-
-        /// The log of the passes.
-        let passes = ObservedPassLog()
-
-        /// A new container over this probe, with a queue of its own.
-        func makeContainer() -> LiveBackendContainer<PassObservingModel> {
-            LiveBackendContainer(model: PassObservingModel(observer: observer, latch: latch, passes: passes))
-        }
-    }
-
     /// Builds a router whose loader makes a new container, with a new queue,
     /// for each generation model it loads, and resolves a profile whose
     /// standard and flash slots both name ``sharedRef``.
@@ -68,19 +51,19 @@ struct SharedGenerationQueueContentionTests {
     /// two slots pooled onto one entry: two loads would give two queues.
     ///
     /// - Parameters:
-    ///   - probe: The parts every container's passes report to.
+    ///   - fixture: The parts every container's passes report to.
     ///   - dir: The temporary directory the router caches and records under.
     /// - Returns: The router and the profile it resolved, both of which the
     ///   caller has to keep alive for the length of the test.
     private static func makeSharedEntryProfile(
-        probe: PassProbe, dir: URL
+        fixture: PassObservingFixture, dir: URL
     ) async throws -> (router: Router, profile: LanguageModelProfile) {
         let router = RouterTestFixtures.makeRouter(
             cacheDir: dir,
             loader: SpyingModelLoader(
                 spy: LoadSpy(),
                 dimension: RouterTestFixtures.stubDimension,
-                llmContainer: { _ in probe.makeContainer() })
+                llmContainer: { _ in fixture.makeContainer() })
         )
         let definition = ProfileDefinition(
             name: "shared-entry",
@@ -119,8 +102,10 @@ struct SharedGenerationQueueContentionTests {
     /// - Parameters:
     ///   - profile: The profile whose two generation handles wrap one
     ///     container.
-    ///   - probe: The parts the container's passes report to.
-    private static func expectPassesSerialize(over profile: LanguageModelProfile, probe: PassProbe) async throws {
+    ///   - fixture: The parts the container's passes report to.
+    private static func expectPassesSerialize(
+        over profile: LanguageModelProfile, fixture: PassObservingFixture
+    ) async throws {
         // Identity, not equality: only one queue instance can serialize the one
         // resident container, and a second queue would let both passes in.
         let queue = try Self.queue(of: profile.standard)
@@ -132,7 +117,7 @@ struct SharedGenerationQueueContentionTests {
         let holderTurn = Task { try await holder.respond(to: Self.firstPrompt) }
         #expect(
             await BoundedWait.conditionReached("the standard session's pass in the model") {
-                await probe.observer.enteredCount == 1
+                await fixture.observer.enteredCount == 1
             })
 
         // The flash session's pass now waits in the very same queue. This is
@@ -145,12 +130,12 @@ struct SharedGenerationQueueContentionTests {
 
         // The waiting pass never reached the model, so one pass is in flight
         // rather than two.
-        #expect(await probe.observer.maximumActive == 1)
+        #expect(await fixture.observer.maximumActive == 1)
 
-        await probe.latch.open()
+        await fixture.latch.open()
         #expect(try await holderTurn.value == PassObservingModel.answer(to: Self.firstPrompt))
         #expect(try await waiterTurn.value == PassObservingModel.answer(to: Self.secondPrompt))
-        #expect(await probe.observer.maximumActive == 1)
+        #expect(await fixture.observer.maximumActive == 1)
         #expect(queue.availablePlaces == 1)
         #expect(queue.waiterCount == 0)
     }
@@ -162,14 +147,14 @@ struct SharedGenerationQueueContentionTests {
         let dir = RouterTestFixtures.makeTempDir(prefix: "SharedGenerationQueueContentionTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let probe = PassProbe()
-        let resolved = try await Self.makeSharedEntryProfile(probe: probe, dir: dir)
+        let fixture = PassObservingFixture()
+        let resolved = try await Self.makeSharedEntryProfile(fixture: fixture, dir: dir)
 
         // Identity, not equality: the loader makes a new queue for each load,
         // so one queue shows one pool entry, and a second entry would show two.
         #expect(try Self.queue(of: resolved.profile.standard) === Self.queue(of: resolved.profile.flash))
 
-        await probe.latch.open()
+        await fixture.latch.open()
         withExtendedLifetime(resolved) {}
     }
 
@@ -178,12 +163,12 @@ struct SharedGenerationQueueContentionTests {
         let dir = RouterTestFixtures.makeTempDir(prefix: "SharedGenerationQueueContentionTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let probe = PassProbe()
-        let resolved = try await Self.makeSharedEntryProfile(probe: probe, dir: dir)
+        let fixture = PassObservingFixture()
+        let resolved = try await Self.makeSharedEntryProfile(fixture: fixture, dir: dir)
 
         // One session from each generation handle, which is what a consumer
         // holding a resolved profile has.
-        try await Self.expectPassesSerialize(over: resolved.profile, probe: probe)
+        try await Self.expectPassesSerialize(over: resolved.profile, fixture: fixture)
 
         withExtendedLifetime(resolved) {}
     }
@@ -203,8 +188,8 @@ struct SharedGenerationQueueContentionTests {
         let dir = RouterTestFixtures.makeTempDir(prefix: "SharedGenerationQueueContentionTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let probe = PassProbe()
-        let container = probe.makeContainer()
+        let fixture = PassObservingFixture()
+        let container = fixture.container
         let router = RouterTestFixtures.makeRouter(
             cacheDir: dir,
             loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension)
@@ -216,7 +201,7 @@ struct SharedGenerationQueueContentionTests {
             router: router
         )
 
-        try await Self.expectPassesSerialize(over: profile, probe: probe)
+        try await Self.expectPassesSerialize(over: profile, fixture: fixture)
 
         withExtendedLifetime(profile) {}
     }

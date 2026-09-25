@@ -180,6 +180,24 @@ enum RouterTestFixtures {
         )
     }
 
+    /// Builds a router whose loader vends `container` for each generation
+    /// slot, and resolves the standard test profile ``profile(context:)``.
+    ///
+    /// - Parameters:
+    ///   - container: The container every generation slot resolves to.
+    ///   - cacheDir: The router's cache directory (a per-test temp dir).
+    /// - Returns: The router and the profile it resolved. A caller that has
+    ///   to keep the router alive for the whole test keeps both.
+    /// - Throws: What the resolve throws.
+    static func resolveStandardProfile(
+        over container: any LoadedLLMContainer, cacheDir: URL
+    ) async throws -> (router: Router, profile: LanguageModelProfile) {
+        let router = makeRouter(
+            cacheDir: cacheDir, loader: StubModelLoader(container: container, dimension: stubDimension))
+        let resolved = try await router.resolve(profile: profile(), reporting: ResolutionProgress())
+        return (router, resolved)
+    }
+
     /// A router id's recording root under `recordingsDir` — the directory
     /// ``TranscriptTree/load(under:)`` reads.
     ///

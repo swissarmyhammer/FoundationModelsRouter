@@ -334,12 +334,7 @@ struct NestedGenerationReentryTests {
     private static func makeProfile(
         container: any LoadedLLMContainer, dir: URL
     ) async throws -> LanguageModelProfile {
-        let router = RouterTestFixtures.makeRouter(
-            cacheDir: dir,
-            loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension)
-        )
-        return try await router.resolve(
-            profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        try await RouterTestFixtures.resolveStandardProfile(over: container, cacheDir: dir).profile
     }
 
     /// Runs `turn` in a task of its own and reports its outcome, or `nil` when
@@ -888,13 +883,9 @@ struct NestedGenerationReentryTests {
         let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let observer = ConcurrencyPeakObserver()
-        let latch = RunLatch()
-        let passes = ObservedPassLog()
-        let container = LiveBackendContainer(
-            model: PassObservingModel(observer: observer, latch: latch, passes: passes))
-        let queue = container.generationQueue
-        let profile = try await Self.makeProfile(container: container, dir: dir)
+        let fixture = PassObservingFixture()
+        let queue = fixture.queue
+        let profile = try await Self.makeProfile(container: fixture.container, dir: dir)
 
         let holder = profile.standard.makeSession()
         let waiter = profile.standard.makeSession()
@@ -904,7 +895,7 @@ struct NestedGenerationReentryTests {
         let holderTurn = Task { try await holder.respond(to: Self.outerPrompt) }
         #expect(
             await BoundedWait.conditionReached("the holder's pass in the model") {
-                await observer.enteredCount == 1
+                await fixture.observer.enteredCount == 1
             })
 
         // The waiter's turn holds its own turn lock and has an identity; only
@@ -927,10 +918,10 @@ struct NestedGenerationReentryTests {
                 waiterFinished, named: "the end of the cancelled turn, while the holder still has the place"))
         #expect(queue.waiterCount == 0)
 
-        await latch.open()
+        await fixture.latch.open()
         #expect(try await holderTurn.value == PassObservingModel.answer(to: Self.outerPrompt))
         await #expect(throws: CancellationError.self) { try await waiterTurn.value }
-        #expect(passes.executors(servingPrompt: Self.nestedPrompt).isEmpty)
+        #expect(fixture.passes.executors(servingPrompt: Self.nestedPrompt).isEmpty)
         #expect(queue.availablePlaces == 1)
         #expect(queue.waiterCount == 0)
 

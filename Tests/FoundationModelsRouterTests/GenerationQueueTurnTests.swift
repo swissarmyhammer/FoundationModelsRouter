@@ -41,15 +41,6 @@ struct GenerationQueueTurnTests {
         }
     }
 
-    /// A router over `container`, and the standard test profile it resolved.
-    private struct Fixture {
-        /// The router the profile came from. Kept alive for the whole test.
-        let router: Router
-
-        /// The resolved profile sessions are vended from.
-        let profile: LanguageModelProfile
-    }
-
     /// The prompt of the first session of a test.
     private static let firstPrompt = "a"
 
@@ -61,22 +52,6 @@ struct GenerationQueueTurnTests {
 
     /// How many sessions run a tool loop in the alternation test.
     private static let loopingSessionCount = 2
-
-    /// Builds a router whose loader vends `container`, and resolves the
-    /// standard test profile.
-    ///
-    /// - Parameters:
-    ///   - container: The container every generation slot resolves to.
-    ///   - dir: The temporary directory the router caches under.
-    /// - Returns: The router and its profile.
-    /// - Throws: What the resolve throws.
-    private static func makeFixture(container: any LoadedLLMContainer, dir: URL) async throws -> Fixture {
-        let router = RouterTestFixtures.makeRouter(
-            cacheDir: dir,
-            loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension))
-        let profile = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        return Fixture(router: router, profile: profile)
-    }
 
     /// Starts `turn` in a task of its own that signals `finished` when it ends,
     /// however it ends.
@@ -99,13 +74,13 @@ struct GenerationQueueTurnTests {
     func aToolBodyThatWaitsLetsAnotherSessionCompleteATurn() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "GenerationQueueTurnTests")
         defer { try? FileManager.default.removeItem(at: dir) }
-        let passes = ObservedPassLog()
-        let container = LiveBackendContainer(model: ToolLoopPassModel(toolRounds: 1, passes: passes, step: nil))
-        let fixture = try await Self.makeFixture(container: container, dir: dir)
+        let fixture = PassObservingFixture(toolRounds: 1)
+        await fixture.latch.open()
+        let resolved = try await RouterTestFixtures.resolveStandardProfile(over: fixture.container, cacheDir: dir)
         let entered = AsyncSemaphore(value: 0)
-        let latch = RunLatch()
-        let waiting = fixture.profile.standard.makeSession(tools: [WaitingTool(entered: entered, latch: latch)])
-        let other = fixture.profile.standard.makeSession()
+        let toolLatch = RunLatch()
+        let waiting = resolved.profile.standard.makeSession(tools: [WaitingTool(entered: entered, latch: toolLatch)])
+        let other = resolved.profile.standard.makeSession()
 
         let waitingFinished = AsyncSemaphore(value: 0)
         let waitingTurn = Self.startTurn(signalling: waitingFinished) {
@@ -120,32 +95,32 @@ struct GenerationQueueTurnTests {
         let otherEndedDuringTheWait = await BoundedWait.signalArrived(
             otherFinished, named: "the whole turn of the other session, while the tool body waits")
 
-        await latch.open()
+        await toolLatch.open()
         let otherAnswer = try await otherTurn.value
         let waitingAnswer = try await waitingTurn.value
 
         #expect(toolStarted)
         #expect(otherEndedDuringTheWait)
-        #expect(otherAnswer == ToolLoopPassModel.answer(to: Self.secondPrompt))
-        #expect(waitingAnswer == ToolLoopPassModel.answer(to: Self.firstPrompt))
-        #expect(passes.recorded.map(\.prompt) == [Self.firstPrompt, Self.secondPrompt, Self.firstPrompt])
+        #expect(otherAnswer == PassObservingModel.answer(to: Self.secondPrompt))
+        #expect(waitingAnswer == PassObservingModel.answer(to: Self.firstPrompt))
+        #expect(fixture.passes.recorded.map(\.prompt) == [Self.firstPrompt, Self.secondPrompt, Self.firstPrompt])
         #expect(await BoundedWait.signalArrived(waitingFinished, named: "the end of the waiting turn"))
-        #expect(container.generationQueue.availablePlaces == 1)
-        withExtendedLifetime(fixture) {}
+        #expect(fixture.queue.availablePlaces == 1)
+        withExtendedLifetime(resolved) {}
     }
 
     @Test("two sessions with long tool loops over one model take alternate passes, first in first out")
     func twoToolLoopsTakeAlternatePasses() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "GenerationQueueTurnTests")
         defer { try? FileManager.default.removeItem(at: dir) }
-        let passes = ObservedPassLog()
         let step = AsyncSemaphore(value: 0)
-        let container = LiveBackendContainer(
-            model: ToolLoopPassModel(toolRounds: Self.alternatingToolRounds, passes: passes, step: step))
-        let queue = container.generationQueue
-        let fixture = try await Self.makeFixture(container: container, dir: dir)
-        let first = fixture.profile.standard.makeSession(tools: [MountFixtures.FastTool()])
-        let second = fixture.profile.standard.makeSession(tools: [MountFixtures.FastTool()])
+        let fixture = PassObservingFixture(toolRounds: Self.alternatingToolRounds, step: step)
+        await fixture.latch.open()
+        let passes = fixture.passes
+        let queue = fixture.queue
+        let resolved = try await RouterTestFixtures.resolveStandardProfile(over: fixture.container, cacheDir: dir)
+        let first = resolved.profile.standard.makeSession(tools: [MountFixtures.FastTool()])
+        let second = resolved.profile.standard.makeSession(tools: [MountFixtures.FastTool()])
         let passesPerTurn = Self.alternatingToolRounds + 1
         let totalPasses = Self.loopingSessionCount * passesPerTurn
 
@@ -178,11 +153,11 @@ struct GenerationQueueTurnTests {
         let alternating = (0..<passesPerTurn).flatMap { _ in [Self.firstPrompt, Self.secondPrompt] }
         #expect(everyStepWasObserved)
         #expect(passes.recorded.map(\.prompt) == alternating)
-        #expect(firstAnswer == ToolLoopPassModel.answer(to: Self.firstPrompt))
-        #expect(secondAnswer == ToolLoopPassModel.answer(to: Self.secondPrompt))
+        #expect(firstAnswer == PassObservingModel.answer(to: Self.firstPrompt))
+        #expect(secondAnswer == PassObservingModel.answer(to: Self.secondPrompt))
         #expect(await BoundedWait.signalArrived(firstFinished, named: "the end of the first loop"))
         #expect(await BoundedWait.signalArrived(secondFinished, named: "the end of the second loop"))
         #expect(queue.availablePlaces == 1)
-        withExtendedLifetime(fixture) {}
+        withExtendedLifetime(resolved) {}
     }
 }
