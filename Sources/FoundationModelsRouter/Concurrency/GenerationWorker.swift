@@ -16,28 +16,59 @@ import Synchronization
 /// So the continuation of each submitter resumes exactly one time, also when a
 /// cancel and the start of the item race.
 actor GenerationWorker {
-    /// The identity of one item, and the mark of its cancel.
+    /// The identity of one item, the mark of its cancel, and the task that
+    /// runs it.
     ///
     /// The cancel handler of the submitter sets the mark at once, on the task
     /// that cancels. The actor reads it, so an item whose submitter is
     /// cancelled leaves the count of waiting items and never starts, also
-    /// before the actor takes the cancel.
+    /// before the actor takes the cancel. The mark also cancels the task that
+    /// runs the item at once, with no hop to the actor: the item is a whole
+    /// SDK call, and a stop of that call (a cancel, a compaction yield at a
+    /// tool result) must reach it before the SDK starts its next pass.
     final class Ticket: Sendable {
-        /// Whether the submitter of the item is cancelled.
-        private let cancelled = Atomic<Bool>(false)
+        /// The mark of the cancel and the task that runs the item.
+        private struct State {
+            /// Whether the submitter of the item is cancelled.
+            var isCancelled = false
+
+            /// The task that runs the item, or `nil` before the item runs.
+            var task: Task<Delivery, Never>?
+        }
+
+        /// The state, under one lock.
+        private let state = Mutex(State())
 
         /// Whether the submitter of the item is cancelled.
-        var isCancelled: Bool { cancelled.load(ordering: .sequentiallyConsistent) }
+        var isCancelled: Bool { state.withLock { $0.isCancelled } }
 
-        /// Marks the item as cancelled.
+        /// Marks the item as cancelled, and cancels the task that runs it when
+        /// it runs.
         func markCancelled() {
-            cancelled.store(true, ordering: .sequentiallyConsistent)
+            let task = state.withLock { state -> Task<Delivery, Never>? in
+                state.isCancelled = true
+                return state.task
+            }
+            task?.cancel()
+        }
+
+        /// Records `task` as the task that runs the item, and cancels it when
+        /// the submitter is cancelled already.
+        ///
+        /// - Parameter task: The task that runs the item.
+        fileprivate func attach(_ task: Task<Delivery, Never>) {
+            let isCancelled = state.withLock { state -> Bool in
+                state.task = task
+                return state.isCancelled
+            }
+            guard isCancelled else { return }
+            task.cancel()
         }
     }
 
     /// Gives the submitter its result: a call that resumes the continuation
     /// of the submitter one time.
-    private typealias Delivery = @Sendable () -> Void
+    fileprivate typealias Delivery = @Sendable () -> Void
 
     /// One item that waits for the worker task.
     private struct WaitingItem: Sendable {
@@ -183,6 +214,7 @@ actor GenerationWorker {
                 continue
             }
             let task = Task.detached(priority: item.priority) { await item.run() }
+            item.ticket.attach(task)
             running = RunningItem(ticket: item.ticket, task: task)
             let deliver = await task.value
             running = nil

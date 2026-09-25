@@ -43,25 +43,27 @@ struct PooledResidencyTests {
     /// `respond`, so a test can observe whether two concurrent calls
     /// serialize (never overlap) or interleave.
     ///
-    /// The backend has no executor seam, so the Router gives it no generation
-    /// gating. Each call runs as one pass in the ``GenerationQueue`` of its
-    /// container instead, through ``GenerationQueue/runPass(isolation:_:)``:
-    /// the pattern a consumer's own stub container follows.
+    /// The backend declares no ``LanguageModelSessionBackend/generationQueue``,
+    /// so the session runs its calls directly. Each call submits itself as one
+    /// item to the ``GenerationQueue`` of its container instead, through
+    /// ``GenerationQueue/submit(isolation:_:)``: the pattern a consumer's own
+    /// stub container follows.
     private final class SuspendingSessionBackend: LanguageModelSessionBackend, @unchecked Sendable {
         private let observer: ConcurrencyObserver
         private let releaseGate: AsyncSemaphore
 
-        /// The queue of the container, which each call takes for its one pass.
-        private let generationQueue: GenerationQueue
+        /// The queue of the container, which each call submits itself to as
+        /// one item.
+        private let containerQueue: GenerationQueue
 
-        init(observer: ConcurrencyObserver, releaseGate: AsyncSemaphore, generationQueue: GenerationQueue) {
+        init(observer: ConcurrencyObserver, releaseGate: AsyncSemaphore, containerQueue: GenerationQueue) {
             self.observer = observer
             self.releaseGate = releaseGate
-            self.generationQueue = generationQueue
+            self.containerQueue = containerQueue
         }
 
         func respond(to prompt: String, maxTokens: Int?) async throws -> String {
-            try await generationQueue.runPass { [observer, releaseGate] in
+            try await containerQueue.submit { [observer, releaseGate] in
                 await observer.enter(prompt)
                 await releaseGate.wait()
                 await observer.exit()
@@ -96,10 +98,10 @@ struct PooledResidencyTests {
         let generationQueue = GenerationQueue()
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            SuspendingSessionBackend(observer: observer, releaseGate: releaseGate, generationQueue: generationQueue)
+            SuspendingSessionBackend(observer: observer, releaseGate: releaseGate, containerQueue: generationQueue)
         }
         func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
-            SuspendingSessionBackend(observer: observer, releaseGate: releaseGate, generationQueue: generationQueue)
+            SuspendingSessionBackend(observer: observer, releaseGate: releaseGate, containerQueue: generationQueue)
         }
     }
 

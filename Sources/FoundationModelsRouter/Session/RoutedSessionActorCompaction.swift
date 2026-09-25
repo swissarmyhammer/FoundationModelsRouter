@@ -34,9 +34,11 @@ private struct BackendCompactionSummarizer: CompactionSummarizer {
 
 /// Wraps another ``CompactionSummarizer`` so every model call it makes runs
 /// inside the owning session's turn-cancellation boundary
-/// (``RoutedSessionActor/runCancellableModelCall(composedPrompt:_:)``). This
-/// lets ``RoutedSession/cancelCurrentTurn()`` and task cancellation stop a
-/// compaction's summarizer call.
+/// (``RoutedSessionActor/runCancellableModelCall(composedPrompt:submittingTo:_:)``),
+/// as one submission to the queue of the container that runs it. This lets
+/// ``RoutedSession/cancelCurrentTurn()`` and task cancellation stop a
+/// compaction's summarizer call, and keeps the call from running at the same
+/// time as a submission of another session on that model.
 private struct CancellableCompactionSummarizer: CompactionSummarizer {
     /// The summarizer whose calls are made cancellable.
     let base: any CompactionSummarizer
@@ -44,15 +46,52 @@ private struct CancellableCompactionSummarizer: CompactionSummarizer {
     /// The session whose in-flight turn those calls belong to.
     let session: RoutedSessionActor
 
+    /// The queue each call is one submission to, and its model, or `nil` when
+    /// the backend of the summarizer names no queue.
+    let target: SubmissionTarget?
+
     func summarize(_ prompt: String, maxTokens: Int) async throws -> String {
         // A compaction makes one call on each tier it tries, one tier after the
         // other. ``RoutedSessionActor/inFlightModelCall`` holds one call at a
         // time, and the tiers never run at the same time, so
         // ``RoutedSession/cancelCurrentTurn()`` reaches each call. A cancellation
         // that lands between two tiers stops the next tier at its pre-flight check.
-        try await session.runCancellableModelCall(composedPrompt: prompt) { [base] promptText in
+        // A compaction runs between two submissions of its session, so the
+        // own-model tier never waits for a submission of its own session.
+        try await session.runCancellableModelCall(composedPrompt: prompt, submittingTo: target) { [base] promptText in
             try await base.summarize(promptText, maxTokens: maxTokens)
         }
+    }
+}
+
+/// One summarizer tier that a compaction of a session offers: the backend
+/// each call of the tier is built from, and the model of that backend.
+private struct BackendSummarizerTier {
+    /// The tier this summarizer fills.
+    let tier: CompactionSummarizerTier
+
+    /// The backend each blank-slate summarizer call is built from. Its queue
+    /// is the queue each call is one submission to.
+    let backend: any LanguageModelSessionBackend
+
+    /// The context window of the model of ``backend``, in tokens.
+    let windowTokens: Int
+
+    /// The model of ``backend``.
+    let model: ModelRef
+
+    /// The slot of this tier, whose summarizer runs each call as one
+    /// cancellable submission of `session` to the queue of ``backend``.
+    ///
+    /// - Parameter session: The session whose turn owns the calls.
+    /// - Returns: The slot.
+    func slot(for session: RoutedSessionActor) -> CompactionSummarizerSlot {
+        let target = backend.generationQueue.map { SubmissionTarget(queue: $0, model: model) }
+        return CompactionSummarizerSlot(
+            tier: tier,
+            summarizer: CancellableCompactionSummarizer(
+                base: BackendCompactionSummarizer(backend: backend), session: session, target: target),
+            windowTokens: windowTokens, model: model.stringValue)
     }
 }
 
@@ -82,7 +121,7 @@ extension RoutedSessionActor {
         try await beginTurn()
         defer { endTurn() }
         return try await withCompactionSpan(trigger: .caller) {
-            try await runCompaction(prompt: prompt, budget: budget, summarizers: [ownModelSummarizerSlot()])
+            try await runCompaction(prompt: prompt, budget: budget, summarizers: [ownModelSummarizerTier()])
         }
     }
 
@@ -115,30 +154,27 @@ extension RoutedSessionActor {
         prompt: CompactionPrompt,
         budget: TokenBudget
     ) async throws -> CompactionResult {
-        var summarizers: [CompactionSummarizerSlot] = []
+        var summarizers: [BackendSummarizerTier] = []
         if slot != .flash {
             summarizers.append(
-                CompactionSummarizerSlot(
+                BackendSummarizerTier(
                     tier: .flash,
-                    summarizer: BackendCompactionSummarizer(
-                        backend: profile.flash.container.makeSession(
-                            instructions: nil, samplingMode: profile.flash.samplingMode)),
+                    backend: profile.flash.container.makeSession(
+                        instructions: nil, samplingMode: profile.flash.samplingMode),
                     windowTokens: profile.flash.contextTokens,
-                    model: profile.flash.chosen.stringValue
+                    model: profile.flash.chosen
                 ))
         }
-        summarizers.append(ownModelSummarizerSlot())
+        summarizers.append(ownModelSummarizerTier())
         return try await withCompactionSpan(trigger: .auto) {
             try await runCompaction(prompt: prompt, budget: budget, summarizers: summarizers)
         }
     }
 
-    /// The summarizer slot of this session's own model: a fresh backend over
+    /// The summarizer tier of this session's own model: a fresh backend over
     /// it, in this session's resolved working context.
-    private func ownModelSummarizerSlot() -> CompactionSummarizerSlot {
-        CompactionSummarizerSlot(
-            tier: .ownModel, summarizer: BackendCompactionSummarizer(backend: backend),
-            windowTokens: contextTokens, model: model.stringValue)
+    private func ownModelSummarizerTier() -> BackendSummarizerTier {
+        BackendSummarizerTier(tier: .ownModel, backend: backend, windowTokens: contextTokens, model: model)
     }
 
     /// Opens one ``RouterTracing/SpanName/compact`` span around a whole
@@ -221,14 +257,15 @@ extension RoutedSessionActor {
     ///   - budget: The token budget to compact against, or `nil` for this
     ///     session's resolved working context.
     ///   - summarizers: The summarizer tiers, in the order of preference. Each
-    ///     is wrapped in ``CancellableCompactionSummarizer``.
+    ///     call of a tier is one cancellable submission to the queue of its
+    ///     backend (``CancellableCompactionSummarizer``).
     /// - Returns: What the compaction did.
     /// - Throws: What the last tier throws, or `CancellationError`. A
     ///   compaction that throws leaves this session unchanged.
     private func runCompaction(
         prompt: CompactionPrompt,
         budget: TokenBudget?,
-        summarizers: [CompactionSummarizerSlot]
+        summarizers: [BackendSummarizerTier]
     ) async throws -> CompactionResult {
         let entries = backend.transcriptEntries()
         let resolvedBudget = budget ?? TokenBudget(limit: contextTokens)
@@ -254,14 +291,10 @@ extension RoutedSessionActor {
             // count of the model's tokenizer.
             counter: tokenCounter,
             // Wrapped, never handed over bare: a compaction's summarizer call is a model
-            // call this session's turn owns, and must be cancellable as one (see
+            // call this session's turn owns, and must be cancellable as one, and
+            // one submission to the queue of its model (see
             // ``CancellableCompactionSummarizer``).
-            summarizers: summarizers.map { slot in
-                CompactionSummarizerSlot(
-                    tier: slot.tier,
-                    summarizer: CancellableCompactionSummarizer(base: slot.summarizer, session: self),
-                    windowTokens: slot.windowTokens, model: slot.model)
-            },
+            summarizers: summarizers.map { $0.slot(for: self) },
             summarization: summarization,
             pendingRuns: pendingRuns,
             // The host rule this session was vended, forked or restored with,

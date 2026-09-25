@@ -2,11 +2,14 @@
 /// model one at a time, first in first out (`generation-queue.md`, section
 /// 5.3).
 ///
-/// An item is one generation pass: one call of
-/// `LanguageModelExecutor.respond`. One GPU runs one generation at a time, so
-/// all the passes on one model go through this one queue. A session that runs
-/// a tool body or waits for a person has no item in the queue: the SDK ends an
-/// executor call before it runs the tool body of that call (task ^8nqkten).
+/// An item is one submission to Foundation: one whole SDK call
+/// (`LanguageModelSession.respond` or `streamResponse`), with all of its steps.
+/// The steps are the generation passes and the tool bodies that the SDK runs
+/// between them. One GPU runs one generation at a time, so all the
+/// submissions on one model go through this one queue. A submission holds the
+/// worker for all of its steps, so a tool body holds the model for every other
+/// session on it (section 5.5). A tool that starts long work is a background
+/// tool: it returns at once, and its result comes back to its session as mail.
 ///
 /// The queue is not a lock. A submitter gives the queue its item and waits
 /// only for the result of that item. It never waits for a permission. The
@@ -18,21 +21,27 @@
 ///
 /// There is one queue for each pool entry. The live container
 /// (``MLXFoundationModelsContainer``) makes the queue and owns it, and one
-/// resident container is one pool entry. Each backend the container makes runs
-/// its `LanguageModelSession` over its own ``QueuedLanguageModel``, and all
-/// those wrappers share this queue. Two different models have two queues and
-/// generate at the same time.
+/// resident container is one pool entry. Each backend the container makes
+/// names this queue (``LanguageModelSessionBackend/generationQueue``), and the
+/// session of that backend submits each of its SDK calls to it. Two different
+/// models have two queues and generate at the same time.
 ///
 /// A container with no executor seam (a ``LoadedLLMContainer`` whose backend
-/// is not a `LanguageModelSession` over a `LanguageModel`) gets no pass-level
-/// queue from the wrapper. Such a container can own a queue of its own and
-/// submit each scripted pass through ``runPass(isolation:_:)``, so its queue
-/// behavior is testable without MLX.
+/// is not a `LanguageModelSession` over a `LanguageModel`) can own a queue of
+/// its own. Its backend then names that queue, or submits each scripted call
+/// through ``submit(isolation:_:)`` itself, so its queue behavior is testable
+/// without MLX.
+///
+/// A submission from a task inside an open submission on the same queue could
+/// never run: it waits behind the submission of its own caller. The queue
+/// refuses it at once with
+/// ``GenerationQueueError/waitInsideOpenSubmission(model:)``.
 ///
 /// A cancel of the submitter reaches its item. A waiting item leaves the list
 /// at once and never runs, and its submitter gets `CancellationError`. A
 /// running item gets the cancel on the task that runs it. So
-/// ``RoutedSession/cancelCurrentTurn()`` ends the wait of a pass at once.
+/// ``RoutedSession/cancelCurrentTurn()`` ends the wait of a submission at
+/// once.
 public final class GenerationQueue: Sendable {
     /// The worker that holds the list and runs the items.
     private let worker = GenerationWorker()
@@ -51,38 +60,43 @@ public final class GenerationQueue: Sendable {
     /// - Parameters:
     ///   - isolation: The actor isolation of the caller, which defaults to
     ///     the caller's own. The caller waits and resumes there.
-    ///   - body: One generation pass.
+    ///   - body: One submission.
     /// - Returns: What `body` returns.
-    /// - Throws: `CancellationError` when the calling task is cancelled before
-    ///   its item runs, or what `body` throws.
-    public func runPass<T: Sendable>(
+    /// - Throws: ``GenerationQueueError/waitInsideOpenSubmission(model:)`` when
+    ///   the calling task is inside an open submission on this queue,
+    ///   `CancellationError` when the calling task is cancelled before its item
+    ///   runs, or what `body` throws.
+    public func submit<T: Sendable>(
         isolation: isolated (any Actor)? = #isolation,
         _ body: @escaping @Sendable () async throws -> T
     ) async throws -> T {
-        try await runPass(isolation: isolation, onQueued: {}, body)
+        try await submit(isolation: isolation, onQueued: {}, body)
     }
 
-    /// ``runPass(isolation:_:)``, which also calls `onQueued` when the item
-    /// must wait: the worker runs another item (task ^ake8sax).
+    /// ``submit(isolation:_:)``, which also calls `onQueued` when the item
+    /// must wait: the worker runs another item.
     ///
-    /// An item that finds the queue idle never calls `onQueued`. The
-    /// per-session ``QueuedLanguageModel`` uses it to report the wait to its
-    /// session.
+    /// An item that finds the worker idle never calls `onQueued`. A session
+    /// uses it to report the wait of its submission
+    /// (``SessionEvent/submissionQueued``).
     ///
     /// - Parameters:
     ///   - isolation: The actor isolation of the caller, which defaults to
     ///     the caller's own. The caller waits and resumes there.
-    ///   - onQueued: Called on the calling task when the item joins the list
-    ///     behind another item.
-    ///   - body: One generation pass.
+    ///   - onQueued: Called on the worker when the item joins the list behind
+    ///     another item.
+    ///   - body: One submission.
     /// - Returns: What `body` returns.
-    /// - Throws: `CancellationError` when the calling task is cancelled before
-    ///   its item runs, or what `body` throws.
-    func runPass<T: Sendable>(
+    /// - Throws: ``GenerationQueueError/waitInsideOpenSubmission(model:)`` when
+    ///   the calling task is inside an open submission on this queue,
+    ///   `CancellationError` when the calling task is cancelled before its item
+    ///   runs, or what `body` throws.
+    func submit<T: Sendable>(
         isolation: isolated (any Actor)? = #isolation,
         onQueued: @Sendable () -> Void,
         _ body: @escaping @Sendable () async throws -> T
     ) async throws -> T {
+        try refuseWaitInsideOpenSubmission()
         let ticket = GenerationWorker.Ticket()
         let worker = worker
         return try await withTaskCancellationHandler {
@@ -91,6 +105,25 @@ public final class GenerationQueue: Sendable {
             ticket.markCancelled()
             Task { await worker.cancel(ticket) }
         }
+    }
+
+    /// Refuses a wait for this queue from a task inside an open submission on
+    /// this queue: an in-band tool body of a running item. An item of that
+    /// task could run only after the item of that tool body ends, which waits
+    /// for it (`generation-queue.md`, section 5.5, rule 2).
+    ///
+    /// ``submit(isolation:onQueued:_:)`` calls it for each submission. A
+    /// session calls it before it waits for its own turn lock, so a wait for
+    /// the answer of a session over this queue is refused too, also when that
+    /// session is busy.
+    ///
+    /// A background run has a closed mark (``ModelCallMark/withBackgroundRunMark(_:)``),
+    /// so it is not refused.
+    ///
+    /// - Throws: ``GenerationQueueError/waitInsideOpenSubmission(model:)``.
+    func refuseWaitInsideOpenSubmission() throws {
+        guard let open = ModelCallMark.current?.openSubmission(on: self) else { return }
+        throw GenerationQueueError.waitInsideOpenSubmission(model: open.model)
     }
 
     /// Whether the worker runs, or is about to run, an item.

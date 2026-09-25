@@ -203,6 +203,18 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// `transcript` instead of this backend's own history. An empty
     /// `transcript` gives a blank-slate backend.
     func replacingTranscript(_ transcript: FoundationModels.Transcript) -> any LanguageModelSessionBackend
+
+    /// The work queue of the model of this backend, or `nil` when the backend
+    /// has none (`generation-queue.md`, section 5.3).
+    ///
+    /// The session of this backend submits each generating call of the
+    /// backend to this queue as one item: one whole SDK call, with all of its
+    /// passes and tool bodies. A backend with no queue runs each call
+    /// directly. All the backends of one model name the same queue, a fork
+    /// and a replaced transcript included.
+    ///
+    /// There is a default implementation that gives `nil`.
+    var generationQueue: GenerationQueue? { get }
 }
 
 /// Drives an `AsyncThrowingStream<String, Error>` iterator from the task that
@@ -269,6 +281,12 @@ extension LanguageModelSessionBackend {
     /// ``makeFork()``.
     public func makeFork(tools: [any Tool]) -> any LanguageModelSessionBackend {
         makeFork()
+    }
+
+    /// Default ``generationQueue``: `nil`, because a backend that does not
+    /// override it names no queue, and its session runs each call directly.
+    public var generationQueue: GenerationQueue? {
+        nil
     }
 
     /// Default ``replacingTranscript(_:)``: ignores `transcript` and forwards

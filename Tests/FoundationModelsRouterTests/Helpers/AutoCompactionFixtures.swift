@@ -292,10 +292,45 @@ enum AutoCompactionFixtures {
         samplingMode: GenerationOptions.SamplingMode? = nil,
         tempDirPrefix: String
     ) async throws -> (session: RoutedSession, standard: ConfiguredLLMContainer, flash: ConfiguredLLMContainer) {
+        let flashContainer = ConfiguredLLMContainer(responseText: "FLASH-SUMMARY")
+        let (session, standardContainer) = try await makeTriggeredSession(
+            budget: budget, tools: tools, summarization: summarization, tracer: tracer,
+            samplingMode: samplingMode, flash: flashContainer, tempDirPrefix: tempDirPrefix)
+        return (session, standardContainer, flashContainer)
+    }
+
+    /// ``makeTriggeredSession(budget:tools:summarization:tracer:samplingMode:tempDirPrefix:)``
+    /// over a `flash` container that the caller gives, so a test can watch
+    /// the flash summarizer call on a container of its own choice.
+    ///
+    /// - Parameters:
+    ///   - budget: The auto-compaction opt-in to vend the session with, or
+    ///     `nil` to opt out.
+    ///   - tools: The tools to vend the session with. Defaults to none.
+    ///   - summarization: The summarization stage every compaction on the vended
+    ///     session runs with. Defaults to `Summarization()`.
+    ///   - tracer: The tracer every handle of the resolved profile carries, or
+    ///     `nil` (the default) to read `InstrumentationSystem.tracer` at call
+    ///     time.
+    ///   - samplingMode: The decoding strategy the router passes to every
+    ///     backend it makes, or `nil` (the default) for the provider default.
+    ///   - flashContainer: The container the `.flash` slot resolves to.
+    ///   - tempDirPrefix: The calling suite's name, so a leaked temp directory
+    ///     is attributable.
+    /// - Returns: The session plus its `standard` container.
+    /// - Throws: Whatever profile resolution or a warm-up turn throws.
+    static func makeTriggeredSession(
+        budget: TokenBudget?,
+        tools: [any Tool] = [],
+        summarization: Summarization = Summarization(),
+        tracer: (any Tracer)? = nil,
+        samplingMode: GenerationOptions.SamplingMode? = nil,
+        flash flashContainer: any LoadedLLMContainer,
+        tempDirPrefix: String
+    ) async throws -> (session: RoutedSession, standard: ConfiguredLLMContainer) {
         let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let recorder = InMemoryRecorder()
         let standardContainer = ConfiguredLLMContainer(responseText: cannedText)
-        let flashContainer = ConfiguredLLMContainer(responseText: "FLASH-SUMMARY")
         let loader = PerSlotModelLoader(
             standard: standardContainer, flash: flashContainer, dimension: RouterTestFixtures.stubDimension)
         let router = RouterTestFixtures.makeRouter(
@@ -312,6 +347,6 @@ enum AutoCompactionFixtures {
             _ = try await session.respond(to: "turn \(turn)")
         }
 
-        return (session, standardContainer, flashContainer)
+        return (session, standardContainer)
     }
 }

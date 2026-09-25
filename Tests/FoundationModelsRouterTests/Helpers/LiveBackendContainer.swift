@@ -11,9 +11,9 @@ import FoundationModelsRouterTestSupport
 /// does not write one more copy of the four factory methods.
 ///
 /// Like the live container, it owns one ``GenerationQueue``, and each backend
-/// it vends runs over its own ``QueuedLanguageModel`` on that queue. A
-/// scripted tool loop thus takes the queue for each of its passes, with no
-/// MLX.
+/// it vends runs over its own ``SessionLanguageModel`` and declares that
+/// queue. A routed session thus submits each whole scripted SDK call, tool
+/// loop included, as one item of the queue, with no MLX.
 struct LiveBackendContainer<Model: FoundationModels.LanguageModel>: LoadedLLMContainer {
     /// The scripted model every backend of this container runs over.
     let model: Model

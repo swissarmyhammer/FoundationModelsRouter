@@ -39,10 +39,16 @@ public enum PromptCancellationResult: Sendable, Equatable {
 /// Every generation method records the turn's new transcript entries, whether
 /// the model returns or throws. One session never has two turns in flight:
 /// a turn holds ``RoutedSessionActor/turnLock`` for its whole length. Model
-/// work over one model does not overlap: each generation pass of a turn waits
-/// for the one place of that model's ``GenerationQueue``, and holds it for
-/// that pass only. A turn in a tool body, or in a wait for a person, holds no
-/// place, so another session over the same model can generate meanwhile.
+/// work over one model does not overlap: each model call of a turn is one
+/// submission to the ``GenerationQueue`` of that model, and the one worker of
+/// the queue runs the submissions one at a time, first in first out. A
+/// submission is one whole SDK call, with its generation passes and the tool
+/// bodies between them. So a tool body, or a wait for a person inside it,
+/// holds the model for every other session on it. A tool that starts long
+/// work, or waits for a child session on the same model, is a background
+/// tool: it returns at once, and its result comes back as mail. An in-band
+/// tool body that asks a session on the same model for an answer is refused
+/// at once with ``GenerationQueueError/waitInsideOpenSubmission(model:)``.
 public protocol RoutedSession: Actor {
     /// The resolved profile this session runs against.
     nonisolated var profile: LanguageModelProfile { get }
@@ -131,11 +137,13 @@ public protocol RoutedSession: Actor {
     /// Nothing bounds a decode: there is no timeout. A generation with no
     /// observable progress reports ``SessionEvent/generationStalled(_:)`` on
     /// ``streamSessionEvents()`` with ``GenerationProgressVisibility/wholeAnswer``
-    /// visibility, and one line in this module's log. Only the time a pass
-    /// holds its place in the ``GenerationQueue`` of the model counts: a wait
-    /// for a queue place and a tool body give no report. A wait for a queue
-    /// place reports ``SessionEvent/passQueued`` and then
-    /// ``SessionEvent/passStarted`` on ``streamSessionEvents()``.
+    /// visibility, and one line in this module's log. Only the time inside a
+    /// pass of the running submission counts: a wait for the worker of the
+    /// ``GenerationQueue`` of the model and a tool body give no report. A
+    /// submission that waits for the worker reports
+    /// ``SessionEvent/submissionQueued``, and each submission reports
+    /// ``SessionEvent/submissionStarted`` when the worker starts it, on
+    /// ``streamSessionEvents()``.
     ///
     /// Every turn this call runs — its own turn, and each further turn of the
     /// run-plane drain — opens one OpenTelemetry span named
@@ -170,7 +178,9 @@ public protocol RoutedSession: Actor {
     /// - Returns: The model's complete text response; the last drained turn's
     ///   when this call's own turn backgrounded work.
     /// - Throws: ``SessionReentryError/sameSessionTurnInFlight(sessionID:)`` when
-    ///   called from a tool of this session's own turn.
+    ///   called from a tool of this session's own turn, or
+    ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)`` when called
+    ///   in band from a tool of a submission on the same model.
     func respond(to prompt: String, maxTokens: Int?) async throws -> String
 
     /// Streams a text response to a prompt as it is produced, recording the call.
@@ -180,8 +190,9 @@ public protocol RoutedSession: Actor {
     /// run plane; it finishes while a backgrounded run is in flight. A stall
     /// reports ``SessionEvent/generationStalled(_:)`` on ``streamSessionEvents()``
     /// with ``GenerationProgressVisibility/fragments(observed:)`` visibility.
-    /// A wait for a generation queue place is not a stall; it reports
-    /// ``SessionEvent/passQueued`` and ``SessionEvent/passStarted`` there.
+    /// A wait for the worker of the generation queue is not a stall; it
+    /// reports ``SessionEvent/submissionQueued`` there, and each submission
+    /// reports ``SessionEvent/submissionStarted``.
     ///
     /// The turn opens one span, exactly as ``respond(to:maxTokens:)`` states,
     /// with `turn.entry_point` reading `stream`.
@@ -201,11 +212,12 @@ public protocol RoutedSession: Actor {
     /// attempt's ``SessionEvent/turnEnded(_:)`` for a reactive compaction.
     /// ``SessionEvent/generationStalled(_:)`` is emitted on each interval
     /// without progress: no text fragment, no transcript entry, and no tool
-    /// call or tool result. Only the time a pass holds its place in the
-    /// ``GenerationQueue`` of the model counts, so a wait for a queue place
-    /// and a tool body between two passes emit no stall. A pass that must
-    /// wait for its place emits ``SessionEvent/passQueued``, and
-    /// ``SessionEvent/passStarted`` when it takes the place.
+    /// call or tool result. Only the time inside a pass of the running
+    /// submission counts, so a wait for the worker of the ``GenerationQueue``
+    /// of the model and a tool body between two passes emit no stall. A
+    /// submission that must wait for the worker emits
+    /// ``SessionEvent/submissionQueued``, and each submission emits
+    /// ``SessionEvent/submissionStarted`` when the worker starts it.
     ///
     /// Abandoning this stream cancels the turn. This surface does not drain the
     /// run plane. A run that settles before the stream ends is reported as
@@ -234,8 +246,8 @@ public protocol RoutedSession: Actor {
     /// ``SessionEvent/elicitationRequested(_:)``,
     /// ``SessionEvent/entryRecorded(id:kind:)``,
     /// ``SessionEvent/compaction(_:)``, ``SessionEvent/discoveryPrimingFailed(_:)``,
-    /// ``SessionEvent/generationStalled(_:)``, ``SessionEvent/passQueued``,
-    /// ``SessionEvent/passStarted``, and ``SessionEvent/turnEnded(_:)``.
+    /// ``SessionEvent/generationStalled(_:)``, ``SessionEvent/submissionQueued``,
+    /// ``SessionEvent/submissionStarted``, and ``SessionEvent/turnEnded(_:)``.
     /// ``SessionEvent/textDelta(_:)`` and ``SessionEvent/textReset`` travel only
     /// on ``streamEvents(to:maxTokens:)``. Every event belongs to the turn named
     /// by the most recent ``SessionEvent/turnStarted(_:)``. A run's
@@ -261,10 +273,11 @@ public protocol RoutedSession: Actor {
     /// returns its response. A cancellation that lands before any model call
     /// starts makes the turn throw without calling the model. The transcript
     /// records a cancelled turn as a failed turn, with one close. The outbox
-    /// follows the attach-or-requeue rule. The turn lock is released, and the
-    /// generation queue keeps its one place. A turn whose pass still waits for
-    /// a place in the generation queue is a turn in flight: the cancellation
-    /// ends that wait at once, and the turn takes no place.
+    /// follows the attach-or-requeue rule. The turn lock is released. A turn
+    /// whose submission still waits for the worker of the generation queue is
+    /// a turn in flight: the cancellation removes that submission from the
+    /// queue at once, it never runs, and the worker runs the next item. A
+    /// running submission is cancelled on the task that runs it.
     ///
     /// Only the turn in flight is affected. A compaction's summarizer call is
     /// cancelled where it stands.
@@ -275,10 +288,11 @@ public protocol RoutedSession: Actor {
 
     /// Runs `body`, a wait on a person, and returns what it returns.
     ///
-    /// The wait holds no generation place: a turn holds a place of the model's
-    /// ``GenerationQueue`` only for each of its passes, and a tool body runs
-    /// between two passes. So another session over the same model generates
-    /// while a person is being waited on. This session keeps its own turn lock
+    /// A tool body runs inside its submission, so the wait holds the worker of
+    /// the ``GenerationQueue`` of the model: every other session on that model
+    /// waits for the end of the submission. To wait for a person without
+    /// holding the model, raise an elicitation from a background run
+    /// (``ToolContext/elicit(_:)``). This session keeps its own turn lock
     /// throughout, so no second turn of this session starts during the wait.
     ///
     /// The call releases nothing and acquires nothing, so a throw or a
@@ -305,9 +319,10 @@ public protocol RoutedSession: Actor {
     /// Installs how long a model call on this session may run with no
     /// observable progress before it reports
     /// ``SessionEvent/generationStalled(_:)``. The change takes effect on the
-    /// next model call. The interval counts only the time a pass holds its
-    /// place in the ``GenerationQueue`` of the model; ``GenerationStall``
-    /// states the meaning of each field of a report.
+    /// next model call. The interval counts only the time inside a pass of the
+    /// running submission, and never the wait for the worker of the
+    /// ``GenerationQueue`` of the model; ``GenerationStall`` states the
+    /// meaning of each field of a report.
     ///
     /// Stall reports are off until the host calls this. The session has no
     /// interval of its own: the host that shows the report names the interval.

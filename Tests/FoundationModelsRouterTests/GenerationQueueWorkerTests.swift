@@ -99,7 +99,7 @@ struct GenerationQueueWorkerTests {
         let task = Task {
             let outcome: Result<Value, any Error>
             do {
-                outcome = .success(try await queue.runPass(body))
+                outcome = .success(try await queue.submit(body))
             } catch {
                 outcome = .failure(error)
             }
@@ -305,7 +305,7 @@ struct GenerationQueueWorkerTests {
         let ran = RanFlag()
         let outcome = await Task {
             withUnsafeCurrentTask { $0?.cancel() }
-            return try await queue.runPass { ran.set() }
+            return try await queue.submit { ran.set() }
         }.result
 
         #expect(Self.isCancellation(outcome))
@@ -313,17 +313,100 @@ struct GenerationQueueWorkerTests {
         #expect(await queue.isRunning == false)
         #expect(await queue.waitingCount == 0)
     }
+
+    /// The model the marks of the refusal tests name.
+    private static let markedModel: ModelRef = "org/marked-model"
+
+    /// Submits an item that sets `ran` to `queue`, under `mark`, and gives its
+    /// outcome.
+    ///
+    /// - Parameters:
+    ///   - queue: The queue to submit to.
+    ///   - mark: The model-call mark of the submitting task.
+    ///   - ran: The flag the item sets when it runs.
+    /// - Returns: The outcome of the submission.
+    private static func submitUnderMark(
+        to queue: GenerationQueue, mark: ModelCallMark, ran: RanFlag
+    ) async -> Result<Int, any Error> {
+        await ModelCallMark.$current.withValue(mark) {
+            do {
+                return .success(
+                    try await queue.submit {
+                        ran.set()
+                        return Self.racedValue
+                    })
+            } catch {
+                return .failure(error)
+            }
+        }
+    }
+
+    @Test("a submission from a task inside an open submission on the same queue is refused at once, and never runs")
+    func aSubmissionInsideAnOpenSubmissionOnTheSameQueueIsRefused() async throws {
+        let queue = GenerationQueue()
+        let ran = RanFlag()
+        let mark = ModelCallMark(
+            sessionID: ULID.generate(), submission: SubmissionTarget(queue: queue, model: Self.markedModel))
+
+        let outcome = await Self.submitUnderMark(to: queue, mark: mark, ran: ran)
+
+        #expect(throws: GenerationQueueError.waitInsideOpenSubmission(model: Self.markedModel)) {
+            try outcome.get()
+        }
+        #expect(!ran.isSet)
+        #expect(await queue.isRunning == false)
+        #expect(await queue.waitingCount == 0)
+    }
+
+    @Test("a submission under a closed mark, or an open mark of another queue, runs")
+    func aSubmissionOutsideAnOpenSubmissionOnItsQueueRuns() async throws {
+        let queue = GenerationQueue()
+        let otherQueue = GenerationQueue()
+        let closed = ModelCallMark(
+            sessionID: ULID.generate(), submission: SubmissionTarget(queue: queue, model: Self.markedModel))
+        closed.close()
+        let otherModel = ModelCallMark(
+            sessionID: ULID.generate(), submission: SubmissionTarget(queue: otherQueue, model: Self.markedModel))
+        let ranUnderClosed = RanFlag()
+        let ranUnderOther = RanFlag()
+
+        let closedOutcome = await Self.submitUnderMark(to: queue, mark: closed, ran: ranUnderClosed)
+        let otherOutcome = await Self.submitUnderMark(to: queue, mark: otherModel, ran: ranUnderOther)
+
+        #expect(try closedOutcome.get() == Self.racedValue)
+        #expect(try otherOutcome.get() == Self.racedValue)
+        #expect(ranUnderClosed.isSet)
+        #expect(ranUnderOther.isSet)
+    }
+
+    @Test("a background run of an open submission is not refused a submission on the same queue")
+    func aBackgroundRunOfAnOpenSubmissionIsNotRefused() async throws {
+        let queue = GenerationQueue()
+        let ran = RanFlag()
+        let open = ModelCallMark(
+            sessionID: ULID.generate(), submission: SubmissionTarget(queue: queue, model: Self.markedModel))
+
+        let outcome = await ModelCallMark.$current.withValue(open) {
+            await ModelCallMark.withBackgroundRunMark {
+                await Self.submitUnderMark(to: queue, mark: ModelCallMark.current ?? open, ran: ran)
+            }
+        }
+
+        #expect(try outcome.get() == Self.racedValue)
+        #expect(ran.isSet)
+    }
 }
 
-/// The pass of the scripted model runs on the task of the worker, and the SDK
-/// call returns the output of that pass (task ^a0ze9af).
+/// An item runs on the task of the worker, and the SDK call returns the output
+/// of its pass (tasks ^a0ze9af and ^1psqdm9).
 ///
 /// ``SubmitterMarkModel`` answers with the value of a task-local that the
 /// test binds around the SDK call. The SDK gives task-locals to the executor
-/// (the control test), so a pass that answers "none" behind a
-/// ``QueuedLanguageModel`` ran on a task that the worker made, which
-/// inherits no task-local of the submitter.
-@Suite("Generation queue: the pass runs on the worker task (task ^a0ze9af)")
+/// (the control test), so a pass that answers "none" ran on a task that the
+/// worker made, which inherits no task-local of the submitter. That holds for
+/// a whole SDK call submitted as one item, and for each pass of a
+/// ``SessionLanguageModel`` whose passes are items.
+@Suite("Generation queue: an item runs on the worker task (tasks ^a0ze9af, ^1psqdm9)")
 struct GenerationQueueWorkerTaskTests {
     /// The task-local that the test binds around the SDK call.
     enum SubmitterMark {
@@ -412,12 +495,28 @@ struct GenerationQueueWorkerTaskTests {
         #expect(content == SubmitterMarkModel.answer(seeing: Self.submitterMark))
     }
 
-    @Test("behind the queue, the pass runs on the worker task, and the SDK call returns the output of that pass")
+    @Test("behind a wrapper whose each pass is an item, the pass runs on the worker task, and the SDK call returns its output")
     func thePassRunsOnTheWorkerTaskAndTheSDKCallReturnsItsOutput() async throws {
         let queue = GenerationQueue()
-        let model = QueuedLanguageModel(wrapping: SubmitterMarkModel(), queue: queue)
+        let model = SessionLanguageModel(wrapping: SubmitterMarkModel(), passQueue: queue)
 
         let content = try await Self.respondWithMark(over: model)
+
+        #expect(content == SubmitterMarkModel.answer(seeing: nil))
+        #expect(await queue.isRunning == false)
+    }
+
+    @Test("a whole SDK call submitted as one item runs on the worker task, and returns the output of its pass")
+    func aWholeSDKCallRunsOnTheWorkerTask() async throws {
+        let queue = GenerationQueue()
+        let model = SessionLanguageModel(wrapping: SubmitterMarkModel())
+
+        let content = try await SubmitterMark.$value.withValue(Self.submitterMark) {
+            try await queue.submit {
+                let session = LanguageModelSession(model: model, tools: [])
+                return try await session.respond(to: "which mark").content
+            }
+        }
 
         #expect(content == SubmitterMarkModel.answer(seeing: nil))
         #expect(await queue.isRunning == false)

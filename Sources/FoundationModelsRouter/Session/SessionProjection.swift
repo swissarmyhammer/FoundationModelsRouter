@@ -159,8 +159,8 @@ public final class SessionProjection {
             phase = .compacting
             transcript.append(
                 TranscriptEntry(id: result.id, kind: .compaction(result), sourceEntryId: result.summaryEntryId))
-        case .discoveryPrimingFailed, .generationStalled, .passQueued, .passStarted, .repetitionStopped, .runSettled,
-            .toolCallReport, .elicitationRequested, .generationCall:
+        case .discoveryPrimingFailed, .generationStalled, .submissionQueued, .submissionStarted, .repetitionStopped,
+            .runSettled, .toolCallReport, .elicitationRequested, .generationCall:
             // Handled explicitly, and deliberately changes nothing. A settled
             // run's terminal reaches this mirror as the recorded tool output
             // of the turn that next carries it. A turn whose
@@ -168,9 +168,10 @@ public final class SessionProjection {
             // turn does (see ``SessionEvent/discoveryPrimingFailed(_:)``), and a
             // stall report bounds nothing at all — the turn is still running and
             // will still produce whatever it was going to produce (see
-            // ``SessionEvent/generationStalled(_:)``). A wait for a generation
-            // queue place and its end change no entry and no counter: the turn
-            // produces the same output after the wait. A repetition stop
+            // ``SessionEvent/generationStalled(_:)``). A wait of a submission for
+            // the worker of its model and the start of the submission change no
+            // entry and no counter: the turn produces the same output after the
+            // wait. A repetition stop
             // report comes with the recorded entries of the stopped attempt,
             // and its ``SessionEvent/turnEnded(_:)`` names the stop. A tool call report
             // carries records for a host to decode, and the call's phase is

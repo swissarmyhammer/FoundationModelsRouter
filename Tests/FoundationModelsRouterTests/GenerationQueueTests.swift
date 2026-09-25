@@ -7,17 +7,20 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Task ^8csj2hw: the generation queue of one container, taken for one
-/// executor pass at a time (`generation-queue.md`, section 2).
+/// Tasks ^8csj2hw and ^1psqdm9: the generation queue of one container, and
+/// the per-session wrapper of each backend (`generation-queue.md`, sections
+/// 5.1 and 5.3).
 ///
 /// Each backend a container makes runs its `LanguageModelSession` over its own
-/// ``QueuedLanguageModel``, and all those wrappers share the one
-/// ``GenerationQueue`` of the container. ``PassObservingModel`` makes each
-/// executor call an observable pass that stays open until a ``RunLatch``
-/// opens, so a test sees an overlap, a queued pass, and which executor ran
-/// each pass. The backends are the production ``MLXFoundationModelsSessionBackend``
-/// over the scripted model, through ``LiveBackendContainer``.
-@Suite("Generation queue: one executor pass at a time for each container (task ^8csj2hw)")
+/// ``SessionLanguageModel``, and declares the one ``GenerationQueue`` of the
+/// container (``LanguageModelSessionBackend/generationQueue``). The session
+/// submits each whole SDK call of the backend to that queue.
+/// ``PassObservingModel`` makes each executor call an observable pass that
+/// stays open until a ``RunLatch`` opens, so a test sees an overlap, a waiting
+/// submission, and which executor ran each pass. The backends are the
+/// production ``MLXFoundationModelsSessionBackend`` over the scripted model,
+/// through ``LiveBackendContainer``.
+@Suite("Generation queue: one submission at a time for each container (tasks ^8csj2hw, ^1psqdm9)")
 struct GenerationQueueTests {
     /// The repository id of the raw MLX model the wrapper tests build. The
     /// model is never loaded.
@@ -42,26 +45,44 @@ struct GenerationQueueTests {
             tokenCounter: CharacterTokenCounter())
     }
 
-    @Test("two sessions over one container never run two executor passes at the same time")
-    func twoSessionsOverOneContainerNeverOverlapTheirPasses() async throws {
+    /// Submits one whole call of `backend` to `queue`, as a session submits
+    /// the SDK call of its backend.
+    ///
+    /// - Parameters:
+    ///   - prompt: The prompt of the call.
+    ///   - backend: The backend whose call is the item.
+    ///   - queue: The queue the item goes to.
+    /// - Returns: The answer of the call.
+    /// - Throws: What the queue or the call throws.
+    private static func submitCall(
+        _ prompt: String, of backend: any LanguageModelSessionBackend, to queue: GenerationQueue
+    ) async throws -> String {
+        try await queue.submit { try await backend.respond(to: prompt, maxTokens: nil) }
+    }
+
+    @Test("two whole calls submitted to the queue of one container never run at the same time")
+    func twoSubmissionsOverOneContainerNeverOverlap() async throws {
         let fixture = PassObservingFixture()
         let first = fixture.container.makeSession(instructions: nil)
         let second = fixture.container.makeSession(instructions: nil)
+        let queue = try #require(first.generationQueue)
 
-        let firstTurn = Task { try await first.respond(to: "first", maxTokens: nil) }
+        let firstCall = Task { try await Self.submitCall("first", of: first, to: queue) }
         _ = await BoundedWait.conditionReached("the first pass entered the model") {
             await fixture.observer.enteredCount == 1
         }
-        let secondTurn = Task { try await second.respond(to: "second", maxTokens: nil) }
-        _ = await BoundedWait.conditionReached("the second pass waited for a queue place") {
+        let secondCall = Task { try await Self.submitCall("second", of: second, to: queue) }
+        _ = await BoundedWait.conditionReached("the second submission waited for the worker") {
             await fixture.queue.waitingCount == 1
         }
         #expect(await fixture.observer.maximumActive == 1)
 
         await fixture.latch.open()
-        let firstAnswer = try await firstTurn.value
-        let secondAnswer = try await secondTurn.value
+        let firstAnswer = try await firstCall.value
+        let secondAnswer = try await secondCall.value
 
+        #expect(queue === fixture.queue)
+        #expect(second.generationQueue === fixture.queue)
         #expect(firstAnswer == PassObservingModel.answer(to: "first"))
         #expect(secondAnswer == PassObservingModel.answer(to: "second"))
         #expect(await fixture.observer.enteredCount == 2)
@@ -98,26 +119,26 @@ struct GenerationQueueTests {
         #expect(secondExecutors.isDisjoint(with: forkExecutors))
     }
 
-    @Test("a pass cancelled while it waits for a queue place throws CancellationError and takes no place")
-    func cancelledWaitingPassLeavesNoPlaceTaken() async throws {
+    @Test("a submission cancelled while it waits for the worker throws CancellationError and never runs")
+    func cancelledWaitingSubmissionNeverRuns() async throws {
         let fixture = PassObservingFixture()
         let holder = fixture.container.makeSession(instructions: nil)
         let waiter = fixture.container.makeSession(instructions: nil)
 
-        let holdingTurn = Task { try await holder.respond(to: "holder", maxTokens: nil) }
+        let holdingCall = Task { try await Self.submitCall("holder", of: holder, to: fixture.queue) }
         _ = await BoundedWait.conditionReached("the holding pass entered the model") {
             await fixture.observer.enteredCount == 1
         }
-        let waitingTurn = Task { try await waiter.respond(to: "waiter", maxTokens: nil) }
-        _ = await BoundedWait.conditionReached("the second pass waited for a queue place") {
+        let waitingCall = Task { try await Self.submitCall("waiter", of: waiter, to: fixture.queue) }
+        _ = await BoundedWait.conditionReached("the second submission waited for the worker") {
             await fixture.queue.waitingCount == 1
         }
-        waitingTurn.cancel()
-        let waitingOutcome = await waitingTurn.result
+        waitingCall.cancel()
+        let waitingOutcome = await waitingCall.result
         let waiterCountAfterCancel = await fixture.queue.waitingCount
 
         await fixture.latch.open()
-        _ = try await holdingTurn.value
+        _ = try await holdingCall.value
 
         #expect(throws: CancellationError.self) { try waitingOutcome.get() }
         #expect(waiterCountAfterCancel == 0)
@@ -125,30 +146,30 @@ struct GenerationQueueTests {
         #expect(fixture.passes.executors(servingPrompt: "waiter").isEmpty)
     }
 
-    @Test("a pass reports that it waits only when another pass holds the place (task ^ake8sax)")
-    func aPassReportsItsWaitOnlyWhenThePlaceIsTaken() async throws {
+    @Test("a submission reports that it waits only when the worker runs another item (task ^ake8sax)")
+    func aSubmissionReportsItsWaitOnlyWhenTheWorkerIsBusy() async throws {
         let queue = GenerationQueue()
         let entered = AsyncSemaphore(value: 0)
         let release = AsyncSemaphore(value: 0)
         let holderWaits = AsyncSemaphore(value: 0)
         let waiterWaits = AsyncSemaphore(value: 0)
 
-        let holdingPass = Task {
-            try await queue.runPass(onQueued: { holderWaits.signal() }) {
+        let holdingSubmission = Task {
+            try await queue.submit(onQueued: { holderWaits.signal() }) {
                 entered.signal()
                 await release.wait()
             }
         }
-        let holderInside = await BoundedWait.signalArrived(entered, named: "the holding pass took the place")
-        let waitingPass = Task {
-            try await queue.runPass(onQueued: { waiterWaits.signal() }) {}
+        let holderInside = await BoundedWait.signalArrived(entered, named: "the holding submission started")
+        let waitingSubmission = Task {
+            try await queue.submit(onQueued: { waiterWaits.signal() }) {}
         }
-        let waiterQueued = await BoundedWait.conditionReached("the second pass waited for the place") {
+        let waiterQueued = await BoundedWait.conditionReached("the second submission waited for the worker") {
             await queue.waitingCount == 1
         }
         release.signal()
-        try await holdingPass.value
-        try await waitingPass.value
+        try await holdingSubmission.value
+        try await waitingSubmission.value
 
         #expect(holderInside)
         #expect(waiterQueued)
@@ -157,28 +178,38 @@ struct GenerationQueueTests {
         #expect(await queue.isRunning == false)
     }
 
-    @Test("two wrappers over one model and one queue are two executor cache keys")
-    func wrappersOverOneQueueCompareByTheirOwnState() {
-        let queue = GenerationQueue()
+    @Test("two wrappers over one model are two executor cache keys")
+    func wrappersOverOneModelCompareByTheirOwnState() {
         let model = Self.makeUnloadableMLXModel()
-        let first = QueuedLanguageModel(wrapping: model, queue: queue)
-        let second = QueuedLanguageModel(wrapping: model, queue: queue)
+        let first = SessionLanguageModel(wrapping: model)
+        let second = SessionLanguageModel(wrapping: model)
 
         #expect(first.executorConfiguration != second.executorConfiguration)
+        #expect(first.state.passQueue == nil)
     }
 
-    @Test("the live container gives a new wrapper over its own queue on each read of languageModel")
+    @Test("the live container gives a new wrapper on each read of languageModel, whose each pass is one item")
     func liveContainerWrapsItsRawModelOnEachRead() throws {
         let container = Self.makeLiveContainer()
 
-        let first = try #require(container.languageModel as? QueuedLanguageModel)
-        let second = try #require(container.languageModel as? QueuedLanguageModel)
+        let first = try #require(container.languageModel as? SessionLanguageModel)
+        let second = try #require(container.languageModel as? SessionLanguageModel)
 
         #expect(first.state !== second.state)
-        #expect(first.state.queue === container.generationQueue)
-        #expect(second.state.queue === container.generationQueue)
+        #expect(first.state.passQueue === container.generationQueue)
+        #expect(second.state.passQueue === container.generationQueue)
         let wrapped = try #require(first.state.wrapped as? MLXLanguageModel)
         #expect(wrapped.modelID == container.model.modelID)
+    }
+
+    @Test("a live backend, its fork and a replaced transcript declare the queue of their container")
+    func liveBackendDeclaresTheQueueOfItsContainer() {
+        let container = Self.makeLiveContainer()
+        let backend = container.makeSession(instructions: nil)
+
+        #expect(backend.generationQueue === container.generationQueue)
+        #expect(backend.makeFork().generationQueue === container.generationQueue)
+        #expect(backend.replacingTranscript(Transcript(entries: [])).generationQueue === container.generationQueue)
     }
 
     @Test("respondWithoutReasoning still finds the raw MLX model behind the wrapper, in a fork too")

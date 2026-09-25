@@ -44,10 +44,12 @@ let demoReplyTokenCeiling = 160
 /// ``SessionEvent`` case as it arrives.
 ///
 /// Both turns below run through this one helper, so the flash triage and the
-/// standard reply read as one observed session flow. Four cases carry a
+/// standard reply read as one observed session flow. Five cases carry a
 /// plain text turn, in this order:
 ///
 /// - ``SessionEvent/turnStarted(_:)`` opens the turn's correlation frame.
+/// - ``SessionEvent/submissionStarted`` reports that the worker of the model
+///   started the SDK call of the turn.
 /// - ``SessionEvent/textDelta(_:)`` fragments print as the model produces
 ///   them and accumulate into the reply this function returns.
 ///   ``SessionEvent/textReset`` clears that accumulation — the documented
@@ -61,9 +63,9 @@ let demoReplyTokenCeiling = 160
 /// The remaining cases stay silent by construction: these sessions carry no
 /// tools, no `budget:`, and no discovery priming, so the tool-lifecycle,
 /// compaction, and priming events never fire, a stall report would only
-/// say the machine is busy, each turn runs alone on its model so no pass
-/// waits for a generation queue place, and the demo's short replies never
-/// fill the window of a repetition stop.
+/// say the machine is busy, each turn runs alone on its model so no
+/// submission waits for the worker of its model, and the demo's short
+/// replies never fill the window of a repetition stop.
 ///
 /// - Parameters:
 ///   - session: The session to drive the turn on.
@@ -89,6 +91,8 @@ func runObservedTurn(
         switch event {
         case .turnStarted(let start):
             print("[\(label)] turnStarted turn=\(start.turnId)")
+        case .submissionStarted:
+            print("[\(label)] submissionStarted — the worker of the model started the SDK call")
         case .textDelta(let fragment):
             if !midFragmentBlock {
                 print("[\(label)] textDelta fragments:")
@@ -110,7 +114,7 @@ func runObservedTurn(
                 "[\(label)] turnEnded tokensIn=\(usage.tokensIn) tokensOut=\(usage.tokensOut) contextFill=\(percent)%"
             )
         case .reasoningDelta, .toolCall, .toolStatus, .toolInvocation, .toolCallReport,
-            .compaction, .discoveryPrimingFailed, .generationStalled, .passQueued, .passStarted, .repetitionStopped,
+            .compaction, .discoveryPrimingFailed, .generationStalled, .submissionQueued, .repetitionStopped,
             .runSettled, .elicitationRequested, .generationCall:
             // Silent by construction — see this function's documentation.
             break

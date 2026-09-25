@@ -3,15 +3,18 @@ import Testing
 import FoundationModelsRouter
 
 /// Holds ``GenerationQueue`` to the access level a consumer outside this
-/// package needs (task ^8csj2hw): a stub container with no executor seam
-/// makes its own queue and runs each scripted pass in `runPass`, so its queue
-/// behavior is testable without MLX.
+/// package needs (tasks ^8csj2hw and ^1psqdm9): a stub container with no
+/// executor seam makes its own queue and submits each scripted call in
+/// `submit`, so its queue behavior is testable without MLX. A backend names
+/// the queue its session submits to through
+/// ``LanguageModelSessionBackend/generationQueue``, and a wait that can never
+/// end is refused with ``GenerationQueueError``.
 ///
 /// The import is plain, with no `@testable`, so a member that loses `public`
 /// stops this file from compiling before a single test runs.
 @Suite("GenerationQueue surface over a plain import")
 struct GenerationQueuePublicSurfaceTests {
-    /// Counts the passes inside the queue at one time, and keeps the largest
+    /// Counts the items inside the queue at one time, and keeps the largest
     /// count.
     private actor PassCounter {
         /// The passes inside the queue now.
@@ -56,17 +59,36 @@ struct GenerationQueuePublicSurfaceTests {
         return name
     }
 
-    @Test("two scripted passes on one queue never overlap, and each returns its body's value")
+    @Test("two scripted items on one queue never overlap, and each returns its body's value")
     func scriptedPassesOnOneQueueNeverOverlap() async throws {
         let queue = GenerationQueue()
         let counter = PassCounter()
 
-        async let first = queue.runPass { await Self.scriptedPass(named: "first", reportingTo: counter) }
-        async let second = queue.runPass { await Self.scriptedPass(named: "second", reportingTo: counter) }
+        async let first = queue.submit { await Self.scriptedPass(named: "first", reportingTo: counter) }
+        async let second = queue.submit { await Self.scriptedPass(named: "second", reportingTo: counter) }
 
         let answers = try await [first, second]
         #expect(answers == ["first", "second"])
         #expect(await counter.entered == 2)
         #expect(await counter.peak == 1)
+    }
+
+    /// The label a consumer shows for `error`, or `nil` for an error that is
+    /// not a refused wait.
+    ///
+    /// - Parameter error: The error a call threw.
+    /// - Returns: The label, which names the model.
+    private static func refusalLabel(for error: any Error) -> String? {
+        guard case .waitInsideOpenSubmission(let model) = error as? GenerationQueueError else { return nil }
+        return "a tool waited inside its submission on \(model.stringValue)"
+    }
+
+    @Test("a consumer matches the refusal of a wait inside an open submission, and reads its model")
+    func aConsumerMatchesTheRefusedWait() {
+        let model: ModelRef = "org/refused"
+        let refusal = GenerationQueueError.waitInsideOpenSubmission(model: model)
+
+        #expect(Self.refusalLabel(for: refusal) == "a tool waited inside its submission on org/refused")
+        #expect(refusal.errorDescription?.contains(model.stringValue) == true)
     }
 }

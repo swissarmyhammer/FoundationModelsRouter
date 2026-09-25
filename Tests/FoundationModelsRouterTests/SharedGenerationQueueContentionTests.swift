@@ -22,10 +22,10 @@ import Testing
 /// ``twoHandBuiltHandlesOverOneContainerContend()``.
 ///
 /// Each container is a ``LiveBackendContainer`` over a ``PassObservingModel``,
-/// so each pass goes through the production backend and its queued wrapper. A
-/// pass reports what is concurrently inside the model and stays there until a
-/// latch opens, so the suite needs no network and no GPU, and it waits on no
-/// clock.
+/// so each turn submits its whole SDK call to the queue of the container
+/// (task ^1psqdm9). A pass reports what is concurrently inside the model and
+/// stays there until a latch opens, so the suite needs no network and no GPU,
+/// and it waits on no clock.
 @Suite("Generation queue contention over one shared pool entry")
 struct SharedGenerationQueueContentionTests {
     // MARK: - Constants
@@ -88,11 +88,11 @@ struct SharedGenerationQueueContentionTests {
     /// Runs one turn on `profile.standard` and one on `profile.flash`, and
     /// holds the pair to the one-queue contract.
     ///
-    /// The standard turn's pass takes the one place of the queue and stays in
-    /// the model until the latch opens. The flash turn's pass then waits in
-    /// the very same queue, so one pass is in the model rather than two. Both
-    /// turns answer once the latch opens, and the queue is left as it was
-    /// found.
+    /// The standard turn's submission runs on the worker of the queue, and its
+    /// pass stays in the model until the latch opens. The flash turn's
+    /// submission then waits in the very same queue, so one pass is in the
+    /// model rather than two. Both turns answer once the latch opens, and the
+    /// queue is left as it was found.
     ///
     /// The two graphs a caller can build -- the resolved pair and the
     /// hand-built pair -- go through this one drill, because they owe the
@@ -107,7 +107,7 @@ struct SharedGenerationQueueContentionTests {
         over profile: LanguageModelProfile, fixture: PassObservingFixture
     ) async throws {
         // Identity, not equality: only one queue instance can serialize the one
-        // resident container, and a second queue would let both passes in.
+        // resident container, and a second queue would let both submissions in.
         let queue = try Self.queue(of: profile.standard)
         #expect(queue === (try Self.queue(of: profile.flash)))
 
@@ -120,16 +120,16 @@ struct SharedGenerationQueueContentionTests {
                 await fixture.observer.enteredCount == 1
             })
 
-        // The flash session's pass now waits in the very same queue. This is
-        // the contention: two handles, one container, one queue.
+        // The flash session's submission now waits in the very same queue.
+        // This is the contention: two handles, one container, one queue.
         let waiterTurn = Task { try await waiter.respond(to: Self.secondPrompt) }
         #expect(
-            await BoundedWait.conditionReached("the flash session's pass waiting in the shared queue") {
+            await BoundedWait.conditionReached("the flash session's submission waiting in the shared queue") {
                 await queue.waitingCount == 1
             })
 
-        // The waiting pass never reached the model, so one pass is in flight
-        // rather than two.
+        // The waiting submission never reached the model, so one pass is in
+        // flight rather than two.
         #expect(await fixture.observer.maximumActive == 1)
 
         await fixture.latch.open()

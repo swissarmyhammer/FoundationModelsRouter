@@ -7,17 +7,17 @@ import Testing
 
 /// Exercises milestone 9: the ``RoutedSession/fork(workingDirectory:)`` primitive
 /// over the persistent ``LanguageModelSessionBackend``, plus the per-model
-/// ``GenerationQueue`` its passes wait in.
+/// ``GenerationQueue`` its submissions wait in.
 ///
 /// Everything runs against stubs with no network and no GPU:
 /// - a ``TrackingSessionBackend`` that records call count and prompt history
 ///   like the shared ``StubSessionBackend``, so a fork's ``makeFork()``-seeded
 ///   transcript inheritance and independent divergence are observed exactly;
-/// - the same backend, when wired with a test-controlled ``SerialObserver`` +
-///   release gate, runs `respond` as one pass in its container's queue and can
-///   suspend that pass, so the queue's non-overlap and FIFO order are made
-///   deterministic through the queue's `waitingCount` observability rather than
-///   sleeps.
+/// - the same backend declares its container's queue, so the session submits
+///   each whole call to it; when wired with a test-controlled
+///   ``SerialObserver`` + release gate, the backend can suspend a call, so the
+///   queue's non-overlap and FIFO order are made deterministic through the
+///   queue's `waitingCount` observability rather than sleeps.
 ///
 /// Real prefix reuse (no recompute) is gated to the milestone 7 integration
 /// suite; here the abstraction is asserted through the stub.
@@ -67,11 +67,10 @@ struct ForkConcurrencyTests {
     /// guided-probe-wired backend still records into the same probe —
     /// mirroring how a fork shares its parent's underlying model.
     ///
-    /// A backend with no executor seam gets no generation gating from the
-    /// Router, so an observed call runs as one pass in the
-    /// ``GenerationQueue`` its container owns, through
-    /// ``GenerationQueue/runPass(isolation:_:)``: the pattern a consumer's own
-    /// stub container follows.
+    /// It declares the ``GenerationQueue`` its container owns
+    /// (``LanguageModelSessionBackend/generationQueue``), so the session
+    /// submits each whole call of this backend to that queue as one item
+    /// (task ^1psqdm9).
     private final class TrackingSessionBackend: LanguageModelSessionBackend, @unchecked Sendable {
         private(set) var callCount = 0
         private(set) var receivedPrompts: [String]
@@ -81,12 +80,12 @@ struct ForkConcurrencyTests {
         private let releaseGate: AsyncSemaphore?
         private let guidedProbe: GuidedProbe?
 
-        /// The queue of the container, which each observed call takes for its
-        /// one pass.
-        private let generationQueue: GenerationQueue
+        /// The queue of the container, which the session submits each whole
+        /// call of this backend to.
+        let generationQueue: GenerationQueue?
 
         init(
-            generationQueue: GenerationQueue,
+            generationQueue: GenerationQueue?,
             observer: SerialObserver? = nil,
             releaseGate: AsyncSemaphore? = nil,
             guidedProbe: GuidedProbe? = nil,
@@ -104,11 +103,9 @@ struct ForkConcurrencyTests {
             receivedPrompts.append(prompt)
             if let observer, let releaseGate {
                 let id = Int(prompt) ?? -1
-                try await generationQueue.runPass {
-                    await observer.enter(id)
-                    await releaseGate.wait()
-                    await observer.exit()
-                }
+                await observer.enter(id)
+                await releaseGate.wait()
+                await observer.exit()
                 return "ok-\(id)"
             }
             return "ok"
@@ -167,7 +164,8 @@ struct ForkConcurrencyTests {
     /// call history directly. No MLX.
     ///
     /// It owns one ``GenerationQueue``, and every backend it vends, and every
-    /// fork of those, runs its observed calls in that one queue.
+    /// fork of those, declares that one queue, so each of their calls is one
+    /// submission to it.
     private final class InstrumentedLLMContainer: LoadedLLMContainer, @unchecked Sendable {
         /// The scripted counter of this container: one token per `Character`.
         let tokenCounter: any TokenCounter = CharacterTokenCounter()
@@ -435,9 +433,9 @@ struct ForkConcurrencyTests {
 
     // MARK: - Per-model generation queue
 
-    @Test("concurrent passes on one model never overlap and take the queue first in first out")
+    @Test("concurrent submissions on one model never overlap and run first in first out")
     @MainActor
-    func generationQueueSerializesPassesAndIsFIFO() async throws {
+    func generationQueueSerializesSubmissionsAndIsFIFO() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -450,8 +448,8 @@ struct ForkConcurrencyTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         // Four callers over the SAME model: a root session and three forks. They
-        // share the container's one generation queue, so their passes must
-        // serialize, each pass in the order it joined the queue.
+        // share the container's one generation queue, so their submissions
+        // must serialize, each in the order it joined the queue.
         let root = profile.standard.makeSession()
         let fork1 = try await root.fork(workingDirectory: nil)
         let fork2 = try await root.fork(workingDirectory: nil)
@@ -460,14 +458,14 @@ struct ForkConcurrencyTests {
 
         let queue = container.generationQueue
 
-        // Launch call 0; its pass takes the one place of the queue and suspends.
+        // Launch call 0; its submission runs on the worker and suspends.
         let task0 = Task { try await callers[0].respond(to: "0") }
         await Self.spin(until: { await queue.isRunning })
         await Self.spin(until: { await observer.entryOrder == [0] })
 
-        // Launch calls 1, 2, 3 one at a time, each only after the previous pass
-        // has actually joined the queue — establishing a deterministic FIFO
-        // arrival order without sleeping.
+        // Launch calls 1, 2, 3 one at a time, each only after the previous
+        // submission has actually joined the queue — establishing a
+        // deterministic FIFO arrival order without sleeping.
         let task1 = Task { try await callers[1].respond(to: "1") }
         await Self.spin(until: { await queue.waitingCount == 1 })
         let task2 = Task { try await callers[2].respond(to: "2") }

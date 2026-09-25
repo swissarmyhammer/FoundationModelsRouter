@@ -1,8 +1,9 @@
 /// ``RoutedSessionActor``'s turn gating: the turn lock, turn cancellation, and
 /// the refusal of a turn that a tool of the same session's own turn asks for.
 extension RoutedSessionActor {
-    /// See ``RoutedSession/awaitingUser(_:)``. Runs `body` and holds nothing
-    /// for it: a turn holds a generation place only for each of its passes.
+    /// See ``RoutedSession/awaitingUser(_:)``. Runs `body` and takes or
+    /// releases nothing for it. Inside a tool body, the submission of that
+    /// tool body keeps the worker of the model for the whole wait.
     func awaitingUser<T: Sendable>(_ body: @Sendable () async throws -> T) async rethrows -> T {
         try await body()
     }
@@ -29,22 +30,27 @@ extension RoutedSessionActor {
     }
 
     /// Admits a turn through ``turnLock``, which the turn keeps until its
-    /// ``endTurn()``. The turn takes no generation place here: each pass of
-    /// the turn takes a place of the model's ``GenerationQueue`` for that pass
-    /// only.
+    /// ``endTurn()``. The turn submits nothing here: each model call of the
+    /// turn is one submission to the model's ``GenerationQueue``.
     ///
     /// - Returns: The identity of the turn that just began. See ``TurnID``.
     /// - Throws: ``SessionReentryError/sameSessionTurnInFlight(sessionID:)``
-    ///   when this call came from inside a tool of this session's own turn.
+    ///   when this call came from inside a tool of this session's own turn,
+    ///   or ``GenerationQueueError/waitInsideOpenSubmission(model:)`` when it
+    ///   came from an in-band tool body of a submission on the queue of this
+    ///   session's model. That turn could run only after the submission of the
+    ///   tool body ends, so the refusal comes before the wait for the turn
+    ///   lock.
     @discardableResult
     func beginTurn() async throws -> TurnID {
         try refuseReentryOntoThisSession()
+        try backend.generationQueue?.refuseWaitInsideOpenSubmission()
         await turnLock.wait()
         await attachOutboxJournalIfNeeded()
-        // Minted once this turn holds the turn lock. A pass of this turn that
-        // then waits for a queue place thus belongs to a turn with an
-        // identity, and ``cancelCurrentTurn()`` cancels ``inFlightModelCall``,
-        // which ends that wait at once.
+        // Minted once this turn holds the turn lock. A submission of this turn
+        // that then waits for the worker of the queue thus belongs to a turn
+        // with an identity, and ``cancelCurrentTurn()`` cancels
+        // ``inFlightModelCall``, which removes that submission at once.
         lastTurnId += 1
         currentTurnId = lastTurnId
         // A new turn may compact inside the turn again, at a tool result or

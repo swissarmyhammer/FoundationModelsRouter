@@ -52,10 +52,10 @@ extension RoutedSessionActor {
 
     /// The single recorder-bracketed generation chokepoint every public method runs through.
     ///
-    /// The bracket holds ``turnLock`` for the whole turn. It holds no generation place: each
-    /// pass of `body` waits for a place of the model's ``GenerationQueue`` and holds that
-    /// place for that pass only, so a tool body between two passes holds nothing. It drains
-    /// pending events from ``outbox`` into the prompt, runs `body`, then records the transcript delta.
+    /// The bracket holds ``turnLock`` for the whole turn. Each model call of `body` is one
+    /// submission to the model's ``GenerationQueue``, which holds the worker of the model
+    /// for its passes and the tool bodies between them. It drains pending events from
+    /// ``outbox`` into the prompt, runs `body`, then records the transcript delta.
     ///
     /// - Parameters:
     ///   - grammar: The grammar in force for this turn, or `nil`.
@@ -573,22 +573,68 @@ extension RoutedSessionActor {
         }
     }
 
-    /// Runs one attempt's model call in a task this session can cancel from
-    /// outside the turn, and awaits its result.
+    /// Runs one attempt's model call as one submission of ``backend`` to the
+    /// queue of its model, in a task this session can cancel from outside the
+    /// turn, and awaits its result.
     ///
-    /// Cancelling ``inFlightModelCall`` unwinds `body` and every in-band tool call
-    /// under it. A background run keeps running in the session's ``mailbox``. The
-    /// turn's recording runs after this returns or throws and is never cancelled.
-    /// ``CancellableCompactionSummarizer`` also routes a compaction's summarizer call through here.
+    /// The queue and the model are ``ownSubmissionTarget``. See
+    /// ``runCancellableModelCall(composedPrompt:submittingTo:_:)``.
     ///
     /// - Parameters:
     ///   - composedPrompt: This attempt's composed prompt, handed to `body`.
-    ///   - body: The model work to run.
+    ///   - body: The model work to run: one whole SDK call.
     /// - Returns: The response text `body` produced.
-    /// - Throws: Whatever `body` throws, or `CancellationError` when this turn
-    ///   was already cancelled before its model call started.
+    /// - Throws: Whatever `body` throws, `CancellationError` when this turn
+    ///   was already cancelled before its model call started, or
+    ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)``.
     internal func runCancellableModelCall(
         composedPrompt: String,
+        _ body: @escaping @Sendable (String) async throws -> String
+    ) async throws -> String {
+        try await runCancellableModelCall(composedPrompt: composedPrompt, submittingTo: ownSubmissionTarget, body)
+    }
+
+    /// The queue that each model call of ``backend`` is one submission to, and
+    /// this session's model, or `nil` when the backend names no queue.
+    var ownSubmissionTarget: SubmissionTarget? {
+        backend.generationQueue.map { SubmissionTarget(queue: $0, model: model) }
+    }
+
+    /// Runs one model call as one submission to the queue of `target`, in a
+    /// task this session can cancel from outside the turn, and awaits its
+    /// result (`generation-queue.md`, section 5.3).
+    ///
+    /// The submission is `body` itself: one whole SDK call, with all of its
+    /// passes and tool bodies. The worker of the queue runs it on a task of
+    /// its own, which inherits no task-local of this call, so the submission
+    /// binds the task-locals of the model call itself (see
+    /// ``submission(of:composedPrompt:mark:boundary:context:serviceContext:)``).
+    /// Any other task-local of the caller does not reach the tool bodies of a
+    /// queued call. With no `target`, the call runs directly, on a task of
+    /// its own.
+    ///
+    /// Cancelling ``inFlightModelCall`` removes a submission that still waits
+    /// for the worker, or unwinds `body` and every in-band tool call under it.
+    /// A background run keeps running in the session's ``mailbox``. The
+    /// turn's recording runs after this returns or throws and is never
+    /// cancelled. ``CancellableCompactionSummarizer`` also routes a
+    /// compaction's summarizer call through here, to the queue of the
+    /// container that runs it.
+    ///
+    /// - Parameters:
+    ///   - composedPrompt: This attempt's composed prompt, handed to `body`.
+    ///   - target: The queue the call is one submission to, and its model, or
+    ///     `nil` to run the call directly.
+    ///   - body: The model work to run.
+    /// - Returns: The response text `body` produced.
+    /// - Throws: Whatever `body` throws, `CancellationError` when this turn
+    ///   was already cancelled before its model call started or while its
+    ///   submission waited, or
+    ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)`` when this
+    ///   call comes from inside an open submission on the same queue.
+    internal func runCancellableModelCall(
+        composedPrompt: String,
+        submittingTo target: SubmissionTarget?,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
         // A cancellation that landed while this turn held no model call — between two
@@ -626,22 +672,24 @@ extension RoutedSessionActor {
         // The mark of this model call, published for exactly this call. A tool
         // the model invokes from inside the call reads it, so a turn or a fork
         // that tool asks of this same session is refused rather than parked on
-        // the turn lock this turn holds. Closed in the `defer` below, so a task
-        // that outlives the call is in no model call of this session. See
-        // ``ModelCallMark``.
-        let modelCallMark = ModelCallMark(sessionID: id)
+        // the turn lock this turn holds, and a submission it makes to the same
+        // queue is refused rather than parked behind this submission. Closed in
+        // the `defer` below, so a task that outlives the call is in no model
+        // call of this session. See ``ModelCallMark``.
+        let modelCallMark = ModelCallMark(sessionID: id, submission: target)
         defer { modelCallMark.close() }
         // The stall watch (task ^z6xcmnh), opened before the call and closed
         // by its own `defer`. It bounds nothing: the watchdog only reports a
         // ``GenerationStall`` on each interval the call goes without observable
         // progress, so a decode that stops making progress becomes visible
         // while it is still running instead of only when it finally ends. See
-        // ``RoutedSessionActor/reportGenerationStall(id:)``. The pass reports
-        // of this call (task ^ake8sax) feed the same watch, so it counts only
-        // the time a pass holds its queue place, and they tell the consumer
-        // about a wait for a place. They close first, so the last reports
-        // reach the watch and the turn before the watch ends.
-        let stallWatchId = beginGenerationStallWatch()
+        // ``RoutedSessionActor/reportGenerationStall(id:)``. The phase reports
+        // of this call (tasks ^ake8sax and ^1psqdm9) feed the same watch, so
+        // it counts only the time inside a pass of the running submission, and
+        // they tell the consumer about the wait and the start of the
+        // submission. They close first, so the last reports reach the watch
+        // and the turn before the watch ends.
+        let stallWatchId = beginGenerationStallWatch(submitsToQueue: target != nil)
         let passReports = openGenerationPassReports(callID: stallWatchId)
         let stallWatchdog = Task { await self.watchGenerationForStalls(id: stallWatchId) }
         defer {
@@ -651,15 +699,13 @@ extension RoutedSessionActor {
         }
         // The tool-result append boundary of this model call: each tool result
         // the model reads next goes through it (see ``noteToolResult(_:)``).
-        let resultBoundary = ToolResultAppendBoundary(session: self)
+        let submission = Self.submission(
+            of: body, composedPrompt: composedPrompt, mark: modelCallMark,
+            boundary: ToolResultAppendBoundary(session: self), context: turnContext,
+            serviceContext: ServiceContext.current)
+        let observer = generationPassObserver
         let modelCall = Task {
-            try await ModelCallMark.$current.withValue(modelCallMark) {
-                try await ToolResultAppendBoundary.$current.withValue(resultBoundary) {
-                    try await ToolContext.$current.withValue(turnContext) {
-                        try await body(composedPrompt)
-                    }
-                }
-            }
+            try await Self.run(submission, on: target?.queue, reportingTo: observer)
         }
         cancellationProbe.bind(to: modelCall)
         inFlightModelCall = modelCall
@@ -674,6 +720,67 @@ extension RoutedSessionActor {
             try await modelCall.value
         } onCancel: {
             modelCall.cancel()
+        }
+    }
+
+    /// The submission of one model call: `body` over `composedPrompt`, with
+    /// the task-locals of the call bound around it.
+    ///
+    /// The worker of a queue runs the submission on a task that inherits no
+    /// task-local of the session, so the submission binds each one itself.
+    /// The SDK gives them to each tool body it runs inside the call. The
+    /// tracing `ServiceContext` of the turn is one of them, so the span of
+    /// each tool call stays a child of the span of its turn.
+    ///
+    /// - Parameters:
+    ///   - body: The model work: one whole SDK call.
+    ///   - composedPrompt: The composed prompt of the attempt.
+    ///   - mark: The mark of the model call.
+    ///   - boundary: The tool-result append boundary of the model call.
+    ///   - context: The ambient ``ToolContext`` of the model call.
+    ///   - serviceContext: The tracing context of the turn, or `nil`.
+    /// - Returns: The submission.
+    private static func submission(
+        of body: @escaping @Sendable (String) async throws -> String,
+        composedPrompt: String,
+        mark: ModelCallMark,
+        boundary: ToolResultAppendBoundary,
+        context: ToolContext,
+        serviceContext: ServiceContext?
+    ) -> @Sendable () async throws -> String {
+        {
+            try await ServiceContext.$current.withValue(serviceContext) {
+                try await ModelCallMark.$current.withValue(mark) {
+                    try await ToolResultAppendBoundary.$current.withValue(boundary) {
+                        try await ToolContext.$current.withValue(context) {
+                            try await body(composedPrompt)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Runs `submission` as one item of `queue`, and reports its wait and its
+    /// start to `observer`, or runs it directly when there is no queue.
+    ///
+    /// - Parameters:
+    ///   - submission: The submission of one model call.
+    ///   - queue: The queue of the model, or `nil`.
+    ///   - observer: The observer of this session's model calls.
+    /// - Returns: What `submission` returns.
+    /// - Throws: What the queue or `submission` throws.
+    private static func run(
+        _ submission: @escaping @Sendable () async throws -> String,
+        on queue: GenerationQueue?,
+        reportingTo observer: GenerationPassObserver
+    ) async throws -> String {
+        guard let queue else {
+            return try await submission()
+        }
+        return try await queue.submit(onQueued: { observer.submissionQueued() }) {
+            observer.submissionStarted()
+            return try await submission()
         }
     }
 

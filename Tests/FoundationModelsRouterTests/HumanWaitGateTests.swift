@@ -5,14 +5,15 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises human waits (plan.md, "Human waits must not stall the model").
-/// Before, one semaphore serialized both *the turns of a session* and *the
-/// generation of a model*. Thus a tool call that waited for a person stopped the
-/// model for the full wait. Now a turn holds only the per-session
-/// ``RoutedSessionActor/turnLock``. The per-model ``GenerationQueue`` is held
-/// only for the duration of one model pass. A human wait is not in a pass, so
-/// it holds no queue place, and ``RoutedSession/awaitingUser(_:)`` has nothing
-/// to release. The turn lock stays held for the full wait.
+/// Exercises human waits (`generation-queue.md`, section 5.5, rule 6). The
+/// item of the per-model ``GenerationQueue`` is one whole submission to
+/// Foundation (task ^1psqdm9), and a tool body runs inside its submission. So
+/// a human wait inside a tool holds the model for every other session on it:
+/// their submissions wait behind the submission of the wait. The way to wait
+/// for a person without holding the model is an elicitation from a
+/// background run. ``RoutedSession/awaitingUser(_:)`` holds nothing and
+/// releases nothing. The per-session ``RoutedSessionActor/turnLock`` stays
+/// held for the full wait.
 ///
 /// Everything runs against stubs with no network and no GPU: a backend whose
 /// `respond` runs a test-supplied closure mid-generation stands in for the SDK
@@ -22,11 +23,11 @@ import Testing
 ///
 /// The complementary claim — that turn serialization and ordering are unchanged
 /// when nobody calls `awaitingUser` — is covered where it already was:
-/// `ForkConcurrencyTests.generationQueueSerializesPassesAndIsFIFO` (four callers
-/// over one model never overlap and run FIFO) and
+/// `ForkConcurrencyTests.generationQueueSerializesSubmissionsAndIsFIFO` (four
+/// callers over one model never overlap and run FIFO) and
 /// `MultiTurnSessionTests.forkHoldsTurnLockDuringMakeFork` (a fork queues behind
 /// an in-flight turn).
-@Suite("Human waits hold no generation queue place and never release the per-session turn lock")
+@Suite("A human wait in a tool holds the model, and never releases the per-session turn lock")
 struct HumanWaitGateTests {
     // MARK: - Failures raised from inside a human wait
 
@@ -78,12 +79,19 @@ struct HumanWaitGateTests {
     /// system may do while a turn is suspended inside the model call, and
     /// whether anything reads a torn, half-appended transcript.
     ///
+    /// It declares the queue of its container, so the session submits each
+    /// whole call of this backend to that queue, as over a live container.
+    ///
     /// `@unchecked Sendable` is safe for the same reason ``StubSessionBackend``'s
     /// is: ``RoutedSessionActor`` drives one backend's calls one at a time, now
     /// under the session's own turn lock.
     private final class HookedSessionBackend: LanguageModelSessionBackend, @unchecked Sendable {
         private let hook: TurnHook
         private let observer: TurnObserver
+
+        /// The queue of the container, which the session submits each whole
+        /// call of this backend to.
+        let generationQueue: GenerationQueue?
 
         /// This backend's synthetic transcript: one `.prompt` per call, plus one
         /// `.response` per call that ran to completion.
@@ -94,9 +102,10 @@ struct HumanWaitGateTests {
         /// proving *when* a concurrent fork read this backend's transcript.
         private(set) var lastFork: HookedSessionBackend?
 
-        init(hook: TurnHook, observer: TurnObserver, entries: [Transcript.Entry] = []) {
+        init(hook: TurnHook, observer: TurnObserver, generationQueue: GenerationQueue?, entries: [Transcript.Entry] = []) {
             self.hook = hook
             self.observer = observer
+            self.generationQueue = generationQueue
             self.entries = entries
         }
 
@@ -152,7 +161,8 @@ struct HumanWaitGateTests {
         /// child into ``lastFork``, so a test can assert both *that* a fork read
         /// this backend and *what* it saw.
         func makeFork(tools: [any Tool]) -> any LanguageModelSessionBackend {
-            let fork = HookedSessionBackend(hook: hook, observer: observer, entries: entries)
+            let fork = HookedSessionBackend(
+                hook: hook, observer: observer, generationQueue: generationQueue, entries: entries)
             lastFork = fork
             return fork
         }
@@ -160,7 +170,8 @@ struct HumanWaitGateTests {
 
     /// A ``LoadedLLMContainer`` vending ``HookedSessionBackend``s wired to one
     /// shared hook and observer, retaining every one it manufactured so a test
-    /// can reach a specific session's backend by creation order.
+    /// can reach a specific session's backend by creation order. Like a live
+    /// container, it owns one ``GenerationQueue`` that every backend declares.
     ///
     /// `@unchecked Sendable` is safe because ``backends`` is only appended to
     /// inside `makeSession`, itself only reached from `RoutedModel.makeSession`
@@ -172,6 +183,9 @@ struct HumanWaitGateTests {
         private let hook: TurnHook
         private let observer: TurnObserver
         private(set) var backends: [HookedSessionBackend] = []
+
+        /// The queue every backend of this container declares.
+        let generationQueue = GenerationQueue()
 
         init(hook: TurnHook, observer: TurnObserver) {
             self.hook = hook
@@ -187,7 +201,8 @@ struct HumanWaitGateTests {
         }
 
         private func makeHookedBackend(entries: [Transcript.Entry]) -> HookedSessionBackend {
-            let backend = HookedSessionBackend(hook: hook, observer: observer, entries: entries)
+            let backend = HookedSessionBackend(
+                hook: hook, observer: observer, generationQueue: generationQueue, entries: entries)
             backends.append(backend)
             return backend
         }
@@ -466,18 +481,18 @@ struct HumanWaitGateTests {
         return Fixture(container: container, observer: observer, hook: hook, profile: profile)
     }
 
-    // MARK: - The regression: a human wait must not stall other sessions
+    // MARK: - A human wait in a tool holds the model
 
-    @Test("a turn suspended in awaitingUser does not stop another session over the same model from generating")
+    @Test("a turn suspended in awaitingUser holds the model, so another session over the same model runs after the wait")
     @MainActor
-    func humanWaitLetsAnotherSessionOnTheSameModelGenerate() async throws {
+    func humanWaitHoldsTheModelForAnotherSession() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
+        let queue = fixture.container.generationQueue
 
-        // Two root sessions over the SAME model — the arrangement that used to
-        // serialize a human wait against every other session on the model.
+        // Two root sessions over the SAME model.
         let sessionA = fixture.model.makeSession()
         let sessionB = fixture.model.makeSession()
         let turnLockA = try #require(sessionA as? RoutedSessionActor).turnLock
@@ -502,23 +517,24 @@ struct HumanWaitGateTests {
         // A keeps its own turn lock for the full wait.
         #expect(turnLockA.availablePermits == 0)
 
-        // B runs a whole turn, start to finish, while A is still in the wait, so
-        // `exited` is read after a finished turn instead of racing the scheduler.
-        // B's finish is observed through the model call it leaves before it is
-        // awaited, so a wait that in fact stops B fails this test with a readable
-        // message instead of hanging the whole run on an await that could never
-        // return.
+        // B's submission waits behind A's: the wait is a step of A's submission,
+        // so it holds the worker of the model.
         let taskB = Task { try await sessionB.respond(to: "b") }
-        let responseB = try await Self.completedTurn(taskB, prompt: "b", observer: fixture.observer)
-        #expect(await fixture.observer.exited == ["b"])
+        #expect(
+            await BoundedWait.conditionReached("sessionB's submission waiting behind the human wait") {
+                await queue.waitingCount == 1
+            })
+        #expect(await fixture.observer.entered == ["a-wait"])
 
-        // A then finishes its own turn normally.
+        // A then finishes its own turn, and only then does B run.
         humanGate.signal()
         #expect(try await Self.completedTurn(taskA, prompt: "a-wait", observer: fixture.observer) == "ok-a-wait")
-        #expect(responseB == "ok-b")
-        #expect(await fixture.observer.exited == ["b", "a-wait"])
+        #expect(try await Self.completedTurn(taskB, prompt: "b", observer: fixture.observer) == "ok-b")
+        #expect(await fixture.observer.exited == ["a-wait", "b"])
+        #expect(await fixture.observer.maxActive == 1)
         #expect(turnLockA.availablePermits == 1)
         #expect(turnLockA.waiterCount == 0)
+        #expect(await queue.isRunning == false)
     }
 
     // MARK: - The turn lock is never released early
@@ -848,10 +864,10 @@ struct HumanWaitGateTests {
 
         // The mirror image of `waitOverlappingAnotherTurnDoesNotInflateTheTurnLock`:
         // there the wait ended after the turn, here the turn ends while the wait
-        // is still open and another session is in its own turn. Before, the wait
-        // re-acquired a generation permit on its way out, and a turn that ended
-        // in that window could strand the permit. Now a wait holds nothing and
-        // takes nothing back, so no order of these events can strand a lock.
+        // is still open and another session waits for its own turn. Before, the
+        // wait re-acquired a generation permit on its way out, and a turn that
+        // ended in that window could strand the permit. Now a wait holds nothing
+        // and takes nothing back, so no order of these events can strand a lock.
         let inTurnA = AsyncSemaphore(value: 0)
         let releaseTurnA = AsyncSemaphore(value: 0)
         let inTurnB = AsyncSemaphore(value: 0)
@@ -890,15 +906,21 @@ struct HumanWaitGateTests {
         try await BoundedWait.awaitSignal(waitEntered, named: "the out-of-turn human wait being entered")
         #expect(turnLockA.availablePermits == 0)
 
-        // B starts its own turn on the same model and suspends too.
+        // B starts its own turn on the same model. Its submission waits behind
+        // A's, which holds the model.
         let turnB = Task { try await sessionB.respond(to: "turn-b") }
-        try await BoundedWait.awaitSignal(inTurnB, named: "sessionB's turn reaching the model")
+        #expect(
+            await BoundedWait.conditionReached("sessionB's submission waiting behind sessionA's") {
+                await fixture.container.generationQueue.waitingCount == 1
+            })
         #expect(turnLockB.availablePermits == 0)
 
-        // A's turn ends *while* the out-of-turn wait is still open.
+        // A's turn ends *while* the out-of-turn wait is still open, and B's
+        // submission then reaches the model.
         releaseTurnA.signal()
         #expect(try await Self.completedTurn(turnA, prompt: "turn-a", observer: fixture.observer) == "ok-turn-a")
         #expect(turnLockA.availablePermits == 1)
+        try await BoundedWait.awaitSignal(inTurnB, named: "sessionB's turn reaching the model")
 
         // The wait ends next. It takes nothing back, so it does not suspend.
         releaseWait.signal()

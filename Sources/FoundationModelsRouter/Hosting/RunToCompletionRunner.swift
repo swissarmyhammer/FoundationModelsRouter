@@ -3,6 +3,10 @@ import FoundationModels
 import Tracing
 
 /// A decorator that runs each call of the wrapped tool to completion and returns its value in band. A call with no progress past the timeout ends with ``ToolMountError/timedOut(tool:timeoutSeconds:)``.
+///
+/// The body runs inside the submission of its session (task ^1psqdm9), so it holds the worker of the model for every
+/// other session on that model until it returns. A body that asks a session on the same model for an answer is refused
+/// at once with ``GenerationQueueError/waitInsideOpenSubmission(model:)``. Long work belongs in a background tool.
 struct RunToCompletionRunner<
     Arguments: ConvertibleFromGeneratedContent & Sendable
 >: Tool, TurnBoundaryTool, ToolDecorator {

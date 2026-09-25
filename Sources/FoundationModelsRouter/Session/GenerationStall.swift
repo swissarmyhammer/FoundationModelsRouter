@@ -10,15 +10,13 @@ public enum GenerationProgressVisibility: Sendable, Equatable {
     /// The turn streams. `observed` is how many text fragments of the whole
     /// model call arrived before the stall. ``GenerationStall/timeWithoutProgress``
     /// is measured from the last append of any ``GenerationProgressKind``, or
-    /// from the moment the current pass took its queue place when that is
-    /// later.
+    /// from the start of the current pass when that is later.
     case fragments(observed: Int)
 
     /// The turn returns one whole `String`, so there is no text fragment to
     /// count. ``GenerationStall/timeWithoutProgress`` is measured from the last
-    /// tool call or tool result, or from the start of the call before the
-    /// first, or from the moment the current pass took its queue place when
-    /// that is later.
+    /// tool call or tool result, or from the start of the submission before
+    /// the first, or from the start of the current pass when that is later.
     case wholeAnswer
 }
 
@@ -26,7 +24,8 @@ public enum GenerationProgressVisibility: Sendable, Equatable {
 /// interval a ``GenerationStall`` is measured over, and the report names the
 /// kind of the last one.
 public enum GenerationProgressKind: Sendable, Equatable {
-    /// No append yet. The report is measured from the start of the call.
+    /// No append yet. The report is measured from the start of the
+    /// submission of the call.
     case callStart
 
     /// A text fragment of the response.
@@ -89,24 +88,27 @@ public enum GenerationProgressKind: Sendable, Equatable {
 /// observe for an interval. The report bounds nothing. A stalled generation
 /// reports again on each further interval without progress.
 ///
-/// The report measures generation, and not a wait (task ^ake8sax). When the
-/// backend of the session runs over the per-session queued wrapper of the
-/// live container, each pass of the model call reports when it holds its
-/// place in the ``GenerationQueue`` of its model. The session then counts
-/// only the time a pass holds its place: a wait for a queue place and a tool
-/// body between two passes give no report. A backend with no executor seam
-/// reports no pass, and the whole call counts.
+/// The report measures generation, and not a wait (tasks ^ake8sax and
+/// ^1psqdm9). The model call is one submission to the ``GenerationQueue`` of
+/// its model, and nothing counts while the submission waits for the worker.
+/// When the backend of the session runs over the per-session wrapper of the
+/// live container, each pass of the running submission reports its start and
+/// its end. The session then counts only the time inside a pass: a wait for
+/// the worker and a tool body between two passes give no report. A backend
+/// with no executor seam reports no pass, and the time counts from the start
+/// of the submission.
 public struct GenerationStall: Sendable, Equatable, CustomStringConvertible {
     /// How long the generation has gone with no observable progress.
     ///
     /// For a backend that reports its passes, this is measured only over the
-    /// time a pass holds its queue place: from the later of the last progress
-    /// and the moment the current pass took its place. For a backend with no
-    /// executor seam, it is measured from the last progress.
+    /// time inside a pass: from the later of the last progress and the start
+    /// of the current pass. For a backend with no executor seam, it is
+    /// measured from the later of the last progress and the start of the
+    /// submission.
     public let timeWithoutProgress: Duration
 
-    /// How long this model call has been in flight: the whole call, with each
-    /// wait for a queue place and each tool body in it.
+    /// How long this model call has been in flight: the whole call, with the
+    /// wait for the worker and each tool body in it.
     public let timeInFlight: Duration
 
     /// What the session could observe about this generation's progress. A
@@ -114,10 +116,10 @@ public struct GenerationStall: Sendable, Equatable, CustomStringConvertible {
     /// whole model call.
     public let visibility: GenerationProgressVisibility
 
-    /// The kind of the last append. A pass that takes its queue place is not
-    /// progress, so the kind does not change when a pass starts.
+    /// The kind of the last append. The start of a submission or of a pass is
+    /// not progress, so the kind does not change when one starts.
     /// ``timeWithoutProgress`` is measured from this append, or from the
-    /// moment the current pass took its place when that is later.
+    /// start of the current pass when that is later.
     public let lastProgress: GenerationProgressKind
 
     /// Creates a stall report.
@@ -195,14 +197,19 @@ struct GenerationStallWatch: Sendable {
     /// body starts, not inferred from the first fragment.
     var producesFragments: Bool = false
 
+    /// When the submission of this call started on the worker of its queue,
+    /// or `nil` while the submission waits. A call with no queue starts its
+    /// submission at the start of the call.
+    var submissionStartedAt: ContinuousClock.Instant?
+
     /// Whether the backend of this call reports its passes. Set by the first
-    /// ``GenerationPassPhase`` of the call. Until then the watch measures the
-    /// whole call, as it does for a backend with no executor seam.
+    /// pass phase of the call. Until then the watch measures from the start
+    /// of the submission, as it does for a backend with no executor seam.
     var reportsPasses = false
 
-    /// When the pass of this call that holds its queue place took the place,
-    /// or `nil` while no pass of this call holds a place.
-    var passHeldSince: ContinuousClock.Instant?
+    /// When the pass of the running submission that runs now started, or
+    /// `nil` while no pass runs.
+    var passRunningSince: ContinuousClock.Instant?
 
     /// What the session can observe about this call, as a report says it.
     var visibility: GenerationProgressVisibility {
@@ -212,28 +219,36 @@ struct GenerationStallWatch: Sendable {
     /// The instant that the time without progress is measured from now, or
     /// `nil` when no time counts now.
     ///
-    /// For a call whose backend reports its passes, only the time a pass
-    /// holds its queue place counts: the later of the last progress and the
-    /// moment the current pass took its place. A wait for a queue place and
-    /// a tool body between two passes count nothing. For any other call, the
-    /// time counts from the last progress.
+    /// Nothing counts while the submission waits for the worker. For a call
+    /// whose backend reports its passes, only the time inside a pass counts:
+    /// the later of the last progress and the start of the current pass. A
+    /// tool body between two passes counts nothing. For any other call, the
+    /// time counts from the later of the last progress and the start of the
+    /// submission.
     var measuredFrom: ContinuousClock.Instant? {
-        guard reportsPasses else { return lastProgressAt }
-        guard let passHeldSince else { return nil }
-        return max(lastProgressAt, passHeldSince)
+        guard let submissionStartedAt else { return nil }
+        guard reportsPasses else { return max(lastProgressAt, submissionStartedAt) }
+        guard let passRunningSince else { return nil }
+        return max(lastProgressAt, passRunningSince)
     }
 
-    /// Applies one reported phase of a pass of this call. Taking a queue
-    /// place is not progress, so ``lastProgressAt`` does not change.
+    /// Applies one reported phase of this call. The start of a submission or
+    /// of a pass is not progress, so ``lastProgressAt`` does not change.
     ///
-    /// - Parameter phase: The phase the pass reported.
-    mutating func apply(_ phase: GenerationPassPhase) {
-        reportsPasses = true
+    /// - Parameter phase: The phase the call reported.
+    mutating func apply(_ phase: GenerationCallPhase) {
         switch phase {
-        case .started(let instant, _):
-            passHeldSince = instant
-        case .queued, .ended:
-            passHeldSince = nil
+        case .submissionQueued:
+            // The wait counts nothing: the submission has not started yet.
+            break
+        case .submissionStarted(let instant):
+            submissionStartedAt = instant
+        case .passStarted(let instant):
+            reportsPasses = true
+            passRunningSince = instant
+        case .passEnded:
+            reportsPasses = true
+            passRunningSince = nil
         }
     }
 }
@@ -249,12 +264,16 @@ extension RoutedSessionActor {
 
     /// Opens a stall watch over the model call about to start.
     ///
+    /// - Parameter submitsToQueue: Whether the call submits to a queue. Its
+    ///   submission then starts when the worker reports it. A call with no
+    ///   queue starts its submission now.
     /// - Returns: The new watch's id.
-    func beginGenerationStallWatch() -> UInt64 {
+    func beginGenerationStallWatch(submitsToQueue: Bool) -> UInt64 {
         lastGenerationStallWatchId += 1
         let now = ContinuousClock.now
         generationStallWatch = GenerationStallWatch(
-            id: lastGenerationStallWatchId, startedAt: now, lastProgressAt: now)
+            id: lastGenerationStallWatchId, startedAt: now, lastProgressAt: now,
+            submissionStartedAt: submitsToQueue ? nil : now)
         return lastGenerationStallWatchId
     }
 
@@ -291,9 +310,9 @@ extension RoutedSessionActor {
     /// watch is still installed and has gone the whole interval without
     /// progress. Reports to the module log and to ``currentTurnEventSink``.
     ///
-    /// It first takes the pass phases not yet applied
+    /// It first takes the call phases not yet applied
     /// (``drainGenerationPassPhases()``), so the report reads whether a pass
-    /// holds its queue place now, and not a moment ago. See
+    /// runs now, and not a moment ago. See
     /// ``GenerationStallWatch/measuredFrom`` for the time that counts.
     ///
     /// - Parameter id: The watch to report against.
@@ -322,10 +341,12 @@ extension RoutedSessionActor {
     /// on each interval it goes without observable progress. Ends when the
     /// task is cancelled or the watch is gone. Reads the interval once.
     ///
-    /// The watch runs over the whole model call, but for a backend that
-    /// reports its passes it counts only the time a pass holds its queue
-    /// place (``GenerationStallWatch/measuredFrom``). A wait for a queue place
-    /// and a tool body between two passes make no report (task ^ake8sax).
+    /// The watch runs over the whole model call, but it counts nothing while
+    /// the submission waits for the worker, and for a backend that reports
+    /// its passes it counts only the time inside a pass
+    /// (``GenerationStallWatch/measuredFrom``). A wait for the worker and a
+    /// tool body between two passes make no report (tasks ^ake8sax and
+    /// ^1psqdm9).
     ///
     /// - Parameter id: The watch to report against.
     func watchGenerationForStalls(id: UInt64) async {

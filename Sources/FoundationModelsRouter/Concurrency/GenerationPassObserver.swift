@@ -1,65 +1,63 @@
 import Synchronization
 
-/// One point in the life of a generation pass, as a
-/// ``GenerationPassObserver`` records it (task ^ake8sax).
-enum GenerationPassPhase: Sendable, Equatable {
-    /// The pass joined the queue behind another item, because the worker of
-    /// the queue runs a pass of another session.
-    case queued
+/// One point in the life of a model call, as a ``GenerationPassObserver``
+/// records it (tasks ^ake8sax and ^1psqdm9): the wait and the start of its
+/// submission, and the start and the end of each pass inside it.
+enum GenerationCallPhase: Sendable, Equatable {
+    /// The submission of the call joined the queue of its model behind
+    /// another item, because the worker runs a submission of another session.
+    case submissionQueued
 
-    /// The worker of the queue started the pass. `at` is when it started.
-    /// `afterWait` is `true` when the pass waited behind another item before
-    /// it started, so the phase before this one was ``queued``.
-    case started(at: ContinuousClock.Instant, afterWait: Bool)
+    /// The worker of the queue started the submission of the call. `at` is
+    /// when it started.
+    case submissionStarted(at: ContinuousClock.Instant)
 
-    /// The pass left the queue: it ended, or its task was cancelled while it
-    /// waited, and it never started.
-    case ended
+    /// A pass of the running submission started. `at` is when it started.
+    case passStarted(at: ContinuousClock.Instant)
+
+    /// The pass ended.
+    case passEnded
 
     /// The event that tells the consumer of the session about this phase, or
     /// `nil` for a phase the consumer does not see.
     ///
-    /// A pass that found the queue idle sends no event, so a consumer sees
-    /// ``SessionEvent/passStarted`` only after a ``SessionEvent/passQueued``.
+    /// A submission that found the worker idle sends only
+    /// ``SessionEvent/submissionStarted``. A pass sends no event.
     var sessionEvent: SessionEvent? {
         switch self {
-        case .queued:
-            .passQueued
-        case .started(_, let afterWait):
-            afterWait ? .passStarted : nil
-        case .ended:
+        case .submissionQueued:
+            .submissionQueued
+        case .submissionStarted:
+            .submissionStarted
+        case .passStarted, .passEnded:
             nil
         }
     }
 }
 
-/// A report of a backend's passes that the session of that backend installs
-/// (`generation-queue.md`, section 2).
+/// A report of the model calls of a session: the wait and the start of each
+/// submission, and the start and the end of each pass inside it
+/// (`generation-queue.md`, section 5.6).
 ///
-/// The wait for the worker of the queue happens in the executor of the
-/// per-session ``QueuedLanguageModel``, and not on the session actor, and the
-/// worker runs the pass on a task of its own. A task-local that the session
-/// binds reaches neither of them. So the session gives this observer to the
-/// per-session state of its wrapper
-/// (``QueuedLanguageModelState/reportPasses(to:)``), and the executor calls it
-/// at three points of each pass: the pass waits behind another item, the
-/// worker starts the pass, and the pass leaves the queue.
+/// The submission of a call runs on a task that the worker of the queue
+/// makes, and the SDK runs each pass below it, maybe on a task of its own. A
+/// task-local that the session binds reaches neither of them. So the session
+/// gives this observer to the per-session state of the wrapper of its backend
+/// (``SessionLanguageModelState/reportPasses(to:)``), and the executor calls
+/// it at the start and the end of each pass. The session itself calls it when
+/// its submission waits for the worker, and when the worker starts it.
 ///
 /// The calls are synchronous and never suspend, so they cannot delay a pass.
-/// Each call appends one ``GenerationPassPhase`` under a lock, in the order of
+/// Each call appends one ``GenerationCallPhase`` under a lock, in the order of
 /// the calls, and wakes the reader of the model call in flight. The session
 /// actor takes the phases in that order (``takePhases()``) and turns them into
 /// its own state: the stall watch and the events of its consumer.
 final class GenerationPassObserver: Sendable {
     /// The phases not yet taken, and the wake of the model call in flight.
     private struct State {
-        /// The phases the executor recorded and the session did not take yet,
-        /// in the order of the calls.
-        var pending: [GenerationPassPhase] = []
-
-        /// Whether the pass in flight waits behind another item and the
-        /// worker did not start it yet.
-        var isWaiting = false
+        /// The phases the calls recorded and the session did not take yet, in
+        /// the order of the calls.
+        var pending: [GenerationCallPhase] = []
 
         /// The wake of the model call in flight: the id of that call and the
         /// continuation of its wake stream. `nil` between model calls.
@@ -69,39 +67,32 @@ final class GenerationPassObserver: Sendable {
     /// The state, under one lock.
     private let state = Mutex(State())
 
-    /// Records that the pass joined the queue.
-    func passQueued() {
-        record { state in
-            state.isWaiting = true
-            return .queued
-        }
+    /// Records that the submission of the call waits behind another item.
+    func submissionQueued() {
+        record(.submissionQueued)
     }
 
-    /// Records that the worker of the queue started the pass now.
+    /// Records that the worker of the queue started the submission now.
+    func submissionStarted() {
+        record(.submissionStarted(at: ContinuousClock.now))
+    }
+
+    /// Records that a pass of the running submission started now.
     func passStarted() {
-        let now = ContinuousClock.now
-        record { state in
-            defer { state.isWaiting = false }
-            return .started(at: now, afterWait: state.isWaiting)
-        }
+        record(.passStarted(at: ContinuousClock.now))
     }
 
-    /// Records that the pass left the queue.
+    /// Records that the pass ended.
     func passEnded() {
-        record { state in
-            state.isWaiting = false
-            return .ended
-        }
+        record(.passEnded)
     }
 
-    /// Appends the phase `makePhase` gives, and wakes the reader of the model
-    /// call in flight.
+    /// Appends `phase`, and wakes the reader of the model call in flight.
     ///
-    /// - Parameter makePhase: Updates the state and gives the phase, under the
-    ///   lock.
-    private func record(_ makePhase: (inout State) -> GenerationPassPhase) {
+    /// - Parameter phase: The phase to record.
+    private func record(_ phase: GenerationCallPhase) {
         let continuation = state.withLock { state in
-            state.pending.append(makePhase(&state))
+            state.pending.append(phase)
             return state.wake?.continuation
         }
         continuation?.yield()
@@ -111,7 +102,7 @@ final class GenerationPassObserver: Sendable {
     /// calls.
     ///
     /// - Returns: The phases.
-    func takePhases() -> [GenerationPassPhase] {
+    func takePhases() -> [GenerationCallPhase] {
         state.withLock { state in
             defer { state.pending.removeAll() }
             return state.pending
@@ -153,7 +144,7 @@ final class GenerationPassObserver: Sendable {
 }
 
 /// A session backend whose passes the session can observe: it runs its
-/// `LanguageModelSession` over a per-session ``QueuedLanguageModel``.
+/// `LanguageModelSession` over a per-session ``SessionLanguageModel``.
 ///
 /// ``MLXFoundationModelsSessionBackend`` conforms. A backend with no executor
 /// seam does not conform, and its session sees no pass.

@@ -119,8 +119,9 @@ struct RecordingLanguageModel: LanguageModel, Sendable {
 /// diff-and-record work, so a `generate`, a `sync`, and a `noteCompaction` on
 /// the same handle never interleave. The lock does not cover the call of the
 /// wrapped executor: the GPU queue of the model is the job of the
-/// ``QueuedLanguageModel`` that the container gives as
-/// ``LoadedLLMContainer/languageModel`` (`generation-queue.md`, section 2).
+/// ``SessionLanguageModel`` that the container gives as
+/// ``LoadedLLMContainer/languageModel``, whose each pass is one item of the
+/// queue of the model (`generation-queue.md`, section 5.3).
 actor RecordingLanguageModelState {
     /// The recording root id.
     nonisolated let routerId: ULID

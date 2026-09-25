@@ -278,13 +278,15 @@ actor RoutedSessionActor: RoutedSession {
 
     /// The backend every generation and fork runs through. Never vended to
     /// callers. ``compact(prompt:budget:)`` replaces it after a compaction.
-    /// Each replacement reports its passes to ``generationPassObserver``.
+    /// Each replacement reports its passes to ``generationPassObserver``. Each
+    /// model call of it is one submission to its ``LanguageModelSessionBackend/generationQueue``.
     var backend: any LanguageModelSessionBackend {
         didSet { observeGenerationPasses(of: backend) }
     }
 
-    /// The observer every backend of this session reports its passes to
-    /// (task ^ake8sax). See ``drainGenerationPassPhases()``.
+    /// The observer every backend of this session reports its passes to, and
+    /// each submission of this session reports its wait and its start to
+    /// (tasks ^ake8sax and ^1psqdm9). See ``drainGenerationPassPhases()``.
     nonisolated let generationPassObserver = GenerationPassObserver()
 
     /// See ``RoutedSession/transcript``. Reads under ``turnLock``, except from
@@ -356,7 +358,9 @@ actor RoutedSessionActor: RoutedSession {
 
     /// The in-flight turn's model call, the task ``cancelCurrentTurn()``
     /// cancels, or `nil` when no model call is outstanding. Only the model call
-    /// runs in this task; the turn's recording runs afterwards.
+    /// runs in this task; the turn's recording runs afterwards. A cancel of the
+    /// task removes a submission that waits for the worker, or cancels the
+    /// running submission.
     var inFlightModelCall: Task<String, Error>?
 
     /// The turn a ``cancelCurrentTurn()`` has been requested for, or `nil`.

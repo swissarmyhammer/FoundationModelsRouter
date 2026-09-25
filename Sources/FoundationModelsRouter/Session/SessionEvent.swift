@@ -62,30 +62,33 @@ public enum SessionEvent: Sendable, Equatable {
     /// This is a report, not a bound. It repeats once per further interval without progress.
     /// ``GenerationStall/visibility`` says what the report can claim.
     ///
-    /// The session measures only the time a pass of the call holds its place
-    /// in the ``GenerationQueue`` of its model. A wait for a queue place (see
-    /// ``passQueued``) and a tool body between two passes give no report.
-    /// A backend with no executor seam reports no pass, and its whole call is
-    /// measured. ``GenerationStall`` states the meaning of each field.
+    /// The session measures only the time inside a pass of the running
+    /// submission. A wait for the worker of the ``GenerationQueue`` of the
+    /// model (see ``submissionQueued``) and a tool body between two passes
+    /// give no report. For a backend that reports no pass, the time counts
+    /// from the start of the submission. ``GenerationStall`` states the
+    /// meaning of each field.
     case generationStalled(GenerationStall)
 
-    /// A generation pass of the turn in flight waits in the
-    /// ``GenerationQueue`` of its model, because the worker of that queue runs
-    /// a pass of another session. A consumer can show "waiting for the model".
+    /// A submission of the session waits in the ``GenerationQueue`` of its
+    /// model, because the worker of that queue runs a submission of another
+    /// session. A submission is one whole SDK call, with its passes and its
+    /// tool bodies. A consumer can show "waiting for the model".
     ///
-    /// The session sends it only when the pass must wait. A pass that finds
-    /// the queue idle sends none. ``passStarted`` follows when the worker
-    /// starts the pass. A cancelled wait sends no ``passStarted``, and the
-    /// turn ends.
-    /// Only a backend that runs over the per-session queued wrapper of the
-    /// live container reports passes; a backend with no executor seam sends
-    /// neither event.
-    case passQueued
+    /// The session sends it only when the submission must wait. A submission
+    /// that finds the worker free sends none. ``submissionStarted`` follows
+    /// when the worker starts the submission. A cancelled wait sends no
+    /// ``submissionStarted``, and the turn ends.
+    /// Only a backend that names a queue
+    /// (``LanguageModelSessionBackend/generationQueue``) submits to one; a
+    /// backend with no queue sends neither event.
+    case submissionQueued
 
-    /// The worker of the ``GenerationQueue`` of its model started the pass
-    /// that sent ``passQueued``, and the pass generates now. The session sends
-    /// it only after a ``passQueued``.
-    case passStarted
+    /// The worker of the ``GenerationQueue`` of its model started a
+    /// submission of the session, and the submission generates now. The
+    /// session sends it for each submission to a queue, after
+    /// ``submissionQueued`` when the submission had to wait.
+    case submissionStarted
 
     /// The session stopped the generate call in flight because the call no
     /// longer wrote new lines. The event comes before the

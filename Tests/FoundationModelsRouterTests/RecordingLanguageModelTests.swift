@@ -215,7 +215,8 @@ struct RecordingLanguageModelTests {
     /// is), so it returns a bare, unused ``StubSessionBackend``.
     ///
     /// Like the live container, it owns one ``GenerationQueue`` and gives a
-    /// new ``QueuedLanguageModel`` over it on each read of `languageModel`.
+    /// new ``SessionLanguageModel`` on each read of `languageModel`, whose
+    /// each pass is one item of that queue.
     private struct StubLanguageModelContainer: PlainTranscriptStubContainer {
         let model: StubUnderlyingModel
 
@@ -227,7 +228,7 @@ struct RecordingLanguageModelTests {
         }
 
         var languageModel: any LanguageModel {
-            QueuedLanguageModel(wrapping: model, queue: generationQueue)
+            SessionLanguageModel(wrapping: model, passQueue: generationQueue)
         }
     }
 

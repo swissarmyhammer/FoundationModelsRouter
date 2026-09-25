@@ -18,11 +18,14 @@ import Testing
 /// Every handle comes from ``Router/resolve(profile:reporting:)``, never from a
 /// hand-built ``RoutedLLM``, so each session is the shape a consumer holds.
 ///
-/// A turn holds its session's turn lock for its whole length, and a place of
-/// the model's ``GenerationQueue`` only for each of its passes (task
-/// ^93kjn94). So a tool body that generates on another session holds nothing
-/// that session needs, and a tool body that asks its own session for a turn
-/// or a fork must be refused, because that session's turn lock is held.
+/// A turn holds its session's turn lock for its whole length. The stub
+/// container of these tests has no ``GenerationQueue``, so a tool body that
+/// generates on another session over it runs that model call directly and
+/// holds nothing that session needs. A tool body that asks its own session for
+/// a turn or a fork must be refused, because that session's turn lock is held.
+/// Over a container with a queue, an in-band tool body that waits for a
+/// session on the same model is refused at once (task ^1psqdm9,
+/// `GenerationQueueTurnTests`).
 @Suite("Nested generation from inside a tool body")
 struct NestedGenerationReentryTests {
     // MARK: - Test tool
@@ -887,10 +890,16 @@ struct NestedGenerationReentryTests {
         #expect(seen == nil)
     }
 
-    // MARK: - A turn that waits for a queue place
+    // MARK: - A turn whose submission waits for the worker
 
-    @Test("cancelCurrentTurn() on a session whose pass waits for a queue place cancels that turn at once")
-    func cancelOnASessionWaitingForAQueuePlaceCancelsItAtOnce() async throws {
+    /// The prompt of the session whose submission waits behind the cancelled
+    /// one.
+    private static let nextPrompt = "summarize the ranking"
+
+    @Test(
+        "cancelCurrentTurn() on a session whose submission waits removes it at once, and the worker then runs the next item"
+    )
+    func cancelOnASessionWhoseSubmissionWaitsRemovesItAtOnce() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -900,9 +909,10 @@ struct NestedGenerationReentryTests {
 
         let holder = profile.standard.makeSession()
         let waiter = profile.standard.makeSession()
+        let next = profile.standard.makeSession()
 
-        // The holder's pass takes the one place of the queue and stays inside
-        // the model until the latch opens.
+        // The holder's submission runs on the worker, and its pass stays
+        // inside the model until the latch opens.
         let holderTurn = Task { try await holder.respond(to: Self.outerPrompt) }
         #expect(
             await BoundedWait.conditionReached("the holder's pass in the model") {
@@ -910,29 +920,38 @@ struct NestedGenerationReentryTests {
             })
 
         // The waiter's turn holds its own turn lock and has an identity; only
-        // its pass waits, in the queue.
+        // its submission waits, in the queue of the model.
         let waiterFinished = AsyncSemaphore(value: 0)
         let waiterTurn = Task {
             defer { waiterFinished.signal() }
             return try await waiter.respond(to: Self.nestedPrompt)
         }
         #expect(
-            await BoundedWait.conditionReached("the waiter's pass waiting in the queue") {
+            await BoundedWait.conditionReached("the waiter's submission waiting in the queue") {
                 await queue.waitingCount == 1
             })
+        // A third submission joins the queue behind the waiter's.
+        let nextTurn = Task { try await next.respond(to: Self.nextPrompt) }
+        #expect(
+            await BoundedWait.conditionReached("the next submission waiting behind the waiter's") {
+                await queue.waitingCount == 2
+            })
 
-        // So the request reaches that wait, and the turn ends at once, while the
-        // holder still has the place.
+        // So the request reaches the waiting item, and the turn ends at once,
+        // while the holder still runs on the worker.
         #expect(await waiter.cancelCurrentTurn() == .requested)
         #expect(
             await BoundedWait.signalArrived(
-                waiterFinished, named: "the end of the cancelled turn, while the holder still has the place"))
-        #expect(await queue.waitingCount == 0)
+                waiterFinished, named: "the end of the cancelled turn, while the holder still runs"))
+        #expect(await queue.waitingCount == 1)
 
         await fixture.latch.open()
         #expect(try await holderTurn.value == PassObservingModel.answer(to: Self.outerPrompt))
         await #expect(throws: CancellationError.self) { try await waiterTurn.value }
-        #expect(fixture.passes.executors(servingPrompt: Self.nestedPrompt).isEmpty)
+        // The worker ran the next item after the holder, and never the
+        // cancelled one.
+        #expect(try await nextTurn.value == PassObservingModel.answer(to: Self.nextPrompt))
+        #expect(fixture.passes.recorded.map(\.prompt) == [Self.outerPrompt, Self.nextPrompt])
         #expect(await queue.isRunning == false)
         #expect(await queue.waitingCount == 0)
 
