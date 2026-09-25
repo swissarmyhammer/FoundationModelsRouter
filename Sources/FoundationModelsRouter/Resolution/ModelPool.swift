@@ -75,6 +75,11 @@ package struct PoolEntry: Sendable {
     /// it at zero references, whichever router releases last.
     let evict: @Sendable (any LoadedModelContainer) async -> Void
 
+    /// The prompt cache this entry sizes, and the working set of the resolve
+    /// that loaded it. The pool sends the budget again through it when this
+    /// entry's footprint changes or the entry is evicted.
+    let promptCache: PromptCacheSizing
+
     /// Whether the acquisition that received this snapshot loaded the model:
     /// it is the only hold. Under the resolve lock no release can drop a
     /// hold, so an entry that was resident before has at least two holds
@@ -221,6 +226,8 @@ public actor ModelPool {
     ///     figure less `sessionBytes`.
     ///   - sessionBytes: The raw KV cache estimate this hold adds at its own
     ///     context, and what its release gives back. Zero for an embedder.
+    ///   - promptCache: The prompt cache to size, and the working set the
+    ///     resolve measured.
     ///   - load: The loader call that produces a fresh resident container.
     ///     It is `@Sendable` because the pool, not the caller, runs it.
     ///   - evict: The loader call that frees the container at zero references.
@@ -231,6 +238,7 @@ public actor ModelPool {
         key: ResidencyKey,
         footprintBytes: Int64,
         sessionBytes: Int64,
+        promptCache: PromptCacheSizing,
         load: @Sendable () async throws -> PooledContainer,
         evict: @escaping @Sendable (any LoadedModelContainer) async -> Void
     ) async throws -> PoolEntry {
@@ -238,18 +246,56 @@ public actor ModelPool {
             entry.refcount += 1
             entry.acquiredChargeBytes += sessionBytes
             entries[key] = entry
+            await resizePromptCache(through: promptCache)
             return entry
+        }
+        // Shrink the prompt cache BEFORE the weights load, so its spills start
+        // while the weights are read, and give the bytes back if the load fails.
+        await resizePromptCache(through: promptCache, loadingFootprintBytes: footprintBytes)
+        let container: PooledContainer
+        do {
+            container = try await load()
+        } catch {
+            await resizePromptCache(through: promptCache)
+            throw error
         }
         let entry = PoolEntry(
             refcount: 1,
             baseWeightsBytes: footprintBytes - sessionBytes,
             acquiredChargeBytes: sessionBytes,
-            container: try await load(),
+            container: container,
             gates: ResidentModelGates(),
-            evict: evict
+            evict: evict,
+            promptCache: promptCache
         )
         entries[key] = entry
         return entry
+    }
+
+    /// Sends the prompt-cache memory budget to the loader of `sizing`: its
+    /// working set less the footprint of each resident entry, less the
+    /// footprint of a model that is about to load, and less the prompt-cache
+    /// bytes that are being written to disk. See ``PromptCacheBudget``.
+    ///
+    /// Each change of the resident footprint sends it one time: a load (before
+    /// the weights load), a failed load, a hold added on a resident model, and
+    /// each release. It is not sent a second time after a load that succeeds:
+    /// the spills that the first send started would count again, as spilling
+    /// bytes, and make the budget smaller than the footprints need.
+    ///
+    /// - Parameters:
+    ///   - sizing: The loader to send the budget to, and the working set to
+    ///     size against.
+    ///   - loadingFootprintBytes: The footprint of a model that is about to
+    ///     load and is not yet an entry, or zero.
+    private func resizePromptCache(
+        through sizing: PromptCacheSizing, loadingFootprintBytes: Int64 = 0
+    ) async {
+        let usage = await sizing.loader.promptCacheUsage
+        let footprints = entries.values.map(\.footprintBytes) + [loadingFootprintBytes]
+        let budget = PromptCacheBudget.memoryBudgetBytes(
+            workingSetBytes: sizing.workingSetBytes, residentFootprints: footprints, usage: usage)
+        await sizing.loader.configurePromptCache(memoryBudgetBytes: budget)
     }
 
     /// Records the charges a resolved profile was granted, by its residency
@@ -317,8 +363,9 @@ public actor ModelPool {
     }
 
     /// Gives back one charge: decrements the model's refcount, gives back the
-    /// charge's KV cache share, and evicts the model at zero references. A
-    /// no-op when the key is not resident.
+    /// charge's KV cache share, and evicts the model at zero references. Then
+    /// it sends the prompt-cache budget again, after the eviction has freed
+    /// the weights. A no-op when the key is not resident.
     ///
     /// - Parameter charge: The charge to give back.
     private func release(charge: SlotCharge) async {
@@ -331,5 +378,6 @@ public actor ModelPool {
         } else {
             entries[charge.key] = entry
         }
+        await resizePromptCache(through: entry.promptCache)
     }
 }

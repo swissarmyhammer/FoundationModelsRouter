@@ -213,9 +213,31 @@ public protocol ModelLoader: Sendable {
     /// Evicts a resident container and releases the memory it holds. Called
     /// when the last reference to a residency goes away. Non-throwing.
     func evict(container: any LoadedModelContainer) async
+
+    /// Sets the memory budget of the prompt cache that the models of this
+    /// loader keep. The pool calls it each time its resident footprint
+    /// changes, with the working set less the resident footprints and less
+    /// the prompt-cache bytes that are being written to disk
+    /// (`generation-queue.md`, section 3).
+    ///
+    /// - Parameter memoryBudgetBytes: The most bytes the prompt-cache entries
+    ///   in memory may hold.
+    func configurePromptCache(memoryBudgetBytes: Int) async
+
+    /// The bytes the prompt cache of the models of this loader holds now.
+    var promptCacheUsage: PromptCacheUsage { get async }
 }
 
 extension ModelLoader {
     /// A no-op eviction. Only a loader that manages residency overrides it.
     public func evict(container: any LoadedModelContainer) async {}
+
+    /// A no-op budget. Only a loader whose models keep a prompt cache
+    /// overrides it. When a loader does not, its runtime keeps its own default.
+    public func configurePromptCache(memoryBudgetBytes: Int) async {}
+
+    /// No usage. Only a loader whose models keep a prompt cache overrides it.
+    public var promptCacheUsage: PromptCacheUsage {
+        get async { .zero }
+    }
 }

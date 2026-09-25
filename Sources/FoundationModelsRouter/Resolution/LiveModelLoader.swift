@@ -811,6 +811,42 @@ public struct LiveModelLoader: ModelLoader {
         await generation.model.evict()
     }
 
+    /// Sends the memory budget to the process-wide prompt cache of the fork,
+    /// `MLXLanguageModel.configurePromptCache(memoryBudgetBytes:)`. The fork
+    /// applies it at once: a smaller budget moves the least recently used
+    /// entries to its disk spool before the call returns.
+    ///
+    /// The fork API is on its `stable` branch at `ffac55d` (2026-09-25) and
+    /// later. Both `Package.resolved` files (the root package and
+    /// `IntegrationTests/`) resolve `stable` to
+    /// `ffac55d4e9e0f75d30347c561cea042b674be831`.
+    ///
+    /// The Router does not set the disk budget. It keeps the fork default:
+    /// one quarter of the free space of the volume of the spool folder, read
+    /// at the first use. The Router knows nothing about the disk that the fork
+    /// does not know, and a file on disk costs no memory. A read of a spilled
+    /// entry costs much less than the prefill it saves (`generation-queue.md`
+    /// section 3), so a larger disk budget than the default has no clear gain.
+    ///
+    /// - Parameter memoryBudgetBytes: The most bytes the prompt-cache entries
+    ///   in memory may hold.
+    public func configurePromptCache(memoryBudgetBytes: Int) async {
+        await MLXLanguageModel.configurePromptCache(memoryBudgetBytes: memoryBudgetBytes)
+    }
+
+    /// The bytes the process-wide prompt cache of the fork holds now,
+    /// `MLXLanguageModel.promptCacheUsage`.
+    public var promptCacheUsage: PromptCacheUsage {
+        get async {
+            let usage = await MLXLanguageModel.promptCacheUsage
+            return PromptCacheUsage(
+                memoryBytes: usage.memoryBytes,
+                spillingBytes: usage.spillingBytes,
+                diskBytes: usage.diskBytes
+            )
+        }
+    }
+
     /// The revision used when a ``ModelRef`` does not pin one.
     private static let defaultRevision = "main"
 

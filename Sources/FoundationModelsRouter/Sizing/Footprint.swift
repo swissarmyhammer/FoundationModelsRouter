@@ -4,6 +4,13 @@ import Foundation
 ///
 /// The KV cache is fp16 regardless of weight quantization. Overhead is not
 /// modeled. The fit step compares this raw estimate with the budget.
+///
+/// The estimate does not size recurrent state. A model with recurrent layers
+/// (Mamba or another state-space model, such as the linear layers of Qwen3.5
+/// and Qwen3.6) keeps a fixed-size state for each such layer in place of a KV
+/// cache. ``kvBytes(context:)`` counts every layer as an attention layer, so
+/// the estimate is wrong for such a model, and the prompt-cache budget that
+/// the pool computes from it is wrong by the same amount.
 struct Footprint: Sendable, Equatable {
     /// Bytes per cached element (fp16).
     private static let cacheElementBytes: Int64 = 2

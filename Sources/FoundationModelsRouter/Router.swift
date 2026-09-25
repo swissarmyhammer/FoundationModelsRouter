@@ -294,6 +294,7 @@ public actor Router {
                     sessionBytes: Self.chosenSessionBytes(
                         for: chosen, context: slotRes.contextTokens, metadataByRef: metadataByRef
                     ),
+                    workingSetBytes: totalBudget,
                     newKeys: &newKeys,
                     progress: progress
                 )
@@ -305,6 +306,7 @@ public actor Router {
                 key: ResidencyKey(ref: resolution.embedding, role: .embedding),
                 chosen: resolution.embedding,
                 footprintBytes: Self.chosenFootprint(for: embeddingRes),
+                workingSetBytes: totalBudget,
                 newKeys: &newKeys,
                 progress: progress
             )
@@ -408,6 +410,8 @@ public actor Router {
     ///   - sessionBytes: The raw KV cache estimate this hold adds on the model at
     ///     its own context, and what its release gives back. Zero for an
     ///     embedder.
+    ///   - workingSetBytes: The recommended working set this resolve measured.
+    ///     The pool sizes the prompt cache of this router's loader against it.
     ///   - newKeys: Accumulates `key` when this call inserted a fresh entry.
     ///   - progress: The progress to drive through acquisition.
     ///   - load: The loader call that produces a fresh resident container.
@@ -420,6 +424,7 @@ public actor Router {
         slot: ModelSlot,
         footprintBytes: Int64,
         sessionBytes: Int64,
+        workingSetBytes: Int64,
         newKeys: inout Set<ResidencyKey>,
         progress: ResolutionProgress,
         load: @Sendable (ModelRef, ModelSlot, @escaping @Sendable (DownloadProgress) -> Void)
@@ -431,6 +436,7 @@ public actor Router {
             key: key,
             footprintBytes: footprintBytes,
             sessionBytes: sessionBytes,
+            promptCache: PromptCacheSizing(loader: loader, workingSetBytes: workingSetBytes),
             load: {
                 // Runs only for a key the pool did not hold, so a slot the
                 // pool already held opens no load span at all: a trace
@@ -454,7 +460,7 @@ public actor Router {
     }
 
     /// Acquires a generation slot for `key` through
-    /// ``acquireModel(key:chosen:slot:footprintBytes:sessionBytes:newKeys:progress:load:wrap:)``.
+    /// ``acquireModel(key:chosen:slot:footprintBytes:sessionBytes:workingSetBytes:newKeys:progress:load:wrap:)``.
     ///
     /// - Parameter context: The working context this resolve decodes at,
     ///   passed to the loader as advice. It is not part of `key`.
@@ -465,12 +471,13 @@ public actor Router {
         context: Int,
         footprintBytes: Int64,
         sessionBytes: Int64,
+        workingSetBytes: Int64,
         newKeys: inout Set<ResidencyKey>,
         progress: ResolutionProgress
     ) async throws -> AcquiredSlot {
         try await acquireModel(
             key: key, chosen: chosen, slot: slot, footprintBytes: footprintBytes,
-            sessionBytes: sessionBytes,
+            sessionBytes: sessionBytes, workingSetBytes: workingSetBytes,
             newKeys: &newKeys, progress: progress,
             load: { try await loader.loadLLM(ref: $0, slot: $1, context: context, reporting: $2) },
             wrap: { .llm($0) }
@@ -478,19 +485,20 @@ public actor Router {
     }
 
     /// Acquires the embedding slot for `key` through
-    /// ``acquireModel(key:chosen:slot:footprintBytes:sessionBytes:newKeys:progress:load:wrap:)``.
+    /// ``acquireModel(key:chosen:slot:footprintBytes:sessionBytes:workingSetBytes:newKeys:progress:load:wrap:)``.
     /// An embedder carries no KV cache, so its hold adds zero session bytes
     /// and its footprint is its weights alone.
     private func acquireEmbedder(
         key: ResidencyKey,
         chosen: ModelRef,
         footprintBytes: Int64,
+        workingSetBytes: Int64,
         newKeys: inout Set<ResidencyKey>,
         progress: ResolutionProgress
     ) async throws -> AcquiredSlot {
         try await acquireModel(
             key: key, chosen: chosen, slot: .embedding, footprintBytes: footprintBytes,
-            sessionBytes: 0,
+            sessionBytes: 0, workingSetBytes: workingSetBytes,
             newKeys: &newKeys, progress: progress,
             load: { try await loader.loadEmbedder(ref: $0, slot: $1, reporting: $2) },
             wrap: { .embedding($0) }
