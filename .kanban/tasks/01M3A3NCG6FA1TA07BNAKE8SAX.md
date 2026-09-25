@@ -58,10 +58,26 @@ comments:
     6. ACP comment before the change: the task comment that starts "Picked up. Final shape for the ACP card ^rfn4m87" (names `SessionEvent.passQueued` and `SessionEvent.passStarted`, and the meaning of all four `GenerationStall` fields). It was posted before any production code changed.
     7. Full suite green: `swift test --skip-build` 5 runs, each "1403 tests in 161 suites passed ... with 2 known issues" (the 2 known issues were there before), plus 3 and 19 tests in the other bundles; details in the "implement — changed" step record.
   timestamp: 2026-09-25T17:34:57.327497+00:00
+- actor: claude-code
+  id: 01m3ctxe7540nwpyk9wdmpyeba
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit b7359b1). 0 findings, 0 confirmed, 0 refuted. The engine examined 21 files. It did not examine 3 files: 2 files in `.kanban/` (excluded by `.reviewignore`) and `generation-queue.md` (no validator applies to it).
+    - next: The task is in done. No work remains.
+  timestamp: 2026-09-25T17:48:21.605313+00:00
+- actor: claude-code
+  id: 01m3ctz3cwfne0by4z1zccfgcv
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 20 files (pass observer; SessionEvent.passQueued and passStarted)
+    - test: green — swift test, 1425 passed (1403+3+19), 0 failed, 0 skipped; queue and stall suites 3 extra runs clean; all products and IntegrationTests build clean
+    - commit: b7359b1
+    - review: clean — 0 findings
+  timestamp: 2026-09-25T17:49:16.060258+00:00
 depends_on:
 - 01M39ZNSNZGBYEY5G8R93KJN94
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffff8580
 title: Do not count a wait for a queue place as a stalled generation, and tell the consumer about the wait
 ---
 ## Why
