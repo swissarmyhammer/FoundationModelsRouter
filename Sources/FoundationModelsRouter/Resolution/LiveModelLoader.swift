@@ -55,8 +55,9 @@ package struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     /// it; generation runs over a ``QueuedLanguageModel`` that wraps it.
     let model: MLXLanguageModel
 
-    /// The queue every per-session wrapper of this container shares. It is a
-    /// class, so each copy of this container holds the same queue.
+    /// The queue every per-session wrapper of this container shares. It is an
+    /// actor, a reference type, so each copy of this container holds the same
+    /// queue.
     let generationQueue = GenerationQueue()
 
     /// The window of ``model``, in tokens: the native max context its

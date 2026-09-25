@@ -918,7 +918,7 @@ struct NestedGenerationReentryTests {
         }
         #expect(
             await BoundedWait.conditionReached("the waiter's pass waiting in the queue") {
-                queue.waiterCount == 1
+                await queue.waitingCount == 1
             })
 
         // So the request reaches that wait, and the turn ends at once, while the
@@ -927,14 +927,14 @@ struct NestedGenerationReentryTests {
         #expect(
             await BoundedWait.signalArrived(
                 waiterFinished, named: "the end of the cancelled turn, while the holder still has the place"))
-        #expect(queue.waiterCount == 0)
+        #expect(await queue.waitingCount == 0)
 
         await fixture.latch.open()
         #expect(try await holderTurn.value == PassObservingModel.answer(to: Self.outerPrompt))
         await #expect(throws: CancellationError.self) { try await waiterTurn.value }
         #expect(fixture.passes.executors(servingPrompt: Self.nestedPrompt).isEmpty)
-        #expect(queue.availablePlaces == 1)
-        #expect(queue.waiterCount == 0)
+        #expect(await queue.isRunning == false)
+        #expect(await queue.waitingCount == 0)
 
         // The cancelled session still generates: its turn lock and the queue
         // are both free.

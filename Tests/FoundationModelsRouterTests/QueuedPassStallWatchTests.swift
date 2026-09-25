@@ -90,7 +90,7 @@ struct QueuedPassStallWatchTests {
         }
         try await Task.sleep(for: Self.heldLongerThanTheInterval)
         let stallsDuringTheWait = await waitingLog.stalls
-        let stillWaiting = fixture.queue.waiterCount == 1
+        let stillWaiting = await fixture.queue.waitingCount == 1
 
         await fixture.latch.open()
         _ = try await holdingTurn.value
@@ -116,7 +116,7 @@ struct QueuedPassStallWatchTests {
         #expect(holdingTurnEnded)
         #expect(await !holdingLog.contains(.passQueued))
         #expect(await !holdingLog.contains(.passStarted))
-        #expect(fixture.queue.availablePlaces == 1)
+        #expect(await fixture.queue.isRunning == false)
         withExtendedLifetime(resolved) {}
     }
 

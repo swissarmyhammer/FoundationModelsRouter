@@ -61,7 +61,7 @@ struct PooledResidencyTests {
         }
 
         func respond(to prompt: String, maxTokens: Int?) async throws -> String {
-            try await generationQueue.runPass {
+            try await generationQueue.runPass { [observer, releaseGate] in
                 await observer.enter(prompt)
                 await releaseGate.wait()
                 await observer.exit()
@@ -362,7 +362,7 @@ struct PooledResidencyTests {
         // other wait in the shared queue, before releasing them, so the queue
         // — not scheduling luck — is what is under test.
         #expect(await BoundedWait.conditionReached("one pass inside the shared model") { await observer.active == 1 })
-        #expect(await BoundedWait.conditionReached("the other pass waiting in the shared queue") { queue.waiterCount == 1 })
+        #expect(await BoundedWait.conditionReached("the other pass waiting in the shared queue") { await queue.waitingCount == 1 })
         #expect(await observer.maxActive == 1)
 
         releaseGate.signal()

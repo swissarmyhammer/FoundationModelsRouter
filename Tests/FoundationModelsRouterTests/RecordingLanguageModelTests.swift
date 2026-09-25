@@ -527,12 +527,12 @@ struct RecordingLanguageModelTests {
         // recording lock back after the diff, and the pass holds the one place
         // of the queue.
         #expect(handleA.state.recordingLock.availablePermits == 1)
-        #expect(queue.availablePlaces == 0)
+        #expect(await queue.isRunning)
 
         // handleB's pass waits in the queue of the container rather than
         // reaching the model concurrently with handleA's still-running pass.
         let taskB = Task { _ = try await sessionB.respond(to: "b") }
-        await Self.spin(until: { queue.waiterCount == 1 })
+        await Self.spin(until: { await queue.waitingCount == 1 })
         #expect(await observer.active == 1)
         #expect(await observer.maxActive == 1)
 

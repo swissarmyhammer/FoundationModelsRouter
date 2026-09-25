@@ -125,7 +125,7 @@ struct SharedGenerationQueueContentionTests {
         let waiterTurn = Task { try await waiter.respond(to: Self.secondPrompt) }
         #expect(
             await BoundedWait.conditionReached("the flash session's pass waiting in the shared queue") {
-                queue.waiterCount == 1
+                await queue.waitingCount == 1
             })
 
         // The waiting pass never reached the model, so one pass is in flight
@@ -136,8 +136,8 @@ struct SharedGenerationQueueContentionTests {
         #expect(try await holderTurn.value == PassObservingModel.answer(to: Self.firstPrompt))
         #expect(try await waiterTurn.value == PassObservingModel.answer(to: Self.secondPrompt))
         #expect(await fixture.observer.maximumActive == 1)
-        #expect(queue.availablePlaces == 1)
-        #expect(queue.waiterCount == 0)
+        #expect(await queue.isRunning == false)
+        #expect(await queue.waitingCount == 0)
     }
 
     // MARK: - The queue a resolve vends

@@ -1,11 +1,20 @@
-/// The work queue of one resident model: one generation pass runs at a time
-/// (`generation-queue.md`, section 2).
+/// The work queue of one resident model: one worker runs the items of the
+/// model one at a time, first in first out (`generation-queue.md`, section
+/// 5.3).
 ///
-/// A pass is one call of `LanguageModelExecutor.respond`. One GPU runs one
-/// generation at a time, so all the passes on one model wait in this one FIFO
-/// queue. A session that runs a tool body or waits for a person holds no
-/// place: the SDK ends an executor call before it runs the tool body of that
-/// call (task ^8nqkten).
+/// An item is one generation pass: one call of
+/// `LanguageModelExecutor.respond`. One GPU runs one generation at a time, so
+/// all the passes on one model go through this one queue. A session that runs
+/// a tool body or waits for a person has no item in the queue: the SDK ends an
+/// executor call before it runs the tool body of that call (task ^8nqkten).
+///
+/// The queue is not a lock. A submitter gives the queue its item and waits
+/// only for the result of that item. It never waits for a permission. The
+/// ``GenerationWorker`` of the queue holds the list of the waiting items, and
+/// its one worker task runs them in order, each on a task that it makes for
+/// that item. A task that the worker makes inherits no task-local of the
+/// submitter, so an item binds in its own closure each task-local that it
+/// needs.
 ///
 /// There is one queue for each pool entry. The live container
 /// (``MLXFoundationModelsContainer``) makes the queue and owns it, and one
@@ -16,72 +25,87 @@
 ///
 /// A container with no executor seam (a ``LoadedLLMContainer`` whose backend
 /// is not a `LanguageModelSession` over a `LanguageModel`) gets no pass-level
-/// gating from the wrapper. Such a container can own a queue of its own and run
-/// each scripted pass in ``runPass(isolation:_:)``, so its queue behavior is
-/// testable without MLX.
+/// queue from the wrapper. Such a container can own a queue of its own and
+/// submit each scripted pass through ``runPass(isolation:_:)``, so its queue
+/// behavior is testable without MLX.
 ///
-/// A turn holds no place outside its passes. A pass that waits here belongs to
-/// a turn with an identity, so ``RoutedSession/cancelCurrentTurn()`` ends the
-/// wait at once: the wait is cancellable, and a cancelled wait takes no place.
+/// A cancel of the submitter reaches its item. A waiting item leaves the list
+/// at once and never runs, and its submitter gets `CancellationError`. A
+/// running item gets the cancel on the task that runs it. So
+/// ``RoutedSession/cancelCurrentTurn()`` ends the wait of a pass at once.
 public final class GenerationQueue: Sendable {
-    /// The one place of the queue: a fair FIFO semaphore at value `1`.
-    private let place = AsyncSemaphore(value: 1)
+    /// The worker that holds the list and runs the items.
+    private let worker = GenerationWorker()
 
-    /// Makes a queue with its one place free.
+    /// Makes an idle queue.
     public init() {}
 
-    /// Waits for the place of the queue, runs `body`, and gives the place back.
+    /// Submits `body` as one item, and waits for its result.
     ///
-    /// A caller cancelled while it waits leaves the queue at once, runs
-    /// nothing, and takes no place. After the wait, the place is given back
-    /// in a `defer`, whether `body` returns, throws, or is cancelled.
+    /// `body` runs on a task that the worker makes, after every item that
+    /// joined the queue before it. A submitter that is cancelled while its
+    /// item waits gets `CancellationError` at once, and the item never runs.
+    /// A submitter that is cancelled while its item runs cancels the task
+    /// that runs it, and gets what `body` then gives.
     ///
     /// - Parameters:
-    ///   - isolation: The caller's actor isolation, which defaults to the
-    ///     caller's own. `body` runs there, on the calling task.
+    ///   - isolation: The actor isolation of the caller, which defaults to
+    ///     the caller's own. The caller waits and resumes there.
     ///   - body: One generation pass.
     /// - Returns: What `body` returns.
     /// - Throws: `CancellationError` when the calling task is cancelled before
-    ///   it gets the place, or what `body` throws.
-    public func runPass<T>(
+    ///   its item runs, or what `body` throws.
+    public func runPass<T: Sendable>(
         isolation: isolated (any Actor)? = #isolation,
-        _ body: () async throws -> T
+        _ body: @escaping @Sendable () async throws -> T
     ) async throws -> T {
-        try await place.withPermitUnlessCancelled(isolation: isolation, body)
+        try await runPass(isolation: isolation, onQueued: {}, body)
     }
 
-    /// ``runPass(isolation:_:)``, which also calls `onQueued` when the pass
-    /// must wait: a pass of another session holds the place (task ^ake8sax).
+    /// ``runPass(isolation:_:)``, which also calls `onQueued` when the item
+    /// must wait: the worker runs another item (task ^ake8sax).
     ///
-    /// A pass that finds the place free never calls `onQueued`. The
+    /// An item that finds the queue idle never calls `onQueued`. The
     /// per-session ``QueuedLanguageModel`` uses it to report the wait to its
     /// session.
     ///
     /// - Parameters:
-    ///   - isolation: The caller's actor isolation, which defaults to the
-    ///     caller's own. `body` runs there, on the calling task.
-    ///   - onQueued: Called on the calling task when the pass joins the queue.
+    ///   - isolation: The actor isolation of the caller, which defaults to
+    ///     the caller's own. The caller waits and resumes there.
+    ///   - onQueued: Called on the calling task when the item joins the list
+    ///     behind another item.
     ///   - body: One generation pass.
     /// - Returns: What `body` returns.
     /// - Throws: `CancellationError` when the calling task is cancelled before
-    ///   it gets the place, or what `body` throws.
-    func runPass<T>(
+    ///   its item runs, or what `body` throws.
+    func runPass<T: Sendable>(
         isolation: isolated (any Actor)? = #isolation,
         onQueued: @Sendable () -> Void,
-        _ body: () async throws -> T
+        _ body: @escaping @Sendable () async throws -> T
     ) async throws -> T {
-        try await place.withPermitUnlessCancelled(isolation: isolation, onQueued: onQueued, body)
+        let ticket = GenerationWorker.Ticket()
+        let worker = worker
+        return try await withTaskCancellationHandler {
+            try await worker.submit(ticket, onQueued: onQueued, body)
+        } onCancel: {
+            ticket.markCancelled()
+            Task { await worker.cancel(ticket) }
+        }
     }
 
-    /// The number of free places, `0` or `1`.
+    /// Whether the worker runs, or is about to run, an item.
     ///
     /// Exposed for observability and deterministic testing; not part of the
     /// queue contract.
-    var availablePlaces: Int { place.availablePermits }
+    var isRunning: Bool {
+        get async { await worker.isRunning }
+    }
 
-    /// The number of passes that wait for the place.
+    /// The number of items that wait for the worker.
     ///
     /// Exposed for observability and deterministic testing; not part of the
     /// queue contract.
-    var waiterCount: Int { place.waiterCount }
+    var waitingCount: Int {
+        get async { await worker.waitingCount }
+    }
 }

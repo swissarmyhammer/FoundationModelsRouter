@@ -14,9 +14,9 @@ import Synchronization
 ///
 /// ``waitUnlessCancelled()`` throws `CancellationError` instead, and a caller
 /// the user cancels leaves the queue at once. ``Router/resolve(profile:reporting:)``
-/// takes this acquire for the pool's resolve lock, and each pass takes it for
-/// its place in the ``GenerationQueue``: a queued resolve or pass holds nothing
-/// yet and can be abandoned safely.
+/// takes this acquire for the pool's resolve lock: a queued resolve holds
+/// nothing yet and can be abandoned safely. The ``GenerationQueue`` is a work
+/// queue, not a semaphore, and takes no acquire of this type.
 ///
 /// One arrival order serves both kinds of waiter, so the queue stays fair
 /// whichever acquire each caller took, and each continuation is resumed

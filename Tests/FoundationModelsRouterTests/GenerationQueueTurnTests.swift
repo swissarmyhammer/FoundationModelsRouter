@@ -162,7 +162,7 @@ struct GenerationQueueTurnTests {
         #expect(waitingAnswer == PassObservingModel.answer(to: Self.firstPrompt))
         #expect(fixture.passes.recorded.map(\.prompt) == [Self.firstPrompt, Self.secondPrompt, Self.firstPrompt])
         #expect(await BoundedWait.signalArrived(waitingFinished, named: "the end of the waiting turn"))
-        #expect(fixture.queue.availablePlaces == 1)
+        #expect(await fixture.queue.isRunning == false)
         withExtendedLifetime(resolved) {}
     }
 
@@ -189,7 +189,7 @@ struct GenerationQueueTurnTests {
         let secondFinished = AsyncSemaphore(value: 0)
         let secondTurn = Self.startTurn(signalling: secondFinished) { try await second.respond(to: Self.secondPrompt) }
         let secondQueued = await BoundedWait.conditionReached("the first pass of the second session in the queue") {
-            queue.waiterCount == 1
+            await queue.waitingCount == 1
         }
 
         // Release one pass at a time. The next pass to start is the one the
@@ -200,7 +200,8 @@ struct GenerationQueueTurnTests {
             step.signal()
             let isLastPass = released + 1 == totalPasses
             everyStepWasObserved = await BoundedWait.conditionReached("pass \(released + 1) started") {
-                passes.recorded.count == released + 1 && (isLastPass || queue.waiterCount == 1)
+                let waitingCount = await queue.waitingCount
+                return passes.recorded.count == released + 1 && (isLastPass || waitingCount == 1)
             }
         }
         for _ in passes.recorded.count...totalPasses { step.signal() }
@@ -214,7 +215,7 @@ struct GenerationQueueTurnTests {
         #expect(secondAnswer == PassObservingModel.answer(to: Self.secondPrompt))
         #expect(await BoundedWait.signalArrived(firstFinished, named: "the end of the first loop"))
         #expect(await BoundedWait.signalArrived(secondFinished, named: "the end of the second loop"))
-        #expect(queue.availablePlaces == 1)
+        #expect(await queue.isRunning == false)
         withExtendedLifetime(resolved) {}
     }
 
@@ -244,7 +245,7 @@ struct GenerationQueueTurnTests {
         #expect(fixture.passes.recorded.map(\.prompt) == [Self.firstPrompt, Self.secondPrompt, Self.firstPrompt])
         #expect(await Self.responseTexts(of: child) == [PassObservingModel.answer(to: Self.secondPrompt)])
         #expect(parentAnswer == PassObservingModel.answer(to: Self.firstPrompt))
-        #expect(fixture.queue.availablePlaces == 1)
+        #expect(await fixture.queue.isRunning == false)
         withExtendedLifetime(resolved) {}
     }
 
@@ -288,7 +289,7 @@ struct GenerationQueueTurnTests {
         // The two passes of the ended turn, then the pass of the run on the
         // child.
         #expect(fixture.passes.recorded.map(\.prompt) == [Self.firstPrompt, Self.firstPrompt, Self.secondPrompt])
-        #expect(fixture.queue.availablePlaces == 1)
+        #expect(await fixture.queue.isRunning == false)
         withExtendedLifetime(resolved) {}
     }
 }

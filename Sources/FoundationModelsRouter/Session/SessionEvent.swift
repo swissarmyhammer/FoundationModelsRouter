@@ -69,20 +69,21 @@ public enum SessionEvent: Sendable, Equatable {
     /// measured. ``GenerationStall`` states the meaning of each field.
     case generationStalled(GenerationStall)
 
-    /// A generation pass of the turn in flight waits for the place of the
-    /// ``GenerationQueue`` of its model, because a pass of another session
-    /// holds the place. A consumer can show "waiting for the model".
+    /// A generation pass of the turn in flight waits in the
+    /// ``GenerationQueue`` of its model, because the worker of that queue runs
+    /// a pass of another session. A consumer can show "waiting for the model".
     ///
     /// The session sends it only when the pass must wait. A pass that finds
-    /// the place free sends none. ``passStarted`` follows when the pass takes
-    /// the place. A cancelled wait sends no ``passStarted``, and the turn ends.
+    /// the queue idle sends none. ``passStarted`` follows when the worker
+    /// starts the pass. A cancelled wait sends no ``passStarted``, and the
+    /// turn ends.
     /// Only a backend that runs over the per-session queued wrapper of the
     /// live container reports passes; a backend with no executor seam sends
     /// neither event.
     case passQueued
 
-    /// The pass that sent ``passQueued`` took the place of the
-    /// ``GenerationQueue`` of its model, and generates now. The session sends
+    /// The worker of the ``GenerationQueue`` of its model started the pass
+    /// that sent ``passQueued``, and the pass generates now. The session sends
     /// it only after a ``passQueued``.
     case passStarted
 

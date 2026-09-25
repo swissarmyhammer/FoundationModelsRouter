@@ -4,10 +4,12 @@ import FoundationModels
 /// model whose own executor calls it directly.
 ///
 /// A wrapper (``RecordingLanguageModel``, ``QueuedLanguageModel``) does its
-/// own work around one executor call and passes the request through. It
-/// calls the wrapped executor on the same task and over the same outer
-/// channel, so the wrapped executor sees the request unchanged and a
-/// task-local value the wrapper binds reaches it.
+/// own work around one executor call and passes the request through, over the
+/// same outer channel, so the wrapped executor sees the request unchanged.
+/// ``RecordingLanguageModel`` calls the wrapped executor on the same task, so a
+/// task-local value it binds reaches that executor. ``QueuedLanguageModel``
+/// calls it on the task that the worker of its ``GenerationQueue`` makes, so
+/// only a task-local that the item itself binds reaches that executor.
 enum ExecutorPassthrough {
     /// One call of a wrapped executor.
     typealias Respond = @Sendable (

@@ -1,9 +1,9 @@
 import FoundationModels
 import Synchronization
 
-/// A `FoundationModels.LanguageModel` that runs each executor pass of a
-/// wrapped model inside one place of a ``GenerationQueue``
-/// (`generation-queue.md`, section 2).
+/// A `FoundationModels.LanguageModel` that submits each executor pass of a
+/// wrapped model as one item of a ``GenerationQueue``
+/// (`generation-queue.md`, section 5.3).
 ///
 /// There is one wrapper for each backend a container makes: each session,
 /// each fork, and each summarizer backend. Each wrapper has its own
@@ -86,15 +86,21 @@ struct QueuedLanguageModel: LanguageModel, Sendable {
             innerRespond = try ExecutorPassthrough.make(wrapping: configuration.state.wrapped)
         }
 
-        /// Waits for the place of the queue, runs one pass of the wrapped
-        /// executor on this task over the same `channel`, and gives the place
-        /// back on every exit.
+        /// Submits one pass of the wrapped executor to the queue, and waits
+        /// for the result of that pass.
+        ///
+        /// The item is the executor call of the SDK itself, not a copy: it
+        /// calls the wrapped executor with the same `request` and over the
+        /// same `channel` that the SDK gave this call. The worker of the
+        /// queue runs it on a task of its own. That task inherits no
+        /// task-local of this call, so the item binds each task-local that
+        /// the pass needs. The pass needs none now.
         ///
         /// The pass reports to the observer of its session, when the session
-        /// installed one (task ^ake8sax): that the pass joins the queue, that
-        /// it takes the place, and that it leaves the queue. The last report
-        /// comes on every exit, just after the place is given back, and also
-        /// after a wait that a cancellation ended.
+        /// installed one (task ^ake8sax): that the pass waits behind another
+        /// item, that the worker starts it, and that it left the queue. The
+        /// last report comes on every exit, after the result of the item, and
+        /// also after a wait that a cancellation ended.
         ///
         /// - Parameters:
         ///   - request: The generation request, passed through unchanged.
@@ -102,7 +108,7 @@ struct QueuedLanguageModel: LanguageModel, Sendable {
         ///     configuration.
         ///   - channel: The outer channel the wrapped executor streams into.
         /// - Throws: `CancellationError` when the task is cancelled while the
-        ///   pass waits for its place, or what the wrapped executor throws.
+        ///   pass waits for the worker, or what the wrapped executor throws.
         func respond(
             to request: LanguageModelExecutorGenerationRequest,
             model: QueuedLanguageModel,
@@ -110,7 +116,7 @@ struct QueuedLanguageModel: LanguageModel, Sendable {
         ) async throws {
             let observer = state.passObserver
             defer { observer?.passEnded() }
-            try await state.queue.runPass(onQueued: { observer?.passQueued() }) {
+            try await state.queue.runPass(onQueued: { observer?.passQueued() }) { [innerRespond] in
                 observer?.passStarted()
                 try await innerRespond(request, channel)
             }

@@ -16,7 +16,7 @@ import Testing
 /// - the same backend, when wired with a test-controlled ``SerialObserver`` +
 ///   release gate, runs `respond` as one pass in its container's queue and can
 ///   suspend that pass, so the queue's non-overlap and FIFO order are made
-///   deterministic through the queue's `waiterCount` observability rather than
+///   deterministic through the queue's `waitingCount` observability rather than
 ///   sleeps.
 ///
 /// Real prefix reuse (no recompute) is gated to the milestone 7 integration
@@ -462,18 +462,18 @@ struct ForkConcurrencyTests {
 
         // Launch call 0; its pass takes the one place of the queue and suspends.
         let task0 = Task { try await callers[0].respond(to: "0") }
-        await Self.spin(until: { queue.availablePlaces == 0 })
+        await Self.spin(until: { await queue.isRunning })
         await Self.spin(until: { await observer.entryOrder == [0] })
 
         // Launch calls 1, 2, 3 one at a time, each only after the previous pass
         // has actually joined the queue — establishing a deterministic FIFO
         // arrival order without sleeping.
         let task1 = Task { try await callers[1].respond(to: "1") }
-        await Self.spin(until: { queue.waiterCount == 1 })
+        await Self.spin(until: { await queue.waitingCount == 1 })
         let task2 = Task { try await callers[2].respond(to: "2") }
-        await Self.spin(until: { queue.waiterCount == 2 })
+        await Self.spin(until: { await queue.waitingCount == 2 })
         let task3 = Task { try await callers[3].respond(to: "3") }
-        await Self.spin(until: { queue.waiterCount == 3 })
+        await Self.spin(until: { await queue.waitingCount == 3 })
 
         // Only one pass has entered so far — the queue held the rest out.
         #expect(await observer.entryOrder == [0])
@@ -489,7 +489,7 @@ struct ForkConcurrencyTests {
 
         #expect(await observer.entryOrder == [0, 1, 2, 3])
         #expect(await observer.maxActive == 1)
-        #expect(queue.availablePlaces == 1)
+        #expect(await queue.isRunning == false)
 
         _ = callers
     }

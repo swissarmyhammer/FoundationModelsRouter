@@ -3,23 +3,23 @@ import Synchronization
 /// One point in the life of a generation pass, as a
 /// ``GenerationPassObserver`` records it (task ^ake8sax).
 enum GenerationPassPhase: Sendable, Equatable {
-    /// The pass joined the queue, because a pass of another session holds
-    /// the place.
+    /// The pass joined the queue behind another item, because the worker of
+    /// the queue runs a pass of another session.
     case queued
 
-    /// The pass took the place of the queue. `at` is when it took the place.
-    /// `afterWait` is `true` when the pass joined the queue before it took
-    /// the place, so the phase before this one was ``queued``.
+    /// The worker of the queue started the pass. `at` is when it started.
+    /// `afterWait` is `true` when the pass waited behind another item before
+    /// it started, so the phase before this one was ``queued``.
     case started(at: ContinuousClock.Instant, afterWait: Bool)
 
-    /// The pass left the queue: it gave its place back, or it left the wait
-    /// with no place because its task was cancelled.
+    /// The pass left the queue: it ended, or its task was cancelled while it
+    /// waited, and it never started.
     case ended
 
     /// The event that tells the consumer of the session about this phase, or
     /// `nil` for a phase the consumer does not see.
     ///
-    /// A pass that took a free place sends no event, so a consumer sees
+    /// A pass that found the queue idle sends no event, so a consumer sees
     /// ``SessionEvent/passStarted`` only after a ``SessionEvent/passQueued``.
     var sessionEvent: SessionEvent? {
         switch self {
@@ -36,14 +36,14 @@ enum GenerationPassPhase: Sendable, Equatable {
 /// A report of a backend's passes that the session of that backend installs
 /// (`generation-queue.md`, section 2).
 ///
-/// The wait for a queue place happens in the executor of the per-session
-/// ``QueuedLanguageModel``, and not on the session actor. A task-local that the
-/// session binds does not reach that executor through `LanguageModelSession`,
-/// because the SDK can run the executor on another task. So the session gives
-/// this observer to the per-session state of its wrapper
+/// The wait for the worker of the queue happens in the executor of the
+/// per-session ``QueuedLanguageModel``, and not on the session actor, and the
+/// worker runs the pass on a task of its own. A task-local that the session
+/// binds reaches neither of them. So the session gives this observer to the
+/// per-session state of its wrapper
 /// (``QueuedLanguageModelState/reportPasses(to:)``), and the executor calls it
-/// at three points of each pass: the pass joins the queue, the pass takes the
-/// place, and the pass leaves the queue.
+/// at three points of each pass: the pass waits behind another item, the
+/// worker starts the pass, and the pass leaves the queue.
 ///
 /// The calls are synchronous and never suspend, so they cannot delay a pass.
 /// Each call appends one ``GenerationPassPhase`` under a lock, in the order of
@@ -57,8 +57,8 @@ final class GenerationPassObserver: Sendable {
         /// in the order of the calls.
         var pending: [GenerationPassPhase] = []
 
-        /// Whether the pass in flight joined the queue and did not take the
-        /// place yet.
+        /// Whether the pass in flight waits behind another item and the
+        /// worker did not start it yet.
         var isWaiting = false
 
         /// The wake of the model call in flight: the id of that call and the
@@ -77,7 +77,7 @@ final class GenerationPassObserver: Sendable {
         }
     }
 
-    /// Records that the pass took the place of the queue now.
+    /// Records that the worker of the queue started the pass now.
     func passStarted() {
         let now = ContinuousClock.now
         record { state in

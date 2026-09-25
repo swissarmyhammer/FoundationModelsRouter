@@ -54,7 +54,7 @@ struct GenerationQueueTests {
         }
         let secondTurn = Task { try await second.respond(to: "second", maxTokens: nil) }
         _ = await BoundedWait.conditionReached("the second pass waited for a queue place") {
-            fixture.queue.waiterCount == 1
+            await fixture.queue.waitingCount == 1
         }
         #expect(await fixture.observer.maximumActive == 1)
 
@@ -66,7 +66,7 @@ struct GenerationQueueTests {
         #expect(secondAnswer == PassObservingModel.answer(to: "second"))
         #expect(await fixture.observer.enteredCount == 2)
         #expect(await fixture.observer.maximumActive == 1)
-        #expect(fixture.queue.availablePlaces == 1)
+        #expect(await fixture.queue.isRunning == false)
     }
 
     @Test("two sessions and a fork over one container each get their own executor")
@@ -110,18 +110,18 @@ struct GenerationQueueTests {
         }
         let waitingTurn = Task { try await waiter.respond(to: "waiter", maxTokens: nil) }
         _ = await BoundedWait.conditionReached("the second pass waited for a queue place") {
-            fixture.queue.waiterCount == 1
+            await fixture.queue.waitingCount == 1
         }
         waitingTurn.cancel()
         let waitingOutcome = await waitingTurn.result
-        let waiterCountAfterCancel = fixture.queue.waiterCount
+        let waiterCountAfterCancel = await fixture.queue.waitingCount
 
         await fixture.latch.open()
         _ = try await holdingTurn.value
 
         #expect(throws: CancellationError.self) { try waitingOutcome.get() }
         #expect(waiterCountAfterCancel == 0)
-        #expect(fixture.queue.availablePlaces == 1)
+        #expect(await fixture.queue.isRunning == false)
         #expect(fixture.passes.executors(servingPrompt: "waiter").isEmpty)
     }
 
@@ -144,7 +144,7 @@ struct GenerationQueueTests {
             try await queue.runPass(onQueued: { waiterWaits.signal() }) {}
         }
         let waiterQueued = await BoundedWait.conditionReached("the second pass waited for the place") {
-            queue.waiterCount == 1
+            await queue.waitingCount == 1
         }
         release.signal()
         try await holdingPass.value
@@ -154,7 +154,7 @@ struct GenerationQueueTests {
         #expect(waiterQueued)
         #expect(holderWaits.availablePermits == 0)
         #expect(waiterWaits.availablePermits == 1)
-        #expect(queue.availablePlaces == 1)
+        #expect(await queue.isRunning == false)
     }
 
     @Test("two wrappers over one model and one queue are two executor cache keys")
