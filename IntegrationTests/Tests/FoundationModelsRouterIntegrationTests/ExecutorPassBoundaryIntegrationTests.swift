@@ -112,7 +112,9 @@ struct ExecutorPassBoundaryIntegrationTests {
         let lastPassEnd = try #require(log.recorded.last { $0.boundary == .executorExited })
         // Printed, not asserted: the measurement the card asks for. A pass that
         // waited for the consumer ends near the consumer's end; a pass that
-        // does not wait ends long before it.
+        // does not wait ends long before it. The gated run's record for the
+        // card: a reader copies this line. This test target does not ship.
+        // swiftlint:disable:next no_direct_standard_out_logs - the gated run's record; this target does not ship
         print(
             "[slowStreamConsumer] snapshots=\(snapshotCount) passDurations=\(log.passDurations) "
                 + "consumeTotal=\(consumeStarted.duration(to: consumeEnded)) "

@@ -43,6 +43,48 @@ comments:
     - evidence: a818fcc test(queue): prove an executor pass ends before the SDK runs its tool body (^8nqkten); pushed 294dd23..a818fcc to origin/main. Committed at the user's request before /review.
     - next: /review
   timestamp: 2026-09-24T19:32:50.788682+00:00
+- actor: claude-code
+  id: 01m3c7cafsn3mffbq10gnms9g5
+  text: |-
+    ### review — findings
+    - evidence: review sha a818fcc~1..a818fcc. 1 finding (1 confirmed, 0 refuted). IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/ExecutorPassBoundaryIntegrationTests.swift:116 (code-hygiene/disallowed-constructs-swift, no_direct_standard_out_logs).
+    - next: Remove the direct standard-out call from the file. Look for all print, debugPrint and dump calls in the file, not only the line in the finding. Then do the review again.
+  timestamp: 2026-09-25T12:06:57.785882+00:00
+- actor: claude-code
+  id: 01m3c7e1es0q23jg114r0aadbq
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — done before this /finish run
+    - test: not run in this iteration (the earlier implement run tested it)
+    - commit: a818fcc
+    - review: findings — IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/ExecutorPassBoundaryIntegrationTests.swift:116
+  timestamp: 2026-09-25T12:07:54.073220+00:00
+- actor: claude-code
+  id: 01m3c7h66zpvcna2eynkefjepb
+  text: |-
+    Picked up the review finding again. Moved the card to doing.
+
+    Finding (no_direct_standard_out_logs) at `ExecutorPassBoundaryIntegrationTests.swift`: the `print(` of the slow-consumer test was the only standard-out call in the file. It writes the measurement that this card asks for (snapshots, passDurations, consumeTotal, consumerLagAfterLastPass). The earlier result comment copied these numbers from that line.
+
+    Other ways to record the value do not work for this case:
+    - The test targets have no logging system. An `os.Logger` does not write to the test output, where a reader copies the line from.
+    - `Issue.record` makes the test fail.
+    - An `#expect` message shows only when the expectation fails.
+    - `Attachment.record` writes nowhere when no attachments path is set. `CompactionContinuityEvalRealSubjectRunner.swift` records this.
+
+    The repository idiom for a gated-run record in this target is a `disable:next` directive with a reason. `Qwen38CompactionIntegrationTests.swift` and `Support/Qwen38ResidentModel.swift` use it. The fix puts `// swiftlint:disable:next no_direct_standard_out_logs - the gated run's record; this target does not ship` directly above the `print(`, and adds the reason to the comment above it. No other print, debugPrint, dump or _printChanges call is in the file. Also none is in the two other files of this card: `Tests/FoundationModelsRouterTestSupport/ExecutorPassBoundaryProbe.swift` and `Tests/FoundationModelsRouterTests/ExecutorPassBoundaryTests.swift`.
+
+    Build: `touch` on the file, then `swift build --build-tests -v` in `IntegrationTests/`. The log shows "Compiling ExecutorPassBoundaryIntegrationTests.swift". Result: Build complete. The log has one warning only: "missing creator for mutated node ... mlx-swift_Cmlx.bundle". The build system gives this warning, and it was there before this change. The gated real-model tests did not run.
+
+    Tool note: `update task` returned a result that was too large (about 125k characters) to show in the tool output. Read the card to make sure that the finding checkbox is `- [x]`.
+  timestamp: 2026-09-25T12:09:37.247439+00:00
+- actor: claude-code
+  id: 01m3c7hcvfpj8qpfpeq63ppeg4
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/ExecutorPassBoundaryIntegrationTests.swift (added a `swiftlint:disable:next no_direct_standard_out_logs` directive and its reason above the measurement `print(`). `swift build --build-tests` in IntegrationTests/: Build complete. The changed file compiled again. The build has 0 new warnings. The finding checkbox is now `- [x]`. The card is in doing.
+    - next: /review
+  timestamp: 2026-09-25T12:09:44.047498+00:00
 position_column: doing
 position_ordinal: '80'
 title: Prove that one executor call ends before the SDK runs the tool body of that call
@@ -70,3 +112,9 @@ The code did not prove this:
 - [x] The same for the stream path, and a statement about a slow stream consumer.
 - [x] The same in the gated real-model suite over `MLXLanguageModel`.
 - [x] A comment on this task gives the result. If the executor call stays open across the tool body, stop the queue work and tell the FoundationModelsAgents session. The seam must then move into the fork (release the queue place at the tool-call send, as the fork does for `perform`). #generation-queue
+
+## Review Findings (2026-09-25 07:03)
+
+> Scope: `review sha a818fcc~1..a818fcc` — reviewed the diffs only — lines this change added or modified. 3 file(s) reviewed, 0 not reviewed.
+
+- [x] `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/ExecutorPassBoundaryIntegrationTests.swift:116` `code-hygiene/disallowed-constructs-swift` — no_direct_standard_out_logs: Do not commit print(…), debugPrint(…), dump(…) or _printChanges(), which write to standard out in release. Log to a dedicated logging system, or silence one debug-only line with // swiftlint:disable:next no_direct_standard_out_logs and the reason after it.
