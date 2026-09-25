@@ -10,6 +10,10 @@ import Tokenizers
 
 @testable import FoundationModelsRouter
 
+/// The working context of ``twoModelProfile``, in tokens: 4k. It is the short
+/// context of the spill measurements of fork task ^mre55m3.
+private let twoModelContextTokens = 4096
+
 /// The profile of this suite: two small generation models with attention
 /// layers only, and the real embedder of the gated suites. All three are
 /// resident at one time.
@@ -22,7 +26,7 @@ private let twoModelProfile = ProfileDefinition(
     standard: ["mlx-community/Qwen3-4B-4bit"],
     flash: ["mlx-community/Qwen3-1.7B-4bit"],
     embedding: [RealModels.embedding],
-    context: 4096
+    context: twoModelContextTokens
 )
 
 /// The prompt each session of this suite answers.

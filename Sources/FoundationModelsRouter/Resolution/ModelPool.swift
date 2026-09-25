@@ -75,10 +75,12 @@ package struct PoolEntry: Sendable {
     /// it at zero references, whichever router releases last.
     let evict: @Sendable (any LoadedModelContainer) async -> Void
 
-    /// The prompt cache this entry sizes, and the working set of the resolve
-    /// that loaded it. The pool sends the budget again through it when this
+    /// The prompt cache this entry sizes, and the working set of the latest
+    /// resolve that acquired it. Each acquisition replaces it, so that a
+    /// release sends the budget against the same working set as the latest
+    /// acquisition. The pool sends the budget again through it when this
     /// entry's footprint changes or the entry is evicted.
-    let promptCache: PromptCacheSizing
+    var promptCache: PromptCacheSizing
 
     /// Whether the acquisition that received this snapshot loaded the model:
     /// it is the only hold. Under the resolve lock no release can drop a
@@ -245,6 +247,9 @@ public actor ModelPool {
         if var entry = entries[key] {
             entry.refcount += 1
             entry.acquiredChargeBytes += sessionBytes
+            // Keep the sizing of this acquisition, so that a later release
+            // sends the budget against the same working set as this send.
+            entry.promptCache = promptCache
             entries[key] = entry
             await resizePromptCache(through: promptCache)
             return entry

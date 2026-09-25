@@ -39,7 +39,7 @@ public struct PromptCacheUsage: Sendable, Equatable {
 ///
 /// The pool keeps one on each entry. An unload has no router on the stack (a
 /// dropped ``ResidencyHold`` starts it), so the entry must carry the target
-/// and the working set of the resolve that loaded it.
+/// and the working set of the latest resolve that acquired it.
 package struct PromptCacheSizing: Sendable {
     /// The loader whose prompt cache gets the budget.
     let loader: any ModelLoader

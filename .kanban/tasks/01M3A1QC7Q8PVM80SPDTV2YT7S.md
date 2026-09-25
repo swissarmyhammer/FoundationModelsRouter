@@ -46,6 +46,38 @@ comments:
     - gated, real models: `PromptCacheBudgetIntegrationTests/` 1/1 pass with Qwen3-4B-4bit + Qwen3-1.7B-4bit + Qwen3-Embedding-0.6B-4bit-DWQ (RED first on the no-op loader: diskBytes == 0). `LanguageModelSessionBackendIntegrationTests/secondTurnReusesFirstTurnsKVCache` 1/1 pass on Muse-Glimmer-30B-mxfp4 at the ffac55d pin. `CrossRouterPoolIntegrationTests/` 2/2 pass.
     - next: /review
   timestamp: 2026-09-25T12:51:56.339659+00:00
+- actor: claude-code
+  id: 01m3cay1amky42fx3829vdqtj4
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (commit 5cd08d9). 4 findings (4 confirmed, 1 refuted). IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/PromptCacheBudgetIntegrationTests.swift:25, IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/Support/SettledValuePoll.swift:8, Sources/FoundationModelsRouter/Resolution/ModelPool.swift:249, Tests/FoundationModelsRouterTests/PromptCacheBudgetTests.swift:26.
+    - next: Correct the 4 items in the section "Review Findings (2026-09-25 07:58)". Then run the tests and do the review again. The task stays in the review column.
+  timestamp: 2026-09-25T13:09:03.956114+00:00
+- actor: claude-code
+  id: 01m3cazqpqdxhxgg6a7vb2jxvr
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 10 files
+    - test: green — swift test, 1409 passed (1389+1+19), 0 failed, 0 skipped; IntegrationTests build clean
+    - commit: 5cd08d9
+    - review: findings — PromptCacheBudgetIntegrationTests.swift:25, Support/SettledValuePoll.swift:8, Resolution/ModelPool.swift:249, PromptCacheBudgetTests.swift:26
+  timestamp: 2026-09-25T13:09:59.639742+00:00
+- actor: claude-code
+  id: 01m3cb6ww2ec3gwnej1e7p98cg
+  text: |-
+    Review findings corrected (implement step, 2026-09-25). Not committed.
+    - Finding 3 (invariant-propagation): `PoolEntry.promptCache` is now `var`. `ModelPool.acquire` sets `entry.promptCache = promptCache` when it uses a resident entry again, so a release sends the budget against the working set (and loader) of the latest acquisition. The doc comments of `PoolEntry.promptCache` and `PromptCacheSizing` now say "the latest resolve that acquired it". New unit test `releaseUsesTheWorkingSetOfTheLatestAcquisition`: acquire at 48 GiB, acquire the same key at 32 GiB, release one hold, expect 32 GiB less the footprint. It failed before the fix (the release sent 48 GiB less the footprint) and passes after.
+    - Finding 4 (reuse): `PromptCacheRecordingLoader` gives `loadLLM`, `loadEmbedder` and `preload` to a composed shared `StubModelLoader` (with one `CannedLLMContainer`). It overrides only `configurePromptCache` and `promptCacheUsage`. I did not change the shared stub, because 40 suites use it.
+    - Findings 1 and 2 (magic-numbers-swift): new named constants `twoModelContextTokens` (4096) and `SettledValuePoll.readIntervalMilliseconds` (50). Check: `swiftlint lint` with `only_rules: [no_magic_numbers]` and `allowed_numbers: [0, 1, -1, 100]` gives 0 violations on the 5 changed Swift files (before: 2, the two named lines).
+    - Note: the SwiftPM line `warning: missing creator for mutated node: ...mlx-swift_Cmlx.bundle/Contents/MacOS` shows in both builds. It is from the build graph of the MLX resource bundle, not from a Swift source file.
+  timestamp: 2026-09-25T13:13:54.306198+00:00
+- actor: claude-code
+  id: 01m3cb70sf7ys399ypb41v9k5c
+  text: |-
+    ### implement — changed
+    - evidence: 5 files — Sources/FoundationModelsRouter/Resolution/ModelPool.swift, Sources/FoundationModelsRouter/Sizing/PromptCacheBudget.swift, Tests/FoundationModelsRouterTests/PromptCacheBudgetTests.swift, IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/PromptCacheBudgetIntegrationTests.swift, IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/Support/SettledValuePoll.swift. `swift test --filter 'FoundationModelsRouterTests.PromptCacheBudgetTests'` RED first (1 of 12 failed: the new test), then green. Root `swift test`: 1390 tests in 158 suites pass (2 known issues, both pre-existing withKnownIssue) + 1 + 19 = 1410 pass, 0 fail. `swift build --build-tests` in IntegrationTests/: build complete, changed modules recompiled, no Swift warnings. The 4 findings are checked.
+    - next: /review
+  timestamp: 2026-09-25T13:13:58.319027+00:00
 depends_on:
 - 01M39ZMNME683Y75PX48NQKTEN
 position_column: doing
@@ -113,3 +145,15 @@ On M5 GPUs, MLX computes float32 matmul in TF32 by default (`MLX_ENABLE_TF32`). 
 - [x] A comment gives the disk-budget decision and the resolved fork revision (`ffac55d` or later).
 - [x] An integration test (gated) with two resident models: weights plus caches stay within the pool budget.
 - [x] `secondTurnReusesFirstTurnsKVCache` (`IntegrationTests/.../LanguageModelSessionBackendTests.swift`) stays green on the new fork pin. #generation-queue #prompt-cache
+
+## Review Findings (2026-09-25 07:58)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 9 file(s) reviewed, 6 not reviewed.
+
+> 6 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 6 file(s)
+
+- [x] `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/PromptCacheBudgetIntegrationTests.swift:25` `code-hygiene/magic-numbers-swift` — Magic numbers should be replaced by named constants.
+- [x] `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/Support/SettledValuePoll.swift:8` `code-hygiene/magic-numbers-swift` — Magic numbers should be replaced by named constants.
+- [x] `Sources/FoundationModelsRouter/Resolution/ModelPool.swift:249` `completeness/invariant-propagation` — When reusing a resident pool entry, the code sends a resize-budget call using the new resolve's `promptCache.workingSetBytes` (line 249), but the entry's stored `promptCache` field is never updated. Later, during release (line 381), the code uses `entry.promptCache.workingSetBytes` (the entry's original working set from initial load). This asymmetry violates the invariant: a value that determines budget calculation should use the same value at all sites that consume it. If the machine's working set changed between the initial load and reuse, the release will send a budget calculated against a stale working set. Update the entry's stored promptCache when reusing in a new resolve. After line 248 (`entries[key] = entry`), also assign `entry.promptCache = promptCache` so that the entry's working-set context stays current. This ensures release (line 381) uses the same working set as the most recent acquire.
+- [x] `Tests/FoundationModelsRouterTests/PromptCacheBudgetTests.swift:26` `reuse/reuse` — The `loadLLM` method reimplements code that is 0.99 similar to an existing implementation. This exact functionality already exists in `RouterTestFixtures.StubModelLoader`, which returns `CannedLLMContainer(ref: ref)`. Rather than duplicating the method, the class should inherit from or delegate to the existing implementation. Extend `RouterTestFixtures.StubModelLoader` and override only `configurePromptCache` and `promptCacheUsage` to add the budget-recording behavior, or delegate loading calls to a composed `StubModelLoader` instance.

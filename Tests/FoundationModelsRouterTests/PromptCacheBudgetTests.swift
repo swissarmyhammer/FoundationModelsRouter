@@ -6,15 +6,23 @@ import Testing
 /// A ``ModelLoader`` that records each prompt-cache memory budget it gets, and
 /// reports a fixed prompt-cache usage.
 ///
-/// It loads a ``CannedLLMContainer`` for each generation reference and a
+/// It gives each load to the shared ``StubModelLoader``, which loads one
+/// ``CannedLLMContainer`` for each generation slot and a
 /// ``StubEmbeddingContainer`` for each embedder. It does no download and uses
 /// no GPU.
 private actor PromptCacheRecordingLoader: ModelLoader {
+    /// The reference of the canned generation container that each load gives.
+    private static let cannedRef: ModelRef = "org/prompt-cache"
+
     /// Each memory budget the pool sent, in the order it was sent.
     private(set) var memoryBudgets: [Int] = []
 
     /// The usage this loader reports for each read.
     private let usage: PromptCacheUsage
+
+    /// The shared stub that does each load.
+    private let stub = StubModelLoader(
+        container: CannedLLMContainer(ref: cannedRef), dimension: RouterTestFixtures.stubDimension)
 
     /// Makes a loader that reports `usage`.
     ///
@@ -29,7 +37,7 @@ private actor PromptCacheRecordingLoader: ModelLoader {
         context: Int,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> any LoadedLLMContainer {
-        CannedLLMContainer(ref: ref)
+        try await stub.loadLLM(ref: ref, slot: slot, context: context, reporting: reporting)
     }
 
     func loadEmbedder(
@@ -37,10 +45,12 @@ private actor PromptCacheRecordingLoader: ModelLoader {
         slot: ModelSlot,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> any LoadedEmbeddingContainer {
-        StubEmbeddingContainer(dimension: RouterTestFixtures.stubDimension)
+        try await stub.loadEmbedder(ref: ref, slot: slot, reporting: reporting)
     }
 
-    func preload(container: any LoadedModelContainer) async throws {}
+    func preload(container: any LoadedModelContainer) async throws {
+        try await stub.preload(container: container)
+    }
 
     func configurePromptCache(memoryBudgetBytes: Int) async {
         memoryBudgets.append(memoryBudgetBytes)
@@ -59,6 +69,11 @@ private struct DeliberateLoadFailure: Error {}
 struct PromptCacheBudgetTests {
     /// The recommended working set of each test: 48 GiB.
     static let workingSet: Int64 = 48 << 30
+
+    /// The recommended working set that a later resolve measures: 32 GiB. It
+    /// is different from ``workingSet``, so a test can see which working set a
+    /// budget used.
+    static let laterWorkingSet: Int64 = 32 << 30
 
     /// The footprint of the first resident model: 6 GiB.
     static let firstFootprint: Int64 = 6 << 30
@@ -157,6 +172,21 @@ struct PromptCacheBudgetTests {
         await release(Self.firstKey, on: pool)
         #expect(await loader.memoryBudgets.last == Int(Self.workingSet))
         #expect(await pool.residentModelCount == 0)
+    }
+
+    @Test("a release sizes the budget against the working set of the latest acquisition")
+    func releaseUsesTheWorkingSetOfTheLatestAcquisition() async throws {
+        let loader = PromptCacheRecordingLoader()
+        let pool = ModelPool()
+        let firstSizing = PromptCacheSizing(loader: loader, workingSetBytes: Self.workingSet)
+        let laterSizing = PromptCacheSizing(loader: loader, workingSetBytes: Self.laterWorkingSet)
+
+        try await acquire(Self.firstKey, footprint: Self.firstFootprint, sizing: firstSizing, on: pool)
+        try await acquire(Self.firstKey, footprint: Self.firstFootprint, sizing: laterSizing, on: pool)
+        await release(Self.firstKey, on: pool)
+
+        #expect(await pool.residentModelCount == 1)
+        #expect(await loader.memoryBudgets.last == Int(Self.laterWorkingSet - Self.firstFootprint))
     }
 
     @Test("the pool shrinks the budget before it loads the weights of a new model")

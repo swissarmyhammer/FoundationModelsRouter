@@ -4,8 +4,11 @@ enum SettledValuePoll {
     /// How many times a poll reads the value before it stops.
     static let readLimit = 600
 
+    /// The time between two reads, in milliseconds.
+    static let readIntervalMilliseconds = 50
+
     /// The time between two reads.
-    static let readInterval: Duration = .milliseconds(50)
+    static let readInterval: Duration = .milliseconds(readIntervalMilliseconds)
 
     /// The value `read` gives once `isSettled` accepts it, or the value of one
     /// more read at the end of a bounded wait.
