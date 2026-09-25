@@ -32,50 +32,32 @@ comments:
   id: 01m3cxkwnp3a3ks0rhrm41z3r0
   text: '2026-09-25: STOPPED and superseded in scope. The user wants a work-queue design with no locks and no "turn" concept, not a rename to "request". The design task ^jdp02p now designs the new model and writes the implementation tasks. This task waits on ^jdp02p; the design either replaces it with new tasks or rewrites it. Do not start the rename. The untracked fixture `Tests/FoundationModelsRouterTests/Fixtures/PreRequestRenameRecording/` (a recording written at 50a629e with the key `recoveriesPerTurn`) can serve the "old recordings still load" test.'
   timestamp: 2026-09-25T18:35:34.454106+00:00
+- actor: claude-code
+  id: 01m3cyxmhec7kz764gew9cbc1x
+  text: 'Rewritten on 2026-09-25 by the design task ^jdp02p (not deleted). The old plan (rename "turn" to "request", keep `turnLock` as `requestLock`) is dropped: the user rejected a rename and a lock. The new tasks remove the turn itself: ^a0ze9af, ^1psqdm9, ^dpn2ytt, ^3qx0mpt, ^cbhpdjy, ^x7cxsg3, ^5d0qx1b. This task now removes what they leave: `TurnBoundaryTool` becomes `SubmissionBoundaryTool.submissionWillBegin()`, `awaitingUser(_:)` goes, and the other "turn" names and docs go. The consumer updates moved to ^d7d777f. The event choice that the ACP card ^tz867gz asked for is in `generation-queue.md` section 5.6: `submissionStarted`/`submissionEnded` for each SDK call (`submissionEnded` replaces `turnEnded` one for one), and `answered`/`answerFailed` for each final answer. The full old name to new name list is in section 5.6, and ^d7d777f posts it on ^tz867gz.'
+  timestamp: 2026-09-25T18:58:22.382444+00:00
 depends_on:
-- 01M39ZP766H4S63AR4R44Y6BA4
-- 01M3A1F89ZRFMCGTNPBNJDP02P
+- 01M3CYMT8QK7YBJ904JX7CXSG3
+- 01M3CYN72XRWG9THXXE5D0QX1B
 position_column: todo
 position_ordinal: '8e80'
-title: Rename the "turn" level to "request" in the Router API, events, and code
+title: 'Remove the last "turn" names: the boundary tool, awaitingUser, the tracing names and the docs'
 ---
 ## Why
 
-The word "turn" hides the real units. The Router has three levels:
-
-1. **Request**: one call from the caller to `respond`/`stream`, one prompt in, one reply out. Now named "turn".
-2. **Attempt**: one `LanguageModelSession.respond` inside a request (`runTurnAttempt`). More than one after an overflow retry or a compaction continuation.
-3. **Pass**: one executor call, one generation. The item of the per-model queue.
-
-The user decided on 2026-09-24 that breaking consumers is acceptable. The consumers are our own packages.
+Rewritten on 2026-09-25 by the design task ^jdp02p. The earlier plan of this task renamed "turn" to "request". The user rejected that: "A rename of 'turn' to 'request' is NOT the goal"; the "turn" concept is vague and must go, "as opposed to a queue of requests to the Foundation level model to do generation or tool calling". The work-queue tasks remove the turn itself: ^a0ze9af (the worker), ^1psqdm9 (the submission is the item), ^dpn2ytt (reads and forks with no lock), ^3qx0mpt (the pump, no `turnLock`), ^cbhpdjy (the message API), ^x7cxsg3 (the events and `SessionAnswer`), ^5d0qx1b (the limits for each answer and the stored key). This task removes what is left. Design: `generation-queue.md`, sections 5.6 and 5.10.
 
 ## What to do
 
-1. Rename the request level. Suggested names (the implementer can propose better names in a comment first):
-   - `turnLock` → `requestLock`; `beginTurn`/`endTurn` → `beginRequest`/`endRequest`.
-   - `TurnID` → `RequestID`; `currentTurnId`, `lastTurnId`, `cancelRequestedTurnId`, `isTurnCancelled` to match.
-   - `cancelCurrentTurn()` → `cancelCurrentRequest()`; `TurnCancellationResult` (`.noTurnInFlight`, `.turnCancelled`) to match.
-   - `TurnStart`, `TurnOutcome`, `SessionProjection.currentTurn`, `SessionReentryError.sameSessionTurnInFlight`, `isInsideOwnTurnToolCall`, `forkDuringSameSessionTurn`.
-   - `TurnBoundaryTool.turnWillBegin()` → `requestWillBegin()`.
-   - `awaitingUser(_:)`: ^44y6ba4 makes it a pass-through. Decide here if it stays (renamed) or goes.
-2. Fix the meaning of the events. `SessionEvent.turnEnded` is sent one time for each ATTEMPT (see its doc comment in `Session/SessionEvent.swift`), and a request that retries sends two. Choose one:
-   (a) `requestStarted` / `requestEnded`, one pair for each request, and a separate `attemptEnded(TokenUsage)` for each attempt; or
-   (b) rename to `attemptStarted` / `attemptEnded` and add request events.
-   Write the choice AND the final list of old name → new name in a comment on this task BEFORE the change. The FoundationModelsACPAgent card ^tz867gz (on the ACP board) reads that comment.
-3. Recording format: the recorded files hold turn-level data (`TranscriptEvent.isFailedTurnClose` in `Recording/TranscriptEvent.swift`; the turn-final `.response` usage stamp read by the stamp reader in `Compaction/TokenBudget.swift`). Rename the Swift API. The reader must still read files written before the rename. Do not change the key names on disk unless a version bump and a reader for the old version come in the same change.
-4. Update the doc comments, `plan.md`, `generation-queue.md`, the tracing attribute names (`Tracing/RouterTracing.swift`), and the test names.
-5. Update these consumers in the same change set (counts of the old symbols, measured 2026-09-24 with `rg`):
-   - `../FoundationModelsMultitool`: turnWillBegin 28, TurnBoundaryTool 3, turnEnded 3, turnStarted 2, cancelCurrentTurn 1.
-   - `../AgentViewKit`: cancelCurrentTurn 11, turnEnded 10, turnStarted 6, TurnStart, TurnID.
-   - `../FoundationModelsExtras`: TurnOutcome 1.
-   - `../FoundationModelsAgents`: turnStarted 1.
-   Before you edit one of these, read its board. If its board says that it adopts the rename itself (as FoundationModelsACPAgent does), do not edit it; list it in a comment here.
-6. Do NOT edit `../FoundationModelsACPAgent` (user decision, 2026-09-24, from the ACP session's comment on this task). It adopts the rename on its own board, card ^tz867gz. It has 39 `turnEnded`, 12 `awaitingUser`, 9 `turnStarted`, 6 `cancelCurrentTurn`, 3 `turnWillBegin`, and one each of `TurnStart`, `TurnOutcome`, `turnCancelled`, `noTurnInFlight`.
+1. Replace `TurnBoundaryTool.turnWillBegin()` with `SubmissionBoundaryTool.submissionWillBegin()`. The session calls it one time before each submission of the pump, after it takes the messages, at the same place as now (after the drain, before the model call).
+2. Remove `awaitingUser(_:)` from `RoutedSession`. It is a pass-through since ^93kjn94. A wait for a person in an in-band tool holds the model for every session on it. The way to wait for a person is an elicitation from a background run (`SessionEvent.elicitationRequested`, `respond(elicitationId:response:)`).
+3. Rename every other Swift name with "turn" at the request level that the earlier tasks left: for example `recordFailedTurn`, `runTurnAttempt`, `currentTurnEventSink`, `turnEventSink`, `settledRunDeliveryPrompt` docs, `RouterTracing.TurnEntryPoint`, `modelTurnCount` in test helpers, and the "turn" wording in doc comments, `plan.md` and `generation-queue.md`. Keep the recording keys on disk as ^5d0qx1b decided.
+4. Update the test names and the suite names that say "turn".
 
 ## Acceptance Criteria
 
-- [ ] No public symbol of the Router names "turn" for the request level (`rg -n "\b[A-Za-z]*[Tt]urn[A-Z]" Sources` shows only recording keys kept for old files and `modelTurnsThinkingOffByTemplateFlag`).
-- [ ] The request events come one time for each request, also when the request retries (test with an overflow retry).
-- [ ] A recording written before the rename still loads (test with a fixture file).
-- [ ] A comment on this task gives the event choice and the full old → new name list, before the change lands.
-- [ ] The Router suite builds and passes, and each consumer this task edits (step 5) builds and passes its suite. FoundationModelsACPAgent is not edited. #generation-queue #naming
+- [ ] `rg -n "\b[A-Za-z]*[Tt]urn[A-Z]" Sources` shows only recording keys kept for old files and `modelTurnsThinkingOffByTemplateFlag`.
+- [ ] `rg -n -i "\bturns?\b" Sources` shows no doc comment that names a request-level "turn".
+- [ ] A test: `submissionWillBegin()` is called one time before each submission of the pump, also for a submission that mail started.
+- [ ] Public-surface tests for `SubmissionBoundaryTool`.
+- [ ] Full `swift test` green, 0 new warnings; IntegrationTests build clean. #generation-queue #naming

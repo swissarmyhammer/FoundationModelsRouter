@@ -14,6 +14,14 @@ comments:
   id: 01m3c6mzfn76hp8xn6cr79k3t8
   text: '2026-09-25: the two comments of 2026-09-24 that say `.none` are out of date. The fork case is `.uncached` (fork `ffac55d`). `.none` resolves to `Optional.none` and adds a key. Use the description.'
   timestamp: 2026-09-25T11:54:12.853718+00:00
+- actor: claude-code
+  id: 01m3cywgm7jbneyz5gkr553exr
+  text: |-
+    From the design task ^jdp02p (2026-09-25, `generation-queue.md` section 5): what changes for R3.
+    - The seam does not change: the `.uncached` binding goes in the executor `respond` of the per-session wrapper, next to the R2 binding. ^1psqdm9 renames the wrapper `SessionLanguageModel`; if R3 lands after it, use the new name.
+    - A summarizer call is one submission on the queue of the container that runs it (^1psqdm9 step 3, ^6wqketz). The binding is below that submission, in the executor, so it still reaches the fork.
+    - The compaction paths change place: the proactive compaction and the compaction after a yield, a ceiling stop or an overflow happen at the pump, between two submissions (^3qx0mpt). Step 2 of this task ("every compaction path") must cover the pump path; the list of paths is otherwise the same.
+  timestamp: 2026-09-25T18:57:45.607454+00:00
 depends_on:
 - 01M39ZPCNPZCG3RPG9Q6WQKETZ
 - 01M3A1QPQMDJD33G9ANCC2TEZN

@@ -10,6 +10,15 @@ comments:
   id: 01m3a1ycjqeyeb0224x4pgbbbb
   text: 'Fork dependencies (mlx-swift-lm board, 2026-09-24): ^2mk47nr (task-local, no dependency, can land first) and ^zcys2qw (release). The mlx session verified that the task-local reaches sessionCacheKey: Executor.respond -> withTaskCancellationHandler -> $drainCoordinator.withValue -> runRespond -> sessionCacheKey, all on one task. LIMIT: the binding does NOT reach the executor through LanguageModelSession, because the SDK can run the executor on another task. The wrapper must bind it inside its own executor respond and call the inner executor directly (as RecordingLanguageModelState.makePassthrough does). API: `public enum PromptCacheScope { case session(String); case none }`, `@TaskLocal public static var promptCacheScope: PromptCacheScope?` (nil = first-entry-id rule), `public func releasePromptCache(sessionID: String) async` (memory + spilling + disk for this model id; no-op if unknown). The release id is the same string the wrapper binds. The holder count is not necessary.'
   timestamp: 2026-09-24T15:53:29.431805+00:00
+- actor: claude-code
+  id: 01m3cyvnznsgxk7pk0sv05xexh
+  text: |-
+    From the design task ^jdp02p (2026-09-25, `generation-queue.md` section 5): the item of the generation queue becomes one submission to Foundation (one whole SDK call), run by one worker task for each model (^a0ze9af, ^1psqdm9). What changes for R2:
+    - The seam does not change. The per-session scope binding still happens in the per-session wrapper, inside its executor `respond`, around the inner executor call. The SDK calls that executor below the submission, so the binding is still on the task of the inner executor call.
+    - ^1psqdm9 renames `QueuedLanguageModel` to `SessionLanguageModel` and removes the queue from it. If R2 lands first, the rename carries the binding with it. If R2 lands after ^1psqdm9, put the binding in `SessionLanguageModel.Executor.respond`.
+    - ^a0ze9af (before ^1psqdm9) still runs each PASS as an item on the worker task. If R2 lands between ^a0ze9af and ^1psqdm9, the binding must go INSIDE the closure that the executor submits, because the worker task inherits no task-local (^a0ze9af step 3 says so).
+    - Step 4 (release on close) is unchanged. A session that the pump drives still has one ULID for all of its submissions, so the key stays stable across submissions and continuations.
+  timestamp: 2026-09-25T18:57:18.325076+00:00
 depends_on:
 - 01M39ZNAJWMVZ291SCH8CSJ2HW
 position_column: todo

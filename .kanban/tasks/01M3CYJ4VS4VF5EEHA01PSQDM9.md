@@ -1,0 +1,36 @@
+---
+assignees:
+- claude-code
+depends_on:
+- 01M3CYHCGYFC6JMYTVZA0ZE9AF
+position_column: todo
+position_ordinal: '9080'
+title: Make one submission to Foundation the item of the generation queue
+---
+## Why
+
+The user said on 2026-09-25: "right -- going to Foundation to generate -- or call tools which might be multiple 'steps' inside Foundation -- that submission to Foundation needs to be queued". So the item of the queue of a model is one submission to Foundation: one SDK call (`LanguageModelSession.respond` or `streamResponse`), with all of its steps (generation passes and tool bodies). Now the item is one executor pass. Design: `generation-queue.md`, sections 5.1, 5.3, 5.5 and 5.7.
+
+A submission holds the worker of its model for all of its steps. A tool body that waits in-band for a session on the same model can thus never end: the submission of that session waits behind the submission of the tool. The spike `SubmissionQueueSpikeTests` proves that a background tool avoids this, and that the result comes back as mail. It also proves the other side: the same test with an in-band tool times out.
+
+## What to do
+
+1. The per-session wrapper no longer takes the queue for each pass. Rename `QueuedLanguageModel` to `SessionLanguageModel` (and its state to `SessionLanguageModelState`). It stays one instance for each backend, with the identity key of ^8csj2hw. It keeps the pass observer (for the stall watch) and it is the seam of R2 ^cc2tezn (`promptCacheScope` inside its executor `respond`, on the SDK's executor task).
+2. The session submits its whole model call as one item. `runCancellableModelCall` (`Session/RoutedSessionActorTurnExecution.swift`) gives the queue of its backend one closure. The closure binds `ModelCallMark`, `ToolResultAppendBoundary` and `ToolContext` (the worker task inherits no task-local) and runs `body(composedPrompt)`. The backend names its queue: add `generationQueue: GenerationQueue?` to `LanguageModelSessionBackend`, `nil` by default. A backend with no queue runs the call directly, as now. `inFlightModelCall` and cancel keep working: a cancel removes a waiting item, or cancels the running item.
+3. Each summarizer call (`CancellableCompactionSummarizer`, the flash tier and the own-model tier) is one item on the queue of the container that runs it. The own-model summarizer runs between two submissions of its session, so it cannot wait for itself.
+4. Events: replace `SessionEvent.passQueued` and `.passStarted` with `.submissionQueued` (only when the submission must wait) and `.submissionStarted` (for each submission). Update every exhaustive switch (`SessionProjection`, `TurnOutcome`, `Examples/MultiModelGeneration`, `ScriptedToolTurnComparisonTests`, IntegrationTests `RealToolTurnComparisonTests`).
+5. Stall watch: count only the time inside a pass of the running submission (the wrapper reports pass start and pass end, with no queue phase). A wait for the worker and a tool body give no `generationStalled`. For a backend with no pass reports, count from the start of the submission, not from the call (the wait for the worker is not a stall). `GenerationStall.timeInFlight` stays the whole model call.
+6. The wait-cycle refusal: `ModelCallMark` also names the queue of its submission. A submission to queue Q from a task with an OPEN mark on Q (an in-band tool body of a running submission on the same model) throws at once a new typed error, `GenerationQueueError.waitInsideOpenSubmission(model:)`, and does not hang. A background body has a closed mark (`withBackgroundRunMark`), so it is not refused. Keep `SessionReentryError` for now; task "Replace turnLock with a per-session message queue" removes it.
+7. Restate the tests that assume an in-band wait on the same model, to the new contract: `GenerationQueueTurnTests.aToolBodyThatWaitsLetsAnotherSessionCompleteATurn` (the other session now runs after the submission), `.twoToolLoopsTakeAlternatePasses` (whole submissions in FIFO order), `.aParentWaitsInAToolBodyForAChildTurnOnTheSameModel` (now the refusal; the background shape is the spike), `HumanWaitGateTests` (a wait in a tool holds the model), `QueuedPassStallWatchTests`, `SharedGenerationQueueContentionTests`, `ForkConcurrencyTests.generationQueueSerializesPassesAndIsFIFO`, `GenerationQueueTests`. Do not delete an assertion to make the suite green: restate it or replace it with the assertion of the new contract.
+8. Update the doc comments that say "a tool body holds no place": `GenerationQueue`, `RoutedSession` (type doc, `respond`, `streamResponse`, `streamEvents`, `awaitingUser`, `cancelCurrentTurn`), `RunToCompletionRunner`, `BackgroundTool.inlineSettleGrace` (an in-band wait now holds the model for every session on it).
+
+## Acceptance Criteria
+
+- [ ] A test over the scripted model: two sessions with tool loops over one model run whole submissions in FIFO order; the second SDK call starts only after the first ends.
+- [ ] A test: an in-band tool body that asks a session over the same model for an answer gets `GenerationQueueError.waitInsideOpenSubmission` at once (bounded, no hang). A background body that does the same completes (`SubmissionQueueSpikeTests` stays green).
+- [ ] A test: a wait for the worker and a tool body give no `generationStalled`; a held pass with no fragment still reports `.fragments(0)`.
+- [ ] A test: `submissionQueued` comes before `submissionStarted` for a submission that waits, and a submission with a free worker sends only `submissionStarted`. A public-surface test names both cases.
+- [ ] A test: a flash summarizer call and a flash submission of another session never overlap.
+- [ ] A test: a cancel of a session whose submission waits removes the item at once; the caller gets `CancellationError`; the worker then runs the next item.
+- [ ] `ExecutorPassBoundaryTests` and `ExecutorPassBoundaryIntegrationTests` stay green.
+- [ ] Full `swift test` green, 0 new warnings; `swift build --package-path IntegrationTests --build-tests` clean. #generation-queue

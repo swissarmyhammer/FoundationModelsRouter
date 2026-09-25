@@ -232,6 +232,10 @@ struct PassObservingModel: LanguageModel {
         /// Emits one call of the tool `name`, whose one argument names the
         /// round of `turn`.
         ///
+        /// The argument is JSON-encoded, so a prompt with quotes or line
+        /// breaks (a delivery prompt with a pending-run envelope) gives valid
+        /// arguments.
+        ///
         /// - Parameters:
         ///   - name: The name of the tool to call.
         ///   - turn: The turn the call belongs to.
@@ -246,7 +250,9 @@ struct PassObservingModel: LanguageModel {
                     action: .toolCall(
                         id: round,
                         name: name,
-                        action: .appendArguments(#"{"value":"\#(round)"}"#, tokenCount: emittedTokenCount))))
+                        action: .appendArguments(
+                            GeneratedContent(properties: ["value": round]).jsonString,
+                            tokenCount: emittedTokenCount))))
         }
 
         /// The turn `transcript` ends in.
