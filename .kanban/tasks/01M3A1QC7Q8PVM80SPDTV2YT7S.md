@@ -78,10 +78,26 @@ comments:
     - evidence: 5 files — Sources/FoundationModelsRouter/Resolution/ModelPool.swift, Sources/FoundationModelsRouter/Sizing/PromptCacheBudget.swift, Tests/FoundationModelsRouterTests/PromptCacheBudgetTests.swift, IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/PromptCacheBudgetIntegrationTests.swift, IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/Support/SettledValuePoll.swift. `swift test --filter 'FoundationModelsRouterTests.PromptCacheBudgetTests'` RED first (1 of 12 failed: the new test), then green. Root `swift test`: 1390 tests in 158 suites pass (2 known issues, both pre-existing withKnownIssue) + 1 + 19 = 1410 pass, 0 fail. `swift build --build-tests` in IntegrationTests/: build complete, changed modules recompiled, no Swift warnings. The 4 findings are checked.
     - next: /review
   timestamp: 2026-09-25T13:13:58.319027+00:00
+- actor: claude-code
+  id: 01m3cbn6wscbys1129dacmkpkt
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (fd881d2). 0 findings, 0 confirmed, 0 refuted. 5 files reviewed. The 4 findings of 2026-09-25 07:58 have fixes: `twoModelContextTokens` in PromptCacheBudgetIntegrationTests.swift, `readIntervalMilliseconds` in SettledValuePoll.swift, `entry.promptCache = promptCache` on the reuse path in ModelPool.swift (with the test `releaseUsesTheWorkingSetOfTheLatestAcquisition`), and `PromptCacheRecordingLoader` sends each load to `StubModelLoader`.
+    - next: none. The task moved to done.
+  timestamp: 2026-09-25T13:21:43.321533+00:00
+- actor: claude-code
+  id: 01m3cbrbprn2mxt3sk8khpd9rg
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 5 files (4 findings fixed; new test releaseUsesTheWorkingSetOfTheLatestAcquisition)
+    - test: green — swift test, 1410 passed (1390+1+19), 0 failed, 0 skipped; IntegrationTests build clean
+    - commit: fd881d2
+    - review: clean — 0 findings
+  timestamp: 2026-09-25T13:23:26.552205+00:00
 depends_on:
 - 01M39ZMNME683Y75PX48NQKTEN
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffff8280
 title: 'R1: size the prompt-cache byte budget from the pool and give it to the fork'
 ---
 ## Why
