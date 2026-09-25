@@ -159,7 +159,12 @@ let package = Package(
                 .target(name: "\(packageName)RealModelSupport"),
                 inMemoryTracingProduct,
             ] + mlxProducts,
-            path: "Tests/\(packageName)Tests"
+            path: "Tests/\(packageName)Tests",
+            // `Fixtures` holds recordings. A test reads them from disk, at a
+            // path relative to its source file. They are not SwiftPM
+            // resources, so the target excludes them, as `CompactionDemo`
+            // does above. Without this line, the build gives a warning.
+            exclude: ["Fixtures"]
         ),
         // Test-only support shared by the real-model targets in the nested
         // `IntegrationTests/` package. It

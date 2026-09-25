@@ -1,0 +1,35 @@
+{
+  "configuration" : {
+    "compactionPrompt" : {
+      "name" : "router-default-v7",
+      "text" : "Summarize the conversation above. Whoever continues has no other memory of it.\nStart with a line \"Values:\" that gives each code, name, path and number the user asked to keep or the next step needs, copied exactly.\nThen write a short summary of the few points that matter to go on:\n- what the user wants;\n- what is decided, and what must not be done;\n- what is done, and what comes next.\n\nLeave out small talk, and finished work that does not matter next. Use plain sentences or short bullets."
+    },
+    "repetitionDetection" : {
+      "isEnabled" : true,
+      "minimumLineLength" : 20,
+      "recoveriesPerTurn" : 2,
+      "windowTokens" : 2048
+    },
+    "summarization" : {
+
+    },
+    "toolNames" : [
+
+    ],
+    "workingDirectory" : "file:\/\/\/fixture-work\/"
+  },
+  "context" : 1000,
+  "model" : "org\/std-a",
+  "profile" : {
+    "context" : 1000,
+    "definitionName" : "coding",
+    "embedding" : "org\/emb-a",
+    "flash" : "org\/flash-a",
+    "standard" : "org\/std-a"
+  },
+  "recordingLevel" : "full",
+  "routerId" : "01M3CWVB5J9PBZCS85Z2TW6Y59",
+  "schemaVersion" : 2,
+  "slot" : "standard",
+  "workingDirectory" : "file:\/\/\/fixture-work\/"
+}
