@@ -36,7 +36,7 @@ Decisions (user, 2026-09-24):
 - **The limit is memory in bytes, not a number of sessions.** No fixed session count stays in the code.
 - **An entry that does not fit in memory goes to disk and comes back.** The fork writes it in a folder for each process under the temporary directory, and deletes the folders of dead processes at start.
 - **The Router sizes the byte budget** from the pool: the recommended working set minus the footprints of the resident entries (weights plus one KV estimate for each slot hold; many sessions share one hold). Resident prompt-cache memory is `memoryBytes + spillingBytes` (an entry that is being written to disk is still in memory).
-- **Each session has its own cache key.** The per-session wrapper binds the fork's task-local `MLXLanguageModel.promptCacheScope` to `.session(<session ULID>)` inside its executor `respond`, on the same task as the inner executor call. A fork thus has its own key, and a compaction keeps the key. A summarizer backend binds `.none` and keeps nothing.
+- **Each session has its own cache key.** The per-session wrapper binds the fork's task-local `MLXLanguageModel.promptCacheScope` to `.session(<session ULID>)` inside its executor `respond`, on the same task as the inner executor call. A fork thus has its own key, and a compaction keeps the key. A summarizer backend binds `.uncached` and keeps nothing. Do not bind `.none`: the task-local has the type `PromptCacheScope?`, so `.none` is `Optional.none` (no scope, the first-entry-id rule), and the compiler gives no error.
 - **`RoutedSession.close()` releases the session's key** with `releasePromptCache(sessionID:)`, before the early return of `close()` when there are no terminal events.
 - **A restore failure gives a cold start**, never a failed request.
 - **A cold cache after a process restart is acceptable** (user decision, 2026-09-24). The fork's spool is one temporary folder for each process, and the fork deletes the folders of dead processes at start. A session restored from its recording after a restart computes its cache again from the start. No fork task and no Router task keep the cache across a restart.
@@ -44,7 +44,7 @@ Decisions (user, 2026-09-24):
 ### Fork API (mlx-swift-lm board, 2026-09-24)
 
 ```swift
-public enum PromptCacheScope: Sendable, Hashable { case session(String); case none }
+public enum PromptCacheScope: Sendable, Hashable { case session(String); case uncached }
 @TaskLocal public static var promptCacheScope: PromptCacheScope?   // nil = first-entry-id rule
 public static func configurePromptCache(memoryBudgetBytes: Int) async
 public static func configurePromptCache(diskBudgetBytes: Int) async
@@ -54,9 +54,22 @@ public static var promptCacheUsage: (memoryBytes: Int, spillingBytes: Int, diskB
 
 Fork defaults when the host sets nothing: memory = 25% of max(0, maxRecommendedWorkingSetSize - Memory.activeMemory) at first use; disk = 25% of the free space of the volume.
 
-Fork tasks: ^375zmcs (byte count), ^ddjhenh (byte budget), ^jvag56k (restore into fresh caches), ^b28dxz2 (offset through the file), ^z6av3ep (file format), ^w0s77dt and ^fzvh9gx (disk spool), ^jar6qq9 (restore in the executor), ^2mk47nr (the task-local key; needs ^ddjhenh), ^zcys2qw (public budget API and release; needs the spool), ^mre55m3 (measure the spill cost and the `evalLock` hold time).
+Fork tasks: ^375zmcs (byte count), ^ddjhenh (byte budget), ^jvag56k (restore into fresh caches), ^b28dxz2 (offset through the file), ^z6av3ep (file format), ^w0s77dt and ^fzvh9gx (disk spool), ^jar6qq9 (restore in the executor), ^2mk47nr (the task-local key; needs ^ddjhenh), ^6zkwn0q (rename `.none` to `.uncached`), ^zcys2qw (public budget API and release; needs the spool), ^mre55m3 (measure the spill cost and the `evalLock` hold time).
 
-Risk: a spill write holds MLX's process-wide `evalLock` for the whole write, which stops the generation of every model. The fork has one serial writer. ^mre55m3 measures the hold time. R1 reads that number before it chooses the budget.
+Risk: a spill write holds MLX's process-wide `evalLock` for the whole write, which stops the generation of every model. The fork has one serial writer, so two holds do not overlap. R1 reads the measurements below before it chooses the budget.
+
+Measurements of ^mre55m3 (2026-09-24). A disk write and a read of a prompt cache cost much less than a prefill, on both models:
+
+| Model | Context | Prefill s | File bytes | Write s | Read s | Longest `evalLock` hold s |
+|---|---|---|---|---|---|---|
+| Qwen3-4B-4bit | 4096 | 1.567 | 604 MB | 0.122 | 0.020 | 0.122 |
+| Qwen3-4B-4bit | 32768 | 13.085 | 4.83 GB | 1.187 | 0.161 | 1.187 |
+| Qwen3.8-27B-mxfp4 | 4096 | 5.025 | 422 MB | 0.052 | 0.016 | 0.052 |
+| Qwen3.8-27B-mxfp4 | 32768 | 52.991 | 2.30 GB | 0.224 | 0.075 | 0.224 |
+
+- After each restore, the next token is the same as the original, in all four cases.
+- Limit: each read came immediately after its write, so the file was probably in the OS page cache. A read from a cold disk can be slower.
+- Result for the Router: a 32k spill of a 4B model that has only attention layers holds `evalLock` for approximately 1.2 s. During that time, the evaluation of every other model stops.
 
 ## 4. Router tasks
 
