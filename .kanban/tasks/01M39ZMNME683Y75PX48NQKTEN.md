@@ -85,8 +85,24 @@ comments:
     - evidence: 1 file — IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/ExecutorPassBoundaryIntegrationTests.swift (added a `swiftlint:disable:next no_direct_standard_out_logs` directive and its reason above the measurement `print(`). `swift build --build-tests` in IntegrationTests/: Build complete. The changed file compiled again. The build has 0 new warnings. The finding checkbox is now `- [x]`. The card is in doing.
     - next: /review
   timestamp: 2026-09-25T12:09:44.047498+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m3c8514eq3rbhjgqcvgn0f4b
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (8ae5571). 0 findings, 0 confirmed, 0 refuted. The engine reviewed 1 file. It did not review 2 `.kanban/` files because `.reviewignore` excludes them. The prior finding at `ExecutorPassBoundaryIntegrationTests.swift:116` (`code-hygiene/disallowed-constructs-swift`) is resolved. A `// swiftlint:disable:next no_direct_standard_out_logs` line with a reason is now above the `print(`.
+    - next: The task is in done.
+  timestamp: 2026-09-25T12:20:27.406275+00:00
+- actor: claude-code
+  id: 01m3c86gtthnz9jzvtvtr20sfd
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 1 file (swiftlint suppression with reason above the print)
+    - test: green — swift test, 1398 passed, 0 failed, 0 skipped; IntegrationTests build clean
+    - commit: 8ae5571
+    - review: clean — 0 findings
+  timestamp: 2026-09-25T12:21:16.250053+00:00
+position_column: done
+position_ordinal: ffffff8180
 title: Prove that one executor call ends before the SDK runs the tool body of that call
 ---
 ## Why
