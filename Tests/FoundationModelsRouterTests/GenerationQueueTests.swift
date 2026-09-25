@@ -157,7 +157,6 @@ struct GenerationQueueTests {
         let first = QueuedLanguageModel(wrapping: model, queue: queue)
         let second = QueuedLanguageModel(wrapping: model, queue: queue)
 
-        #expect(first.executorConfiguration == first.executorConfiguration)
         #expect(first.executorConfiguration != second.executorConfiguration)
     }
 

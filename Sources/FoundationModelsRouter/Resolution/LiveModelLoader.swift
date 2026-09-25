@@ -224,29 +224,31 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     // periphery:ignore
     internal var session: LanguageModelSession { liveSession }
 
-    /// Creates a backend over an existing session.
+    /// Creates a backend over a new session. This initializer is the one
+    /// place that makes the per-session ``QueuedLanguageModel``: it wraps
+    /// `model` on `generationQueue` and gives the wrapper to `makeSession`.
     ///
     /// - Parameters:
-    ///   - session: The live session every call runs through. It runs over a
-    ///     ``QueuedLanguageModel`` of its own that wraps `model`.
     ///   - model: The raw `LanguageModel` conformance that the session's
     ///     wrapper wraps.
     ///   - generationQueue: The queue of the container of `model`.
     ///   - contextWindow: The window of `model`, in tokens. A call that names
     ///     no ceiling sends it as `maximumResponseTokens`.
-    ///   - instructions: The system instructions of `session`, or `nil`.
-    ///   - tools: The tools of `session`.
+    ///   - instructions: The system instructions of the session, or `nil`.
+    ///   - tools: The tools of the session.
     ///   - samplingMode: The decoding strategy, or `nil` for the provider default.
+    ///   - makeSession: Makes the live session every call runs through, over
+    ///     the new per-session wrapper it receives.
     private init(
-        session: LanguageModelSession,
         model: any FoundationModels.LanguageModel,
         generationQueue: GenerationQueue,
         contextWindow: Int,
         instructions: String?,
         tools: [any FoundationModels.Tool],
-        samplingMode: GenerationOptions.SamplingMode?
+        samplingMode: GenerationOptions.SamplingMode?,
+        makeSession: (QueuedLanguageModel) -> LanguageModelSession
     ) {
-        self.liveSession = session
+        self.liveSession = makeSession(QueuedLanguageModel(wrapping: model, queue: generationQueue))
         self.model = model
         self.generationQueue = generationQueue
         self.contextWindow = contextWindow
@@ -274,11 +276,12 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
         tools: [any FoundationModels.Tool],
         samplingMode: GenerationOptions.SamplingMode? = nil
     ) {
-        let queued = QueuedLanguageModel(wrapping: model, queue: generationQueue)
         self.init(
-            session: LanguageModelSession(model: queued, tools: tools, instructions: instructions),
             model: model, generationQueue: generationQueue, contextWindow: contextWindow,
-            instructions: instructions, tools: tools, samplingMode: samplingMode)
+            instructions: instructions, tools: tools, samplingMode: samplingMode
+        ) { queued in
+            LanguageModelSession(model: queued, tools: tools, instructions: instructions)
+        }
     }
 
     /// Creates a backend over a new session seeded from `transcript`, which
@@ -304,12 +307,13 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
         samplingMode: GenerationOptions.SamplingMode? = nil,
         instructions: String?? = nil
     ) {
-        let queued = QueuedLanguageModel(wrapping: model, queue: generationQueue)
         self.init(
-            session: LanguageModelSession(model: queued, tools: tools, transcript: transcript),
             model: model, generationQueue: generationQueue, contextWindow: contextWindow,
             instructions: instructions ?? TranscriptDiffer.leadingInstructionsText(of: transcript),
-            tools: tools, samplingMode: samplingMode)
+            tools: tools, samplingMode: samplingMode
+        ) { queued in
+            LanguageModelSession(model: queued, tools: tools, transcript: transcript)
+        }
     }
 
     /// Generates a complete text response through ``liveSession``.

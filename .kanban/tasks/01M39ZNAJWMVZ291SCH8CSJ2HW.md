@@ -53,6 +53,37 @@ comments:
     - tests: `swift build --build-tests` 0 compiler warnings (only the known mlx bundle line); `swift test` root: 1396 tests in 159 suites passed (2 known issues, both pre-existing withKnownIssue), plus 2 and 19 tests in the other targets passed; GenerationQueueTests + RecordingLanguageModelTests 16/16, and 8 parallel processes x 200 repetitions all passed; IntegrationTests package builds; gated `LanguageModelSessionBackendIntegrationTests` + `ExecutorPassBoundaryIntegrationTests`: 14 tests in 2 suites passed over real MLX (the KV-cache reuse test passes through the wrapper).
     - next: /review
   timestamp: 2026-09-25T13:43:35.451013+00:00
+- actor: claude-code
+  id: 01m3cer51sh0bex85sekqnwqvq
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD. 3 findings, 3 confirmed, 0 refuted. Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:269, Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:298, Tests/FoundationModelsRouterTests/GenerationQueueTests.swift:160
+    - next: Correct the 3 open items in the "Review Findings (2026-09-25 08:51)" section. The task stays in review.
+  timestamp: 2026-09-25T14:15:45.465866+00:00
+- actor: claude-code
+  id: 01m3cew5jpk8zjm7nq0ckhtdx8
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 13 files
+    - test: green — swift test, 1417 passed (1396+2+19), 0 failed, 0 skipped; 5 extra runs of the concurrency suites clean; IntegrationTests build clean
+    - commit: 2e97dac
+    - review: findings — Resolution/LiveModelLoader.swift:269, Resolution/LiveModelLoader.swift:298, GenerationQueueTests.swift:160
+  timestamp: 2026-09-25T14:17:57.078452+00:00
+- actor: claude-code
+  id: 01m3cfm2qwtj4m42x51haxgz2f
+  text: |-
+    Review findings fixed (2026-09-25 08:51 section).
+    - LiveModelLoader.swift: the private designated init of MLXFoundationModelsSessionBackend now takes a `makeSession: (QueuedLanguageModel) -> LanguageModelSession` closure in place of a finished session. The designated init is now the one place that makes the per-session QueuedLanguageModel. Each convenience init gives only its LanguageModelSession variant (instructions or transcript) and its instructions. The file has no other copy of the wrapper-and-init pattern. The `languageModel` property of the container makes one wrapper and calls no init, so it stays.
+    - GenerationQueueTests.swift: the tautology `first.executorConfiguration == first.executorConfiguration` is removed. No other tautology is in the file. The stable key of one wrapper is already proved through a real path: `eachSessionOverOneContainerGetsItsOwnExecutor` runs two passes of one session and expects one executor (`firstExecutors.count == 1`).
+    - Note: the build shows `warning: missing creator for mutated node ... mlx-swift_Cmlx.bundle`. This is a SwiftPM build-graph message about the MLX resource bundle, not a compiler warning, and it is not from this change.
+  timestamp: 2026-09-25T14:31:00.604060+00:00
+- actor: claude-code
+  id: 01m3cfmghva8d6fqccz1g7r82n
+  text: |-
+    ### implement — changed
+    - evidence: 2 files — Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift, Tests/FoundationModelsRouterTests/GenerationQueueTests.swift. `swift test` at root: 1396 tests in 159 suites passed (2 known issues), plus 2 and 19 tests in the other test bundles; `--filter GenerationQueueTests`: 6 tests passed; `swift build --build-tests` in IntegrationTests/: Build complete (178.57 sec, recompiled). 3 of 3 findings checked.
+    - next: review
+  timestamp: 2026-09-25T14:31:14.747489+00:00
 depends_on:
 - 01M39ZMNME683Y75PX48NQKTEN
 position_column: doing
@@ -90,3 +121,14 @@ In this task the queue MUST be a semaphore different from the turn-long `generat
 - [x] `respondWithoutReasoning` still turns thinking off for a template-flag model (test that the raw model is found).
 - [x] The Recording path records the same events as before. `RecordingLanguageModelTests` stay green, except the test that pins the gate, which changes to the new lock.
 - [x] Nothing in this task changes `beginTurn`/`endTurn`. The full suite is green. #generation-queue
+
+## Review Findings (2026-09-25 08:51)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 13 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:269` `duplication/duplication` — Two convenience `init` methods (lines 269–282 and 298–313) duplicate the pattern of creating a `QueuedLanguageModel` wrapper and calling the designated `init`. They differ only in how `LanguageModelSession` is constructed (with `instructions` vs `transcript`) and how the final `instructions` parameter is derived. This repeated structure should be extracted into a helper method to avoid drift. Extract a private helper method that accepts both the model and instructions as parameters, wraps it in `QueuedLanguageModel`, creates the session, and calls the designated init. Alternatively, add a parameter to one of the convenience inits to accept a pre-built or conditionally-built `LanguageModelSession` so the two methods can share the common boilerplate.
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:298` `duplication/duplication` — Second convenience `init` method (lines 298–313) duplicates the structure of the first (lines 269–282). Both create a `QueuedLanguageModel` and call the designated `init` with nearly identical parameter-passing logic. The only meaningful differences are in the `LanguageModelSession` variant and instructions derivation, which should be parameterized rather than copy-pasted. See line 269 fix: extract the common pattern into a shared helper method or combine the logic so both variants call a single helper that accepts the key differences as parameters.
+- [x] `Tests/FoundationModelsRouterTests/GenerationQueueTests.swift:160` `test-integrity/no-test-cheating` — The assertion `first.executorConfiguration == first.executorConfiguration` is a trivial tautology that always passes and proves nothing meaningful. It only checks reflexivity of equality, which any equality operator must satisfy by design, regardless of whether the actual behavior being tested (different wrappers having different executor configurations) works correctly. Remove line 160. The test's purpose is fully verified by the assertion on line 161: `#expect(first.executorConfiguration != second.executorConfiguration)`. If testing equality operator behavior is necessary, it should be in a separate dedicated test.
