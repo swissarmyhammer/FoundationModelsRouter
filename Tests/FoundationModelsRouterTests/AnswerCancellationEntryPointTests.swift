@@ -26,9 +26,15 @@ extension AnswerCancellationTests {
         // The stream is drained into `delivered` as it arrives, so what the consumer
         // had already been handed survives the error the stream finishes with.
         let delivered = DeliveredEvents()
+        // The consumer sends this event after it appended the first chunk to
+        // `delivered`, so a test that the event resumes finds the chunk there.
+        let firstChunkAtConsumer = AwaitedEvent()
         let answerTask = Task { () throws -> Int in
             for try await event in await session.streamEvents(to: "stream-cancel") {
                 await delivered.append(event)
+                if event == .textDelta(HookedSessionBackend.firstStreamedChunk) {
+                    firstChunkAtConsumer.signal()
+                }
             }
             return await delivered.events.count
         }
@@ -38,11 +44,15 @@ extension AnswerCancellationTests {
         // The session reads the backend stream through an unfolding stream,
         // which ends at once when its task is cancelled, so a chunk that is
         // still in the buffer of the backend stream is not delivered. The
-        // test must cancel only after the consumer received the chunk, or the
-        // result depends on the load of the machine.
-        _ = await BoundedWait.conditionReached("the first streamed chunk at the consumer") {
-            await delivered.events.contains(.textDelta(HookedSessionBackend.firstStreamedChunk))
-        }
+        // test must cancel only after the consumer received the chunk.
+        //
+        // The wait is on the event of the consumer, not on a wall-clock
+        // bound. Nothing on the path of the chunk waits for the tool, so the
+        // chunk always arrives; a loaded machine only delays it. A bound of
+        // some seconds failed under parallel stress (task ^7w145zc) while the
+        // chunk was still on its way. Only the `.timeLimit` of the suite ends
+        // this wait, when the chunk genuinely never arrives.
+        try await firstChunkAtConsumer.wait()
 
         #expect(await session.cancel() == .requested)
         try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
