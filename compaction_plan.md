@@ -1,7 +1,8 @@
 # Plan: Compaction — compacting long transcripts inside FoundationModelsRouter
 
-Give any `RoutedSession` — and any bare `LanguageModelSession` over a
-`RecordingLanguageModel` handle — a context-window lifecycle: measure how full
+Give any `RoutedSession` — and, until ^qhf29tg removed the handle, any bare
+`LanguageModelSession` over a `RecordingLanguageModel` handle — a
+context-window lifecycle: measure how full
 the transcript is, and when it approaches the resolved context size, compact the
 older conversation into a summary so the session keeps going instead of dying
 with `exceededContextWindowSize`. On-device models run at host-budget-fitted
@@ -180,7 +181,8 @@ the `tokensIn`/`tokensOut` fields of `.response`-kind events.
   - `RoutedSessionActor` **does** stamp: it computes the usage delta of each
     submission and writes it as `tokensIn`/`tokensOut` on the diff's
     `.response` events (`recordTranscriptDelta(grammar:since:usage:)`).
-  - The `RecordingLanguageModel` handle **does not**: `TranscriptDiffer` is
+  - The `RecordingLanguageModel` handle (removed by ^qhf29tg, with the fix
+    below) **does not**: `TranscriptDiffer` is
     deliberately narrow — its doc states that the stamps of a submission
     (`grammar`, `ms`, `tokensIn`/`tokensOut`) are *the caller's concern* —
     and no caller on the handle path supplies them, so handle-recorded
@@ -207,6 +209,10 @@ submission (instructions only — fill ≈ 0), and the *prospective* check that 
 planned compaction will land under target, where the pipeline uses a
 character-ratio estimate calibrated by the measured pre-compaction count —
 safe because the next real submission re-measures exactly.
+
+**Removed (^qhf29tg):** no consumer used the recording handle, so ^qhf29tg
+removed it, its `noteCompaction(_:)` and its tests. `RoutedSessionActor.compact`
+is now the one entry point. The paragraph below is the history of that path.
 
 **The bare-session path** (a caller not using `RoutedSession` — e.g. the ACP
 bridge — drives bare `LanguageModelSession`s over the recording handle
@@ -543,6 +549,8 @@ their own targets in the nested `IntegrationTests/` package
   actor; id unchanged by construction) and `Compactor` + `noteCompaction` for
   bare sessions over the handle (a caller not using `RoutedSession`, e.g. the
   ACP bridge). The routed path is implemented on the bare primitives.
+  **Removed (^qhf29tg):** the bare-session entry point and its handle are
+  gone, so `RoutedSession.compact()` is the one entry point now.
 - **The compaction lives in the transcript** — `CompactionSegment` makes compaction
   self-describing; the recording mirror persists it with zero schema work,
   and restore reads the checkpoint from data the transcript itself carries.

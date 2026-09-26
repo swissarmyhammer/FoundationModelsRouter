@@ -544,8 +544,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // reads the committed transcript next month does not, and that
             // file still holds the recorded instructions. One `.divergence`
             // marker states the condition in the record itself. The write path
-            // is the one ``RecordingLanguageModel`` and ``RoutedSessionActor``
-            // use for their own transcript-divergence markers.
+            // is the one ``RoutedSessionActor`` uses for its own
+            // transcript-divergence markers.
             await routedLLM.recorder.append(
                 TranscriptEvent.Partial(
                     routerId: routedLLM.routerId,

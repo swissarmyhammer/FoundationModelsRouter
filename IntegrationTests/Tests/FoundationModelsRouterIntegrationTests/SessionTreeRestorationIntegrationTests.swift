@@ -147,16 +147,17 @@ private let sessionTreeToolCallingModel: ModelRef = RealModels.standard
 struct SessionTreeRestorationIntegrationTests {
     // MARK: - Test tool (task jkdae4b: tools threaded through restoreSessionTree)
 
-    /// The scripted tool argument schema the answer's prompt reliably drives —
-    /// mirrors ``RecordingHandleIntegrationTests/EchoArguments``.
+    /// The scripted tool argument schema the answer's prompt reliably drives:
+    /// one required string field, the smallest surface a model can reliably
+    /// fill in when it is told to call this tool.
     @Generable
     struct EchoArguments {
         let text: String
     }
 
     /// A real `FoundationModels.Tool` conformer, so the SDK's own machinery
-    /// invokes it once it observes a `.toolCalls` entry naming it — mirrors
-    /// ``RecordingHandleIntegrationTests/EchoTool``.
+    /// invokes it once it observes a `.toolCalls` entry naming it. It returns
+    /// the text it gets, with the prefix `echoed: `.
     private struct EchoTool: FoundationModels.Tool {
         let name = "echo"
         let description = "Echoes the given text back verbatim."

@@ -166,10 +166,8 @@ struct ProjectionExampleTests {
         /// every session.
         ///
         /// The two factories below are the whole conformance. The tool-carrying
-        /// variants and `languageModel` come from the `public` defaults
-        /// ``LoadedLLMContainer`` supplies, and the default `languageModel`
-        /// traps — which is the honest answer for a container that holds a
-        /// script instead of a model.
+        /// variants come from the `public` defaults ``LoadedLLMContainer``
+        /// supplies.
         private struct ScriptedContainer: LoadedLLMContainer {
             /// The scripted counter of this container: one token per `Character`.
             let tokenCounter: any TokenCounter = CharacterTokenCounter()

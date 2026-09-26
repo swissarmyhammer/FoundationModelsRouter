@@ -17,12 +17,10 @@ import Synchronization
 ///
 /// A wrapper of a backend holds no queue: the session submits each whole SDK
 /// call of its backend to the ``GenerationQueue`` of the model
-/// (``LanguageModelSessionBackend/generationQueue``). A wrapper that a
-/// recording handle gets (``LoadedLLMContainer/languageModel``) has a pass
-/// queue instead (``SessionLanguageModelState/passQueue``). The consumer
-/// drives that SDK session itself, so the Router never makes its SDK call and
-/// cannot submit it whole. Each pass of such a wrapper is thus one item of the
-/// queue, and it never runs at the same time as a submission of a session.
+/// (``LanguageModelSessionBackend/generationQueue``). A wrapper made with a
+/// pass queue (``SessionLanguageModelState/passQueue``) submits each of its
+/// passes to that queue as one item instead. No production code makes such a
+/// wrapper now. Only a test does.
 ///
 /// The wrapper keeps the raw model in ``SessionLanguageModelState/wrapped``. A
 /// caller that needs the raw model (the `as? MLXLanguageModel` cast of
@@ -36,9 +34,8 @@ struct SessionLanguageModel: LanguageModel, Sendable {
     /// Makes a wrapper with a new per-session state over `wrapped`.
     ///
     /// The wrapper of the session of one backend has no pass queue, and runs
-    /// each pass directly. The wrapper of a recording handle, whose SDK calls
-    /// the Router does not make, gives `passQueue`: each of its passes is
-    /// then one item of that queue.
+    /// each pass directly. A wrapper made with `passQueue` makes each of its
+    /// passes one item of that queue.
     ///
     /// - Parameters:
     ///   - wrapped: The raw model whose executor runs each pass.

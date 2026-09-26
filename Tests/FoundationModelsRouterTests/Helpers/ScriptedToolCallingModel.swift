@@ -263,12 +263,6 @@ struct ScriptedToolCallingContainer: LoadedLLMContainer {
     /// ``LanguageModelSessionBackend/transcriptEntries()`` documents.
     let vendedBackends = VendedBackendLog()
 
-    /// The raw model handle, so a test can build its own session over the very
-    /// model the container mounts.
-    var languageModel: any FoundationModels.LanguageModel {
-        live.model
-    }
-
     /// Vends a backend over a fresh session carrying `instructions`, with no
     /// tools mounted.
     ///

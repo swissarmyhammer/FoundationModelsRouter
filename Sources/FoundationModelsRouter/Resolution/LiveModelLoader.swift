@@ -48,9 +48,7 @@ import Synchronization
 /// container is one pool entry, so this is the queue of the pool entry. Each
 /// backend the container makes runs over a new per-session
 /// ``SessionLanguageModel`` and names that queue, so its session submits each
-/// whole SDK call to it. Each read of ``languageModel`` gives a new wrapper
-/// whose each pass is one item of that queue (`generation-queue.md`, section
-/// 5.3).
+/// whole SDK call to it (`generation-queue.md`, section 5.3).
 package struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     /// The raw `LanguageModel` conformance of this slot's resident MLX model.
     /// The eviction of the loader and the thinking control of a backend read
@@ -69,15 +67,6 @@ package struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     /// The counter over the loaded model's own tokenizer. See
     /// ``LoadedLLMContainer/tokenCounter``.
     package let tokenCounter: any TokenCounter
-
-    /// A new per-session ``SessionLanguageModel`` over ``model``, whose each
-    /// pass is one item of ``generationQueue``. Each read gives a new wrapper,
-    /// so each handle that reads it gets its own executor. The consumer of the
-    /// handle drives its own SDK session, so the Router cannot submit that SDK
-    /// call whole.
-    package var languageModel: any FoundationModels.LanguageModel {
-        SessionLanguageModel(wrapping: model, passQueue: generationQueue)
-    }
 
     /// Makes a live session backend over ``model`` that decodes with the
     /// provider default.

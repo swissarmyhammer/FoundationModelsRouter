@@ -198,9 +198,9 @@ struct GuidedPublicSurfaceTests {
     /// A resident model that writes only the two factories
     /// ``LoadedLLMContainer`` still requires of a conformer.
     ///
-    /// It names no `makeSession(instructions:tools:)`, no
-    /// `makeSession(transcript:tools:)` and no `languageModel`, each of which
-    /// has a `public` default the protocol supplies.
+    /// It names no `makeSession(instructions:tools:)` and no
+    /// `makeSession(transcript:tools:)`. Each of them has a `public` default
+    /// that the protocol supplies.
     private struct MinimalContainer: LoadedLLMContainer {
         /// The scripted counter of this container: one token per `Character`.
         let tokenCounter: any TokenCounter = CharacterTokenCounter()

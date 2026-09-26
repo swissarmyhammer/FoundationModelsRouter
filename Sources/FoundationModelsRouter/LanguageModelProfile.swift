@@ -73,10 +73,6 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// memory or none.
     var recordingsRoot: URL? { durableRecording?.root }
 
-    /// The sidecar writer a vended session writes its `session.json` through,
-    /// or `nil` when there is no durable transcripts root.
-    var sessionSidecarWriter: SessionSidecarWriter? { durableRecording?.sidecarWriter }
-
     /// The weak back-reference to the profile that owns this model, guarded
     /// for the readers that race the one registration.
     ///

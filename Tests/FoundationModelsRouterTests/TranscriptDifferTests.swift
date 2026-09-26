@@ -13,8 +13,8 @@ import Testing
 /// session's identity (`routerId`, `sessionId`, `parentId`, `slot`, `model`)
 /// and returns the ordered ``TranscriptEvent/Partial`` values every entry
 /// `current` gained beyond `lastSeen` maps to, via the existing
-/// ``TranscriptEntryMapper``. It is the one diff implementation
-/// ``RoutedSessionActor`` and the upcoming recording handle both share.
+/// ``TranscriptEntryMapper``. It is the diff implementation that
+/// ``RoutedSessionActor`` uses.
 @Suite("TranscriptDiffer: last-seen-vs-current Transcript diff")
 struct TranscriptDifferTests {
     // MARK: - Identity fixture

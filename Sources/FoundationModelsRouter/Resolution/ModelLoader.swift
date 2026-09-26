@@ -108,17 +108,6 @@ public protocol LoadedLLMContainer: LoadedModelContainer {
         transcript: FoundationModels.Transcript, tools: [any Tool], samplingMode: GenerationOptions.SamplingMode?
     ) -> any LanguageModelSessionBackend
 
-    /// The `FoundationModels.LanguageModel` that ``RoutedModel/makeLanguageModel()``
-    /// wraps in each recording handle. The default traps. Only a container
-    /// that supports ``RoutedModel/makeLanguageModel()`` must override it.
-    ///
-    /// The live container gives a new per-session wrapper over its raw model
-    /// on each read, whose each pass is one item of its ``GenerationQueue``:
-    /// the consumer drives the SDK session of the handle, so the Router cannot
-    /// submit its SDK calls whole. The recording handle itself submits
-    /// nothing.
-    var languageModel: any FoundationModels.LanguageModel { get }
-
     /// The counter that counts tokens the way this container's model counts
     /// them. A session vended over this container owns it, and counts every
     /// transcript, summary and tool output with it before a model call. The
@@ -128,13 +117,6 @@ public protocol LoadedLLMContainer: LoadedModelContainer {
 }
 
 extension LoadedLLMContainer {
-    /// Traps. See ``LoadedLLMContainer/languageModel``.
-    public var languageModel: any FoundationModels.LanguageModel {
-        preconditionFailure(
-            "this LoadedLLMContainer does not expose a languageModel; RoutedModel.makeLanguageModel() is unavailable for it"
-        )
-    }
-
     /// Ignores `tools` and forwards to ``makeSession(instructions:)``.
     public func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
         makeSession(instructions: instructions)

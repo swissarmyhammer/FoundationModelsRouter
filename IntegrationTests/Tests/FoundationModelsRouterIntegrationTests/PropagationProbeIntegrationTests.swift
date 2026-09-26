@@ -140,9 +140,8 @@ private let propagationProbeToolName = "context_probe"
 /// What is no longer proven is:
 ///
 /// - **The standard model's tool dispatch through `LanguageModelSession`.** The
-///   30B still goes through Apple's own tool dispatch in
-///   ``RecordingHandleIntegrationTests`` and in the tool-calling test of
-///   ``SessionTreeRestorationIntegrationTests``. The propagation question is
+///   30B still goes through Apple's own tool dispatch in the tool-calling test
+///   of ``SessionTreeRestorationIntegrationTests``. The propagation question is
 ///   about that dispatch rather than about the weights behind it, and the 4B
 ///   makes the same two-round answer with the same entry kinds, so the shape the
 ///   four stages read is the same; the model is not.
@@ -174,8 +173,7 @@ struct PropagationProbeIntegrationTests {
 
     /// The scripted tool argument schema the answer's prompt reliably drives:
     /// a single required string field, the smallest surface a model can
-    /// reliably fill in when directly instructed to call this tool — the
-    /// same shape ``RecordingHandleIntegrationTests``' `EchoArguments` uses.
+    /// reliably fill in when directly instructed to call this tool.
     @Generable
     struct ProbeArguments {
         let note: String
@@ -244,8 +242,9 @@ struct PropagationProbeIntegrationTests {
 
     // MARK: - Shared fixtures
 
-    /// The tool-forcing instructions shape ``RecordingHandleIntegrationTests``
-    /// already proved drives a real tool call.
+    /// The tool-forcing instructions: one sentence that names the tool, names
+    /// the argument to fill with the user's exact text, and tells the model to
+    /// report the tool's result back. This shape drives a real tool call.
     private static let probeInstructions = """
         You always respond to the user by calling the `\(propagationProbeToolName)` tool with \
         the user's exact text as its `note` argument, then report the tool's result back \
@@ -264,8 +263,7 @@ struct PropagationProbeIntegrationTests {
     /// The options every probe answer passes to `session.respond(to:options:)`.
     ///
     /// Stated here, and deliberately here rather than through
-    /// ``RealModelContainer/samplingMode``, for the reason
-    /// ``RecordingHandleIntegrationTests`` states on its own `answerOptions`: a
+    /// ``RealModelContainer/samplingMode``, for this reason: a
     /// mode a suite passes to `makeSession(...samplingMode:)` is read by the
     /// session backend a `RoutedSession` drives, and this suite drives no
     /// `RoutedSession`. It drives a raw `LanguageModelSession` over the

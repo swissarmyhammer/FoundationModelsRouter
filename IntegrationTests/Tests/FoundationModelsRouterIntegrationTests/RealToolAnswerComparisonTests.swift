@@ -106,8 +106,7 @@ private let realToolAnswerModel: ModelRef = "mlx-community/Qwen3-4B-4bit"
 /// What is no longer proven is:
 ///
 /// - **The standard model's tool answer on both surfaces.** The 30B's
-///   `respond(to:)` tool path is still driven by
-///   ``RecordingHandleIntegrationTests`` and by the tool-calling test of
+///   `respond(to:)` tool path is still driven by the tool-calling test of
 ///   ``SessionTreeRestorationIntegrationTests``. No suite drives its
 ///   `streamEvents(to:)` tool path now, and nothing compares the two surfaces
 ///   over it. The 4B writes a `<think>` block before its calls and before its

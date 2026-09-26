@@ -188,20 +188,6 @@ struct GenerationQueueTests {
         #expect(first.state.passQueue == nil)
     }
 
-    @Test("the live container gives a new wrapper on each read of languageModel, whose each pass is one item")
-    func liveContainerWrapsItsRawModelOnEachRead() throws {
-        let container = Self.makeLiveContainer()
-
-        let first = try #require(container.languageModel as? SessionLanguageModel)
-        let second = try #require(container.languageModel as? SessionLanguageModel)
-
-        #expect(first.state !== second.state)
-        #expect(first.state.passQueue === container.generationQueue)
-        #expect(second.state.passQueue === container.generationQueue)
-        let wrapped = try #require(first.state.wrapped as? MLXLanguageModel)
-        #expect(wrapped.modelID == container.model.modelID)
-    }
-
     @Test("a live backend, its fork and a replaced transcript declare the queue of their container")
     func liveBackendDeclaresTheQueueOfItsContainer() {
         let container = Self.makeLiveContainer()

@@ -507,52 +507,6 @@ struct CompactionSegmentTests {
         #expect(restoredTranscript == synthesized)
     }
 
-    // MARK: - makeLanguageModel(resuming:)
-
-    @Test("resuming a session whose recorded transcript carries a CompactionSegment succeeds with no caller configuration")
-    @MainActor
-    func makeLanguageModelResumingRestoresCompactionSegment() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
-        defer {
-            try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: recordingsDir)
-        }
-
-        let router = Self.makeRouter(
-            container: UndrivenLanguageModelContainer(),
-            recorder: JSONLRecorder(directory: recordingsDir),
-            cacheDir: cacheDir,
-            recordingsDir: recordingsDir
-        )
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
-        // Record a synthesized transcript carrying a CompactionSegment onto a
-        // fresh handle by syncing directly — sync(_:) diffs any given
-        // Transcript against last-seen and records what's new, so this needs
-        // no real model answer (see RecordingLanguageModel.sync(_:)'s doc
-        // comment: "typically session.transcript at the end of an answer", but any
-        // Transcript works).
-        let parentHandle = profile.standard.makeLanguageModel()
-        let synthesized = Self.makeSynthesizedTranscript()
-        await parentHandle.sync(Transcript(entries: synthesized))
-
-        // No caller setup at all: the segment rebuilds from its own persisted
-        // schema name.
-        let (_, restored) = try profile.standard.makeLanguageModel(resuming: parentHandle.state.sessionId)
-
-        #expect(Array(restored) == synthesized)
-        guard case .response(let response) = Array(restored).last,
-            case .structure(let segment) = response.segments.last,
-            let compaction = try CompactionSegment(structuredSegment: segment)
-        else {
-            Issue.record("expected the resumed transcript's summary entry to carry a .structure CompactionSegment")
-            return
-        }
-        #expect(compaction.content.promptName == "default")
-        #expect(compaction.content.pendingRuns == [Self.fixturePendingRun])
-    }
-
     // MARK: - A consumer's own segment type lives alongside the router's
 
     private struct Note: Codable, Equatable, Sendable {

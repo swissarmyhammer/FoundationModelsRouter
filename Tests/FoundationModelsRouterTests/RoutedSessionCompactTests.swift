@@ -8,9 +8,7 @@ import Testing
 /// Exercises task ffsjqha (compaction epic — compaction_plan.md §1.4,
 /// build-order step 6): ``RoutedSession/compact(prompt:budget:)``, the
 /// session-level entry point that compacts a ``RoutedSessionActor``'s live
-/// transcript in place — the actor counterpart to
-/// ``RecordingLanguageModel/noteCompaction(_:)`` for a bare session over the
-/// recording handle. The session compacts with
+/// transcript in place. The session compacts with
 /// ``Compactor/compact(_:prompt:budget:counter:summarizers:summarization:pendingRuns:protection:abandoning:)``,
 /// one summarizer call on its own model, and then
 /// ``LanguageModelSessionBackend/replacingTranscript(_:)``.
