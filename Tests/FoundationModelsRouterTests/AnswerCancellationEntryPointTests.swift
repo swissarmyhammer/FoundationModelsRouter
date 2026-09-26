@@ -306,8 +306,7 @@ extension AnswerCancellationTests {
             await release.wait()
             // The one failure a budgeted answer compacts-and-retries on, raised
             // with a cancellation already outstanding against this answer.
-            throw LanguageModelError.contextSizeExceeded(
-                .init(contextSize: 100, tokenCount: 150, debugDescription: "stub context overflow"))
+            throw Self.makeStubContextOverflow()
         }
 
         let answerTask = Task {

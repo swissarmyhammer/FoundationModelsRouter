@@ -141,6 +141,47 @@ comments:
     - evidence: 14 files. Changed: Sources/FoundationModelsRouter/Session/SessionProjection.swift, Tests/FoundationModelsRouterTests/AnswerCancellationTests.swift, HumanWaitGateTests.swift, SubmissionBoundaryToolTests.swift, CeilingStopCompactionTests.swift, ScriptedToolAnswerComparisonTests.swift, ToolOutputProtectionSessionTests.swift, Tools/RecordCompactionFixture/main.swift. New: Tests/FoundationModelsRouterTests/AnswerCancellationStubs.swift, AnswerCancellationFixtures.swift, AnswerCancellationEntryPointTests.swift, AnswerCancellationCompactionTests.swift, Helpers/AnswerHook.swift. `swift test`: 1466 + 15 + 19 = 1500 passed, 2 known issues as before, 0 failed. Changed suites (`--filter` on type names, 11 suites) 3 extra runs: 131 tests passed each time. `swift build --build-tests`: complete, no warning. `swift build --product RecordCompactionFixture`: complete. IntegrationTests `swift build --build-tests`: complete. Only warning: the known mlx "missing creator" line.
     - next: review
   timestamp: 2026-09-26T09:40:45.233379+00:00
+- actor: claude-code
+  id: 01m3ej7kywmbg13qsw9nd57tpk
+  text: |-
+    ### review — findings
+    - evidence: `review sha HEAD~1..HEAD` (commit 9792325): 1 finding (1 confirmed, 0 refuted, 21 attempted, 0 failed). Tests/FoundationModelsRouterTests/AnswerCancellationStubs.swift:331 `code-hygiene/magic-numbers-swift`. All 12 items of the 2026-09-26 03:07 section are checked. The engine reviewed AnswerCancellationTests.swift with no prompt-cap skip. `driveAnswers(_:on:)` is defined in Tests/FoundationModelsRouterTests/Helpers/CompactionFixtures.swift.
+    - next: Replace the magic numbers in AnswerCancellationStubs.swift with named constants, in all of the file. Then run review again on the new commit.
+  timestamp: 2026-09-26T09:55:06.844684+00:00
+- actor: claude-code
+  id: 01m3eja0aa136gyy1v965vxxq2
+  text: |-
+    ### finish iteration 2 — findings
+    - implement: changed — 14 files (12 findings fixed; cancellation tests split into 5 files)
+    - test: green — swift test, 1500 passed (1466+15+19), 0 failed, 0 skipped; changed suites 3 extra runs clean; all products and IntegrationTests build clean
+    - commit: 9792325
+    - review: findings — Tests/FoundationModelsRouterTests/AnswerCancellationStubs.swift:331
+  timestamp: 2026-09-26T09:56:25.034484+00:00
+- actor: claude-code
+  id: 01m3ejeyps7tqnnbcrvrcaz70a
+  text: |-
+    2026-09-26, implement step for the finding of "Review Findings (2026-09-26 04:45)" (`code-hygiene/magic-numbers-swift`).
+
+    Research:
+    - The rule is swiftlint `no_magic_numbers` with `allowed_numbers: [0, 1, -1, 100]`. The rule does not report a shift operand, a `static let`, a stored property, or a literal in a `@Test` body.
+    - swiftlint on the 6 files (`AnswerCancellationStubs.swift`, `AnswerCancellationTests.swift`, `AnswerCancellationFixtures.swift`, `AnswerCancellationEntryPointTests.swift`, `AnswerCancellationCompactionTests.swift`, `Helpers/AnswerHook.swift`): 1 violation before (Stubs `0.5`), 0 after.
+    - A text search found more bare literals. Each has a reason:
+      - The stub overflow `contextSize: 100, tokenCount: 150` is in 2 `@Test` bodies (EntryPoint, Compaction). swiftlint does not report it. It is the same stub value in 2 files, so it now has a name.
+      - `64 << 30` and `48 << 30` (Fixtures): these are shift operands, and the rule does not report shift operands.
+      - The numbers in `configJSON` and `treeJSON` are text in a string, not Swift literals.
+      - The `== 2`, `== 3` and `+ 2` counts are expected values in `@Test` assertions. A comment gives the reason for each one. The assertions are not changed.
+
+    Change:
+    - `StubEmbeddingContainer.stubVectorComponent: Float = 0.5` (Stubs).
+    - `stubOverflowContextSize = 100`, `stubOverflowTokenCount = 150` and `makeStubContextOverflow()` (Fixtures). The 2 `throw` sites now call `Self.makeStubContextOverflow()`.
+  timestamp: 2026-09-26T09:59:07.225012+00:00
+- actor: claude-code
+  id: 01m3ejf1s8hx989rcjxwwb3f84
+  text: |-
+    ### implement — changed
+    - evidence: 4 files: Tests/FoundationModelsRouterTests/AnswerCancellationStubs.swift, AnswerCancellationFixtures.swift, AnswerCancellationEntryPointTests.swift, AnswerCancellationCompactionTests.swift. swiftlint no_magic_numbers ([0, 1, -1, 100]) on the 6 split files and Helpers/AnswerHook.swift: 1 before, 0 after. `swift build --build-tests`: complete; the only warning is the known mlx "missing creator" line. `swift test`: 1466 + 15 + 19 = 1500 passed, 2 known issues as before, 0 failed. `swift test --skip-build --filter AnswerCancellationTests` 3 extra runs: 25 tests passed each time. The finding is `- [x]`.
+    - next: review
+  timestamp: 2026-09-26T09:59:10.376881+00:00
 depends_on:
 - 01M3CYMT8QK7YBJ904JX7CXSG3
 - 01M3CYN72XRWG9THXXE5D0QX1B
@@ -205,3 +246,12 @@ Rewritten on 2026-09-25 by the design task ^jdp02p. The earlier plan of this tas
 - [x] `Tests/FoundationModelsRouterTests/ToolOutputProtectionSessionTests.swift:111` `completeness/public-output-contract` — The function `driveAnswers(Fixtures.recentAnswerCount, on:)` is called at 6 test sites (lines 111, 128, 142, 160, 178, 197) but is never defined, causing compilation failure. Either the function definition is missing from this change, or these calls should not be present. Either add the definition of `driveAnswers(_:on:)` helper function to the test class, or remove the calls to this undefined function from lines 111, 128, 142, 160, 178, and 197. If the function should exist, provide its implementation with signature: `private static func driveAnswers(_ count: Int, on session: RoutedSession) async throws`. <!-- the helper is defined: `func driveAnswers(_ count: Int, on session: RoutedSession) async throws` in Tests/FoundationModelsRouterTests/Helpers/CompactionFixtures.swift; the suite doc and each call site now name that file -->
 - [x] `Tools/RecordCompactionFixture/main.swift:114` `code-hygiene/disallowed-constructs-swift` — no_direct_standard_out_logs: Do not commit print(…), debugPrint(…), dump(…) or _printChanges(), which write to standard out in release. Log to a dedicated logging system, or silence one debug-only line with // swiftlint:disable:next no_direct_standard_out_logs and the reason after it.
 - [x] `Tools/RecordCompactionFixture/main.swift:179` `code-hygiene/disallowed-constructs-swift` — no_direct_standard_out_logs: Do not commit print(…), debugPrint(…), dump(…) or _printChanges(), which write to standard out in release. Log to a dedicated logging system, or silence one debug-only line with // swiftlint:disable:next no_direct_standard_out_logs and the reason after it.
+
+## Review Findings (2026-09-26 04:45)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 13 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/AnswerCancellationStubs.swift:331` `code-hygiene/magic-numbers-swift` — Magic numbers should be replaced by named constants. <!-- `0.5` is `StubEmbeddingContainer.stubVectorComponent`; the stub overflow `100`/`150` (2 files) is `makeStubContextOverflow()` with `stubOverflowContextSize` and `stubOverflowTokenCount`; swiftlint no_magic_numbers on the 6 files: 1 before, 0 after -->

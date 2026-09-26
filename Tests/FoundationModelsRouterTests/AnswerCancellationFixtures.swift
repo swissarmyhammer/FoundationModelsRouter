@@ -86,6 +86,23 @@ extension AnswerCancellationTests {
         target: inertCompactionTarget
     )
 
+    /// The context size that ``makeStubContextOverflow()`` reports.
+    static let stubOverflowContextSize = 100
+
+    /// The token count that ``makeStubContextOverflow()`` reports. It is
+    /// larger than ``stubOverflowContextSize``, as a real overflow is.
+    static let stubOverflowTokenCount = 150
+
+    /// Makes the context overflow that a mid-answer hook throws: the one
+    /// failure on which a budgeted answer compacts and tries again.
+    static func makeStubContextOverflow() -> LanguageModelError {
+        .contextSizeExceeded(
+            .init(
+                contextSize: stubOverflowContextSize,
+                tokenCount: stubOverflowTokenCount,
+                debugDescription: "stub context overflow"))
+    }
+
     // MARK: - Compaction fixtures
 
     /// The compaction prompt a compaction test vends its session with, so the mid-answer

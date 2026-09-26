@@ -326,9 +326,13 @@ extension AnswerCancellationTests {
     /// A stub embedder container — never exercised here, present only so the
     /// profile resolves. No MLX.
     struct StubEmbeddingContainer: LoadedEmbeddingContainer {
+        /// The value of each component of each stub vector. No test reads it:
+        /// it is only a value that is not zero.
+        static let stubVectorComponent: Float = 0.5
+
         let dimension: Int
         func embed(texts: [String]) async throws -> [[Float]] {
-            texts.map { _ in [Float](repeating: 0.5, count: dimension) }
+            texts.map { _ in [Float](repeating: Self.stubVectorComponent, count: dimension) }
         }
     }
 

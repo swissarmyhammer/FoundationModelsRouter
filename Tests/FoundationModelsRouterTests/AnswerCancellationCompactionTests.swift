@@ -506,8 +506,7 @@ extension AnswerCancellationTests {
                 try await suspendInSummarizer?(prompt)
                 return
             }
-            throw LanguageModelError.contextSizeExceeded(
-                .init(contextSize: 100, tokenCount: 150, debugDescription: "stub context overflow"))
+            throw Self.makeStubContextOverflow()
         }
 
         let answerTask = Task {
