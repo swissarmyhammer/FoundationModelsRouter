@@ -135,10 +135,26 @@ comments:
     - evidence: 4 files — Examples/MultiModelGeneration/main.swift (13 directives), Sources/FoundationModelsRouter/Concurrency/SessionLanguageModel.swift (one init), Sources/FoundationModelsRouter/Concurrency/GenerationPassObserver.swift (docs name the callers), Sources/FoundationModelsRouter/Concurrency/GenerationQueue.swift (doc names where the mark is set). `swift test`: 1425 + 4 + 19 = 1448 passed, 0 failed, 2 known issues (withKnownIssue). Queue, cancel and re-entry suites (15 suites, 120 tests) 3 extra runs: all passed. `swift build --build-tests` and both example targets recompiled: 0 warnings in first-party files (only the known `mlx-swift_Cmlx.bundle` note). `swift build --package-path IntegrationTests --build-tests`: clean. Removal experiments A to F: each removed call fails 1 to 6 tests, then restored.
     - next: review
   timestamp: 2026-09-25T23:54:48.603567+00:00
+- actor: claude-code
+  id: 01m3dgbs1658k45qrm1p1y822k
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (c465a16); 0 findings (0 confirmed, 0 refuted; 7 validator runs, 0 failed); 4 files reviewed, 2 `.kanban/` files excluded by `.reviewignore`. All 4 items of "Review Findings (2026-09-25 18:27)" are checked. Call sites verified at HEAD: `RoutedSessionActor.run(_:on:reportingTo:)` in `Session/RoutedSessionActorTurnExecution.swift` calls `queue.submit(onQueued: { observer.submissionQueued() })` and `observer.submissionStarted()`; `runCancellableModelCall(composedPrompt:submittingTo:_:)` calls `Self.run(submission, on: target?.queue, reportingTo: observer)`, makes `ModelCallMark(sessionID: id, submission: target)` with `defer { modelCallMark.close() }`, and `submission(of:...)` binds it with `ModelCallMark.$current.withValue(mark)`. `GenerationQueue.submit` and `beginTurn()` call `refuseWaitInsideOpenSubmission()`.
+    - next: none. The task moved to done.
+  timestamp: 2026-09-26T00:03:11.526715+00:00
+- actor: claude-code
+  id: 01m3dgcr44fjm07y5c372mkrxj
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 4 files (one SessionLanguageModel init; doc comments name the callers; swiftlint lines in the demo). Findings 2 and 3 were not real gaps; removal experiments are in the comments.
+    - test: green — swift test, 1448 passed (1425+4+19), 0 failed, 0 skipped; queue and cancel suites 2 extra runs clean
+    - commit: c465a16
+    - review: clean — 0 findings
+  timestamp: 2026-09-26T00:03:43.364984+00:00
 depends_on:
 - 01M3CYHCGYFC6JMYTVZA0ZE9AF
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffff8980
 title: Make one submission to Foundation the item of the generation queue
 ---
 ## Why
