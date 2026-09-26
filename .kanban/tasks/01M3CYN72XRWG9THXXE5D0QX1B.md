@@ -74,10 +74,27 @@ comments:
     - evidence: 1 file: Tests/FoundationModelsRouterTests/Helpers/AnswerLimitsModel.swift. swiftlint no_magic_numbers over the 3 new test files of abc9666: 5 before, 0 after. `swift test`: 1463 + 14 + 19 = 1496 passed, 2 known issues as before, 0 failed; the only warning is the known mlx "missing creator" line. `swift test --skip-build --filter 'AnswerLimitsTests|StoredRecoveriesKeyTests'` 3 extra times: 5 tests in 2 suites passed each time. The 3 findings are `- [x]`.
     - next: /review
   timestamp: 2026-09-26T07:17:33.459157+00:00
+- actor: claude-code
+  id: 01m3e9kk3fjttx612wdwfwz6nb
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 0604412). 0 findings, 0 confirmed, 0 refuted. 7 validator runs, 0 failed. The engine reviewed 1 file. The .reviewignore rule excluded 2 .kanban files.
+    - prior findings: all 3 items of "Review Findings (2026-09-26 01:56)" are checked. The commit replaced each magic number with a named constant: `ceilingStopTokensIn` (400), `repeatingHoldSeconds` (5), and `budgetLimit`, `budgetTrigger`, `budgetTarget`, `recoveriesPerAnswer` in `AnswerLimitsSessionFixture`.
+    - next: none. The task moved to done.
+  timestamp: 2026-09-26T07:24:21.999830+00:00
+- actor: claude-code
+  id: 01m3e9mt39fnd4x6m9f4znz6td
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 1 test helper (named constants; swiftlint no_magic_numbers 5 to 0)
+    - test: green — swift test, 1496 passed (1463+14+19), 0 failed, 0 skipped
+    - commit: 0604412
+    - review: clean — 0 findings
+  timestamp: 2026-09-26T07:25:01.929658+00:00
 depends_on:
 - 01M3CYK7FSPBXGC7NWD3QX0MPT
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffff8e80
 title: Count recoveries and compaction stops for each answer, and keep the stored key recoveriesPerTurn
 ---
 ## Why
