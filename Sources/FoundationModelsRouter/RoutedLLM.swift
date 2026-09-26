@@ -114,7 +114,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             agentSpawn: configuration.agentSpawn,
             discoveryPriming: configuration.discoveryPriming,
             toolOutputProtection: configuration.toolOutputProtection,
-            repetitionDetection: configuration.repetitionDetection)
+            repetitionDetection: configuration.repetitionDetection,
+            mailOnlyAnswerLimit: configuration.mailOnlyAnswerLimit)
     }
 
     /// The shared builder behind the plain and guided session surfaces.
@@ -127,6 +128,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - grammar: The grammar that constrains the session, or `nil`.
     ///   - repetitionDetection: The settings of the repetition watch of the
     ///     session. See ``RepetitionDetection``.
+    ///   - mailOnlyAnswerLimit: The most answers in a row that mail alone
+    ///     starts. See ``SessionConfiguration/mailOnlyAnswerLimit``.
     /// - Returns: A new ``RoutedSession`` over this model.
     func makeSession(
         grammar: Grammar?,
@@ -140,7 +143,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         agentSpawn: SessionSidecar.AgentSpawn? = nil,
         discoveryPriming: DiscoveryPriming? = nil,
         toolOutputProtection: ToolOutputProtection? = nil,
-        repetitionDetection: RepetitionDetection = RepetitionDetection()
+        repetitionDetection: RepetitionDetection = RepetitionDetection(),
+        mailOnlyAnswerLimit: Int = SessionConfiguration.defaultMailOnlyAnswerLimit
     ) -> RoutedSession {
         let owningProfile = requireOwningProfile(apiName: "makeSession")
 
@@ -228,6 +232,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             discoveryPriming: discoveryPriming,
             toolOutputProtection: toolOutputProtection,
             repetitionDetection: repetitionDetection,
+            mailOnlyAnswerLimit: mailOnlyAnswerLimit,
             // Threaded only into the sidecar's configuration envelope (task
             // ^ne5g9jn), so the recorded configuration names the recording
             // root the session was actually vended with.

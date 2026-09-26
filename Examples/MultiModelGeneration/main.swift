@@ -66,8 +66,9 @@ let demoReplyTokenCeiling = 160
 /// compaction, and priming events never fire, a stall report would only
 /// say the machine is busy, each answer runs alone on its model so no
 /// submission waits for the worker of its model, the demo's short replies
-/// never fill the window of a repetition stop, and a failed answer throws
-/// from the stream.
+/// never fill the window of a repetition stop, a failed answer throws
+/// from the stream, and a mail delivery pause comes only on the session-wide
+/// feed.
 ///
 /// - Parameters:
 ///   - session: The session that answers.
@@ -123,7 +124,7 @@ func runObservedAnswer(
                 "[\(label)] answered replyCharacters=\(answer.reply.count) messages=\(answer.messageIds.count)")
         case .reasoningDelta, .toolCall, .toolStatus, .toolInvocation, .toolCallReport,
             .compaction, .discoveryPrimingFailed, .generationStalled, .submissionQueued, .repetitionStopped,
-            .runSettled, .elicitationRequested, .generationCall, .answerFailed:
+            .runSettled, .elicitationRequested, .generationCall, .answerFailed, .mailDeliveryPaused:
             // Silent by construction — see this function's documentation.
             break
         }

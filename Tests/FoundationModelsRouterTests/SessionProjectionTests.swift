@@ -228,6 +228,19 @@ struct SessionProjectionTests {
                     elicitation: MountFixtures.proceedRequest())))
     }
 
+    @Test("a mailDeliveryPaused changes nothing: phase, transcript, answer, and counters stay as they were")
+    @MainActor
+    func mailDeliveryPausedChangesNothing() {
+        Self.expectProjectionUnchanged(
+            by: .mailDeliveryPaused(
+                MailDeliveryPause(
+                    limit: SessionConfiguration.defaultMailOnlyAnswerLimit,
+                    heldMail: [
+                        OperationEvent(
+                            tool: "search", op: "search", correlationID: "token-1", kind: .completed, detail: "done")
+                    ])))
+    }
+
     // MARK: - compaction: appended as its own entry, phase .compacting
 
     @Test("a compaction event appends its result and sets phase .compacting")

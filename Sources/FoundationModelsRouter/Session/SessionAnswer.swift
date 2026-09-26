@@ -161,8 +161,9 @@ struct SessionAnswerReducer {
             accumulate(end.usage)
         case .submissionQueued, .submissionStarted, .answered, .answerFailed, .textDelta, .textReset,
             .reasoningDelta, .entryRecorded, .discoveryPrimingFailed, .generationStalled, .repetitionStopped,
-            .runSettled, .toolCallReport, .elicitationRequested, .generationCall:
-            // Deliberately not carried by the answer. The frames of a
+            .runSettled, .toolCallReport, .elicitationRequested, .generationCall, .mailDeliveryPaused:
+            // Deliberately not carried by the answer. A mail delivery pause
+            // comes when no answer runs, so no answer can carry it. The frames of a
             // submission and of an answer are the structure the answer sums.
             // The reply is the final reply of the chain, not a reduction of
             // its text fragments: a continuation writes its own reply, and

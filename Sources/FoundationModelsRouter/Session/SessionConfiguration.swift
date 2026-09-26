@@ -54,8 +54,34 @@ public struct SessionConfiguration: Sendable {
     /// again, and a fork inherits it.
     public var repetitionDetection: RepetitionDetection
 
+    /// The default of ``mailOnlyAnswerLimit``: 100 answers in a row.
+    ///
+    /// A normal chain is short: a model starts some background runs, and each
+    /// settled run starts one answer. 100 answers in a row with no caller
+    /// message is far past such a chain, and each of them holds the model for
+    /// a whole submission. So only a chain with no end reaches it.
+    public static let defaultMailOnlyAnswerLimit = 100
+
+    /// The most answers in a row that mail alone starts, with no caller
+    /// message between them (`generation-queue.md`, section 5.4).
+    ///
+    /// Mail causes the next submission of the session with no caller call.
+    /// So a model that starts one more background run in each answer gets one
+    /// more answer for each run, with no end. When this many answers in a row
+    /// had no caller message, the session holds new mail in its queue and
+    /// starts no answer for it. The next caller message carries the held mail
+    /// into its submission, and the count starts again. The mail is never
+    /// lost. The session reports each hold with
+    /// ``SessionEvent/mailDeliveryPaused(_:)`` and a log line.
+    ///
+    /// `0` holds all mail for the next caller message. A negative value acts
+    /// as `0`. The sidecar records the value, a restore applies it again, and
+    /// a fork inherits it.
+    public var mailOnlyAnswerLimit: Int
+
     /// Creates a session configuration. Every parameter defaults to the
-    /// matching default of `RoutedModel.makeSession`.
+    /// matching default of `RoutedModel.makeSession`, and
+    /// `mailOnlyAnswerLimit` defaults to ``defaultMailOnlyAnswerLimit``.
     public init(
         instructions: String? = nil,
         workingDirectory: URL? = nil,
@@ -68,7 +94,8 @@ public struct SessionConfiguration: Sendable {
         discoveryPriming: DiscoveryPriming? = nil,
         grammar: Grammar? = nil,
         toolOutputProtection: ToolOutputProtection? = nil,
-        repetitionDetection: RepetitionDetection = RepetitionDetection()
+        repetitionDetection: RepetitionDetection = RepetitionDetection(),
+        mailOnlyAnswerLimit: Int = defaultMailOnlyAnswerLimit
     ) {
         self.instructions = instructions
         self.workingDirectory = workingDirectory
@@ -82,6 +109,7 @@ public struct SessionConfiguration: Sendable {
         self.grammar = grammar
         self.toolOutputProtection = toolOutputProtection
         self.repetitionDetection = repetitionDetection
+        self.mailOnlyAnswerLimit = mailOnlyAnswerLimit
     }
 
     /// The `Codable` slice of this configuration, persisted in the session sidecar.
@@ -99,7 +127,8 @@ public struct SessionConfiguration: Sendable {
             agentSpawn: agentSpawn,
             discoveryPriming: discoveryPriming,
             grammar: grammar,
-            repetitionDetection: repetitionDetection
+            repetitionDetection: repetitionDetection,
+            mailOnlyAnswerLimit: mailOnlyAnswerLimit
         )
     }
 
@@ -143,5 +172,10 @@ public struct SessionConfiguration: Sendable {
         /// The repetition detection settings, or `nil` in a sidecar written
         /// before the setting existed. A restore reads `nil` as the default.
         let repetitionDetection: RepetitionDetection?
+
+        /// The most answers in a row that mail alone starts, or `nil` in a
+        /// sidecar written before the setting existed. A restore reads `nil`
+        /// as ``SessionConfiguration/defaultMailOnlyAnswerLimit``.
+        let mailOnlyAnswerLimit: Int?
     }
 }

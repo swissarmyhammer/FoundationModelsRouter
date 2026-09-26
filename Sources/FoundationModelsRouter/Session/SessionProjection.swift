@@ -176,8 +176,10 @@ public final class SessionProjection {
             transcript.append(
                 TranscriptEntry(id: result.id, kind: .compaction(result), sourceEntryId: result.summaryEntryId))
         case .discoveryPrimingFailed, .generationStalled, .submissionQueued, .repetitionStopped,
-            .runSettled, .toolCallReport, .elicitationRequested, .generationCall:
-            // Handled explicitly, and deliberately changes nothing. A settled
+            .runSettled, .toolCallReport, .elicitationRequested, .generationCall, .mailDeliveryPaused:
+            // Handled explicitly, and deliberately changes nothing. A mail
+            // delivery pause changes no entry: the held mail waits in the
+            // queue of the session, and the next caller message carries it. A settled
             // run's terminal reaches this mirror as the recorded tool output
             // of the submission that next carries it. A submission whose
             // discovery priming could not seed generates as an unprimed

@@ -2,6 +2,10 @@ import Foundation
 import FoundationModels
 import Tracing
 
+/// The logger for mail that the pump holds, because the answers in a row that
+/// mail alone started reached ``SessionConfiguration/mailOnlyAnswerLimit``.
+private let mailDeliveryLogger = makeModuleLogger(category: "MailDelivery")
+
 /// The work that the pump of a session runs now (`generation-queue.md`,
 /// section 5.4). The pump runs one work at a time, so a session never has
 /// two SDK calls, and no caller waits on a lock.
@@ -151,6 +155,11 @@ extension RoutedSessionActor: SessionMailObserver {
             endPumpWork()
             return
         }
+        guard !messages.isEmpty || mailOnlyAnswersInARow < mailOnlyAnswerLimit else {
+            await pauseMailDelivery(holding: batch.events)
+            endPumpWork()
+            return
+        }
         let options = messages.first?.options ?? .mailDelivery
         pumpWork?.kind = .answer(options: options, messages: messages)
         startAnswerLimits()
@@ -162,8 +171,37 @@ extension RoutedSessionActor: SessionMailObserver {
             result = .failure(error)
         }
         let delivered = deliveredMessages ?? messages
+        countAnswer(delivering: delivered)
         endPumpWork()
         resolve(delivered, with: result)
+    }
+
+    /// Counts the answer that just ended for the bound on answers that mail
+    /// alone starts (``SessionConfiguration/mailOnlyAnswerLimit``). An answer
+    /// that delivered a caller message, also one that joined a continuation,
+    /// starts the count again. An answer that only mail started adds one.
+    ///
+    /// - Parameter delivered: The caller messages the answer delivered.
+    private func countAnswer(delivering delivered: [SessionMessage]) {
+        mailOnlyAnswersInARow = delivered.isEmpty ? mailOnlyAnswersInARow + 1 : 0
+    }
+
+    /// Holds the mail of a batch that only mail started, because
+    /// ``mailOnlyAnswersInARow`` reached ``mailOnlyAnswerLimit``
+    /// (`generation-queue.md`, section 5.4). The mail goes back into the
+    /// outbox, held, so it starts no submission by itself, and the next
+    /// caller message carries it. The session reports the hold with
+    /// ``SessionEvent/mailDeliveryPaused(_:)`` and a log line.
+    ///
+    /// No answer runs now, so the event goes to the session-wide feed only.
+    ///
+    /// - Parameter events: The mail the pump took.
+    private func pauseMailDelivery(holding events: [SessionOutbox.PendingEvent]) async {
+        await outbox.putBack(holding: events)
+        let pause = MailDeliveryPause(limit: mailOnlyAnswerLimit, heldMail: events.map(\.event))
+        mailDeliveryLogger.notice(
+            "session \(self.id.description, privacy: .public): \(pause.description, privacy: .public)")
+        emitSessionScopedEvent(.mailDeliveryPaused(pause))
     }
 
     /// Runs the first submission of an answer, and every continuation of it.

@@ -159,6 +159,16 @@ public enum SessionEvent: Sendable, Equatable {
     /// usage gives none. The run journal records each one as a
     /// ``TranscriptEvent/Kind/generationCall`` event.
     case generationCall(GenerationCallUsage)
+
+    /// The session held new mail and started no answer for it, because
+    /// ``SessionConfiguration/mailOnlyAnswerLimit`` answers in a row had no
+    /// caller message (`generation-queue.md`, section 5.4). The held mail
+    /// waits in the queue of the session, and the next caller message
+    /// carries it into its submission. Only
+    /// ``RoutedSession/streamSessionEvents()`` carries this event, because no
+    /// answer runs when the session holds the mail. The session sends one for
+    /// each hold.
+    case mailDeliveryPaused(MailDeliveryPause)
 }
 
 /// The records one tool call attached, carried by ``SessionEvent/toolCallReport(_:)``.

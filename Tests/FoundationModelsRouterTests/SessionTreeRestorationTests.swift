@@ -927,6 +927,7 @@ struct SessionTreeRestorationTests {
         #expect(restoredRoot.summarization == Summarization())
         #expect(restoredRoot.discoveryPriming == nil)
         #expect(restoredRoot.repetitionDetection == RepetitionDetection())
+        #expect(restoredRoot.mailOnlyAnswerLimit == SessionConfiguration.defaultMailOnlyAnswerLimit)
         #expect(restored.configurationReport.missingTools.isEmpty)
     }
 
@@ -957,6 +958,37 @@ struct SessionTreeRestorationTests {
         #expect(restoredRoot.repetitionDetection == detection)
         let restoredFork = try #require(restored.session(fork.id) as? RoutedSessionActor)
         #expect(restoredFork.repetitionDetection == detection)
+    }
+
+    @Test("a session made with a mail-only answer limit keeps it in a fork and after a restore (task ^9bxas0w)")
+    @MainActor
+    func restoredTreeReappliesRecordedMailOnlyAnswerLimit() async throws {
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        // A value that is not the default, so the restore cannot pass by
+        // falling back to the default.
+        let limit = SessionConfiguration.defaultMailOnlyAnswerLimit + 1
+        let root = profile1.standard.makeSession(configuration: SessionConfiguration(mailOnlyAnswerLimit: limit))
+        _ = try await root.respond(to: "hello")
+        let fork = try #require(try await root.fork(workingDirectory: nil) as? RoutedSessionActor)
+        #expect(fork.mailOnlyAnswerLimit == limit)
+
+        let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+
+        let restoredRoot = try #require(restored.root as? RoutedSessionActor)
+        #expect(restoredRoot.mailOnlyAnswerLimit == limit)
+        let restoredFork = try #require(restored.session(fork.id) as? RoutedSessionActor)
+        #expect(restoredFork.mailOnlyAnswerLimit == limit)
     }
 
     // MARK: - Decided restore losses (task ^xky3j8w)

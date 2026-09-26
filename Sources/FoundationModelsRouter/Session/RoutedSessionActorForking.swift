@@ -80,7 +80,7 @@ extension RoutedSessionActor {
         // for this session. This site's chain is fork →
         // mount → cap (task ^k4nygqa; the root and restore sites each
         // have their own deliberately distinct chain — see
-        // ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:)``
+        // ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:mailOnlyAnswerLimit:)``
         // and `restoreSessionTree`). Composition order matters: a tool is
         // forked first via its own `forked()` (falling back to sharing the
         // original unchanged when it doesn't conform to `ForkableTool`),
@@ -229,6 +229,10 @@ extension RoutedSessionActor {
             // A fork continues its parent's conversation, so the same watch
             // stops a call of the fork that repeats itself.
             repetitionDetection: repetitionDetection,
+            // A fork continues its parent's conversation, so the same bound
+            // holds a chain of answers that mail alone starts. Its count
+            // starts at zero, because the fork has no answer yet.
+            mailOnlyAnswerLimit: mailOnlyAnswerLimit,
             // Same model, so the same tokenizer counts for the child.
             tokenCounter: tokenCounter,
             // The parent's own tracer: a fork continues its parent's

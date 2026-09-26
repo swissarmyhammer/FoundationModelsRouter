@@ -486,6 +486,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 // In the envelope since task ^1hcwaqy. A sidecar written
                 // before it carries `nil` and gets the default.
                 repetitionDetection: configuration?.repetitionDetection ?? RepetitionDetection(),
+                // In the envelope since task ^9bxas0w. A sidecar written
+                // before it carries `nil` and gets the default.
+                mailOnlyAnswerLimit: configuration?.mailOnlyAnswerLimit
+                    ?? SessionConfiguration.defaultMailOnlyAnswerLimit,
                 // Not in the envelope either: the counter comes from the
                 // container the node is restored over, as a vended session
                 // takes it.

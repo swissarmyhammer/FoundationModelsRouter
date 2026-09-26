@@ -198,6 +198,7 @@ func makeRoutedSessionActor(
     discoveryPriming: DiscoveryPriming? = nil,
     toolOutputProtection: ToolOutputProtection? = nil,
     repetitionDetection: RepetitionDetection = RepetitionDetection(),
+    mailOnlyAnswerLimit: Int = SessionConfiguration.defaultMailOnlyAnswerLimit,
     recordingRoot: URL? = nil,
     tokenCounter: any TokenCounter,
     tracer: (any Tracer)?
@@ -234,6 +235,7 @@ func makeRoutedSessionActor(
             discoveryPriming: discoveryPriming,
             toolOutputProtection: toolOutputProtection,
             repetitionDetection: repetitionDetection,
+            mailOnlyAnswerLimit: mailOnlyAnswerLimit,
             recordingRoot: recordingRoot,
             tokenCounter: tokenCounter,
             tracer: tracer
@@ -447,6 +449,17 @@ actor RoutedSessionActor: RoutedSession {
     /// records it. See ``RepetitionDetection``.
     nonisolated let repetitionDetection: RepetitionDetection
 
+    /// The most answers in a row that mail alone starts, which this session
+    /// was vended, forked or restored with. A fork carries it forward, and
+    /// the sidecar records it. See ``SessionConfiguration/mailOnlyAnswerLimit``.
+    nonisolated let mailOnlyAnswerLimit: Int
+
+    /// How many answers in a row mail alone started since the last answer
+    /// that delivered a caller message. The pump counts it, and holds new
+    /// mail when it reaches ``mailOnlyAnswerLimit``
+    /// (``countAnswer(delivering:)``).
+    var mailOnlyAnswersInARow = 0
+
     /// The stall watch over the one model call in flight, or `nil` between
     /// calls. See ``beginGenerationStallWatch()`` and ``GenerationStall``.
     var generationStallWatch: GenerationStallWatch?
@@ -589,12 +602,14 @@ actor RoutedSessionActor: RoutedSession {
         discoveryPriming: DiscoveryPriming? = nil,
         toolOutputProtection: ToolOutputProtection? = nil,
         repetitionDetection: RepetitionDetection = RepetitionDetection(),
+        mailOnlyAnswerLimit: Int = SessionConfiguration.defaultMailOnlyAnswerLimit,
         recordingRoot: URL? = nil,
         tokenCounter: any TokenCounter,
         tracer: (any Tracer)?
     ) {
         self.toolOutputProtection = toolOutputProtection
         self.repetitionDetection = repetitionDetection
+        self.mailOnlyAnswerLimit = mailOnlyAnswerLimit
         self.tokenCounter = tokenCounter
         self.profile = profile
         self.routerId = routerId
@@ -668,7 +683,8 @@ actor RoutedSessionActor: RoutedSession {
                 agentSpawn: agentSpawn,
                 discoveryPriming: discoveryPriming,
                 grammar: grammar,
-                repetitionDetection: repetitionDetection
+                repetitionDetection: repetitionDetection,
+                mailOnlyAnswerLimit: mailOnlyAnswerLimit
             ).persistable,
             to: recordingDirectory
         )

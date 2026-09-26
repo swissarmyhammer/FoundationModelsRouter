@@ -38,6 +38,16 @@ The session pushes settlement to the model — the model never polls:
   reported as ``SessionEvent/runSettled(_:)``.
 - `status` and `wait` give an earlier look; they are not required.
 
+A model can start one more background run in each answer, for example to ask
+a status tool again after each result. Each settled run then starts one more
+answer, with no end. ``SessionConfiguration/mailOnlyAnswerLimit`` bounds that
+chain: when that many answers in a row had no caller message, the session
+holds new mail in its queue and starts no answer for it. The next caller
+message carries the held mail, so no mail is lost. The session reports each
+hold with ``SessionEvent/mailDeliveryPaused(_:)`` and a log line. The default,
+``SessionConfiguration/defaultMailOnlyAnswerLimit``, is far past a normal
+chain.
+
 ## Topics
 
 ### Identity and directories
@@ -76,6 +86,7 @@ it gives no answer.
 - ``SubmissionID``
 - ``SessionAnswer``
 - ``AnswerFailure``
+- ``MailDeliveryPause``
 
 ### Messages
 

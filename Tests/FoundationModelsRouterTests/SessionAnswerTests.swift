@@ -375,4 +375,18 @@ struct SessionAnswerTests {
                     tool: open.tool, op: open.op, correlationID: open.correlationID, kind: .elicitation, detail: "",
                     elicitation: MountFixtures.proceedRequest())))
     }
+
+    @Test("the reducer does not carry a mailDeliveryPaused: the answer is the same with and without one")
+    func reducerDoesNotCarryAMailDeliveryPaused() {
+        let open = Self.openRecord
+        Self.expectReducerIgnores(
+            .mailDeliveryPaused(
+                MailDeliveryPause(
+                    limit: SessionConfiguration.defaultMailOnlyAnswerLimit,
+                    heldMail: [
+                        OperationEvent(
+                            tool: open.tool, op: open.op, correlationID: open.correlationID, kind: .completed,
+                            detail: "done")
+                    ])))
+    }
 }

@@ -82,11 +82,17 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
         let event: OperationEvent
 
         /// Whether the event waits for a submission that something else
-        /// starts: a submission gave it back (``requeue(event:)``), or a cancel
-        /// held it (``holdPendingMail()``). A held run terminal starts no
+        /// starts: a submission gave it back (``requeue(event:)``), a cancel
+        /// held it (``holdPendingMail()``), or the bound on answers that mail
+        /// alone starts held it (``putBack(holding:)``). A held run terminal starts no
         /// submission by itself, so the pump does not retry it at once; it
         /// rides the next submission.
         let isHeld: Bool
+
+        /// This event with its id, held (``isHeld``).
+        var held: PendingEvent {
+            PendingEvent(id: id, event: event, isHeld: true)
+        }
     }
 
     /// A snapshot of everything currently pending, per kind.
@@ -185,12 +191,24 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
         events = untouched + events
     }
 
+    /// Puts back events that the pump took and did not use, in front of every
+    /// event posted since, and holds each one (``PendingEvent/isHeld``). The
+    /// bound on answers that mail alone starts uses it
+    /// (``SessionConfiguration/mailOnlyAnswerLimit``): the mail then starts no
+    /// submission by itself, and the next caller message carries it. Each
+    /// event keeps its id. No journal write happens, and no pump wakes.
+    ///
+    /// - Parameter taken: The events, in the order the pump took them.
+    func putBack(holding taken: [PendingEvent]) {
+        events = taken.map(\.held) + events
+    }
+
     /// Holds every pending event (``PendingEvent/isHeld``), so none starts a
     /// submission by itself. A cancel of the session calls it: the mail stays
     /// for a later submission, and the cancel does not start one. Each event
     /// keeps its id and its place.
     func holdPendingMail() {
-        events = events.map { PendingEvent(id: $0.id, event: $0.event, isHeld: true) }
+        events = events.map(\.held)
     }
 
     /// Stages one event as pending under the coalescing policy.
