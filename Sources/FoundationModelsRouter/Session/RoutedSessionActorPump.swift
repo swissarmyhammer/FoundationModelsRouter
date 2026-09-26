@@ -163,14 +163,16 @@ extension RoutedSessionActor: SessionMailObserver {
             endPumpWork()
             return
         }
-        pumpWork?.kind = .answer(options: messages.first?.options ?? .mailDelivery, messages: messages)
+        let options = messages.first?.options ?? .mailDelivery
+        pumpWork?.kind = .answer(options: options, messages: messages)
         // The limits of an answer start fresh for each answer, and a
         // continuation of the same answer keeps them.
         compactionYieldsStopped = false
         repetitionWatch.recoveriesThisTurn = 0
         let result: Result<String, any Error>
         do {
-            result = .success(try await runFirstSubmission(carrying: messages, mail: mail, workId: workId))
+            result = .success(
+                try await runFirstSubmission(carrying: messages, options: options, mail: mail, workId: workId))
         } catch {
             result = .failure(error)
         }
@@ -184,15 +186,18 @@ extension RoutedSessionActor: SessionMailObserver {
     /// - Parameters:
     ///   - messages: The caller messages of the first submission, or none
     ///     when only mail started it.
+    ///   - options: The options of every submission of the chain. Their
+    ///     token ceiling is the ceiling of each submission: every message
+    ///     that the options admit named that same ceiling.
     ///   - mail: The mail events of the first submission.
     ///   - workId: The id of the work.
     /// - Returns: The final reply of the chain.
     /// - Throws: What the chain throws.
     private func runFirstSubmission(
-        carrying messages: [SessionMessage], mail: [OperationEvent], workId: UInt64
+        carrying messages: [SessionMessage], options: SubmissionOptions, mail: [OperationEvent], workId: UInt64
     ) async throws -> String {
         let first = messages.first
-        let ceiling = ResponseTokenCeiling(requested: first?.requestedMaxTokens, contextTokens: contextTokens)
+        let ceiling = ResponseTokenCeiling(requested: options.requestedMaxTokens, contextTokens: contextTokens)
         let work = submissionWork(for: first?.reader ?? .reply, responseTokenCeiling: ceiling)
         let ownPrompt =
             messages.isEmpty

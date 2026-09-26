@@ -125,7 +125,9 @@ struct SubmissionOptions: Sendable, Equatable {
     /// Whether the submission gives its output as a stream.
     let isStream: Bool
 
-    /// The token ceiling the callers named, or `nil`.
+    /// The token ceiling the callers named, or `nil`. The pump gives it to
+    /// each submission of the answer, and it is part of the key that groups
+    /// the messages of one submission.
     let requestedMaxTokens: Int?
 
     /// Whether `message` can go in a submission with these options.

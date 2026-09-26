@@ -218,13 +218,21 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
     /// submission by itself. A cancel of the session calls it: the mail stays
     /// for a later submission, and the cancel does not start one.
     func holdPendingMail() {
-        events = events.map { PendingEvent(id: $0.id, event: $0.event, isHeld: true) }
+        setEventHold(true)
     }
 
     /// Ends the hold of every pending event, so a held run terminal can start
     /// a submission again.
     func releaseHeldMail() {
-        events = events.map { PendingEvent(id: $0.id, event: $0.event, isHeld: false) }
+        setEventHold(false)
+    }
+
+    /// Sets the hold (``PendingEvent/isHeld``) of every pending event to
+    /// `held`. Each event keeps its id and its place.
+    ///
+    /// - Parameter held: Whether each pending event is held.
+    private func setEventHold(_ held: Bool) {
+        events = events.map { PendingEvent(id: $0.id, event: $0.event, isHeld: held) }
     }
 
     /// Stages one event as pending under the coalescing policy.
@@ -415,9 +423,8 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
     func takeSubmissionBatch(deliveringRunsOf settledRunTokens: Set<String>) -> SubmissionBatch? {
         if let first = messages.first {
             let options = first.options
-            let taken = options.isStream ? [first] : messages.filter(options.admits)
-            let takenIDs = Set(taken.map(\.id))
-            messages.removeAll { takenIDs.contains($0.id) }
+            let taken =
+                options.isStream ? takeMessages(where: { $0.id == first.id }) : takeMessages(where: options.admits)
             return SubmissionBatch(events: takeEvents(), messages: taken)
         }
         guard Self.canStartASubmission(events, settledRunTokens: settledRunTokens) else {
@@ -448,10 +455,18 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
     /// - Parameter options: The options of the running answer.
     /// - Returns: The batch, which can be empty.
     func takeJoiningBatch(options: SubmissionOptions) -> SubmissionBatch {
-        let joining = messages.filter(options.admits)
-        let joiningIDs = Set(joining.map(\.id))
-        messages.removeAll { joiningIDs.contains($0.id) }
-        return SubmissionBatch(events: takeEvents(), messages: joining)
+        SubmissionBatch(events: takeEvents(), messages: takeMessages(where: options.admits))
+    }
+
+    /// Takes every waiting caller message for which `isTaken` is `true`. The
+    /// other messages keep their order.
+    ///
+    /// - Parameter isTaken: Whether a message is taken.
+    /// - Returns: The taken messages, in the order they arrived.
+    private func takeMessages(where isTaken: (SessionMessage) -> Bool) -> [SessionMessage] {
+        let taken = messages.filter(isTaken)
+        messages.removeAll(where: isTaken)
+        return taken
     }
 
     /// Takes every pending mail event.
@@ -467,9 +482,7 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
     ///
     /// - Returns: The withdrawn messages, in the order they arrived.
     func withdrawMessages() -> [SessionMessage] {
-        let withdrawn = messages
-        messages = []
-        return withdrawn
+        takeMessages { _ in true }
     }
 
     /// Withdraws the waiting caller message with `id`.

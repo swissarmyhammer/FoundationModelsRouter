@@ -195,11 +195,7 @@ extension RoutedSessionActor {
             attempt.onEvent?(.compaction(result))
             compactionYieldsStopped = result.summaryEntryId == nil
         }
-        return try await runTurnAttempt(
-            grammar: attempt.grammar, pendingEvents: [], ownPrompt: continuationPrompt,
-            responseTokenCeiling: attempt.responseTokenCeiling, onEvent: attempt.onEvent,
-            allowOverflowRetry: attempt.allowOverflowRetry, rejectedCallRetries: attempt.rejectedCallRetries,
-            isContinuation: true, body)
+        return try await runContinuation(after: attempt, prompt: continuationPrompt, body: body)
     }
 
     /// Whether an attempt that ended with `finishReason` compacts and goes on

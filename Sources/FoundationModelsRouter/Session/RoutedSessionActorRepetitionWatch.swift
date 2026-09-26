@@ -251,11 +251,7 @@ extension RoutedSessionActor {
             return Self.responseText(of: rebuilt, excluding: attempt.entryIdsBeforeAttempt)
         }
         repetitionWatch.recoveriesThisTurn = recovery
-        return try await runTurnAttempt(
-            grammar: attempt.grammar, pendingEvents: [], ownPrompt: Self.repetitionStopContinuationPrompt,
-            responseTokenCeiling: attempt.responseTokenCeiling, onEvent: attempt.onEvent,
-            allowOverflowRetry: attempt.allowOverflowRetry, rejectedCallRetries: attempt.rejectedCallRetries,
-            isContinuation: true, body)
+        return try await runContinuation(after: attempt, prompt: Self.repetitionStopContinuationPrompt, body: body)
     }
 
     /// Puts the rebuilt transcript of the stopped attempt into ``backend``

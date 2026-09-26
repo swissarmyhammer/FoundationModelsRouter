@@ -59,6 +59,54 @@ comments:
     - evidence: new `Sources/FoundationModelsRouter/Session/{SessionMessage,RoutedSessionActorPump}.swift`; `RoutedSessionActorTurnGating.swift` -> `RoutedSessionActorCancellation.swift`; changed Session/{RoutedSessionActor, RoutedSessionActorGeneration, RoutedSessionActorTurnExecution, RoutedSessionActorCompaction, RoutedSessionActorCompactionYield, RoutedSessionActorRepetitionWatch, RoutedSessionActorRecording, RoutedSessionActorRunJournal, RoutedSessionActorGenerationCalls, SessionOutbox, GenerationReentry, RoutedSession, LanguageModelSessionBackend, OperationEventSegment, TurnIdentity}.swift, Hosting/SessionMailbox.swift, Concurrency/{AsyncSemaphore,GenerationQueue}.swift, Router.swift, Resolution/LiveModelLoader.swift, Tracing/RouterTracing.swift, docc/RoutedSession.md, generation-queue.md; tests: new SessionMessagePumpTests.swift, Helpers/FirstCallFlag.swift, plus 26 restated or re-documented test files. `swift test`: 1439 + 4 + 19 = 1462 passed (3 runs); forced rebuild: 0 warnings (only the known mlx bundle line); stress 12 x 30 x 3 rounds vs HEAD: no crash HEAD does not show (^vg6bmq6 only).
     - next: review (the task stays in `doing`). Not committed.
   timestamp: 2026-09-26T02:33:03.690742+00:00
+- actor: claude-code
+  id: 01m3dv9b45p5vpefmnhns8md0h
+  text: |-
+    ### review — findings
+    - evidence: `review sha HEAD~1..HEAD`, 9 findings (9 confirmed, 3 refuted). RoutedSessionActorCompaction.swift:131, RoutedSessionActorCompaction.swift:245, RoutedSessionActorCompactionYield.swift:201, RoutedSessionActorGeneration.swift:158, RoutedSessionActorGeneration.swift:249, RoutedSessionActorRepetitionWatch.swift:257, SessionMessage.swift:129, SessionOutbox.swift:220, SessionOutbox.swift:226.
+    - fact: The two `completeness/invariant-propagation` findings say that a symbol is not defined. Both symbols are in the tree: `cancel(compaction:)` is in RoutedSessionActorPump.swift, and `isWorkCancelled` is in RoutedSessionActorTurnExecution.swift. The implementer must examine these two findings against the code.
+    - next: The implementer corrects each finding in the dated `## Review Findings` section. Then run the review again. The task stays in `review`.
+  timestamp: 2026-09-26T03:14:06.085343+00:00
+- actor: claude-code
+  id: 01m3dvbvb94s4q00317tnd8tz1
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — about 55 files (turnLock removed; one pump for each session)
+    - test: green — swift test, 1462 passed (1439+4+19), 0 failed, 0 skipped; 26 session and queue suites 3 extra runs clean; IntegrationTests build clean
+    - commit: 745e40d
+    - review: findings — RoutedSessionActorCompaction.swift:131, :245 (symbols exist; the reviewer found them), RoutedSessionActorCompactionYield.swift:201, RoutedSessionActorGeneration.swift:158, :249, RoutedSessionActorRepetitionWatch.swift:257, SessionMessage.swift:129, SessionOutbox.swift:220, :226
+  timestamp: 2026-09-26T03:15:28.233087+00:00
+- actor: claude-code
+  id: 01m3dvnjsmgag1s9y6mm41wzdb
+  text: |-
+    Picked up the 9 findings of 2026-09-25 21:41. Moved to doing.
+
+    Findings 1 and 2 (`completeness/invariant-propagation`): both symbols exist, and each call is load-bearing. Proof:
+
+    1. `cancel(compaction:)` is `func cancel(compaction request: CompactionRequest)` in `Session/RoutedSessionActorPump.swift`. Experiment: the call in `compact(prompt:budget:)` removed. Result: 2 failures in TurnCancellationTests: `cancellingACallerDrivenCompactStopsIt(route: .callerTask)` (the running compaction never stops; time limit) and the NEW test `cancellingAWaitingCallerCompactWithdrawsIt` (the waiting request stays in `pendingCompactions`; no test covered this path before). Call restored.
+    2. `isWorkCancelled` is `var isWorkCancelled: Bool` in `Session/RoutedSessionActorTurnExecution.swift`. Experiment A: the read replaced with `false` (never abandon). Result: NO existing test failed. Reason: the auto compaction has two tiers, and the pre-flight check of the next tier throws `CancellationError` anyway. A caller `compact()` has one tier only, so the summarizer fault reached the caller in place of the stop. That was a coverage gap. NEW test `callerCompactFaultCoincidingWithAStopIsCancelled` fails with `.summarizerFailed of type ProbeError` under experiment A, and passes with the read. Experiment B: the guard line removed (always abandon). Result: 5 failures (`summarizerCancellationErrorWithNoStopOutstandingStillDegrades`, AutoCompactionTests flash fallback, 3 CompactionTracingTests). Guard restored.
+
+    Each call site now has a comment that names the file and the declaration of the symbol, and the tests that prove it. No propagation gap in production code: every cancel read in the compaction path goes through `isWorkCancelled` or the per-request mark `PumpAnswer.isCancelRequested`.
+  timestamp: 2026-09-26T03:20:47.156565+00:00
+- actor: claude-code
+  id: 01m3dvw6aczawvgc0wp3has2v1
+  text: |-
+    Findings 3 to 9: decisions and reasons.
+
+    - Findings 3 and 4 (`duplication/duplication`, CompactionYield and RepetitionWatch): new `runContinuation(after:prompt:body:)` in `RoutedSessionActorTurnExecution.swift`, beside `runTurnAttempt`. It is the one place that builds a continuation from a `StoppedAttempt` (no mail, `isContinuation: true`). `compactAndContinue` and `continueAfterRepetitionStop` call it. The two continuation calls in `recoverFailedAttempt` stay as they are: they have no `StoppedAttempt`, and their arguments differ (retry prompt and retry count; `allowOverflowRetry: false`).
+    - Findings 5 and 6 (`duplication/duplication`, Generation): new private `streamMessage(prompt:maxTokens:reader:)`. `streamResponse` and `streamEvents` each give only the reader case. The same cause was also in `submissionWork`: its two stream cases had the same body. New private `streamSubmissionWork(into:responseTokenCeiling:onEvent:wrapFragment:)` removes it.
+    - Finding 7 (`code-hygiene/dead-code-swift`, `SubmissionOptions.requestedMaxTokens`): kept, and now read. The field is the ceiling part of the key that groups messages, so the pump reads the ceiling of each submission from it: `runAnswer` passes its `options` to `runFirstSubmission(carrying:options:mail:workId:)`, which builds `ResponseTokenCeiling(requested: options.requestedMaxTokens, ...)` (before: `first?.requestedMaxTokens`, the same value). Reason not to remove it: without it the options cannot keep two messages with different ceilings out of one submission (step 2 of the task).
+    - Findings 8 and 9 (`duplication/duplication`, SessionOutbox): new private `setEventHold(_:)`. The same cause was also in `takeSubmissionBatch`, `takeJoiningBatch` and `withdrawMessages` (each copied "filter, then remove by id"). New private `takeMessages(where:)` removes it.
+    - No lock was added. Nothing waits on a semaphore or a mutex.
+    - New tests (TurnCancellationTests): `cancellingAWaitingCallerCompactWithdrawsIt`, `callerCompactFaultCoincidingWithAStopIsCancelled`. Count 1462 -> 1464.
+  timestamp: 2026-09-26T03:24:23.756595+00:00
+- actor: claude-code
+  id: 01m3dvwa947dwc5v2j70m29xg5
+  text: |-
+    ### implement — changed
+    - evidence: 9 files — Sources/FoundationModelsRouter/Session/{RoutedSessionActorCompaction, RoutedSessionActorCompactionYield, RoutedSessionActorGeneration, RoutedSessionActorPump, RoutedSessionActorRepetitionWatch, RoutedSessionActorTurnExecution, SessionMessage, SessionOutbox}.swift, Tests/FoundationModelsRouterTests/TurnCancellationTests.swift (2 new tests). `swift build --build-tests`: 0 warnings besides the known mlx bundle line. `swift test`: 1441 + 4 + 19 = 1464 passed, 0 failed (2 known issues are the designed `withKnownIssue` marks in RealModelHarnessTests and BoundedWaitTests), run 2 times. Session, pump, outbox, compaction, cancellation, prompt queue, human wait, reentry, run plane, repetition and generation queue suites: 280 tests, 4 runs, all passed. All 9 findings are checked.
+    - next: review. The task stays in `doing`. Not committed.
+  timestamp: 2026-09-26T03:24:27.812429+00:00
 depends_on:
 - 01M3CYJ4VS4VF5EEHA01PSQDM9
 - 01M3CYJJGNHH04AREE9DPN2YTT
@@ -95,3 +143,39 @@ The SDK allows one `LanguageModelSession.respond` at a time for each SDK session
 - [x] A test: a submission that fails after it took mail puts the mail back (no silent outbox loss), and a proactive compaction that throws records the failure and requeues its mail. <!-- proving tests: SessionMessagePumpTests.aFailedDeliveryPutsItsMailBackAndIsNotRetried; TurnCancellationTests.cancelledProactiveCompactionRequeuesItsDrainedEvents, cancelledTurnRequeuesUndeliveredEvents -->
 - [x] The memory note `routed-session-cancellation-invariants` is updated for each invariant that changed (see `generation-queue.md` section 5.9). <!-- proof: memory/routed-session-cancellation-invariants.md rewritten (gone: turnLock/beginTurn/drain; kept: background mark wrap, recordFailedTurn bracket, checkCancellation; renamed: isWorkCancelled; new: detached pump, caller-task refusal, per-event hold, background-terminal-only delivery); stub-backend-producer-race.md updated -->
 - [x] Full `swift test` green, 0 new warnings. The concurrency suites pass a parallel stress run with no crash that HEAD does not also show (^vg6bmq6). <!-- proof: `swift test` 1439 + 4 + 19 = 1462 green in 3 runs; forced rebuild of the package targets: 0 warnings besides the known mlx bundle line; stress 12 procs x 30 reps x 3 rounds over 34 concurrency suites: the only crash is the ^vg6bmq6 signature, which HEAD shows at the same rate (HEAD 4/2/4, this tree 4/1/2 processes) --> #generation-queue
+
+## Review Findings (2026-09-25 21:41)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 52 file(s) reviewed, 6 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+> 2 file(s) not reviewed — no validator matched:
+> - `Sources/FoundationModelsRouter/FoundationModelsRouter.docc/RoutedSession.md` — no validator matches this file
+> - `generation-queue.md` — no validator matches this file
+
+> ⚠️ tool rule 'code-hygiene/disallowed-constructs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> disallowed-constructs-swift found no file at Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnGating.swift, so its constructs are unread
+
+> ⚠️ tool rule 'code-hygiene/function-length-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> function-length-swift found no file at Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnGating.swift, so its bodies are unread
+
+> ⚠️ tool rule 'code-hygiene/idioms-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> idioms-swift found no file at Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnGating.swift, so its declarations are unread
+
+> ⚠️ tool rule 'code-hygiene/magic-numbers-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> magic-numbers-swift found no file at Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnGating.swift, so its literals are unread
+
+> ⚠️ tool rule 'code-hygiene/missing-docs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> missing-docs-swift found no file at Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnGating.swift, so its declarations are unread
+
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorCompaction.swift:131` `completeness/invariant-propagation` — The compaction initiation (line 119-133) sets up a cancellation handler that calls `self.cancel(compaction: request)`, but no matching `cancel(compaction:)` overload exists. The only `cancel` method shown in the added code accepts `SessionMessage`, not `CompactionRequest`. This leaves the compaction cancellation path incomplete and breaks the symmetry: if a caller can initiate a compaction, the cancellation mechanism must handle it. Add a `func cancel(compaction: CompactionRequest) async` overload in RoutedSessionActorCancellation.swift to handle cancellation of pending compaction requests, or verify that the cancellation transport (line 131) calls the correct method name and type that exists elsewhere.
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorCompaction.swift:245` `completeness/invariant-propagation` — The code references `isWorkCancelled` (line 245: `guard isWorkCancelled else { return }`) but this property/function is not defined anywhere in the marked additions. The change transitions from turn-based to work-based cancellation (removing `cancelRequestedTurnId`, adding `cancelRequestedWorkId`), and code that reads the cancellation status must have a corresponding property. The invariant is broken: usage without definition. Add a computed property `var isWorkCancelled: Bool { guard let workId = pumpWork?.id else { return false }; return cancelRequestedWorkId == workId }` to RoutedSessionActor, or define it as an inline check if the guard statement should use a different condition.
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorCompactionYield.swift:201` `duplication/duplication` — The `runTurnAttempt` call at lines 198–202 is nearly verbatim identical to the call in `continueAfterRepetitionStop` at RoutedSessionActorRepetitionWatch.swift:254–258, differing only in the `ownPrompt` parameter (`continuationPrompt` vs `Self.repetitionStopContinuationPrompt`). This is one function with an argument waiting to be extracted. Extract a shared helper function that accepts the continuation prompt as a parameter and delegates to `runTurnAttempt` with the other shared values, eliminating the copy in one or both locations.
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorGeneration.swift:158` `duplication/duplication` — The `sendAndAwaitAnswer` call in `streamResponse` at lines 157–158 is nearly verbatim identical to the call in `streamEvents` at lines 248–249, differing only in the `reader` parameter (`.textStream(continuation)` vs `.eventStream(continuation)`). This is one function with an argument waiting to be extracted. Extract a shared helper function parameterized by the `reader` type, eliminating the duplicate function bodies and centralizing the `sendAndAwaitAnswer` call logic.
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorGeneration.swift:249` `duplication/duplication` — The `sendAndAwaitAnswer` call in `streamEvents` at lines 248–249 is nearly verbatim identical to the call in `streamResponse` at lines 157–158, differing only in the `reader` parameter (`.eventStream(continuation)` vs `.textStream(continuation)`). This is one function with an argument waiting to be extracted. Extract a shared helper function parameterized by the `reader` type, eliminating the duplicate function bodies and centralizing the `sendAndAwaitAnswer` call logic.
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorRepetitionWatch.swift:257` `duplication/duplication` — The `runTurnAttempt` call at lines 254–258 is nearly verbatim identical to the call in `compactAndContinue` at RoutedSessionActorCompactionYield.swift:198–202, differing only in the `ownPrompt` parameter (`Self.repetitionStopContinuationPrompt` vs `continuationPrompt`). This is one function with an argument waiting to be extracted. Extract a shared helper function that accepts the continuation prompt as a parameter and delegates to `runTurnAttempt` with the other shared values, eliminating the copy in one or both locations.
+- [x] `Sources/FoundationModelsRouter/Session/SessionMessage.swift:129` `code-hygiene/dead-code-swift` — var.instance `requestedMaxTokens` is assignOnlyProperty.
+- [x] `Sources/FoundationModelsRouter/Session/SessionOutbox.swift:220` `duplication/duplication` — holdPendingMail() and releaseHeldMail() (line 226) are nearly identical, differing only in a single boolean literal. This is a function with an argument waiting to be extracted. Extract a private helper function `private func setEventHold(_ held: Bool)` with the shared body, and have both `holdPendingMail()` and `releaseHeldMail()` call it with `true` and `false` respectively.
+- [x] `Sources/FoundationModelsRouter/Session/SessionOutbox.swift:226` `duplication/duplication` — releaseHeldMail() is a near-duplicate of holdPendingMail() (line 220), differing only in a single boolean literal. Extract a private helper function `private func setEventHold(_ held: Bool)` and call it from both public functions.

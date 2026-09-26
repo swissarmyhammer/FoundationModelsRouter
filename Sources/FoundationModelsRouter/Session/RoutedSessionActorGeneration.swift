@@ -127,17 +127,35 @@ extension RoutedSessionActor {
             // delivers the text and nothing else — see
             // ``SessionEvent/textReset``, which the event stream carries in
             // its place.
-            return SubmissionWork(grammar: nil, onEvent: nil) { composedPrompt in
-                try await self.streamGeneratingBody(
-                    composedPrompt: composedPrompt, responseTokenCeiling: ceiling.resolved, into: continuation,
-                    wrapFragment: { $0.text.isEmpty ? [] : [$0.text] })
-            }
+            return streamSubmissionWork(
+                into: continuation, responseTokenCeiling: ceiling, onEvent: nil,
+                wrapFragment: { $0.text.isEmpty ? [] : [$0.text] })
         case .eventStream(let continuation):
-            return SubmissionWork(grammar: nil, onEvent: { continuation.yield($0) }) { composedPrompt in
-                try await self.streamGeneratingBody(
-                    composedPrompt: composedPrompt, responseTokenCeiling: ceiling.resolved, into: continuation,
-                    wrapFragment: Self.sessionEvents(for:))
-            }
+            return streamSubmissionWork(
+                into: continuation, responseTokenCeiling: ceiling, onEvent: { continuation.yield($0) },
+                wrapFragment: Self.sessionEvents(for:))
+        }
+    }
+
+    /// What one stream submission runs: the stream call with no grammar,
+    /// which gives each fragment to `continuation`.
+    ///
+    /// - Parameters:
+    ///   - continuation: The stream of the reader of the submission.
+    ///   - ceiling: The token ceiling of the submission.
+    ///   - onEvent: The event sink of the answer, or `nil`.
+    ///   - wrapFragment: Wraps one fragment into zero or more elements.
+    /// - Returns: The work of the submission.
+    private func streamSubmissionWork<Element: Sendable>(
+        into continuation: AsyncThrowingStream<Element, Error>.Continuation,
+        responseTokenCeiling ceiling: ResponseTokenCeiling,
+        onEvent: (@Sendable (SessionEvent) -> Void)?,
+        wrapFragment: @escaping @Sendable (ResponseFragment) -> [Element]
+    ) -> SubmissionWork {
+        SubmissionWork(grammar: nil, onEvent: onEvent) { composedPrompt in
+            try await self.streamGeneratingBody(
+                composedPrompt: composedPrompt, responseTokenCeiling: ceiling.resolved, into: continuation,
+                wrapFragment: wrapFragment)
         }
     }
 
@@ -153,9 +171,27 @@ extension RoutedSessionActor {
     /// - Returns: A stream of response fragments, finishing when generation
     ///   completes or throwing if it fails.
     func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
+        streamMessage(prompt: prompt, maxTokens: maxTokens) { .textStream($0) }
+    }
+
+    /// Sends one stream message, and finishes the returned stream with its
+    /// answer. Cancelling the stream cancels the waiting `Task`, which
+    /// cancels the message.
+    ///
+    /// - Parameters:
+    ///   - prompt: The prompt to respond to.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil`.
+    ///   - reader: Makes the reader of the message from the continuation of
+    ///     the returned stream.
+    /// - Returns: The stream that the submission of the message fills.
+    private func streamMessage<Element: Sendable>(
+        prompt: String,
+        maxTokens: Int?,
+        reader: @escaping @Sendable (AsyncThrowingStream<Element, Error>.Continuation) -> MessageReader
+    ) -> AsyncThrowingStream<Element, Error> {
         Self.wrapAsyncStream { continuation in
             _ = try await self.sendAndAwaitAnswer(
-                text: prompt, requestedMaxTokens: maxTokens, reader: .textStream(continuation), entryPoint: .stream)
+                text: prompt, requestedMaxTokens: maxTokens, reader: reader(continuation), entryPoint: .stream)
         }
     }
 
@@ -244,10 +280,7 @@ extension RoutedSessionActor {
     /// - Returns: A stream of session events, finishing when generation
     ///   completes or throwing if it fails.
     func streamEvents(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<SessionEvent, Error> {
-        Self.wrapAsyncStream { continuation in
-            _ = try await self.sendAndAwaitAnswer(
-                text: prompt, requestedMaxTokens: maxTokens, reader: .eventStream(continuation), entryPoint: .stream)
-        }
+        streamMessage(prompt: prompt, maxTokens: maxTokens) { .eventStream($0) }
     }
 
     /// See ``RoutedSession/streamSessionEvents()``. Registers a continuation in

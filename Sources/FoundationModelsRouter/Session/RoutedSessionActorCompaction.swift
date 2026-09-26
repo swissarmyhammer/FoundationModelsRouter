@@ -128,6 +128,12 @@ extension RoutedSessionActor {
             try await request.answer.value()
         } onCancel: {
             request.answer.requestCancel()
+            // `cancel(compaction:)` is defined in RoutedSessionActorPump.swift
+            // (`func cancel(compaction request: CompactionRequest)`). It takes a
+            // waiting request out of `pendingCompactions`, or stops the running
+            // compaction. TurnCancellationTests proves both paths:
+            // `cancellingAWaitingCallerCompactWithdrawsIt` and
+            // `cancellingACallerDrivenCompactStopsIt(route: .callerTask)`.
             Task { await self.cancel(compaction: request) }
         }
     }
@@ -242,6 +248,13 @@ extension RoutedSessionActor {
     /// - Throws: `CancellationError` when a cancellation is outstanding against
     ///   this turn.
     private func abandonCompactionIfCancelled(discarding error: Error, tier: CompactionSummarizerTier) throws {
+        // `isWorkCancelled` is defined in RoutedSessionActorTurnExecution.swift
+        // (`var isWorkCancelled: Bool`), the one cancel predicate of the work of
+        // the pump. With it always `false`, a one-tier caller compaction gives
+        // the fault in place of the stop
+        // (TurnCancellationTests.callerCompactFaultCoincidingWithAStopIsCancelled).
+        // With it always `true`, a failed tier never degrades
+        // (TurnCancellationTests.summarizerCancellationErrorWithNoStopOutstandingStillDegrades).
         guard isWorkCancelled else { return }
         noteAbandonedCompaction(discarding: error, tier: tier)
         throw CancellationError()

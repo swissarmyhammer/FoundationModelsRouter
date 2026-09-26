@@ -390,6 +390,33 @@ extension RoutedSessionActor {
         return try await continueAfterCeilingStop(attempt: attempt, body: body)
     }
 
+    /// Runs one continuation submission of the answer after `attempt`
+    /// stopped: a compaction yield, a ceiling stop, or a repetition stop.
+    ///
+    /// The continuation keeps the grammar, the ceiling, the event sink and
+    /// the retry state of `attempt`. It carries none of the mail of
+    /// `attempt`, because the stopped attempt is already recorded. It takes
+    /// the messages that wait when it starts
+    /// (``takeMessagesJoiningTheAnswer()``).
+    ///
+    /// - Parameters:
+    ///   - attempt: The attempt that stopped.
+    ///   - continuationPrompt: The own prompt of the continuation.
+    ///   - body: The model work to run.
+    /// - Returns: The response text of the continuation.
+    /// - Throws: What the continuation throws.
+    func runContinuation(
+        after attempt: StoppedAttempt,
+        prompt continuationPrompt: String,
+        body: @escaping @Sendable (String) async throws -> String
+    ) async throws -> String {
+        try await runTurnAttempt(
+            grammar: attempt.grammar, pendingEvents: [], ownPrompt: continuationPrompt,
+            responseTokenCeiling: attempt.responseTokenCeiling, onEvent: attempt.onEvent,
+            allowOverflowRetry: attempt.allowOverflowRetry, rejectedCallRetries: attempt.rejectedCallRetries,
+            isContinuation: true, body)
+    }
+
     /// Runs the attempt again after a failed attempt that one of the two
     /// recoveries can mend, or throws the error again.
     ///

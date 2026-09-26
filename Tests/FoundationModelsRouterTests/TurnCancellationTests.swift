@@ -1640,6 +1640,91 @@ struct TurnCancellationTests {
         #expect(await Self.followUpTurnCompletes(on: session, observer: fixture.observer))
     }
 
+    @Test("a summarizer fault in a caller-driven compact() that coincides with a stop ends it as cancelled, not as the fault")
+    @MainActor
+    func callerCompactFaultCoincidingWithAStopIsCancelled() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let fixture = try await Self.makeFixture(cacheDir: dir)
+        let session = try await Self.makeCompactionTriggeredSession(fixture, budget: Self.summarizingCompactionBudget)
+
+        // A caller compaction offers one tier only: the own model. So no later
+        // tier refuses the work at its pre-flight check. Only the abandon rule
+        // of the compaction can change the fault into the stop.
+        let insideSummarizer = AsyncSemaphore(value: 0)
+        let release = AsyncSemaphore(value: 0)
+        let suspendsOn = Self.firstSummarizerCall()
+        fixture.hook.midTurn = { prompt in
+            guard suspendsOn(prompt) else { return }
+            insideSummarizer.signal()
+            await release.wait()
+            throw ProbeError.summarizerFailed
+        }
+
+        let compactTask = Task {
+            try await session.compact(prompt: Self.compactionSummarizerPrompt, budget: Self.summarizingCompactionBudget)
+        }
+        await insideSummarizer.wait()
+        #expect(await session.cancelCurrentTurn() == .requested)
+        // Released by the test, so the summarizer ends with its own fault while
+        // the stop is outstanding.
+        release.signal()
+
+        await #expect(throws: CancellationError.self) {
+            try await compactTask.value
+        }
+
+        fixture.hook.midTurn = nil
+        #expect(await Self.followUpTurnCompletes(on: session, observer: fixture.observer))
+    }
+
+    @Test("cancelling a caller-driven compact() that waits behind a running turn withdraws it at once, and no summarizer runs")
+    @MainActor
+    func cancellingAWaitingCallerCompactWithdrawsIt() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let fixture = try await Self.makeFixture(cacheDir: dir)
+        // Not metered over the trigger, so the turn that holds the pump runs no
+        // proactive compaction of its own.
+        let session = try await Self.makeCompactionTriggeredSession(
+            fixture, budget: Self.summarizingCompactionBudget, metersTriggeringFill: false)
+        let actor = try #require(session as? RoutedSessionActor)
+
+        // The pump runs this turn, so the compaction below waits in the list of
+        // the pump until the turn ends.
+        let holdingPrompt = "holds-the-pump"
+        let insideTool = AsyncSemaphore(value: 0)
+        let sawCancellation = Self.suspendInsideCancellationAwareTool(
+            fixture, prompt: holdingPrompt, insideTool: insideTool)
+        let turnTask = Task { try await session.respond(to: holdingPrompt) }
+        await insideTool.wait()
+
+        let compactTask = Task {
+            try await session.compact(prompt: Self.compactionSummarizerPrompt, budget: Self.summarizingCompactionBudget)
+        }
+        await BoundedWait.spin(until: { await actor.pendingCompactions.count == 1 })
+        #expect(await actor.pendingCompactions.count == 1)
+
+        // The cancel of the caller must take the request out of the list while
+        // the turn still runs. The caller does not wait for the end of the turn.
+        compactTask.cancel()
+        await BoundedWait.spin(until: { await actor.pendingCompactions.isEmpty })
+        #expect(await actor.pendingCompactions.isEmpty)
+        #expect(await actor.isPumpRunning)
+
+        #expect(await session.cancelCurrentTurn() == .requested)
+        try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
+        await #expect(throws: CancellationError.self) {
+            try await compactTask.value
+        }
+        #expect(await fixture.observer.entered.filter(Self.isSummarizerCall).isEmpty)
+
+        fixture.hook.midTurn = nil
+        #expect(await Self.followUpTurnCompletes(on: session, observer: fixture.observer))
+    }
+
     @Test(
         "a turn cancelled inside its own proactive compaction re-queues the outbox events it had drained",
         arguments: CancellationRoute.allCases)
