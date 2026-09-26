@@ -37,8 +37,24 @@ comments:
     - decision: the helper file was renamed to match its only type (UndrivenLanguageModelContainer). The design docs follow the "Superseded"/"Removed" marker style of generation-queue.md instead of a delete, so the history stays readable.
     - next: /review
   timestamp: 2026-09-26T17:59:44.031441+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m3fekxkq8mwz1zfkcp77d246
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 7262313). 0 findings, 0 confirmed, 0 refuted. 14 validator passes ran, and 0 failed. The tools did not judge the 6 deleted files because those files do not exist. Deleted files are not new code. The review skipped the .kanban files (.reviewignore), compaction_plan.md and generation-queue.md (no validator matches them).
+    - next: none. The task is in done.
+  timestamp: 2026-09-26T18:11:10.071488+00:00
+- actor: claude-code
+  id: 01m3fennawbzqr1dmxpqmf8a57
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 5 files deleted, 1 renamed, about 20 edited; follow-up ^rbm6jtz for passQueue
+    - test: green — swift package clean then swift test, 1495 passed (1459+17+19), 0 failed, 0 skipped; drop of 28 equals the deleted tests; IntegrationTests build clean; Periphery shows no new finding
+    - commit: 7262313
+    - review: clean — 0 findings
+  timestamp: 2026-09-26T18:12:07.132772+00:00
+position_column: done
+position_ordinal: ffffff9780
 title: Remove RecordingLanguageModel, its RoutedModel factories, and its unit and integration tests
 ---
 ## Why
