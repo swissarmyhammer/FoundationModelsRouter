@@ -41,6 +41,35 @@ extension RoutedSession {
         }
     }
 
+    /// Whether this session is idle once its pump has ended: no caller message
+    /// waits in its outbox. The session then holds no answer, and nothing of
+    /// it is stranded.
+    ///
+    /// ``becomesIdle()`` asks the same question under the wall clock of
+    /// ``BoundedWait``. This one waits for the end of
+    /// ``RoutedSessionActor/pumpTask`` itself, so a loaded machine makes it
+    /// slower and never wrong; only the `.timeLimit` of the test ends a pump
+    /// that never ends.
+    ///
+    /// The watch of each pump is a task of its own because `await pump.value`
+    /// does not end on a cancellation. That task ends when the pump ends.
+    ///
+    /// - Returns: Whether no caller message waits after the last pump ended.
+    /// - Throws: ``EventNeverArrived`` when the waiting task was cancelled
+    ///   before the pump ended.
+    func isIdleOnceThePumpEnds() async throws -> Bool {
+        let session = self as! RoutedSessionActor
+        while let pump = await session.pumpTask {
+            let pumpEnded = AwaitedEvent()
+            Task {
+                await pump.value
+                pumpEnded.signal()
+            }
+            try await pumpEnded.wait()
+        }
+        return await outbox.waitingMessageCount == 0
+    }
+
     /// The stall report interval the session holds now — see
     /// ``RoutedSessionActor/generationStallReportInterval``.
     var installedGenerationStallReportInterval: Duration {

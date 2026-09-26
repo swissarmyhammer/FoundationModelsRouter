@@ -74,13 +74,33 @@ enum BoundedWait {
     @discardableResult
     static func spin(until condition: @Sendable () async -> Bool) async -> Bool {
         let deadline = ContinuousClock.now.advanced(by: .nanoseconds(ceilingNanoseconds))
+        return await poll(until: condition, givingUpWhen: { ContinuousClock.now >= deadline })
+    }
+
+    /// Whether `condition` held before `giveUp` said to stop: yielded for
+    /// first, then polled for, one ``pollIntervalNanoseconds`` apart.
+    ///
+    /// The one loop every repeated reading in these tests runs. What ends a
+    /// reading that never holds is the caller's choice: ``spin(until:)`` gives
+    /// up on its wall clock, and ``AwaitedCondition`` gives up only when its
+    /// task is cancelled. `giveUp` is read only after the yields are spent,
+    /// so a change a few task suspensions away is always seen first.
+    ///
+    /// - Parameters:
+    ///   - condition: The state change to wait for.
+    ///   - giveUp: Whether to stop reading `condition` now.
+    /// - Returns: Whether the condition held before `giveUp` said to stop.
+    static func poll(
+        until condition: @Sendable () async -> Bool,
+        givingUpWhen giveUp: () -> Bool
+    ) async -> Bool {
         for _ in 0..<yieldsBeforePolling {
             if await condition() { return true }
             await Task.yield()
         }
         while true {
             if await condition() { return true }
-            if ContinuousClock.now >= deadline { return false }
+            if giveUp() { return false }
             await waitOnePollInterval()
         }
     }
@@ -88,9 +108,10 @@ enum BoundedWait {
     /// Waits ``pollIntervalNanoseconds`` before the next reading of a condition.
     ///
     /// `Task.sleep` throws the moment the surrounding task is cancelled, and a
-    /// cancelled wait must still end on the deadline rather than on a hot loop,
-    /// so a sleep that cannot run becomes a yield. Cancellation never decides
-    /// when a wait ends here; only the deadline does.
+    /// cancelled wait must still end where its `giveUp` says rather than on a
+    /// hot loop, so a sleep that cannot run becomes a yield. Cancellation never
+    /// decides when a wait ends here; only the `giveUp` of
+    /// ``poll(until:givingUpWhen:)`` does.
     private static func waitOnePollInterval() async {
         if (try? await Task.sleep(nanoseconds: pollIntervalNanoseconds)) == nil {
             await Task.yield()

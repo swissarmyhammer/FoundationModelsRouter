@@ -20,9 +20,20 @@ import Testing
 /// Everything runs against stubs with no network and no GPU: a backend whose
 /// `respond` runs a test-supplied closure mid-generation stands in for the SDK
 /// invoking a tool inside the model call, and that closure is the tool body
-/// that waits for a person. Determinism comes from the observability of the
-/// pump (``RoutedSessionActor/isPumpRunning``) and of the outbox
-/// (``SessionOutbox/waitingMessageCount``) rather than from sleeps.
+/// that waits for a person.
+///
+/// Every moment a test here waits for is a signal that the run which reaches
+/// the moment sends (task ^1qpmghh): an ``AwaitedEvent`` from the tool body or
+/// from the end of a task, ``SessionEvent/submissionQueued(_:)`` for a
+/// submission that waits behind another, and the end of the pump task of the
+/// session for an idle session. One state has no signal — a message that waits
+/// in the outbox — and the test reads it through ``AwaitedCondition``, which
+/// has no deadline of its own. No wait here ends on a wall clock, so a loaded
+/// machine makes these tests slower and never red. Before, each wait gave up
+/// after the five seconds of ``BoundedWait``, and a full parallel `swift test`
+/// that starved the main actor for longer failed a correct test. What ends a
+/// test whose moment never comes is the `.timeLimit` of the suite: a ceiling
+/// on a fault, and never a budget for the work.
 ///
 /// The complementary claim — that the order of submissions does not change
 /// when no tool waits for a person — is covered where it already was:
@@ -30,7 +41,9 @@ import Testing
 /// callers over one model never overlap and run FIFO) and
 /// `MultiMessageSessionTests.forkDoesNotWaitForARunningSubmission` (a fork does
 /// not wait for a running submission; it reads the settled transcript).
-@Suite("A human wait in a tool holds the model, and the session keeps its answer running")
+@Suite(
+    "A human wait in a tool holds the model, and the session keeps its answer running",
+    .timeLimit(.minutes(1)))
 struct HumanWaitGateTests {
     // MARK: - Failures raised from inside a human wait
 
@@ -100,6 +113,11 @@ struct HumanWaitGateTests {
         /// proving *when* a concurrent fork read this backend's transcript.
         var lastFork: HookedSessionBackend? { newestFork.withLock { $0 } }
 
+        /// Sent when this backend makes its first fork, so a test waits for
+        /// the fork on the event rather than reading ``lastFork`` again and
+        /// again.
+        let forkMade = AwaitedEvent()
+
         init(hook: AnswerHook, observer: AnswerObserver, generationQueue: GenerationQueue?, entries: [Transcript.Entry] = []) {
             self.hook = hook
             self.observer = observer
@@ -118,7 +136,7 @@ struct HumanWaitGateTests {
                     throw error
                 }
             }
-            let responseText = "ok-\(prompt)"
+            let responseText = HumanWaitGateTests.reply(to: prompt)
             append(.response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: responseText))])))
             await observer.exit(prompt)
             return responseText
@@ -174,6 +192,7 @@ struct HumanWaitGateTests {
             let fork = HookedSessionBackend(
                 hook: hook, observer: observer, generationQueue: generationQueue, entries: Array(transcript))
             newestFork.withLock { $0 = fork }
+            forkMade.signal()
             return fork
         }
     }
@@ -337,129 +356,97 @@ struct HumanWaitGateTests {
         )
     }
 
-    /// Thrown by ``completedRun(awaiting:named:finishedWhen:)`` when the run it waited
-    /// on never finished, so the test that caught the fault stops there instead
-    /// of awaiting a task that never resumes.
-    private struct RunNeverFinished: Error {}
+    /// A task a test starts, with the event the task sends when it ends.
+    ///
+    /// A test reads the value only through ``value()``, never through a bare
+    /// `await task.value`. A regression that strands a message suspends the
+    /// run on an answer that never comes, and `Task.value` does not end on the
+    /// cancellation that the `.timeLimit` of the suite sends, so a bare await
+    /// would hang the whole `swift test` run instead of failing the test that
+    /// caught the fault. The event is a wait that the cancellation ends. Past
+    /// the event the task has ended, so the read of its value cannot suspend.
+    private struct ObservedRun<Value: Sendable>: Sendable {
+        /// The task that runs the body.
+        private let task: Task<Value, Error>
 
-    /// Whether the run named `label` reached the point `condition` observes,
-    /// inside ``BoundedWait``'s bound, recording an issue when it never did.
-    ///
-    /// - Parameters:
-    ///   - label: What the run is, named in the recorded issue.
-    ///   - condition: The observable effect that says the run got there.
-    /// - Returns: Whether the run got there inside the bound.
-    private static func finished(named label: String, when condition: @Sendable () async -> Bool) async -> Bool {
-        await BoundedWait.conditionReached("the end of \(label)", when: condition)
-    }
+        /// Sent when ``task`` ends, by a return or by a throw.
+        private let ended: AwaitedEvent
 
-    /// The value `task` produced, awaited only once `condition` shows the run
-    /// reached the end of everything that can suspend it.
-    ///
-    /// Deliberately not a bare `await task.value`: a regression that strands a
-    /// message suspends the run on an answer that never comes, so awaiting such
-    /// a run directly hangs the whole `swift test` run — this target sets no
-    /// `.timeLimit` trait — instead of failing the test that caught the fault.
-    /// Past the observed point nothing left in the run can strand it, so
-    /// awaiting from there cannot hang.
-    ///
-    /// - Parameters:
-    ///   - task: The run to read a value from.
-    ///   - label: What the run is, named in the recorded issue.
-    ///   - condition: The observable effect that says the run got past every wait.
-    /// - Returns: Whatever the run returned.
-    /// - Throws: ``RunNeverFinished`` when the run never got there, after
-    ///   recording an issue; otherwise whatever the run itself threw.
-    private static func completedRun<Value: Sendable>(
-        awaiting task: Task<Value, Error>,
-        named label: String,
-        finishedWhen condition: @Sendable () async -> Bool
-    ) async throws -> Value {
-        guard await finished(named: label, when: condition) else {
+        /// Starts `body` on a task of its own.
+        ///
+        /// - Parameter body: The work of the run.
+        init(_ body: @escaping @Sendable () async throws -> Value) {
+            let ended = AwaitedEvent()
+            self.ended = ended
+            task = Task {
+                defer { ended.signal() }
+                return try await body()
+            }
+        }
+
+        /// What the run returned, read once the run has ended.
+        ///
+        /// - Returns: The value of the run.
+        /// - Throws: ``EventNeverArrived`` when the `.timeLimit` of the suite
+        ///   ended the wait before the run ended; otherwise what the run threw.
+        func value() async throws -> Value {
+            try await ended.wait()
+            return try await task.value
+        }
+
+        /// Cancels the run, as a caller that stops its wait cancels its own
+        /// task. Read the result with ``value()``.
+        func cancel() {
             task.cancel()
-            throw RunNeverFinished()
         }
-        return try await task.value
     }
 
-    /// ``completedRun(awaiting:named:finishedWhen:)`` for a run that cannot fail.
+    /// Thrown by the run of ``submissionQueued(on:)`` when the event stream of
+    /// the session ended with no ``SessionEvent/submissionQueued(_:)``.
+    private struct SubmissionNeverQueued: Error {}
+
+    /// A run that ends when `session` reports that a submission of it waits
+    /// behind another submission on its model.
     ///
-    /// Swift declares `Task.value` separately for `Failure == Never`, so the two
-    /// spellings cannot be one generic function; everything but the `try` is
-    /// shared through ``finished(named:when:)``.
+    /// The report is ``SessionEvent/submissionQueued(_:)``. The queue of the
+    /// model sends it when the submission joins the waiting list, so the end
+    /// of this run is the signal of that moment. The subscription is open when
+    /// this function returns, so start the answer after the call.
+    ///
+    /// - Parameter session: The session whose submission is to wait.
+    /// - Returns: The run that ends on the report.
+    private static func submissionQueued(on session: any RoutedSession) async -> ObservedRun<Void> {
+        let events = await session.streamSessionEvents()
+        return ObservedRun {
+            for await event in events {
+                if case .submissionQueued = event { return }
+            }
+            throw SubmissionNeverQueued()
+        }
+    }
+
+    /// The reply of one further ordinary answer on `session`: the proof that
+    /// the session and its model still accept work.
     ///
     /// - Parameters:
-    ///   - task: The run to wait on.
-    ///   - label: What the run is, named in the recorded issue.
-    ///   - condition: The observable effect that says the run got past every wait.
-    /// - Returns: Whatever the run returned.
-    /// - Throws: ``RunNeverFinished`` when the run never got there, after
-    ///   recording an issue.
-    @discardableResult
-    private static func completedRun<Value: Sendable>(
-        awaiting task: Task<Value, Never>,
-        named label: String,
-        finishedWhen condition: @Sendable () async -> Bool
-    ) async throws -> Value {
-        guard await finished(named: label, when: condition) else {
-            task.cancel()
-            throw RunNeverFinished()
-        }
-        return await task.value
-    }
-
-    /// The value `answerTask` produced, awaited only once `observer` shows that
-    /// the answer left the model — ``completedRun(awaiting:named:finishedWhen:)`` with
-    /// the observation every ordinary answer in this suite is bounded by.
-    ///
-    /// Leaving the model call is the right point to await from: after it, the
-    /// pump only records the submission and gives the answer, and neither
-    /// waits for anything outside the session.
-    ///
-    /// - Parameters:
-    ///   - answerTask: The task that waits for the answer.
-    ///   - prompt: The prompt of that answer, as `observer` records it.
-    ///   - observer: The observer that the model call of the answer reports to.
-    /// - Returns: Whatever the answer returned.
-    /// - Throws: ``RunNeverFinished`` when the answer never left the model,
-    ///   after recording an issue; otherwise whatever the answer itself threw.
-    private static func completedAnswer<Value: Sendable>(
-        awaiting answerTask: Task<Value, Error>,
-        prompt: String,
-        observer: AnswerObserver
-    ) async throws -> Value {
-        try await completedRun(awaiting: answerTask, named: "the answer \(prompt)") {
-            await observer.exited.contains(prompt)
-        }
-    }
-
-    /// Whether one further ordinary answer on `session` runs to completion,
-    /// observed through `observer` under ``BoundedWait``'s bound rather than by
-    /// awaiting the answer, recording an issue when that answer never reaches
-    /// the model.
-    ///
-    /// The indirection is the point: a regression that strands the pump
-    /// blocks every later message on that session forever, so awaiting such an
-    /// answer directly would hang the whole suite instead of failing an
-    /// assertion in the test that caught it.
-    private static func followUpAnswerCompletes(
+    ///   - session: The session to answer on.
+    ///   - prompt: The prompt of the answer.
+    /// - Returns: The reply of the answer.
+    /// - Throws: What the answer throws, or ``EventNeverArrived`` when the
+    ///   `.timeLimit` of the suite ended the wait.
+    private static func followUpAnswer(
         on session: any RoutedSession,
-        observer: AnswerObserver,
         prompt: String = followUpPrompt
-    ) async -> Bool {
-        let task = Task { try await session.respond(to: prompt) }
-        let reachedTheModel = await BoundedWait.conditionReached("the follow-up answer \(prompt) leaving the model") {
-            await observer.exited.contains(prompt)
-        }
-        guard reachedTheModel else {
-            // Never admitted to the model at all — its message was stranded. The
-            // suite must not await it.
-            task.cancel()
-            return false
-        }
-        // Past the model call now, so nothing left in this answer can strand it,
-        // and awaiting it cannot hang.
-        return (try? await task.value) != nil
+    ) async throws -> String {
+        try await ObservedRun { try await session.respond(to: prompt) }.value()
+    }
+
+    /// The reply the stub backend gives to `prompt`.
+    ///
+    /// - Parameter prompt: The prompt of an answer.
+    /// - Returns: The reply of that answer.
+    private static func reply(to prompt: String) -> String {
+        "ok-\(prompt)"
     }
 
     /// Whether `entry` is a `.response` — how a test tells a whole recorded
@@ -512,39 +499,38 @@ struct HumanWaitGateTests {
         let sessionB = fixture.model.makeSession()
 
         // The tool body of A's submission waits on `humanGate`, as a tool that
-        // waits for a person does. The body signals `waitStarted` from inside
+        // waits for a person does. The body sends `waitStarted` from inside
         // the wait, so the test resumes at a point where A is provably in the
-        // wait, rather than after a bounded number of scheduler hops.
+        // wait.
         let humanGate = AsyncSemaphore(value: 0)
-        let waitStarted = AsyncSemaphore(value: 0)
+        let waitStarted = AwaitedEvent()
         fixture.hook.midAnswer = { prompt in
             guard prompt == "a-wait" else { return }
             waitStarted.signal()
             await humanGate.wait()
         }
 
-        let taskA = Task { try await sessionA.respond(to: "a-wait") }
-        try await BoundedWait.awaitSignal(waitStarted, named: "the start of sessionA's human wait")
+        let answerA = ObservedRun { try await sessionA.respond(to: "a-wait") }
+        try await waitStarted.wait()
 
         // A's pump keeps its answer running for the full wait.
         #expect(await sessionA.isPumpRunning)
 
         // B's submission waits behind A's: the wait is a step of A's submission,
         // so it holds the worker of the model.
-        let taskB = Task { try await sessionB.respond(to: "b") }
-        #expect(
-            await BoundedWait.conditionReached("sessionB's submission waiting behind the human wait") {
-                await queue.waitingCount == 1
-            })
+        let queuedB = await Self.submissionQueued(on: sessionB)
+        let answerB = ObservedRun { try await sessionB.respond(to: "b") }
+        try await queuedB.value()
+        #expect(await queue.waitingCount == 1)
         #expect(await fixture.observer.entered == ["a-wait"])
 
         // A then finishes its own answer, and only then does B run.
         humanGate.signal()
-        #expect(try await Self.completedAnswer(awaiting: taskA, prompt: "a-wait", observer: fixture.observer) == "ok-a-wait")
-        #expect(try await Self.completedAnswer(awaiting: taskB, prompt: "b", observer: fixture.observer) == "ok-b")
+        #expect(try await answerA.value() == Self.reply(to: "a-wait"))
+        #expect(try await answerB.value() == Self.reply(to: "b"))
         #expect(await fixture.observer.exited == ["a-wait", "b"])
         #expect(await fixture.observer.maxActive == 1)
-        #expect(await sessionA.becomesIdle())
+        #expect(try await sessionA.isIdleOnceThePumpEnds())
         #expect(await queue.isRunning == false)
     }
 
@@ -560,22 +546,22 @@ struct HumanWaitGateTests {
         let session = fixture.model.makeSession()
 
         let humanGate = AsyncSemaphore(value: 0)
+        let waitStarted = AwaitedEvent()
         fixture.hook.midAnswer = { prompt in
             guard prompt == "first" else { return }
+            waitStarted.signal()
             await humanGate.wait()
         }
 
-        let firstTask = Task { try await session.respond(to: "first") }
-        await BoundedWait.spin(until: { humanGate.waiterCount == 1 })
+        let first = ObservedRun { try await session.respond(to: "first") }
+        try await waitStarted.wait()
 
         // The second respond is a message. It waits in the outbox, and never
         // goes into the running submission, which keeps the model for the
-        // whole wait.
-        let secondTask = Task { try await session.respond(to: "second") }
-        #expect(
-            await BoundedWait.conditionReached("the second message waiting in the outbox") {
-                await session.outbox.waitingMessageCount == 1
-            })
+        // whole wait. The outbox sends no event when a message joins it, so
+        // the test reads the count until it holds.
+        let second = ObservedRun { try await session.respond(to: "second") }
+        try await AwaitedCondition.wait(until: { await session.outbox.waitingMessageCount == 1 })
 
         #expect(await fixture.observer.entered == ["first"])
         #expect(await fixture.observer.maxActive == 1)
@@ -583,8 +569,8 @@ struct HumanWaitGateTests {
         // Only once the human wait ends and the first answer completes does the
         // second one run — in submission order, never interleaved.
         humanGate.signal()
-        #expect(try await Self.completedAnswer(awaiting: firstTask, prompt: "first", observer: fixture.observer) == "ok-first")
-        #expect(try await Self.completedAnswer(awaiting: secondTask, prompt: "second", observer: fixture.observer) == "ok-second")
+        #expect(try await first.value() == Self.reply(to: "first"))
+        #expect(try await second.value() == Self.reply(to: "second"))
         #expect(await fixture.observer.entered == ["first", "second"])
         #expect(await fixture.observer.maxActive == 1)
     }
@@ -600,31 +586,32 @@ struct HumanWaitGateTests {
         let backend = try #require(fixture.container.backends.first)
 
         let humanGate = AsyncSemaphore(value: 0)
+        let waitStarted = AwaitedEvent()
         fixture.hook.midAnswer = { prompt in
             guard prompt == "answer" else { return }
+            waitStarted.signal()
             await humanGate.wait()
         }
 
         // The submission suspends mid-transcript: its `.prompt` entry is
         // appended, its `.response` entry is not. Anything that reads the live
         // transcript now reads a torn submission.
-        let answerTask = Task { try await session.respond(to: "answer") }
-        await BoundedWait.spin(until: { humanGate.waiterCount == 1 })
+        let answer = ObservedRun { try await session.respond(to: "answer") }
+        try await waitStarted.wait()
         #expect(Self.isResponse(entry: backend.transcriptEntries().last) == false)
 
         // The fork reads the settled transcript of the session, so it does not
         // wait for the submission (task ^dpn2ytt). It makes its child while the
-        // human wait is still open.
-        let forkTask = Task { try await session.fork(workingDirectory: nil) }
-        let forkedDuringTheWait = await BoundedWait.conditionReached("the fork making its child") {
-            backend.lastFork != nil
-        }
+        // human wait is still open: the test waits for the child before it
+        // ends the wait, so a fork that waited for the submission would never
+        // make it, and the `.timeLimit` of the suite would end this test.
+        let fork = ObservedRun { try await session.fork(workingDirectory: nil) }
+        try await backend.forkMade.wait()
 
         humanGate.signal()
-        #expect(try await Self.completedAnswer(awaiting: answerTask, prompt: "answer", observer: fixture.observer) == "ok-answer")
-        let child = try await forkTask.value
+        #expect(try await answer.value() == Self.reply(to: "answer"))
+        let child = try await fork.value()
 
-        #expect(forkedDuringTheWait)
         let childBackend = try #require(backend.lastFork)
         // No submission of the session had settled when the fork read it, so
         // the child holds nothing of the torn submission.
@@ -652,27 +639,22 @@ struct HumanWaitGateTests {
             throw ProbeError.boom
         }
 
-        // The answer runs as its own task, and the test observes its unwind
-        // before it awaits it: its tool waits on a person, so a regression on
-        // the entry or exit route of that wait suspends the answer forever, and
-        // a bare `await session.respond(to:)` here would hang the whole
-        // `swift test` run instead of failing this test. The observer records
-        // the exit from the model call on the throwing path as much as on the
-        // returning one.
-        let answerTask = Task { try await session.respond(to: "throwing") }
-        guard await Self.finished(named: "the throwing answer", when: { await fixture.observer.exited.contains("throwing") })
-        else { return }
+        // The answer runs as its own task, and the test waits for the end of
+        // that task on its event: its tool waits on a person, so a regression
+        // on the entry or exit route of that wait suspends the answer forever,
+        // and a bare `await session.respond(to:)` here would hang the whole
+        // `swift test` run instead of failing this test.
+        let answer = ObservedRun { try await session.respond(to: "throwing") }
         await #expect(throws: ProbeError.boom) {
-            try await answerTask.value
+            try await answer.value()
         }
 
         // The session is idle again — the failure stranded nothing.
-        #expect(await session.becomesIdle())
-        #expect(await session.outbox.waitingMessageCount == 0)
+        #expect(try await session.isIdleOnceThePumpEnds())
 
         // The proof that accounting really is balanced: the session still works.
-        #expect(await Self.followUpAnswerCompletes(on: session, observer: fixture.observer))
-        #expect(await session.becomesIdle())
+        #expect(try await Self.followUpAnswer(on: session) == Self.reply(to: Self.followUpPrompt))
+        #expect(try await session.isIdleOnceThePumpEnds())
     }
 
     @Test("cancelling a task while its tool body waits for a person leaves the session idle")
@@ -689,7 +671,7 @@ struct HumanWaitGateTests {
         // racing to get there; `suspended` is what the wait actually suspends on,
         // released by the cancellation handler — the shape a real elicitation
         // awaiting a reply has, rather than a poll of `Task.isCancelled`.
-        let insideWait = AsyncSemaphore(value: 0)
+        let insideWait = AwaitedEvent()
         let suspended = AsyncSemaphore(value: 0)
         fixture.hook.midAnswer = { prompt in
             guard prompt == "cancelled" else { return }
@@ -702,26 +684,25 @@ struct HumanWaitGateTests {
             try Task.checkCancellation()
         }
 
-        let answerTask = Task { try await session.respond(to: "cancelled") }
-        try await BoundedWait.awaitSignal(insideWait, named: "the answer suspending inside its human wait")
+        let answer = ObservedRun { try await session.respond(to: "cancelled") }
+        try await insideWait.wait()
         #expect(await session.isPumpRunning)
 
-        answerTask.cancel()
-        // The answer unwinds only once the cancellation reaches its suspended
-        // body, so the test observes the unwind before it awaits it: a
-        // cancellation that never arrives fails this test with a readable
-        // message rather than hanging.
-        guard await Self.finished(named: "the cancelled answer", when: { await fixture.observer.exited.contains("cancelled") })
-        else { return }
+        answer.cancel()
+        // The test waits for the end of the answer on its event: a
+        // cancellation that never arrives leaves that event unsent, and the
+        // `.timeLimit` of the suite then ends this test rather than hanging
+        // the run.
         await #expect(throws: CancellationError.self) {
-            try await answerTask.value
+            try await answer.value()
         }
 
-        // The cancelled answer ends, and nothing of it waits.
-        #expect(await session.becomesIdle())
-        #expect(await session.outbox.waitingMessageCount == 0)
+        // The cancelled answer ends, and nothing of it waits. The pump ends
+        // only once the cancellation reached the suspended body and the
+        // model call unwound.
+        #expect(try await session.isIdleOnceThePumpEnds())
 
-        #expect(await Self.followUpAnswerCompletes(on: session, observer: fixture.observer))
+        #expect(try await Self.followUpAnswer(on: session) == Self.reply(to: Self.followUpPrompt))
     }
 
     // MARK: - Consecutive waits, and waits outside any submission
@@ -737,9 +718,9 @@ struct HumanWaitGateTests {
 
         // Two waits in one submission — what a tool that asks a person two
         // questions, one after the other, looks like to the session.
-        let firstEntered = AsyncSemaphore(value: 0)
+        let firstEntered = AwaitedEvent()
         let releaseFirst = AsyncSemaphore(value: 0)
-        let secondEntered = AsyncSemaphore(value: 0)
+        let secondEntered = AwaitedEvent()
         let releaseSecond = AsyncSemaphore(value: 0)
         fixture.hook.midAnswer = { prompt in
             guard prompt == "nested" else { return }
@@ -749,8 +730,8 @@ struct HumanWaitGateTests {
             await releaseSecond.wait()
         }
 
-        let answerTask = Task { try await session.respond(to: "nested") }
-        try await BoundedWait.awaitSignal(firstEntered, named: "the first human wait being entered")
+        let answer = ObservedRun { try await session.respond(to: "nested") }
+        try await firstEntered.wait()
 
         // The first wait is open, and the answer still runs: a wait releases
         // nothing, and no message waits.
@@ -758,21 +739,18 @@ struct HumanWaitGateTests {
         #expect(await session.outbox.waitingMessageCount == 0)
 
         releaseFirst.signal()
-        try await BoundedWait.awaitSignal(secondEntered, named: "the second human wait being entered")
+        try await secondEntered.wait()
 
         // The second wait is open, and the answer still runs.
         #expect(await session.isPumpRunning)
         #expect(await session.outbox.waitingMessageCount == 0)
 
         releaseSecond.signal()
-        #expect(try await Self.completedAnswer(awaiting: answerTask, prompt: "nested", observer: fixture.observer) == "ok-nested")
-        #expect(await session.becomesIdle())
-        #expect(await session.outbox.waitingMessageCount == 0)
+        #expect(try await answer.value() == Self.reply(to: "nested"))
+        #expect(try await session.isIdleOnceThePumpEnds())
     }
 
-    @Test(
-        "a wait for a person outside any submission, open while an answer runs, leaves the session idle after the answer",
-        .timeLimit(.minutes(1)))
+    @Test("a wait for a person outside any submission, open while an answer runs, leaves the session idle after the answer")
     @MainActor
     func waitOverlappingAnotherAnswerLeavesTheSessionIdle() async throws {
         let dir = Self.makeTempDir()
@@ -785,10 +763,10 @@ struct HumanWaitGateTests {
         // run that reaches it, rather than a reading polled until ``BoundedWait``'s
         // wall clock runs out (task ^q8cnmb2): a loaded machine makes this test
         // slower and never red. What ends a run that never reaches its moment is
-        // the `.timeLimit` above, so no wait here has to give up early to keep the
-        // suite from hanging. The semaphores that remain are the ones this test
-        // *signals* rather than waits on — a release the test itself makes always
-        // arrives, so nothing about it can be late.
+        // the `.timeLimit` of the suite, so no wait here has to give up early to
+        // keep the suite from hanging. The semaphores that remain are the ones
+        // this test *signals* rather than waits on — a release the test itself
+        // makes always arrives, so nothing about it can be late.
         //
         // This answer suspends in the backend, and the wait for a person below
         // is not part of it: it comes from a plain task outside any submission,
@@ -804,63 +782,43 @@ struct HumanWaitGateTests {
             await releaseAnswer.wait()
         }
 
-        let answerFinished = AwaitedEvent()
-        let answerTask = Task {
-            defer { answerFinished.signal() }
-            return try await session.respond(to: "answer")
-        }
+        let answer = ObservedRun { try await session.respond(to: "answer") }
         try await inAnswer.wait()
         #expect(await session.isPumpRunning)
 
         // The wait outside the submission takes nothing and gives nothing back.
-        // `waitFinished` is signalled after the wait ends, so the whole exit of
-        // the wait is observable without awaiting the task that could be
+        // The run sends its end event after the wait ends, so the whole exit of
+        // the wait is observable without a bare await of the task that could be
         // suspended in it.
         let waitEntered = AwaitedEvent()
         let releaseWait = AsyncSemaphore(value: 0)
-        let waitFinished = AwaitedEvent()
-        let waitTask = Task {
+        let wait = ObservedRun {
             waitEntered.signal()
             await releaseWait.wait()
-            waitFinished.signal()
         }
         try await waitEntered.wait()
         #expect(await session.isPumpRunning)
 
         // The end of the submission ends the answer.
         releaseAnswer.signal()
-        try await answerFinished.wait()
-        #expect(try await answerTask.value == "ok-answer")
-        #expect(await session.becomesIdle())
+        #expect(try await answer.value() == Self.reply(to: "answer"))
+        #expect(try await session.isIdleOnceThePumpEnds())
 
         // The wait ending after the answer must not wake the pump again.
         releaseWait.signal()
-        try await waitFinished.wait()
-        await waitTask.value
-        #expect(await session.becomesIdle())
-        #expect(await session.outbox.waitingMessageCount == 0)
+        try await wait.value()
+        #expect(try await session.isIdleOnceThePumpEnds())
 
         // With no submission running, a further wait must still see an idle
         // session. It runs as its own task, so the test reads the state from
         // outside the wait rather than from the task that is inside it.
-        let tailWaitFinished = AwaitedEvent()
-        let tailWaitTask = Task {
-            #expect(await session.becomesIdle())
-            tailWaitFinished.signal()
-        }
-        try await tailWaitFinished.wait()
-        await tailWaitTask.value
+        let tailWait = ObservedRun { try await session.isIdleOnceThePumpEnds() }
+        #expect(try await tailWait.value())
 
         // The proof that accounting really is balanced: one further ordinary
         // answer on this session still runs to completion.
-        let followUpFinished = AwaitedEvent()
-        let followUpTask = Task {
-            defer { followUpFinished.signal() }
-            return try await session.respond(to: Self.followUpPrompt)
-        }
-        try await followUpFinished.wait()
-        #expect(try await followUpTask.value == "ok-\(Self.followUpPrompt)")
-        #expect(await session.becomesIdle())
+        #expect(try await Self.followUpAnswer(on: session) == Self.reply(to: Self.followUpPrompt))
+        #expect(try await session.isIdleOnceThePumpEnds())
     }
 
     @Test("an answer that ends while a wait for a person outside any submission is open strands nothing: the model family keeps generating")
@@ -880,9 +838,9 @@ struct HumanWaitGateTests {
         // answer that ended in that window could strand the permit. Now a wait
         // holds nothing and takes nothing back, so no order of these events can
         // strand work.
-        let inAnswerA = AsyncSemaphore(value: 0)
+        let inAnswerA = AwaitedEvent()
         let releaseAnswerA = AsyncSemaphore(value: 0)
-        let inAnswerB = AsyncSemaphore(value: 0)
+        let inAnswerB = AwaitedEvent()
         let releaseAnswerB = AsyncSemaphore(value: 0)
         fixture.hook.midAnswer = { prompt in
             switch prompt {
@@ -898,55 +856,50 @@ struct HumanWaitGateTests {
         }
 
         // A's pump runs its answer, which suspends without any wait of its own.
-        let answerA = Task { try await sessionA.respond(to: "answer-a") }
-        try await BoundedWait.awaitSignal(inAnswerA, named: "sessionA's answer reaching the model")
+        let answerA = ObservedRun { try await sessionA.respond(to: "answer-a") }
+        try await inAnswerA.wait()
         #expect(await sessionA.isPumpRunning)
 
-        // A wait outside any submission opens. `waitFinished` is signalled
-        // after the wait ends, so the end of the wait is observable without
-        // awaiting a task that could be suspended in it.
-        let waitEntered = AsyncSemaphore(value: 0)
+        // A wait outside any submission opens. The run sends its end event
+        // after the wait ends, so the end of the wait is observable without a
+        // bare await of a task that could be suspended in it.
+        let waitEntered = AwaitedEvent()
         let releaseWait = AsyncSemaphore(value: 0)
-        let waitFinished = AsyncSemaphore(value: 0)
-        let waitTask = Task {
+        let wait = ObservedRun {
             waitEntered.signal()
             await releaseWait.wait()
-            waitFinished.signal()
         }
-        try await BoundedWait.awaitSignal(waitEntered, named: "the human wait outside any submission being entered")
+        try await waitEntered.wait()
         #expect(await sessionA.isPumpRunning)
 
         // B starts its own answer on the same model. Its submission waits behind
         // A's, which holds the model.
-        let answerB = Task { try await sessionB.respond(to: "answer-b") }
-        #expect(
-            await BoundedWait.conditionReached("sessionB's submission waiting behind sessionA's") {
-                await fixture.container.generationQueue.waitingCount == 1
-            })
+        let queuedB = await Self.submissionQueued(on: sessionB)
+        let answerB = ObservedRun { try await sessionB.respond(to: "answer-b") }
+        try await queuedB.value()
+        #expect(await fixture.container.generationQueue.waitingCount == 1)
         #expect(await sessionB.isPumpRunning)
 
         // A's answer ends *while* the wait is still open, and B's submission
         // then reaches the model.
         releaseAnswerA.signal()
-        #expect(try await Self.completedAnswer(awaiting: answerA, prompt: "answer-a", observer: fixture.observer) == "ok-answer-a")
-        #expect(await sessionA.becomesIdle())
-        try await BoundedWait.awaitSignal(inAnswerB, named: "sessionB's answer reaching the model")
+        #expect(try await answerA.value() == Self.reply(to: "answer-a"))
+        #expect(try await sessionA.isIdleOnceThePumpEnds())
+        try await inAnswerB.wait()
 
         // The wait ends next. It takes nothing back, so it does not suspend.
         releaseWait.signal()
-        try await Self.completedRun(awaiting: waitTask, named: "the human wait outside any submission") {
-            waitFinished.availablePermits > 0
-        }
-        #expect(await sessionA.becomesIdle())
+        try await wait.value()
+        #expect(try await sessionA.isIdleOnceThePumpEnds())
 
         releaseAnswerB.signal()
-        #expect(try await Self.completedAnswer(awaiting: answerB, prompt: "answer-b", observer: fixture.observer) == "ok-answer-b")
-        #expect(await sessionB.becomesIdle())
+        #expect(try await answerB.value() == Self.reply(to: "answer-b"))
+        #expect(try await sessionB.isIdleOnceThePumpEnds())
 
         // The behavioral consequence: both sessions over this model still accept
         // a further answer.
-        #expect(await Self.followUpAnswerCompletes(on: sessionA, observer: fixture.observer, prompt: "after-a"))
-        #expect(await Self.followUpAnswerCompletes(on: sessionB, observer: fixture.observer, prompt: "after-b"))
+        #expect(try await Self.followUpAnswer(on: sessionA, prompt: "after-a") == Self.reply(to: "after-a"))
+        #expect(try await Self.followUpAnswer(on: sessionB, prompt: "after-b") == Self.reply(to: "after-b"))
     }
 
     @Test("a wait for a person outside any submission runs, starts no pump, and leaves the session idle")
@@ -958,38 +911,32 @@ struct HumanWaitGateTests {
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = fixture.model.makeSession()
 
-        // The wait runs as its own task and bounded rather than awaited
-        // outright: a regression on the entry or exit route of the wait
-        // suspends it forever, and this target sets no `.timeLimit` trait, so a
-        // bare await would hang the whole `swift test` run instead of failing
-        // this test.
-        #expect(await session.becomesIdle())
-        let reply = AsyncSemaphore(value: 0)
-        let waitEntered = AsyncSemaphore(value: 0)
-        let answered = AsyncSemaphore(value: 0)
-        let waitTask = Task { () -> Int in
+        // The wait runs as its own task, and the test waits for its end on the
+        // event of the run rather than awaiting it outright: a regression on
+        // the entry or exit route of the wait suspends it forever, and a bare
+        // await would hang the whole `swift test` run instead of failing this
+        // test.
+        #expect(try await session.isIdleOnceThePumpEnds())
+        let personAnswers = AsyncSemaphore(value: 0)
+        let waitEntered = AwaitedEvent()
+        let wait = ObservedRun { () -> Int in
             waitEntered.signal()
-            await reply.wait()
-            answered.signal()
+            await personAnswers.wait()
             return Self.personReply
         }
-        try await BoundedWait.awaitSignal(waitEntered, named: "the human wait outside any submission being entered")
+        try await waitEntered.wait()
 
         // The wait is open, and no pump runs: a wait outside a submission
         // starts no work of the session.
         #expect(await session.isPumpRunning == false)
 
-        reply.signal()
-        let answer = try await Self.completedRun(awaiting: waitTask, named: "the human wait outside any submission") {
-            answered.availablePermits > 0
-        }
-        #expect(answer == Self.personReply)
+        personAnswers.signal()
+        #expect(try await wait.value() == Self.personReply)
 
         // Still idle: the wait takes nothing and gives nothing back.
-        #expect(await session.becomesIdle())
-        #expect(await session.outbox.waitingMessageCount == 0)
+        #expect(try await session.isIdleOnceThePumpEnds())
 
-        #expect(await Self.followUpAnswerCompletes(on: session, observer: fixture.observer))
-        #expect(await session.becomesIdle())
+        #expect(try await Self.followUpAnswer(on: session) == Self.reply(to: Self.followUpPrompt))
+        #expect(try await session.isIdleOnceThePumpEnds())
     }
 }
