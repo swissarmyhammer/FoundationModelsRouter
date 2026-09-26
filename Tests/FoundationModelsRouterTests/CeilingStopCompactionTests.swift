@@ -41,7 +41,7 @@ struct CeilingStopCompactionTests {
     private static let underTriggerUsage = MeteredGenerationCall(tokensIn: 100, tokensOut: ceiling)
 
     /// The cut text of `length` characters.
-    private static func cutText(length: Int) -> String {
+    private static func makeCutText(length: Int) -> String {
         "CUT:" + String(repeating: "x", count: length)
     }
 
@@ -56,13 +56,13 @@ struct CeilingStopCompactionTests {
     ///   - cutEndsInsideReasoning: Whether the cut call ends inside its
     ///     thought instead of inside its response text.
     /// - Returns: The events of the answer, in order.
-    private static func answerEvents(
+    private static func makeAnswerEvents(
         cutLength: Int, cutUsage: MeteredGenerationCall, cutEndsInsideReasoning: Bool = false
     ) async throws -> [SessionEvent] {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: directory) }
         let model = CeilingStopCompactionModel(
-            cutText: cutText(length: cutLength), cutUsage: cutUsage, cutEndsInsideReasoning: cutEndsInsideReasoning)
+            cutText: makeCutText(length: cutLength), cutUsage: cutUsage, cutEndsInsideReasoning: cutEndsInsideReasoning)
         let router = RouterTestFixtures.makeRouter(
             cacheDir: directory, recorder: InMemoryRecorder(),
             loader: StubModelLoader(
@@ -88,7 +88,7 @@ struct CeilingStopCompactionTests {
     @Test(
         "a ceiling stop over the trigger: one compaction, one continuation submission, and one answer")
     func ceilingStopOverTheTriggerCompactsAndGoesOn() async throws {
-        let events = try await Self.answerEvents(cutLength: Self.largeCutLength, cutUsage: Self.overTriggerUsage)
+        let events = try await Self.makeAnswerEvents(cutLength: Self.largeCutLength, cutUsage: Self.overTriggerUsage)
 
         let compactions = events.compactionResults
         #expect(compactions.count == 1)
@@ -110,7 +110,7 @@ struct CeilingStopCompactionTests {
 
     @Test("a ceiling stop under the trigger: no compaction, and the one submission ends as truncated")
     func ceilingStopUnderTheTriggerEndsTruncated() async throws {
-        let events = try await Self.answerEvents(cutLength: Self.smallCutLength, cutUsage: Self.underTriggerUsage)
+        let events = try await Self.makeAnswerEvents(cutLength: Self.smallCutLength, cutUsage: Self.underTriggerUsage)
 
         #expect(events.compactionResults.isEmpty)
         #expect(Self.finishReasons(in: events) == [.maxTokens])
@@ -125,7 +125,7 @@ struct CeilingStopCompactionTests {
         let usage = MeteredGenerationCall(tokensIn: Self.overTriggerUsage.tokensIn, tokensOut: Self.ceiling - 1)
         #expect(usage.tokensIn + usage.tokensOut >= Self.budget.triggerTokens)
 
-        let events = try await Self.answerEvents(
+        let events = try await Self.makeAnswerEvents(
             cutLength: Self.largeCutLength, cutUsage: usage, cutEndsInsideReasoning: true)
 
         #expect(events.compactionResults.isEmpty)

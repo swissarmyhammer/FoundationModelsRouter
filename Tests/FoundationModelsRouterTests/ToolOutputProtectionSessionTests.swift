@@ -16,6 +16,9 @@ import Testing
 /// Everything runs against stubs: a ``StubSessionBackend``-backed container
 /// and a ``JSONLRecorder`` in a temp directory. A second router, pointed at the
 /// same id and recordings root, restores what the first one recorded.
+///
+/// The warm-up answers come from ``driveAnswers(_:on:)``, a helper in
+/// `Helpers/CompactionFixtures.swift` that other compaction suites also use.
 @Suite("Tool output protection through a session, its fork, and its restore")
 struct ToolOutputProtectionSessionTests {
     /// The fixtures every test here reads.
@@ -108,6 +111,7 @@ struct ToolOutputProtectionSessionTests {
         defer { directories.remove() }
         let profile = try await Self.resolveProfile(in: directories, routerId: .generate())
         let session = profile.standard.makeSession(toolOutputProtection: Fixtures.rule)
+        // ``driveAnswers(_:on:)`` is in Helpers/CompactionFixtures.swift.
         try await driveAnswers(Fixtures.recentAnswerCount, on: session)
 
         let result = try await Self.compact(session: session)
@@ -125,6 +129,7 @@ struct ToolOutputProtectionSessionTests {
         let profile = try await Self.resolveProfile(in: directories, routerId: .generate())
         let session = profile.standard.makeSession(
             configuration: SessionConfiguration(toolOutputProtection: Fixtures.rule))
+        // ``driveAnswers(_:on:)`` is in Helpers/CompactionFixtures.swift.
         try await driveAnswers(Fixtures.recentAnswerCount, on: session)
 
         let result = try await Self.compact(session: session)
@@ -139,6 +144,7 @@ struct ToolOutputProtectionSessionTests {
         defer { directories.remove() }
         let profile = try await Self.resolveProfile(in: directories, routerId: .generate())
         let session = profile.standard.makeSession()
+        // ``driveAnswers(_:on:)`` is in Helpers/CompactionFixtures.swift.
         try await driveAnswers(Fixtures.recentAnswerCount, on: session)
 
         let result = try await Self.compact(session: session)
@@ -157,6 +163,7 @@ struct ToolOutputProtectionSessionTests {
         let profile = try await Self.resolveProfile(in: directories, routerId: .generate())
         let session = profile.standard.makeSession(
             configuration: SessionConfiguration(toolOutputProtection: Fixtures.rule))
+        // ``driveAnswers(_:on:)`` is in Helpers/CompactionFixtures.swift.
         try await driveAnswers(Fixtures.recentAnswerCount, on: session)
 
         let fork = try await session.fork(workingDirectory: nil)
@@ -175,6 +182,7 @@ struct ToolOutputProtectionSessionTests {
         let original = try await Self.resolveProfile(in: directories, routerId: routerId)
         let session = original.standard.makeSession(
             configuration: SessionConfiguration(toolOutputProtection: Fixtures.rule))
+        // ``driveAnswers(_:on:)`` is in Helpers/CompactionFixtures.swift.
         try await driveAnswers(Fixtures.recentAnswerCount, on: session)
 
         let restoring = try await Self.resolveProfile(in: directories, routerId: routerId)
@@ -194,6 +202,7 @@ struct ToolOutputProtectionSessionTests {
         let original = try await Self.resolveProfile(in: directories, routerId: routerId)
         let session = original.standard.makeSession(
             configuration: SessionConfiguration(toolOutputProtection: Fixtures.rule))
+        // ``driveAnswers(_:on:)`` is in Helpers/CompactionFixtures.swift.
         try await driveAnswers(Fixtures.recentAnswerCount, on: session)
         try await Self.compact(session: session)
         let liveTranscript = await session.transcript

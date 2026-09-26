@@ -442,42 +442,62 @@ public final class SessionProjection {
     /// - Parameter entries: The cold transcript's entries, oldest first.
     /// - Returns: The rows, in transcript order.
     nonisolated static func transcriptRows(from entries: [Transcript.Entry]) -> [TranscriptEntry] {
-        var rows: [TranscriptEntry] = []
-        var dispatchedToolCallIds: [String] = []
-        var completedToolCallIds: Set<String> = []
-        for entry in entries {
+        entries.reduce(into: ColdTranscriptScan()) { scan, entry in scan.read(entry: entry) }.finishedRows
+    }
+
+    /// The state that ``transcriptRows(from:)`` threads through the entries
+    /// of a cold transcript: the rows so far, and the tool calls of the
+    /// submission that the scan is in.
+    private struct ColdTranscriptScan {
+        /// The rows so far, in transcript order.
+        private var rows: [TranscriptEntry] = []
+
+        /// The call ids that the current submission dispatched, in order.
+        private var dispatchedToolCallIds: [String] = []
+
+        /// The call ids of the current submission that an output answered.
+        private var completedToolCallIds: Set<String> = []
+
+        /// The rows, with each call row that is still
+        /// ``ToolCallStatus/running`` marked ``ToolCallStatus/failed``: no
+        /// output answered that call.
+        var finishedRows: [TranscriptEntry] {
+            rows.map { row in
+                guard case .toolCall(var call) = row.kind, call.status == .running else { return row }
+                call.status = .failed
+                var failed = row
+                failed.kind = .toolCall(call)
+                return failed
+            }
+        }
+
+        /// Reads the next entry of the cold transcript into the rows.
+        ///
+        /// - Parameter entry: The next entry, in transcript order.
+        mutating func read(entry: Transcript.Entry) {
             let (kind, payload, text) = TranscriptEntryMapper.event(from: entry)
             switch kind {
             case .prompt:
                 // A compaction boundary is a row, not the start of a submission.
-                if let boundary = compactionRow(from: entry, entryId: payload.entryId) {
+                if let boundary = SessionProjection.compactionRow(from: entry, entryId: payload.entryId) {
                     rows.append(boundary)
                 } else {
                     dispatchedToolCallIds.removeAll()
                     completedToolCallIds.removeAll()
                 }
             case .toolCalls:
-                for call in payload.toolCalls ?? [] {
-                    dispatchedToolCallIds.append(call.id)
-                    rows.append(
-                        TranscriptEntry(
-                            id: call.id,
-                            kind: .toolCall(
-                                ToolCallEntry(
-                                    id: call.id, name: call.toolName, argumentsJSON: call.argumentsJSON,
-                                    status: .running, summary: nil)),
-                            sourceEntryId: payload.entryId))
-                }
+                read(toolCalls: payload.toolCalls ?? [], entryId: payload.entryId)
             case .toolOutput:
                 let callId = ToolCallOutputPairing.completedToolCallId(
                     forOutputEntryId: payload.entryId,
                     dispatched: dispatchedToolCallIds,
                     completed: completedToolCallIds)
                 completedToolCallIds.insert(callId)
-                updateToolCallRow(id: callId, status: .completed, summary: text, output: payload.segments, in: &rows)
+                SessionProjection.updateToolCallRow(
+                    id: callId, status: .completed, summary: text, output: payload.segments, in: &rows)
             case .response:
                 rows.append(
-                    compactionRow(from: entry, entryId: payload.entryId)
+                    SessionProjection.compactionRow(from: entry, entryId: payload.entryId)
                         ?? TranscriptEntry(id: payload.entryId, kind: .text(text ?? ""), sourceEntryId: payload.entryId))
             case .reasoning:
                 rows.append(
@@ -488,19 +508,25 @@ public final class SessionProjection {
                 break
             }
         }
-        failUnansweredToolCallRows(in: &rows)
-        return rows
-    }
 
-    /// Marks every call row still ``ToolCallStatus/running`` as
-    /// ``ToolCallStatus/failed``.
-    ///
-    /// - Parameter rows: The rows grouped from the whole transcript.
-    private nonisolated static func failUnansweredToolCallRows(in rows: inout [TranscriptEntry]) {
-        for index in rows.indices {
-            guard case .toolCall(var call) = rows[index].kind, call.status == .running else { continue }
-            call.status = .failed
-            rows[index].kind = .toolCall(call)
+        /// Adds one ``ToolCallStatus/running`` call row for each call of a
+        /// `.toolCalls` entry, and records each call as dispatched.
+        ///
+        /// - Parameters:
+        ///   - toolCalls: The calls of the entry, in order.
+        ///   - entryId: The id of the `.toolCalls` entry.
+        private mutating func read(toolCalls: [ToolCallPayload], entryId: String) {
+            dispatchedToolCallIds.append(contentsOf: toolCalls.map(\.id))
+            rows.append(
+                contentsOf: toolCalls.map { call in
+                    TranscriptEntry(
+                        id: call.id,
+                        kind: .toolCall(
+                            ToolCallEntry(
+                                id: call.id, name: call.toolName, argumentsJSON: call.argumentsJSON,
+                                status: .running, summary: nil)),
+                        sourceEntryId: entryId)
+                })
         }
     }
 
@@ -633,46 +659,79 @@ public final class SessionProjection {
     /// - Parameter entries: The cold transcript's entries, oldest first.
     /// - Returns: The superseded text rows' entry ids.
     private nonisolated static func supersededTextEntryIds(in entries: [Transcript.Entry]) -> Set<String> {
-        var superseded: Set<String> = []
-        var submissionTextEntryIds: [String] = []
-        for entry in entries {
-            let (kind, payload, _) = TranscriptEntryMapper.event(from: entry)
-            switch kind {
-            case .prompt:
-                // A compaction boundary is not the start of a submission.
-                guard compactionRow(from: entry, entryId: payload.entryId) == nil else { break }
-                submissionTextEntryIds.removeAll()
-            case .response:
-                guard compactionRow(from: entry, entryId: payload.entryId) == nil else { break }
-                superseded.formUnion(submissionTextEntryIds)
-                submissionTextEntryIds.append(payload.entryId)
-            case .toolCalls, .toolOutput, .reasoning, .session, .instructions, .embedding, .divergence,
-                .generationCall, .repeatedPartRemoval, .toolCall, .unknown:
-                break
-            }
-        }
-        return superseded
+        let submissions = entries.compactMap(submissionMark(of:)).split(separator: .submissionStart)
+        // In each submission, every text entry but the last is superseded.
+        return Set(submissions.flatMap { submission in submission.dropLast().compactMap(\.textEntryId) })
     }
+
+    /// What one entry of a cold transcript means to the submissions that
+    /// ``supersededTextEntryIds(in:)`` groups.
+    private enum SubmissionMark: Equatable {
+        /// A plain `.prompt`: the start of a submission.
+        case submissionStart
+
+        /// A plain `.response`: one text row of the current submission.
+        case text(entryId: String)
+
+        /// The entry id of a ``text(entryId:)`` mark, or `nil` for a
+        /// ``submissionStart``.
+        var textEntryId: String? {
+            guard case .text(let entryId) = self else { return nil }
+            return entryId
+        }
+    }
+
+    /// The mark that `entry` puts on the submissions of a cold transcript,
+    /// or `nil` for an entry that puts none. A compaction boundary is not
+    /// the start of a submission, and it is not a text row.
+    ///
+    /// - Parameter entry: An entry of the cold transcript.
+    /// - Returns: The mark of `entry`, or `nil`.
+    private nonisolated static func submissionMark(of entry: Transcript.Entry) -> SubmissionMark? {
+        let (kind, payload, _) = TranscriptEntryMapper.event(from: entry)
+        switch kind {
+        case .prompt:
+            return compactionRow(from: entry, entryId: payload.entryId) == nil ? .submissionStart : nil
+        case .response:
+            return compactionRow(from: entry, entryId: payload.entryId) == nil ? .text(entryId: payload.entryId) : nil
+        case .toolCalls, .toolOutput, .reasoning, .session, .instructions, .embedding, .divergence,
+            .generationCall, .repeatedPartRemoval, .toolCall, .unknown:
+            return nil
+        }
+    }
+
+    /// The ordinal of a row before any recorded entry, so that it sorts
+    /// ahead of every recorded one.
+    private static let ordinalBeforeEveryRecordedEntry = -1
 
     /// ``transcript`` sorted by each row's recorded ordinal. A row with no
     /// ordinal inherits the nearest preceding row's ordinal.
     ///
     /// - Returns: The rows in canonical order.
     private func canonicallyOrderedTranscript() -> [TranscriptEntry] {
-        var keyed: [(ordinal: Int, index: Int, row: TranscriptEntry)] = []
-        keyed.reserveCapacity(transcript.count)
-        // Rows before any recorded entry sort ahead of every recorded one.
-        var carried = -1
-        for (index, row) in transcript.enumerated() {
-            if let sourceEntryId = row.sourceEntryId, let ordinal = recordedEntryOrdinals[sourceEntryId] {
-                carried = ordinal
-            }
-            keyed.append((carried, index, row))
+        let ordinals = carriedOrdinals()
+        return transcript.indices
+            .sorted { (ordinals[$0], $0) < (ordinals[$1], $1) }
+            .map { transcript[$0] }
+    }
+
+    /// The ordinal of each row of ``transcript``, in transcript order: the
+    /// row's recorded ordinal, or else the ordinal of the nearest preceding
+    /// row.
+    ///
+    /// - Returns: One ordinal for each row of ``transcript``.
+    private func carriedOrdinals() -> [Int] {
+        transcript.reduce(into: []) { ordinals, row in
+            let recorded = row.sourceEntryId.flatMap { recordedEntryOrdinals[$0] }
+            ordinals.append(recorded ?? ordinals.last ?? Self.ordinalBeforeEveryRecordedEntry)
         }
-        return keyed.sorted { ($0.ordinal, $0.index) < ($1.ordinal, $1.index) }.map(\.row)
     }
 
     /// Applies the grouping rule to rows already in canonical order.
+    ///
+    /// Each row that is not context is an anchor. The context rows between
+    /// one anchor and the next attach to the next anchor. Context rows after
+    /// the last anchor stay top-level.
     ///
     /// - Parameters:
     ///   - rows: The rows to group, in canonical order.
@@ -681,24 +740,44 @@ public final class SessionProjection {
     private nonisolated static func groupedRows(
         from rows: [TranscriptEntry], supersededTextRowIds: Set<String>
     ) -> [GroupedRow] {
-        var grouped: [GroupedRow] = []
-        var pendingContext: [TranscriptEntry] = []
-        for row in rows {
-            switch row.kind {
-            case .reasoning:
-                pendingContext.append(row)
-            case .text where supersededTextRowIds.contains(row.id):
-                pendingContext.append(row)
-            case .toolCall:
-                grouped.append(.toolCallGroup(ToolCallGroup(call: row, context: pendingContext)))
-                pendingContext.removeAll()
-            case .text, .compaction:
-                grouped.append(contentsOf: pendingContext.map(GroupedRow.row))
-                pendingContext.removeAll()
-                grouped.append(.row(row))
-            }
+        let anchorIndices = rows.indices.filter { index in
+            !isContext(row: rows[index], supersededTextRowIds: supersededTextRowIds)
         }
-        grouped.append(contentsOf: pendingContext.map(GroupedRow.row))
-        return grouped
+        let contextStarts = [rows.startIndex] + anchorIndices.map { rows.index(after: $0) }
+        let anchored = zip(contextStarts, anchorIndices).flatMap { contextStart, anchor in
+            groupedItems(anchor: rows[anchor], context: Array(rows[contextStart..<anchor]))
+        }
+        let trailingContext = rows[(contextStarts.last ?? rows.startIndex)...].map(GroupedRow.row)
+        return anchored + trailingContext
+    }
+
+    /// Whether `row` is context: a reasoning row or a superseded text row.
+    ///
+    /// - Parameters:
+    ///   - row: The row to classify.
+    ///   - supersededTextRowIds: The ids of the superseded text rows.
+    /// - Returns: `true` for a context row, `false` for an anchor row.
+    private nonisolated static func isContext(row: TranscriptEntry, supersededTextRowIds: Set<String>) -> Bool {
+        switch row.kind {
+        case .reasoning:
+            return true
+        case .text:
+            return supersededTextRowIds.contains(row.id)
+        case .toolCall, .compaction:
+            return false
+        }
+    }
+
+    /// The grouped items of one anchor row and the context rows before it.
+    /// A tool-call anchor gets one ``ToolCallGroup`` that holds the context.
+    /// Any other anchor stays top-level, after its context rows.
+    ///
+    /// - Parameters:
+    ///   - anchor: The row that is not context.
+    ///   - context: The context rows immediately before `anchor`, in order.
+    /// - Returns: The grouped items, in canonical order.
+    private nonisolated static func groupedItems(anchor: TranscriptEntry, context: [TranscriptEntry]) -> [GroupedRow] {
+        guard case .toolCall = anchor.kind else { return context.map(GroupedRow.row) + [.row(anchor)] }
+        return [.toolCallGroup(ToolCallGroup(call: anchor, context: context))]
     }
 }

@@ -109,8 +109,11 @@ do {
     fail("cannot create \(outputDirectory.path): \(error)")
 }
 
+// swiftlint:disable:next no_direct_standard_out_logs  the tool reports its progress on standard out; that is its output
 print("[record] output: \(outputDirectory.path)")
+// swiftlint:disable:next no_direct_standard_out_logs  the tool reports its progress on standard out; that is its output
 print("[record] model: \(RecordingScript.recordingModel.stringValue) at context \(RecordingScript.workingContextTokens)")
+// swiftlint:disable:next no_direct_standard_out_logs  the tool reports its progress on standard out; that is its output
 print("[record] decoding: argmax, reply ceiling \(RecordingScript.replyTokenCeiling) tokens per answer")
 
 // MARK: - Record the conversation
@@ -149,6 +152,7 @@ let progress = ResolutionProgress()
 let progressTask = Task { @MainActor in
     for await transition in progress.phases {
         let percent = Int((transition.fraction * 100).rounded())
+        // swiftlint:disable:next no_direct_standard_out_logs  the tool reports its progress on standard out; that is its output
         print("[resolve] phase=\(transition.phase) fraction=\(percent)%")
     }
 }
@@ -176,11 +180,13 @@ let recordingStartedAt = Date()
 for (index, prompt) in RecordingScript.prompts.enumerated() {
     do {
         let reply = try await session.respond(to: prompt, maxTokens: RecordingScript.replyTokenCeiling)
+        // swiftlint:disable:next no_direct_standard_out_logs  the tool reports its progress on standard out; that is its output
         print("[answer \(index + 1)/\(RecordingScript.prompts.count)] replied with \(reply.count) characters")
     } catch {
         fail("answer \(index + 1) failed: \(error)")
     }
 }
+// swiftlint:disable:next no_direct_standard_out_logs  the tool reports its progress on standard out; that is its output
 print("[record] \(String(format: "%.0f", Date().timeIntervalSince(recordingStartedAt))) s of recording wall clock")
 
 // MARK: - Flatten the layout to the fixture's shape
@@ -231,6 +237,7 @@ do {
 } catch {
     fail("the finished recording does not count: \(error)")
 }
+// swiftlint:disable:next no_direct_standard_out_logs  the tool reports its progress on standard out; that is its output
 print(
     "[verify] \(Array(transcript).count) entries, kinds \(kinds), "
         + "\(transcriptTokens) tokens")
@@ -259,10 +266,12 @@ guard redactionFindings.isEmpty else {
         record time (never by editing the recording) and run the tool again.
         """)
 }
+// swiftlint:disable:next no_direct_standard_out_logs  the tool reports its progress on standard out; that is its output
 print("[verify] redaction scan clean over \(redactionPatterns.count) patterns")
 
 // MARK: - Hand over
 
+// swiftlint:disable:next no_direct_standard_out_logs  the tool reports its progress on standard out; that is its output
 print(
     """
     [done] the recording is verified and clean, at:

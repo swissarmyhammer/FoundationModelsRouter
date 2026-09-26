@@ -1,6 +1,7 @@
 import Foundation
 import FoundationModels
 import FoundationModelsRouterTestSupport
+import Synchronization
 import Testing
 
 @testable import FoundationModelsRouter
@@ -60,20 +61,6 @@ struct HumanWaitGateTests {
         }
     }
 
-    /// The mid-generation closure a test installs, standing in for a tool the
-    /// SDK invokes *inside* the model call. It gets the prompt of the
-    /// submission, so one hook can serve several sessions and suspend only the
-    /// answer a test means to suspend.
-    ///
-    /// A plain mutable class rather than an actor because
-    /// ``HookedSessionBackend/respond(to:maxTokens:)`` reads it from whatever
-    /// isolation the submission runs on: `@unchecked Sendable` is safe because
-    /// ``midAnswer`` is written exactly once, on the single `@MainActor` test
-    /// task, before any answer starts, and only read afterwards.
-    private final class AnswerHook: @unchecked Sendable {
-        var midAnswer: (@Sendable (String) async throws -> Void)?
-    }
-
     // MARK: - Stub container + backend
 
     /// A ``LanguageModelSessionBackend`` that runs ``AnswerHook/midAnswer`` in
@@ -86,11 +73,10 @@ struct HumanWaitGateTests {
     /// It declares the queue of its container, so the session submits each
     /// whole call of this backend to that queue, as over a live container.
     ///
-    /// `@unchecked Sendable` is safe for the same reason ``StubSessionBackend``'s
-    /// is: ``RoutedSessionActor`` drives one backend's calls one at a time,
-    /// because its one pump submits the next item only after the result of
-    /// the last one.
-    private final class HookedSessionBackend: LanguageModelSessionBackend, @unchecked Sendable {
+    /// Properly `Sendable`, like ``StubSessionBackend``: each mutable field is
+    /// behind a ``Mutex``. A test reads ``lastFork`` and ``entries`` from its
+    /// own task while the session drives the calls of this backend.
+    private final class HookedSessionBackend: LanguageModelSessionBackend {
         private let hook: AnswerHook
         private let observer: AnswerObserver
 
@@ -100,22 +86,29 @@ struct HumanWaitGateTests {
 
         /// This backend's synthetic transcript: one `.prompt` per call, plus one
         /// `.response` per call that ran to completion.
-        private(set) var entries: [Transcript.Entry]
+        private let transcript: Mutex<[Transcript.Entry]>
+
+        /// This backend's synthetic transcript, as of this read.
+        var entries: [Transcript.Entry] { transcript.withLock { $0 } }
+
+        /// The most recent fork this backend produced, or `nil` when
+        /// ``makeFork(tools:)`` has never been called.
+        private let newestFork = Mutex<HookedSessionBackend?>(nil)
 
         /// The most recent fork this backend produced, or `nil` if
         /// ``makeFork(tools:)`` has never been called — the observation point
         /// proving *when* a concurrent fork read this backend's transcript.
-        private(set) var lastFork: HookedSessionBackend?
+        var lastFork: HookedSessionBackend? { newestFork.withLock { $0 } }
 
         init(hook: AnswerHook, observer: AnswerObserver, generationQueue: GenerationQueue?, entries: [Transcript.Entry] = []) {
             self.hook = hook
             self.observer = observer
             self.generationQueue = generationQueue
-            self.entries = entries
+            self.transcript = Mutex(entries)
         }
 
         func respond(to prompt: String, maxTokens: Int?) async throws -> String {
-            entries.append(.prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))])))
+            append(.prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))])))
             await observer.enter(prompt)
             if let midAnswer = hook.midAnswer {
                 do {
@@ -126,11 +119,16 @@ struct HumanWaitGateTests {
                 }
             }
             let responseText = "ok-\(prompt)"
-            entries.append(
-                .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: responseText))]))
-            )
+            append(.response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: responseText))])))
             await observer.exit(prompt)
             return responseText
+        }
+
+        /// Appends one entry to this backend's synthetic transcript.
+        ///
+        /// - Parameter entry: The entry to append.
+        private func append(_ entry: Transcript.Entry) {
+            transcript.withLock { $0.append(entry) }
         }
 
         /// Not exercised by this suite — every test here drives whole-response
@@ -175,7 +173,7 @@ struct HumanWaitGateTests {
         func makeFork(tools: [any Tool], seededFrom transcript: Transcript) -> any LanguageModelSessionBackend {
             let fork = HookedSessionBackend(
                 hook: hook, observer: observer, generationQueue: generationQueue, entries: Array(transcript))
-            lastFork = fork
+            newestFork.withLock { $0 = fork }
             return fork
         }
     }
@@ -185,16 +183,21 @@ struct HumanWaitGateTests {
     /// can reach a specific session's backend by creation order. Like a live
     /// container, it owns one ``GenerationQueue`` that every backend declares.
     ///
-    /// `@unchecked Sendable` is safe because ``backends`` is only appended to
-    /// inside `makeSession`, itself only reached from `RoutedModel.makeSession`
-    /// on the single `@MainActor` test task, and read from that same task.
-    private final class HookedLLMContainer: LoadedLLMContainer, @unchecked Sendable {
+    /// Properly `Sendable`: the list of vended backends is behind a
+    /// ``Mutex``, so a test can read ``backends`` while a session vends one.
+    private final class HookedLLMContainer: LoadedLLMContainer {
         /// The scripted counter of this container: one token per `Character`.
         let tokenCounter: any TokenCounter = CharacterTokenCounter()
 
         private let hook: AnswerHook
         private let observer: AnswerObserver
-        private(set) var backends: [HookedSessionBackend] = []
+
+        /// Every backend this container vended, in creation order.
+        private let vended = Mutex<[HookedSessionBackend]>([])
+
+        /// Every backend this container vended, in creation order, as of
+        /// this read.
+        var backends: [HookedSessionBackend] { vended.withLock { $0 } }
 
         /// The queue every backend of this container declares.
         let generationQueue = GenerationQueue()
@@ -215,7 +218,7 @@ struct HumanWaitGateTests {
         private func makeHookedBackend(entries: [Transcript.Entry]) -> HookedSessionBackend {
             let backend = HookedSessionBackend(
                 hook: hook, observer: observer, generationQueue: generationQueue, entries: entries)
-            backends.append(backend)
+            vended.withLock { $0.append(backend) }
             return backend
         }
     }
@@ -334,7 +337,7 @@ struct HumanWaitGateTests {
         )
     }
 
-    /// Thrown by ``completedRun(_:named:finishedWhen:)`` when the run it waited
+    /// Thrown by ``completedRun(awaiting:named:finishedWhen:)`` when the run it waited
     /// on never finished, so the test that caught the fault stops there instead
     /// of awaiting a task that never resumes.
     private struct RunNeverFinished: Error {}
@@ -346,7 +349,7 @@ struct HumanWaitGateTests {
     ///   - label: What the run is, named in the recorded issue.
     ///   - condition: The observable effect that says the run got there.
     /// - Returns: Whether the run got there inside the bound.
-    private static func finished(_ label: String, when condition: @Sendable () async -> Bool) async -> Bool {
+    private static func finished(named label: String, when condition: @Sendable () async -> Bool) async -> Bool {
         await BoundedWait.conditionReached("the end of \(label)", when: condition)
     }
 
@@ -368,22 +371,22 @@ struct HumanWaitGateTests {
     /// - Throws: ``RunNeverFinished`` when the run never got there, after
     ///   recording an issue; otherwise whatever the run itself threw.
     private static func completedRun<Value: Sendable>(
-        _ task: Task<Value, Error>,
+        awaiting task: Task<Value, Error>,
         named label: String,
         finishedWhen condition: @Sendable () async -> Bool
     ) async throws -> Value {
-        guard await finished(label, when: condition) else {
+        guard await finished(named: label, when: condition) else {
             task.cancel()
             throw RunNeverFinished()
         }
         return try await task.value
     }
 
-    /// ``completedRun(_:named:finishedWhen:)`` for a run that cannot fail.
+    /// ``completedRun(awaiting:named:finishedWhen:)`` for a run that cannot fail.
     ///
     /// Swift declares `Task.value` separately for `Failure == Never`, so the two
     /// spellings cannot be one generic function; everything but the `try` is
-    /// shared through ``finished(_:when:)``.
+    /// shared through ``finished(named:when:)``.
     ///
     /// - Parameters:
     ///   - task: The run to wait on.
@@ -394,11 +397,11 @@ struct HumanWaitGateTests {
     ///   recording an issue.
     @discardableResult
     private static func completedRun<Value: Sendable>(
-        _ task: Task<Value, Never>,
+        awaiting task: Task<Value, Never>,
         named label: String,
         finishedWhen condition: @Sendable () async -> Bool
     ) async throws -> Value {
-        guard await finished(label, when: condition) else {
+        guard await finished(named: label, when: condition) else {
             task.cancel()
             throw RunNeverFinished()
         }
@@ -406,7 +409,7 @@ struct HumanWaitGateTests {
     }
 
     /// The value `answerTask` produced, awaited only once `observer` shows that
-    /// the answer left the model — ``completedRun(_:named:finishedWhen:)`` with
+    /// the answer left the model — ``completedRun(awaiting:named:finishedWhen:)`` with
     /// the observation every ordinary answer in this suite is bounded by.
     ///
     /// Leaving the model call is the right point to await from: after it, the
@@ -421,11 +424,11 @@ struct HumanWaitGateTests {
     /// - Throws: ``RunNeverFinished`` when the answer never left the model,
     ///   after recording an issue; otherwise whatever the answer itself threw.
     private static func completedAnswer<Value: Sendable>(
-        _ answerTask: Task<Value, Error>,
+        awaiting answerTask: Task<Value, Error>,
         prompt: String,
         observer: AnswerObserver
     ) async throws -> Value {
-        try await completedRun(answerTask, named: "the answer \(prompt)") {
+        try await completedRun(awaiting: answerTask, named: "the answer \(prompt)") {
             await observer.exited.contains(prompt)
         }
     }
@@ -461,7 +464,7 @@ struct HumanWaitGateTests {
 
     /// Whether `entry` is a `.response` — how a test tells a whole recorded
     /// submission from one torn open at the prompt.
-    private static func isResponse(_ entry: Transcript.Entry?) -> Bool {
+    private static func isResponse(entry: Transcript.Entry?) -> Bool {
         guard case .response = entry else { return false }
         return true
     }
@@ -537,8 +540,8 @@ struct HumanWaitGateTests {
 
         // A then finishes its own answer, and only then does B run.
         humanGate.signal()
-        #expect(try await Self.completedAnswer(taskA, prompt: "a-wait", observer: fixture.observer) == "ok-a-wait")
-        #expect(try await Self.completedAnswer(taskB, prompt: "b", observer: fixture.observer) == "ok-b")
+        #expect(try await Self.completedAnswer(awaiting: taskA, prompt: "a-wait", observer: fixture.observer) == "ok-a-wait")
+        #expect(try await Self.completedAnswer(awaiting: taskB, prompt: "b", observer: fixture.observer) == "ok-b")
         #expect(await fixture.observer.exited == ["a-wait", "b"])
         #expect(await fixture.observer.maxActive == 1)
         #expect(await sessionA.becomesIdle())
@@ -580,8 +583,8 @@ struct HumanWaitGateTests {
         // Only once the human wait ends and the first answer completes does the
         // second one run — in submission order, never interleaved.
         humanGate.signal()
-        #expect(try await Self.completedAnswer(firstTask, prompt: "first", observer: fixture.observer) == "ok-first")
-        #expect(try await Self.completedAnswer(secondTask, prompt: "second", observer: fixture.observer) == "ok-second")
+        #expect(try await Self.completedAnswer(awaiting: firstTask, prompt: "first", observer: fixture.observer) == "ok-first")
+        #expect(try await Self.completedAnswer(awaiting: secondTask, prompt: "second", observer: fixture.observer) == "ok-second")
         #expect(await fixture.observer.entered == ["first", "second"])
         #expect(await fixture.observer.maxActive == 1)
     }
@@ -607,7 +610,7 @@ struct HumanWaitGateTests {
         // transcript now reads a torn submission.
         let answerTask = Task { try await session.respond(to: "answer") }
         await BoundedWait.spin(until: { humanGate.waiterCount == 1 })
-        #expect(Self.isResponse(backend.transcriptEntries().last) == false)
+        #expect(Self.isResponse(entry: backend.transcriptEntries().last) == false)
 
         // The fork reads the settled transcript of the session, so it does not
         // wait for the submission (task ^dpn2ytt). It makes its child while the
@@ -618,7 +621,7 @@ struct HumanWaitGateTests {
         }
 
         humanGate.signal()
-        #expect(try await Self.completedAnswer(answerTask, prompt: "answer", observer: fixture.observer) == "ok-answer")
+        #expect(try await Self.completedAnswer(awaiting: answerTask, prompt: "answer", observer: fixture.observer) == "ok-answer")
         let child = try await forkTask.value
 
         #expect(forkedDuringTheWait)
@@ -657,7 +660,7 @@ struct HumanWaitGateTests {
         // the exit from the model call on the throwing path as much as on the
         // returning one.
         let answerTask = Task { try await session.respond(to: "throwing") }
-        guard await Self.finished("the throwing answer", when: { await fixture.observer.exited.contains("throwing") })
+        guard await Self.finished(named: "the throwing answer", when: { await fixture.observer.exited.contains("throwing") })
         else { return }
         await #expect(throws: ProbeError.boom) {
             try await answerTask.value
@@ -708,7 +711,7 @@ struct HumanWaitGateTests {
         // body, so the test observes the unwind before it awaits it: a
         // cancellation that never arrives fails this test with a readable
         // message rather than hanging.
-        guard await Self.finished("the cancelled answer", when: { await fixture.observer.exited.contains("cancelled") })
+        guard await Self.finished(named: "the cancelled answer", when: { await fixture.observer.exited.contains("cancelled") })
         else { return }
         await #expect(throws: CancellationError.self) {
             try await answerTask.value
@@ -762,7 +765,7 @@ struct HumanWaitGateTests {
         #expect(await session.outbox.waitingMessageCount == 0)
 
         releaseSecond.signal()
-        #expect(try await Self.completedAnswer(answerTask, prompt: "nested", observer: fixture.observer) == "ok-nested")
+        #expect(try await Self.completedAnswer(awaiting: answerTask, prompt: "nested", observer: fixture.observer) == "ok-nested")
         #expect(await session.becomesIdle())
         #expect(await session.outbox.waitingMessageCount == 0)
     }
@@ -925,19 +928,19 @@ struct HumanWaitGateTests {
         // A's answer ends *while* the wait is still open, and B's submission
         // then reaches the model.
         releaseAnswerA.signal()
-        #expect(try await Self.completedAnswer(answerA, prompt: "answer-a", observer: fixture.observer) == "ok-answer-a")
+        #expect(try await Self.completedAnswer(awaiting: answerA, prompt: "answer-a", observer: fixture.observer) == "ok-answer-a")
         #expect(await sessionA.becomesIdle())
         try await BoundedWait.awaitSignal(inAnswerB, named: "sessionB's answer reaching the model")
 
         // The wait ends next. It takes nothing back, so it does not suspend.
         releaseWait.signal()
-        try await Self.completedRun(waitTask, named: "the human wait outside any submission") {
+        try await Self.completedRun(awaiting: waitTask, named: "the human wait outside any submission") {
             waitFinished.availablePermits > 0
         }
         #expect(await sessionA.becomesIdle())
 
         releaseAnswerB.signal()
-        #expect(try await Self.completedAnswer(answerB, prompt: "answer-b", observer: fixture.observer) == "ok-answer-b")
+        #expect(try await Self.completedAnswer(awaiting: answerB, prompt: "answer-b", observer: fixture.observer) == "ok-answer-b")
         #expect(await sessionB.becomesIdle())
 
         // The behavioral consequence: both sessions over this model still accept
@@ -977,7 +980,7 @@ struct HumanWaitGateTests {
         #expect(await session.isPumpRunning == false)
 
         reply.signal()
-        let answer = try await Self.completedRun(waitTask, named: "the human wait outside any submission") {
+        let answer = try await Self.completedRun(awaiting: waitTask, named: "the human wait outside any submission") {
             answered.availablePermits > 0
         }
         #expect(answer == Self.personReply)

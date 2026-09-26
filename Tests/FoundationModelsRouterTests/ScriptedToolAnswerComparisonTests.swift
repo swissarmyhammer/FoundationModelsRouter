@@ -42,7 +42,7 @@ struct ScriptedToolAnswerComparisonTests {
     /// - Parameter narration: Prose to emit before the calls, or `nil` for the
     ///   shape `MLXLanguageModel`'s own executor produces (a call, no prose).
     /// - Returns: The script to play out.
-    private static func script(narration: String? = nil) -> ScriptedAnswerScript {
+    private static func makeScript(narration: String? = nil) -> ScriptedAnswerScript {
         ScriptedAnswerScript(
             rounds: [
                 [
@@ -73,9 +73,9 @@ struct ScriptedToolAnswerComparisonTests {
     /// - Parameter narration: Prose the model emits before its calls, or `nil`.
     /// - Returns: The run's answer and normalized transcript.
     /// - Throws: Whatever building or driving the session throws.
-    private static func respondRun(narration: String? = nil) async throws -> ToolAnswerRunOutcome {
+    private static func makeRespondRun(narration: String? = nil) async throws -> ToolAnswerRunOutcome {
         let fixture = try await ScriptedSessionFixture.make(
-            playing: script(narration: narration),
+            playing: makeScript(narration: narration),
             mounting: makeTools(),
             tempDirPrefix: tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -96,9 +96,9 @@ struct ScriptedToolAnswerComparisonTests {
     /// - Parameter narration: Prose the model emits before its calls, or `nil`.
     /// - Returns: The run's answer, ids, and normalized transcript.
     /// - Throws: Whatever building or driving the session throws.
-    private static func streamRun(narration: String? = nil) async throws -> ToolAnswerRunOutcome {
+    private static func makeStreamRun(narration: String? = nil) async throws -> ToolAnswerRunOutcome {
         let fixture = try await ScriptedSessionFixture.make(
-            playing: script(narration: narration),
+            playing: makeScript(narration: narration),
             mounting: makeTools(),
             tempDirPrefix: tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -146,8 +146,8 @@ struct ScriptedToolAnswerComparisonTests {
 
     @Test("both surfaces produce the same transcript, with no prose before the calls")
     func surfacesAgreeOnTranscript() async throws {
-        let responded = try await Self.respondRun()
-        let streamed = try await Self.streamRun()
+        let responded = try await Self.makeRespondRun()
+        let streamed = try await Self.makeStreamRun()
 
         #expect(
             responded.transcript == streamed.transcript,
@@ -164,8 +164,8 @@ struct ScriptedToolAnswerComparisonTests {
 
     @Test("both surfaces produce the same transcript across a narrated tool boundary")
     func surfacesAgreeOnTranscriptWithNarration() async throws {
-        let responded = try await Self.respondRun(narration: Self.narration)
-        let streamed = try await Self.streamRun(narration: Self.narration)
+        let responded = try await Self.makeRespondRun(narration: Self.narration)
+        let streamed = try await Self.makeStreamRun(narration: Self.narration)
 
         #expect(
             responded.transcript == streamed.transcript,
@@ -180,7 +180,7 @@ struct ScriptedToolAnswerComparisonTests {
 
     @Test("the transcript of a two-call answer has the entry kinds a tool-using answer must have")
     func transcriptCarriesToolCallsAndToolOutputs() async throws {
-        let kinds = try await Self.streamRun().transcript.map(\.kind)
+        let kinds = try await Self.makeStreamRun().transcript.map(\.kind)
 
         #expect(
             kinds == [.instructions, .prompt, .toolCalls, .toolOutput, .toolOutput, .response],
@@ -189,7 +189,7 @@ struct ScriptedToolAnswerComparisonTests {
 
     @Test("every completed tool status names a call the answer announced")
     func completedStatusIdsMatchCalledIds() async throws {
-        let outcome = try await Self.streamRun()
+        let outcome = try await Self.makeStreamRun()
 
         #expect(outcome.calledIds.count == 2, "the scenario asks for two calls in one answer")
         #expect(Set(outcome.completedIds) == Set(outcome.calledIds))
@@ -199,8 +199,8 @@ struct ScriptedToolAnswerComparisonTests {
 
     @Test("the streamed answer is the answer respond(to:) returns, character for character")
     func streamedAnswerEqualsRespondedAnswer() async throws {
-        let responded = try await Self.respondRun(narration: Self.narration)
-        let streamed = try await Self.streamRun(narration: Self.narration)
+        let responded = try await Self.makeRespondRun(narration: Self.narration)
+        let streamed = try await Self.makeStreamRun(narration: Self.narration)
 
         #expect(responded.answer == Self.expectedAnswer)
         #expect(
@@ -214,7 +214,7 @@ struct ScriptedToolAnswerComparisonTests {
 
     @Test("superseded pre-tool text is still delivered, and is no longer the answer")
     func supersededTextIsDeliveredButNotTheAnswer() async throws {
-        let streamed = try await Self.streamRun(narration: Self.narration)
+        let streamed = try await Self.makeStreamRun(narration: Self.narration)
 
         #expect(
             streamed.rawAnswer == Self.narration + Self.expectedAnswer,

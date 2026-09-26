@@ -84,10 +84,10 @@ struct SubmissionBoundaryToolTests {
     /// test can prove the hook fires before the model call, not only that
     /// it fires.
     ///
-    /// `@unchecked Sendable` on the same terms as ``StubSessionBackend``: the
-    /// owning session drives one backend method at a time, `log` is an actor,
-    /// and ``rejectionsLeft`` is behind a lock.
-    private final class OrderRecordingBackend: LanguageModelSessionBackend, @unchecked Sendable {
+    /// Properly `Sendable`: each stored property is a constant of a
+    /// `Sendable` type. `log` is an actor, and ``rejectionsLeft`` is behind a
+    /// ``Mutex``.
+    private final class OrderRecordingBackend: LanguageModelSessionBackend {
         private let inner = StubSessionBackend()
         private let log: CallOrderLog
 
@@ -154,7 +154,7 @@ struct SubmissionBoundaryToolTests {
 
     /// Vends one retained ``OrderRecordingBackend`` per session, sharing the
     /// caller's ``CallOrderLog``.
-    private final class OrderRecordingLLMContainer: PlainTranscriptStubContainer, @unchecked Sendable {
+    private struct OrderRecordingLLMContainer: PlainTranscriptStubContainer {
         private let log: CallOrderLog
 
         /// How many calls of the vended backend throw a rejected tool call
