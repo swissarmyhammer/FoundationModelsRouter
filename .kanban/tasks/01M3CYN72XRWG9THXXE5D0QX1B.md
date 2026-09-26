@@ -39,6 +39,41 @@ comments:
     - evidence: Sources: RepetitionDetection.swift, RoutedSessionActorPump.swift, RoutedSessionActorRepetitionWatch.swift, TranscriptEvent.swift, TokenBudget.swift, RoutedSessionActorTurnExecution.swift. Tests: new AnswerLimitsTests.swift, StoredRecoveriesKeyTests.swift, Helpers/AnswerLimitsModel.swift; changed AutoCompactionTests, RepetitionStopTests, SessionTreeRestorationTests, TranscriptEventSchemaTests, TranscriptReconstructionTests, SessionChokepointTests, Helpers/{CeilingStopCompactionModel,RepeatingReasoningModel,SessionEventCollection}.swift. `swift test`: 1463 + 14 + 19 = 1496 passed (was 1490; +6 new), 2 known issues as before. swiftpm-testing-helper --repetitions 20 over 13 suites (recording, compaction, repetition, overflow; 159 tests): passed. IntegrationTests `swift build --build-tests`: complete. Only warning: the known mlx "missing creator" line.
     - next: /review
   timestamp: 2026-09-26T06:48:54.106457+00:00
+- actor: claude-code
+  id: 01m3e91nfw374krykxk82aye91
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (abc9666). 3 findings: Tests/FoundationModelsRouterTests/Helpers/AnswerLimitsModel.swift:95, Tests/FoundationModelsRouterTests/Helpers/AnswerLimitsModel.swift:139, Tests/FoundationModelsRouterTests/Helpers/AnswerLimitsModel.swift:248 (code-hygiene/magic-numbers-swift).
+    - next: Replace the magic numbers in AnswerLimitsModel.swift with named constants. Do this for all magic numbers in the file, not only the three lines. Then run the tests and review again.
+  timestamp: 2026-09-26T07:14:34.620360+00:00
+- actor: claude-code
+  id: 01m3e92sgg41yazy262vsfwx3z
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — about 20 files (startAnswerLimits; renames to answer; stored key kept)
+    - test: green — swift test, 1496 passed (1463+14+19), 0 failed, 0 skipped; 7 recording and compaction suites 3 extra runs clean; all products and IntegrationTests build clean
+    - commit: abc9666
+    - review: findings — Helpers/AnswerLimitsModel.swift:95, :139, :248
+  timestamp: 2026-09-26T07:15:11.504374+00:00
+- actor: claude-code
+  id: 01m3e96zpy9kwhyt7pen9ea2p7
+  text: |-
+    Review fix (implement, iteration 2): I replaced each magic number in `Helpers/AnswerLimitsModel.swift` with a named constant.
+    - `AnswerLimitsModel.ceilingStopTokensIn = 400` now feeds `ceilingStopUsage`. The doc comment now names the budget of the fixture and not raw values.
+    - `AnswerLimitsModel.repeatingHoldSeconds = 5` now feeds `repeatingHold`.
+    - `AnswerLimitsSessionFixture.budgetLimit = 1_000`, `budgetTrigger = 0.8`, `budgetTarget = 0.5` now feed `budget`.
+    - `AnswerLimitsSessionFixture.recoveriesPerAnswer = 1` now feeds `detection`. swiftlint allows 1, but I named it because the value is a limit that the tests rely on.
+    - swiftlint 0.65.1, only rule `no_magic_numbers`, `allowed_numbers: [0, 1, -1, 100]` (the rule config of the validator), over AnswerLimitsModel.swift, AnswerLimitsTests.swift and StoredRecoveriesKeyTests.swift. Before: 5 violations, all in AnswerLimitsModel.swift (lines 95, 139, and 248 x3). After: 0. The two test files had 0 before: their numbers are already named constants (`fixtureRecoveries`, `fixtureContext`) or 0 and 1.
+    - The repo has no `.swiftlint.yml`, so I used a scratch config with only this rule.
+    - No test and no assertion changed.
+  timestamp: 2026-09-26T07:17:28.926606+00:00
+- actor: claude-code
+  id: 01m3e9744kfcd5e176c0g1kswt
+  text: |-
+    ### implement — changed
+    - evidence: 1 file: Tests/FoundationModelsRouterTests/Helpers/AnswerLimitsModel.swift. swiftlint no_magic_numbers over the 3 new test files of abc9666: 5 before, 0 after. `swift test`: 1463 + 14 + 19 = 1496 passed, 2 known issues as before, 0 failed; the only warning is the known mlx "missing creator" line. `swift test --skip-build --filter 'AnswerLimitsTests|StoredRecoveriesKeyTests'` 3 extra times: 5 tests in 2 suites passed each time. The 3 findings are `- [x]`.
+    - next: /review
+  timestamp: 2026-09-26T07:17:33.459157+00:00
 depends_on:
 - 01M3CYK7FSPBXGC7NWD3QX0MPT
 position_column: doing
@@ -66,3 +101,14 @@ Three limits reset "for each turn" now: `compactionYieldsStopped` and `repetitio
 - [x] Full `swift test` green, 0 new warnings. <!-- 1463 + 14 + 19 = 1496 passed -->
 
 #generation-queue
+
+## Review Findings (2026-09-26 01:56)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 18 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/Helpers/AnswerLimitsModel.swift:95` `code-hygiene/magic-numbers-swift` — Magic numbers should be replaced by named constants.
+- [x] `Tests/FoundationModelsRouterTests/Helpers/AnswerLimitsModel.swift:139` `code-hygiene/magic-numbers-swift` — Magic numbers should be replaced by named constants.
+- [x] `Tests/FoundationModelsRouterTests/Helpers/AnswerLimitsModel.swift:248` `code-hygiene/magic-numbers-swift` — Magic numbers should be replaced by named constants.

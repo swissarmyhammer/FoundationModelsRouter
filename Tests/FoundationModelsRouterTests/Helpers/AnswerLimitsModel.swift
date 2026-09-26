@@ -89,10 +89,13 @@ struct AnswerLimitsModel: LanguageModel {
     /// The output token ceiling that the caller of each answer names.
     static let ceiling = 500
 
-    /// The usage of a call that stops at ``ceiling``: 400 input tokens and
-    /// the whole ceiling, so the context of 900 tokens is over the trigger
-    /// of a budget with a limit of 1,000 tokens and a trigger of 0.8.
-    static let ceilingStopUsage = MeteredGenerationCall(tokensIn: 400, tokensOut: ceiling)
+    /// The input tokens of a call that stops at ``ceiling``.
+    private static let ceilingStopTokensIn = 400
+
+    /// The usage of a call that stops at ``ceiling``: ``ceilingStopTokensIn``
+    /// input tokens and the whole ceiling, so the context of 900 tokens is over
+    /// the trigger of ``AnswerLimitsSessionFixture/budget`` (800 tokens).
+    static let ceilingStopUsage = MeteredGenerationCall(tokensIn: ceilingStopTokensIn, tokensOut: ceiling)
 
     /// The usage of an answer call and of a summarizer call.
     static let smallUsage = MeteredGenerationCall(tokensIn: 1, tokensOut: 1)
@@ -134,9 +137,12 @@ struct AnswerLimitsModel: LanguageModel {
     /// far more than one window of the detection of the tests.
     private static let cycleCount = 40
 
+    /// The hold of a ``AnswerLimitsStep/repeating`` call, in seconds.
+    private static let repeatingHoldSeconds = 5
+
     /// The hold of a ``AnswerLimitsStep/repeating`` call. It ends only when
     /// the session stops the call, or the test fails on what follows.
-    private static let repeatingHold = Duration.seconds(5)
+    private static let repeatingHold = Duration.seconds(repeatingHoldSeconds)
 
     /// The reasoning of a ``AnswerLimitsStep/repeating`` call.
     static let repeatingScript = RepeatingReasoningScript.repeating(
@@ -243,17 +249,29 @@ struct AnswerLimitsModel: LanguageModel {
 /// ``AnswerLimitsModel``, with an auto-compaction budget and a repetition
 /// detection.
 struct AnswerLimitsSessionFixture {
-    /// The budget of each session: a small limit, so one scripted call can
+    /// The limit of ``budget``, in tokens: small, so one scripted call can
     /// cross the trigger.
-    static let budget = TokenBudget(limit: 1_000, trigger: 0.8, target: 0.5)
+    private static let budgetLimit = 1_000
+
+    /// The trigger of ``budget``, as a fraction of ``budgetLimit``.
+    private static let budgetTrigger = 0.8
+
+    /// The target of ``budget``, as a fraction of ``budgetLimit``.
+    private static let budgetTarget = 0.5
+
+    /// The budget of each session.
+    static let budget = TokenBudget(limit: budgetLimit, trigger: budgetTrigger, target: budgetTarget)
 
     /// The window of the repetition detection, in tokens: small, so one
     /// repeating call fills it.
     private static let window = 200
 
-    /// The repetition detection of each session: one recovery for each
-    /// answer, so one answer uses all of its recoveries.
-    static let detection = RepetitionDetection(windowTokens: window, recoveriesPerAnswer: 1)
+    /// The repetition recoveries of each answer: one, so one answer uses all
+    /// of its recoveries.
+    private static let recoveriesPerAnswer = 1
+
+    /// The repetition detection of each session.
+    static let detection = RepetitionDetection(windowTokens: window, recoveriesPerAnswer: recoveriesPerAnswer)
 
     /// The vended session a test drives its answers on.
     let session: RoutedSession
