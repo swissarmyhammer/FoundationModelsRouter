@@ -73,10 +73,26 @@ comments:
     - evidence: `Sources/FoundationModelsRouter/Session/TurnIdentity.swift` (`TurnStart.messageId` and `TurnStart.init(turnId:messageId:)` are now `public`; the init doc tells why a consumer calls it). `TurnID` has no gap: its `internal init` is explicit and deliberate. New `Tests/FoundationModelsRouterPublicSurfaceTests/TurnStartPublicSurfaceTests.swift` (plain import: it reads `messageId`, binds and calls the init, and asserts the key path is read-only). RED: the new file did not compile ("'messageId' is inaccessible due to 'internal' protection level", "'TurnStart' initializer is inaccessible"). GREEN: `swift test --filter TurnStartPublicSurfaceTests` 1 passed. Full `swift test`: 1445 + 8 + 19 = 1472 passed, 0 failed, 0 code warnings (the 2 known issues are the existing `withKnownIssue` in BoundedWaitTests and RealModelHarnessTests). Both findings flipped to `- [x]`.
     - next: review
   timestamp: 2026-09-26T04:32:39.817517+00:00
+- actor: claude-code
+  id: 01m3e04s0pg635qznvcwr7wq33
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit a8c28d0) gave 0 findings (0 confirmed, 0 refuted, 7 attempted, 0 failed). The engine reviewed 2 files: TurnIdentity.swift and TurnStartPublicSurfaceTests.swift. The 2 files in `.kanban/` are excluded by `.reviewignore`. The 2 prior findings (TurnIdentity.swift:53 and :60, `swift/access-control`) are fixed: `messageId` and `init(turnId:messageId:)` are now `public`. All prior items are checked.
+    - next: none. The task is in done.
+  timestamp: 2026-09-26T04:38:59.350645+00:00
+- actor: claude-code
+  id: 01m3e05jsvhy5e7knjxmyc4sc2
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 2 files (TurnStart.messageId and init public; public-surface test)
+    - test: green — swift test, 1472 passed (1445+8+19), 0 failed, 0 skipped; IntegrationTests build clean
+    - commit: a8c28d0
+    - review: clean — 0 findings
+  timestamp: 2026-09-26T04:39:25.755953+00:00
 depends_on:
 - 01M3CYK7FSPBXGC7NWD3QX0MPT
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffff8c80
 title: 'Public message API: send a message, name it by MessageID, cancel with cancel()'
 ---
 ## Why
