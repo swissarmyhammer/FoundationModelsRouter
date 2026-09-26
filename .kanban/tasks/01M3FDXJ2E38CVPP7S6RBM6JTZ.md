@@ -40,8 +40,24 @@ comments:
     - evidence: 5 files. `Sources/FoundationModelsRouter/Concurrency/SessionLanguageModel.swift`, `Sources/FoundationModelsRouter/Core/ExecutorPassthrough.swift`, `Tests/FoundationModelsRouterTests/GenerationQueueWorkerTests.swift`, `Tests/FoundationModelsRouterTests/GenerationQueueTests.swift`, `generation-queue.md`. `rg 'passQueue' Sources Tests IntegrationTests Examples Tools`: no match. Clean build in a new scratch path: exit 0, 0 project warnings. `swift test` (full): before 1459 + 17 + 19 = 1495, after 1458 + 17 + 19 = 1494, drop of 1 = the deleted test, 0 failures, the same 2 known issues. `swift build --package-path IntegrationTests --build-tests`: exit 0. Periphery (`--skip-build --index-store-path <scratch>/out --retain-public --relative-results`): 54 project findings before (7 Sources, 47 Tests), 54 after, the same set.
     - next: `/review`.
   timestamp: 2026-09-26T18:23:46.198633+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m3fft4j50bwx73dsjb3dxms3
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (bd786db); 0 findings, 0 confirmed, 0 refuted; 7 files attempted, 0 failed. The engine did not review generation-queue.md (no validator matches it) and the two .kanban files (.reviewignore).
+    - next: none. The task moved to done.
+  timestamp: 2026-09-26T18:32:02.373062+00:00
+- actor: claude-code
+  id: 01m3ffx2jjtpfj97p0551j5852
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 5 files (per-pass queue path removed; 1 test deleted)
+    - test: green — swift test, 1494 passed (1458+17+19), 0 failed, 0 skipped; IntegrationTests build clean; Periphery 54 before and 54 after
+    - commit: bd786db
+    - review: clean — 0 findings
+  timestamp: 2026-09-26T18:33:38.642322+00:00
+position_column: done
+position_ordinal: ffffff9880
 title: Remove the per-pass queue path of SessionLanguageModel (passQueue), which no production code uses after ^qhf29tg
 ---
 ## Why
