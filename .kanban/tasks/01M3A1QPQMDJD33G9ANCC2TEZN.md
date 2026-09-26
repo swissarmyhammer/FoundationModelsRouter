@@ -62,10 +62,26 @@ comments:
     - evidence: 4 new files — Sources/FoundationModelsRouter/Concurrency/SessionPromptCache.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorPromptCache.swift, Tests/FoundationModelsRouterTests/SessionPromptCacheKeyTests.swift, Tests/FoundationModelsRouterTests/Helpers/PromptCacheScopeRecordingModel.swift; 7 changed — Concurrency/SessionLanguageModel.swift, Resolution/LiveModelLoader.swift, Session/RoutedSession.swift, Session/RoutedSessionActor.swift, Session/RoutedSessionActorForking.swift, Session/RoutedSessionActorPassReports.swift, IntegrationTests/.../LanguageModelSessionBackendTests.swift. `swift test`: 1473 + 15 + 19 = 1507 passed (was 1502; +5 new), 2 known issues that existed before. Clean build in a new scratch path (`swift build --build-tests`): zero compiler warnings (only the known `missing creator for mutated node` line). Gated real model: `swift test --package-path IntegrationTests --filter "secondAnswerReusesFirstAnswersKVCache|sessionKeyedCacheIsReusedUntilItsRelease"`: 2 passed.
     - next: review
   timestamp: 2026-09-26T12:54:49.694279+00:00
+- actor: claude-code
+  id: 01m3ex0bxm9q5mfg0wkqfs9n1a
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 92af46c). 0 findings, 0 confirmed, 0 refuted. The engine examined 11 files. The .reviewignore rule excluded 2 .kanban files.
+    - next: None. The task is in done.
+  timestamp: 2026-09-26T13:03:23.572260+00:00
+- actor: claude-code
+  id: 01m3ex0x1dv5ejrmd26ytmxps7
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 11 files (session ULID bound as the prompt cache scope in SessionLanguageModel; close() releases the cache)
+    - test: green — swift test, 1507 passed (1473+15+19), 0 failed, 0 skipped; 6 session and cache suites 3 extra runs clean; gated real-model tests secondAnswerReusesFirstAnswersKVCache and sessionKeyedCacheIsReusedUntilItsRelease passed (implementer run)
+    - commit: 92af46c
+    - review: clean — 0 findings
+  timestamp: 2026-09-26T13:03:41.101644+00:00
 depends_on:
 - 01M39ZNAJWMVZ291SCH8CSJ2HW
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffff9180
 title: 'R2: key the prompt cache by the Router session id, and release it when the session closes'
 ---
 ## Why
