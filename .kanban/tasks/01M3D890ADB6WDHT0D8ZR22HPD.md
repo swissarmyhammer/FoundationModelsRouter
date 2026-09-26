@@ -17,8 +17,53 @@ comments:
     - fix: `Package.swift` — the `\(packageName)Tests` test target had no `exclude`/`resources` entry for the new `Tests/FoundationModelsRouterTests/Fixtures/` directory, so `swift build` reported "found 2 file(s) which are unhandled; explicitly declare them as resources or exclude from the target" for `Fixtures/PreRequestRenameRecording/.../session.json` and `transcript.jsonl`. Added `exclude: ["Fixtures"]` to that target, matching the existing `CompactionDemo` target's precedent (fixtures read from disk relative to the source file, not bundled as SwiftPM resources). Warning is gone after the fix.
     - next: none — all green, no commit made per instructions.
   timestamp: 2026-09-25T22:02:28.522705+00:00
-position_column: todo
-position_ordinal: '9780'
+- actor: claude-code
+  id: 01m3f1vxcystmatyv6ckp3wzs0
+  text: |-
+    ### Research at HEAD f04e07d
+
+    Mapping of the old names to the current code:
+    - `TurnCancellationTests.swift:1154` is now `AnswerCancellationEntryPointTests.swift` (an extension of `AnswerCancellationTests`), test `cancellingAStreamingAnswerFinishesTheStreamWithCancellationError`, display name "cancel() finishes a streamEvents answer with CancellationError, leaving the consumer what it already received". The failing check is `#expect(await delivered.events.contains(.textDelta(HookedSessionBackend.firstStreamedChunk)))`, now at line 42.
+    - `PooledResidencyTests.swift:323` is now `PooledResidencyTests.swift:325`, test `droppingOneProfileKeepsSharedModelLoadedForTheOther`, check `#expect(await spy.evictions == 3)`.
+    - `QueuedPassStallWatchTests.swift:213` is now line 239, test `aStallAfterAWaitAndAToolBodyMeasuresOnlyTheHeldPass`, check `stalls.allSatisfy { $0.lastProgress == .toolResult }`.
+    - `RecordingLanguageModelTests.swift:530` is now lines 531 and 537, test `recordingLockLeavesGenerationToTheQueue`.
+    - Suite filter of the task, with the current names: `FoundationModelsRouterTests\.(GenerationQueueTests|GenerationQueueSubmissionTests|GenerationQueueWorkerTests|GenerationQueueWorkerTaskTests|SharedGenerationQueueContentionTests|QueuedPassStallWatchTests|AnswerCancellationTests|NestedGenerationReentryTests|PooledResidencyTests|ForkConcurrencyTests|RecordingLanguageModelTests)/` (109 tests in 11 suites). `GenerationQueueTurnTests` is now `GenerationQueueSubmissionTests`.
+
+    Reproduction at HEAD (`swiftpm-testing-helper --repetitions`, N processes at once, script as in the memory note `stub-backend-producer-race.md`):
+    - Suite filter, 12 x 30, load 4.4 to 11.2: `RecordingLanguageModelTests` 4 failures (3 at :531, 1 at :537) in 3 of 12 processes. No other failure.
+    - Suite filter, 16 x 50, load 7.0 to 26.2: `PooledResidencyTests.swift:325` 1, `RecordingLanguageModelTests.swift:531` 5. 3 processes stopped with exit 134: `_ContiguousArrayStorage deallocated with non-zero retain count 2` (that is ^vg6bmq6, not this task).
+    - `cancellingAStreamingAnswerFinishesTheStreamWithCancellationError` only, 16 x 500, load 7.6: 8 failures at `AnswerCancellationEntryPointTests.swift:42`. 16 x 3000 while other load ran: 46 failures.
+    - `droppingOneProfileKeepsSharedModelLoadedForTheOther` only, 16 x 1000, load 37 to 41: 17 failures at :325.
+    - `aStallAfterAWaitAndAToolBodyMeasuresOnlyTheHeldPass` only: 24 x 40 (load 4.8 to 6.6), 16 x 30 (load 4.9 to 8.0, beside 16 other test processes), 16 x 30 (load 10.4 to 46.4, with 20 `yes` CPU burners): 0 failures in 1920 runs, and 0 in the suite runs above. One ^vg6bmq6 crash in the 24 x 40 round. This failure does not reproduce at HEAD; the stall watch changed after dd1190a (^1psqdm9 made the queue item one whole SDK call). No code change for it.
+
+    Causes:
+    1. streamEvents cancel: `LanguageModelSessionBackend.streamResponseFragments` (default) wraps the backend stream in `AsyncThrowingStream(unfolding:)`. The unfolding stream sets its producer to nil in its cancellation handler, so when the consuming task is already cancelled, `next()` returns nil and a chunk that waits in the buffer of the inner stream is dropped. `HookedSessionBackend` yields `firstStreamedChunk` and then signals `insideTool` from its own producer task. The session's consumer can still be behind: under load, the test calls `cancel()` before the consumer pulls the chunk. The chunk then never reaches the session, so the consumer of `streamEvents` never "already received" it. The test cancels on a signal that does not mean what its assertion needs. Decision: this is a test that depends on timing, not a production defect: the documented contract is that what the stream already yielded stays yielded; a chunk that the session did not yet read is not yielded. Fix: wait (bounded) for the real signal, the chunk in `delivered`, before the cancel.
+    2. Pooled shared-model unload: the session made by `second.standard.makeSession(...)` holds its `LanguageModelProfile` (`RoutedSessionActor.profile`), and so the `ResidencyHold`. `respond` returns when the answer arrives, but the detached pump task (`Task.detached { await self.runPump() }`) holds the session until the pump ends. Under load the pump ends after the test drops `second` and `third` and the next resolve drains, so the hold is still alive and the resolve evicts nothing. Decision: not a production defect (a session that still runs keeps its models resident, as the ARC design says). Fix: the test keeps the session, shows that a live session keeps the residency (0 evictions), drops it, and waits (bounded) for the real signal, the deinit of the session, before the last resolve.
+    3. RecordingLanguageModelTests: the local `spin(until:)` counts 100_000 yields and has no clock. Under load the count ends before the pass enters the model. Fix: use `BoundedWait.conditionReached`, which has a wall-clock bound, and delete the local spin.
+  timestamp: 2026-09-26T14:28:20.510884+00:00
+- actor: claude-code
+  id: 01m3f2hpm1j3vmjqtqxg3y5v1d
+  text: |-
+    ### Fixes landed (test code only, no production change)
+
+    - `Tests/FoundationModelsRouterTests/AnswerCancellationEntryPointTests.swift`: `cancellingAStreamingAnswerFinishesTheStreamWithCancellationError` waits with `BoundedWait.conditionReached` until `delivered` holds `firstStreamedChunk`, then cancels. The assertion after the cancel stays.
+    - `Tests/FoundationModelsRouterTests/PooledResidencyTests.swift`: `droppingOneProfileKeepsSharedModelLoadedForTheOther` keeps the session in a variable. After the test drops `second` and `third`, a resolve (`drainer`) asserts 0 evictions: this shows the cause (a live session holds the residency). Then the test drops the session, waits for its release (new helper `releaseObservation(of:)`, a weak capture) and asserts 3 evictions. The session is released in each run, so no leak.
+    - `Tests/FoundationModelsRouterTests/RecordingLanguageModelTests.swift`: the local yield-count `spin(until:)` is deleted; the three waits use `BoundedWait.conditionReached` (wall-clock bound).
+
+    ### After the fix (stress, 2026-09-26)
+    - Suite filter, 12 x 30, 3 rounds: round 1 load 27 to 51, round 2 17 to 26, round 3 14 to 21. 0 failures of the three tests. Rounds 1 and 2 had 6 exit-134 crashes, 5 of them `_ContiguousArrayStorage deallocated with non-zero retain count 2` (^vg6bmq6), 1 silent SIGABRT (probably the same).
+    - Round 1 also had 1 failure of a different test: `cancellationSurvivesIntoTheOverflowRetry` (route `callerTask`), `AnswerCancellationEntryPointTests.swift:338` and `:341` (the model re-entered after the cancel). Not in the scope of this task, and not changed by this task. Filed as a new task (ULID 01M3F2G4WT9X9J8HPSPCX1TYPE). The test alone, 16 x 2000, gave 0 failures.
+    - `swift test`: 1486 + 17 + 19 = 1522 passed, 0 failed, 2 known issues (the deliberate `withKnownIssue`). `swift build --build-tests`: only the known `mlx-swift_Cmlx.bundle` warning.
+
+    ### QueuedPassStallWatchTests
+    No change. It did not reproduce at HEAD in 1920 single-test runs (load up to 46) and in all suite rounds.
+
+    ### step: implement — changed
+    - evidence: 3 test files changed (AnswerCancellationEntryPointTests.swift, PooledResidencyTests.swift, RecordingLanguageModelTests.swift). Stress before/after as above. `swift test` 1522 passed.
+    - next: review.
+  timestamp: 2026-09-26T14:40:14.465595+00:00
+position_column: doing
+position_ordinal: '80'
 title: 'Find why two tests fail under parallel stress at HEAD: TurnCancellationTests streamEvents cancel, PooledResidencyTests shared model unload'
 ---
 ## What
@@ -27,6 +72,8 @@ Two tests fail under parallel stress. Both failures occur at HEAD dd1190a, befor
 
 1. `TurnCancellationTests` "cancelCurrentTurn finishes a streamEvents turn with CancellationError, leaving the consumer what it already received" fails at `TurnCancellationTests.swift:1154`: `await delivered.events.contains(.textDelta(HookedSessionBackend.firstStreamedChunk))` is false. This test uses `HookedSessionBackend` and no `GenerationQueue`.
 2. `PooledResidencyTests` "a shared model stays loaded while either profile references it, and unloads only once both references are dropped" fails at `PooledResidencyTests.swift:323`: `await spy.evictions == ...`.
+
+Current names (HEAD f04e07d): 1 is `AnswerCancellationEntryPointTests.swift`, `cancellingAStreamingAnswerFinishesTheStreamWithCancellationError`; 2 is `PooledResidencyTests.swift`, `droppingOneProfileKeepsSharedModelLoadedForTheOther`. See the research comment for the full mapping.
 
 ## Measurement (2026-09-25, load average about 21 to 28)
 
@@ -44,5 +91,7 @@ Two tests fail under parallel stress. Both failures occur at HEAD dd1190a, befor
 
 ## Acceptance
 
-- [ ] The stress above gives 0 failures of these two tests over 3 rounds.
-- [ ] A regression test or a changed assertion shows the cause, and does not make an assertion weaker. #test-flake
+- [x] The stress above gives 0 failures of these two tests over 3 rounds.
+  - Proof: 3 rounds of 12 processes x `--repetitions 30`, filter `FoundationModelsRouterTests\.(GenerationQueueTests|GenerationQueueSubmissionTests|GenerationQueueWorkerTests|GenerationQueueWorkerTaskTests|SharedGenerationQueueContentionTests|QueuedPassStallWatchTests|AnswerCancellationTests|NestedGenerationReentryTests|PooledResidencyTests|ForkConcurrencyTests|RecordingLanguageModelTests)/` (109 tests): 0 failures of `cancellingAStreamingAnswerFinishesTheStreamWithCancellationError`, `droppingOneProfileKeepsSharedModelLoadedForTheOther` and `recordingLockLeavesGenerationToTheQueue`. Single-test stress: stream cancel 16 x 3000 twice (load to 30.5), 0 failures (before: 46); shared unload 16 x 1000 and 16 x 2000 (load 47 to 53), 0 failures (before: 17 in 16 x 1000); recording lock 16 x 1000, 0 failures.
+- [x] A regression test or a changed assertion shows the cause, and does not make an assertion weaker.
+  - Proof: `cancellingAStreamingAnswerFinishesTheStreamWithCancellationError` now waits (bounded) until the consumer has the first chunk before the cancel, and still asserts the chunk after the stream throws. `droppingOneProfileKeepsSharedModelLoadedForTheOther` now asserts that a live session keeps its profile resident (0 evictions after the test drops its profile references), then waits for the release of the session and asserts 3 evictions. `recordingLockLeavesGenerationToTheQueue` waits with `BoundedWait.conditionReached` instead of a count of yields. No assertion is removed or made weaker. #test-flake

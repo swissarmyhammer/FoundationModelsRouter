@@ -33,6 +33,16 @@ extension AnswerCancellationTests {
             return await delivered.events.count
         }
         await insideTool.wait()
+        // The backend yields the first chunk before the tool runs, but the
+        // signal of the tool does not tell that the consumer has the chunk.
+        // The session reads the backend stream through an unfolding stream,
+        // which ends at once when its task is cancelled, so a chunk that is
+        // still in the buffer of the backend stream is not delivered. The
+        // test must cancel only after the consumer received the chunk, or the
+        // result depends on the load of the machine.
+        _ = await BoundedWait.conditionReached("the first streamed chunk at the consumer") {
+            await delivered.events.contains(.textDelta(HookedSessionBackend.firstStreamedChunk))
+        }
 
         #expect(await session.cancel() == .requested)
         try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)

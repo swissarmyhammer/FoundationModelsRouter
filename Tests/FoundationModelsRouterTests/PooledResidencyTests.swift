@@ -111,6 +111,14 @@ struct PooledResidencyTests {
         RouterTestFixtures.makeTempDir(prefix: "PooledResidencyTests")
     }
 
+    /// Observes the release of `session` without a strong reference to it.
+    ///
+    /// - Parameter session: The session to observe.
+    /// - Returns: A closure that tells whether `session` is released.
+    private static func releaseObservation(of session: any RoutedSession) -> @Sendable () -> Bool {
+        { [weak session] in session == nil }
+    }
+
     // MARK: - The pool a router uses.
 
     @Test("a router built with no pool uses the process-wide shared pool")
@@ -315,11 +323,27 @@ struct PooledResidencyTests {
         var third: LanguageModelProfile? = try await router.resolve(
             profile: shared, reporting: ResolutionProgress())
         #expect(await spy.evictions == 0)
-        _ = try await #require(second).standard.makeSession(instructions: nil)
-            .respond(to: "still alive")
+        var session: (any RoutedSession)? = try #require(second).standard.makeSession(instructions: nil)
+        _ = try await #require(session).respond(to: "still alive")
 
+        // A session holds the profile it came from. While the session lives,
+        // it keeps the three models resident after the test drops its own
+        // references, so this resolve evicts nothing.
         second.dropReference()
         third.dropReference()
+        var drainer: LanguageModelProfile? = try await router.resolve(
+            profile: shared, reporting: ResolutionProgress())
+        #expect(await spy.evictions == 0)
+        drainer.dropReference()
+
+        // `respond` returns when the answer arrives, but the pump of the
+        // session can run after that and holds the session until it ends. So
+        // the release of the session, not the return of `respond`, is the
+        // signal that the last reference is gone.
+        let sessionIsReleased = Self.releaseObservation(of: try #require(session))
+        session = nil
+        #expect(await BoundedWait.conditionReached("the release of the session") { sessionIsReleased() })
+
         // Now unreferenced by anyone: all three models evicted.
         let reresolved = try await router.resolve(profile: shared, reporting: ResolutionProgress())
         #expect(await spy.evictions == 3)

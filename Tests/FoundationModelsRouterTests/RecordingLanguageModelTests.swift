@@ -342,16 +342,6 @@ struct RecordingLanguageModelTests {
         )
     }
 
-    /// Spins cooperatively until `condition` holds or a bounded number of
-    /// yields elapse, so a scheduler-ordered state change is observed without
-    /// a fixed sleep.
-    private static func spin(until condition: @Sendable () async -> Bool) async {
-        for _ in 0..<100_000 {
-            if await condition() { return }
-            await Task.yield()
-        }
-    }
-
     // MARK: - Per-handle identity
 
     @Test("two makeLanguageModel() calls mint distinct handles: different session ids and recording directories")
@@ -523,7 +513,7 @@ struct RecordingLanguageModelTests {
         let sessionB = LanguageModelSession(model: handleB, tools: [])
 
         let taskA = Task { _ = try await sessionA.respond(to: "a") }
-        await Self.spin(until: { await observer.active == 1 })
+        _ = await BoundedWait.conditionReached("the pass of handleA in the model") { await observer.active == 1 }
         // The pass of handleA is in the model. The handle gave its own
         // recording lock back after the diff, and the pass holds the one place
         // of the queue.
@@ -533,14 +523,14 @@ struct RecordingLanguageModelTests {
         // handleB's pass waits in the queue of the container rather than
         // reaching the model concurrently with handleA's still-running pass.
         let taskB = Task { _ = try await sessionB.respond(to: "b") }
-        await Self.spin(until: { await queue.waitingCount == 1 })
+        _ = await BoundedWait.conditionReached("the pass of handleB in the queue") { await queue.waitingCount == 1 }
         #expect(await observer.active == 1)
         #expect(await observer.maxActive == 1)
 
         releaseGate.signal()
         _ = try await taskA.value
 
-        await Self.spin(until: { await observer.active == 1 })
+        _ = await BoundedWait.conditionReached("the pass of handleB in the model") { await observer.active == 1 }
         releaseGate.signal()
         _ = try await taskB.value
 
