@@ -26,7 +26,7 @@ import Synchronization
 /// itself, and never casts this wrapper.
 struct SessionLanguageModel: LanguageModel, Sendable {
     /// The per-session state of this wrapper: its identity, the raw model,
-    /// the pass observer, and the prompt-cache scope.
+    /// the pass observer, the prompt-cache scope, and the pass watches.
     let state: SessionLanguageModelState
 
     /// Makes a wrapper with a new per-session state over `wrapped`.
@@ -114,6 +114,10 @@ struct SessionLanguageModel: LanguageModel, Sendable {
         /// The observer of the session gets the start of the pass before the
         /// wrapped executor runs, and the end of the pass on every exit.
         ///
+        /// The pass watches of the wrapper run beside the wrapped executor,
+        /// and each has ended before this call returns to the SDK
+        /// (``SessionLanguageModelState/withPassWatches(_:)``).
+        ///
         /// - Parameters:
         ///   - request: The generation request, passed through unchanged.
         ///   - model: This wrapper. Unread: the state arrives through the
@@ -128,8 +132,10 @@ struct SessionLanguageModel: LanguageModel, Sendable {
             let observer = state.passObserver
             observer?.passStarted()
             defer { observer?.passEnded() }
-            try await state.withPromptCacheScope {
-                try await innerRespond(request, channel)
+            try await state.withPassWatches {
+                try await state.withPromptCacheScope {
+                    try await innerRespond(request, channel)
+                }
             }
         }
     }
@@ -139,9 +145,28 @@ struct SessionLanguageModel: LanguageModel, Sendable {
 ///
 /// It is a class because its identity is the executor cache key of the
 /// wrapper: one state is one session, so one executor. The per-pass work of a
-/// session (its prompt-cache scope, the report of a pass) keeps its session
-/// data here.
+/// session (its prompt-cache scope, the report of a pass, its pass watches)
+/// keeps its session data here.
 final class SessionLanguageModelState: Sendable {
+    /// Work that runs beside each pass of this wrapper, on a child task of
+    /// the pass (``withPassWatches(_:)``). The pass cancels it when the
+    /// wrapped executor returns, and waits for it to end.
+    ///
+    /// It is the one place where the owner can read the transcript of the
+    /// `LanguageModelSession` of this wrapper while a call of that session is
+    /// in flight. The SDK writes its transcript with no guard between two
+    /// passes of a tool loop, and a read from another task in that window
+    /// aborts the process (task ^vg6bmq6). Inside a pass, the SDK guards its
+    /// writes. A watch must end soon after its cancel, because the pass does
+    /// not return to the SDK before that.
+    typealias PassWatch = @Sendable () async -> Void
+
+    /// The identity of one pass watch, which ``removePassWatch(_:)`` takes.
+    struct PassWatchID: Hashable, Sendable {
+        /// The number of the watch, unique in its state.
+        fileprivate let number: UInt64
+    }
+
     /// The raw model whose executor runs each pass.
     let wrapped: any LanguageModel
 
@@ -156,6 +181,12 @@ final class SessionLanguageModelState: Sendable {
         /// The prompt-cache scope that each pass binds, or `nil` before the
         /// owner installs one.
         var promptCacheScope: MLXLanguageModel.PromptCacheScope?
+
+        /// The watches each pass runs, by identity.
+        var passWatches: [PassWatchID: PassWatch] = [:]
+
+        /// The number that the next watch gets.
+        var nextPassWatchNumber: UInt64 = 0
     }
 
     /// What the owner of this wrapper installed. A lock guards it, because
@@ -216,6 +247,54 @@ final class SessionLanguageModelState: Sendable {
         }
         try await MLXLanguageModel.$promptCacheScope.withValue(scope) {
             try await body()
+        }
+    }
+
+    /// Runs `watch` beside each pass of this wrapper, from the next pass on,
+    /// until ``removePassWatch(_:)`` takes it out.
+    ///
+    /// A pass that is running when this call adds the watch does not run
+    /// it.
+    ///
+    /// - Parameter watch: The work to run beside each pass.
+    /// - Returns: The identity of the watch, for ``removePassWatch(_:)``.
+    func addPassWatch(_ watch: @escaping PassWatch) -> PassWatchID {
+        installation.withLock { installation in
+            let id = PassWatchID(number: installation.nextPassWatchNumber)
+            installation.nextPassWatchNumber += 1
+            installation.passWatches[id] = watch
+            return id
+        }
+    }
+
+    /// Takes the watch `id` out, so the next pass does not run it. A pass
+    /// that runs the watch now cancels it at its end, as before.
+    ///
+    /// - Parameter id: The identity that ``addPassWatch(_:)`` gave.
+    func removePassWatch(_ id: PassWatchID) {
+        installation.withLock { _ = $0.passWatches.removeValue(forKey: id) }
+    }
+
+    /// Runs `pass` with each pass watch of this wrapper on a child task
+    /// beside it, then cancels the watches and waits for each to end.
+    ///
+    /// Thus each watch starts after the pass starts, and ends before this
+    /// call returns. No watch runs while the SDK writes its transcript
+    /// between two passes.
+    ///
+    /// - Parameter pass: The call of the wrapped executor.
+    /// - Throws: What `pass` throws.
+    func withPassWatches(_ pass: () async throws -> Void) async rethrows {
+        let watches = installation.withLock { Array($0.passWatches.values) }
+        guard !watches.isEmpty else {
+            return try await pass()
+        }
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for watch in watches {
+                group.addTask { await watch() }
+            }
+            defer { group.cancelAll() }
+            try await pass()
         }
     }
 

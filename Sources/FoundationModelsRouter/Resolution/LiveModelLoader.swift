@@ -428,23 +428,58 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
         newestSnapshot.withLock { $0 }
     }
 
-    /// Gives the transcript of ``liveSession`` each time it changes.
+    /// Gives the transcript of ``liveSession`` each time it changes inside a
+    /// pass of a call.
     ///
     /// `LanguageModelSession` is `Observable`, and its transcript grows while
-    /// a call is in flight, reasoning included. `Observations` reads it at
-    /// each change. The relay task ends when the reader ends the stream.
+    /// a call is in flight, reasoning included. A read loop reads it at each
+    /// change (``relayTranscript(of:into:)``), in a pass watch of the wrapper
+    /// of the session (``SessionLanguageModelState/addPassWatch(_:)``): each
+    /// pass starts a new loop, and the end of the pass cancels the loop and
+    /// waits for it. The SDK writes the transcript with no guard between two
+    /// passes of a tool loop, and a read in that window aborts the process
+    /// (task ^vg6bmq6). The first value of each pass holds what the SDK wrote
+    /// between the passes. The reader ends the stream, and the watch is then
+    /// taken out.
     func transcriptUpdates() -> AsyncStream<[FoundationModels.Transcript.Entry]> {
         let session = liveSession
-        let observations = Observations { Array(session.transcript) }
+        let state = sessionModelState
         return AsyncStream { continuation in
-            let relay = Task {
-                for await entries in observations {
-                    continuation.yield(entries)
-                }
-                continuation.finish()
+            let watch = state.addPassWatch {
+                await Self.relayTranscript(of: session, into: continuation)
             }
-            continuation.onTermination = { _ in relay.cancel() }
+            continuation.onTermination = { _ in state.removePassWatch(watch) }
         }
+    }
+
+    /// Gives the transcript of `session` to `continuation` now and after each
+    /// change of it, until the task is cancelled.
+    ///
+    /// The loop reads the transcript only on its own task, and a cancel ends
+    /// the wait for the next change at once: the wait is on an `AsyncStream`,
+    /// which ends at a cancel. A loop over `Observations` in its place hung
+    /// the stress test of task ^vg6bmq6 in 3 of 3 runs: at times its
+    /// iteration does not end at the cancel of the pass, and the pass then
+    /// waits for a change that comes only after the pass returns.
+    ///
+    /// - Parameters:
+    ///   - session: The session whose transcript to read.
+    ///   - continuation: The stream that gets each value.
+    private static func relayTranscript(
+        of session: LanguageModelSession,
+        into continuation: AsyncStream<[FoundationModels.Transcript.Entry]>.Continuation
+    ) async {
+        let (changes, change) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        var wakes = changes.makeAsyncIterator()
+        repeat {
+            let entries = withObservationTracking(options: .didSet) {
+                Array(session.transcript)
+            } onChange: { event in
+                event.cancel()
+                change.yield()
+            }
+            continuation.yield(entries)
+        } while await wakes.next() != nil
     }
 
     /// Records the usage of the last generation call of a generating method.

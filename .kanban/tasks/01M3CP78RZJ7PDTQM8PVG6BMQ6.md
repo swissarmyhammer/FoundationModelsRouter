@@ -6,8 +6,83 @@ comments:
   id: 01m3f41c5c5x680rnqm63sdjar
   text: 'Data from ^cx1type stress (24 processes x 60 repetitions, the ^zr22hpd filter, load 7 to 34), 4 rounds: exit 134 with `_ContiguousArrayStorage deallocated with non-zero retain count 2` in 3, 4, 0 and 4 processes. One round also had 2 processes with exit 139 (SIGSEGV, EXC_BAD_ACCESS in `_swift_release_dealloc`). Crash reports swiftpm-testing-helper-2026-09-26-100246.ips and -100253.ips: the faulting frames are FoundationModels frames and `SessionLanguageModel.Executor.respond(to:model:streamingInto:)`, so it looks like the same use-after-free in another form. Round 1 was at HEAD c75de40 with no change, so this is not from ^cx1type.'
   timestamp: 2026-09-26T15:06:16.620223+00:00
-position_column: todo
-position_ordinal: 8d80
+- actor: claude-code
+  id: 01m3frjza63rpg0bk4dygf9mb8
+  text: |-
+    Research (load about 15 of 18 cores; 4 sourcekit-lsp processes of other sessions use about 4 cores).
+
+    1. Reproduced at HEAD 1c99acd: 12 helper processes x 100 repetitions, the task filter: round 1 gave 5 crashes (4 x exit 134 with the retain-count message, 1 x exit 139); round 2 gave 9.
+    2. Stack under lldb (ReportCrash wrote no .ips for these runs): the aborting thread is an unnamed task job of FoundationModels (image offsets as in the task), `swift_release_dealloc` -> `swift_deallocClassInstance` -> fatalError. The retain count 2 means that one more retain came after the last release: a read of a shared variable raced a write of that variable. The .ips 100253 (exit 139) shows the same bad object destroyed in `SessionLanguageModel.Executor.respond`, which destroys its copy of the request (its transcript).
+    3. Thread Sanitizer (`swift build --build-tests --sanitize=thread`, `swift test --sanitize=thread --skip-build`): it reports only a false positive in ULID.init (the zero-size `SystemRandomNumberGenerator` passed inout; the location is the value witness table of Builtin.Int64). TSan does not see the fault, because the other side of the race is in FoundationModels, which is not instrumented. Note: swiftpm-testing-helper ignores DYLD_INSERT_LIBRARIES (TSan says "interceptors not installed"); use `swift test --sanitize=thread`.
+    4. Per suite (12 x 100): ToolResultCompactionTests 6 crashes, GenerationCallUsageTests 2, RejectedToolCallRetryTests 0, SessionEventStreamTests 0. Even `resultUnderTheTriggerDoesNotCompact` (one tool call, no compaction) crashes.
+    5. Bisect in Router code: when `MLXFoundationModelsSessionBackend.transcriptUpdates()` gives a finished stream (the repetition watch then reads nothing), the task stress gives 0 of 12. The same binary with the watch on gives 5 and 8 of 12 on the two suites. Thus the trigger is the repetition watch (^1hcwaqy): `Observations { Array(session.transcript) }` reads `LanguageModelSession.transcript` on its relay task while the SDK runs a tool loop.
+    6. Probes with a raw `LanguageModelSession` (no Router code), 12 x 200, 16 sessions for each test:
+       - tool loop, nothing reads the transcript: 0 crashes (also 0 at 12 x 1000).
+       - tool loop, another task reads `session.transcript` in a loop: 12 of 12 crash.
+       - text-only model (reasoning + 40 text appends), the same reads: 0.
+       - tool loop, reads of `session.usage` or `isResponding` only: 0.
+       - tool loop, reads only inside the tool body: 0.
+       - tool loop, reads at all times except inside the tool body: 12 of 12.
+       - tool loop, reads only while an executor pass runs (a lock opens a gate at the start of `respond` and closes it at the end, and each read holds the lock): 0 of 12 at 300 repetitions.
+       Conclusion: the SDK writes the transcript with no guard between the passes of a tool loop (outside the executor pass and outside the tool body). A read from another task in that window races the write. The fault is in FoundationModels (a documented `Observable`, `@unchecked Sendable` type whose getter is not safe), but the Router causes it: the protocol states that the backend must guard its transcript, and the live backend reads from the relay task in that window.
+  timestamp: 2026-09-26T21:05:24.806718+00:00
+- actor: claude-code
+  id: 01m3fy72881s1qany5hh06954q
+  text: |-
+    Fix landed (not committed).
+
+    Cause: `MLXFoundationModelsSessionBackend.transcriptUpdates()` (the source of the repetition watch, ^1hcwaqy) read `LanguageModelSession.transcript` through `Observations` on a relay task of its own, at all times. `LanguageModelSession` writes its transcript with no guard between two passes of a tool loop, so a read in that window races the write and the runtime aborts. The fault is in the Router's use of the SDK; the SDK getter is also not safe (write-up for Apple in the next comment).
+
+    Change:
+    - `Sources/FoundationModelsRouter/Concurrency/SessionLanguageModel.swift`: `SessionLanguageModelState` gets pass watches: `addPassWatch(_:)`, `removePassWatch(_:)`, `withPassWatches(_:)`. The executor runs each watch on a child task of the pass (a task group), cancels it when the wrapped executor returns, and waits for it. Thus each watch starts inside a pass and has ended before the pass returns to the SDK. The watches live in the existing `installation` Mutex of the state. There is no new lock, and the session design has no lock.
+    - `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift`: `transcriptUpdates()` installs a pass watch. The watch runs `relayTranscript(of:into:)`: it reads the transcript with `withObservationTracking(options: .didSet)`, gives the value, and waits for the next change on an `AsyncStream`, which ends at a cancel. The stream removes its watch at termination.
+    - `Sources/FoundationModelsRouter/Session/LanguageModelSessionBackend.swift`: the doc of `transcriptUpdates()` states the rule (read only where no unguarded write can run; the live backend gives no value between two passes).
+
+    What did not work: a pass watch that iterates `Observations` in place of the `AsyncStream` wait. The stress test hung in 3 of 3 runs (swiftpm-testing-helper, 40 s watchdog; with the `.timeLimit(.minutes(1))` trait the test fails after 64 s): at times the `Observations` iteration does not end at the cancel of the pass, and the pass waits for a change that comes only after it returns. A small probe (one `Observations` loop, cancelled while it waits) ended at the cancel, so the hang is a rare race, not every cancel.
+
+    Tests:
+    - `Tests/FoundationModelsRouterTests/SessionLanguageModelPassWatchTests.swift` (deterministic): the tool body of a two-pass tool loop sees watch counts starts 1, ends 1 (the watch of pass 1 ended by a cancel before the tool ran); after the call starts 2, ends 2, no uncancelled end; a removed watch does not run. RED before the fix: the build failed (`addPassWatch`, `removePassWatch`, `PassWatch` did not exist).
+    - `Tests/FoundationModelsRouterTests/TranscriptUpdatesToolLoopTests.swift` (crash regression, about 2 s): 64 backends x 256 tool loops, 4 readers of `transcriptUpdates()` for each call. Before the fix: 5 of 8 runs aborted with the retain-count message. After the fix: 8 of 8 passed (0 retain-count messages).
+
+    Proof of the acceptance items:
+    - [x] Stress: 12 helper processes x 100 repetitions with the task filter, 3 rounds after the fix: 0, 0 and 0 crashes, 12 of 12 "Test run with 28 tests in 4 suites passed" each round (load 14 to 43). Before the fix the same command gave 5 and 9 crashes. Note: the filter matches 4 suites only, because `TurnTokenCeilingTests` and `TurnFinishReasonTests` are now `AnswerTokenCeilingTests` and `SubmissionFinishReasonTests`. A wider round (12 x 100 with those two, `GenerationQueueSubmissionTests` and the two new suites; 67 tests in 9 suites) gave 12 of 12 passed, 0 crashes.
+    - [x] Regression test: `TranscriptUpdatesToolLoopTests` fails before the fix (5 of 8 runs abort) and passes after it (8 of 8); `SessionLanguageModelPassWatchTests` fails before the fix (does not compile) and passes after it.
+    - Full run `swift test`: 1465 + 17 + 19 = 1501 passed (1498 before + 3 new), 2 known issues that the suite expects (RealModelHarness, BoundedWait), 0 warnings.
+  timestamp: 2026-09-26T22:43:46.056884+00:00
+- actor: claude-code
+  id: 01m3fy7cyc5dmhe61jr5nnamxg
+  text: |-
+    Write-up for Apple (FoundationModels, macOS 27 SDK in Xcode at /Applications/Xcode.app, this machine 2026-09-26).
+
+    Title: `LanguageModelSession.transcript` read from another task during a tool loop aborts the process ("_ContiguousArrayStorage deallocated with non-zero retain count 2").
+
+    `LanguageModelSession` is `Observable` and `@unchecked Sendable`, and its `transcript` getter is public. A read of `transcript` from a second task while a `respond`/`streamResponse` call runs a tool loop aborts the process with the message above (SIGABRT in `swift_deallocClassInstance` on an unnamed FoundationModels task job; FoundationModels offsets 0x94d8c and 0x95714 in each report), and at times gives EXC_BAD_ACCESS in `_swift_release_dealloc`. The window is between the passes: after the executor call returns and before the next executor call, outside the `Tool.call` body. Reads inside a `LanguageModelExecutor.respond` call and reads inside `Tool.call` did not crash. A model with no tool call did not crash. Reads of `usage` and `isResponding` did not crash.
+
+    Minimal repro (no Router code):
+    1. A `LanguageModel` whose executor sends `.toolCalls(entryID:action: .toolCall(id:name:action: .appendArguments(json, tokenCount: 1)))` for a mounted `Tool` when the request transcript holds no `.toolCalls` entry, and else sends `.response(action: .appendText(...))`.
+    2. 16 tasks at the same time, each: `let session = LanguageModelSession(model: m, tools: [tool], instructions: "i")`; start `Task { while !Task.isCancelled { _ = Array(session.transcript).count; await Task.yield() } }`; then `for try await _ in session.streamResponse(to: "look up the record") {}`; cancel the reader.
+    3. Run the test bundle in 12 `swiftpm-testing-helper` processes at the same time, `--repetitions 200` (command in the memory note `stub-backend-producer-race.md`). Result: 12 of 12 processes abort. The same with no reader: 0 of 12 (also 0 at `--repetitions 1000`). The same reader gated to executor passes only: 0 of 12 at 300 repetitions.
+    The probe code was a temporary test file (`ZZCrashProbeTests.swift`); it is deleted. The scripted model `Tests/FoundationModelsRouterTests/Helpers/ToolResultCompactionModel.swift` and `LargeResultTool` are the model and tool it used.
+  timestamp: 2026-09-26T22:43:57.004773+00:00
+- actor: claude-code
+  id: 01m3fy7pa966c3t11zjks5xzcb
+  text: |-
+    Other findings (no tasks filed, as the orchestrator ordered):
+    1. `swift test --sanitize=thread` reports a "Swift access race" in `ULID.init<A>(timestamp:generator:)` (ULID.swift in the yaslab package, called from `ULID.generate()` in `MessageID.init()` and `InFlightTranscript.appendingOutputs`). It is a false positive: the location is the value witness table of `Builtin.Int64`, from the zero-size `SystemRandomNumberGenerator` passed `inout`. A TSan run of this repo shows it until it is suppressed.
+    2. `swiftpm-testing-helper` run directly ignores `DYLD_INSERT_LIBRARIES` (TSan aborts with "interceptors not installed"), and the Swift backtracer refuses it ("not supported for privileged executables"). Use `swift test --sanitize=thread --scratch-path <dir>` for TSan, and `lldb --batch -o "settings set target.env-vars DYLD_FRAMEWORK_PATH=... DYLD_LIBRARY_PATH=..." -o run -k "thread backtrace all"` for a stack. ReportCrash wrote no `.ips` for these aborts (it throttles).
+    3. The stress filter in this task names `TurnTokenCeilingTests` and `TurnFinishReasonTests`, which no longer exist (now `AnswerTokenCeilingTests`, `SubmissionFinishReasonTests`); the filter matches 4 suites and 28 tests.
+    4. A pass watch must end soon after its cancel: the pass does not return to the SDK before that. A loop over `Observations` does not always end at a cancel (see the fix comment). Any future pass watch must wait on something that ends at a cancel.
+    5. The memory note `stub-backend-producer-race.md` names the same runtime message for the `StubSessionBackend` race. This crash had another cause (the SDK transcript read between passes). I added a memory note for it.
+  timestamp: 2026-09-26T22:44:06.601380+00:00
+- actor: claude-code
+  id: 01m3fy87byrcrzwbwwpf4a5maj
+  text: |-
+    ### implement — changed
+    - evidence: crash stack = FoundationModels task job -> `swift_release_dealloc` -> `swift_deallocClassInstance` fatalError (a retain raced the last release). Cause = `MLXFoundationModelsSessionBackend.transcriptUpdates()` read `LanguageModelSession.transcript` on its own task between the passes of a tool loop, where the SDK writes it with no guard. Files: Sources/FoundationModelsRouter/Concurrency/SessionLanguageModel.swift, Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift, Sources/FoundationModelsRouter/Session/LanguageModelSessionBackend.swift, Tests/FoundationModelsRouterTests/SessionLanguageModelPassWatchTests.swift (new), Tests/FoundationModelsRouterTests/TranscriptUpdatesToolLoopTests.swift (new). Stress 12 x 100 task filter: before 5 and 9 crashes, after 0/0/0 over 3 rounds; wider 67-test round 0 of 12. Regression test: 5 of 8 aborts before, 8 of 8 passes after. `swift test`: 1465 + 17 + 19 = 1501 passed, 0 warnings.
+    - next: /review
+  timestamp: 2026-09-26T22:44:24.062643+00:00
+position_column: doing
+position_ordinal: '80'
 title: Find the crash in the SDK tool loop under parallel load (_ContiguousArrayStorage deallocated with non-zero retain count 2)
 ---
 ## What
@@ -37,5 +112,5 @@ The result is 4 to 5 crashed processes of 12. The command is in the memory note 
 
 ## Acceptance
 
-- The stress above gives 0 crashes of 12 processes over 3 rounds.
-- A regression test fails before the fix and passes after it.
+- [x] The stress above gives 0 crashes of 12 processes over 3 rounds.
+- [x] A regression test fails before the fix and passes after it.

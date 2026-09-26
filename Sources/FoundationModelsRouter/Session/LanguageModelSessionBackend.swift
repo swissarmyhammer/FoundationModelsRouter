@@ -208,10 +208,13 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// The stream snapshots of `LanguageModelSession` show no reasoning while
     /// the reasoning grows, but the observable transcript of the session does.
     /// A session that watches a call in flight for repetition reads the
-    /// reasoning and the text here (task ^1hcwaqy). The values come from the
-    /// task that generates, so a backend must guard its transcript, as
-    /// ``transcriptEntries()`` states. Values that come faster than the reader
-    /// reads can merge into one value.
+    /// reasoning and the text here (task ^1hcwaqy). The values come while the
+    /// call writes the transcript, so a backend must read its transcript only
+    /// where no unguarded write can run. `LanguageModelSession` writes its
+    /// transcript with no guard between two passes of a tool loop, so the
+    /// live backend reads it only while a pass runs, and gives no value
+    /// between two passes (task ^vg6bmq6). Values that come faster than the
+    /// reader reads can merge into one value.
     ///
     /// There is a default implementation that finishes at once, with no
     /// value. A backend with no observable transcript gives no update, and
