@@ -52,6 +52,11 @@ struct ToolResultCompactionTests {
 
         /// The temp directory the router cached into.
         let directory: URL
+
+        /// The queue of the one container. Each slot of the profile
+        /// resolves to that container, so every call of the session and every
+        /// summarizer call is one item of this queue.
+        let queue: GenerationQueue
     }
 
     /// The usage of a call that reports no count, as the engine does at the
@@ -64,8 +69,12 @@ struct ToolResultCompactionTests {
     /// - Parameters:
     ///   - resultLength: The size of the tool result, in characters.
     ///   - usage: The usage the call that asks for the tool reports.
+    ///   - slot: The model of the profile the session runs on. The default is
+    ///     the standard slot. A session on the flash slot is offered only the
+    ///     own-model summarizer tier.
     private static func makeFixture(
-        resultLength: Int, usage: MeteredGenerationCall = toolCallUsage
+        resultLength: Int, usage: MeteredGenerationCall = toolCallUsage,
+        slot: KeyPath<LanguageModelProfile, RoutedLLM> = \.standard
     ) async throws -> Fixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let recorder = InMemoryRecorder()
@@ -75,8 +84,10 @@ struct ToolResultCompactionTests {
             cacheDir: directory, recorder: recorder,
             loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension))
         let profile = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        let session = profile.standard.makeSession(tools: [tool], budget: budget)
-        return Fixture(session: session, tool: tool, recorder: recorder, directory: directory)
+        let session = profile[keyPath: slot].makeSession(tools: [tool], budget: budget)
+        return Fixture(
+            session: session, tool: tool, recorder: recorder, directory: directory,
+            queue: container.generationQueue)
     }
 
     /// Runs one streamed answer and collects its events.
@@ -108,6 +119,40 @@ struct ToolResultCompactionTests {
         let answer = try #require(events.answers.first)
         #expect(answer.compactions == compactions)
         #expect(events.streamedText.contains(ToolResultCompactionModel.Executor.answerText))
+    }
+
+    /// Task ^6wqketz. The session is on the flash slot, so its compaction offers
+    /// the own-model tier only, and that summarizer call is one item on the
+    /// queue of the session's own model. The production change that makes this
+    /// test fail: a compaction that runs while the stopped submission still
+    /// holds the worker. The summarizer item then waits behind the submission
+    /// of its own session, and the answer never ends.
+    @Test("the own-model summarizer between two submissions of an answer completes, with no self-deadlock")
+    func ownModelSummarizerBetweenTwoSubmissionsCompletes() async throws {
+        let fixture = try await Self.makeFixture(resultLength: Self.largeResultLength, slot: \.flash)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let (log, answer) = SessionEventLog.collect(
+            await fixture.session.streamEvents(to: Self.prompt, maxTokens: nil))
+        let answered = await BoundedWait.conditionReached("the answer after the own-model compaction") {
+            await !log.events.answers.isEmpty
+        }
+        if !answered {
+            // A self-deadlock never ends. The cancel takes the waiting item
+            // out, so the test fails and does not hang the run.
+            _ = await fixture.session.cancel()
+        }
+        try await answer.value
+
+        let events = await log.events
+        let compaction = try #require(events.compactionResults.first)
+        #expect(events.compactionResults.count == 1)
+        #expect(compaction.summarizerTier == .ownModel)
+        #expect(compaction.summaryEntryId != nil)
+        #expect(events.submissionStarts.map(\.cause) == [.message, .continuation])
+        #expect(events.streamedText.contains(ToolResultCompactionModel.Executor.answerText))
+        #expect(await fixture.queue.isRunning == false)
+        #expect(await fixture.queue.waitingCount == 0)
     }
 
     @Test("the record holds the stopped rounds, then the compaction boundary, then the continuation")
