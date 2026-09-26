@@ -77,8 +77,24 @@ comments:
     - `MailOnlyAnswerLimitTests|SessionTreeRestorationTests`, 3 extra runs: 31 tests, all passed each time.
     - next: review.
   timestamp: 2026-09-26T14:11:45.203813+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m3f15rjxs2ftd4rn98c8jz5n
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit f3ead1b). 0 findings, 0 confirmed, 0 refuted. The engine reviewed 2 files. It did not review 2 `.kanban/` files, because `.reviewignore` excludes them. The 2 prior findings are fixed: `RunStartingContainer` is now a plain `Sendable` class and does not use `@unchecked Sendable`. The mail-limit restore test and the repetition-detection restore test now both call the shared helper `expectForkAndRestoreKeep`.
+    - next: none. The task moved to done.
+  timestamp: 2026-09-26T14:16:14.685348+00:00
+- actor: claude-code
+  id: 01m3f17dsjx6b6pd58zd1f6a7w
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 2 test files (Sendable container; shared fork-and-restore helper)
+    - test: green — swift test, 1522 passed (1486+17+19), 0 failed, 0 skipped; 2 changed suites 3 extra runs clean
+    - commit: f3ead1b
+    - review: clean — 0 findings
+  timestamp: 2026-09-26T14:17:09.170931+00:00
+position_column: done
+position_ordinal: ffffff9380
 title: Decide a guard for an endless chain of mail-only submissions
 ---
 ## Why
