@@ -94,7 +94,7 @@ final class StubGenerationLog: @unchecked Sendable {
 /// `@unchecked Sendable` invariant: ``record(_:)`` runs either from direct
 /// test-code construction between turns or from backend calls
 /// (`makeFork`/`replacingTranscript`) that `RoutedSessionActor` serializes
-/// one at a time under the owning session's turn lock. Nothing ever touches
+/// one at a time through the owning session's pump. Nothing ever touches
 /// an instance concurrently.
 final class StubBackendRegistry: @unchecked Sendable {
     /// Every backend recorded so far, in creation order.
@@ -184,7 +184,7 @@ final class StubSessionBackend: LanguageModelSessionBackend {
     }
 
     /// The one lock every mutable field lives behind. See the type's own
-    /// documentation for why a lock, and not the session's turn lock, is
+    /// documentation for why a lock, and not the one pump of the session, is
     /// what keeps a read beside a live stream producer sound.
     private let state: Mutex<State>
 

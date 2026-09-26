@@ -347,62 +347,61 @@ actor RoutedSessionActor: RoutedSession {
     /// This session's own instanced tool list, as threaded to the backend.
     nonisolated let tools: [any Tool]
 
-    /// The staging area for tool events and queued prompts. Fresh per session.
+    /// The queue of messages of this session: the mail, the caller messages
+    /// that wait for the pump, and the queued prompts. Fresh per session.
     nonisolated let outbox: SessionOutbox
 
     /// The registry of tracked background runs and pending elicitations. Fresh
     /// per session.
     nonisolated let mailbox: SessionMailbox
 
-    /// This session's turn lock, held for the whole of every turn. Not
-    /// `private` so a test can observe its ``AsyncSemaphore/waiterCount``.
-    nonisolated let turnLock = AsyncSemaphore(value: 1)
+    /// The pump of this session while it runs, or `nil` when no pump runs.
+    /// See ``wakePump()``.
+    var pumpTask: Task<Void, Never>?
 
-    /// The id of the turn holding ``turnLock``, or `nil` between turns. Ids
-    /// are monotonic.
-    var currentTurnId: UInt64?
+    /// Whether a message arrived since the pump last looked, so the pump
+    /// takes one more cycle before it ends.
+    var pumpWakeRequested = false
 
-    /// The last id ``beginTurn()`` handed out.
-    var lastTurnId: UInt64 = 0
+    /// The work the pump runs now, or `nil` between works.
+    var pumpWork: PumpWork?
 
-    /// The in-flight turn's model call, the task ``cancelCurrentTurn()``
-    /// cancels, or `nil` when no model call is outstanding. Only the model call
-    /// runs in this task; the turn's recording runs afterwards. A cancel of the
-    /// task removes a submission that waits for the worker, or cancels the
-    /// running submission.
+    /// The id of the last work the pump started. Ids are monotonic.
+    var lastWorkId: UInt64 = 0
+
+    /// The caller compactions that wait for the pump, first in first out.
+    var pendingCompactions: [CompactionRequest] = []
+
+    /// The ``dispatchNextPrompt()`` callers that wait until the pump has no
+    /// work left, keyed by waiter id. See ``awaitPumpIdle()``.
+    var pumpIdleWaiters: [ULID: PumpIdleWaiter] = [:]
+
+    /// The in-flight model call of the work the pump runs, the task
+    /// ``requestCancelOfRunningWork()`` cancels, or `nil` when no model call
+    /// is outstanding. Only the model call runs in this task; the recording
+    /// of its submission runs afterwards. A cancel of the task removes a
+    /// submission that waits for the worker, or cancels the running
+    /// submission.
     var inFlightModelCall: Task<String, Error>?
 
-    /// The turn a ``cancelCurrentTurn()`` has been requested for, or `nil`.
-    /// A cancellation recorded here lands on the turn's next model call.
-    /// ``endTurn()`` clears it.
-    var cancelRequestedTurnId: UInt64?
-
-    /// How many cancellation requests ``cancelCurrentTurn()`` has recorded on
-    /// this session, ever. Monotonic and never cleared, so a caller that spans
-    /// more than one turn can compare it against a snapshot.
-    var cancelRequestCount: UInt64 = 0
-
-    /// How many ``respond(to:maxTokens:)`` calls are draining the run plane
-    /// right now. A drain runs between turns, so ``cancelCurrentTurn()`` reads
-    /// this to answer ``TurnCancellationResult/requested``.
-    var runPlaneDrainCount = 0
-
-    /// The gates of the run-plane drain waits suspended on this session, keyed
-    /// by waiter id. ``cancelCurrentTurn()`` resumes them to end a suspended
-    /// drain. One gate per waiter, because two callers can drain at once.
-    var runPlaneDrainWaitGates: [ULID: RaceGate<RunPlaneDrainWaitOutcome>] = [:]
+    /// The work a cancel has been requested for, or `nil`. A cancellation
+    /// recorded here lands on the next model call of the work. The pump
+    /// clears it when the work ends. ``isWorkCancelled`` is its one read
+    /// site.
+    var cancelRequestedWorkId: UInt64?
 
     /// Whether the session's first-line `session` meta event has been recorded.
-    /// Set before the meta append, so no reentrant turn can emit it twice.
+    /// Set before the meta append, so no reentrant call can emit it twice.
     var didRecordSessionMeta = false
 
     /// Whether this session has installed itself as ``outbox``'s
     /// ``OperationEventJournal``. Set by ``attachOutboxJournalIfNeeded()``.
     var didAttachOutboxJournal = false
 
-    /// The in-flight turn's composed event sink (see ``turnEventSink(_:)``),
-    /// or `nil` between turns. ``deliver(invocation:)`` uses it to hand a live
-    /// ``SessionEvent/toolInvocation(_:)`` to the current turn.
+    /// The composed event sink of the running answer (see
+    /// ``turnEventSink(_:)``), or `nil` between answers.
+    /// ``deliver(invocation:)`` uses it to hand a live
+    /// ``SessionEvent/toolInvocation(_:)`` to the running answer.
     var currentTurnEventSink: ((SessionEvent) -> Void)?
 
     /// The ledger of the generate attempt in flight, or `nil` between
@@ -414,10 +413,10 @@ actor RoutedSessionActor: RoutedSession {
     /// boundaries. See ``ToolResultWatch`` and ``noteToolResult(_:)``.
     var toolResultWatch = ToolResultWatch()
 
-    /// Whether the turn in flight stops compacting inside the turn, at a tool
-    /// result or at a ceiling stop: set when such a compaction applied no
-    /// summary (``compactAndContinue(attempt:continuationPrompt:body:)``), and
-    /// cleared by ``beginTurn()`` for each new turn.
+    /// Whether the running answer stops compacting inside the answer, at a
+    /// tool result or at a ceiling stop: set when such a compaction applied
+    /// no summary (``compactAndContinue(attempt:continuationPrompt:body:)``),
+    /// and cleared by the pump for each new answer.
     var compactionYieldsStopped = false
 
     /// The repetition watch of this session: the watch of the model call in

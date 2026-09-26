@@ -1,31 +1,6 @@
 import Foundation
 import Synchronization
 
-/// A refusal to do work that would re-enter a session that is already mid-turn.
-///
-/// A tool body that asks its own session for a second turn is refused,
-/// because ``RoutedSessionActor/turnLock`` is held for the whole turn and is
-/// not lent. A transcript read and a fork are never refused: each is served
-/// at once from the settled transcript of the session (``SettledTranscript``,
-/// `generation-queue.md`, section 5.8), from any task. A tool body that asks a
-/// different session on the same model for an answer is refused by the queue
-/// of that model (``GenerationQueueError/waitInsideOpenSubmission(model:)``).
-enum SessionReentryError: Error, Equatable, LocalizedError {
-    /// A tool body of `sessionID`'s own turn asked that session for another turn.
-    case sameSessionTurnInFlight(sessionID: ULID)
-
-    /// A localized message that describes the error.
-    var errorDescription: String? {
-        switch self {
-        case .sameSessionTurnInFlight(let sessionID):
-            return """
-                Session \(sessionID) is already running a turn that invoked this tool, so it \
-                cannot run another one while that turn is in flight.
-                """
-        }
-    }
-}
-
 /// The queue that one submission goes to, and the model whose queue it is
 /// (`generation-queue.md`, section 5.5, rule 2).
 ///
@@ -46,12 +21,13 @@ struct SubmissionTarget: Sendable {
 /// The mark says which session the model call belongs to, whether that call
 /// is still open, and the queue of its submission. The model is suspended in
 /// a tool call whenever a tool body runs in the call, so "in the open model
-/// call of this session" is "in a tool call of this session's own turn".
-/// ``RoutedSessionActor`` reads the mark to refuse a turn that a tool asks of
-/// the same session, whose turn holds ``RoutedSessionActor/turnLock``, and to
-/// take a settled transcript at a tool-result boundary of its own open model
-/// call. ``GenerationQueue`` reads it to refuse a submission from inside an
-/// open submission on itself.
+/// call of this session" is "in a tool call of this session's own
+/// submission". ``RoutedSessionActor`` reads the mark to refuse at once a
+/// wait for an answer of the same session, which could come only after the
+/// submission that waits for the tool (`generation-queue.md`, section 5.5,
+/// rule 2), and to take a settled transcript at a tool-result boundary of its
+/// own open model call. ``GenerationQueue`` reads it to refuse a submission
+/// from inside an open submission on itself.
 ///
 /// ``RoutedSessionActor/runCancellableModelCall(composedPrompt:submittingTo:_:)``
 /// binds one mark around each model call, on the task that runs the
@@ -132,13 +108,14 @@ final class ModelCallMark: Sendable {
     /// of the session whose model call started the run. Outside any model call
     /// there is no mark, and `body` runs with none.
     ///
-    /// The run keeps the session, so a turn it asks of that session is refused
-    /// with a clear error: the turn that started the run can still hold the
-    /// turn lock, and a turn parked on it would stall without a sound. A
-    /// transcript read or a fork of that session gets the settled transcript
-    /// at once, as from any other task. The mark is closed, so the queue does
-    /// not refuse a submission of the run: the run does not hold the worker
-    /// of its model.
+    /// The run keeps the session, but the mark is closed, so the run is in no
+    /// model call. An answer it asks of that session is not refused: its
+    /// message waits for a later submission of the session. A transcript read
+    /// or a fork of that session gets the settled transcript at once, as from
+    /// any other task. The queue does not refuse a submission of the run
+    /// either: the run does not hold the worker of its model. Without this
+    /// wrap, the run inherits the OPEN mark of the call, and each of those
+    /// legal waits is refused.
     ///
     /// - Parameter body: The work of the background run.
     /// - Returns: Whatever `body` returns.

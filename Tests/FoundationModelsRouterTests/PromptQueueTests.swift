@@ -10,7 +10,8 @@ import Testing
 /// ``RoutedSession/enqueue(prompt:)``/``RoutedSession/pendingPrompts()``/
 /// ``RoutedSession/cancel(id:)``/``RoutedSession/replace(id:prompt:)`` plus
 /// ``RoutedSession/dispatchNextPrompt()`` driver dispatch, race-safe against
-/// `SessionOutbox.drainForDispatch()`'s commit boundary.
+/// the commit boundary where the pump of the session takes a released prompt
+/// for its submission (task ^3qx0mpt).
 ///
 /// Everything runs against stubs — no MLX, no network, no GPU.
 @Suite("Prompt queue: enqueue, inspect, edit, cancel, driver dispatch")
@@ -37,16 +38,16 @@ struct PromptQueueTests {
     }
 
     /// A backend whose ``respond(to:maxTokens:)`` signals ``started`` the
-    /// moment it is called — proof the turn's outbox drain has already
-    /// committed — and then suspends on ``proceed`` until the test releases
+    /// moment it is called — proof the pump already took the prompt for its
+    /// submission — and then suspends on ``proceed`` until the test releases
     /// it. The fixture the commit-boundary race tests use to land a
     /// concurrent `cancel`/`replace`/`enqueue` squarely inside an in-flight
-    /// dispatch's "already drained, not yet recorded" window.
+    /// dispatch's "already taken, not yet recorded" window.
     ///
     /// A plain mutable class rather than an actor, mirroring
     /// ``StubSessionBackend``: ``RoutedSessionActor`` only ever drives one
-    /// backend method at a time (serialized by the session's own serial
-    /// gate), so ``entries`` is never mutated concurrently with itself —
+    /// backend method at a time (serialized by the session's one pump), so
+    /// ``entries`` is never mutated concurrently with itself —
     /// only ``started``/``proceed`` (both real ``AsyncSemaphore``s) are ever
     /// touched from a second, concurrent task.
     private final class GatedStubBackend: LanguageModelSessionBackend, @unchecked Sendable {
@@ -388,18 +389,14 @@ struct PromptQueueTests {
         #expect(promptEvent.text == expectedLine + "\n\nwhat happened?")
     }
 
-    // MARK: - dispatchNextPrompt() delivers a settled run on an empty queue
+    // MARK: - The pump delivers a settled run on an empty queue
 
-    /// The output the delivery-turn test's background tool returns, so the
+    /// The output the delivery test's background tool returns, so the
     /// terminal line the model hears is recognizable.
     private static let deliveredToolOutput = "background result: the job finished"
 
-    /// How long the delivery-turn test waits for a run it has already released
-    /// to settle.
-    private static let mailboxWaitTimeoutSeconds: Double = 30
-
     @Test(
-        "an event-only wake with a settled run runs a delivery turn on an EMPTY prompt queue: the model hears the terminal, with no wait call"
+        "a settled run on an EMPTY prompt queue starts a delivery submission with no caller call: the model hears the terminal, with no wait call"
     )
     @MainActor
     func settledRunOnEmptyQueueRunsADeliveryTurn() async throws {
@@ -412,7 +409,7 @@ struct PromptQueueTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let backend = try #require(container.lastBackend)
 
-        // The first dispatched turn backgrounds the job; the queue is empty
+        // The first dispatched prompt backgrounds the job; the queue is empty
         // after it.
         _ = await session.enqueue(prompt: "start the job")
         _ = try await session.dispatchNextPrompt()
@@ -420,20 +417,18 @@ struct PromptQueueTests {
         #expect(await session.pendingPrompts().isEmpty)
 
         await gate.open()
-        let settled = await session.mailbox.wait(completionToken: token, seconds: Self.mailboxWaitTimeoutSeconds)
-        guard case .settled(let terminal) = settled else {
-            Issue.record("expected the run to settle after the gate opened, got \(settled)")
-            return
-        }
+        let terminal = try await MountFixtures.settledTerminal(of: token, in: session.mailbox)
 
-        // The driver loop's shape: the settlement wakes the driver, and the
-        // dispatch it makes runs a delivery turn with nothing queued.
-        await session.awaitQueuedWork()
-        let delivered = try await session.dispatchNextPrompt()
-        #expect(delivered != nil)
+        // No driver calls: the settlement is mail, and the pump of the session
+        // starts the delivery submission by itself.
+        #expect(
+            await BoundedWait.conditionReached("the delivery submission reaching the backend") {
+                backend.receivedPrompts.count == 2
+            })
+        #expect(await session.becomesIdle())
 
-        // The model heard the terminal on that turn, and never called wait:
-        // one tool call, and nothing left staged.
+        // The model heard the terminal on that submission, and never called
+        // wait: one tool call, and nothing left staged.
         let deliveryPrompt = try #require(backend.receivedPrompts.last)
         #expect(backend.receivedPrompts.count == 2)
         #expect(deliveryPrompt.contains(OperationEventSegment.renderedLine(for: terminal)))
@@ -503,7 +498,7 @@ struct PromptQueueTests {
         let dispatchTask = Task { try await session.dispatchNextPrompt() }
 
         // Wait until the backend has actually been asked to respond — proof
-        // the outbox's drain already committed this prompt's id.
+        // the pump already took this prompt for its submission.
         await backend.started.wait()
 
         let cancelResult = await session.cancel(id: id)
@@ -562,8 +557,8 @@ struct PromptQueueTests {
         let firstResponse = try await dispatchTask.value
         #expect(firstResponse == "gated response")
 
-        // The second prompt was never touched by the first turn's drain —
-        // still pending, ready for the next dispatch.
+        // The second prompt was never touched by the first dispatch — still
+        // pending, ready for the next dispatch.
         let pending = await session.pendingPrompts()
         #expect(pending.map(\.id) == [secondId])
     }
@@ -725,37 +720,42 @@ struct PromptQueueTests {
         #expect(await session.pendingPrompts().isEmpty)
     }
 
-    @Test("a prompt whose dispatch is suspended behind another turn is still withdrawable, and its dispatch then runs no turn")
+    @Test("a released prompt that waits behind another submission is still withdrawable, and it reaches no submission")
     @MainActor
-    func cancelPromptWithdrawsAPromptWaitingOnTheTurnLock() async throws {
+    func cancelPromptWithdrawsAPromptWaitingForThePump() async throws {
         let recorder = InMemoryRecorder()
         let backend = GatedStubBackend(responseText: "gated response")
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        // Occupy the turn lock with a direct turn.
+        // Occupy the pump with a direct respond.
         let blockingTurn = Task { try await session.respond(to: "blocking turn") }
         await backend.started.wait()
 
-        // A dispatch for this prompt now suspends on the turn lock: its drain has
-        // not run, so the prompt is still in the queue and still withdrawable.
+        // A dispatch releases this prompt as a message, which waits in the
+        // outbox for the next submission: it is still withdrawable.
         let id = await session.enqueue(prompt: "suspended prompt")
         let suspendedDispatch = Task { try await session.dispatchNextPrompt() }
+        #expect(
+            await BoundedWait.conditionReached("the released prompt waiting in the outbox") {
+                await session.outbox.waitingMessageCount == 1
+            })
 
         let result = await session.cancelPrompt(id: id)
         #expect(result == .withdrawn)
 
         backend.proceed.signal()
         _ = try await blockingTurn.value
-        // The suspended dispatch never reaches the backend: its drain finds the
-        // withdrawn prompt gone and it runs no turn at all.
-        #expect(try await suspendedDispatch.value == nil)
+        // The withdrawn prompt never reaches the backend: its dispatch ends
+        // with `CancellationError`, and no submission carried it.
+        await #expect(throws: CancellationError.self) { try await suspendedDispatch.value }
+        #expect(await session.becomesIdle())
 
         let promptTexts = await recorder.events.filter { $0.kind == .prompt }.map(\.text)
         #expect(promptTexts == ["blocking turn"])
     }
 
-    @Test("cancelPrompt cancels the turn of a prompt the drain already committed")
+    @Test("cancelPrompt cancels the turn of a prompt the pump already took for its submission")
     @MainActor
     func cancelPromptCancelsDispatchedPromptsTurn() async throws {
         let recorder = InMemoryRecorder()
@@ -767,7 +767,7 @@ struct PromptQueueTests {
         let dispatchTask = Task { try await session.dispatchNextPrompt() }
         await backend.started.wait()
 
-        // Past the drain, `cancel(id:)` alone can only report `alreadySent`.
+        // Past the take, `cancel(id:)` alone can only report `alreadySent`.
         #expect(await session.cancel(id: id) == .alreadySent)
 
         let result = await session.cancelPrompt(id: id)

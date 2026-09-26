@@ -141,8 +141,8 @@ extension RoutedSessionActor {
             grammar: grammar, since: started, usageBefore: usageBefore,
             responseTokenCeiling: responseTokenCeiling, pendingEvents: pendingEvents, onEvent: onEvent,
             stopReason: stopReason)
-        // `drainForDispatch()` already destructively removed `pendingEvents`
-        // from `outbox` before `body()` ran. When this turn's diff produced no
+        // The pump already destructively took `pendingEvents` from `outbox`
+        // before `body()` ran. When this submission's diff produced no
         // `.prompt`-kind partial to attach them to — every `.ebnf`-guided
         // turn, whose backend validates and throws before touching its live
         // session at all (see `MLXFoundationModelsSessionBackend.respond(to:
@@ -158,7 +158,9 @@ extension RoutedSessionActor {
     }
 
     /// Re-posts `events` onto ``outbox`` through `SessionOutbox.requeue(event:)`.
-    /// The events are not journaled a second time.
+    /// The events are not journaled a second time, and they are held
+    /// (``SessionOutbox/PendingEvent/isHeld``), so a submission that could
+    /// not take them is not started again at once.
     ///
     /// - Parameter events: The events to re-queue, in outbox order.
     func requeueUnattachedPendingEvents(events: [OperationEvent]) async {

@@ -18,16 +18,18 @@ import Testing
 /// Every handle comes from ``Router/resolve(profile:reporting:)``, never from a
 /// hand-built ``RoutedLLM``, so each session is the shape a consumer holds.
 ///
-/// A turn holds its session's turn lock for its whole length. The stub
-/// container of these tests has no ``GenerationQueue``, so a tool body that
-/// generates on another session over it runs that model call directly and
-/// holds nothing that session needs. A tool body that asks its own session for
-/// a turn must be refused, because that session's turn lock is held. A fork or
-/// a transcript read that a tool body asks of its own session is served at
-/// once, from the settled transcript of that session (task ^dpn2ytt).
-/// Over a container with a queue, an in-band tool body that waits for a
-/// session on the same model is refused at once (task ^1psqdm9,
-/// `GenerationQueueTurnTests`).
+/// A session has no lock: one pump for each session submits its messages
+/// (task ^3qx0mpt). The stub container of these tests has no
+/// ``GenerationQueue``, so a tool body that generates on another session over
+/// it runs that model call directly and holds nothing that session needs. An
+/// in-band tool body that asks its own session for an answer is refused at
+/// once, because that answer could come only after the submission that waits
+/// for the tool body. A declared background body asks its own session and
+/// gets an answer from a later submission. A fork or a transcript read that a
+/// tool body asks of its own session is served at once, from the settled
+/// transcript of that session (task ^dpn2ytt). Over a container with a
+/// queue, an in-band tool body that waits for a session on the same model is
+/// refused at once (task ^1psqdm9, `GenerationQueueTurnTests`).
 @Suite("Nested generation from inside a tool body")
 struct NestedGenerationReentryTests {
     // MARK: - Test tool
@@ -173,8 +175,8 @@ struct NestedGenerationReentryTests {
     /// after a background run settled — answers from the prompt it was given.
     ///
     /// `@unchecked Sendable` on the same terms as ``StubSessionBackend``: the
-    /// owning session drives one backend method at a time (its turn lock
-    /// serializes turns), and the test reads the captures only after the
+    /// owning session drives one backend method at a time (its pump submits
+    /// one item at a time), and the test reads the captures only after the
     /// driving call returned. The one thing a test reads mid-turn is the
     /// ``HandedBackRecord``, which carries its own lock.
     private final class ToolCallingBackend: LanguageModelSessionBackend, @unchecked Sendable {
@@ -322,10 +324,10 @@ struct NestedGenerationReentryTests {
     /// What one turn produced, carried out of the turn's own task.
     ///
     /// A failure is carried as its description, plus the typed refusal when it
-    /// is one: `Error` is not `Sendable`, and ``SessionReentryError`` is.
+    /// is one, so a test can compare it.
     private enum TurnOutcome: Sendable {
         case finished(String)
-        case failed(reentry: SessionReentryError?, description: String)
+        case failed(refusal: GenerationQueueError?, description: String)
     }
 
     // MARK: - Fixtures
@@ -367,7 +369,7 @@ struct NestedGenerationReentryTests {
             } catch {
                 report.yield(
                     .failed(
-                        reentry: error as? SessionReentryError,
+                        refusal: error as? GenerationQueueError,
                         description: String(describing: error)))
             }
             report.finish()
@@ -416,9 +418,8 @@ struct NestedGenerationReentryTests {
             Issue.record(
                 """
                 \(turn) did not finish within \(turnTimeout). Work a tool body asks of a \
-                routed session has to settle in band: a turn holds its own session's turn \
-                lock for its whole length, tool call included, so a call that waits on that \
-                lock suspends for as long as the turn it is part of.
+                routed session has to settle or be refused at once: a wait that could \
+                never end must not suspend the submission it is part of.
                 """)
             return nil
         case .failed(_, let description):
@@ -502,20 +503,20 @@ struct NestedGenerationReentryTests {
     ///   - expected: The refusal the call has to raise.
     ///   - call: What the refused call is called in the report.
     private static func expectRefused(
-        _ outcome: TurnOutcome?, with expected: SessionReentryError, describing call: String
+        _ outcome: TurnOutcome?, with expected: GenerationQueueError, describing call: String
     ) {
         switch outcome {
         case nil:
             Issue.record(
                 """
                 The turn did not finish within \(turnTimeout). \(call) has to be refused, \
-                never suspended on the turn lock its own caller holds.
+                never suspended behind the submission that waits for it.
                 """)
         case .finished(let answer):
             Issue.record("The turn answered \"\(answer)\" instead of refusing \(call).")
-        case .failed(let reentry, let description):
+        case .failed(let refusal, let description):
             #expect(
-                reentry == expected, "The refusal did not name this session: \(description)")
+                refusal == expected, "The refusal did not name the model of this session: \(description)")
         }
     }
 
@@ -577,7 +578,7 @@ struct NestedGenerationReentryTests {
 
     // MARK: - The same session
 
-    @Test("a tool body that generates on its own session is refused, rather than suspending without a sound")
+    @Test("an in-band tool body that waits for an answer of its own session gets the wait-cycle error at once")
     @MainActor
     func aToolBodyThatGeneratesOnItsOwnSessionIsRefused() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
@@ -588,16 +589,18 @@ struct NestedGenerationReentryTests {
 
         let caller = profile.standard.makeSession(
             tools: [NestedGeneratingTool(target: target, label: "caller")])
-        // The tool generates on the very session whose turn invoked it. The turn
-        // lock is the correctness gate and is lent to nobody, so this has to
-        // fail — and it has to fail with something a caller can read.
+        // The tool waits for an answer of the very session whose submission
+        // invoked it. That answer could come only after the submission, which
+        // waits for the tool, so the wait could never end. It has to fail at
+        // once, with the wait-cycle error that names the model.
         target.set(caller)
+        let model = try #require(caller as? RoutedSessionActor).model
 
         let outcome = await Self.outcome(
             of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.turnTimeout)
 
         Self.expectRefused(
-            outcome, with: .sameSessionTurnInFlight(sessionID: caller.id),
+            outcome, with: .waitInsideOpenSubmission(model: model),
             describing: "a tool body that generates on its own session")
 
         withExtendedLifetime(profile) {}
@@ -763,29 +766,35 @@ struct NestedGenerationReentryTests {
         withExtendedLifetime(harness) {}
     }
 
-    @Test("a declared background body that generates on the session that started it is refused, not stalled")
+    @Test("a declared background body asks the session that started it for an answer, and gets it from a later submission, with no error and no hang")
     @MainActor
-    func aBackgroundBodyThatGeneratesOnItsOwnSessionIsRefused() async throws {
+    func aBackgroundBodyThatGeneratesOnItsOwnSessionGetsAnAnswer() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let harness = try await BackgroundHarness.make(dir: dir)
         let caller = harness.profile.standard.makeSession(
             tools: [NestedGeneratingTool(target: harness.target, label: "caller", mount: Self.backgroundMount)])
-        // The body generates on the very session whose turn started it. That
-        // turn holds the turn lock, which is lent to nobody, so the run has to
-        // fail with something a reader can name — while the turn is still open.
+        // The body asks the very session whose submission started it. Its
+        // mark is closed, so the message is not refused: it waits in the
+        // outbox for a later submission of the session.
         harness.target.set(caller)
 
         let turn = harness.startTurn(on: caller)
-        if let token = await Self.handedBackToken(from: harness.handedBack) {
-            let terminal = await Self.settledTerminal(of: token, on: caller, describing: "The refused run")
-            #expect(terminal?.outcome == .failed)
-            #expect(terminal?.detail.contains(caller.id.description) == true)
-        }
+        let token = try #require(await Self.handedBackToken(from: harness.handedBack))
 
+        // The submission that started the run ends with the handle it was
+        // handed. The pump then submits the message of the run, and the run
+        // settles with the answer of that submission.
         Self.expectFinished(
             await harness.endTurn(turn), is: harness.handedBack.value ?? "", describing: "The outer turn")
+        // The progress report of the run is mail, so it rides the prompt of
+        // that submission in front of the run's own message.
+        let terminal = await Self.settledTerminal(of: token, on: caller, describing: "The run that asks its own session")
+        #expect(terminal?.outcome == .succeeded)
+        let detail = try #require(terminal?.detail)
+        #expect(detail.hasPrefix("caller" + NestedGeneratingTool.labelSeparator + ToolCallingBackend.answerPrefix))
+        #expect(detail.hasSuffix(Self.nestedPrompt))
         withExtendedLifetime(harness) {}
     }
 
@@ -864,9 +873,9 @@ struct NestedGenerationReentryTests {
             }
         }
 
-        // The session stays, so the run is refused a turn of that session. The
-        // run is no tool call the model is suspended in, so it reads and forks
-        // that session under the turn lock.
+        // The session stays, but the run is no tool call the model is
+        // suspended in. So its wait for an answer of that session is not
+        // refused: the message waits for a later submission.
         let (runSessionID, runIsInTheCall) = try #require(seen)
         #expect(runSessionID == sessionID)
         #expect(!runIsInTheCall)
@@ -910,7 +919,7 @@ struct NestedGenerationReentryTests {
                 await fixture.observer.enteredCount == 1
             })
 
-        // The waiter's turn holds its own turn lock and has an identity; only
+        // The pump of the waiter runs its answer, which has an identity; only
         // its submission waits, in the queue of the model.
         let waiterFinished = AsyncSemaphore(value: 0)
         let waiterTurn = Task {
@@ -946,8 +955,8 @@ struct NestedGenerationReentryTests {
         #expect(await queue.isRunning == false)
         #expect(await queue.waitingCount == 0)
 
-        // The cancelled session still generates: its turn lock and the queue
-        // are both free.
+        // The cancelled session still generates: its pump and the queue are
+        // both free.
         let followUp = await Self.outcome(
             of: { try await waiter.respond(to: Self.outerPrompt) }, within: Self.turnTimeout)
         Self.expectFinished(

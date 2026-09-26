@@ -101,14 +101,37 @@ struct GenerationQueueTurnTests {
         /// The latch the body waits on before it asks for the turn.
         let start: RunLatch
 
-        /// Every call goes to the background at once.
+        /// Taken by the first call, which asks the child for the turn.
+        let firstCall = FirstCallFlag()
+
+        /// Every call goes to the background.
         var mount: ToolMount? { ToolMount(mode: .background) }
 
+        /// A later call starts nothing and settles at once, inside this grace,
+        /// so its result goes back in its own envelope and is no mail. Without
+        /// it, the scripted model calls the tool again in each delivery
+        /// submission, and each call would start one more delivery.
+        var inlineSettleGrace: TimeInterval? { GenerationQueueTurnTests.laterCallSettleGrace }
+
         func call(arguments: MountArguments) async throws -> String {
+            guard firstCall.take() else { return GenerationQueueTurnTests.nothingStarted }
             await start.waitUntilOpen()
             return try await child.respond(to: GenerationQueueTurnTests.secondPrompt)
         }
     }
+
+    /// How long a call of ``BackgroundChildTurnTool`` waits for its run to
+    /// settle inline. Long enough for a run that starts nothing, and short,
+    /// because the wait holds the model.
+    private static let laterCallSettleGrace: TimeInterval = 0.5
+
+    /// The answer of each later call of ``BackgroundChildTurnTool``.
+    private static let nothingStarted = "nothing new started"
+
+    /// The passes before the delivery submission of the parent: the two
+    /// passes of its first submission (the tool call, then the answer), and
+    /// the one pass of the run on the child.
+    private static let passesBeforeDelivery = 3
 
     /// The prompt of the first session of a test.
     private static let firstPrompt = "a"
@@ -319,7 +342,7 @@ struct GenerationQueueTurnTests {
         let parentInside = await BoundedWait.conditionReached("the first pass of the parent") {
             fixture.passes.recorded.count == 1
         }
-        // The child's own turn holds its turn lock, and its submission waits
+        // The pump of the child runs its answer, and its submission waits
         // behind the parent's.
         let childFinished = AsyncSemaphore(value: 0)
         let childTurn = Self.startTurn(signalling: childFinished) {
@@ -330,7 +353,7 @@ struct GenerationQueueTurnTests {
         }
 
         // The tool body of the parent now asks the busy child for an answer.
-        // A wait for the child's turn lock would never end.
+        // A wait for an answer of the busy child would never end.
         for _ in 0..<Self.busyChildPassCount { step.signal() }
         try #require(
             await BoundedWait.signalArrived(
@@ -388,10 +411,26 @@ struct GenerationQueueTurnTests {
         }
         #expect(terminal?.outcome == .succeeded)
         #expect(terminal?.detail == PassObservingModel.answer(to: Self.secondPrompt))
+
+        // The terminal is mail: the pump of the parent delivers it in one
+        // more submission, with no caller call, and then ends.
+        #expect(
+            await BoundedWait.conditionReached("the delivery submission of the parent") {
+                fixture.passes.recorded.count > Self.passesBeforeDelivery
+            })
+        #expect(await parent.becomesIdle())
+        #expect(
+            await BoundedWait.conditionReached("the queue of the model ending its work") {
+                await !fixture.queue.isRunning
+            })
         // The two passes of the ended turn, then the pass of the run on the
-        // child.
-        #expect(fixture.passes.recorded.map(\.prompt) == [Self.firstPrompt, Self.firstPrompt, Self.secondPrompt])
-        #expect(await fixture.queue.isRunning == false)
+        // child, then the passes of the delivery submission, which carries
+        // the answer of the child.
+        let prompts = fixture.passes.recorded.map(\.prompt)
+        #expect(Array(prompts.prefix(Self.passesBeforeDelivery)) == [Self.firstPrompt, Self.firstPrompt, Self.secondPrompt])
+        let deliveryPrompt = try #require(prompts.dropFirst(Self.passesBeforeDelivery).first)
+        #expect(deliveryPrompt.contains(PassObservingModel.answer(to: Self.secondPrompt)))
+        #expect(deliveryPrompt.contains(RoutedSessionActor.settledRunDeliveryPrompt))
         withExtendedLifetime(resolved) {}
     }
 }

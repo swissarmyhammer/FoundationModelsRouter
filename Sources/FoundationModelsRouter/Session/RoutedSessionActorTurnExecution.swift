@@ -7,9 +7,10 @@ import os
 /// The logger for a turn's failed pre-discovery seeding.
 private let sessionPrimingLogger = makeModuleLogger(category: "DiscoveryPriming")
 
-/// ``RoutedSessionActor``'s turn execution: the recorder-bracketed generation
-/// chokepoint, the queued-prompt turn, discovery priming, the recovery from an
-/// overflow or a rejected tool call, and cancellation.
+/// ``RoutedSessionActor``'s answer execution: the recorder-bracketed chain of
+/// submissions that the pump runs for one answer, the queued-prompt helper,
+/// discovery priming, the recovery from an overflow or a rejected tool call,
+/// and cancellation.
 extension RoutedSessionActor {
     /// The token ceiling a turn gives its backend.
     ///
@@ -50,78 +51,16 @@ extension RoutedSessionActor {
         }
     }
 
-    /// The single recorder-bracketed generation chokepoint every public method runs through.
-    ///
-    /// The bracket holds ``turnLock`` for the whole turn. Each model call of `body` is one
-    /// submission to the model's ``GenerationQueue``, which holds the worker of the model
-    /// for its passes and the tool bodies between them. It drains pending events from
-    /// ``outbox`` into the prompt, runs `body`, then records the transcript delta.
-    ///
-    /// - Parameters:
-    ///   - grammar: The grammar in force for this turn, or `nil`.
-    ///   - entryPoint: The surface this turn was started through, which the
-    ///     turn's span reports. Every caller states it, because the chokepoint
-    ///     cannot tell one surface from another.
-    ///   - prompt: This turn's own prompt text.
-    ///   - responseTokenCeiling: The token ceiling `body` gives the backend, and
-    ///     the ceiling the caller named. The recording reads the resolved
-    ///     ceiling to find ``TokenUsage/finishReason``. The retry after a
-    ///     context overflow reads the ceiling the caller named.
-    ///   - onEvent: A sink for this turn's ``SessionEvent``s, or `nil`.
-    ///   - body: The model work to run.
-    /// - Returns: The response text `body` produced.
-    /// - Throws: Whatever `body` throws, after the turn is recorded.
-    func generate(
-        grammar: Grammar? = nil,
-        entryPoint: RouterTracing.TurnEntryPoint,
-        prompt: String,
-        responseTokenCeiling: ResponseTokenCeiling,
-        onEvent: ((SessionEvent) -> Void)? = nil,
-        _ body: @escaping @Sendable (String) async throws -> String
-    ) async throws -> String {
-        // Acquire the turn lock for the whole bracket, and release it on every
-        // path with a `defer` (the recording bracket stays in this actor's
-        // isolation region, so the locked work is not sent across an isolation
-        // boundary as a `withPermit` closure would be). `beginTurn()`/`endTurn()`
-        // pair exactly like `withPermit`, so no permit can leak. A refusal throws
-        // before the lock is touched, so the `defer` is installed only once there
-        // is something to release.
-        let turnId = try await beginTurn()
-        defer { endTurn() }
-
-        await recordSessionMetaIfNeeded()
-
-        // Drain-on-turn: everything staged in `outbox` since the last turn is
-        // compacted into *this* turn's prompt, here inside the turn lock so a
-        // drain never interleaves with a concurrent turn. This caller supplies
-        // its own prompt directly, so only events are drained — never the
-        // queued-prompt FIFO (see `SessionOutbox.drainPendingEvents()`, as
-        // opposed to `SessionOutbox.drainForDispatch()`, which only
-        // ``dispatchNextPrompt()`` uses): a prompt waiting in the queue is left
-        // exactly where it is rather than silently dequeued and discarded by
-        // an unrelated ad hoc turn. An empty outbox drains to an empty
-        // `pendingEvents`, so ``composedPrompt(pendingEvents:prompt:)`` returns
-        // `prompt` unchanged and ``attachingPendingEventSegments(events:to:)``
-        // attaches nothing below — byte-identical to a session that never
-        // used an outbox.
-        let pendingEvents = await outbox.drainPendingEvents().map(\.event)
-        await notifyTurnBoundaryTools()
-        return try await runTurn(
-            grammar: grammar, turnId: turnId, entryPoint: entryPoint, promptId: nil,
-            pendingEvents: pendingEvents, ownPrompt: prompt, responseTokenCeiling: responseTokenCeiling,
-            onEvent: onEvent, body)
-    }
-
     /// Calls ``TurnBoundaryTool/turnWillBegin()`` once on every mounted tool
     /// that conforms, in mount order — the clock tick a tool uses to apply a
     /// change it prepared at the side (task w77k41m).
     ///
-    /// Runs at both drain sites (this turn's own ``outbox`` drain in
-    /// ``generate(grammar:entryPoint:prompt:responseTokenCeiling:onEvent:_:)`` and ``dispatchNextPrompt()``'s),
-    /// after the drain and before the model call of the turn — so a turn that
-    /// fails before the model call still made the hook call, and a fork's
-    /// hook fires only on the fork's own tools (``ForkableTool`` composition).
-    private func notifyTurnBoundaryTools() async {
+    /// The pump calls it one time for each answer, after it took the batch
+    /// of the answer and before the model call of its first submission — so
+    /// an answer that fails before the model call still made the hook call,
+    /// and a fork's hook fires only on the fork's own tools (``ForkableTool``
+    /// composition).
+    func notifyTurnBoundaryTools() async {
         for tool in tools {
             guard let boundaryTool = tool as? any TurnBoundaryTool else { continue }
             await boundaryTool.turnWillBegin()
@@ -138,29 +77,32 @@ extension RoutedSessionActor {
         }
     }
 
-    /// Runs one turn inside that turn's own span. The caller must hold ``turnLock``.
+    /// Runs one answer inside its own span. Only the pump calls it, so no
+    /// other submission of this session runs meanwhile.
     ///
-    /// Every generation surface reaches this one method, so the span it opens
-    /// covers all of them: ``RoutedSession/respond(to:maxTokens:)``,
+    /// Every generation surface reaches this one method through the pump, so
+    /// the span it opens covers all of them:
+    /// ``RoutedSession/respond(to:maxTokens:)``,
     /// ``RoutedSession/streamResponse(to:maxTokens:)``,
-    /// ``RoutedSession/streamEvents(to:maxTokens:)`` and
-    /// ``RoutedSession/dispatchNextPrompt()``. Those methods state the span
-    /// contract; ``RouterTracing`` states the rule that keeps content off it.
+    /// ``RoutedSession/streamEvents(to:maxTokens:)``,
+    /// ``RoutedSession/dispatchNextPrompt()`` and an answer that only mail
+    /// started. Those methods state the span contract; ``RouterTracing``
+    /// states the rule that keeps content off it.
     ///
     /// - Parameters:
     ///   - grammar: The grammar in force for this turn.
-    ///   - turnId: This turn's identity, minted by ``beginTurn()``.
-    ///   - entryPoint: The surface this turn was started through.
-    ///   - promptId: The queued prompt this turn dispatched, or `nil`.
-    ///   - pendingEvents: The events this turn drained from ``outbox``.
-    ///   - ownPrompt: This turn's own prompt text.
+    ///   - turnId: The identity of this answer, which the pump minted.
+    ///   - entryPoint: The surface this answer was started through.
+    ///   - promptId: The queued prompt this answer delivers, or `nil`.
+    ///   - pendingEvents: The mail the pump took from ``outbox`` for it.
+    ///   - ownPrompt: The prompt text of its caller messages.
     ///   - responseTokenCeiling: The token ceiling `body` gives the backend, and the ceiling the caller named.
     ///   - onEvent: A sink for this turn's ``SessionEvent``s, or `nil`.
     ///   - body: The model work to run.
     /// - Returns: The response text `body` produced.
     /// - Throws: Whatever `body` throws, or `CancellationError` from the compaction.
     ///   `withSpan` records the error on the span and raises it again.
-    private func runTurn(
+    func runTurn(
         grammar: Grammar?,
         turnId: TurnID,
         entryPoint: RouterTracing.TurnEntryPoint,
@@ -202,7 +144,7 @@ extension RoutedSessionActor {
         span.attributes[RouterTracing.AttributeKey.tokensOut] = output
     }
 
-    /// Runs one turn's model work and recording. The caller must hold ``turnLock``.
+    /// Runs one answer's model work and recording. Only the pump calls it.
     ///
     /// When ``autoCompactionBudget`` is set and measured usage has reached
     /// ``TokenBudget/triggerTokens``, the turn compacts first. A compaction that throws
@@ -210,10 +152,10 @@ extension RoutedSessionActor {
     ///
     /// - Parameters:
     ///   - grammar: The grammar in force for this turn.
-    ///   - turnId: This turn's identity, minted by ``beginTurn()``.
-    ///   - promptId: The queued prompt this turn dispatched, or `nil`.
-    ///   - pendingEvents: The events this turn drained from ``outbox``.
-    ///   - ownPrompt: This turn's own prompt text.
+    ///   - turnId: The identity of this answer, which the pump minted.
+    ///   - promptId: The queued prompt this answer delivers, or `nil`.
+    ///   - pendingEvents: The mail the pump took from ``outbox`` for it.
+    ///   - ownPrompt: The prompt text of its caller messages.
     ///   - responseTokenCeiling: The token ceiling `body` gives the backend, and the ceiling the caller named.
     ///   - onEvent: A sink for this turn's ``SessionEvent``s, or `nil`.
     ///   - body: The model work to run.
@@ -261,11 +203,11 @@ extension RoutedSessionActor {
             } catch {
                 // A compaction can now throw — a stop landing inside its summarizer call
                 // unwinds it (see ``CancellableCompactionSummarizer``) — and this
-                // turn has not reached `runTurnAttempt`, where a failed turn's
-                // recording and the outbox's attach-or-requeue rule both live. So
-                // the compaction's failure path has to run them here, or the events this
-                // turn already *destructively* drained would be destroyed and the
-                // turn would leave no trace at all. Neither is a formality: an
+                // answer has not reached `runTurnAttempt`, where a failed
+                // submission's recording and the outbox's attach-or-requeue rule
+                // both live. So the compaction's failure path has to run them
+                // here, or the mail the pump already *destructively* took would
+                // be destroyed and the answer would leave no trace at all. Neither is a formality: an
                 // abandoned compaction leaves `backend` exactly as it was, so the diff
                 // finds no `.prompt` partial to attach those events to and
                 // re-queues them, and the synthetic close is the trace.
@@ -341,6 +283,11 @@ extension RoutedSessionActor {
     ///   - onEvent: A sink for this turn's ``SessionEvent``s, or `nil`.
     ///   - allowOverflowRetry: Whether a recoverable context overflow compacts and retries once.
     ///   - rejectedCallRetries: How many rejected tool calls this turn has already sent back to the model. The first attempt of a turn has sent none.
+    ///   - isContinuation: Whether this attempt is a continuation submission
+    ///     of the answer. A continuation first takes the messages that wait
+    ///     (``takeMessagesJoiningTheAnswer()``): the mail goes into its
+    ///     preamble, and each caller prompt that can share the submission
+    ///     goes after `ownPrompt`.
     ///   - body: The model work to run.
     /// - Returns: The response text `body` produced.
     /// - Throws: Whatever `body` throws, or the retry's own outcome when a retry ran.
@@ -352,8 +299,16 @@ extension RoutedSessionActor {
         onEvent: ((SessionEvent) -> Void)? = nil,
         allowOverflowRetry: Bool,
         rejectedCallRetries: Int = 0,
+        isContinuation: Bool = false,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
+        var pendingEvents = pendingEvents
+        var ownPrompt = ownPrompt
+        if isContinuation {
+            let joining = await takeMessagesJoiningTheAnswer()
+            pendingEvents += joining.events
+            ownPrompt = ([ownPrompt] + joining.texts).joined(separator: Self.messageSeparator)
+        }
         let composedPrompt = Self.composedPrompt(pendingEvents: pendingEvents, prompt: ownPrompt)
 
         let started = Date()
@@ -455,7 +410,8 @@ extension RoutedSessionActor {
     ///   the configured target of the budget.
     ///
     /// The caller has already recorded the failed attempt, so the retry
-    /// carries no pending events.
+    /// carries none of its mail. The retry is a continuation: it carries the
+    /// messages that wait when it starts.
     ///
     /// - Parameters:
     ///   - error: The error the failed attempt threw.
@@ -485,7 +441,7 @@ extension RoutedSessionActor {
                 grammar: grammar, pendingEvents: [], ownPrompt: retry.prompt(retrying: ownPrompt),
                 responseTokenCeiling: responseTokenCeiling, onEvent: onEvent,
                 allowOverflowRetry: allowOverflowRetry,
-                rejectedCallRetries: ordinal, body
+                rejectedCallRetries: ordinal, isContinuation: true, body
             )
         }
 
@@ -507,7 +463,7 @@ extension RoutedSessionActor {
         return try await runTurnAttempt(
             grammar: grammar, pendingEvents: [], ownPrompt: ownPrompt,
             responseTokenCeiling: responseTokenCeiling, onEvent: onEvent,
-            allowOverflowRetry: false, rejectedCallRetries: rejectedCallRetries, body
+            allowOverflowRetry: false, rejectedCallRetries: rejectedCallRetries, isContinuation: true, body
         )
     }
 
@@ -575,7 +531,7 @@ extension RoutedSessionActor {
 
     /// Runs one attempt's model call as one submission of ``backend`` to the
     /// queue of its model, in a task this session can cancel from outside the
-    /// turn, and awaits its result.
+    /// pump, and awaits its result.
     ///
     /// The queue and the model are ``ownSubmissionTarget``. See
     /// ``runCancellableModelCall(composedPrompt:submittingTo:_:)``.
@@ -584,7 +540,7 @@ extension RoutedSessionActor {
     ///   - composedPrompt: This attempt's composed prompt, handed to `body`.
     ///   - body: The model work to run: one whole SDK call.
     /// - Returns: The response text `body` produced.
-    /// - Throws: Whatever `body` throws, `CancellationError` when this turn
+    /// - Throws: Whatever `body` throws, `CancellationError` when this work
     ///   was already cancelled before its model call started, or
     ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)``.
     internal func runCancellableModelCall(
@@ -601,7 +557,7 @@ extension RoutedSessionActor {
     }
 
     /// Runs one model call as one submission to the queue of `target`, in a
-    /// task this session can cancel from outside the turn, and awaits its
+    /// task this session can cancel from outside the pump, and awaits its
     /// result (`generation-queue.md`, section 5.3).
     ///
     /// The submission is `body` itself: one whole SDK call, with all of its
@@ -616,8 +572,8 @@ extension RoutedSessionActor {
     /// Cancelling ``inFlightModelCall`` removes a submission that still waits
     /// for the worker, or unwinds `body` and every in-band tool call under it.
     /// A background run keeps running in the session's ``mailbox``. The
-    /// turn's recording runs after this returns or throws and is never
-    /// cancelled. ``CancellableCompactionSummarizer`` also routes a
+    /// recording of the submission runs after this returns or throws and is
+    /// never cancelled. ``CancellableCompactionSummarizer`` also routes a
     /// compaction's summarizer call through here, to the queue of the
     /// container that runs it.
     ///
@@ -627,7 +583,7 @@ extension RoutedSessionActor {
     ///     `nil` to run the call directly.
     ///   - body: The model work to run.
     /// - Returns: The response text `body` produced.
-    /// - Throws: Whatever `body` throws, `CancellationError` when this turn
+    /// - Throws: Whatever `body` throws, `CancellationError` when this work
     ///   was already cancelled before its model call started or while its
     ///   submission waited, or
     ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)`` when this
@@ -637,12 +593,12 @@ extension RoutedSessionActor {
         submittingTo target: SubmissionTarget?,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
-        // A cancellation that landed while this turn held no model call — between two
+        // A cancellation that landed while this work held no model call — between two
         // summarizer tiers of a compaction, or between a failed attempt and this
         // retry — had no task to cancel, so it is honored here instead of being
         // dropped, and the model (with every tool call it would make) is never
-        // re-entered on behalf of a turn already cancelled.
-        if isTurnCancelled {
+        // re-entered on behalf of work already cancelled.
+        if isWorkCancelled {
             throw CancellationError()
         }
         // The host-side ambient binding (task ^k4nygqa): every backend respond()/stream
@@ -670,12 +626,12 @@ extension RoutedSessionActor {
             isCancelled: { cancellationProbe.isCancelled }
         )
         // The mark of this model call, published for exactly this call. A tool
-        // the model invokes from inside the call reads it, so a turn or a fork
-        // that tool asks of this same session is refused rather than parked on
-        // the turn lock this turn holds, and a submission it makes to the same
-        // queue is refused rather than parked behind this submission. Closed in
-        // the `defer` below, so a task that outlives the call is in no model
-        // call of this session. See ``ModelCallMark``.
+        // the model invokes from inside the call reads it, so a wait for an
+        // answer of this same session, or a submission to the same queue, is
+        // refused at once rather than parked behind this submission, which
+        // waits for the tool. Closed in the `defer` below, so a task that
+        // outlives the call is in no model call of this session. See
+        // ``ModelCallMark``.
         let modelCallMark = ModelCallMark(sessionID: id, submission: target)
         defer { modelCallMark.close() }
         // The stall watch (task ^z6xcmnh), opened before the call and closed
@@ -688,7 +644,7 @@ extension RoutedSessionActor {
         // it counts only the time inside a pass of the running submission, and
         // they tell the consumer about the wait and the start of the
         // submission. They close first, so the last reports reach the watch
-        // and the turn before the watch ends.
+        // and the answer before the watch ends.
         let stallWatchId = beginGenerationStallWatch(submitsToQueue: target != nil)
         let passReports = openGenerationPassReports(callID: stallWatchId)
         let stallWatchdog = Task { await self.watchGenerationForStalls(id: stallWatchId) }
@@ -784,13 +740,18 @@ extension RoutedSessionActor {
         }
     }
 
-    /// Whether a cancellation is outstanding against the turn in flight, by either
-    /// route: the caller's own `Task.isCancelled`, or ``cancelRequestedTurnId``
-    /// set by ``RoutedSession/cancelCurrentTurn()``. Read after each `await`; do not cache.
-    var isTurnCancelled: Bool {
+    /// Whether a cancellation is outstanding against the work the pump runs,
+    /// by either route: `Task.isCancelled` of the task that reads it, or
+    /// ``cancelRequestedWorkId`` set for that work by
+    /// ``requestCancelOfRunningWork()`` (``RoutedSession/cancelCurrentTurn()``,
+    /// or the cancel of a caller whose message the work carries). This is the
+    /// one read site of ``cancelRequestedWorkId``, so the two routes cannot
+    /// diverge. Every cancel decision keys on this predicate, never on the
+    /// type of a `CancellationError`. Read after each `await`; do not cache.
+    var isWorkCancelled: Bool {
         if Task.isCancelled { return true }
-        guard let turnId = currentTurnId else { return false }
-        return cancelRequestedTurnId == turnId
+        guard let workId = pumpWork?.id else { return false }
+        return cancelRequestedWorkId == workId
     }
 
     /// Whether `error` is a recoverable context-overflow failure:
@@ -833,88 +794,36 @@ extension RoutedSessionActor {
             configuredTargetTokens: budget.targetTokens)
     }
 
-    /// Runs the earliest still-pending queued prompt as one normal recorded turn.
-    /// See ``RoutedSession/dispatchNextPrompt()`` for the full contract.
+    /// See ``RoutedSession/dispatchNextPrompt()``. A thin helper over the
+    /// pump: it releases the front queued prompt as a caller message, and
+    /// waits for its answer. The prompt keeps its id, which
+    /// ``SessionEvent/turnStarted(_:)`` reports.
     ///
-    /// Dequeues the front prompt and any pending events in one atomic
-    /// `SessionOutbox.drainForDispatch()` call, inside the same turn lock
-    /// ``generate(grammar:entryPoint:prompt:responseTokenCeiling:onEvent:_:)`` uses. Honors ``grammar``. The
-    /// prompt's id is reported in ``SessionEvent/turnStarted(_:)``.
+    /// With no queued prompt, it wakes the pump and waits until the pump has
+    /// no work left: the pump delivers each settled run's terminal by itself.
+    /// This call also ends the hold on mail that a failed submission gave
+    /// back, or that a cancel held (``SessionOutbox/releaseHeldMail()``), so
+    /// that mail gets one more delivery.
     ///
-    /// A drain that finds no queued prompt but holds a settled run's terminal runs
-    /// a delivery turn with ``settledRunDeliveryPrompt``. A drain that holds only
-    /// progress or elicitation reports re-queues them and runs no turn.
-    ///
-    /// - Returns: The response text the turn produced, or `nil` when no turn ran.
-    /// - Throws: Whatever the dispatched turn throws.
+    /// - Returns: The reply to the released prompt; with no queued prompt,
+    ///   the reply of the last answer that only mail started while this call
+    ///   waited, or `nil`.
+    /// - Throws: Whatever the answer of the released prompt throws, or
+    ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)``.
     func dispatchNextPrompt() async throws -> String? {
-        let turnId = try await beginTurn()
-        defer { endTurn() }
-
-        let drained = await outbox.drainForDispatch()
-        let pendingEvents = drained.events.map(\.event)
-        await notifyTurnBoundaryTools()
-        guard let queued = drained.prompt else {
-            return try await deliverSettledRunsIfAny(turnId: turnId, pendingEvents: pendingEvents)
+        try refuseWaitInsideOpenSubmission()
+        await attachOutboxJournalIfNeeded()
+        let released = await outbox.releaseFrontPrompt(answer: PumpAnswer(), serviceContext: ServiceContext.current)
+        guard let released else {
+            await outbox.releaseHeldMail()
+            wakePump()
+            return await awaitPumpIdle()
         }
-
-        // Only now — with a prompt confirmed to actually dispatch as a turn
-        // — is it safe to record the session's first-line meta event.
-        await recordSessionMetaIfNeeded()
-        return try await runDispatchedTurn(
-            turnId: turnId, promptId: queued.id, pendingEvents: pendingEvents,
-            ownPrompt: TranscriptEntryMapper.flattenedText(queued.prompt))
+        wakePump()
+        return try await awaitAnswer(of: released)
     }
 
-    /// The empty-queue half of ``dispatchNextPrompt()``: runs a delivery turn
-    /// when `pendingEvents` holds a run's terminal, and re-queues them otherwise.
-    /// The re-queue path does not record the session meta line.
-    ///
-    /// - Returns: The delivery turn's response, or `nil` when no turn ran.
-    /// - Throws: Whatever the delivery turn throws.
-    private func deliverSettledRunsIfAny(turnId: TurnID, pendingEvents: [OperationEvent]) async throws -> String? {
-        guard pendingEvents.contains(where: { $0.kind == .completed }) else {
-            await requeueUnattachedPendingEvents(events: pendingEvents)
-            await outbox.finishDispatch()
-            return nil
-        }
-        await recordSessionMetaIfNeeded()
-        return try await runDispatchedTurn(
-            turnId: turnId, promptId: nil, pendingEvents: pendingEvents,
-            ownPrompt: Self.settledRunDeliveryPrompt)
-    }
-
-    /// Runs one turn under the dispatch bracket and releases the outbox's
-    /// dispatched slot on every exit. The release is an `await`, so the outcome
-    /// is captured instead of returned directly.
-    ///
-    /// - Parameters:
-    ///   - turnId: This turn's identity, minted by ``beginTurn()``.
-    ///   - promptId: The queued prompt this turn dispatched, or `nil` for a delivery turn.
-    ///   - pendingEvents: The events the drain claimed, in outbox order.
-    ///   - ownPrompt: This turn's own prompt text.
-    /// - Returns: The response text the turn produced.
-    /// - Throws: Whatever the turn throws.
-    private func runDispatchedTurn(
-        turnId: TurnID, promptId: PromptID?, pendingEvents: [OperationEvent], ownPrompt: String
-    ) async throws -> String {
-        let outcome: Result<String, any Error>
-        let ceiling = ResponseTokenCeiling(requested: nil, contextTokens: contextTokens)
-        do {
-            outcome = .success(
-                try await runTurn(
-                    grammar: grammar, turnId: turnId, entryPoint: .dispatch, promptId: promptId,
-                    pendingEvents: pendingEvents, ownPrompt: ownPrompt, responseTokenCeiling: ceiling,
-                    respondBody(grammar: grammar, responseTokenCeiling: ceiling.resolved)
-                ))
-        } catch {
-            outcome = .failure(error)
-        }
-        await outbox.finishDispatch()
-        return try outcome.get()
-    }
-
-    /// Composes this turn's model-visible prompt: `pendingEvents` rendered as a
+    /// Composes a submission's model-visible prompt: `pendingEvents` rendered as a
     /// plain-text preamble (see ``OperationEventSegment/renderedLine(for:)``), a blank
     /// line, then `prompt`. Returns `prompt` unchanged when `pendingEvents` is empty.
     private static func composedPrompt(pendingEvents: [OperationEvent], prompt: String) -> String {

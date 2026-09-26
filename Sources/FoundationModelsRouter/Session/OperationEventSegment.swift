@@ -1,11 +1,12 @@
 import Foundation
 import FoundationModels
 
-/// A ``PersistableStructuredSegment`` durably recording one drained ``OperationEvent`` on the `.prompt` entry it rode into a turn.
+/// A ``PersistableStructuredSegment`` durably recording one drained ``OperationEvent`` on the `.prompt` entry it rode into a submission.
 ///
-/// ``RoutedSessionActor``'s turn chokepoint drains
-/// `SessionOutbox.drainForDispatch()` at the start of every turn and
-/// renders each drained event as a plain-text preamble line the model reads
+/// The pump of ``RoutedSessionActor`` takes the mail of the session
+/// (`SessionOutbox.takeSubmissionBatch(deliveringRunsOf:)`) at the start of
+/// every submission and renders each taken event as a plain-text preamble
+/// line the model reads
 /// (see ``renderedLine(for:)``) — but the model never sees anything beyond
 /// that flattened text, since the live `LanguageModelSession` only ever
 /// accepts a plain prompt string (``LanguageModelSessionBackend``'s

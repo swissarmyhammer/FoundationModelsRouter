@@ -1,16 +1,16 @@
 /// One turn's identity on one session — the correlation key that ties a
 /// submitted prompt to the events the turn it started produced.
 ///
-/// Minted by ``RoutedSessionActor/beginTurn()`` from the monotonic counter the
-/// session already keeps for its human-wait bookkeeping, so a session has one
-/// turn-identity space rather than a second one invented for reporting. Unique
-/// within its session and never reused; pair it with ``RoutedSession/id`` for an
-/// identity unique across sessions.
+/// Minted by the pump of the session from the monotonic counter of its work
+/// (``RoutedSessionActor/lastWorkId``), so a session has one identity space
+/// rather than a second one invented for reporting. Unique within its session
+/// and never reused; pair it with ``RoutedSession/id`` for an identity unique
+/// across sessions.
 ///
-/// Consecutive turns need not take consecutive ids. Every holder of the turn
-/// lock takes one, including ``RoutedSession/compact(prompt:budget:)``, which
-/// runs no generation and therefore reports no ``SessionEvent/turnStarted(_:)``
-/// of its own.
+/// Consecutive turns need not take consecutive ids. Every work of the pump
+/// takes one, including ``RoutedSession/compact(prompt:budget:)``, which runs
+/// no generation and therefore reports no ``SessionEvent/turnStarted(_:)`` of
+/// its own.
 ///
 /// Opaque on purpose: comparing two of these, and printing one, is the whole of
 /// what a client does with it.
@@ -20,8 +20,8 @@ public struct TurnID: Hashable, Sendable, CustomStringConvertible {
 
     /// Wraps one raw turn number.
     ///
-    /// `internal`, deliberately: only ``RoutedSessionActor/beginTurn()`` mints
-    /// these, which is what keeps the handle opaque to clients.
+    /// `internal`, deliberately: only the pump of the session mints these,
+    /// which is what keeps the handle opaque to clients.
     ///
     /// - Parameter value: The session's own monotonic turn number.
     internal init(_ value: UInt64) {

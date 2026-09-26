@@ -3,8 +3,7 @@ import FoundationModels
 
 /// The outcome of ``RoutedSession/cancelCurrentTurn()``.
 public enum TurnCancellationResult: Sendable, Equatable {
-    /// A turn was in flight, or a ``RoutedSession/respond(to:maxTokens:)`` call
-    /// was draining the run plane.
+    /// The pump of the session ran work, or a caller message waited for it.
     ///
     /// Cancellation is cooperative. This reports that the request was recorded,
     /// not that the model or a tool has stopped.
@@ -37,8 +36,15 @@ public enum PromptCancellationResult: Sendable, Equatable {
 /// generation surface.
 ///
 /// Every generation method records the turn's new transcript entries, whether
-/// the model returns or throws. One session never has two turns in flight:
-/// a turn holds ``RoutedSessionActor/turnLock`` for its whole length. Model
+/// the model returns or throws. A session is a queue of messages with no lock
+/// (`generation-queue.md`, section 5.4): each generation method sends one
+/// message and waits only for its answer. One pump task for each session is
+/// the only code that submits for that session, and it submits the next
+/// item only after the result of the last one, so one session never has two
+/// SDK calls. A message that arrives while a submission runs waits for the
+/// next submission, and every waiting message that can share one submission
+/// goes into it. The terminal of a settled background run is mail: the pump
+/// delivers it to the model in a later submission, with no caller call. Model
 /// work over one model does not overlap: each model call of a turn is one
 /// submission to the ``GenerationQueue`` of that model, and the one worker of
 /// the queue runs the submissions one at a time, first in first out. A
@@ -47,8 +53,10 @@ public enum PromptCancellationResult: Sendable, Equatable {
 /// holds the model for every other session on it. A tool that starts long
 /// work, or waits for a child session on the same model, is a background
 /// tool: it returns at once, and its result comes back as mail. An in-band
-/// tool body that asks a session on the same model for an answer is refused
-/// at once with ``GenerationQueueError/waitInsideOpenSubmission(model:)``.
+/// tool body that asks its own session, or a session on the same model, for
+/// an answer is refused at once with
+/// ``GenerationQueueError/waitInsideOpenSubmission(model:)``. A background
+/// body asks its own session and gets the answer of a later submission.
 public protocol RoutedSession: Actor {
     /// The resolved profile this session runs against.
     nonisolated var profile: LanguageModelProfile { get }
@@ -112,32 +120,32 @@ public protocol RoutedSession: Actor {
     /// it is. A summary that does not shrink the live context is discarded,
     /// and ``CompactionResult/shortfall`` states why.
     ///
-    /// A compaction holds the turn lock, so ``cancelCurrentTurn()`` can cancel it.
-    /// To recover from `LanguageModelError.contextSizeExceeded`, compact with
-    /// a lower target and retry once.
+    /// The pump runs the compaction between two submissions, so it never runs
+    /// beside a submission of this session, and ``cancelCurrentTurn()`` can
+    /// cancel it. To recover from `LanguageModelError.contextSizeExceeded`,
+    /// compact with a lower target and retry once.
     ///
     /// - Parameter budget: The token budget to compact against, or `nil` for this
     ///   session's resolved working context.
     /// - Throws: The summarizer's error. A caller-driven compaction offers the
     ///   own model only, so a summarizer failure here reaches the caller.
     ///   Also `CancellationError` when cancelled, or
-    ///   ``SessionReentryError/sameSessionTurnInFlight(sessionID:)`` when called
-    ///   from a tool of this session's own turn.
+    ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)`` when called
+    ///   from an in-band tool of this session's own submission.
     @discardableResult
     func compact(prompt: CompactionPrompt, budget: TokenBudget?) async throws -> CompactionResult
 
     /// Generates a complete text response to a prompt, recording the call.
     ///
-    /// This call drains both planes before it answers. The content plane is
-    /// compacted into each turn's prompt as a preamble. The run plane is drained
-    /// after this call's own turn: every background run is awaited to
-    /// settlement, and a further turn delivers the results to the model. Each
-    /// further turn that starts new background work starts one more round. The
-    /// drain ends when a round finds no background run to await; no count
-    /// bounds the rounds.
-    /// The drain does not end background runs; that is ``close()``'s job. A
-    /// cancellation ends the drain and returns the last turn's answer, and the
-    /// runs it waited on stay running.
+    /// This call is a helper: it sends the prompt as one message, and waits
+    /// for its answer. The mail that waits goes into the prompt of the
+    /// submission as a preamble. The answer is the final reply of the
+    /// submission that carried the prompt, and of each continuation of it
+    /// (a compaction, a retry, a recovery). A background run that the
+    /// submission started does not hold the answer: its terminal is mail, and
+    /// the pump delivers it to the model in a later submission. A caller whose
+    /// task is cancelled withdraws its message, or stops the submission that
+    /// carries it.
     ///
     /// Nothing bounds a decode: there is no timeout. A generation with no
     /// observable progress reports ``SessionEvent/generationStalled(_:)`` on
@@ -150,8 +158,7 @@ public protocol RoutedSession: Actor {
     /// ``SessionEvent/submissionStarted`` when the worker starts it, on
     /// ``streamSessionEvents()``.
     ///
-    /// Every turn this call runs — its own turn, and each further turn of the
-    /// run-plane drain — opens one OpenTelemetry span named
+    /// Each answer the pump runs opens one OpenTelemetry span named
     /// ``RouterTracing/SpanName/turn``, of kind `client`, through the tracer
     /// ``RouterTracing/tracer(explicit:)`` resolves from the handle this
     /// session came off. Unbootstrapped, that resolves to a no-op tracer, so an
@@ -180,19 +187,20 @@ public protocol RoutedSession: Actor {
     /// so the payload stays free of the caller's own content.
     ///
     /// - Parameter maxTokens: The token ceiling, or `nil` for the resolved context of the model.
-    /// - Returns: The model's complete text response; the last drained turn's
-    ///   when this call's own turn backgrounded work.
-    /// - Throws: ``SessionReentryError/sameSessionTurnInFlight(sessionID:)`` when
-    ///   called from a tool of this session's own turn, or
-    ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)`` when called
-    ///   in band from a tool of a submission on the same model.
+    /// - Returns: The model's complete text response: the final reply of the
+    ///   answer that carried the prompt.
+    /// - Throws: ``GenerationQueueError/waitInsideOpenSubmission(model:)`` when
+    ///   called in band from a tool of a submission of this session, or of a
+    ///   submission on the same model.
     func respond(to prompt: String, maxTokens: Int?) async throws -> String
 
     /// Streams a text response to a prompt as it is produced, recording the call.
     ///
-    /// Abandoning the stream cancels the turn behind it, as ``cancelCurrentTurn()``
-    /// does, and records it as a cancelled turn. This surface does not drain the
-    /// run plane; it finishes while a backgrounded run is in flight. A stall
+    /// The prompt is one message that goes alone in its submission, because
+    /// its fragments belong to this stream. Abandoning the stream cancels the
+    /// submission behind it, as ``cancelCurrentTurn()`` does, and records it
+    /// as a cancelled turn. The stream finishes while a backgrounded run is in
+    /// flight; the pump delivers its terminal later, as mail. A stall
     /// reports ``SessionEvent/generationStalled(_:)`` on ``streamSessionEvents()``
     /// with ``GenerationProgressVisibility/fragments(observed:)`` visibility.
     /// A wait for the worker of the generation queue is not a stall; it
@@ -224,8 +232,9 @@ public protocol RoutedSession: Actor {
     /// ``SessionEvent/submissionQueued``, and each submission emits
     /// ``SessionEvent/submissionStarted`` when the worker starts it.
     ///
-    /// Abandoning this stream cancels the turn. This surface does not drain the
-    /// run plane. A run that settles before the stream ends is reported as
+    /// Abandoning this stream cancels the turn. The stream finishes while a
+    /// backgrounded run is in flight. A run that settles before the stream
+    /// ends is reported as
     /// ``SessionEvent/runSettled(_:)``; a later one is reported on
     /// ``streamSessionEvents()``. A call that closes inside the turn reports
     /// its attachments here as ``SessionEvent/toolCallReport(_:)``, after its
@@ -278,16 +287,19 @@ public protocol RoutedSession: Actor {
     /// returns its response. A cancellation that lands before any model call
     /// starts makes the turn throw without calling the model. The transcript
     /// records a cancelled turn as a failed turn, with one close. The outbox
-    /// follows the attach-or-requeue rule. The turn lock is released. A turn
-    /// whose submission still waits for the worker of the generation queue is
-    /// a turn in flight: the cancellation removes that submission from the
-    /// queue at once, it never runs, and the worker runs the next item. A
-    /// running submission is cancelled on the task that runs it.
+    /// follows the attach-or-requeue rule. A turn whose submission still waits
+    /// for the worker of the generation queue is a turn in flight: the
+    /// cancellation removes that submission from the queue at once, it never
+    /// runs, and the worker runs the next item. A running submission is
+    /// cancelled on the task that runs it.
     ///
-    /// Only the turn in flight is affected. A compaction's summarizer call is
-    /// cancelled where it stands.
-    /// A ``respond(to:maxTokens:)`` draining the run plane stops draining and
-    /// returns its last turn's answer; the runs it waited on stay running.
+    /// Every caller message that waits for the pump is withdrawn: its caller
+    /// gets `CancellationError`, and it never reaches the model. The mail is
+    /// not withdrawn: it stays in the outbox for a later submission, because a
+    /// run terminal must not be lost. It waits there for new mail or a new
+    /// message, so the cancel does not start a submission of its own. A
+    /// compaction's summarizer call is cancelled where it stands. A background
+    /// run keeps running.
     @discardableResult
     func cancelCurrentTurn() async -> TurnCancellationResult
 
@@ -297,8 +309,9 @@ public protocol RoutedSession: Actor {
     /// the ``GenerationQueue`` of the model: every other session on that model
     /// waits for the end of the submission. To wait for a person without
     /// holding the model, raise an elicitation from a background run
-    /// (``ToolContext/elicit(_:)``). This session keeps its own turn lock
-    /// throughout, so no second turn of this session starts during the wait.
+    /// (``ToolContext/elicit(_:)``). The pump of this session keeps the answer
+    /// running throughout, so a message that arrives during the wait goes into
+    /// a later submission.
     ///
     /// The call releases nothing and acquires nothing, so a throw or a
     /// cancellation from `body` leaves every lock as it was, and overlapping
@@ -353,26 +366,26 @@ public protocol RoutedSession: Actor {
     /// Idempotent.
     func close() async
 
-    /// Runs the earliest pending prompt in this session's queue as one recorded
-    /// turn, with any pending turn-riding events.
+    /// Releases the earliest pending prompt in this session's queue as a
+    /// message, and waits for its answer: a thin helper over the pump of the
+    /// session. The mail that waits rides the same submission.
     ///
-    /// Nothing in this package drains the queue automatically. A driver waits
-    /// on ``awaitQueuedWork()`` and then calls this method. When no prompt is
-    /// queued but a background run has settled, this runs a delivery turn that
-    /// reports the run's terminal to the model.
+    /// A queued prompt waits until a driver releases it with this method. The
+    /// mail needs no driver: the pump delivers each settled run's terminal by
+    /// itself. When no prompt is queued, this call waits until the pump has no
+    /// work left, and returns the reply of the last answer that only mail
+    /// started while it waited.
     ///
-    /// Within the queue, prompts dispatch in enqueue order. Between the queue
-    /// and the direct ``respond(to:maxTokens:)`` path there is no order; a
-    /// client that needs one sequences the calls itself. The turn lock is a
-    /// strict FIFO ``AsyncSemaphore``, and a cancelled caller keeps its place
-    /// in line.
+    /// Within the queue, prompts dispatch in enqueue order. A released prompt
+    /// waits behind the messages that arrived before it, and it shares a
+    /// submission with every waiting message that can share one.
     ///
     /// A turn this call runs opens one span, exactly as
     /// ``respond(to:maxTokens:)`` states, with `turn.entry_point` reading
     /// `dispatch`. A call that runs no turn opens no span.
     ///
-    /// - Returns: The model's response text, or `nil` if no prompt was queued
-    ///   and no run had settled when this call drained the outbox.
+    /// - Returns: The model's response text, or `nil` when no prompt was queued
+    ///   and no answer that only mail started ended while this call waited.
     func dispatchNextPrompt() async throws -> String?
 
     /// Suspends until this session holds work for a future turn: a queued

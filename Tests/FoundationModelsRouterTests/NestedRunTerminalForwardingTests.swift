@@ -221,14 +221,21 @@ struct NestedRunTerminalForwardingTests {
     /// The journaled terminals under `token`, read through the public
     /// `TranscriptEvent.operationEvents`.
     ///
+    /// The journal writes each posted event as a `.toolOutput` entry of its
+    /// own. The pump of the session also delivers a settled terminal as mail,
+    /// in the `.prompt` entry of a later submission (task ^3qx0mpt). That
+    /// copy is a delivery, not a journal write, so this reads the
+    /// `.toolOutput` entries only.
+    ///
     /// - Parameters:
     ///   - recorder: The recorder the session journals through.
     ///   - token: The run's completion token.
-    /// - Returns: Every `.completed` event under `token`, in journal order.
+    /// - Returns: Every journaled `.completed` event under `token`, in
+    ///   journal order.
     private static func journaledTerminals(
         in recorder: InMemoryRecorder, for token: String
     ) async -> [OperationEvent] {
-        await recorder.events.flatMap(\.operationEvents).filter {
+        await recorder.events.filter { $0.kind == .toolOutput }.flatMap(\.operationEvents).filter {
             $0.kind == .completed && $0.correlationID == token
         }
     }

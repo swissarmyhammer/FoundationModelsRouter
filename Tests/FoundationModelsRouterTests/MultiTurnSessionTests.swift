@@ -34,7 +34,7 @@ struct MultiTurnSessionTests {
     ///
     /// `@unchecked Sendable` is safe for the same reason `StubSessionBackend`
     /// is: `RoutedSessionActor` drives every method call on one backend
-    /// through the owning session's turn lock, so there is never concurrent access to
+    /// through the owning session's pump, one at a time, so there is never concurrent access to
     /// guard against in practice.
     private final class TrackingBackend: LanguageModelSessionBackend, @unchecked Sendable {
         /// The real stub every call is forwarded to.
@@ -343,16 +343,6 @@ struct MultiTurnSessionTests {
         )
     }
 
-    /// Spins cooperatively until `condition` holds or a bounded number of
-    /// yields elapse, so a scheduler-ordered state change is observed without
-    /// a fixed sleep.
-    private static func spin(until condition: @Sendable () async -> Bool) async {
-        for _ in 0..<100_000 {
-            if await condition() { return }
-            await Task.yield()
-        }
-    }
-
     // MARK: - Same backend serves every turn
 
     @Test("the same backend instance serves two respond() calls on one session")
@@ -432,9 +422,14 @@ struct MultiTurnSessionTests {
 
         let session = profile.standard.makeSession()
 
-        // Start a respond() call; it suspends inside the backend body.
+        // Start a respond() call; it suspends inside the backend body. The
+        // pump of the session reaches the backend on a task of its own, so the
+        // wait is bounded by the wall clock, never by a count of yields.
         let respondTask = Task { try await session.respond(to: "turn") }
-        await Self.spin(until: { log.events.contains("respond-enter") })
+        #expect(
+            await BoundedWait.conditionReached("the respond call entering the backend") {
+                log.events.contains("respond-enter")
+            })
 
         // A fork reads the settled transcript of the session, so it does not
         // wait for the turn above (task ^dpn2ytt). It makes the child's

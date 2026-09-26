@@ -198,7 +198,7 @@ public actor Router {
         reporting progress: ResolutionProgress,
         span: any Span
     ) async throws -> LanguageModelProfile {
-        // The cancellable acquire, unlike the one a session turn lock takes: a
+        // The cancellable acquire: a
         // resolve queued behind another resolve holds nothing yet, so a caller
         // the user cancels leaves the queue at once instead of waiting for a
         // permit it no longer wants. See ``AsyncSemaphore/waitUnlessCancelled()``.

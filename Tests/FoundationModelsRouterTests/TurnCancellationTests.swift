@@ -692,10 +692,10 @@ struct TurnCancellationTests {
     /// observed through `observer` under a bounded spin rather than by awaiting
     /// the turn.
     ///
-    /// The indirection is the point: a regression that strands a turn lock
-    /// blocks every later turn on that session forever, so awaiting such a turn
-    /// directly would hang the whole suite instead of failing an assertion in the
-    /// test that caught it.
+    /// The indirection is the point: a regression that strands the pump
+    /// blocks every later message on that session forever, so awaiting such a
+    /// turn directly would hang the whole suite instead of failing an assertion
+    /// in the test that caught it.
     private static func followUpTurnCompletes(
         on session: any RoutedSession,
         observer: TurnObserver,
@@ -704,9 +704,8 @@ struct TurnCancellationTests {
         let task = Task { try await session.respond(to: prompt) }
         await BoundedWait.spin(until: { await observer.exited.contains(prompt) })
         guard await observer.exited.contains(prompt) else {
-            // Never admitted to the model at all — suspended on the turn lock. Cancelling
-            // will not resume it (``AsyncSemaphore/wait()`` ignores cancellation
-            // by design), but the suite must not await it either.
+            // Never admitted to the model at all — its message was stranded. The
+            // suite must not await it.
             task.cancel()
             return false
         }
@@ -718,16 +717,16 @@ struct TurnCancellationTests {
     ///
     /// ``followUpTurnCompletes(on:observer:prompt:)`` for a test that has to *see*
     /// what the next turn did — its own ``SessionEvent/compaction(_:)``, say — and
-    /// bounded by the same spin for the same reason: a regression that stranded a
-    /// turn lock would hang the suite rather than fail the test that caught it.
+    /// bounded by the same spin for the same reason: a regression that stranded
+    /// the pump would hang the suite rather than fail the test that caught it.
     ///
     /// Unlike that method, this one *does* await the task on its give-up path, and
     /// the difference is deliberate — do not "fix" the two to match. This task
     /// consumes an `AsyncThrowingStream`, whose `next()` is cancellation-aware and
     /// ends, so cancelling it always completes it. ``followUpTurnCompletes(on:observer:prompt:)``
-    /// wraps a bare `respond(to:)` that can be suspended in ``AsyncSemaphore/wait()``,
-    /// which ignores cancellation by design, so awaiting it there would hang exactly
-    /// when the helper exists to avoid hanging.
+    /// wraps a bare `respond(to:)` whose answer a stranded pump never gives, so
+    /// awaiting it there would hang exactly when the helper exists to avoid
+    /// hanging.
     ///
     /// - Parameters:
     ///   - session: The session to run one more turn on.
@@ -1023,18 +1022,17 @@ struct TurnCancellationTests {
         #expect(afterEvents.last?.text == "ok-after")
     }
 
-    // MARK: - Lock accounting
+    // MARK: - Nothing stranded
 
-    @Test("cancelling a turn suspended in awaitingUser leaves the turn lock balanced and blocks no other session")
+    @Test("cancelling a turn suspended in awaitingUser leaves the session idle and blocks no other session")
     @MainActor
-    func cancellingATurnSuspendedInAwaitingUserKeepsTheTurnLockBalanced() async throws {
+    func cancellingATurnSuspendedInAwaitingUserLeavesTheSessionIdle() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let sessionA = fixture.model.makeSession()
         let sessionB = fixture.model.makeSession()
-        let turnLockA = try #require(sessionA as? RoutedSessionActor).turnLock
 
         // The turn suspends on a person from inside `awaitingUser`, which holds
         // no generation place, when the cancellation arrives: the interaction
@@ -1045,20 +1043,19 @@ struct TurnCancellationTests {
 
         let turnTask = Task { try await sessionA.respond(to: "cancel-in-wait") }
         await insideWait.wait()
-        #expect(turnLockA.availablePermits == 0)
+        #expect(await sessionA.isPumpRunning)
 
         #expect(await sessionA.cancelCurrentTurn() == .requested)
         try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
 
-        // Exactly one permit of the turn lock is back — not two and not none.
-        #expect(turnLockA.availablePermits == 1)
-        #expect(turnLockA.waiterCount == 0)
+        // The answer ended, and nothing of it waits.
+        #expect(await sessionA.becomesIdle())
 
         // The behavioral proof: another session over the same model still
         // generates, and so does the cancelled one.
         #expect(await Self.followUpTurnCompletes(on: sessionB, observer: fixture.observer, prompt: "other-session"))
         #expect(await Self.followUpTurnCompletes(on: sessionA, observer: fixture.observer))
-        #expect(turnLockA.availablePermits == 1)
+        #expect(await sessionA.becomesIdle())
     }
 
     // MARK: - The outbox rule
@@ -1174,9 +1171,9 @@ struct TurnCancellationTests {
         #expect(await session.cancelCurrentTurn() == .requested)
         try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
 
-        // `drainForDispatch()` is the commit point, and a cancellation does not roll
-        // it back: the prompt is spent, and its id reports what it reported the
-        // moment it was drained.
+        // The release of the prompt is the commit point, and a cancellation does
+        // not roll it back: the prompt is spent, and its id reports what it
+        // reported the moment it was released.
         #expect(await session.pendingPrompts().isEmpty)
         #expect(await session.cancel(id: queued) == .alreadySent)
     }
@@ -1270,7 +1267,7 @@ struct TurnCancellationTests {
         #expect(await fixture.recorder.events.last?.text == "ok-stubborn")
     }
 
-    @Test("a turn cancelled while queued behind another never reaches the model at all")
+    @Test("a respond cancelled while its message waits behind another submission never reaches the model, and records nothing")
     @MainActor
     func cancellingAQueuedTurnNeverReachesTheModel() async throws {
         let dir = Self.makeTempDir()
@@ -1278,11 +1275,10 @@ struct TurnCancellationTests {
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = fixture.model.makeSession()
-        let turnLock = try #require(session as? RoutedSessionActor).turnLock
 
-        // The first turn holds the turn lock and suspends inside the model without
-        // checking cancellation, so the second turn is provably queued rather than
-        // racing to start.
+        // The first submission suspends inside the model without checking
+        // cancellation, so the second message provably waits in the outbox
+        // rather than racing to start.
         let insideFirstTurn = AsyncSemaphore(value: 0)
         let releaseFirstTurn = AsyncSemaphore(value: 0)
         fixture.hook.midTurn = { prompt in
@@ -1295,30 +1291,32 @@ struct TurnCancellationTests {
         await insideFirstTurn.wait()
 
         let queuedTask = Task { try await session.respond(to: "queued-and-cancelled") }
-        await BoundedWait.spin(until: { turnLock.waiterCount == 1 })
-        #expect(turnLock.waiterCount == 1)
+        #expect(
+            await BoundedWait.conditionReached("the second message waiting in the outbox") {
+                await session.outbox.waitingMessageCount == 1
+            })
 
-        // Cancelled while suspended on the turn lock. Its acquisition ignores cancellation by
-        // design, so this turn still takes its place in line — what it does once it
-        // gets there is the question.
+        // Cancelled while its message waits. The message leaves the outbox,
+        // or the pump drops it when it takes it: it never goes into a
+        // submission.
         queuedTask.cancel()
         releaseFirstTurn.signal()
         #expect(try await firstTask.value == "ok-holds-the-lock")
 
-        // It throws rather than generating: with nothing under way to observe the
-        // cancellation, the model is never called for this turn at all — which is
-        // the one case where the turn does *not* return a response it never saw
-        // cancelled (see ``RoutedSession/cancelCurrentTurn()``).
+        // It throws rather than generating: the model is never called for this
+        // message at all — which is the one case where a cancel of work that
+        // ignores it still gives no response (see
+        // ``RoutedSession/cancelCurrentTurn()``).
         await #expect(throws: CancellationError.self) {
             try await queuedTask.value
         }
         #expect(await fixture.observer.entered == ["holds-the-lock"])
 
-        // Recorded like any other failed turn even so — the first turn's whole
-        // prompt/response pair, then the cancelled turn's lone bodyless close.
+        // No submission carried the message, so the record holds only the
+        // first submission's whole prompt/response pair.
         let events = await fixture.recorder.events
-        #expect(events.map(\.kind) == [.session, .prompt, .response, .response])
-        #expect(events.last?.text == nil)
+        #expect(events.map(\.kind) == [.session, .prompt, .response])
+        #expect(events.last?.text == "ok-holds-the-lock")
         #expect(await Self.followUpTurnCompletes(on: session, observer: fixture.observer))
     }
 
@@ -1380,8 +1378,8 @@ struct TurnCancellationTests {
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         // A budget makes this session recover from context overflow by compaction
-        // harder and retrying once — and that retry is the window where a turn
-        // holds the turn lock with no model call outstanding, so a cancellation
+        // harder and retrying once — and that retry is the window where the pump
+        // runs the answer with no model call outstanding, so a cancellation
         // arriving in it has no task to cancel and must be remembered instead.
         let session = fixture.model.makeSession(budget: Self.unreachableTriggerBudget)
 
@@ -1589,13 +1587,13 @@ struct TurnCancellationTests {
         #expect(await fixture.observer.entered.filter(Self.isSummarizerCall).count == 1)
         #expect(await fixture.observer.entered.contains("compacts-first") == false)
 
-        // And this path gave its turn lock back too, fault and stop together.
+        // And this path stranded nothing either, fault and stop together.
         fixture.hook.midTurn = nil
         #expect(await Self.followUpTurnCompletes(on: session, observer: fixture.observer))
     }
 
     @Test(
-        "cancelling a caller-driven compact() stops it too, by either route — it holds the turn lock the same way",
+        "cancelling a caller-driven compact() stops it too, by either route — the pump runs it as work the same way",
         arguments: CancellationRoute.allCases)
     @MainActor
     func cancellingACallerDrivenCompactStopsIt(route: CancellationRoute) async throws {
@@ -1616,9 +1614,10 @@ struct TurnCancellationTests {
         }
         await insideSummarizer.wait()
 
-        // A manual compaction is not a "turn" a caller ever asked to generate, but it holds
-        // the turn lock and runs real model work, so a stop reaches it on exactly the
-        // same terms — a caller no longer has to own an enclosing `Task` to get out.
+        // A manual compaction is not a "turn" a caller ever asked to generate, but the
+        // pump runs it as its work and it runs real model work, so a stop reaches it on
+        // exactly the same terms — a caller no longer has to own an enclosing `Task`
+        // to get out.
         //
         // Both routes, because routing the summarizer through the turn's own
         // cancellable model call *changed* how the caller's route arrives here: a
@@ -1636,7 +1635,7 @@ struct TurnCancellationTests {
         try await Self.awaitCancelledUnwind(compactTask, sawCancellation: sawCancellation)
         #expect(await fixture.observer.toolSawCancellation)
 
-        // And it gave its turn lock back on the way out, so the session still generates.
+        // And it stranded nothing on the way out, so the session still generates.
         fixture.hook.midTurn = nil
         #expect(await Self.followUpTurnCompletes(on: session, observer: fixture.observer))
     }

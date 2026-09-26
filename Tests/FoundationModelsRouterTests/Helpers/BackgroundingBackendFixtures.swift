@@ -1,6 +1,7 @@
 import Foundation
 import FoundationModels
 import FoundationModelsRouterTestSupport
+import Synchronization
 
 @testable import FoundationModelsRouter
 
@@ -50,17 +51,29 @@ struct LatchedBackgroundToolRunner: Tool, BackgroundTool {
 /// composed ``LatchedBackgroundToolRunner`` — each of which backgrounds its call —
 /// and answers with the last pending envelope; every later turn answers
 /// ``answerPrefix`` plus the prompt it was given, so an answer grounded in
-/// drained results is provable by reading the answer.
+/// settled results is provable by reading the answer.
 ///
-/// `@unchecked Sendable` on the same terms as ``StubSessionBackend``: the
-/// owning session drives one backend method at a time (its turn lock
-/// serializes turns), and a test reads the captures only after the driving
-/// call returned.
-final class BackgroundingBackend: LanguageModelSessionBackend, @unchecked Sendable {
+/// Every mutable field is behind one `Mutex`. The pump of the owning session
+/// drives one backend method at a time, but it delivers a settled run in a
+/// submission of its own, with no caller call (task ^3qx0mpt), so a test can
+/// read the captures while such a submission runs.
+final class BackgroundingBackend: LanguageModelSessionBackend {
     /// The prefix every non-first turn's answer opens with, so a test can
-    /// tell a drained continuation turn's answer from the first turn's
-    /// pending envelope.
+    /// tell a delivery submission's answer from the first turn's pending
+    /// envelope.
     static let answerPrefix = "answered from: "
+
+    /// The fields a call writes and a test reads.
+    private struct Captures {
+        /// See ``BackgroundingBackend/receivedPrompts``.
+        var receivedPrompts: [String] = []
+
+        /// See ``BackgroundingBackend/toolCallCount``.
+        var toolCallCount = 0
+
+        /// See ``BackgroundingBackend/toolOutputs``.
+        var toolOutputs: [String] = []
+    }
 
     private let inner = StubSessionBackend()
 
@@ -71,14 +84,17 @@ final class BackgroundingBackend: LanguageModelSessionBackend, @unchecked Sendab
     /// or `nil` to let that turn return at once.
     private let holdFirstTurn: RunLatch?
 
+    /// The one lock the captures are behind.
+    private let captures = Mutex(Captures())
+
     /// Every prompt this backend was asked to respond to, in turn order.
-    private(set) var receivedPrompts: [String] = []
+    var receivedPrompts: [String] { captures.withLock { $0.receivedPrompts } }
 
     /// How many composed tool calls this backend made, across every turn.
-    private(set) var toolCallCount = 0
+    var toolCallCount: Int { captures.withLock { $0.toolCallCount } }
 
     /// What each composed tool call handed back to the model, in call order.
-    private(set) var toolOutputs: [String] = []
+    var toolOutputs: [String] { captures.withLock { $0.toolOutputs } }
 
     /// Creates a backend over `tools`.
     ///
@@ -92,9 +108,12 @@ final class BackgroundingBackend: LanguageModelSessionBackend, @unchecked Sendab
     }
 
     func respond(to prompt: String, maxTokens: Int?) async throws -> String {
-        receivedPrompts.append(prompt)
+        let isFirstTurn = captures.withLock { captures in
+            captures.receivedPrompts.append(prompt)
+            return captures.toolCallCount == 0
+        }
         _ = try await inner.respond(to: prompt, maxTokens: maxTokens)
-        guard toolCallCount == 0 else {
+        guard isFirstTurn else {
             return Self.answerPrefix + prompt
         }
         var rendered = ""
@@ -103,9 +122,9 @@ final class BackgroundingBackend: LanguageModelSessionBackend, @unchecked Sendab
                 let mounted = ToolFailureDelivery.throwingTool(of: tool)
                     as? BackgroundToolRunner<BackgroundFixtureArguments>
             else { continue }
-            toolCallCount += 1
+            captures.withLock { $0.toolCallCount += 1 }
             rendered = try await mounted.call(arguments: BackgroundFixtureArguments(value: prompt))
-            toolOutputs.append(rendered)
+            captures.withLock { [rendered] in $0.toolOutputs.append(rendered) }
         }
         await holdFirstTurn?.waitUntilOpen()
         return rendered

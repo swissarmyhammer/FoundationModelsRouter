@@ -8,9 +8,11 @@ import Synchronization
 /// ``wait()`` is non-throwing, so acquisition runs to completion even when
 /// the task is cancelled while suspended. Cancellation is observed at the
 /// surrounding `await` boundaries and by the body of ``withPermit(isolation:_:)``.
-/// The turn lock of a session takes this acquire, because a cancelled waiter
-/// that walked away from that queue would leave a lock count that no later
-/// release ever balances.
+/// A caller that must hold a permit for the whole of its work takes this
+/// acquire, because a cancelled waiter that walked away from the queue would
+/// leave a count that no later release ever balances. A session takes no
+/// acquire of this type: its pump submits its messages one at a time, with
+/// no lock (`generation-queue.md`, section 5.4).
 ///
 /// ``waitUnlessCancelled()`` throws `CancellationError` instead, and a caller
 /// the user cancels leaves the queue at once. ``Router/resolve(profile:reporting:)``

@@ -1,4 +1,5 @@
 import Foundation
+import Tracing
 import FoundationModels
 import os
 
@@ -106,10 +107,11 @@ extension RoutedSessionActor {
 
     /// See ``RoutedSession/compact(prompt:budget:)``.
     ///
-    /// Summarizes with a fresh backend over this session's own model. Takes the
-    /// turn lock for the duration (``beginTurn()``),
-    /// then runs ``runCompaction(prompt:budget:summarizers:)`` inside the
-    /// span ``withCompactionSpan(trigger:_:)`` opens.
+    /// Asks the pump for one compaction and waits for its result. The pump
+    /// runs it between two submissions (``compactOwnModel(prompt:budget:)``),
+    /// so it never runs beside a submission of this session. A cancel of the
+    /// caller withdraws a request that waits, or stops the compaction that
+    /// runs (``cancel(compaction:)``).
     ///
     /// This compaction offers the own model only, so a summarizer failure
     /// reaches the caller — and the span records it.
@@ -118,15 +120,35 @@ extension RoutedSessionActor {
         prompt: CompactionPrompt = .default,
         budget: TokenBudget? = nil
     ) async throws -> CompactionResult {
-        try await beginTurn()
-        defer { endTurn() }
-        return try await withCompactionSpan(trigger: .caller) {
+        try refuseWaitInsideOpenSubmission()
+        let request = CompactionRequest(prompt: prompt, budget: budget, serviceContext: ServiceContext.current)
+        pendingCompactions.append(request)
+        wakePump()
+        return try await withTaskCancellationHandler {
+            try await request.answer.value()
+        } onCancel: {
+            request.answer.requestCancel()
+            Task { await self.cancel(compaction: request) }
+        }
+    }
+
+    /// Runs one caller compaction over this session's own model, inside the
+    /// span ``withCompactionSpan(trigger:_:)`` opens. Only the pump calls it.
+    ///
+    /// - Parameters:
+    ///   - prompt: The compaction prompt sent to the summarizer.
+    ///   - budget: The token budget to compact against, or `nil` for this
+    ///     session's resolved working context.
+    /// - Returns: What the compaction did.
+    /// - Throws: The summarizer's error, or `CancellationError`.
+    func compactOwnModel(prompt: CompactionPrompt, budget: TokenBudget?) async throws -> CompactionResult {
+        try await withCompactionSpan(trigger: .caller) {
             try await runCompaction(prompt: prompt, budget: budget, summarizers: [ownModelSummarizerTier()])
         }
     }
 
-    /// Auto-compaction's entry point. The caller must already hold
-    /// ``turnLock``; this method does not acquire it.
+    /// Auto-compaction's entry point. Only the pump calls it, between two
+    /// submissions of this session.
     ///
     /// Offers two summarizer tiers: the profile's ``LanguageModelProfile/flash``
     /// slot (not offered when this session is the flash slot), then this
@@ -147,7 +169,7 @@ extension RoutedSessionActor {
     ///   applied summary.
     /// - Throws: What the own model throws. `CancellationError` when a tier
     ///   fails and a cancellation is outstanding against this turn
-    ///   (``isTurnCancelled``). That case does not go on to the next tier. The
+    ///   (``isWorkCancelled``). That case does not go on to the next tier. The
     ///   abandoned tier's own failure is logged
     ///   (``noteAbandonedCompaction(discarding:tier:)``).
     func performAutoCompaction(
@@ -212,7 +234,7 @@ extension RoutedSessionActor {
     /// Abandons the compaction a summarizer tier just failed when a stop is
     /// outstanding against this turn. Otherwise returns, so the compaction
     /// goes on to the next tier or throws the failure. Keyed on
-    /// ``isTurnCancelled``, never on the failure's type.
+    /// ``isWorkCancelled``, never on the failure's type.
     ///
     /// - Parameters:
     ///   - error: The failure the tier threw.
@@ -220,7 +242,7 @@ extension RoutedSessionActor {
     /// - Throws: `CancellationError` when a cancellation is outstanding against
     ///   this turn.
     private func abandonCompactionIfCancelled(discarding error: Error, tier: CompactionSummarizerTier) throws {
-        guard isTurnCancelled else { return }
+        guard isWorkCancelled else { return }
         noteAbandonedCompaction(discarding: error, tier: tier)
         throw CancellationError()
     }
@@ -250,7 +272,8 @@ extension RoutedSessionActor {
     /// over ``backend``'s transcript, counted by this session's ``tokenCounter``.
     /// When a summary applied, records the compaction's new entries by id and
     /// replaces ``backend`` with one seeded from the new snapshot. Otherwise
-    /// leaves the session unchanged. The caller must hold ``turnLock``.
+    /// leaves the session unchanged. Only the pump calls it, between two
+    /// submissions of this session.
     ///
     /// - Parameters:
     ///   - prompt: The compaction prompt sent to the summarizer.

@@ -163,6 +163,15 @@ actor SessionMailbox {
         runsByToken[completionToken]?.latestProgressDetail = detail
     }
 
+    /// The completion tokens of every background run that settled on its own,
+    /// with no sweep. The pump of the session reads it: the terminal of such
+    /// a run is mail that can start a submission by itself.
+    ///
+    /// - Returns: The tokens.
+    func settledRunTokens() -> Set<String> {
+        Set(settledTerminalEvents.keys)
+    }
+
     /// A snapshot of every background run, in tracking order. Envelopes only, never bulk output.
     func backgroundRuns() -> [BackgroundRun] {
         trackingOrder.compactMap { token in

@@ -1,6 +1,7 @@
 import Foundation
 import FoundationModels
 import FoundationModelsRouterTestSupport
+import Synchronization
 import Testing
 
 @testable import FoundationModelsRouter
@@ -163,41 +164,74 @@ struct SessionOutboxToolWiringTests {
     }
 
     /// A backend that invokes the session's first composed tool from inside
-    /// `respond` — standing in for the SDK runtime invoking a tool
+    /// its first `respond` — standing in for the SDK runtime invoking a tool
     /// mid-generation, so a test can cancel the turn while that tool call
     /// is in flight.
     ///
-    /// `@unchecked Sendable` on the same terms as ``StubSessionBackend``:
-    /// the owning session drives one backend method at a time, and tests
-    /// read the captures only after the driving turn settled.
-    private final class ToolInvokingBackend: LanguageModelSessionBackend, @unchecked Sendable {
+    /// It invokes the tool in its first `respond` only. The terminal of a
+    /// background run is mail, and the pump of the session delivers it in a
+    /// submission of its own (task ^3qx0mpt): a backend that started a new
+    /// run in each submission would start deliveries with no end. Every
+    /// capture is behind one `Mutex`, because a test reads the captures while
+    /// such a delivery can run.
+    private final class ToolInvokingBackend: LanguageModelSessionBackend {
+        /// The fields a call writes and a test reads.
+        private struct Captures {
+            /// See ``ToolInvokingBackend/toolCallStarted``.
+            var toolCallStarted = false
+
+            /// See ``ToolInvokingBackend/renderedToolOutputs``.
+            var renderedToolOutputs: [String] = []
+
+            /// See ``ToolInvokingBackend/observedTurnTokens``.
+            var observedTurnTokens: [String?] = []
+        }
+
         private let inner = StubSessionBackend()
 
         /// The composed tool list this backend was constructed with.
         private let tools: [any Tool]
 
+        /// The one lock the captures are behind.
+        private let captures = Mutex(Captures())
+
         /// Flips just before the first composed tool is invoked, so a test
         /// can wait for the call to be in flight before cancelling.
-        private(set) var toolCallStarted = false
+        var toolCallStarted: Bool { captures.withLock { $0.toolCallStarted } }
 
         /// Every rendered output the invoked tool returned, in call order.
-        private(set) var renderedToolOutputs: [String] = []
+        var renderedToolOutputs: [String] { captures.withLock { $0.renderedToolOutputs } }
 
         /// The turn-scope binding's `completionToken` observed at each
         /// `respond` entry — what a composed tool's own per-call
         /// `correlationID` must differ from.
-        private(set) var observedTurnTokens: [String?] = []
+        var observedTurnTokens: [String?] { captures.withLock { $0.observedTurnTokens } }
 
         init(tools: [any Tool]) {
             self.tools = tools
         }
 
         func respond(to prompt: String, maxTokens: Int?) async throws -> String {
-            observedTurnTokens.append(ToolContext.current?.completionToken)
+            let isFirstCall = captures.withLock { captures in
+                captures.observedTurnTokens.append(ToolContext.current?.completionToken)
+                return captures.observedTurnTokens.count == 1
+            }
+            if isFirstCall {
+                try await invokeFirstTool(prompt: prompt)
+            }
+            return try await inner.respond(to: prompt, maxTokens: maxTokens)
+        }
+
+        /// Invokes the first composed tool, and records what it rendered.
+        ///
+        /// - Parameter prompt: The prompt of the call, which a background
+        ///   tool receives as its argument.
+        /// - Throws: What the tool throws.
+        private func invokeFirstTool(prompt: String) async throws {
             if let mounted = failureDeliveryPeeled(tools.first) as? BackgroundToolRunner<FakeToolArguments> {
-                toolCallStarted = true
+                captures.withLock { $0.toolCallStarted = true }
                 let rendered = try await mounted.call(arguments: FakeToolArguments(value: prompt))
-                renderedToolOutputs.append(rendered)
+                captures.withLock { $0.renderedToolOutputs.append(rendered) }
             }
             // The non-String counterpart: invokes the binding-only wrapper
             // from inside the turn — under the turn-scope ambient binding —
@@ -206,12 +240,11 @@ struct SessionOutboxToolWiringTests {
             if let bound = failureDeliveryPeeled(tools.first)
                 as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>
             {
-                toolCallStarted = true
+                captures.withLock { $0.toolCallStarted = true }
                 let output = try await bound.call(
                     arguments: AmbientToolArguments(value: Self.nonStringInvocationDetail))
-                renderedToolOutputs.append(output.text)
+                captures.withLock { $0.renderedToolOutputs.append(output.text) }
             }
-            return try await inner.respond(to: prompt, maxTokens: maxTokens)
         }
 
         /// The event detail the backend's non-String invocation posts — a
@@ -1471,8 +1504,13 @@ struct SessionOutboxToolWiringTests {
         #expect(composed.contains(OperationEventSegment.renderedLine(for: staged)))
 
         // The answer resumes the run, which settles with what the user chose.
+        // Its terminal is mail: the pump delivers it to the model in a
+        // submission of its own (task ^3qx0mpt).
         #expect(await session.respond(elicitationId: elicitationId.description, response: .accept(content: nil)) == .delivered)
-        let answer = try await responding.value
-        #expect(answer.contains("answered: accept"))
+        _ = try await responding.value
+        #expect(
+            await BoundedWait.conditionReached("the terminal of the resumed run reaching the model") {
+                backend.receivedPrompts.last?.contains("answered: accept") == true
+            })
     }
 }

@@ -12,14 +12,16 @@ import Testing
 /// their submissions wait behind the submission of the wait. The way to wait
 /// for a person without holding the model is an elicitation from a
 /// background run. ``RoutedSession/awaitingUser(_:)`` holds nothing and
-/// releases nothing. The per-session ``RoutedSessionActor/turnLock`` stays
-/// held for the full wait.
+/// releases nothing. A session has no lock (task ^3qx0mpt): its pump runs the
+/// answer for the full wait, and a message that arrives meanwhile waits in the
+/// outbox for the next submission.
 ///
 /// Everything runs against stubs with no network and no GPU: a backend whose
 /// `respond` runs a test-supplied closure mid-generation stands in for the SDK
 /// invoking a tool inside the model call, and that closure is what calls
-/// `awaitingUser`. Determinism comes from ``AsyncSemaphore``'s
-/// `availablePermits`/`waiterCount` observability rather than from sleeps.
+/// `awaitingUser`. Determinism comes from the observability of the pump
+/// (``RoutedSessionActor/isPumpRunning``) and of the outbox
+/// (``SessionOutbox/waitingMessageCount``) rather than from sleeps.
 ///
 /// The complementary claim — that turn serialization and ordering are unchanged
 /// when nobody calls `awaitingUser` — is covered where it already was:
@@ -27,7 +29,7 @@ import Testing
 /// callers over one model never overlap and run FIFO) and
 /// `MultiTurnSessionTests.forkDoesNotWaitForAnInFlightTurn` (a fork does not
 /// wait for an in-flight turn; it reads the settled transcript).
-@Suite("A human wait in a tool holds the model, and never releases the per-session turn lock")
+@Suite("A human wait in a tool holds the model, and the session keeps its answer running")
 struct HumanWaitGateTests {
     // MARK: - Failures raised from inside a human wait
 
@@ -83,8 +85,9 @@ struct HumanWaitGateTests {
     /// whole call of this backend to that queue, as over a live container.
     ///
     /// `@unchecked Sendable` is safe for the same reason ``StubSessionBackend``'s
-    /// is: ``RoutedSessionActor`` drives one backend's calls one at a time, now
-    /// under the session's own turn lock.
+    /// is: ``RoutedSessionActor`` drives one backend's calls one at a time,
+    /// because its one pump submits the next item only after the result of
+    /// the last one.
     private final class HookedSessionBackend: LanguageModelSessionBackend, @unchecked Sendable {
         private let hook: TurnHook
         private let observer: TurnObserver
@@ -327,7 +330,7 @@ struct HumanWaitGateTests {
 
     /// Thrown by ``completedRun(_:named:finishedWhen:)`` when the run it waited
     /// on never finished, so the test that caught the fault stops there instead
-    /// of awaiting a task suspended on a lock.
+    /// of awaiting a task that never resumes.
     private struct RunNeverFinished: Error {}
 
     /// Whether the run named `label` reached the point `condition` observes,
@@ -345,17 +348,16 @@ struct HumanWaitGateTests {
     /// reached the end of everything that can suspend it.
     ///
     /// Deliberately not a bare `await task.value`: a regression that strands a
-    /// turn lock suspends the run inside
-    /// ``AsyncSemaphore/wait()``, which ignores cancellation by design, so
-    /// awaiting such a run directly hangs the whole `swift test` run — this
-    /// target sets no `.timeLimit` trait — instead of failing the test that
-    /// caught the fault. Past the observed point nothing left in the run waits on
-    /// a lock, so awaiting from there cannot hang.
+    /// message suspends the run on an answer that never comes, so awaiting such
+    /// a run directly hangs the whole `swift test` run — this target sets no
+    /// `.timeLimit` trait — instead of failing the test that caught the fault.
+    /// Past the observed point nothing left in the run can strand it, so
+    /// awaiting from there cannot hang.
     ///
     /// - Parameters:
     ///   - task: The run to read a value from.
     ///   - label: What the run is, named in the recorded issue.
-    ///   - condition: The observable effect that says the run got past its locks.
+    ///   - condition: The observable effect that says the run got past every wait.
     /// - Returns: Whatever the run returned.
     /// - Throws: ``RunNeverFinished`` when the run never got there, after
     ///   recording an issue; otherwise whatever the run itself threw.
@@ -380,7 +382,7 @@ struct HumanWaitGateTests {
     /// - Parameters:
     ///   - task: The run to wait on.
     ///   - label: What the run is, named in the recorded issue.
-    ///   - condition: The observable effect that says the run got past its locks.
+    ///   - condition: The observable effect that says the run got past every wait.
     /// - Returns: Whatever the run returned.
     /// - Throws: ``RunNeverFinished`` when the run never got there, after
     ///   recording an issue.
@@ -401,9 +403,9 @@ struct HumanWaitGateTests {
     /// turn left the model — ``completedRun(_:named:finishedWhen:)`` with the
     /// observation every ordinary turn in this suite is bounded by.
     ///
-    /// Leaving the model call is the right point to await from: a turn's lock
-    /// is taken before it and released by a `signal()` after it, and `signal()`
-    /// cannot suspend.
+    /// Leaving the model call is the right point to await from: after it, the
+    /// pump only records the submission and gives the answer, and neither
+    /// waits for anything outside the session.
     ///
     /// - Parameters:
     ///   - turnTask: The task running the turn.
@@ -427,10 +429,10 @@ struct HumanWaitGateTests {
     /// awaiting the turn, recording an issue when that turn never reaches the
     /// model.
     ///
-    /// The indirection is the point: a regression that strands a turn lock
-    /// blocks every later turn on that session forever, so awaiting such a turn
-    /// directly would hang the whole suite instead of failing an assertion in the
-    /// test that caught it.
+    /// The indirection is the point: a regression that strands the pump
+    /// blocks every later message on that session forever, so awaiting such a
+    /// turn directly would hang the whole suite instead of failing an assertion
+    /// in the test that caught it.
     private static func followUpTurnCompletes(
         on session: any RoutedSession,
         observer: TurnObserver,
@@ -441,16 +443,13 @@ struct HumanWaitGateTests {
             await observer.exited.contains(prompt)
         }
         guard reachedTheModel else {
-            // Never admitted to the model at all — suspended on a lock. Cancelling
-            // will not resume it (``AsyncSemaphore/wait()`` ignores cancellation
-            // by design), but the suite must not await it either.
+            // Never admitted to the model at all — its message was stranded. The
+            // suite must not await it.
             task.cancel()
             return false
         }
-        // Past the model call now, so nothing left in this turn waits on a lock and
-        // awaiting it cannot hang. Awaiting rather than returning here is what lets
-        // a caller assert on lock counts afterwards without racing the turn's own
-        // release.
+        // Past the model call now, so nothing left in this turn can strand it,
+        // and awaiting it cannot hang.
         return (try? await task.value) != nil
     }
 
@@ -502,7 +501,6 @@ struct HumanWaitGateTests {
         // Two root sessions over the SAME model.
         let sessionA = fixture.model.makeSession()
         let sessionB = fixture.model.makeSession()
-        let turnLockA = try #require(sessionA as? RoutedSessionActor).turnLock
 
         // A's turn suspends on `humanGate` from inside `awaitingUser`, standing in
         // for a tool waiting on a person. `waitStarted` is signalled from inside
@@ -521,8 +519,8 @@ struct HumanWaitGateTests {
         let taskA = Task { try await sessionA.respond(to: "a-wait") }
         try await BoundedWait.awaitSignal(waitStarted, named: "the start of sessionA's human wait")
 
-        // A keeps its own turn lock for the full wait.
-        #expect(turnLockA.availablePermits == 0)
+        // A's pump keeps its answer running for the full wait.
+        #expect(await sessionA.isPumpRunning)
 
         // B's submission waits behind A's: the wait is a step of A's submission,
         // so it holds the worker of the model.
@@ -539,22 +537,20 @@ struct HumanWaitGateTests {
         #expect(try await Self.completedTurn(taskB, prompt: "b", observer: fixture.observer) == "ok-b")
         #expect(await fixture.observer.exited == ["a-wait", "b"])
         #expect(await fixture.observer.maxActive == 1)
-        #expect(turnLockA.availablePermits == 1)
-        #expect(turnLockA.waiterCount == 0)
+        #expect(await sessionA.becomesIdle())
         #expect(await queue.isRunning == false)
     }
 
-    // MARK: - The turn lock is never released early
+    // MARK: - A message that arrives during a wait waits for the next submission
 
-    @Test("a second turn on one session still cannot start while that session is inside awaitingUser")
+    @Test("a second respond on one session waits in the outbox, not in the running submission, while that session is inside awaitingUser")
     @MainActor
-    func secondTurnOnOneSessionStillBlocksDuringAHumanWait() async throws {
+    func secondRespondWaitsInTheOutboxDuringAHumanWait() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = fixture.model.makeSession()
-        let turnLock = try #require(session as? RoutedSessionActor).turnLock
 
         let humanGate = AsyncSemaphore(value: 0)
         fixture.hook.midTurn = { prompt in
@@ -565,11 +561,14 @@ struct HumanWaitGateTests {
         let firstTask = Task { try await session.respond(to: "first") }
         await BoundedWait.spin(until: { humanGate.waiterCount == 1 })
 
-        // The second turn is admitted into the actor (it is reentrant at the
-        // suspended await) but must block on the session's own turn lock, which the
-        // first turn keeps for its whole duration.
+        // The second respond is a message. It waits in the outbox, and never
+        // goes into the running submission, which keeps the model for the
+        // whole wait.
         let secondTask = Task { try await session.respond(to: "second") }
-        await BoundedWait.spin(until: { turnLock.waiterCount == 1 })
+        #expect(
+            await BoundedWait.conditionReached("the second message waiting in the outbox") {
+                await session.outbox.waitingMessageCount == 1
+            })
 
         #expect(await fixture.observer.entered == ["first"])
         #expect(await fixture.observer.maxActive == 1)
@@ -626,17 +625,16 @@ struct HumanWaitGateTests {
         #expect(child.parentId == session.id)
     }
 
-    // MARK: - Turn lock accounting on the failure paths
+    // MARK: - The failure paths strand nothing
 
-    @Test("throwing from inside awaitingUser propagates the error and leaves the turn lock free")
+    @Test("throwing from inside awaitingUser propagates the error and leaves the session idle")
     @MainActor
-    func throwingFromAHumanWaitPropagatesAndFreesTheTurnLock() async throws {
+    func throwingFromAHumanWaitPropagatesAndLeavesTheSessionIdle() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = fixture.model.makeSession()
-        let turnLock = try #require(session as? RoutedSessionActor).turnLock
 
         fixture.hook.midTurn = { prompt in
             guard prompt == "throwing" else { return }
@@ -656,24 +654,23 @@ struct HumanWaitGateTests {
             try await turnTask.value
         }
 
-        // The turn lock is free again — the failure did not strand it.
-        #expect(turnLock.availablePermits == 1)
-        #expect(turnLock.waiterCount == 0)
+        // The session is idle again — the failure stranded nothing.
+        #expect(await session.becomesIdle())
+        #expect(await session.outbox.waitingMessageCount == 0)
 
         // The proof that accounting really is balanced: the session still works.
         #expect(await Self.followUpTurnCompletes(on: session, observer: fixture.observer))
-        #expect(turnLock.availablePermits == 1)
+        #expect(await session.becomesIdle())
     }
 
-    @Test("cancelling a task inside awaitingUser leaves the turn lock balanced")
+    @Test("cancelling a task inside awaitingUser leaves the session idle")
     @MainActor
-    func cancellingInsideAHumanWaitLeavesTheTurnLockBalanced() async throws {
+    func cancellingInsideAHumanWaitLeavesTheSessionIdle() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = fixture.model.makeSession()
-        let turnLock = try #require(session as? RoutedSessionActor).turnLock
 
         // `insideWait` is signalled from inside the wait, so the test cancels at
         // a point where the turn is provably suspended on a person rather than
@@ -697,7 +694,7 @@ struct HumanWaitGateTests {
 
         let turnTask = Task { try await session.respond(to: "cancelled") }
         try await BoundedWait.awaitSignal(insideWait, named: "the turn suspending inside its human wait")
-        #expect(turnLock.availablePermits == 0)
+        #expect(await session.isPumpRunning)
 
         turnTask.cancel()
         // The turn unwinds only once the cancellation reaches its suspended body, so
@@ -709,24 +706,23 @@ struct HumanWaitGateTests {
             try await turnTask.value
         }
 
-        // The cancelled turn hands back exactly the turn lock it took.
-        #expect(turnLock.availablePermits == 1)
-        #expect(turnLock.waiterCount == 0)
+        // The cancelled answer ends, and nothing of it waits.
+        #expect(await session.becomesIdle())
+        #expect(await session.outbox.waitingMessageCount == 0)
 
         #expect(await Self.followUpTurnCompletes(on: session, observer: fixture.observer))
     }
 
     // MARK: - Overlapping and out-of-turn waits
 
-    @Test("overlapping human waits in one turn both run while the turn lock stays held, and the lock is free after")
+    @Test("overlapping human waits in one turn both run while the answer keeps running, and the session is idle after")
     @MainActor
-    func overlappingHumanWaitsKeepTheTurnLockHeld() async throws {
+    func overlappingHumanWaitsKeepTheAnswerRunning() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = fixture.model.makeSession()
-        let turnLock = try #require(session as? RoutedSessionActor).turnLock
 
         // Two waits outstanding at once — what two tools of one turn, each
         // awaiting a person, look like to the session.
@@ -745,28 +741,27 @@ struct HumanWaitGateTests {
         let turnTask = Task { try await session.respond(to: "nested") }
         try await BoundedWait.awaitSignal(innerEntered, named: "the inner human wait being entered")
 
-        // Both waits are open, and the turn still holds its lock: a wait
-        // releases nothing, so no second turn can start on this session.
-        #expect(turnLock.availablePermits == 0)
-        #expect(turnLock.waiterCount == 0)
+        // Both waits are open, and the answer still runs: a wait releases
+        // nothing, and no message waits.
+        #expect(await session.isPumpRunning)
+        #expect(await session.outbox.waitingMessageCount == 0)
 
         release.signal()
         #expect(try await Self.completedTurn(turnTask, prompt: "nested", observer: fixture.observer) == "ok-nested")
-        #expect(turnLock.availablePermits == 1)
-        #expect(turnLock.waiterCount == 0)
+        #expect(await session.becomesIdle())
+        #expect(await session.outbox.waitingMessageCount == 0)
     }
 
     @Test(
-        "a human wait overlapping a turn it is not part of leaves the turn lock at exactly one permit",
+        "a human wait overlapping a turn it is not part of leaves the session idle after the turn",
         .timeLimit(.minutes(1)))
     @MainActor
-    func waitOverlappingAnotherTurnDoesNotInflateTheTurnLock() async throws {
+    func waitOverlappingAnotherTurnLeavesTheSessionIdle() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = fixture.model.makeSession()
-        let turnLock = try #require(session as? RoutedSessionActor).turnLock
 
         // Every moment this test waits for is an ``AwaitedEvent``, resumed by the
         // run that reaches it, rather than a reading polled until ``BoundedWait``'s
@@ -781,8 +776,8 @@ struct HumanWaitGateTests {
         // wait below comes from somewhere else entirely, which is what an
         // upstream coordinator that cannot see whether a turn is in flight looks
         // like. Outside `awaitingUser`'s documented precondition, so
-        // serialization is not promised here; the turn lock's *count* must survive
-        // it regardless, because a count that drifts is permanent.
+        // serialization is not promised here; the session must still become
+        // idle after it, because a stranded pump is permanent.
         let inTurn = AwaitedEvent()
         let releaseTurn = AsyncSemaphore(value: 0)
         fixture.hook.midTurn = { prompt in
@@ -797,7 +792,7 @@ struct HumanWaitGateTests {
             return try await session.respond(to: "turn")
         }
         try await inTurn.wait()
-        #expect(turnLock.availablePermits == 0)
+        #expect(await session.isPumpRunning)
 
         // The out-of-turn wait takes nothing and gives nothing back.
         // `waitFinished` is signalled after `awaitingUser` returns, so the wait's
@@ -814,28 +809,28 @@ struct HumanWaitGateTests {
             waitFinished.signal()
         }
         try await waitEntered.wait()
-        #expect(turnLock.availablePermits == 0)
+        #expect(await session.isPumpRunning)
 
-        // The turn ending frees its lock exactly once.
+        // The turn ending ends the answer.
         releaseTurn.signal()
         try await turnFinished.wait()
         #expect(try await turnTask.value == "ok-turn")
-        #expect(turnLock.availablePermits == 1)
+        #expect(await session.becomesIdle())
 
-        // The wait ending after the turn must not change the lock count.
+        // The wait ending after the turn must not wake the pump again.
         releaseWait.signal()
         try await waitFinished.wait()
         await waitTask.value
-        #expect(turnLock.availablePermits == 1)
-        #expect(turnLock.waiterCount == 0)
+        #expect(await session.becomesIdle())
+        #expect(await session.outbox.waitingMessageCount == 0)
 
-        // With no turn in flight, a further wait must still see exactly one
-        // permit. Run as its own task, so the permit count is read from outside
-        // the wait rather than from the task that is inside it.
+        // With no turn in flight, a further wait must still see an idle
+        // session. Run as its own task, so the state is read from outside the
+        // wait rather than from the task that is inside it.
         let tailWaitFinished = AwaitedEvent()
         let tailWaitTask = Task {
             await session.awaitingUser {
-                #expect(turnLock.availablePermits == 1)
+                #expect(await session.becomesIdle())
             }
             tailWaitFinished.signal()
         }
@@ -851,7 +846,7 @@ struct HumanWaitGateTests {
         }
         try await followUpFinished.wait()
         #expect(try await followUpTask.value == "ok-\(Self.followUpPrompt)")
-        #expect(turnLock.availablePermits == 1)
+        #expect(await session.becomesIdle())
     }
 
     @Test("a turn ending while an out-of-turn human wait is open strands nothing: the model family keeps generating")
@@ -863,15 +858,13 @@ struct HumanWaitGateTests {
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let sessionA = fixture.model.makeSession()
         let sessionB = fixture.model.makeSession()
-        let turnLockA = try #require(sessionA as? RoutedSessionActor).turnLock
-        let turnLockB = try #require(sessionB as? RoutedSessionActor).turnLock
 
-        // The mirror image of `waitOverlappingAnotherTurnDoesNotInflateTheTurnLock`:
+        // The mirror image of `waitOverlappingAnotherTurnLeavesTheSessionIdle`:
         // there the wait ended after the turn, here the turn ends while the wait
         // is still open and another session waits for its own turn. Before, the
         // wait re-acquired a generation permit on its way out, and a turn that
         // ended in that window could strand the permit. Now a wait holds nothing
-        // and takes nothing back, so no order of these events can strand a lock.
+        // and takes nothing back, so no order of these events can strand work.
         let inTurnA = AsyncSemaphore(value: 0)
         let releaseTurnA = AsyncSemaphore(value: 0)
         let inTurnB = AsyncSemaphore(value: 0)
@@ -889,10 +882,10 @@ struct HumanWaitGateTests {
             }
         }
 
-        // A's turn holds its turn lock and suspends, without any wait of its own.
+        // A's pump runs its answer, which suspends without any wait of its own.
         let turnA = Task { try await sessionA.respond(to: "turn-a") }
         try await BoundedWait.awaitSignal(inTurnA, named: "sessionA's turn reaching the model")
-        #expect(turnLockA.availablePermits == 0)
+        #expect(await sessionA.isPumpRunning)
 
         // An out-of-turn wait opens on A. `waitFinished` is signalled after
         // `awaitingUser` returns, so the end of the wait is observable without
@@ -908,7 +901,7 @@ struct HumanWaitGateTests {
             waitFinished.signal()
         }
         try await BoundedWait.awaitSignal(waitEntered, named: "the out-of-turn human wait being entered")
-        #expect(turnLockA.availablePermits == 0)
+        #expect(await sessionA.isPumpRunning)
 
         // B starts its own turn on the same model. Its submission waits behind
         // A's, which holds the model.
@@ -917,13 +910,13 @@ struct HumanWaitGateTests {
             await BoundedWait.conditionReached("sessionB's submission waiting behind sessionA's") {
                 await fixture.container.generationQueue.waitingCount == 1
             })
-        #expect(turnLockB.availablePermits == 0)
+        #expect(await sessionB.isPumpRunning)
 
         // A's turn ends *while* the out-of-turn wait is still open, and B's
         // submission then reaches the model.
         releaseTurnA.signal()
         #expect(try await Self.completedTurn(turnA, prompt: "turn-a", observer: fixture.observer) == "ok-turn-a")
-        #expect(turnLockA.availablePermits == 1)
+        #expect(await sessionA.becomesIdle())
         try await BoundedWait.awaitSignal(inTurnB, named: "sessionB's turn reaching the model")
 
         // The wait ends next. It takes nothing back, so it does not suspend.
@@ -931,13 +924,11 @@ struct HumanWaitGateTests {
         try await Self.completedRun(waitTask, named: "the out-of-turn human wait") {
             waitFinished.availablePermits > 0
         }
-        #expect(turnLockA.availablePermits == 1)
-        #expect(turnLockA.waiterCount == 0)
+        #expect(await sessionA.becomesIdle())
 
         releaseTurnB.signal()
         #expect(try await Self.completedTurn(turnB, prompt: "turn-b", observer: fixture.observer) == "ok-turn-b")
-        #expect(turnLockB.availablePermits == 1)
-        #expect(turnLockB.waiterCount == 0)
+        #expect(await sessionB.becomesIdle())
 
         // The behavioral consequence: both sessions over this model still accept
         // a further turn.
@@ -945,7 +936,7 @@ struct HumanWaitGateTests {
         #expect(await Self.followUpTurnCompletes(on: sessionB, observer: fixture.observer, prompt: "after-b"))
     }
 
-    @Test("awaitingUser with no turn in flight runs the body and releases nothing")
+    @Test("awaitingUser with no turn in flight runs the body, releases nothing, and starts no pump")
     @MainActor
     func awaitingUserWithNoTurnInFlightReleasesNothing() async throws {
         let dir = Self.makeTempDir()
@@ -953,13 +944,12 @@ struct HumanWaitGateTests {
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = fixture.model.makeSession()
-        let turnLock = try #require(session as? RoutedSessionActor).turnLock
 
         // Run as its own task and bounded rather than awaited outright: a
         // regression on the wait's entry or exit route suspends it forever, and this
         // target sets no `.timeLimit` trait, so a bare await would hang the whole
         // `swift test` run instead of failing this test.
-        #expect(turnLock.availablePermits == 1)
+        #expect(await session.becomesIdle())
         let answered = AsyncSemaphore(value: 0)
         let waitTask = Task { () -> Int in
             let value = await session.awaitingUser { 42 }
@@ -971,11 +961,11 @@ struct HumanWaitGateTests {
         }
         #expect(answer == 42)
 
-        // Still exactly one permit: the wait takes no lock and gives none back.
-        #expect(turnLock.availablePermits == 1)
-        #expect(turnLock.waiterCount == 0)
+        // Still idle: the wait takes nothing and gives nothing back.
+        #expect(await session.becomesIdle())
+        #expect(await session.outbox.waitingMessageCount == 0)
 
         #expect(await Self.followUpTurnCompletes(on: session, observer: fixture.observer))
-        #expect(turnLock.availablePermits == 1)
+        #expect(await session.becomesIdle())
     }
 }

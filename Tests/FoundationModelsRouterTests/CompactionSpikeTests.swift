@@ -253,7 +253,7 @@ struct CompactionSpikeTests {
     /// `@unchecked Sendable` is safe for the same reason as that type: every
     /// access is sequential, driven by this suite's single awaited
     /// `@MainActor` test method, one call at a time, with any actor-internal
-    /// read further serialized by the owning session's turn lock.
+    /// read further serialized by the owning session's pump.
     private final class SpikeBackend: LanguageModelSessionBackend, @unchecked Sendable {
         var entries: [Transcript.Entry] = []
 

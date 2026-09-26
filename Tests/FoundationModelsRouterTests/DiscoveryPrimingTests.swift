@@ -121,7 +121,7 @@ struct DiscoveryPrimingTests {
     ///
     /// `@unchecked Sendable` on the same terms as ``StubSessionBackend``: the
     /// owning session drives one backend method at a time, serialized by its
-    /// turn lock, and tests read the log only after the driving turn returned.
+    /// pump, and tests read the log only after the driving turn returned.
     private final class PrimingLog: @unchecked Sendable {
         /// Every entry list handed to `replacingTranscript(_:)`, in call order.
         private(set) var reseeds: [[Transcript.Entry]] = []

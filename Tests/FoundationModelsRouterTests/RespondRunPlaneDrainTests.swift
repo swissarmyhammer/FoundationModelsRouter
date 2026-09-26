@@ -1,43 +1,43 @@
 import Foundation
 import FoundationModels
 import FoundationModelsRouterTestSupport
+import Synchronization
 import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises task ^nmpejc5: ``RoutedSession/respond(to:maxTokens:)`` drains the
-/// run plane before it returns, so a turn that backgrounds its tool work still
-/// answers from that work's own results rather than from the completion token
-/// the tool handed back — while ``RoutedSession/streamEvents(to:maxTokens:)``
-/// keeps backgrounding as its feature. Task ^ftdmr58 adds the run signals a
-/// settled run owes the model on each surface: its honest outcome in the
-/// drained answer, and ``SessionEvent/runSettled(_:)`` on the event stream.
-/// Task ^chw3rc6 removes the drain's round count: the drain runs until a
-/// turn starts no new background work.
+/// Exercises the run plane of a session with no drain (task ^3qx0mpt,
+/// restated from task ^nmpejc5): ``RoutedSession/respond(to:maxTokens:)``
+/// answers from its own submission, and a background run that the submission
+/// started does not hold the caller. The terminal of a settled run is mail:
+/// the pump of the session delivers it to the model in a later submission,
+/// with no caller call. Task ^ftdmr58 adds the run signals a settled run owes
+/// the model: its honest outcome reaches the model, and
+/// ``SessionEvent/runSettled(_:)`` reaches the event stream. Task ^chw3rc6
+/// removed the round count, and the pump keeps that: a model that starts new
+/// background work in each delivery gets one more delivery for each settled
+/// run.
 ///
 /// Everything runs against stubs — tools gated on a ``RunLatch``, a backend
 /// that calls them, and an ``InMemoryRecorder`` — so the suite needs no
 /// network and no GPU.
-@Suite("respond(to:): the run-plane drain, and the surfaces that keep backgrounding")
+@Suite("respond(to:): the answer of its own submission, and the pump that delivers each settled run as mail")
 struct RespondRunPlaneDrainTests {
     // MARK: - Backends
 
     /// A backend scripted to start background work for a set number of turns.
     /// Each of its first `backgroundingTurns` turns tracks one fresh run on
     /// the session's own mailbox. Every later turn tracks none. This is the
-    /// shape the drain's exit exists for: a drained turn that starts yet more
-    /// background work, until one turn does not.
+    /// shape the delivery chain ends on: a delivery that starts yet more
+    /// background work, until one delivery does not.
     ///
     /// It reaches the mailbox through the turn-scope ambient ``ToolContext``
     /// the session binds around every model call, which is the same route a
     /// tool of that turn would take.
     ///
-    /// `@unchecked Sendable` on the same terms as ``BackgroundingBackend``: the
-    /// owning session drives one backend method at a time (its turn lock
-    /// serializes turns), and a test reads `receivedPrompts` only after the
-    /// driving call returned.
-    // swiftlint:disable:next no_unchecked_sendable  the session's turn lock serializes every backend method, and the test reads the captures only after the driving call returned
-    private final class ScriptedBackgroundingBackend: LanguageModelSessionBackend, @unchecked Sendable {
+    /// The prompts are behind a `Mutex`: the pump delivers each settled run in
+    /// a submission of its own, so a test reads them while a delivery runs.
+    private final class ScriptedBackgroundingBackend: LanguageModelSessionBackend {
         /// The answer one turn produces, so a test can assert which turn's
         /// answer `respond` returned.
         ///
@@ -58,8 +58,11 @@ struct RespondRunPlaneDrainTests {
         /// one at a time.
         let releaser = BackgroundRunReleaser()
 
+        /// The prompt of each turn, behind the lock a test reads it through.
+        private let prompts = Mutex<[String]>([])
+
         /// Every prompt this backend was asked to respond to, in turn order.
-        private(set) var receivedPrompts: [String] = []
+        var receivedPrompts: [String] { prompts.withLock { $0 } }
 
         /// Makes a backend that tracks a background run in each of its first
         /// `backgroundingTurns` turns.
@@ -71,11 +74,17 @@ struct RespondRunPlaneDrainTests {
         }
 
         func respond(to prompt: String, maxTokens: Int?) async throws -> String {
-            receivedPrompts.append(prompt)
-            let turn = receivedPrompts.count
+            let turn = prompts.withLock { prompts in
+                prompts.append(prompt)
+                return prompts.count
+            }
             _ = try await inner.respond(to: prompt, maxTokens: maxTokens)
             if turn <= backgroundingTurns, let mailbox = ToolContext.current?.mailbox {
-                await releaser.track(on: mailbox)
+                let token = await releaser.track(on: mailbox)
+                // The run settles on its own, beside the submission that
+                // started it, as a quick background job does.
+                let releaser = releaser
+                Task { await releaser.release(token: token) }
             }
             return Self.answerText(ofTurn: turn)
         }
@@ -101,27 +110,55 @@ struct RespondRunPlaneDrainTests {
         }
     }
 
-    /// Tracks fake runs on a mailbox and holds each one running until the test
-    /// releases it — the controllable stand-in for background work a drained
-    /// turn starts.
+    /// Tracks fake runs on a mailbox and holds each one running until
+    /// ``release(token:)`` — the controllable stand-in for background work a
+    /// delivery submission starts.
+    ///
+    /// A released run settles on the mailbox, and its terminal then goes to
+    /// the outbox of the session as mail, as the funnel of a background tool
+    /// posts it. That mail starts the next delivery submission.
     private actor BackgroundRunReleaser {
         /// One latch per background run, keyed by the run's completion token.
         private var gates: [String: RunLatch] = [:]
 
+        /// The mailbox each run is tracked on, keyed by the run's completion
+        /// token.
+        private var mailboxes: [String: SessionMailbox] = [:]
+
+        /// The outbox each settled terminal goes to, or `nil` before
+        /// ``deliverTerminals(to:)``.
+        private var outbox: SessionOutbox?
+
+        /// Names the outbox each settled terminal goes to.
+        ///
+        /// - Parameter outbox: The outbox of the session.
+        func deliverTerminals(to outbox: SessionOutbox) {
+            self.outbox = outbox
+        }
+
         /// Tracks one fresh run whose body waits for ``release(token:)``.
         ///
         /// - Parameter mailbox: The mailbox the run is tracked on.
-        func track(on mailbox: SessionMailbox) async {
+        /// - Returns: The run's completion token.
+        func track(on mailbox: SessionMailbox) async -> String {
             let gate = RunLatch()
             let token = await trackFakeRun(on: mailbox, latch: gate)
             gates[token] = gate
+            mailboxes[token] = mailbox
+            return token
         }
 
-        /// Lets one background run settle. An unknown token is a no-op.
+        /// Lets one background run settle, and posts its terminal as mail.
+        /// An unknown token is a no-op.
         ///
         /// - Parameter token: The run's completion token.
         func release(token: String) async {
-            await gates[token]?.open()
+            guard let gate = gates.removeValue(forKey: token), let mailbox = mailboxes.removeValue(forKey: token)
+            else { return }
+            await gate.open()
+            if case .settled(let terminal) = await mailbox.wait(completionToken: token, seconds: nil) {
+                await outbox?.post(event: terminal)
+            }
         }
 
         /// Lets every run tracked so far settle, so no fake run outlives a
@@ -176,8 +213,8 @@ struct RespondRunPlaneDrainTests {
 
     // MARK: - Constants
 
-    /// The two background results the drain has to merge into the answer — one
-    /// per mounted tool, so a drain that settles only the first run is a wrong
+    /// The two background results the pump has to deliver to the model — one
+    /// per mounted tool, so a delivery of only the first run is a wrong
     /// answer rather than a lucky one.
     private static let firstToolOutput = "background result: the first job finished"
 
@@ -194,10 +231,10 @@ struct RespondRunPlaneDrainTests {
     /// mailbox wait, and its latch never opens before then.
     private static let fixtureTimeoutSeconds: TimeInterval = 0.05
 
-    /// How many turns of one `respond` call start a background run in the
-    /// no-round-count test. The card ^chw3rc6 sets it: the scripted model
-    /// starts a run in each of 6 rounds and then none, so the drain runs one
-    /// turn more than this and answers with that turn's text.
+    /// How many submissions start a background run in the no-round-count
+    /// test. The card ^chw3rc6 sets it: the scripted model starts a run in
+    /// each of 6 submissions and then none, so the pump runs one delivery
+    /// submission more than this.
     private static let backgroundingTurnCount = 6
 
     // MARK: - Fixtures
@@ -220,33 +257,11 @@ struct RespondRunPlaneDrainTests {
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
     }
 
-    /// Waits, bounded, for `session` to hold a ``RoutedSession/respond(to:maxTokens:)``
-    /// call suspended on a wait of its own run plane.
-    ///
-    /// That is the state the two cancellation routes under test have to reach:
-    /// the call's own turn is over, so no turn is in flight, and the call is
-    /// suspended on a run that will not settle. A cancellation landing a moment
-    /// earlier would land on the turn instead and prove nothing about the
-    /// drain.
-    ///
-    /// - Parameter session: The session whose drain is observed.
-    /// - Throws: ``SignalNeverArrived`` when no drain suspended on a wait inside
-    ///   the bound.
-    private static func awaitDrainWait(on session: RoutedSession) async throws {
-        guard
-            await BoundedWait.conditionReached(
-                "a respond call suspending on a wait of the run plane",
-                when: { await session.isSuspendedOnRunPlaneDrainWait })
-        else {
-            throw SignalNeverArrived()
-        }
-    }
-
     /// Opens `gates` and waits for every run tracked on `session` to settle, so
     /// no background work outlives a test.
     ///
     /// - Parameters:
-    ///   - session: The session whose mailbox is drained.
+    ///   - session: The session whose runs settle.
     ///   - gates: The latches the background runs' bodies are waiting on.
     private static func releaseBackgroundRuns(on session: RoutedSession, opening gates: [RunLatch]) async {
         let tokens: [String] = await session.mailbox.backgroundRuns().map(\.completionToken)
@@ -294,8 +309,29 @@ struct RespondRunPlaneDrainTests {
         return terminal
     }
 
+    /// Waits, bounded, until `backend` received `count` prompts: the first
+    /// submission and each delivery submission after it.
+    ///
+    /// - Parameters:
+    ///   - count: How many prompts to wait for.
+    ///   - backend: The backend to watch.
+    /// - Returns: The prompts, in call order.
+    /// - Throws: ``SignalNeverArrived`` when the prompts did not arrive
+    ///   inside the bound.
+    private static func prompts(
+        atLeast count: Int, reaching backend: BackgroundingBackend
+    ) async throws -> [String] {
+        guard
+            await BoundedWait.conditionReached("\(count) prompts reaching the backend", when: {
+                backend.receivedPrompts.count >= count
+            })
+        else { throw SignalNeverArrived() }
+        return backend.receivedPrompts
+    }
+
     /// Drives one `respond(to:)` call over `tool`, lets its run settle, and
-    /// reports the drained answer with the run's own terminal event.
+    /// reports the prompt of the delivery submission that the pump started
+    /// for it, with the run's own terminal event.
     ///
     /// - Parameters:
     ///   - tool: The one tool the session mounts.
@@ -304,32 +340,34 @@ struct RespondRunPlaneDrainTests {
     ///   - opening: Whether the run settles because the latch opens, or on
     ///     its own — by its timeout.
     ///   - dir: The temporary directory the router caches and records under.
-    /// - Returns: The answer `respond` returned and the run's terminal event.
-    private static func drainedAnswer(
+    /// - Returns: The prompt of the delivery submission and the run's
+    ///   terminal event.
+    private static func deliveryPrompt(
         over tool: LatchedBackgroundToolRunner, gate: RunLatch, opening: Bool, dir: URL
-    ) async throws -> (answer: String, terminal: OperationEvent) {
+    ) async throws -> (prompt: String, terminal: OperationEvent) {
         let container = BackgroundingLLMContainer()
         let profile = try await makeProfile(container: container, dir: dir)
         let session = profile.standard.makeSession(tools: [tool])
+        let backend = try #require(container.lastBackend)
 
-        let responding = Task { try await session.respond(to: "run the job") }
+        _ = try await session.respond(to: "run the job")
         let token = try #require(await backgroundTokens(atLeast: 1, on: session).first)
         if opening {
             await gate.open()
         }
         let terminal = try await settledTerminal(of: token, on: session)
-        let answer = try await responding.value
+        let delivery = try #require(try await prompts(atLeast: 2, reaching: backend).last)
         await gate.open()
-        return (answer, terminal)
+        return (delivery, terminal)
     }
 
-    // MARK: - respond(to:) drains before it returns
+    // MARK: - respond(to:) answers from its own submission
 
     @Test(
-        "respond(to:) waits for every run its turn backgrounded, merges their results into the same call, and returns with nothing left tracked"
+        "respond(to:) answers from its own submission, and the pump delivers the terminal of each run it backgrounded to the model with no caller call"
     )
     @MainActor
-    func respondDrainsEveryBackgroundRunBeforeReturning() async throws {
+    func respondAnswersAndThePumpDeliversEachSettledRun() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "RespondRunPlaneDrainTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -343,38 +381,42 @@ struct RespondRunPlaneDrainTests {
         ])
         let backend = try #require(container.lastBackend)
 
-        let responding = Task { try await session.respond(to: "run both jobs") }
+        // The answer is the answer of the first submission: the pending
+        // envelope the tools returned. No run holds the caller.
+        let answer = try await session.respond(to: "run both jobs")
+        #expect(!answer.hasPrefix(BackgroundingBackend.answerPrefix))
+        #expect(backend.receivedPrompts.count == 1)
 
-        // Both runs are backgrounded inside the first turn. Releasing them one at a time —
-        // and waiting for the first to settle before releasing the second —
-        // is what makes a drain that collects only the first run a wrong
-        // answer rather than a lucky one.
+        // Both runs were backgrounded inside the first submission. Releasing
+        // them one at a time makes the pump deliver each one on its own.
         let tokens = await Self.backgroundTokens(atLeast: 2, on: session)
         #expect(tokens.count == 2)
         await firstGate.open()
         _ = await session.mailbox.wait(
             completionToken: tokens[0], seconds: Self.mailboxWaitTimeoutSeconds)
         await secondGate.open()
+        _ = await session.mailbox.wait(
+            completionToken: tokens[1], seconds: Self.mailboxWaitTimeoutSeconds)
 
-        let answer = try await responding.value
+        // Each run's own output reached the model, in a delivery submission
+        // the pump started with no caller call — never only the pending
+        // envelope the tools returned.
+        #expect(
+            await BoundedWait.conditionReached("both outputs reaching the model") {
+                let deliveries = backend.receivedPrompts.dropFirst().joined(separator: "\n")
+                return deliveries.contains(Self.firstToolOutput) && deliveries.contains(Self.secondToolOutput)
+            })
+        #expect(backend.receivedPrompts.dropFirst().allSatisfy { $0.hasSuffix(RoutedSessionActor.settledRunDeliveryPrompt) })
 
-        // The answer is the drained continuation turn's, written from both
-        // runs' own output — never from the pending envelope the tools
-        // returned.
-        #expect(answer.hasPrefix(BackgroundingBackend.answerPrefix))
-        #expect(answer.contains(Self.firstToolOutput))
-        #expect(answer.contains(Self.secondToolOutput))
-
-        // Nothing is left tracked, and the model was never asked to poll: one
-        // turn of its own, one drained continuation turn, two tool calls.
+        // Nothing is left tracked, and the model was never asked to poll: two
+        // tool calls, all in the first submission.
         #expect(await session.mailbox.backgroundRuns().isEmpty)
-        #expect(backend.receivedPrompts.count == 2)
         #expect(backend.toolCallCount == 2)
     }
 
     // MARK: - The run signals a settled run owes the model
 
-    @Test("signal 5, I am done: a run that finishes reports succeeded, and its terminal line reaches the model in the drained answer")
+    @Test("signal 5, I am done: a run that finishes reports succeeded, and its terminal line reaches the model in a delivery submission")
     @MainActor
     func doneSignalReachesTheModelAsASucceededTerminal() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "RespondRunPlaneDrainTests")
@@ -382,14 +424,14 @@ struct RespondRunPlaneDrainTests {
 
         let gate = RunLatch()
         let tool = LatchedBackgroundToolRunner(name: "finishing-job", gate: gate, output: Self.firstToolOutput)
-        let (answer, terminal) = try await Self.drainedAnswer(over: tool, gate: gate, opening: true, dir: dir)
+        let (prompt, terminal) = try await Self.deliveryPrompt(over: tool, gate: gate, opening: true, dir: dir)
 
         #expect(terminal.outcome == .succeeded)
         #expect(terminal.detail == Self.firstToolOutput)
-        #expect(answer.contains(OperationEventSegment.renderedLine(for: terminal)))
+        #expect(prompt.contains(OperationEventSegment.renderedLine(for: terminal)))
     }
 
-    @Test("signal 4, I have an error: a run whose body throws reports failed, and its terminal line reaches the model in the drained answer")
+    @Test("signal 4, I have an error: a run whose body throws reports failed, and its terminal line reaches the model in a delivery submission")
     @MainActor
     func errorSignalReachesTheModelAsAFailedTerminal() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "RespondRunPlaneDrainTests")
@@ -397,10 +439,10 @@ struct RespondRunPlaneDrainTests {
 
         let gate = RunLatch()
         let tool = LatchedBackgroundToolRunner(name: "failing-job", gate: gate, output: Self.firstToolOutput, fails: true)
-        let (answer, terminal) = try await Self.drainedAnswer(over: tool, gate: gate, opening: true, dir: dir)
+        let (prompt, terminal) = try await Self.deliveryPrompt(over: tool, gate: gate, opening: true, dir: dir)
 
         #expect(terminal.outcome == .failed)
-        #expect(answer.contains(OperationEventSegment.renderedLine(for: terminal)))
+        #expect(prompt.contains(OperationEventSegment.renderedLine(for: terminal)))
     }
 
     @Test("a run its own timeout ends reports timedOut, and its terminal line reaches the model the same way")
@@ -412,19 +454,19 @@ struct RespondRunPlaneDrainTests {
         let gate = RunLatch()
         let tool = LatchedBackgroundToolRunner(
             name: "hanging-job", gate: gate, output: Self.firstToolOutput, timeout: Self.fixtureTimeoutSeconds)
-        let (answer, terminal) = try await Self.drainedAnswer(over: tool, gate: gate, opening: false, dir: dir)
+        let (prompt, terminal) = try await Self.deliveryPrompt(over: tool, gate: gate, opening: false, dir: dir)
 
         #expect(terminal.outcome == .timedOut)
-        #expect(answer.contains(OperationEventSegment.renderedLine(for: terminal)))
+        #expect(prompt.contains(OperationEventSegment.renderedLine(for: terminal)))
     }
 
-    // MARK: - The drain has no round count
+    // MARK: - The deliveries have no round count
 
     @Test(
-        "the drain runs until a turn starts no new background work: a model that backgrounds work in each of 6 turns gets a seventh turn, and respond answers with the seventh"
+        "the pump delivers each settled run with no round count: a model that backgrounds work in each of 6 submissions gets a seventh, and respond answers with the first"
     )
     @MainActor
-    func drainRunsUntilATurnStartsNoBackgroundWork() async throws {
+    func deliveriesRunUntilASubmissionStartsNoBackgroundWork() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "RespondRunPlaneDrainTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -432,34 +474,28 @@ struct RespondRunPlaneDrainTests {
         let profile = try await Self.makeProfile(container: container, dir: dir)
         let session = profile.standard.makeSession()
         let backend = try #require(container.lastBackend)
+        await backend.releaser.deliverTerminals(to: session.outbox)
 
-        let responding = Task { try await session.respond(to: "start") }
+        // The caller gets the answer of its own submission at once.
+        let answer = try await session.respond(to: "start")
+        #expect(answer == ScriptedBackgroundingBackend.answerText(ofTurn: 1))
 
-        // Release each background run only after it has been observed tracked
-        // twice, so the drain's own snapshot — taken microseconds after the
-        // run is tracked, while this driver sleeps between observations — can never
-        // miss it and end the loop early.
-        let driver = Task {
-            var seen: Set<String> = []
-            while !Task.isCancelled {
-                for run in await session.mailbox.backgroundRuns() {
-                    if seen.insert(run.completionToken).inserted { continue }
-                    await backend.releaser.release(token: run.completionToken)
-                }
-                try? await Task.sleep(nanoseconds: BoundedWait.pollIntervalNanoseconds)
-            }
-        }
-
-        let answer = try await responding.value
-        driver.cancel()
-
-        // Each of the first 6 turns started a run. The drain settled each run
-        // and ran one further turn. The seventh turn started none, so the
-        // drain ended there, and the answer is the seventh turn's.
-        let turnCount = Self.backgroundingTurnCount + 1
-        #expect(backend.receivedPrompts.count == turnCount)
-        #expect(answer == ScriptedBackgroundingBackend.answerText(ofTurn: turnCount))
-        #expect(await session.mailbox.backgroundRuns().isEmpty)
+        // Each run settles on its own. Its terminal is mail, and its delivery
+        // submission starts the next run, until the seventh submission starts
+        // none.
+        let submissionCount = Self.backgroundingTurnCount + 1
+        #expect(
+            await BoundedWait.conditionReached("\(submissionCount) submissions reaching the backend") {
+                backend.receivedPrompts.count == submissionCount
+            })
+        #expect(
+            await BoundedWait.conditionReached("the pump ending with no run left") {
+                let runs = await session.mailbox.backgroundRuns()
+                let pumpRunning = await session.isPumpRunning
+                return runs.isEmpty && !pumpRunning
+            })
+        #expect(backend.receivedPrompts.count == submissionCount)
+        #expect(backend.receivedPrompts.dropFirst().allSatisfy { $0.hasSuffix(RoutedSessionActor.settledRunDeliveryPrompt) })
 
         // No background run outlives the test, even when an expectation above
         // failed.
@@ -468,7 +504,7 @@ struct RespondRunPlaneDrainTests {
 
     // MARK: - streamEvents(to:) still backgrounds
 
-    @Test("streamEvents(to:) still backgrounds: it finishes with the turn's runs still running, and runs no drained turn")
+    @Test("streamEvents(to:) still backgrounds: it finishes with the turn's runs still running, and runs no delivery while they run")
     @MainActor
     func streamEventsKeepsBackgroundingItsBackgroundRuns() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "RespondRunPlaneDrainTests")
@@ -487,7 +523,7 @@ struct RespondRunPlaneDrainTests {
         for try await _ in await session.streamEvents(to: "run both jobs") {}
 
         // The stream finished while both runs were still in flight — that is
-        // the feature on this surface — and no continuation turn ran.
+        // the feature on this surface — and no delivery submission ran.
         #expect(await session.mailbox.backgroundRuns().count == 2)
         #expect(backend.receivedPrompts.count == 1)
 
@@ -534,13 +570,13 @@ struct RespondRunPlaneDrainTests {
         #expect(events.contains(.runSettled(terminal)))
     }
 
-    // MARK: - Cancelling a call suspended in its drain
+    // MARK: - No caller waits on a run
 
     @Test(
-        "cancelCurrentTurn() reaches a respond suspended in its run-plane drain: it reports requested, and the call ends with its own turn's answer"
+        "a respond whose submission backgrounded work returns at once: the run keeps running, and a cancel then finds no work to stop"
     )
     @MainActor
-    func cancelCurrentTurnEndsARespondSuspendedInItsDrain() async throws {
+    func aRespondDoesNotWaitForTheRunItStarted() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "RespondRunPlaneDrainTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -552,42 +588,34 @@ struct RespondRunPlaneDrainTests {
         ])
         let backend = try #require(container.lastBackend)
 
-        let returned = AsyncSemaphore(value: 0)
-        let responding = Task { () -> String in
-            defer { returned.signal() }
-            return try await session.respond(to: "run the job")
-        }
-        try await Self.awaitDrainWait(on: session)
-
-        // The call's own turn is over, so nothing holds the turn lock — and the
-        // caller is still inside `respond`. This is the call the cancellation
-        // has to reach.
-        #expect(await session.cancelCurrentTurn() == .requested)
-
-        try await BoundedWait.awaitSignal(returned, named: "the cancelled respond call returning")
-        let answer = try await responding.value
-
-        // A cancelled drain answers with the last turn's answer rather than
-        // throwing: here that is this call's own turn's answer, the pending
-        // envelope the backgrounding tool returned. No drained continuation turn
-        // ran.
+        // The run holds nothing: the call returns with its own submission's
+        // answer, the pending envelope the backgrounding tool returned.
+        let answer = try await session.respond(to: "run the job")
         #expect(!answer.hasPrefix(BackgroundingBackend.answerPrefix))
         #expect(backend.receivedPrompts.count == 1)
 
-        // A cancelled drain stops waiting; it does not sweep. The run it was
-        // waiting on is still running, exactly as it was.
+        // A run is not work of the pump, so a cancel finds nothing to stop,
+        // and the run stays running, exactly as it was.
+        #expect(
+            await BoundedWait.conditionReached("the pump ending") { await !session.isPumpRunning })
+        #expect(await session.cancelCurrentTurn() == .noTurnInFlight)
         #expect(await session.mailbox.backgroundRuns().count == 1)
 
         await Self.releaseBackgroundRuns(on: session, opening: [gate])
     }
 
-    @Test("cancelling the caller's own task ends a respond suspended in its run-plane drain")
+    @Test(
+        "cancelling the caller's own task reaches its running submission, and the run that submission already started keeps running"
+    )
     @MainActor
-    func cancellingTheCallersTaskEndsARespondSuspendedInItsDrain() async throws {
+    func cancellingTheCallersTaskLeavesTheStartedRunRunning() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "RespondRunPlaneDrainTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let container = BackgroundingLLMContainer()
+        // The first submission is held open after its tool call, so the
+        // cancel lands while it runs.
+        let holdTurn = RunLatch()
+        let container = BackgroundingLLMContainer(holdFirstTurn: holdTurn)
         let profile = try await Self.makeProfile(container: container, dir: dir)
         let gate = RunLatch()
         let session = profile.standard.makeSession(tools: [
@@ -595,21 +623,20 @@ struct RespondRunPlaneDrainTests {
         ])
         let backend = try #require(container.lastBackend)
 
-        let returned = AsyncSemaphore(value: 0)
-        let responding = Task { () -> String in
-            defer { returned.signal() }
-            return try await session.respond(to: "run the job")
-        }
-        try await Self.awaitDrainWait(on: session)
+        let responding = Task { try await session.respond(to: "run the job") }
+        _ = try #require(await Self.backgroundTokens(atLeast: 1, on: session).first)
 
-        // The other cancellation route: the caller's own task, which the
-        // mailbox's wait ignores by design.
+        // The caller's own task is cancelled. The model work of this stub
+        // ignores the cancel, so the submission still answers when its hold
+        // opens, with the pending envelope.
         responding.cancel()
-
-        try await BoundedWait.awaitSignal(returned, named: "the cancelled respond call returning")
+        await holdTurn.open()
         let answer = try await responding.value
         #expect(!answer.hasPrefix(BackgroundingBackend.answerPrefix))
         #expect(backend.receivedPrompts.count == 1)
+
+        // A cancelled submission stops; it does not sweep. The run it started
+        // is still running, exactly as it was.
         #expect(await session.mailbox.backgroundRuns().count == 1)
 
         await Self.releaseBackgroundRuns(on: session, opening: [gate])

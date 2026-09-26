@@ -29,7 +29,7 @@ struct SessionEventStreamTests {
     /// `@unchecked Sendable` is safe here for the same reason as that type:
     /// every access is sequential, driven by one awaited `@MainActor` test
     /// method at a time, with any read from inside `RoutedSessionActor`'s
-    /// chokepoint further serialized by the owning session's turn lock.
+    /// chokepoint further serialized by the owning session's pump.
     private final class ScriptedTranscriptBackend: LanguageModelSessionBackend, @unchecked Sendable {
         enum StubError: Error, Equatable { case boom }
 

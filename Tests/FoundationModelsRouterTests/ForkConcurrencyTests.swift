@@ -319,18 +319,6 @@ struct ForkConcurrencyTests {
         )
     }
 
-    /// Spins cooperatively until `condition` holds or a bounded number of yields
-    /// elapse, so a deinit-driven or scheduler-ordered state change is observed
-    /// without a fixed sleep.
-    private static func spin(
-        until condition: @Sendable () async -> Bool
-    ) async {
-        for _ in 0..<100_000 {
-            if await condition() { return }
-            await Task.yield()
-        }
-    }
-
     // MARK: - Fork seeds the child's backend from the parent + parentId
 
     @Test("fork seeds the child's backend from the parent's prompt history and sets parentId to the parent's id")
@@ -460,18 +448,18 @@ struct ForkConcurrencyTests {
 
         // Launch call 0; its submission runs on the worker and suspends.
         let task0 = Task { try await callers[0].respond(to: "0") }
-        await Self.spin(until: { await queue.isRunning })
-        await Self.spin(until: { await observer.entryOrder == [0] })
+        await BoundedWait.spin(until: { await queue.isRunning })
+        await BoundedWait.spin(until: { await observer.entryOrder == [0] })
 
         // Launch calls 1, 2, 3 one at a time, each only after the previous
         // submission has actually joined the queue — establishing a
         // deterministic FIFO arrival order without sleeping.
         let task1 = Task { try await callers[1].respond(to: "1") }
-        await Self.spin(until: { await queue.waitingCount == 1 })
+        await BoundedWait.spin(until: { await queue.waitingCount == 1 })
         let task2 = Task { try await callers[2].respond(to: "2") }
-        await Self.spin(until: { await queue.waitingCount == 2 })
+        await BoundedWait.spin(until: { await queue.waitingCount == 2 })
         let task3 = Task { try await callers[3].respond(to: "3") }
-        await Self.spin(until: { await queue.waitingCount == 3 })
+        await BoundedWait.spin(until: { await queue.waitingCount == 3 })
 
         // Only one pass has entered so far — the queue held the rest out.
         #expect(await observer.entryOrder == [0])

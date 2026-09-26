@@ -112,10 +112,11 @@ public final class GenerationQueue: Sendable {
     /// task could run only after the item of that tool body ends, which waits
     /// for it (`generation-queue.md`, section 5.5, rule 2).
     ///
-    /// ``submit(isolation:onQueued:_:)`` calls it for each submission. A
-    /// session calls it before it waits for its own turn lock, so a wait for
-    /// the answer of a session over this queue is refused too, also when that
-    /// session is busy.
+    /// ``submit(isolation:onQueued:_:)`` calls it for each submission. Each
+    /// helper of a session that waits for an answer calls it on the task of
+    /// its caller (``RoutedSessionActor/refuseWaitInsideOpenSubmission()``),
+    /// so a wait for the answer of a session over this queue is refused too,
+    /// also when that session is busy.
     ///
     /// The mark that this check reads is set by
     /// ``RoutedSessionActor/runCancellableModelCall(composedPrompt:submittingTo:_:)``.

@@ -19,8 +19,8 @@ struct RepetitionWatchState {
     /// The stop that the watch of the attempt in flight found, or `nil`.
     var stop: RepetitionStopMarker?
 
-    /// How many recoveries the turn in flight ran. ``RoutedSessionActor/beginTurn()``
-    /// sets it to zero.
+    /// How many recoveries the running answer ran. The pump sets it to zero
+    /// for each new answer.
     var recoveriesThisTurn = 0
 }
 
@@ -188,7 +188,7 @@ extension RoutedSessionActor {
     ///   - watchId: The watch that found it.
     func noteRepetition(_ finding: RepetitionFinding, liveEntries: [Transcript.Entry], watchId: UInt64) {
         guard repetitionWatch.activeWatchId == watchId, let modelCall = inFlightModelCall,
-            !isTurnCancelled, toolResultWatch.yield == nil
+            !isWorkCancelled, toolResultWatch.yield == nil
         else { return }
         let recoveriesLeft = repetitionWatch.recoveriesThisTurn < repetitionDetection.recoveriesPerTurn
         let report = RepetitionStop(
@@ -211,7 +211,7 @@ extension RoutedSessionActor {
     /// - Returns: The marker, or `nil` when the watch did not stop the attempt.
     func takeRepetitionStop() -> RepetitionStopMarker? {
         defer { repetitionWatch.stop = nil }
-        guard !isTurnCancelled else { return nil }
+        guard !isWorkCancelled else { return nil }
         return repetitionWatch.stop
     }
 
@@ -254,7 +254,8 @@ extension RoutedSessionActor {
         return try await runTurnAttempt(
             grammar: attempt.grammar, pendingEvents: [], ownPrompt: Self.repetitionStopContinuationPrompt,
             responseTokenCeiling: attempt.responseTokenCeiling, onEvent: attempt.onEvent,
-            allowOverflowRetry: attempt.allowOverflowRetry, rejectedCallRetries: attempt.rejectedCallRetries, body)
+            allowOverflowRetry: attempt.allowOverflowRetry, rejectedCallRetries: attempt.rejectedCallRetries,
+            isContinuation: true, body)
     }
 
     /// Puts the rebuilt transcript of the stopped attempt into ``backend``

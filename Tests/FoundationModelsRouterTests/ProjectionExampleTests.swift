@@ -87,7 +87,7 @@ struct ProjectionExampleTests {
         ///
         /// `@unchecked Sendable` invariant: `entries` and `usage` change only
         /// inside the methods below, and the owning session calls exactly one
-        /// backend method at a time under its own turn lock. Each fork hands
+        /// backend method at a time, through its one pump. Each fork hands
         /// off to a new instance rather than sharing state, so no two contexts
         /// ever write to one instance.
         private final class ScriptedBackend: LanguageModelSessionBackend, @unchecked Sendable {

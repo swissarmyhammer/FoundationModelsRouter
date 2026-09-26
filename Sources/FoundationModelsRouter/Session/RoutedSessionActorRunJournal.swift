@@ -67,15 +67,16 @@ extension RoutedSessionActor: OperationEventJournal {
             kind: kind, text: OperationEventSegment.renderedLine(for: event), entry: payload)
     }
 
-    /// Installs this session as ``outbox``'s ``OperationEventJournal`` and
-    /// ``ToolInvocationObserver``, and as ``mailbox``'s
-    /// ``BackgroundRunSettlementObserver``, once. Called from ``beginTurn()``.
-    /// Idempotent.
+    /// Installs this session as ``outbox``'s ``OperationEventJournal``,
+    /// ``ToolInvocationObserver`` and ``SessionMailObserver``, and as
+    /// ``mailbox``'s ``BackgroundRunSettlementObserver``, once. Called by each
+    /// helper that sends a message and by the pump. Idempotent.
     func attachOutboxJournalIfNeeded() async {
         guard !didAttachOutboxJournal else { return }
         didAttachOutboxJournal = true
         await outbox.attach(journal: self)
         await outbox.attach(invocationObserver: self)
+        await outbox.attach(mailObserver: self)
         await mailbox.attach(settlementObserver: self)
     }
 }
@@ -84,7 +85,9 @@ extension RoutedSessionActor: OperationEventJournal {
 /// terminal reaches the journal under the run's own token at the moment the
 /// mailbox settles the run, whether or not the run's funnel delivered it.
 extension RoutedSessionActor: BackgroundRunSettlementObserver {
-    /// Journals one naturally settled run's terminal without staging it.
+    /// Journals one naturally settled run's terminal without staging it, and
+    /// wakes the pump, which delivers the terminal that the run's funnel
+    /// staged (``wakePump()``).
     ///
     /// `journalWithoutStaging`, not `post(event:)`: `post` would stage a
     /// second pending `.completed` for a top-level run whose funnel already
@@ -92,9 +95,18 @@ extension RoutedSessionActor: BackgroundRunSettlementObserver {
     /// journal refuses it when the funnel's copy already claimed the
     /// correlation. See ``claimJournalWrite(for:)``.
     ///
+    /// The funnel can stage the terminal before or after this call, and each
+    /// of the two wakes the pump. The pump delivers the terminal only when it
+    /// is both staged and settled, so one of the two wakes finds it.
+    ///
+    /// A held terminal (``SessionOutbox/PendingEvent/isHeld``) stays held: a
+    /// settlement is no new mail, and the forward of it can come after a
+    /// submission already took the terminal and gave it back.
+    ///
     /// - Parameter terminal: The terminal the mailbox forwarded.
     func deliver(settledTerminal terminal: OperationEvent) async {
         await outbox.journalWithoutStaging(event: terminal)
+        wakePump()
     }
 }
 

@@ -199,16 +199,15 @@ enum RouterTracing {
     /// separate the turns a caller drove from the turns a queue driver
     /// dispatched.
     enum TurnEntryPoint: String {
-        /// ``RoutedSession/respond(to:maxTokens:)``, and each further turn its
-        /// run-plane drain runs.
+        /// ``RoutedSession/respond(to:maxTokens:)``.
         case respond
 
         /// ``RoutedSession/streamResponse(to:maxTokens:)`` or
         /// ``RoutedSession/streamEvents(to:maxTokens:)``.
         case stream
 
-        /// ``RoutedSession/dispatchNextPrompt()``: a queued prompt, or a
-        /// settled run's delivery turn.
+        /// ``RoutedSession/dispatchNextPrompt()``: a queued prompt, or an
+        /// answer that only a settled run's terminal started.
         case dispatch
     }
 

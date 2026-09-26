@@ -146,27 +146,27 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// The backend's current full transcript, in order.
     ///
     /// Call this only where no call of this backend writes the transcript:
-    /// while the owning session's turn lock (``RoutedSessionActor/turnLock``)
-    /// is held and no model call runs, or inside a tool call of the owning
-    /// session's own open model call, where the SDK waits in the tool call.
-    /// The owning session keeps a copy as of the last such point
+    /// from the pump of the owning session while no model call of it runs
+    /// (``RoutedSessionActor/wakePump()``), or inside a tool call of the
+    /// owning session's own open model call, where the SDK waits in the tool
+    /// call. The owning session keeps a copy as of the last such point
     /// (``SettledTranscript``) and serves each transcript read and each fork
     /// from that copy.
     ///
-    /// The turn lock does not end a stream's producer. A turn cut short
-    /// mid-stream stops consuming and records itself at once, while the
-    /// producer behind ``streamResponse(to:maxTokens:)`` can still be
-    /// running. A backend whose producer writes the transcript from a task of
-    /// its own must guard the transcript, so this call sees a turn whole or
-    /// not at all.
+    /// The end of a submission does not end a stream's producer. A
+    /// submission cut short mid-stream stops consuming and records itself at
+    /// once, while the producer behind ``streamResponse(to:maxTokens:)`` can
+    /// still be running. A backend whose producer writes the transcript from
+    /// a task of its own must guard the transcript, so this call sees a call
+    /// whole or not at all.
     func transcriptEntries() -> [FoundationModels.Transcript.Entry]
 
     /// The backend's cumulative input/output token usage, or `nil` when the
     /// backend cannot report usage.
     ///
-    /// Call this only while the owning session's turn lock
-    /// (``RoutedSessionActor/turnLock``) is held. The one exception is a tool
-    /// call of the owning session's own turn, where the model waits in the
+    /// Call this only from the pump of the owning session, which runs one
+    /// model call of the session at a time. The one exception is a tool call
+    /// of the owning session's own submission, where the model waits in the
     /// tool and no concurrent writer exists
     /// (``RoutedSessionActor/reportGenerationCallAtToolOpen()``). The counts
     /// are running totals since the session began, not a per-turn delta.
@@ -186,8 +186,8 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// generating method started and did not yet give one, and when its
     /// transcript no longer ends where that call ended.
     ///
-    /// Call this only while the owning session's turn lock
-    /// (``RoutedSessionActor/turnLock``) is held.
+    /// Call this only from the pump of the owning session, which runs one
+    /// model call of the session at a time.
     ///
     /// There is a default implementation that gives `nil`.
     func lastGenerationCallOutputTokenCount() -> Int?

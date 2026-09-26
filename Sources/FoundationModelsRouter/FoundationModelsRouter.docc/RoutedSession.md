@@ -31,11 +31,11 @@ handle at once, and the work goes on behind it. Every other tool is mounted in
 
 The session pushes settlement to the model — the model never polls:
 
-- ``respond(to:maxTokens:)`` awaits each background run and delivers its
-  result in a further turn before it answers.
-- The streaming surfaces return while a run is in flight. A run that settles
-  is reported as ``SessionEvent/runSettled(_:)``, and the next
-  ``dispatchNextPrompt()`` delivers its result to the model.
+- ``respond(to:maxTokens:)`` and the streaming surfaces answer from their own
+  submission, and return while a run is in flight.
+- The terminal of a settled run is mail. The pump of the session delivers it
+  to the model in a later submission, with no caller call, and it is also
+  reported as ``SessionEvent/runSettled(_:)``.
 - `status` and `wait` give an earlier look; they are not required.
 
 ## Topics

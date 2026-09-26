@@ -51,7 +51,7 @@ extension RoutedSessionActor {
     func noteToolResult(_ result: ToolResultAppend) {
         settleTranscriptAtToolResult()
         guard let budget = autoCompactionBudget, let modelCall = inFlightModelCall,
-            !isTurnCancelled, !compactionYieldsStopped, toolResultWatch.yield == nil
+            !isWorkCancelled, !compactionYieldsStopped, toolResultWatch.yield == nil
         else { return }
         toolResultWatch.append(result, tokens: tokenCounter.count(result.text))
         let snapshot = backend.inFlightResponse()
@@ -127,7 +127,7 @@ extension RoutedSessionActor {
     /// - Returns: The marker, or `nil` when the attempt did not yield.
     func takeCompactionYield() -> CompactionYield? {
         defer { toolResultWatch.yield = nil }
-        guard !isTurnCancelled else { return nil }
+        guard !isWorkCancelled else { return nil }
         return toolResultWatch.yield
     }
 
@@ -198,7 +198,8 @@ extension RoutedSessionActor {
         return try await runTurnAttempt(
             grammar: attempt.grammar, pendingEvents: [], ownPrompt: continuationPrompt,
             responseTokenCeiling: attempt.responseTokenCeiling, onEvent: attempt.onEvent,
-            allowOverflowRetry: attempt.allowOverflowRetry, rejectedCallRetries: attempt.rejectedCallRetries, body)
+            allowOverflowRetry: attempt.allowOverflowRetry, rejectedCallRetries: attempt.rejectedCallRetries,
+            isContinuation: true, body)
     }
 
     /// Whether an attempt that ended with `finishReason` compacts and goes on
@@ -224,7 +225,7 @@ extension RoutedSessionActor {
     /// - Returns: `true` when the attempt stopped at the ceiling over the trigger.
     func compactsAfterCeilingStop(_ finishReason: FinishReason) -> Bool {
         guard finishReason == .maxTokens, let budget = autoCompactionBudget,
-            !isTurnCancelled, !compactionYieldsStopped,
+            !isWorkCancelled, !compactionYieldsStopped,
             let measuredTokens = usageState.measuredTokens
         else { return false }
         return measuredTokens >= budget.triggerTokens

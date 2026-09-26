@@ -59,7 +59,7 @@ struct GuidedGenerationTests {
     /// path.
     ///
     /// `@unchecked Sendable` is safe here because `RoutedSessionActor` serializes
-    /// all method calls through the owning session's turn lock, and both wrapped fields
+    /// all method calls through the owning session's pump, one at a time, and both wrapped fields
     /// (`backend`, `spy`) are themselves `Sendable` — `backend` is a `StubSessionBackend`
     /// and `spy` is an actor.
     private final class MaxTokensRecordingBackend: LanguageModelSessionBackend, @unchecked Sendable {

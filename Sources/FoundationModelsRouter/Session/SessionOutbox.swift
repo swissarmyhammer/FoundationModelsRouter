@@ -1,22 +1,32 @@
 import FoundationModels
+import Tracing
 
-/// A per-``RoutedSession`` staging area for material that enters the
-/// conversation at a future turn boundary.
+/// A per-``RoutedSession`` staging area for the messages that wait for the
+/// pump of the session (`generation-queue.md`, section 5.4).
 ///
-/// The outbox stages two kinds of item, never mixed:
+/// The outbox holds three kinds of item, never mixed:
 ///
-/// - Turn-riding events (``PendingEvent``): ``OperationEvent``s posted through
-///   the ``OperationEventSink`` conformance. The next turn drains them into its
-///   prompt preamble. Only ``OperationEventKind/progress`` coalesces, to the
-///   latest pending one per `(tool, correlationID)`, in place. Every posted
-///   event is also recorded in the transcript through the attached
-///   ``OperationEventJournal``, uncoalesced.
-/// - Turn-starting prompts (``PendingPrompt``): queued `Transcript.Prompt`s,
-///   never coalesced, dispatched in FIFO order, one turn each.
+/// - Mail (``PendingEvent``): ``OperationEvent``s posted through the
+///   ``OperationEventSink`` conformance. The next submission of the pump puts
+///   them into its prompt preamble. Only ``OperationEventKind/progress``
+///   coalesces, to the latest pending one per `(tool, correlationID)`, in
+///   place. Every posted event is also recorded in the transcript through the
+///   attached ``OperationEventJournal``, uncoalesced. A posted run terminal
+///   (``OperationEventKind/completed``) tells the attached
+///   ``SessionMailObserver``, so the pump can deliver it.
+/// - Caller messages (``SessionMessage``): the prompts of
+///   ``RoutedSession/respond(to:maxTokens:)``, of the two stream methods, and
+///   of each queued prompt that ``RoutedSession/dispatchNextPrompt()``
+///   released. The pump takes them in FIFO order
+///   (``takeSubmissionBatch(deliveringRunsOf:)``).
+/// - Queued prompts (``PendingPrompt``): the `Transcript.Prompt`s of
+///   ``RoutedSession/enqueue(prompt:)-(Transcript.Prompt)``, never coalesced,
+///   which wait for ``RoutedSession/dispatchNextPrompt()`` to release them as
+///   caller messages, in FIFO order.
 ///
 /// A queued prompt gets a stable ``PromptID`` and a staged event a stable
-/// ``EventID``, both at enqueue. ``drainForDispatch()`` is the commit boundary.
-/// ``nextEvent()`` suspends while the outbox is empty.
+/// ``EventID``, both at enqueue. ``nextEvent()`` suspends while no mail and
+/// no queued prompt waits.
 ///
 /// The actor itself is internal. The vocabulary its prompt queue speaks —
 /// ``PromptID``, ``PromptQueueMutationResult`` and ``PromptQueueDepth`` — is
@@ -45,6 +55,16 @@ protocol StagedEventWithdrawing: Sendable {
     func withdrawStagedEvents(correlationID: String) async
 }
 
+/// The observer that a ``SessionOutbox`` tells when mail that the pump can
+/// deliver arrives: a run terminal (``OperationEventKind/completed``).
+///
+/// A ``RoutedSessionActor`` is the one conformer. It starts its pump when no
+/// pump runs.
+protocol SessionMailObserver: AnyObject, Sendable {
+    /// A run terminal was posted to the outbox.
+    func mailArrived() async
+}
+
 actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdrawing {
     /// A stable identifier the outbox assigns to a staged event at post time.
     ///
@@ -62,13 +82,20 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
         }
     }
 
-    /// One pending turn-riding event with its stable id.
+    /// One pending mail event with its stable id.
     struct PendingEvent: Sendable {
         /// This event's stable id.
         let id: EventID
 
         /// The posted event, or the latest coalesced `.progress` event.
         let event: OperationEvent
+
+        /// Whether the event waits for a submission that something else
+        /// starts: a submission gave it back (``requeue(event:)``), or a cancel
+        /// held it (``holdPendingMail()``). A held run terminal starts no
+        /// submission by itself, so the pump does not retry it at once; it
+        /// rides the next submission.
+        let isHeld: Bool
     }
 
     /// One pending queued prompt with its stable id.
@@ -89,24 +116,18 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
         let prompts: [PendingPrompt]
     }
 
-    /// What ``drainForDispatch()`` returns: every pending event, plus the next
-    /// queued prompt when one was queued.
-    internal struct Drained: Sendable {
-        /// Every event that was pending at drain time, in outbox order.
-        let events: [PendingEvent]
-
-        /// The next queued prompt, or `nil` when none was queued.
-        let prompt: PendingPrompt?
-    }
-
-    /// Pending turn-riding events, in outbox order.
+    /// Pending mail events, in outbox order.
     private var events: [PendingEvent] = []
 
     /// Pending queued prompts, in FIFO order.
     private var prompts: [PendingPrompt] = []
 
-    /// The prompt ``drainForDispatch()`` last committed, until ``finishDispatch()``.
-    private var dispatched: PendingPrompt?
+    /// The caller messages that wait for the pump, in the order they arrived.
+    private var messages: [SessionMessage] = []
+
+    /// The ids of the queued prompts that ``releaseFrontPrompt(answer:serviceContext:)``
+    /// released and the pump has not answered yet, in release order.
+    private var dispatched: [PromptID] = []
 
     /// Continuations suspended by ``nextEvent()`` while the outbox is empty.
     private var wakeups: [CheckedContinuation<Void, Never>] = []
@@ -114,6 +135,10 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
     /// The journal every posted event is recorded into, or `nil` before
     /// ``attach(journal:)``. Weak to avoid a reference cycle.
     private weak var journal: (any OperationEventJournal)?
+
+    /// The observer a posted run terminal wakes, or `nil` before
+    /// ``attach(mailObserver:)``. Weak to avoid a reference cycle.
+    private weak var mailObserver: (any SessionMailObserver)?
 
     /// The observer every posted invocation record and tool call report goes
     /// to, or `nil` before ``attach(invocationObserver:)``. Weak to avoid a
@@ -128,8 +153,11 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
 
     /// Posts one ``OperationEvent``.
     ///
-    /// The event is staged for the next prompt under the coalescing policy,
-    /// and recorded uncoalesced in the attached journal, in post order.
+    /// The event is staged for the next submission under the coalescing
+    /// policy, and recorded uncoalesced in the attached journal, in post
+    /// order. A run terminal then tells the attached ``SessionMailObserver``,
+    /// after its journal write, so the pump delivers a terminal that the
+    /// journal already holds.
     ///
     /// - Parameter event: The event to post.
     func post(event: OperationEvent) async {
@@ -139,6 +167,9 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
         stage(event: event)
         wakeUp()
         await journalWrite?.value
+        if event.kind == .completed {
+            await mailObserver?.mailArrived()
+        }
     }
 
     /// Removes every event staged under `correlationID`, and leaves the
@@ -146,8 +177,8 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
     ///
     /// A run whose result went to the model inside its own tool output calls
     /// this, so the model does not read the same result a second time in front
-    /// of its next prompt. An event a turn already drained is gone from here,
-    /// and this call then removes nothing.
+    /// of its next prompt. An event a submission already took is gone from
+    /// here, and this call then removes nothing.
     ///
     /// - Parameter correlationID: The run's completion token.
     func withdrawStagedEvents(correlationID: String) {
@@ -162,42 +193,76 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
         await enqueueJournalWrite(event: event)?.value
     }
 
-    /// Restages an event a turn drained but did not deliver, without a second
-    /// journal write.
+    /// Restages an event a submission took but did not deliver, without a
+    /// second journal write. The event is held (``PendingEvent/isHeld``): a
+    /// submission that could not take it would give it back again, so it
+    /// waits for the next submission that something else starts. It wakes no
+    /// pump: the pump itself gives the event back.
     ///
     /// - Parameter event: The event to restage.
     internal func requeue(event: OperationEvent) {
-        stage(event: event)
+        stage(event: event, held: true)
         wakeUp()
+    }
+
+    /// Puts back events that the pump took and did not use, in front of every
+    /// event posted since, each as it was: with its id and its hold. No
+    /// journal write happens, and no pump wakes.
+    ///
+    /// - Parameter untouched: The events, in the order the pump took them.
+    func putBack(untouched: [PendingEvent]) {
+        events = untouched + events
+    }
+
+    /// Holds every pending event (``PendingEvent/isHeld``), so none starts a
+    /// submission by itself. A cancel of the session calls it: the mail stays
+    /// for a later submission, and the cancel does not start one.
+    func holdPendingMail() {
+        events = events.map { PendingEvent(id: $0.id, event: $0.event, isHeld: true) }
+    }
+
+    /// Ends the hold of every pending event, so a held run terminal can start
+    /// a submission again.
+    func releaseHeldMail() {
+        events = events.map { PendingEvent(id: $0.id, event: $0.event, isHeld: false) }
     }
 
     /// Stages one event as pending under the coalescing policy.
     ///
-    /// - Parameter event: The event to stage.
-    private func stage(event: OperationEvent) {
+    /// - Parameters:
+    ///   - event: The event to stage.
+    ///   - held: Whether the event is held (``PendingEvent/isHeld``).
+    private func stage(event: OperationEvent, held: Bool = false) {
         switch event.kind {
         case .completed, .elicitation:
-            appendNewPendingEvent(event: event)
+            appendNewPendingEvent(event: event, held: held)
         case .progress:
             if let index = events.firstIndex(where: {
                 $0.event.kind == .progress && $0.event.tool == event.tool
                     && $0.event.correlationID == event.correlationID
             }) {
-                events[index] = PendingEvent(id: events[index].id, event: event)
+                events[index] = PendingEvent(id: events[index].id, event: event, isHeld: held)
             } else {
-                appendNewPendingEvent(event: event)
+                appendNewPendingEvent(event: event, held: held)
             }
         }
     }
 
     /// Installs the journal that records every event posted from now on.
     ///
-    /// Events staged before this call reach the transcript on the turn that
-    /// drains them.
+    /// Events staged before this call reach the transcript with the
+    /// submission that takes them.
     ///
     /// - Parameter journal: The journal to install.
     internal func attach(journal: any OperationEventJournal) {
         self.journal = journal
+    }
+
+    /// Installs the observer that a posted run terminal wakes from now on.
+    ///
+    /// - Parameter mailObserver: The observer to install.
+    internal func attach(mailObserver: any SessionMailObserver) {
+        self.mailObserver = mailObserver
     }
 
     /// Installs the observer that receives every ``ToolInvocationRecord`` and
@@ -239,9 +304,11 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
 
     /// Appends `event` as a new pending item with a fresh ``EventID``.
     ///
-    /// - Parameter event: The event to append.
-    private func appendNewPendingEvent(event: OperationEvent) {
-        events.append(PendingEvent(id: EventID(), event: event))
+    /// - Parameters:
+    ///   - event: The event to append.
+    ///   - held: Whether the event is held (``PendingEvent/isHeld``).
+    private func appendNewPendingEvent(event: OperationEvent, held: Bool) {
+        events.append(PendingEvent(id: EventID(), event: event, isHeld: held))
     }
 
     /// Stages a queued user prompt for a future turn, in FIFO order.
@@ -256,14 +323,22 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
         return id
     }
 
-    /// Cancels a still-pending queued prompt by its stable id.
+    /// Cancels a still-pending queued prompt by its stable id: a prompt that
+    /// waits in the queue, or a released prompt that waits for the pump and
+    /// reached no submission yet. The caller of the release then gets
+    /// `CancellationError`.
     ///
     /// - Parameter id: The id ``enqueue(prompt:)`` returned.
     /// - Returns: ``PromptQueueMutationResult/applied`` if the prompt was
     ///   removed; ``PromptQueueMutationResult/alreadySent`` otherwise.
     @discardableResult
     func cancel(id: PromptID) -> PromptQueueMutationResult {
-        mutatingPendingPrompt(id: id) { index in
+        if let released = withdrawMessage(id: id) {
+            finishDispatch(id: id)
+            released.answer.resolve(.failure(CancellationError()))
+            return .applied
+        }
+        return mutatingPendingPrompt(id: id) { index in
             prompts.remove(at: index)
         }
     }
@@ -305,42 +380,139 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
         Pending(events: events, prompts: prompts)
     }
 
-    /// Drains every pending event and leaves the prompt queue unchanged.
+    /// Adds one caller message behind every message that waits.
     ///
-    /// Call this from inside the session's serial-gated chokepoint.
-    ///
-    /// - Returns: Every event that was pending, now committed.
-    func drainPendingEvents() -> [PendingEvent] {
-        let drainedEvents = events
-        events = []
-        return drainedEvents
+    /// - Parameter message: The message to add.
+    func add(message: SessionMessage) {
+        messages.append(message)
     }
 
-    /// Drains every pending event and the next queued prompt, and commits
+    /// How many caller messages wait for the pump.
+    var waitingMessageCount: Int {
+        messages.count
+    }
+
+    /// Takes what the next submission of the pump carries, and commits
     /// exactly what it returns.
     ///
-    /// Call this from inside the session's serial-gated chokepoint, inside a
-    /// turn bracket. Each call must be released by one ``finishDispatch()``.
+    /// When a caller message waits, the first one decides the options of the
+    /// submission (``SubmissionOptions``), and every waiting message that
+    /// the options admit comes with it, in FIFO order. A stream message goes
+    /// alone. When no caller message waits, the terminal of a settled
+    /// background run starts a submission of its own, unless it is held
+    /// (``PendingEvent/isHeld``). Every pending mail event comes with the
+    /// submission, held or not.
     ///
-    /// - Returns: Every pending event, plus the next queued prompt or `nil`.
-    ///   The prompt stays in ``queueDepth()`` until ``finishDispatch()``.
-    internal func drainForDispatch() -> Drained {
-        let drainedEvents = events
+    /// Other mail — a progress report, an elicitation, or the terminal of an
+    /// in-band run that ended abnormally — starts no submission. The model
+    /// already read the in-band result inside its own submission, so that
+    /// terminal rides the next submission instead.
+    ///
+    /// - Parameter settledRunTokens: The completion tokens of the background
+    ///   runs that settled.
+    /// - Returns: The batch, or `nil` when nothing that can start a
+    ///   submission waits. Then nothing is taken.
+    func takeSubmissionBatch(deliveringRunsOf settledRunTokens: Set<String>) -> SubmissionBatch? {
+        if let first = messages.first {
+            let options = first.options
+            let taken = options.isStream ? [first] : messages.filter(options.admits)
+            let takenIDs = Set(taken.map(\.id))
+            messages.removeAll { takenIDs.contains($0.id) }
+            return SubmissionBatch(events: takeEvents(), messages: taken)
+        }
+        guard Self.canStartASubmission(events, settledRunTokens: settledRunTokens) else {
+            return nil
+        }
+        return SubmissionBatch(events: takeEvents(), messages: [])
+    }
+
+    /// Whether `mail` holds the terminal of a background run that settled,
+    /// and that is not held, which starts a submission with no caller
+    /// message.
+    ///
+    /// - Parameters:
+    ///   - mail: The pending mail events.
+    ///   - settledRunTokens: The completion tokens of the settled background
+    ///     runs.
+    /// - Returns: `true` when one event of `mail` is such a terminal.
+    static func canStartASubmission(_ mail: [PendingEvent], settledRunTokens: Set<String>) -> Bool {
+        mail.contains {
+            !$0.isHeld && $0.event.kind == .completed && settledRunTokens.contains($0.event.correlationID)
+        }
+    }
+
+    /// Takes what a continuation submission of a running answer carries:
+    /// every pending mail event, and every waiting caller message that
+    /// `options` admit.
+    ///
+    /// - Parameter options: The options of the running answer.
+    /// - Returns: The batch, which can be empty.
+    func takeJoiningBatch(options: SubmissionOptions) -> SubmissionBatch {
+        let joining = messages.filter(options.admits)
+        let joiningIDs = Set(joining.map(\.id))
+        messages.removeAll { joiningIDs.contains($0.id) }
+        return SubmissionBatch(events: takeEvents(), messages: joining)
+    }
+
+    /// Takes every pending mail event.
+    ///
+    /// - Returns: The events, in outbox order.
+    private func takeEvents() -> [PendingEvent] {
+        let taken = events
         events = []
-        let drainedPrompt = prompts.isEmpty ? nil : prompts.removeFirst()
-        dispatched = drainedPrompt
-        return Drained(events: drainedEvents, prompt: drainedPrompt)
+        return taken
     }
 
-    /// Empties the dispatched slot ``drainForDispatch()`` filled. Call it on
-    /// every exit of the dispatching turn.
-    internal func finishDispatch() {
-        dispatched = nil
+    /// Withdraws every waiting caller message.
+    ///
+    /// - Returns: The withdrawn messages, in the order they arrived.
+    func withdrawMessages() -> [SessionMessage] {
+        let withdrawn = messages
+        messages = []
+        return withdrawn
     }
 
-    /// A snapshot of this outbox's prompt-queue depth.
+    /// Withdraws the waiting caller message with `id`.
+    ///
+    /// - Parameter id: The id of the message.
+    /// - Returns: The message, or `nil` when no waiting message has `id`.
+    func withdrawMessage(id: PromptID) -> SessionMessage? {
+        guard let index = messages.firstIndex(where: { $0.id == id }) else { return nil }
+        return messages.remove(at: index)
+    }
+
+    /// Releases the front queued prompt as a caller message: the message
+    /// waits behind every other waiting message, keeps the id of the prompt,
+    /// and counts in ``queueDepth()`` as dispatched until
+    /// ``finishDispatch(id:)``.
+    ///
+    /// - Parameters:
+    ///   - answer: The answer the caller of the release waits for.
+    ///   - serviceContext: The tracing context of that caller.
+    /// - Returns: The message, or `nil` when no prompt was queued.
+    func releaseFrontPrompt(answer: PumpAnswer<String>, serviceContext: ServiceContext?) -> SessionMessage? {
+        guard !prompts.isEmpty else { return nil }
+        let queued = prompts.removeFirst()
+        let message = SessionMessage(
+            id: queued.id, text: TranscriptEntryMapper.flattenedText(queued.prompt), requestedMaxTokens: nil,
+            reader: .reply, entryPoint: .dispatch, serviceContext: serviceContext, answer: answer)
+        messages.append(message)
+        dispatched.append(queued.id)
+        return message
+    }
+
+    /// Ends the dispatched state of the released prompt with `id`. The pump
+    /// calls it before it gives the answer of that prompt.
+    ///
+    /// - Parameter id: The id of the released prompt.
+    internal func finishDispatch(id: PromptID) {
+        dispatched.removeAll { $0 == id }
+    }
+
+    /// A snapshot of this outbox's prompt-queue depth. The dispatched prompt
+    /// is the earliest released prompt the pump has not answered yet.
     func queueDepth() -> PromptQueueDepth {
-        PromptQueueDepth(queued: prompts.count, dispatched: dispatched?.id)
+        PromptQueueDepth(queued: prompts.count, dispatched: dispatched.first)
     }
 
     /// Suspends while the outbox is empty. Returns at once when an item is

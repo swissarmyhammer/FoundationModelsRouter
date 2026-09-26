@@ -657,19 +657,22 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
             transcript: transcript, tools: tools, samplingMode: samplingMode)
     }
 
-    /// Returns the current transcript of ``liveSession``. Call it under the turn lock.
+    /// Returns the current transcript of ``liveSession``. Call it only where
+    /// ``LanguageModelSessionBackend/transcriptEntries()`` allows.
     func transcriptEntries() -> [FoundationModels.Transcript.Entry] {
         Array(liveSession.transcript)
     }
 
-    /// Returns the cumulative token usage of ``liveSession``. Call it under the turn lock.
+    /// Returns the cumulative token usage of ``liveSession``. Call it only
+    /// where ``LanguageModelSessionBackend/usageTokenCounts()`` allows.
     func usageTokenCounts() -> (input: Int, output: Int)? {
         let usage = liveSession.usage
         return (usage.input.totalTokenCount, usage.output.totalTokenCount)
     }
 
     /// Returns the output token count of the last generation call of the most
-    /// recent generating method. Call it under the turn lock.
+    /// recent generating method. Call it only from the pump of the owning
+    /// session.
     ///
     /// The recorded count is given only while the transcript of
     /// ``liveSession`` still ends at the last entry of the recorded call. The

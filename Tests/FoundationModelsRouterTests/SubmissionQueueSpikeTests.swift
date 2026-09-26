@@ -1,7 +1,6 @@
 import Foundation
 import FoundationModels
 import FoundationModelsRouterTestSupport
-import Synchronization
 import Testing
 
 @testable import FoundationModelsRouter
@@ -28,7 +27,9 @@ import Testing
 ///    submission of the child waits behind the submission of the parent.
 /// 3. The result of the child comes back to the parent as mail, and the mail
 ///    causes the next submission of the parent, with the result in the
-///    prompt of that submission.
+///    prompt of that submission. Since task ^3qx0mpt the pump of the parent
+///    starts that submission by itself, on the queue of the model, with no
+///    caller call.
 @Suite("Spike: the queue item is one submission, and mail goes between submissions (task ^jdp02p)")
 struct SubmissionQueueSpikeTests {
     /// A test model of the per-model work queue of the design: one worker runs
@@ -102,19 +103,6 @@ struct SubmissionQueueSpikeTests {
         }
     }
 
-    /// A flag that exactly one caller takes.
-    private final class FirstCallFlag: Sendable {
-        /// Whether a caller already took the flag.
-        private let taken = Atomic<Bool>(false)
-
-        /// Takes the flag.
-        ///
-        /// - Returns: `true` for the first caller only.
-        func take() -> Bool {
-            !taken.exchange(true, ordering: .sequentiallyConsistent)
-        }
-    }
-
     /// A background tool whose first call starts a submission of a child
     /// session on the worker, and answers with the answer of the child.
     ///
@@ -134,8 +122,14 @@ struct SubmissionQueueSpikeTests {
         /// Taken by the first call, which starts the submission of the child.
         let firstCall: FirstCallFlag
 
-        /// Every call goes to the background at once.
+        /// Every call goes to the background.
         var mount: ToolMount? { ToolMount(mode: .background) }
+
+        /// A later call starts nothing and settles at once, inside this grace,
+        /// so its result goes back in its own envelope and is no mail. Without
+        /// it, the scripted model calls the tool again in each delivery
+        /// submission, and each call would start one more delivery.
+        var inlineSettleGrace: TimeInterval? { SubmissionQueueSpikeTests.laterCallSettleGrace }
 
         func call(arguments: MountArguments) async throws -> String {
             guard firstCall.take() else { return SubmissionQueueSpikeTests.nothingStarted }
@@ -160,6 +154,11 @@ struct SubmissionQueueSpikeTests {
 
     /// The answer of each later call of the tool.
     private static let nothingStarted = "nothing new started"
+
+    /// How long a call of ``ChildStartingTool`` waits for its run to settle
+    /// inline. Long enough for a run that starts nothing, and short, because
+    /// the wait holds the model.
+    private static let laterCallSettleGrace: TimeInterval = 0.5
 
     /// The passes before the delivery submission of the parent: the two
     /// passes of its first submission (the tool call, then the answer), and
@@ -214,23 +213,25 @@ struct SubmissionQueueSpikeTests {
                 runSettled, named: "the terminal of the background run, after the submission of the child"))
         let terminal = await settledRun.value
 
-        // The pump of the parent: the waiting mail causes the next submission.
-        let delivered = try await worker.submit(Self.parentLabel) {
-            try await parent.dispatchNextPrompt()
-        }
+        // The pump of the parent: the waiting mail causes the next submission,
+        // with no caller call (task ^3qx0mpt).
+        #expect(
+            await BoundedWait.conditionReached("the delivery submission of the parent") {
+                fixture.passes.recorded.count > Self.passesBeforeDelivery
+            })
+        #expect(await parent.becomesIdle())
 
         let childAnswer = PassObservingModel.answer(to: Self.childPrompt)
         let prompts = fixture.passes.recorded.map(\.prompt)
         let deliveryPrompt = try #require(prompts.dropFirst(Self.passesBeforeDelivery).first)
         #expect(terminal?.outcome == .succeeded)
         #expect(terminal?.detail == childAnswer)
-        #expect(await worker.startedLabels == [Self.parentLabel, Self.childLabel, Self.parentLabel])
+        #expect(await worker.startedLabels == [Self.parentLabel, Self.childLabel])
         #expect(
             Array(prompts.prefix(Self.passesBeforeDelivery))
                 == [Self.parentPrompt, Self.parentPrompt, Self.childPrompt])
         #expect(deliveryPrompt.contains(childAnswer))
         #expect(deliveryPrompt.contains(RoutedSessionActor.settledRunDeliveryPrompt))
-        #expect(delivered == PassObservingModel.answer(to: deliveryPrompt))
         withExtendedLifetime(resolved) {}
     }
 }

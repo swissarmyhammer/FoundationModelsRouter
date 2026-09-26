@@ -94,9 +94,10 @@ extension RoutedSessionActor {
     /// Takes the usage of the generation call that ended since the last
     /// report, and adds it to the ledger.
     ///
-    /// Reads ``backend`` without the turn lock at a tool-call open. The
-    /// model waits in the tool at that moment, so no concurrent writer
-    /// exists (see ``LanguageModelSessionBackend/transcriptEntries()``).
+    /// Reads ``backend`` from a task of the running submission at a
+    /// tool-call open. The model waits in the tool at that moment, so no
+    /// concurrent writer exists (see
+    /// ``LanguageModelSessionBackend/transcriptEntries()``).
     ///
     /// - Parameter entryKind: What the call left in the transcript.
     /// - Returns: The usage of that call, or `nil` when no ledger is open,

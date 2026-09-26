@@ -22,11 +22,23 @@ extension RoutedSession {
     /// none — see ``RoutedSessionActor/tracer``.
     nonisolated var sessionTracer: (any Tracer)? { (self as! RoutedSessionActor).tracer }
 
-    /// Whether a ``RoutedSession/respond(to:maxTokens:)`` call on this session
-    /// is suspended on a wait of its own run plane — see
-    /// ``RoutedSessionActor/isSuspendedOnRunPlaneDrainWait``.
-    var isSuspendedOnRunPlaneDrainWait: Bool {
-        get async { await (self as! RoutedSessionActor).isSuspendedOnRunPlaneDrainWait }
+    /// Whether the pump of this session runs now — see
+    /// ``RoutedSessionActor/isPumpRunning``.
+    var isPumpRunning: Bool {
+        get async { await (self as! RoutedSessionActor).isPumpRunning }
+    }
+
+    /// Whether this session becomes idle inside ``BoundedWait``'s bound: its
+    /// pump ends, and no caller message waits in its outbox. The session then
+    /// holds no answer, and nothing of it is stranded.
+    ///
+    /// - Returns: Whether the session became idle inside the bound.
+    func becomesIdle() async -> Bool {
+        await BoundedWait.conditionReached("the session becoming idle") {
+            let pumpRunning = await self.isPumpRunning
+            let waitingMessages = await self.outbox.waitingMessageCount
+            return !pumpRunning && waitingMessages == 0
+        }
     }
 
     /// The stall report interval the session holds now — see

@@ -30,7 +30,7 @@ private actor RunCompletion {
 /// `.timeLimit` trait, so awaiting such a run directly hangs the whole run of
 /// `swift test` rather than failing the test that caught the fault. That is
 /// the escape hatch `TurnCancellationTests` already carries for a stranded
-/// turn lock — a bounded wait, then a recorded issue and a give-up
+/// pump — a bounded wait, then a recorded issue and a give-up
 /// rather than a further await — in the shape the answer-delivery suites need.
 ///
 /// ``deliveredAnswer()`` never awaits the run on its give-up path, and that is
