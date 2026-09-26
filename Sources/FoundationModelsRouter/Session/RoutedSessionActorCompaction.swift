@@ -20,16 +20,27 @@ private let sessionCompactionLogger = makeModuleLogger(category: "Compaction")
 /// Task ^dvyt1dx measured Qwen3.8-27B with its reasoning on: in all four
 /// continuity tasks the model spent the whole ceiling of the call on its
 /// reasoning and wrote no summary. The ceiling stays as it is.
+///
+/// The blank-slate backend keeps no prompt cache (task ^ptev9yy,
+/// `generation-queue.md`, section 3). Its passes bind the `.uncached` scope,
+/// so the call takes no cache and leaves none: a compaction adds no key to
+/// the cache of the model and pushes out no cache of a real session. Each
+/// compaction path and both tiers (the flash tier and the own-model tier)
+/// make their calls here.
 private struct BackendCompactionSummarizer: CompactionSummarizer {
     /// The backend each blank-slate summarizer call is built from.
     let backend: any LanguageModelSessionBackend
 
     func summarize(_ prompt: String, maxTokens: Int) async throws -> String {
+        let blank = backend.replacingTranscript(Transcript(entries: []))
+        // Before the call: the executor of the blank backend reads the scope
+        // at each pass. A backend with no executor seam keeps no cache of
+        // the fork, so it has nothing to set.
+        (blank as? any SessionPromptCacheScoping)?.keepNoPromptCache()
         // The compaction's own ceiling, passed down to the generation path rather
         // than left to resolve to its generic default for each submission — see
         // ``CompactionSummarizer/summarize(_:maxTokens:)``.
-        try await backend.replacingTranscript(Transcript(entries: []))
-            .respondWithoutReasoning(to: prompt, maxTokens: maxTokens)
+        return try await blank.respondWithoutReasoning(to: prompt, maxTokens: maxTokens)
     }
 }
 

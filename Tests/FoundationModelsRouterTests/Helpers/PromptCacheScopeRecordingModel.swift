@@ -12,6 +12,11 @@ struct ScopedPass: Sendable, Equatable {
 
     /// The text of the last prompt of the transcript that the pass received.
     let prompt: String
+
+    /// The id of the first entry of the transcript that the pass received,
+    /// or `nil` for an empty transcript. The fork keys a pass with no scope
+    /// by this id.
+    let firstEntryID: String?
 }
 
 /// The passes and the cache releases of one ``PromptCacheScopeRecordingModel``,
@@ -63,6 +68,30 @@ final class PromptCacheScopeLog: Sendable {
                 return sessionID
             })
     }
+
+    /// The keys that the passes so far put in the prompt cache, as the fork
+    /// keys a pass: the id of a `.session` scope, or the id of the first
+    /// transcript entry when no scope is bound. A pass with the `.uncached`
+    /// scope puts no key.
+    var storeKeys: Set<String> {
+        Set(
+            recordedPasses.compactMap { pass in
+                switch pass.scope {
+                case .session(let sessionID)?: sessionID
+                case .uncached?: nil
+                case nil: pass.firstEntryID
+                }
+            })
+    }
+
+    /// The scopes of the passes whose prompt is none of `prompts`, in order:
+    /// the passes that no caller prompt started, such as a summarizer call.
+    ///
+    /// - Parameter prompts: The caller prompts of the session.
+    /// - Returns: The scope of each other pass.
+    func scopes(notServingPrompts prompts: Set<String>) -> [MLXLanguageModel.PromptCacheScope?] {
+        recordedPasses.filter { !prompts.contains($0.prompt) }.map(\.scope)
+    }
 }
 
 /// A scripted `LanguageModel` that records the prompt-cache scope of each pass
@@ -72,19 +101,41 @@ final class PromptCacheScopeLog: Sendable {
 /// sees, and then answers ``answer``. The model takes the place of the raw
 /// `MLXLanguageModel` of a container: it releases the cache of a session
 /// through the same ``SessionPromptCacheReleasing`` requirement.
+///
+/// A model made with a ``reportedInputTokens`` above zero also reports that
+/// input count as the usage of each pass, so the session measures its
+/// context and its automatic compaction can start.
 struct PromptCacheScopeRecordingModel: LanguageModel, SessionPromptCacheReleasing {
     /// The log each pass and each release records into.
     let log: PromptCacheScopeLog
+
+    /// The input token count that each pass reports as its usage, or zero
+    /// when the passes report no usage.
+    let reportedInputTokens: Int
 
     /// The text of every answer. It is short, so a summary that it writes
     /// shrinks the live context of a compaction.
     static let answer = "ok"
 
+    /// Makes a model over `log`.
+    ///
+    /// - Parameters:
+    ///   - log: The log each pass and each release records into.
+    ///   - reportedInputTokens: The input token count that each pass reports
+    ///     as its usage. The default, zero, reports no usage.
+    init(log: PromptCacheScopeLog, reportedInputTokens: Int = 0) {
+        self.log = log
+        self.reportedInputTokens = reportedInputTokens
+    }
+
     /// The model answers text only.
     var capabilities: LanguageModelCapabilities { LanguageModelCapabilities([]) }
 
-    /// The executor cache key: the identity of the log.
-    var executorConfiguration: Executor.Configuration { Executor.Configuration(log: log) }
+    /// The executor cache key: the identity of the log, with the usage that
+    /// each pass reports.
+    var executorConfiguration: Executor.Configuration {
+        Executor.Configuration(log: log, reportedInputTokens: reportedInputTokens)
+    }
 
     /// Records the release of the cache of `sessionID`.
     ///
@@ -100,21 +151,29 @@ struct PromptCacheScopeRecordingModel: LanguageModel, SessionPromptCacheReleasin
             /// The log each pass records into.
             let log: PromptCacheScopeLog
 
-            /// Equal when both configurations name the same log.
+            /// The input token count that each pass reports, or zero for no
+            /// usage report.
+            let reportedInputTokens: Int
+
+            /// Equal when both configurations name the same log and report
+            /// the same usage.
             ///
             /// - Parameters:
             ///   - lhs: One configuration.
             ///   - rhs: The other configuration.
-            /// - Returns: `true` when both hold the same log object.
+            /// - Returns: `true` when both hold the same log object and the
+            ///   same reported input count.
             static func == (lhs: Self, rhs: Self) -> Bool {
-                lhs.log === rhs.log
+                lhs.log === rhs.log && lhs.reportedInputTokens == rhs.reportedInputTokens
             }
 
-            /// Hashes by the `ObjectIdentifier` of the log.
+            /// Hashes by the `ObjectIdentifier` of the log and by the
+            /// reported input count.
             ///
             /// - Parameter hasher: The hasher to feed.
             func hash(into hasher: inout Hasher) {
                 hasher.combine(ObjectIdentifier(log))
+                hasher.combine(reportedInputTokens)
             }
         }
 
@@ -135,7 +194,8 @@ struct PromptCacheScopeRecordingModel: LanguageModel, SessionPromptCacheReleasin
             self.configuration = configuration
         }
 
-        /// Records the scope that the task of this pass sees, and answers.
+        /// Records the scope that the task of this pass sees, answers, and
+        /// reports the configured usage.
         ///
         /// - Parameters:
         ///   - request: The generation request.
@@ -149,10 +209,26 @@ struct PromptCacheScopeRecordingModel: LanguageModel, SessionPromptCacheReleasin
             streamingInto channel: LanguageModelExecutorGenerationChannel
         ) async throws {
             configuration.log.record(
-                ScopedPass(scope: MLXLanguageModel.promptCacheScope, prompt: Self.lastPrompt(of: request.transcript)))
+                ScopedPass(
+                    scope: MLXLanguageModel.promptCacheScope, prompt: Self.lastPrompt(of: request.transcript),
+                    firstEntryID: Array(request.transcript).first?.id))
             await channel.send(
                 .response(
                     action: .appendText(PromptCacheScopeRecordingModel.answer, tokenCount: Self.emittedTokenCount)))
+            await reportUsage(into: channel)
+        }
+
+        /// Reports ``Configuration/reportedInputTokens`` as the usage of the
+        /// pass, when it is above zero.
+        ///
+        /// - Parameter channel: The channel the pass emits into.
+        private func reportUsage(into channel: LanguageModelExecutorGenerationChannel) async {
+            guard configuration.reportedInputTokens > 0 else { return }
+            await channel.send(
+                .response(
+                    action: .updateUsage(
+                        input: .init(totalTokenCount: configuration.reportedInputTokens, cachedTokenCount: 0),
+                        output: .init(totalTokenCount: Self.emittedTokenCount, reasoningTokenCount: 0))))
         }
 
         /// The text of the last `.prompt` entry of `transcript`.

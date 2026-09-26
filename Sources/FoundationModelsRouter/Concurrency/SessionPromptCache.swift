@@ -31,6 +31,12 @@ protocol SessionPromptCacheScoping: AnyObject, Sendable {
     /// - Parameter sessionID: The id of the session that owns this backend.
     func scopePromptCache(toSession sessionID: String)
 
+    /// Makes each later pass of this backend keep no prompt cache: it binds
+    /// the `.uncached` scope, so it takes no cache and leaves none. A
+    /// compaction calls it on the backend of each summarizer call (task
+    /// ^ptev9yy), so that call adds no key to the cache of the model.
+    func keepNoPromptCache()
+
     /// Releases the prompt cache of `sessionID` on the model of this backend.
     ///
     /// - Parameter sessionID: The id that the passes of the session bound.

@@ -12,7 +12,8 @@ import Synchronization
 /// observer of its session (``GenerationPassObserver``), so the stall watch
 /// counts only the time inside a pass. It is also the seam of the per-pass
 /// session work that must run on the task of the executor call, such as the
-/// prompt-cache key of the session.
+/// prompt-cache scope: the key of the session, or no cache for a summarizer
+/// call.
 ///
 /// A wrapper of a backend holds no queue: the session submits each whole SDK
 /// call of its backend to the ``GenerationQueue`` of the model
@@ -29,7 +30,7 @@ import Synchronization
 /// itself, and never casts this wrapper.
 struct SessionLanguageModel: LanguageModel, Sendable {
     /// The per-session state of this wrapper: its identity, the raw model,
-    /// the pass observer, and the prompt-cache key of the session.
+    /// the pass observer, and the prompt-cache scope.
     let state: SessionLanguageModelState
 
     /// Makes a wrapper with a new per-session state over `wrapped`.
@@ -106,7 +107,7 @@ struct SessionLanguageModel: LanguageModel, Sendable {
         }
 
         /// Runs one pass of the wrapped executor under the prompt-cache scope
-        /// of its session, and reports its start and its end to the observer
+        /// of its wrapper, and reports its start and its end to the observer
         /// of its session.
         ///
         /// The pass is the executor call of the SDK itself, not a copy: it
@@ -158,7 +159,7 @@ struct SessionLanguageModel: LanguageModel, Sendable {
 ///
 /// It is a class because its identity is the executor cache key of the
 /// wrapper: one state is one session, so one executor. The per-pass work of a
-/// session (its prompt-cache key, the report of a pass) keeps its session
+/// session (its prompt-cache scope, the report of a pass) keeps its session
 /// data here.
 final class SessionLanguageModelState: Sendable {
     /// The raw model whose executor runs each pass.
@@ -168,19 +169,21 @@ final class SessionLanguageModelState: Sendable {
     /// wrapper of a backend, whose session submits each whole SDK call.
     let passQueue: GenerationQueue?
 
-    /// What the session of this wrapper installs on it.
+    /// What the owner of this wrapper installs on it: the session of its
+    /// backend, or the compaction that made its backend for a summarizer
+    /// call.
     private struct Installation {
         /// The observer each pass reports to, or `nil` before the session
         /// installs one.
         var passObserver: GenerationPassObserver?
 
-        /// The id that keys the prompt cache of each pass, or `nil` before
-        /// the session installs one.
-        var promptCacheSessionID: String?
+        /// The prompt-cache scope that each pass binds, or `nil` before the
+        /// owner installs one.
+        var promptCacheScope: MLXLanguageModel.PromptCacheScope?
     }
 
-    /// What the session of this wrapper installed. A lock guards it, because
-    /// the session writes it from its actor while an executor reads it from
+    /// What the owner of this wrapper installed. A lock guards it, because
+    /// the owner writes it from its actor while an executor reads it from
     /// the task of a pass.
     private let installation = Mutex(Installation())
 
@@ -197,11 +200,11 @@ final class SessionLanguageModelState: Sendable {
         installation.withLock { $0.passObserver = observer }
     }
 
-    /// The id that keys the prompt cache of each pass of this wrapper, or
-    /// `nil` when no session installed one. A pass with no id binds no scope,
-    /// so the fork keys it by the id of the first transcript entry.
-    var promptCacheSessionID: String? {
-        installation.withLock { $0.promptCacheSessionID }
+    /// The prompt-cache scope that each pass of this wrapper binds, or `nil`
+    /// when nothing installed one. A pass with no scope binds nothing, so
+    /// the fork keys it by the id of the first transcript entry.
+    var promptCacheScope: MLXLanguageModel.PromptCacheScope? {
+        installation.withLock { $0.promptCacheScope }
     }
 
     /// Keys the prompt cache of each pass of this wrapper by `sessionID`,
@@ -209,20 +212,33 @@ final class SessionLanguageModelState: Sendable {
     ///
     /// - Parameter sessionID: The id of the session of this wrapper.
     func scopePromptCache(toSession sessionID: String) {
-        installation.withLock { $0.promptCacheSessionID = sessionID }
+        installation.withLock { $0.promptCacheScope = .session(sessionID) }
     }
 
-    /// Runs `body` with the prompt-cache scope of the session of this
-    /// wrapper bound on the current task: `.session(id)` when the session
-    /// installed an id, or no binding when it installed none.
+    /// Makes each pass of this wrapper keep no prompt cache, from the next
+    /// pass on: each pass binds `.uncached`, so it checks out no cache and
+    /// checks in none (task ^ptev9yy). A compaction sets it on the backend
+    /// of each summarizer call, so that call adds no key to the cache of
+    /// the model.
+    ///
+    /// The case is `.uncached`, never `.none`: the scope is optional, so
+    /// `.none` is `Optional.none`, which binds no scope and adds a key.
+    func keepNoPromptCache() {
+        installation.withLock { $0.promptCacheScope = .uncached }
+    }
+
+    /// Runs `body` with the prompt-cache scope of this wrapper bound on the
+    /// current task: `.session(id)` for the backend of a session,
+    /// `.uncached` for the backend of a summarizer call, or no binding when
+    /// nothing installed a scope.
     ///
     /// - Parameter body: The call of the wrapped executor.
     /// - Throws: What `body` throws.
     func withPromptCacheScope(_ body: () async throws -> Void) async rethrows {
-        guard let sessionID = promptCacheSessionID else {
+        guard let scope = promptCacheScope else {
             return try await body()
         }
-        try await MLXLanguageModel.$promptCacheScope.withValue(.session(sessionID)) {
+        try await MLXLanguageModel.$promptCacheScope.withValue(scope) {
             try await body()
         }
     }

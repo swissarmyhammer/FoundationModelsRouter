@@ -13,7 +13,8 @@
 ///   nothing to release on a replacement.
 /// - A summarizer backend (the own-model tier and the flash tier of a
 ///   compaction) is never adopted as ``backend``, so it does not get the key
-///   of the session.
+///   of the session. Its passes bind the `.uncached` scope (task ^ptev9yy),
+///   so a compaction adds no key to the cache of the model.
 /// - All backends of one session run over one raw model, because
 ///   `replacingTranscript` keeps the model. The release through the current
 ///   ``backend`` thus reaches each model that the session used.

@@ -22,11 +22,41 @@ comments:
     - A summarizer call is one submission on the queue of the container that runs it (^1psqdm9 step 3, ^6wqketz). The binding is below that submission, in the executor, so it still reaches the fork.
     - The compaction paths change place: the proactive compaction and the compaction after a yield, a ceiling stop or an overflow happen at the pump, between two submissions (^3qx0mpt). Step 2 of this task ("every compaction path") must cover the pump path; the list of paths is otherwise the same.
   timestamp: 2026-09-25T18:57:45.607454+00:00
+- actor: claude-code
+  id: 01m3ex76zq6w5tqgctytexpwyr
+  text: |-
+    Research (2026-09-26):
+    - The Router pin of the fork is `ffac55d` (Package.resolved). The case is `MLXLanguageModel.PromptCacheScope.uncached`. The task-local type is `PromptCacheScope?`.
+    - All compaction paths go through one seam. `compactOwnModel` (the caller `compact`, run by the pump) and `performAutoCompaction` (the proactive compaction at the pump, the tool-result yield in `RoutedSessionActorCompactionYield`, the ceiling stop and the overflow retry in `RoutedSessionActorAnswerExecution`) all call `runCompaction`. `runCompaction` makes each tier slot with `BackendSummarizerTier.slot(for:)`, and each call runs in `BackendCompactionSummarizer.summarize`, on `backend.replacingTranscript(Transcript(entries: []))`. This is true for the flash tier (`profile.flash.container.makeSession`) and for the own-model tier (the live backend).
+    - `replacingTranscript` makes a new backend with a new `SessionLanguageModel` wrapper and a new `SessionLanguageModelState`. That state has no scope, so today each summarizer pass binds nothing and the fork keys it by the first transcript entry.
+    - The fork has no public key count. `ExecutorPromptCacheStore.retainedSessionCount` is internal ("Read by tests"). `MLXLanguageModel.promptCacheUsage` gives the byte totals only.
+    - The real models are on this machine (128 GB; `Qwen2.5-3B-Instruct-4bit` and `Muse-Glimmer-30B-mxfp4` are in the Hub cache), so the gated test can run.
+
+    Decision: the state keeps one `MLXLanguageModel.PromptCacheScope?` in place of the session id string. `scopePromptCache(toSession:)` sets `.session(id)`. A new `keepNoPromptCache()` (on `SessionLanguageModelState` and on `SessionPromptCacheScoping`) sets `.uncached`. `BackendCompactionSummarizer` calls it on the blank backend before its one call. The executor `respond` binds the stored scope, on the task of the inner executor call, as R2 does.
+  timestamp: 2026-09-26T13:07:07.895011+00:00
+- actor: claude-code
+  id: 01m3exzczex1rc0k9ebz4t9zfm
+  text: |-
+    Implementation (2026-09-26):
+    - `SessionLanguageModelState` keeps one `MLXLanguageModel.PromptCacheScope?` in place of the session id string. `scopePromptCache(toSession:)` sets `.session(id)`. The new `keepNoPromptCache()` sets `.uncached`. `withPromptCacheScope(_:)` binds the stored scope on the task of the inner executor call, as R2 does. `SessionPromptCacheScoping` has the new requirement `keepNoPromptCache()`, and `MLXFoundationModelsSessionBackend` forwards it to its wrapper state.
+    - `BackendCompactionSummarizer.summarize` calls `keepNoPromptCache()` on the blank backend before its one call. All compaction paths (the caller `compact`, the proactive compaction at the pump, the tool-result yield, the ceiling stop, the overflow retry) and both tiers (flash, own model) make their calls there, so one seam covers them.
+    - TDD: `SummarizerPromptCacheTests` failed first on the scope and key assertions, then passed. The recording model helper now records the first transcript entry id (the key the fork gives a pass with no scope) and can report usage, so the auto compaction starts at the pump.
+    - Mutation check: `keepNoPromptCache()` with `.none` makes both unit tests and the gated key test fail. Restored to `.uncached`.
+    - Gated (real Qwen2.5-3B, this machine): `SummarizerPromptCacheIntegrationTests` 2/2 passed; `secondAnswerReusesFirstAnswersKVCache` (the old `secondTurnReusesFirstTurnsKVCache`, renamed by ^f33q8gw) and `sessionKeyedCacheIsReusedUntilItsRelease` passed. The gated suite reads the key count through `@testable import MLXFoundationModels` (`ExecutorPromptCacheStore.retainedSessionCount`), because the fork has no public key count.
+    - Note: other sessions added board files during this work (tasks 01M3EX8BQ6033ZYFJNSN3RCZ0X, 01M3EXEEDTD9DTP571SQHF29TG, tag `dead-code`). This task did not make or change them.
+  timestamp: 2026-09-26T13:20:20.462793+00:00
+- actor: claude-code
+  id: 01m3exzm7qkd5vcb0xtzep5j25
+  text: |-
+    ### implement — changed
+    - evidence: 8 files changed or added — Sources/FoundationModelsRouter/Concurrency/SessionLanguageModel.swift, Sources/FoundationModelsRouter/Concurrency/SessionPromptCache.swift, Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorCompaction.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorPromptCache.swift, Tests/FoundationModelsRouterTests/Helpers/PromptCacheScopeRecordingModel.swift, Tests/FoundationModelsRouterTests/SummarizerPromptCacheTests.swift (new), IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/SummarizerPromptCacheIntegrationTests.swift (new). `swift test`: 1475 + 15 + 19 = 1509 passed (1507 before, plus 2 new), 0 failed. Full first-party recompile: 0 compiler warnings (only the known mlx-swift_Cmlx.bundle note). Gated: SummarizerPromptCacheIntegrationTests 2/2, secondAnswerReusesFirstAnswersKVCache and sessionKeyedCacheIsReusedUntilItsRelease 2/2 passed. Acceptance criteria 4/4 checked.
+    - next: review
+  timestamp: 2026-09-26T13:20:27.895222+00:00
 depends_on:
 - 01M39ZPCNPZCG3RPG9Q6WQKETZ
 - 01M3A1QPQMDJD33G9ANCC2TEZN
-position_column: todo
-position_ordinal: 8a80
+position_column: doing
+position_ordinal: '80'
 title: 'R3: summarizer calls keep no prompt cache'
 ---
 ## Why
@@ -53,7 +83,7 @@ The key is bound in the executor `respond` of the per-session queued wrapper (^8
 
 ## Acceptance Criteria
 
-- [ ] A compaction adds no key to the store: the key count and the byte total (`promptCacheUsage`) are the same before and after (test).
-- [ ] A test fails if the binding is `Optional.none` in place of `.uncached`.
-- [ ] The next pass of the compacted session still reuses its own cache (gated test).
-- [ ] `secondTurnReusesFirstTurnsKVCache` (`IntegrationTests/.../LanguageModelSessionBackendTests.swift`) stays green. #generation-queue #prompt-cache
+- [x] A compaction adds no key to the store: the key count and the byte total (`promptCacheUsage`) are the same before and after (test). <!-- Gated: SummarizerPromptCacheIntegrationTests.aCompactionAddsNoKeyToThePromptCache (real Qwen2.5-3B; key count = ExecutorPromptCacheStore.retainedSessionCount, bytes = MLXLanguageModel.promptCacheUsage), passed 2026-09-26. Unit: SummarizerPromptCacheTests.ownModelSummarizerOfACallerCompactionAddsNoKey and flashSummarizerOfAnAutomaticCompactionAddsNoKey (PromptCacheScopeLog.storeKeys). -->
+- [x] A test fails if the binding is `Optional.none` in place of `.uncached`. <!-- SummarizerPromptCacheTests (both tests) and SummarizerPromptCacheIntegrationTests.aCompactionAddsNoKeyToThePromptCache. Proved by mutation on 2026-09-26: keepNoPromptCache() set to `.none` made all three fail; restored to `.uncached`. -->
+- [x] The next pass of the compacted session still reuses its own cache (gated test). <!-- SummarizerPromptCacheIntegrationTests.theNextAnswerAfterACompactionReusesItsOwnCache: cachedTokenCount of the answer after the compaction >= the token count of the instructions. Passed 2026-09-26. -->
+- [x] `secondTurnReusesFirstTurnsKVCache` (`IntegrationTests/.../LanguageModelSessionBackendTests.swift`) stays green. <!-- The test is now named secondAnswerReusesFirstAnswersKVCache (^f33q8gw rename). Passed 2026-09-26, with sessionKeyedCacheIsReusedUntilItsRelease (R2). --> #generation-queue #prompt-cache

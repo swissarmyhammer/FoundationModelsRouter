@@ -711,6 +711,13 @@ extension MLXFoundationModelsSessionBackend: SessionPromptCacheScoping {
         sessionModelState.scopePromptCache(toSession: sessionID)
     }
 
+    /// Makes each later pass of ``liveSession`` keep no prompt cache, through
+    /// the per-session state of its wrapper (task ^ptev9yy). The executor of
+    /// the wrapper binds `.uncached` on the task of each pass.
+    func keepNoPromptCache() {
+        sessionModelState.keepNoPromptCache()
+    }
+
     /// Releases the prompt cache of `sessionID` on ``model``, when ``model``
     /// keeps a prompt cache for each session.
     ///
