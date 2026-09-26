@@ -42,8 +42,24 @@ comments:
     - evidence: 30 files in Tests/ (none in Sources/). Periphery total 1422 -> 1383, package files 54 -> 15, Tests/ 47 -> 10, no new finding (the 2 BackgroundTool.swift parameter findings in Sources/ also went away, because no conformance names the parameter now). swift test before 1458 + 17 + 19 = 1494, after 1458 + 17 + 19 = 1494, all pass. Clean build in a new scratch path: no warning in Sources/ or Tests/. swift build --package-path IntegrationTests --build-tests: Build complete.
     - next: /review
   timestamp: 2026-09-26T18:44:22.688324+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m3fh8065r5n46hywv5qcavws
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (c59fbe3); 0 findings, 0 confirmed, 0 refuted; 21 attempts, 0 failed; 30 files reviewed; 2 .kanban files not reviewed (.reviewignore). The task had no prior Review Findings section.
+    - next: none. The task moved to done.
+  timestamp: 2026-09-26T18:57:05.221651+00:00
+- actor: claude-code
+  id: 01m3fh9cff5fxbwz99bc3djj85
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — about 30 test files; Periphery in Tests/ 47 to 10; 7 kept fields marked with a reason
+    - test: green — swift package clean then swift test, 1494 passed (1458+17+19), 0 failed, 0 skipped; @Test count 1508 before and after; IntegrationTests build clean
+    - commit: c59fbe3
+    - review: clean — 0 findings
+  timestamp: 2026-09-26T18:57:50.575472+00:00
+position_column: done
+position_ordinal: ffffff9980
 title: Remove the dead code in the test targets that Periphery found
 ---
 ## Why
