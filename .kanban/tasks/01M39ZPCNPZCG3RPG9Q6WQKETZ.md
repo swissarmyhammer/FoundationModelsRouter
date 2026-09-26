@@ -43,11 +43,27 @@ comments:
     - evidence: 2 test files changed, no production file — Tests/FoundationModelsRouterTests/SummarizerSubmissionTests.swift (new test `aCancelWhileTheSummarizerWaitsCancelsTheAnswer`, helper `startSummarizerBehindAFlashSubmission`), Tests/FoundationModelsRouterTests/ToolResultCompactionTests.swift (new test `ownModelSummarizerBetweenTwoSubmissionsCompletes`, `makeFixture(slot:)`, `Fixture.queue`). `swift build --build-tests`: no compiler warning (only the known mlx `missing creator` line). `swift test`: 1468 + 15 + 19 = 1502 passed (last green 1500, plus 2 new tests; the 2 known issues are the intended `withKnownIssue` in BoundedWaitTests and RealModelHarnessTests). Compaction, queue and cancellation suites (`--filter 'Compaction|GenerationQueue|Cancellation|SummarizerSubmission|MessageQueue|QueuedPass|SharedGenerationQueue'`, 207 + 5 + 19 tests) with `--maximum-repetitions 25 --repeat-until fail`: all passed. The 3 summarizer tests with 200 repetitions: passed. `swift build --build-tests --package-path IntegrationTests`: Build complete.
     - next: review
   timestamp: 2026-09-26T12:19:20.268379+00:00
+- actor: claude-code
+  id: 01m3ev7yzjt5kbrdh18h9bpm8s
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (86b56ea). 0 findings, 0 confirmed, 0 refuted. 7 validator runs were done and 0 failed. The engine examined 2 Swift test files. It did not examine 2 .kanban files because of .reviewignore.
+    - next: None. The task is in done.
+  timestamp: 2026-09-26T12:32:35.314705+00:00
+- actor: claude-code
+  id: 01m3evbc8gw7dj0ftyd92jnamv
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 2 test files (production behavior already in place from ^1psqdm9 and ^3qx0mpt)
+    - test: green — swift test, 1502 passed (1468+15+19), 0 failed, 0 skipped; changed suites 3 extra runs clean
+    - commit: 86b56ea
+    - review: clean — 0 findings
+  timestamp: 2026-09-26T12:34:27.216704+00:00
 depends_on:
 - 01M39ZNSNZGBYEY5G8R93KJN94
 - 01M3CYJ4VS4VF5EEHA01PSQDM9
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffff9080
 title: Run each compaction summarizer call as a queue item on the queue of its own container
 ---
 ## Why
