@@ -6,6 +6,10 @@ comments:
   id: 01m3cwaxq2260c4qb08n5nbhd3
   text: '2026-09-25: the timeout occurred again after ^93kjn94. ^93kjn94 renamed the test to `HumanWaitGateTests.turnEndingDuringAnOutOfTurnWaitStrandsNothing` and said the re-acquire race is gone. During the test step of ^44y6ba4, one full `swift test` run failed this test with `SignalNeverArrived()`. It passed in 4 later runs (1 full run, 3 filtered runs). Thus the cause is not only the old re-acquire. This task is still valid.'
   timestamp: 2026-09-25T18:13:12.034922+00:00
+- actor: claude-code
+  id: 01m3dhpr7yb0p8xsg6ggavdqvt
+  text: 'One more sample of the same symptom (^dpn2ytt, 2026-09-25): in the first full `swift test` after a rebuild, at load average 19 to 23, `HumanWaitGateTests.forkRacingAHumanWaitReadsTheSettledTranscript` hit the 5 s `BoundedWait` bound (`forkedDuringTheWait` false; the test took 7.8 s). The fork path in that tree has no wait at all (no turn lock, no queue). 8 later full runs and 8 processes x 100 repetitions of the suite gave 0 issues. This points at scheduler starvation of the @MainActor tests of this suite under full-suite load, not at an ordering race.'
+  timestamp: 2026-09-26T00:26:39.742473+00:00
 position_column: todo
 position_ordinal: 8c80
 title: Investigate a timeout of HumanWaitGateTests turnEndingDuringAReAcquireStrandsNoPermit under full-suite load

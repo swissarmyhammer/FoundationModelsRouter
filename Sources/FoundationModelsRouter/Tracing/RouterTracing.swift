@@ -114,8 +114,8 @@ enum RouterTracing {
 
         /// The span id of the child session one fork produced.
         ///
-        /// Written only once the child exists, so a fork that was refused or
-        /// that failed carries no such key. Read beside ``sessionId``, the two
+        /// Written only once the child exists, so a fork that failed carries
+        /// no such key. Read beside ``sessionId``, the two
         /// keys of a fork span say which session was forked and which session
         /// came out of it.
         static let forkChildSessionId = "fork.child_session_id"

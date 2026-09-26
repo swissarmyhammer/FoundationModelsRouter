@@ -22,7 +22,9 @@ import Testing
 /// container of these tests has no ``GenerationQueue``, so a tool body that
 /// generates on another session over it runs that model call directly and
 /// holds nothing that session needs. A tool body that asks its own session for
-/// a turn or a fork must be refused, because that session's turn lock is held.
+/// a turn must be refused, because that session's turn lock is held. A fork or
+/// a transcript read that a tool body asks of its own session is served at
+/// once, from the settled transcript of that session (task ^dpn2ytt).
 /// Over a container with a queue, an in-band tool body that waits for a
 /// session on the same model is refused at once (task ^1psqdm9,
 /// `GenerationQueueTurnTests`).
@@ -287,14 +289,16 @@ struct NestedGenerationReentryTests {
     /// The prompt the tool body submits to the session it generates on.
     private static let nestedPrompt = "rank the candidates"
 
-    /// How many transcript entries one stubbed model call has appended by the
-    /// time it invokes the fixture tool: the turn's own `.prompt`, and the
-    /// `.response` ``StubSessionBackend`` pairs with it.
+    /// How many transcript entries the settled transcript of a fresh session
+    /// holds while its first turn runs: none. The stub calls the fixture tool
+    /// directly, with no tool-result boundary, so the last settled point is
+    /// the start of the session.
     ///
-    /// This is what a transcript read from inside that tool call reports, and
-    /// it is what says the read saw the turn in progress rather than an empty
-    /// or stale history.
-    private static let entriesBeforeTheToolCall = 2
+    /// This is what a transcript read of that session reports while the turn
+    /// runs. The live backend holds more by then: the turn's own `.prompt`,
+    /// and the `.response` ``StubSessionBackend`` pairs with it. So the count
+    /// says that the read saw the settled copy, not the live transcript.
+    private static let entriesAtTheLastSettledPoint = 0
 
     /// The upper bound one stubbed turn is allowed.
     ///
@@ -601,8 +605,8 @@ struct NestedGenerationReentryTests {
 
     // MARK: - Forking from inside a tool body
 
-    @Test("a tool body that forks its own session is refused, rather than suspending without a sound")
-    func aToolBodyThatForksItsOwnSessionIsRefused() async throws {
+    @Test("a tool body that forks its own session gets a child at once, rather than a refusal or a wait")
+    func aToolBodyThatForksItsOwnSessionGetsAChildAtOnce() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -610,17 +614,17 @@ struct NestedGenerationReentryTests {
         let profile = try await Self.makeProfile(container: ToolCallingLLMContainer(), dir: dir)
 
         let caller = profile.standard.makeSession(tools: [ForkingTool(target: target)])
-        // The tool forks the very session whose turn invoked it. That turn holds
-        // the turn lock a fork reads under, and cannot release it until the tool
-        // returns, so this has to fail with something a caller can read.
+        // The tool forks the very session whose turn invoked it. The fork reads
+        // the settled transcript of that session, so it waits for nothing the
+        // turn holds (task ^dpn2ytt).
         target.set(caller)
 
         let outcome = await Self.outcome(
             of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.turnTimeout)
 
-        Self.expectRefused(
-            outcome, with: .forkDuringSameSessionTurn(sessionID: caller.id),
-            describing: "a tool body that forks its own session")
+        // The child names the session it came off.
+        Self.expectFinished(
+            outcome, is: caller.id.description, describing: "The turn that forks its own session")
 
         withExtendedLifetime(profile) {}
     }
@@ -649,7 +653,7 @@ struct NestedGenerationReentryTests {
 
     // MARK: - Reading the transcript from inside a tool body
 
-    @Test("a tool body reads its own session's transcript mid-turn, rather than suspending without a sound")
+    @Test("a tool body reads its own session's transcript mid-turn, and gets the settled transcript at once")
     func aToolBodyReadsItsOwnSessionsTranscript() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -658,19 +662,18 @@ struct NestedGenerationReentryTests {
         let profile = try await Self.makeProfile(container: ToolCallingLLMContainer(), dir: dir)
 
         let caller = profile.standard.makeSession(tools: [TranscriptReadingTool(target: target)])
-        // The tool reads the very session whose turn invoked it. That turn holds
-        // the turn lock, so a read that waited for it would never come back —
-        // and it has nothing to wait for, since the only writer is suspended in
-        // this tool.
+        // The tool reads the very session whose turn invoked it. The read takes
+        // the settled transcript of that session, so it waits for nothing the
+        // turn holds (task ^dpn2ytt).
         target.set(caller)
 
         let outcome = await Self.outcome(
             of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.turnTimeout)
 
-        // The count is the history as it stands mid-turn, which is what says the
-        // read saw this session's own backend rather than nothing at all.
+        // The count is the settled transcript, not the live one: the live
+        // backend already holds the turn's prompt and its answer.
         Self.expectFinished(
-            outcome, is: String(Self.entriesBeforeTheToolCall),
+            outcome, is: String(Self.entriesAtTheLastSettledPoint),
             describing: "The transcript-reading turn")
         withExtendedLifetime(profile) {}
     }
@@ -786,9 +789,9 @@ struct NestedGenerationReentryTests {
         withExtendedLifetime(harness) {}
     }
 
-    @Test("a declared background body that forks the session that started it waits for that turn to end, then forks it")
+    @Test("a declared background body that forks the session that started it does not wait for the submission")
     @MainActor
-    func aBackgroundBodyThatForksItsOwnSessionWaitsForTheTurnToEnd() async throws {
+    func aBackgroundBodyThatForksItsOwnSessionDoesNotWaitForTheSubmission() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -798,27 +801,21 @@ struct NestedGenerationReentryTests {
         harness.target.set(caller)
 
         let turn = harness.startTurn(on: caller)
-        let token = await Self.handedBackToken(from: harness.handedBack)
-        // A background body is no tool call the model is suspended in: the turn
-        // that started it is still writing, so the fork waits for the turn lock
-        // like any outside caller rather than being refused or served mid-turn.
-        if let token {
-            #expect(await caller.mailbox.wait(completionToken: token, seconds: 0) == .deadlineElapsed)
-        }
+        let token = try #require(await Self.handedBackToken(from: harness.handedBack))
+        // The submission that started the run is still open. The fork reads
+        // the settled transcript, so the run settles all the same, and its
+        // child names the session it forked (task ^dpn2ytt).
+        let terminal = await Self.settledTerminal(of: token, on: caller, describing: "The forking run")
+        #expect(terminal?.outcome == .succeeded)
+        #expect(terminal?.detail == caller.id.description)
 
         #expect(Self.finishedAnswer(await harness.endTurn(turn), describing: "The forking turn") != nil)
-        // The child came off the finished turn, and names the session it forked.
-        if let token {
-            let terminal = await Self.settledTerminal(of: token, on: caller, describing: "The forking run")
-            #expect(terminal?.outcome == .succeeded)
-            #expect(terminal?.detail == caller.id.description)
-        }
         withExtendedLifetime(harness) {}
     }
 
-    @Test("a declared background body that reads the transcript of the session that started it waits for that turn to end")
+    @Test("a declared background body that reads the transcript of the session that started it does not wait for the submission")
     @MainActor
-    func aBackgroundBodyThatReadsItsOwnSessionsTranscriptWaitsForTheTurnToEnd() async throws {
+    func aBackgroundBodyThatReadsItsOwnSessionsTranscriptDoesNotWaitForTheSubmission() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -828,21 +825,15 @@ struct NestedGenerationReentryTests {
         harness.target.set(caller)
 
         let turn = harness.startTurn(on: caller)
-        let token = await Self.handedBackToken(from: harness.handedBack)
-        // The only writer is not suspended in this body, so the lock-free read
-        // an in-band tool call gets is not on offer: the read waits for the
-        // turn lock.
-        if let token {
-            #expect(await caller.mailbox.wait(completionToken: token, seconds: 0) == .deadlineElapsed)
-        }
+        let token = try #require(await Self.handedBackToken(from: harness.handedBack))
+        // The submission that started the run is still open. The read takes
+        // the settled transcript, so the run settles all the same, with the
+        // entries of the last settled point (task ^dpn2ytt).
+        let terminal = await Self.settledTerminal(of: token, on: caller, describing: "The reading run")
+        #expect(terminal?.outcome == .succeeded)
+        #expect(terminal?.detail == String(Self.entriesAtTheLastSettledPoint))
 
         #expect(Self.finishedAnswer(await harness.endTurn(turn), describing: "The reading turn") != nil)
-        // The read saw the finished turn's own history.
-        if let token {
-            let terminal = await Self.settledTerminal(of: token, on: caller, describing: "The reading run")
-            #expect(terminal?.outcome == .succeeded)
-            #expect(terminal?.detail == String(Self.entriesBeforeTheToolCall))
-        }
         withExtendedLifetime(harness) {}
     }
 

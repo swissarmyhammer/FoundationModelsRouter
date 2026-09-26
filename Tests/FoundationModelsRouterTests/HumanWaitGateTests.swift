@@ -25,8 +25,8 @@ import Testing
 /// when nobody calls `awaitingUser` — is covered where it already was:
 /// `ForkConcurrencyTests.generationQueueSerializesSubmissionsAndIsFIFO` (four
 /// callers over one model never overlap and run FIFO) and
-/// `MultiTurnSessionTests.forkHoldsTurnLockDuringMakeFork` (a fork queues behind
-/// an in-flight turn).
+/// `MultiTurnSessionTests.forkDoesNotWaitForAnInFlightTurn` (a fork does not
+/// wait for an in-flight turn; it reads the settled transcript).
 @Suite("A human wait in a tool holds the model, and never releases the per-session turn lock")
 struct HumanWaitGateTests {
     // MARK: - Failures raised from inside a human wait
@@ -157,12 +157,19 @@ struct HumanWaitGateTests {
             makeFork(tools: [])
         }
 
-        /// Snapshots ``entries`` as of this call into the child and records the
-        /// child into ``lastFork``, so a test can assert both *that* a fork read
-        /// this backend and *what* it saw.
+        /// Snapshots ``entries`` as of this call into the child, through
+        /// ``makeFork(tools:seededFrom:)``.
         func makeFork(tools: [any Tool]) -> any LanguageModelSessionBackend {
+            makeFork(tools: tools, seededFrom: Transcript(entries: entries))
+        }
+
+        /// Seeds the child from `transcript` and records the child into
+        /// ``lastFork``, so a test can assert both *that* a fork was made and
+        /// *what* it was seeded with. The session passes its settled
+        /// transcript here, not the live ``entries``.
+        func makeFork(tools: [any Tool], seededFrom transcript: Transcript) -> any LanguageModelSessionBackend {
             let fork = HookedSessionBackend(
-                hook: hook, observer: observer, generationQueue: generationQueue, entries: entries)
+                hook: hook, observer: observer, generationQueue: generationQueue, entries: Array(transcript))
             lastFork = fork
             return fork
         }
@@ -576,15 +583,14 @@ struct HumanWaitGateTests {
         #expect(await fixture.observer.maxActive == 1)
     }
 
-    @Test("a fork racing a turn suspended in awaitingUser still reads a whole turn, never a half-appended transcript")
+    @Test("a fork racing a turn suspended in awaitingUser returns at once, from the settled transcript, never a half-appended one")
     @MainActor
-    func forkRacingAHumanWaitReadsAConsistentTranscript() async throws {
+    func forkRacingAHumanWaitReadsTheSettledTranscript() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = fixture.model.makeSession()
-        let turnLock = try #require(session as? RoutedSessionActor).turnLock
         let backend = try #require(fixture.container.backends.first)
 
         let humanGate = AsyncSemaphore(value: 0)
@@ -594,31 +600,29 @@ struct HumanWaitGateTests {
         }
 
         // The turn suspends mid-transcript: its `.prompt` entry is appended, its
-        // `.response` entry is not. Anything reading the transcript now would
-        // read a torn turn.
+        // `.response` entry is not. Anything reading the live transcript now
+        // would read a torn turn.
         let turnTask = Task { try await session.respond(to: "turn") }
         await BoundedWait.spin(until: { humanGate.waiterCount == 1 })
         #expect(Self.isResponse(backend.transcriptEntries().last) == false)
 
+        // The fork reads the settled transcript of the session, so it does not
+        // wait for the turn (task ^dpn2ytt). It makes its child while the human
+        // wait is still open.
         let forkTask = Task { try await session.fork(workingDirectory: nil) }
-        await BoundedWait.spin(until: { turnLock.waiterCount == 1 })
-
-        // The fork is blocked on the turn lock, so it has not read anything yet.
-        #expect(backend.lastFork === nil)
-
-        humanGate.signal()
-        #expect(try await Self.completedTurn(turnTask, prompt: "turn", observer: fixture.observer) == "ok-turn")
-        // The fork's own observation point is the transcript read it makes: it is
-        // blocked on the turn lock until the turn above hands that lock back, so a
-        // lock that was never released fails here with a readable message rather
-        // than hanging the run.
-        let child = try await Self.completedRun(forkTask, named: "the fork racing the human wait") {
+        let forkedDuringTheWait = await BoundedWait.conditionReached("the fork making its child") {
             backend.lastFork != nil
         }
 
+        humanGate.signal()
+        #expect(try await Self.completedTurn(turnTask, prompt: "turn", observer: fixture.observer) == "ok-turn")
+        let child = try await forkTask.value
+
+        #expect(forkedDuringTheWait)
         let childBackend = try #require(backend.lastFork)
-        #expect(childBackend.transcriptEntries().count == backend.transcriptEntries().count)
-        #expect(Self.isResponse(childBackend.transcriptEntries().last))
+        // No turn of the session had settled when the fork read it, so the
+        // child holds nothing of the torn turn.
+        #expect(childBackend.transcriptEntries().isEmpty)
         #expect(child.parentId == session.id)
     }
 

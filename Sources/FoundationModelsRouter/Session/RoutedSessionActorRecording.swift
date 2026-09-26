@@ -58,6 +58,9 @@ extension RoutedSessionActor {
         closeGenerationCallLedger()
         let (diffIncludedResponse, pendingEventsAttached) = await recordTranscriptDelta(
             grammar: grammar, since: since, usage: usage, pendingEvents: pendingEvents, onEvent: onEvent)
+        // The submission ended, with success or failure, and its entries are
+        // recorded: a settled point (`generation-queue.md`, section 5.8).
+        settleTranscript()
         if let lastGenerationCall {
             await report(generationCall: lastGenerationCall)
         }

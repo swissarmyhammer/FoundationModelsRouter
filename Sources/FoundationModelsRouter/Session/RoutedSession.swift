@@ -89,10 +89,15 @@ public protocol RoutedSession: Actor {
     /// reports ``unknownContextFill`` when the recording holds no stamp.
     var contextFill: Double { get async }
 
-    /// The SDK transcript this session has accumulated so far, read under the
-    /// session's turn lock: a read issued while a turn is in flight waits for
-    /// that turn. A tool body reading its own session's transcript does not
-    /// wait; it sees the history as it stands mid-turn.
+    /// The SDK transcript of this session as of its last settled point
+    /// (`generation-queue.md`, section 5.8).
+    ///
+    /// A settled point is the end of a submission, after its recording; a
+    /// tool-result boundary of the session's own submission; and a compaction.
+    /// The read returns at once, from any task: it waits for no submission,
+    /// and a tool body of this session's own submission gets the same value.
+    /// While a submission runs, the read does not show the entries that the
+    /// submission appended after the last settled point.
     var transcript: Transcript { get async }
 
     /// Compacts this session's transcript in place: same ``id``, same
@@ -307,13 +312,20 @@ public protocol RoutedSession: Actor {
     ///
     /// The child takes a fresh id with ``parentId`` set to this session's id,
     /// a ``recordingDirectory`` nested under the parent's, and the parent's
-    /// ``grammar``. Its backend is seeded from this session's conversation
-    /// state through ``LanguageModelSessionBackend/makeFork()``. Forks are
-    /// not counted: any number of forks over one model can exist at once.
+    /// ``grammar``. Its backend is seeded from the settled transcript of this
+    /// session (see ``transcript``) through
+    /// ``LanguageModelSessionBackend/makeFork(tools:seededFrom:)``. When that
+    /// transcript ends in a round of tool calls with no output, the fork
+    /// removes those calls, so the child starts from a valid transcript.
+    /// Forks are not counted: any number of forks over one model can exist at
+    /// once.
+    ///
+    /// The fork returns at once, from any task: it waits for no submission of
+    /// this session. A tool body of this session's own submission can fork it.
     ///
     /// - Parameter workingDirectory: The child's working directory, or `nil` for its recording directory.
-    /// - Throws: ``SessionReentryError/forkDuringSameSessionTurn(sessionID:)``
-    ///   when the call comes from inside a tool call of this session's own turn.
+    /// - Throws: Nothing now. The requirement keeps `throws`, so a later
+    ///   version can refuse a fork without a change of the API.
     func fork(workingDirectory: URL?) async throws -> RoutedSession
 
     /// Installs how long a model call on this session may run with no

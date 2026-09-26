@@ -73,14 +73,6 @@ extension RoutedSessionActor {
         throw SessionReentryError.sameSessionTurnInFlight(sessionID: id)
     }
 
-    /// Whether this call arrived from inside a tool call of this session's own
-    /// turn, which holds ``turnLock``: a task of the open model call of this
-    /// session. Every site that would take the lock asks this first. See
-    /// ``ModelCallMark/isOpenModelCall(of:)``.
-    nonisolated var isInsideOwnTurnToolCall: Bool {
-        ModelCallMark.current?.isOpenModelCall(of: id) ?? false
-    }
-
     /// Releases the ``turnLock`` that ``beginTurn()`` took. Synchronous, so it
     /// can run from a `defer`.
     func endTurn() {

@@ -366,6 +366,23 @@ final class StubSessionBackend: LanguageModelSessionBackend {
     /// so a test can assert which tool list
     /// ``RoutedSessionActor/fork(workingDirectory:)`` actually passed.
     func makeFork(tools: [any Tool]) -> any LanguageModelSessionBackend {
+        makeFork(tools: tools, seededFrom: Transcript(entries: entries))
+    }
+
+    /// Returns a new ``StubSessionBackend`` seeded from `transcript`'s
+    /// entries, with a copy of ``receivedPrompts`` and the running usage as
+    /// of this call, and records `tools` into ``lastForkTools``.
+    ///
+    /// ``RoutedSessionActor/fork(workingDirectory:)`` calls it with the
+    /// settled transcript of the session, the way the live
+    /// `MLXFoundationModelsSessionBackend.makeFork(tools:seededFrom:)` seeds a
+    /// forked `LanguageModelSession`.
+    ///
+    /// - Parameters:
+    ///   - tools: The tools the fork's session would mount.
+    ///   - transcript: The transcript to seed the fork from.
+    /// - Returns: The fork.
+    func makeFork(tools: [any Tool], seededFrom transcript: Transcript) -> any LanguageModelSessionBackend {
         let snapshot = state.withLock { state in
             state.lastForkTools = tools
             return state
@@ -374,7 +391,7 @@ final class StubSessionBackend: LanguageModelSessionBackend {
             responseText: snapshot.responseText,
             shouldThrow: snapshot.shouldThrow,
             receivedPrompts: snapshot.receivedPrompts,
-            entries: snapshot.entries,
+            entries: Array(transcript),
             usageIncrement: snapshot.usageIncrement,
             generationLog: generationLog,
             registry: registry

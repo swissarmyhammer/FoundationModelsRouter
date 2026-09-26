@@ -379,6 +379,9 @@ extension RoutedSessionActor {
         // ``persistedBaseline``.
         persistedBaseline = TranscriptDiffer.Baseline(transcript: applied)
         usageState = .measured(input: measuredTokensAfter, output: 0)
+        // The new backend runs no call yet: the compacted window is the new
+        // settled transcript, so a read after the compaction sees it.
+        settleTranscript()
 
         return result
     }

@@ -10,9 +10,9 @@ import Testing
 /// instance must serve every turn on a session (not a fresh one rebuilt per
 /// call), ``RoutedSession/fork(workingDirectory:)`` must seed the child's
 /// backend from a *copy* of the parent's accumulated call history via
-/// ``LanguageModelSessionBackend/makeFork()``, and that `makeFork()` call must
-/// happen strictly after any in-flight turn on the parent has released that
-/// session's turn lock — never concurrently with it.
+/// ``LanguageModelSessionBackend/makeFork()``, and a fork never waits for an
+/// in-flight turn on the parent: it seeds the child from the settled
+/// transcript of the parent (task ^dpn2ytt).
 ///
 /// The companion gated integration suite
 /// (`Tests/FoundationModelsRouterIntegrationTests/LanguageModelSessionBackendTests.swift`)
@@ -118,7 +118,7 @@ struct MultiTurnSessionTests {
         }
     }
 
-    // MARK: - Suspendable stub backend (turn-lock race proof)
+    // MARK: - Suspendable stub backend (a fork during a turn)
 
     /// A synchronized event log a test polls without sleeping, recording the
     /// order generation and fork work actually ran in.
@@ -149,10 +149,9 @@ struct MultiTurnSessionTests {
     ///
     /// `@unchecked Sendable` is safe because both stored properties are
     /// immutable references to independently `Sendable` types (``EventLog``
-    /// is lock-guarded; `AsyncSemaphore` is itself `Sendable`), and
-    /// `RoutedSessionActor` drives every method call on one backend through
-    /// the owning session's turn lock — the very property this test suite proves —
-    /// so there is no concurrent access to guard against in practice.
+    /// is lock-guarded; `AsyncSemaphore` is itself `Sendable`), and no method
+    /// writes a stored property. A fork can call ``makeFork()`` while
+    /// `respond` is suspended, and the two touch only the lock-guarded log.
     private final class SuspendableSessionBackend: LanguageModelSessionBackend, @unchecked Sendable {
         private let log: EventLog
         private let releaseGate: AsyncSemaphore
@@ -197,9 +196,8 @@ struct MultiTurnSessionTests {
             nil
         }
 
-        /// Records that a fork was produced, so a test can assert this never
-        /// happens while a `respond-enter` has not yet been followed by a
-        /// matching `respond-exit`.
+        /// Records that a fork was produced, so a test can assert where the
+        /// fork falls between a `respond-enter` and its `respond-exit`.
         func makeFork() -> any LanguageModelSessionBackend {
             log.record("makeFork")
             return SuspendableSessionBackend(log: log, releaseGate: releaseGate)
@@ -416,11 +414,11 @@ struct MultiTurnSessionTests {
         #expect(childBackend.receivedPrompts == ["one", "two", "child turn"])
     }
 
-    // MARK: - fork() holds the turn lock across makeFork()
+    // MARK: - fork() does not wait for an in-flight respond()
 
-    @Test("fork() holds the turn lock during makeFork(): an in-flight respond() and a concurrent fork() never race")
+    @Test("fork() does not wait for an in-flight respond(): the fork completes while the turn is still suspended")
     @MainActor
-    func forkHoldsTurnLockDuringMakeFork() async throws {
+    func forkDoesNotWaitForAnInFlightTurn() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -433,32 +431,29 @@ struct MultiTurnSessionTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
-        let turnLock = try #require(session as? RoutedSessionActor).turnLock
 
-        // Start a respond() call; it acquires this session's turn lock and suspends
-        // inside the backend body, holding the lock the whole time it is suspended.
+        // Start a respond() call; it suspends inside the backend body.
         let respondTask = Task { try await session.respond(to: "turn") }
-        await Self.spin(until: { turnLock.availablePermits == 0 })
         await Self.spin(until: { log.events.contains("respond-enter") })
 
-        // Concurrently start a fork. It must queue behind the turn lock rather
-        // than reading (forking) the backend's state while the turn above is
-        // still in flight — this is exactly the race
-        // `RoutedSessionActor.fork()` closes by acquiring `turnLock` before
-        // calling `backend.makeFork()`.
+        // A fork reads the settled transcript of the session, so it does not
+        // wait for the turn above (task ^dpn2ytt). It makes the child's
+        // backend while that turn is still suspended. The fork runs in a task
+        // of its own, so a fork that waited fails this test and does not hang
+        // the suite.
         let forkTask = Task { try await session.fork(workingDirectory: nil) }
-        await Self.spin(until: { turnLock.waiterCount >= 1 })
+        let forkedDuringTheTurn = await BoundedWait.conditionReached("the fork making the child's backend") {
+            log.events.contains("makeFork")
+        }
+        let eventsWhileTheTurnIsSuspended = log.events
 
-        // The fork has not reached makeFork() yet: it is suspended behind the
-        // still-open respond() call.
-        #expect(!log.events.contains("makeFork"))
-
-        // Release the suspended respond(); only once it completes and releases
-        // the turn lock can the fork proceed to call makeFork().
         releaseGate.signal()
         _ = try await respondTask.value
-        _ = try await forkTask.value
+        let child = try await forkTask.value
 
-        #expect(log.events == ["respond-enter", "respond-exit", "makeFork"])
+        #expect(forkedDuringTheTurn)
+        #expect(eventsWhileTheTurnIsSuspended == ["respond-enter", "makeFork"])
+        #expect(child.parentId == session.id)
+        #expect(log.events == ["respond-enter", "makeFork", "respond-exit"])
     }
 }

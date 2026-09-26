@@ -126,13 +126,32 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// The default ignores `tools` and forwards to ``makeFork()``.
     func makeFork(tools: [any Tool]) -> any LanguageModelSessionBackend
 
+    /// Produces a new backend over the same underlying model, seeded from
+    /// `transcript`, with `tools` given to its model-facing session. The new
+    /// backend then diverges and shares no further state.
+    ///
+    /// ``RoutedSession/fork(workingDirectory:)`` calls it with the settled
+    /// transcript of the session (`generation-queue.md`, section 5.8), so a
+    /// fork never copies a transcript that a running call writes. The
+    /// default ignores `transcript` and forwards to ``makeFork(tools:)``: a
+    /// backend that does not override it seeds a fork from its own history,
+    /// and must then guard that history as ``transcriptEntries()`` states.
+    ///
+    /// - Parameters:
+    ///   - tools: The tools of the fork's model-facing session.
+    ///   - transcript: The transcript to seed the fork from.
+    /// - Returns: The new backend.
+    func makeFork(tools: [any Tool], seededFrom transcript: FoundationModels.Transcript) -> any LanguageModelSessionBackend
+
     /// The backend's current full transcript, in order.
     ///
-    /// Call this only while the owning session's turn lock
-    /// (``RoutedSessionActor/turnLock``) is held. The one exception is a tool
-    /// call of the owning session's own turn
-    /// (``RoutedSessionActor/isInsideOwnTurnToolCall``), where no concurrent
-    /// writer exists.
+    /// Call this only where no call of this backend writes the transcript:
+    /// while the owning session's turn lock (``RoutedSessionActor/turnLock``)
+    /// is held and no model call runs, or inside a tool call of the owning
+    /// session's own open model call, where the SDK waits in the tool call.
+    /// The owning session keeps a copy as of the last such point
+    /// (``SettledTranscript``) and serves each transcript read and each fork
+    /// from that copy.
     ///
     /// The turn lock does not end a stream's producer. A turn cut short
     /// mid-stream stops consuming and records itself at once, while the
@@ -281,6 +300,15 @@ extension LanguageModelSessionBackend {
     /// ``makeFork()``.
     public func makeFork(tools: [any Tool]) -> any LanguageModelSessionBackend {
         makeFork()
+    }
+
+    /// Default ``makeFork(tools:seededFrom:)``: ignores `transcript` and
+    /// forwards to ``makeFork(tools:)``, so the fork starts from this
+    /// backend's own history.
+    public func makeFork(
+        tools: [any Tool], seededFrom transcript: FoundationModels.Transcript
+    ) -> any LanguageModelSessionBackend {
+        makeFork(tools: tools)
     }
 
     /// Default ``generationQueue``: `nil`, because a backend that does not

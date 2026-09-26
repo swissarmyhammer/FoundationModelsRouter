@@ -3,20 +3,16 @@ import Synchronization
 
 /// A refusal to do work that would re-enter a session that is already mid-turn.
 ///
-/// A tool body that asks its own session for a second turn or a fork is
-/// refused, because ``RoutedSessionActor/turnLock`` is held for the whole
-/// turn and is not lent. A transcript read from inside the session's own tool
-/// call is served without the lock (see
-/// ``RoutedSessionActor/isInsideOwnTurnToolCall``). A tool body that asks a
+/// A tool body that asks its own session for a second turn is refused,
+/// because ``RoutedSessionActor/turnLock`` is held for the whole turn and is
+/// not lent. A transcript read and a fork are never refused: each is served
+/// at once from the settled transcript of the session (``SettledTranscript``,
+/// `generation-queue.md`, section 5.8), from any task. A tool body that asks a
 /// different session on the same model for an answer is refused by the queue
 /// of that model (``GenerationQueueError/waitInsideOpenSubmission(model:)``).
 enum SessionReentryError: Error, Equatable, LocalizedError {
     /// A tool body of `sessionID`'s own turn asked that session for another turn.
     case sameSessionTurnInFlight(sessionID: ULID)
-
-    /// A tool body of `sessionID`'s own turn asked that session to fork. The
-    /// conversation state is half-written mid-turn, so a child cannot be seeded.
-    case forkDuringSameSessionTurn(sessionID: ULID)
 
     /// A localized message that describes the error.
     var errorDescription: String? {
@@ -25,12 +21,6 @@ enum SessionReentryError: Error, Equatable, LocalizedError {
             return """
                 Session \(sessionID) is already running a turn that invoked this tool, so it \
                 cannot run another one while that turn is in flight.
-                """
-        case .forkDuringSameSessionTurn(let sessionID):
-            return """
-                Session \(sessionID) is running a turn that invoked this tool, so its \
-                conversation state is half-written and cannot be forked. Fork before the turn \
-                starts, or fork a different session over the same model.
                 """
         }
     }
@@ -57,11 +47,11 @@ struct SubmissionTarget: Sendable {
 /// is still open, and the queue of its submission. The model is suspended in
 /// a tool call whenever a tool body runs in the call, so "in the open model
 /// call of this session" is "in a tool call of this session's own turn".
-/// ``RoutedSessionActor`` reads the mark to refuse a turn or a fork that a
-/// tool asks of the same session, whose turn holds
-/// ``RoutedSessionActor/turnLock``, and to serve a transcript read from inside
-/// that tool call without the lock. ``GenerationQueue`` reads it to refuse a
-/// submission from inside an open submission on itself.
+/// ``RoutedSessionActor`` reads the mark to refuse a turn that a tool asks of
+/// the same session, whose turn holds ``RoutedSessionActor/turnLock``, and to
+/// take a settled transcript at a tool-result boundary of its own open model
+/// call. ``GenerationQueue`` reads it to refuse a submission from inside an
+/// open submission on itself.
 ///
 /// ``RoutedSessionActor/runCancellableModelCall(composedPrompt:submittingTo:_:)``
 /// binds one mark around each model call, on the task that runs the
@@ -144,10 +134,11 @@ final class ModelCallMark: Sendable {
     ///
     /// The run keeps the session, so a turn it asks of that session is refused
     /// with a clear error: the turn that started the run can still hold the
-    /// turn lock, and a turn parked on it would stall without a sound. The run is no tool call the model is
-    /// suspended in, so a transcript read or a fork of that session waits for
-    /// the turn lock. The mark is closed, so the queue does not refuse a
-    /// submission of the run: the run does not hold the worker of its model.
+    /// turn lock, and a turn parked on it would stall without a sound. A
+    /// transcript read or a fork of that session gets the settled transcript
+    /// at once, as from any other task. The mark is closed, so the queue does
+    /// not refuse a submission of the run: the run does not hold the worker
+    /// of its model.
     ///
     /// - Parameter body: The work of the background run.
     /// - Returns: Whatever `body` returns.

@@ -13,22 +13,20 @@ extension RoutedSessionActor {
     /// - Parameter workingDirectory: The child's working directory, or `nil` to
     ///   default to its recording directory.
     /// - Returns: The forked child session.
-    /// - Throws: Whatever ``performFork(workingDirectory:)`` throws, with the
-    ///   error recorded on the span.
+    /// - Throws: Nothing now: ``performFork(workingDirectory:)`` does not
+    ///   throw. The protocol requirement keeps `throws`, and an error of a
+    ///   later fork step would be recorded on the span.
     func fork(workingDirectory: URL?) async throws -> RoutedSession {
         try await withForkSpan {
-            try await performFork(workingDirectory: workingDirectory)
+            await performFork(workingDirectory: workingDirectory)
         }
     }
 
     /// Opens one ``RouterTracing/SpanName/fork`` span around a whole fork and
     /// writes the child it produced onto it.
     ///
-    /// The span opens before `body` runs, so it covers every part of the call
-    /// that can refuse or suspend: the reentry guard, which throws before the
-    /// turn lock is touched, and the ``turnLock`` wait that reads the parent's
-    /// state. A refused fork therefore still leaves a span carrying its
-    /// refusal.
+    /// The span opens before `body` runs, so it covers every part of the call.
+    /// A fork that throws still leaves a span carrying its error.
     ///
     /// The child's id is written only once the child exists, so a fork that
     /// threw names no child.
@@ -58,38 +56,22 @@ extension RoutedSessionActor {
     /// ``tools``) so a ``ForkableTool`` conformer forks exactly once from its
     /// pristine state before being wrapped in the child's own mount
     /// layer — the chain is fork → mount → cap, so the child's background
-    /// runs are tracked in the child's own mailbox. Acquires
-    /// ``turnLock`` just long enough to read `backend`'s conversation state
-    /// and entry count together, closing the race against a concurrent
-    /// in-flight turn mutating that same state. The child's
+    /// runs are tracked in the child's own mailbox. The child's
     /// ``recordingDirectory`` nests directly under this session's, and it
     /// inherits this session's ``contextTokens``/``usageState`` so its fill
     /// reporting starts from the parent's fill at fork time rather than zero.
     ///
-    /// A fork asked for from inside a tool call of this session's own turn is
-    /// refused rather than served (see ``isInsideOwnTurnToolCall``). That turn
-    /// holds ``turnLock`` until the tool returns, so the wait below could never
-    /// end; and the state the fork would read is half-written mid-turn — the
-    /// tool call has landed, its output and the answer that follows it have
-    /// not — so the child would carry a conversation the model never finished,
-    /// from a history position the parent goes on writing past. Fork before
-    /// the turn starts, or fork another session over the same model.
+    /// The child is seeded from ``settledTranscript``, with the calls of an
+    /// open round that have no output removed
+    /// (``SettledTranscript/removingUnansweredCalls()``), at once and from any
+    /// task (`generation-queue.md`, section 5.8). The fork waits for no
+    /// submission and reads nothing of `backend`'s live transcript, so a fork
+    /// from a tool of this session's own submission is served too.
     ///
     /// - Parameter workingDirectory: The child's working directory, or `nil` to
     ///   default to its recording directory.
     /// - Returns: The forked child session.
-    /// - Throws: ``SessionReentryError/forkDuringSameSessionTurn(sessionID:)``
-    ///   when this call came from inside a tool call of this same session's own
-    ///   turn — refused before the turn lock is touched, so nothing is acquired and
-    ///   nothing has to be unwound. Otherwise nothing — see the protocol doc's
-    ///   ``RoutedSession/fork(workingDirectory:)`` `Throws:` note.
-    private func performFork(workingDirectory: URL?) async throws -> RoutedSession {
-        // The span is already open around this, so the refusal is recorded on
-        // it.
-        guard !isInsideOwnTurnToolCall else {
-            throw SessionReentryError.forkDuringSameSessionTurn(sessionID: id)
-        }
-
+    private func performFork(workingDirectory: URL?) async -> RoutedSession {
         // Fresh-per-session outbox plus fork-then-mount tool composition
         // (see ``outbox``'s doc comment): built from ``originalTools`` — the
         // true originals, never this session's own already-instanced
@@ -110,13 +92,12 @@ extension RoutedSessionActor {
         // `tools` are entirely untouched by this and keep posting to this
         // session's own `outbox` — including any background work that
         // captured this session's sink before the fork — so event delivery
-        // never migrates to the child. Computed before the turn-lock window
-        // below purely because it has no dependency on `backend`'s state;
-        // `childTools` is then threaded into `backend.makeFork(tools:)`
-        // itself, so the live model backing the fork actually calls these
-        // child-instanced tools rather than silently carrying forward
-        // whatever this session's backend was built with (see
-        // ``LanguageModelSessionBackend/makeFork(tools:)``).
+        // never migrates to the child. `childTools` is then threaded into
+        // `backend.makeFork(tools:seededFrom:)` itself, so the live model
+        // backing the fork actually calls these child-instanced tools rather
+        // than silently carrying forward whatever this session's backend was
+        // built with (see
+        // ``LanguageModelSessionBackend/makeFork(tools:seededFrom:)``).
         // Mounting and capping arrive through the shared per-tool
         // composition
         // ``ToolMounting/makeSessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:tokenCounter:tracer:)``
@@ -153,39 +134,27 @@ extension RoutedSessionActor {
             )
         }
 
-        // Acquire this session's turn lock before reading `backend`'s
-        // conversation state to fork it. `generate(grammar:_:)` releases that
-        // same lock only *after* `body()` returns, but `body()` itself suspends
-        // across an await while the model generates — so a concurrent turn can be
-        // mid-flight, outside the lock's protection window as far as `backend`
-        // internals are concerned, mutating the underlying
-        // `LanguageModelSession.transcript` at the exact moment
-        // `makeFork(tools:)` would otherwise read it. Taking the lock here
-        // serializes the fork's read against any in-flight turn, closing that
-        // data race; releasing it immediately after capturing the forked backend
-        // keeps the hold no longer than necessary.
-        //
-        // The turn lock, deliberately: a turn holds it for its whole length,
-        // tool bodies and waits for a person included, and its `backend` is
-        // mid-turn for all of that time. A generation place is held only for
-        // one pass, so it cannot protect this read.
-        await turnLock.wait()
-        // Captured in the same lock window as `makeFork(tools:)`, so it names
-        // exactly the entry count the child's seeded backend starts holding —
-        // the child's own `persistedEntryCount` baseline, so the parent's history
+        // The settled transcript, not the live one: a submission of this
+        // session can run now, and the SDK writes the live transcript on its
+        // own task (`generation-queue.md`, section 5.8). One value holds the
+        // entries and the recording cut of one settled point, so the three
+        // facts below describe one moment. No wait, and no lock.
+        let seed = settledTranscript.removingUnansweredCalls()
+        // The child's own `persistedEntryCount` baseline: the prefix of its
+        // seed that this session had already recorded, so the parent's history
         // inherited into the fork is never re-persisted into the child's
-        // transcript (see ``persistedEntryCount``).
-        let entryCountAtFork = backend.transcriptEntries().count
-        // The cut in append-only history coordinates, captured in the same
-        // synchronous window as `entryCountAtFork` so the two describe one
-        // moment: this session's position in its own recorded history —
-        // unlike the positional backend count above, a compaction never rewinds it,
-        // so a fork taken after a compaction restores the compaction's live window rather
-        // than the discarded pre-compaction span (see ``historyOrdinal`` and
-        // ``SessionSidecar/forkedAtHistoryOrdinal``).
-        let historyOrdinalAtFork = historyOrdinal
-        let forkedBackend = backend.makeFork(tools: childTools)
-        turnLock.signal()
+        // transcript (see ``persistedEntryCount``). At a tool-result boundary,
+        // the entries of the running submission come after it, and the child
+        // records them itself.
+        let entryCountAtFork = seed.recordedEntryCount
+        // The cut in append-only history coordinates, of the same settled
+        // point: this session's position in its own recorded history. Unlike
+        // the positional count above, a compaction never rewinds it, so a fork
+        // taken after a compaction restores the compaction's live window
+        // rather than the discarded pre-compaction span (see
+        // ``historyOrdinal`` and ``SessionSidecar/forkedAtHistoryOrdinal``).
+        let historyOrdinalAtFork = seed.historyOrdinal
+        let forkedBackend = backend.makeFork(tools: childTools, seededFrom: seed.transcript)
 
         // The child's transcript nests directly *under this session's* directory,
         // so the on-disk tree mirrors the fork lineage: a root session lives at
@@ -231,8 +200,8 @@ extension RoutedSessionActor {
             // costs (see `makeRoutedSessionActor`).
             origin: .forked,
             // Same profile/slot, so the same resolved context; the child's
-            // backend is seeded from this session's accumulated transcript
-            // (``LanguageModelSessionBackend/makeFork(tools:)``), so it also
+            // backend is seeded from this session's settled transcript
+            // (``LanguageModelSessionBackend/makeFork(tools:seededFrom:)``), so it also
             // inherits this session's own fill state as of fork time rather
             // than starting from a misleading "nothing sent yet" zero.
             contextTokens: contextTokens,

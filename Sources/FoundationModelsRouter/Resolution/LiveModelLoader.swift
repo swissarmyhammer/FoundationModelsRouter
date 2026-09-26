@@ -624,15 +624,24 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     }
 
     /// Makes a new backend seeded from the accumulated transcript of this
-    /// session, with `tools` in place of this backend's own. A fork is a new
-    /// session, so its session runs over a new per-session wrapper, and it
-    /// names the same queue.
+    /// session, with `tools` in place of this backend's own.
     func makeFork(tools: [any FoundationModels.Tool]) -> any LanguageModelSessionBackend {
+        makeFork(tools: tools, seededFrom: liveSession.transcript)
+    }
+
+    /// Makes a new backend seeded from `transcript`, with `tools` in place of
+    /// this backend's own, and this backend's ``instructions``. A fork is a
+    /// new session, so its session runs over a new per-session wrapper, and
+    /// it names the same queue. It reads nothing of ``liveSession``, so a
+    /// call in flight on this backend does not reach it.
+    func makeFork(
+        tools: [any FoundationModels.Tool], seededFrom transcript: FoundationModels.Transcript
+    ) -> any LanguageModelSessionBackend {
         MLXFoundationModelsSessionBackend(
             model: model,
             generationQueue: containerQueue,
             contextWindow: contextWindow,
-            transcript: liveSession.transcript,
+            transcript: transcript,
             tools: tools,
             samplingMode: samplingMode,
             instructions: instructions

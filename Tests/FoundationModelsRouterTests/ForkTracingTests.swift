@@ -11,8 +11,9 @@ import Tracing
 /// call opens one span through `swift-distributed-tracing`.
 ///
 /// The span opens as the first statement of the fork, so it covers the whole
-/// call and not only the part that succeeds: a fork the reentry guard refuses
-/// still leaves a span with its error recorded.
+/// call and not only the part that succeeds: a fork that throws still leaves a
+/// span with its error recorded. A fork from inside a tool of its own session
+/// is served (task ^dpn2ytt), and its span names its child.
 ///
 /// The rule that no attribute carries the caller's own content lives in
 /// ``SpanContentSafetyTests``, which names no span and therefore already
@@ -48,35 +49,37 @@ struct ForkTracingTests {
         }
     }
 
-    /// A box a test fills with the session its mounted tool forks.
+    /// A box that holds one session: the session a mounted tool forks, or the
+    /// child that tool made.
     ///
     /// The session does not exist until it is vended with the tool already
     /// mounted, so the tool reads its target back through this instead of
     /// holding it at construction.
     private final class SessionBox: Sendable {
-        /// The session, once a test named one.
+        /// The session, once one was put in the box.
         ///
-        /// A `Mutex` because the test task writes it and the SDK's own
-        /// tool-calling task reads it.
+        /// A `Mutex` because the test task and the SDK's own tool-calling task
+        /// each write it or read it.
         private let held: Mutex<(any RoutedSession)?> = Mutex(nil)
 
-        /// The session a test named, or `nil` when none was named.
+        /// The session in the box, or `nil` when none was put in it.
         var value: (any RoutedSession)? { held.withLock { $0 } }
 
-        /// Names the session the tool forks.
+        /// Puts `session` in the box.
         ///
-        /// - Parameter session: The session to fork.
+        /// - Parameter session: The session to keep.
         func set(_ session: any RoutedSession) {
             held.withLock { $0 = session }
         }
     }
 
-    /// A tool whose body forks the very session whose turn invoked it — the
-    /// shape the reentry guard refuses.
+    /// A tool whose body forks the very session whose turn invoked it. The fork
+    /// reads the settled transcript of that session, so it is served
+    /// (task ^dpn2ytt).
     ///
-    /// The refusal is caught rather than raised, so the turn answers normally
-    /// and the answer says which branch ran. What the fork recorded on its span
-    /// is what the test then reads.
+    /// A failure is caught rather than raised, so the turn answers normally
+    /// and the answer says which branch ran. The child goes into ``child``, and
+    /// what the fork recorded on its span is what the test then reads.
     private struct SelfForkingTool: Tool {
         /// The model-facing tool name a scripted call names to reach this tool.
         static let toolName = "self-fork-probe"
@@ -92,33 +95,36 @@ struct ForkTracingTests {
         /// The session this body forks.
         let target: SessionBox
 
+        /// Where the body puts the child the fork made.
+        let child: SessionBox
+
         /// The output a call produces when no target session was named, so a
         /// misbuilt fixture reads as a wrong answer rather than as a pass.
         static let noTargetOutput = "no target session"
 
-        /// The output a call produces when the fork was refused.
-        static let refusedOutput = "fork refused"
+        /// The output a call produces when the fork failed.
+        static let failedOutput = "fork failed"
 
-        /// The output a call produces when the fork was served, which this
-        /// tool's own session must never produce.
+        /// The output a call produces when the fork was served.
         static let servedOutput = "fork served"
 
-        /// Forks the target session and reports which branch ran.
+        /// Forks the target session, keeps the child, and reports which branch
+        /// ran.
         ///
         /// - Parameter arguments: The call's decoded arguments, which this tool
         ///   does not read.
-        /// - Returns: ``refusedOutput`` when the fork was refused,
-        ///   ``servedOutput`` when it was served, or ``noTargetOutput`` when no
+        /// - Returns: ``servedOutput`` when the fork was served,
+        ///   ``failedOutput`` when it threw, or ``noTargetOutput`` when no
         ///   session was named.
-        /// - Throws: Never — the refusal is the measured outcome, so it is
-        ///   caught; `throws` comes from the `Tool` requirement.
+        /// - Throws: Never — a failure is a measured outcome, so it is caught;
+        ///   `throws` comes from the `Tool` requirement.
         func call(arguments: AmbientToolArguments) async throws -> String {
             guard let session = target.value else { return Self.noTargetOutput }
             do {
-                _ = try await session.fork(workingDirectory: nil)
+                child.set(try await session.fork(workingDirectory: nil))
                 return Self.servedOutput
             } catch {
-                return Self.refusedOutput
+                return Self.failedOutput
             }
         }
     }
@@ -206,12 +212,13 @@ struct ForkTracingTests {
         #expect(child.parentId == parent.id)
     }
 
-    // MARK: - A fork the reentry guard refuses
+    // MARK: - A fork from inside a tool of its own session
 
-    @Test("a fork refused from inside a tool of its own turn keeps its span, with the refusal recorded")
-    func refusedForkKeepsItsSpanWithTheRefusalRecorded() async throws {
+    @Test("a fork from inside a tool of its own session is served, and its span names the child")
+    func forkFromItsOwnToolIsServedAndItsSpanNamesTheChild() async throws {
         let tracer = InMemoryTracer()
         let target = SessionBox()
+        let child = SessionBox()
         let fixture = try await ScriptedSessionFixture.make(
             playing: ScriptedTurnScript(rounds: [
                 [
@@ -221,27 +228,26 @@ struct ForkTracingTests {
                         argument: .literal(ScriptedToolFixture.firstStepName))
                 ]
             ]),
-            mounting: [SelfForkingTool(target: target)],
+            mounting: [SelfForkingTool(target: target, child: child)],
             tempDirPrefix: Self.tempDirPrefix,
             tracer: tracer)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         target.set(fixture.session)
 
-        // The tool forks the session whose turn is calling it, so the guard
-        // refuses before any gate is touched. The answer is composed from the
-        // tool's output, so it says which branch really ran.
+        // The tool forks the session whose turn is calling it. The fork reads
+        // the settled transcript of that session, so it is served at once
+        // (task ^dpn2ytt). The answer is composed from the tool's output, so
+        // it says which branch really ran.
         let answer = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
-        #expect(answer.contains(SelfForkingTool.refusedOutput))
+        #expect(answer.contains(SelfForkingTool.servedOutput))
 
+        let forked = try #require(child.value)
         let spans = Self.finishedForkSpans(reportedTo: tracer)
         try #require(spans.count == 1)
         let span = try #require(spans.first)
         #expect(span.kind == .internal)
         #expect(span.attributes.get("session.id") == .string(fixture.session.id.description))
-        // Refused before a child was ever minted, so the span names no child.
-        #expect(span.attributes.get("fork.child_session_id") == nil)
-        try #require(span.errors.count == 1)
-        let recorded = try #require(span.errors.first?.error as? SessionReentryError)
-        #expect(recorded == .forkDuringSameSessionTurn(sessionID: fixture.session.id))
+        #expect(span.attributes.get("fork.child_session_id") == .string(forked.id.description))
+        #expect(span.errors.isEmpty)
     }
 }

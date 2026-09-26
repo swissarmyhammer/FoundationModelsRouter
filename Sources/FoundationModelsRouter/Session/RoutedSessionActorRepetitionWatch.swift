@@ -286,7 +286,8 @@ extension RoutedSessionActor {
 
     /// Replaces the render that the model receives with `entries`, and moves
     /// the recorded baseline to it, as a compaction does. The record keeps
-    /// what it holds, and the next diff finds no divergence.
+    /// what it holds, and the next diff finds no divergence. The new backend
+    /// runs no call yet, so the render is also the new settled transcript.
     ///
     /// - Parameter entries: The new render.
     private func replaceRender(with entries: [Transcript.Entry]) {
@@ -294,6 +295,7 @@ extension RoutedSessionActor {
         backend = backend.replacingTranscript(render)
         persistedEntryCount = render.count
         persistedBaseline = TranscriptDiffer.Baseline(transcript: render)
+        settleTranscript()
     }
 
     /// Records the cut that ``replaceRender(with:)`` made as one

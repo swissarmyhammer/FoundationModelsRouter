@@ -233,12 +233,18 @@ enum InFlightTranscript {
     /// `.toolCalls` entry removed, and that entry removed when no call is
     /// left.
     ///
+    /// With no ids from before the attempt, every entry is an entry of the
+    /// attempt, so the rule applies to the last `.toolCalls` entry of the
+    /// whole transcript. A fork uses it that way on the settled transcript
+    /// (``SettledTranscript/removingUnansweredCalls()``).
+    ///
     /// - Parameters:
     ///   - entries: The entries with the outputs.
-    ///   - entryIdsBeforeAttempt: The ids of the entries from before the attempt.
+    ///   - entryIdsBeforeAttempt: The ids of the entries from before the
+    ///     attempt, or none (the default) for the whole transcript.
     /// - Returns: The entries with only answered calls in the last round.
-    private static func removingUnansweredCalls(
-        from entries: [Transcript.Entry], entryIdsBeforeAttempt: Set<String>
+    static func removingUnansweredCalls(
+        from entries: [Transcript.Entry], entryIdsBeforeAttempt: Set<String> = []
     ) -> [Transcript.Entry] {
         guard
             let index = entries.lastIndex(where: { entry in

@@ -44,8 +44,12 @@ extension RoutedSessionActor {
     /// a stop is outstanding against the turn, when the turn already yielded
     /// and that compaction applied no summary, or when a yield is already set.
     ///
+    /// Before the check, the boundary is a settled point of the transcript
+    /// (``settleTranscriptAtToolResult()``).
+    ///
     /// - Parameter result: The tool result that the model reads next.
     func noteToolResult(_ result: ToolResultAppend) {
+        settleTranscriptAtToolResult()
         guard let budget = autoCompactionBudget, let modelCall = inFlightModelCall,
             !isTurnCancelled, !compactionYieldsStopped, toolResultWatch.yield == nil
         else { return }
@@ -66,6 +70,21 @@ extension RoutedSessionActor {
             """
         )
         modelCall.cancel()
+    }
+
+    /// Takes the transcript as a settled point at a tool-result boundary
+    /// (`generation-queue.md`, section 5.8), when the call comes from a tool
+    /// call of this session's own open model call. There the SDK waits in the
+    /// tool call, so no call writes the transcript. The calls of the open
+    /// round have no output yet; a fork removes them
+    /// (``SettledTranscript/removingUnansweredCalls()``).
+    ///
+    /// A tool body that outlived its model call is in no open model call of
+    /// this session (``ModelCallMark/isOpenModelCall(of:)``), and settles
+    /// nothing: another call can write the transcript by then.
+    private func settleTranscriptAtToolResult() {
+        guard ModelCallMark.current?.isOpenModelCall(of: id) == true else { return }
+        settleTranscript()
     }
 
     /// The context of the newest generation call of the attempt in flight,

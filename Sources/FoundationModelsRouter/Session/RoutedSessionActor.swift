@@ -289,20 +289,29 @@ actor RoutedSessionActor: RoutedSession {
     /// (tasks ^ake8sax and ^1psqdm9). See ``drainGenerationPassPhases()``.
     nonisolated let generationPassObserver = GenerationPassObserver()
 
-    /// See ``RoutedSession/transcript``. Reads under ``turnLock``, except from
-    /// a tool call of this session's own turn (``isInsideOwnTurnToolCall``).
+    /// See ``RoutedSession/transcript``. Gives ``settledTranscript`` at once,
+    /// from any task: it waits for nothing and reads nothing of ``backend``.
     var transcript: Transcript {
-        get async {
-            guard !isInsideOwnTurnToolCall else { return capturedTranscript() }
-            await turnLock.wait()
-            defer { turnLock.signal() }
-            return capturedTranscript()
-        }
+        get async { settledTranscript.transcript }
     }
 
-    /// Captures ``backend``'s entries in one synchronous window.
-    private func capturedTranscript() -> Transcript {
-        Transcript(entries: backend.transcriptEntries())
+    /// The transcript as of the last settled point, with the recording cut
+    /// of that point (`generation-queue.md`, section 5.8). Each transcript
+    /// read and each fork is served from it, so neither waits for a
+    /// submission. ``settleTranscript()`` updates it.
+    var settledTranscript: SettledTranscript
+
+    /// Takes the transcript of ``backend`` as the new settled point, with the
+    /// current recording cut.
+    ///
+    /// Call it only where no call of ``backend`` writes the transcript: at the
+    /// end of a submission after its recording diff, after a reseed of
+    /// ``backend``, and at a tool-result boundary of this session's own open
+    /// model call (``noteToolResult(_:)``).
+    func settleTranscript() {
+        settledTranscript = SettledTranscript(
+            entries: backend.transcriptEntries(), recordedEntryCount: persistedEntryCount,
+            historyOrdinal: historyOrdinal)
     }
 
     /// The slot this session's model fills, stamped onto recorded events.
@@ -587,9 +596,14 @@ actor RoutedSessionActor: RoutedSession {
         self.outbox = outbox
         self.mailbox = mailbox
         self.persistedEntryCount = persistedEntryCount
+        // A new backend runs no call yet, so its transcript is the first
+        // settled point of the session.
+        let seedEntries = backend.transcriptEntries()
         self.persistedBaseline = TranscriptDiffer.Baseline(
-            transcript: Transcript(entries: backend.transcriptEntries().prefix(persistedEntryCount)))
+            transcript: Transcript(entries: seedEntries.prefix(persistedEntryCount)))
         self.historyOrdinal = historyOrdinal
+        self.settledTranscript = SettledTranscript(
+            entries: seedEntries, recordedEntryCount: persistedEntryCount, historyOrdinal: historyOrdinal)
         self.sidecarOrigin = sidecarOrigin
         self.contextTokens = contextTokens
         self.usageState = usageState
