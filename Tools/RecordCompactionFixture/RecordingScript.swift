@@ -3,7 +3,7 @@ import FoundationModels
 import FoundationModelsRouter
 
 /// Everything the recording is made FROM, in one place: the model, the
-/// session settings, the two redaction settings, and the six scripted turns.
+/// session settings, the two redaction settings, and the six scripted messages.
 ///
 /// This type is the recipe that used to live as a table and a paragraph in
 /// `Fixtures/CompactionRecording/README.md`. Each value here is what the
@@ -28,7 +28,7 @@ enum RecordingScript {
     /// `RealModels.context` for the reason ``recordingModel`` states.
     static let workingContextTokens = 8192
 
-    /// The reply ceiling each turn runs under, in tokens.
+    /// The reply ceiling each answer runs under, in tokens.
     ///
     /// Sized for a REASONING model. The first recording attempt used 160 and
     /// produced six empty responses, because the 30B model spends its first
@@ -60,14 +60,14 @@ enum RecordingScript {
         identifier it returns exactly.
         """
 
-    /// The six scripted turns, byte for byte what the checked-in recording
+    /// The six scripted messages, byte for byte what the checked-in recording
     /// carries.
     ///
     /// The conversation is a synthetic engineering discussion — an
     /// ingest-path replacement for a "station archive" and its migration
-    /// plan — written for this fixture. The two long turns make the live
+    /// plan — written for this fixture. The two long messages make the live
     /// context large, so a summary that keeps to the size the compaction
-    /// states is much smaller than the context it replaces. The short turns
+    /// states is much smaller than the context it replaces. The short messages
     /// end the conversation, and the questions give the model reasons to call
     /// its tools.
     static let prompts = [

@@ -6,8 +6,8 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises ``RoutedSession/cancel()``: cancelling the turn already
-/// **in flight**, as opposed to ``RoutedSession/cancel(message:)``'s withdrawal
+/// Exercises ``RoutedSession/cancel()``: cancelling the answer that already
+/// **runs**, as opposed to ``RoutedSession/cancel(message:)``'s withdrawal
 /// of a message that waits for a submission.
 ///
 /// The chain this closes is `ACP session/cancel` -> Router -> MCP
@@ -16,9 +16,9 @@ import Testing
 /// reaches Router — so the only missing link was Router's own ability to cancel
 /// the `Task` that owns the model call a tool runs inside. These tests prove
 /// cancellation reaches *inside* the model call (the regression the work exists
-/// for), that a cancelled turn is recorded exactly like any other failed turn
-/// rather than half-written, that turn-lock accounting survives it, and that the
-/// documented no-op cases really are no-ops.
+/// for), that a cancelled submission is recorded exactly like any other failed
+/// submission rather than half-written, that the pump of the session survives
+/// it, and that the documented no-op cases really are no-ops.
 ///
 /// Everything runs against stubs with no network and no GPU: a backend whose
 /// `respond` runs a test-supplied closure mid-generation stands in for the SDK
@@ -26,7 +26,7 @@ import Testing
 /// ``HumanWaitGateTests``. Determinism comes from ``AsyncSemaphore``
 /// observability rather than from sleeps.
 ///
-/// The moment every test here turns on — a cancellation reaching the tool call
+/// The moment every test here depends on — a cancellation reaching the tool call
 /// running inside the model call — is an ``AwaitedEvent`` the tool itself signals,
 /// rather than a reading polled until a wall clock runs out (task ^bqj719z).
 ///
@@ -34,7 +34,7 @@ import Testing
 /// ``RoutedSession/cancel()`` cancels the model call directly, so the
 /// stop lands in microseconds. A caller cancelling its own stream consumer reaches
 /// the tool only once that consumer runs *again*: the consumer's next `next()`
-/// terminates the stream, the termination handler cancels the turn behind it, and
+/// terminates the stream, the termination handler cancels the answer behind it, and
 /// only then does the stop travel on. That consumer is `@MainActor`, so it runs
 /// when the one main actor every `@MainActor` test in the run shares gives it a
 /// slot. Measured on ``cancelledProactiveCompactionReportsNoCompaction(route:)``: the
@@ -47,16 +47,16 @@ import Testing
 /// tests exist to catch — is the `.timeLimit` below: a ceiling on a fault, thirty
 /// times the slowest crossing measured, and never a budget for the work.
 @Suite(
-    "In-flight turn cancellation reaches the model call, and the tools inside it",
+    "The cancel of a running answer reaches the model call, and the tools inside it",
     .timeLimit(.minutes(1)))
-struct TurnCancellationTests {
-    /// The two routes a turn in flight can be cancelled by, so a test can assert
+struct AnswerCancellationTests {
+    /// The two routes that can cancel a running answer, so a test can assert
     /// the same behavior of both instead of duplicating itself per route.
     enum CancellationRoute: Sendable, CaseIterable, CustomTestStringConvertible {
         /// ``RoutedSession/cancel()`` — Router's own primitive.
         case routerAPI
 
-        /// The turn's caller cancelling its own enclosing `Task` — the propagation
+        /// The caller of the answer cancelling its own enclosing `Task` — the propagation
         /// Router had before it had a primitive of its own.
         case callerTask
 
@@ -71,7 +71,7 @@ struct TurnCancellationTests {
     /// Failures a test's own stand-in tool raises — to mark a path that must never
     /// be taken, or to stand in for a fault the model itself would raise.
     private enum ProbeError: Error, Equatable {
-        /// The overflow retry re-entered the model even though the turn had
+        /// The overflow retry re-entered the model even though the answer had
         /// already been cancelled.
         case modelReenteredAfterCancellation
 
@@ -80,12 +80,12 @@ struct TurnCancellationTests {
         case summarizerFailed
     }
 
-    // MARK: - Turn observability
+    // MARK: - Answer observability
 
-    /// Records which turns entered and left the model and whether a tool
+    /// Records which answers entered and left the model and whether a tool
     /// running inside the model call ever observed cancellation, so
     /// propagation past `body` is asserted rather than inferred.
-    private actor TurnObserver {
+    private actor AnswerObserver {
         private(set) var entered: [String] = []
         private(set) var exited: [String] = []
         private(set) var toolSawCancellation = false
@@ -103,7 +103,7 @@ struct TurnCancellationTests {
         }
     }
 
-    /// Collects the events a streaming turn delivered before it failed.
+    /// Collects the events a streaming answer delivered before it failed.
     ///
     /// Outside the task draining the stream deliberately: that task throws when the
     /// stream finishes with an error, taking any locally accumulated array with it,
@@ -118,42 +118,42 @@ struct TurnCancellationTests {
     }
 
     /// The mid-generation closure a test installs, standing in for a tool the
-    /// SDK invokes *inside* the model call. It is handed the turn's prompt so
-    /// one hook can serve several sessions, suspending only the turn a test means
-    /// to suspend.
+    /// SDK invokes *inside* the model call. It gets the prompt of the
+    /// submission, so one hook can serve several sessions and suspend only the
+    /// answer a test means to suspend.
     ///
     /// A plain mutable class rather than an actor because
     /// ``HookedSessionBackend/respond(to:maxTokens:)`` reads it from whatever
-    /// isolation the turn runs on: `@unchecked Sendable` is safe because
-    /// ``midTurn`` is written exactly once, on the single `@MainActor` test task,
-    /// before any turn is started, and only read afterwards.
-    private final class TurnHook: @unchecked Sendable {
-        var midTurn: (@Sendable (String) async throws -> Void)?
+    /// isolation the submission runs on: `@unchecked Sendable` is safe because
+    /// ``midAnswer`` is written exactly once, on the single `@MainActor` test
+    /// task, before any answer starts, and only read afterwards.
+    private final class AnswerHook: @unchecked Sendable {
+        var midAnswer: (@Sendable (String) async throws -> Void)?
     }
 
     // MARK: - Stub container + backend
 
-    /// A ``LanguageModelSessionBackend`` that runs ``TurnHook/midTurn`` in the
+    /// A ``LanguageModelSessionBackend`` that runs ``AnswerHook/midAnswer`` in the
     /// middle of `respond`, standing in for a long-running MCP tool call the
     /// SDK invokes from inside the model call.
     ///
-    /// ``appendsPromptBeforeToolCall`` decides whether this turn's `.prompt`
-    /// entry is already in the transcript when the tool runs — which is exactly
-    /// what decides a cancelled turn's outbox rule: a turn whose prompt was
-    /// durably appended really did deliver its drained events to the model, and
-    /// one that appended nothing never did.
+    /// ``appendsPromptBeforeToolCall`` decides whether the `.prompt` entry of
+    /// this submission is already in the transcript when the tool runs — which
+    /// is exactly what decides the outbox rule of a cancelled submission: a
+    /// submission whose prompt was durably appended really did deliver its
+    /// drained events to the model, and one that appended nothing never did.
     ///
     /// Properly `Sendable` rather than `@unchecked`, unlike ``StubSessionBackend``,
     /// because on this backend the transcript really is shared: the streaming path
-    /// produces from a task of its own, and a turn cancelled mid-stream stops
+    /// produces from a task of its own, and a submission cancelled mid-stream stops
     /// consuming (and goes on to read ``transcriptEntries()`` for its diff) while
     /// that producer is still live. Whether the two actually overlap depends on
     /// what the installed hook does about cancellation, which is no basis for a
     /// data-race argument — so ``entries`` is behind a ``Mutex`` and the question
     /// does not arise.
     private final class HookedSessionBackend: LanguageModelSessionBackend {
-        private let hook: TurnHook
-        private let observer: TurnObserver
+        private let hook: AnswerHook
+        private let observer: AnswerObserver
         private let appendsPromptBeforeToolCall: Bool
 
         /// This backend's synthetic transcript.
@@ -163,63 +163,64 @@ struct TurnCancellationTests {
         var entries: [Transcript.Entry] { transcript.withLock { $0 } }
 
         /// What ``usageTokenCounts()`` reports: how many input tokens each
-        /// completed turn adds to a running total, and that total so far.
+        /// completed submission adds to a running total, and that total so far.
         private struct Metering {
-            /// The input tokens one completed turn adds, or `nil` for a backend
-            /// that reports no usage at all.
-            var inputTokensPerTurn: Int?
+            /// The input tokens one completed submission adds, or `nil` for a
+            /// backend that reports no usage at all.
+            var inputTokensPerSubmission: Int?
 
-            /// Every metered turn's input tokens so far.
+            /// The input tokens of every metered submission so far.
             var totalInputTokens = 0
         }
 
         /// This backend's measured usage — behind a lock for the same reason
         /// ``transcript`` is, and mutable because a compaction fixture starts metering
-        /// between two turns.
+        /// between two answers.
         private let metering: Mutex<Metering>
 
         init(
-            hook: TurnHook,
-            observer: TurnObserver,
+            hook: AnswerHook,
+            observer: AnswerObserver,
             appendsPromptBeforeToolCall: Bool,
             entries: [Transcript.Entry] = [],
-            inputTokensPerTurn: Int? = nil
+            inputTokensPerSubmission: Int? = nil
         ) {
             self.hook = hook
             self.observer = observer
             self.appendsPromptBeforeToolCall = appendsPromptBeforeToolCall
             self.transcript = Mutex(entries)
-            self.metering = Mutex(Metering(inputTokensPerTurn: inputTokensPerTurn))
+            self.metering = Mutex(Metering(inputTokensPerSubmission: inputTokensPerSubmission))
         }
 
-        /// The input tokens each completed turn adds to this backend's measured
-        /// usage, as of this read — carried over to every backend derived from
-        /// this one, so a compaction that swaps the session's backend does not silently
-        /// stop it measuring.
-        var inputTokensPerTurn: Int? { metering.withLock { $0.inputTokensPerTurn } }
+        /// The input tokens each completed submission adds to this backend's
+        /// measured usage, as of this read — carried over to every backend
+        /// derived from this one, so a compaction that swaps the session's
+        /// backend does not silently stop it measuring.
+        var inputTokensPerSubmission: Int? { metering.withLock { $0.inputTokensPerSubmission } }
 
-        /// Starts reporting measured usage: `inputTokensPerTurn` input tokens for
-        /// every turn completed from here on.
+        /// Starts reporting measured usage: `inputTokensPerSubmission` input
+        /// tokens for every submission completed from here on.
         ///
-        /// A compaction fixture starts metering only for its *last* warm-up turn: a
-        /// session measuring usage from its first turn would cross its budget's
-        /// trigger with almost nothing in its transcript, and a compaction with no old
-        /// span left to summarize never makes a summarizer call at all.
+        /// A compaction fixture starts metering only for its *last* warm-up
+        /// answer: a session measuring usage from its first answer would cross
+        /// its budget's trigger with almost nothing in its transcript, and a
+        /// compaction with no old span left to summarize never makes a
+        /// summarizer call at all.
         ///
-        /// - Parameter inputTokensPerTurn: The input tokens each completed turn
-        ///   adds to the running total.
-        func startMetering(inputTokensPerTurn: Int) {
-            metering.withLock { $0.inputTokensPerTurn = inputTokensPerTurn }
+        /// - Parameter inputTokensPerSubmission: The input tokens each
+        ///   completed submission adds to the running total.
+        func startMetering(inputTokensPerSubmission: Int) {
+            metering.withLock { $0.inputTokensPerSubmission = inputTokensPerSubmission }
         }
 
-        /// Adds one completed turn's measured input tokens to the running total,
-        /// so that turn's own delta — the difference between the snapshots the
-        /// session takes either side of it — is exactly
-        /// ``Metering/inputTokensPerTurn``.
-        private func meterOneTurn() {
+        /// Adds the measured input tokens of one completed submission to the
+        /// running total, so the own delta of that submission — the difference
+        /// between the snapshots the session takes either side of it — is
+        /// exactly ``Metering/inputTokensPerSubmission``.
+        private func meterOneSubmission() {
             metering.withLock { state in
-                guard let perTurn = state.inputTokensPerTurn else { return }
-                state.totalInputTokens += perTurn
+                guard let perSubmission = state.inputTokensPerSubmission else { return }
+                state.totalInputTokens += perSubmission
             }
         }
 
@@ -228,9 +229,9 @@ struct TurnCancellationTests {
                 appendPrompt(prompt)
             }
             await observer.enter(prompt)
-            if let midTurn = hook.midTurn {
+            if let midAnswer = hook.midAnswer {
                 do {
-                    try await midTurn(prompt)
+                    try await midAnswer(prompt)
                 } catch {
                     await observer.exit(prompt)
                     throw error
@@ -241,7 +242,7 @@ struct TurnCancellationTests {
             }
             let responseText = "ok-\(prompt)"
             appendResponse(responseText)
-            meterOneTurn()
+            meterOneSubmission()
             await observer.exit(prompt)
             return responseText
         }
@@ -262,20 +263,21 @@ struct TurnCancellationTests {
             }
         }
 
-        /// The chunk a streaming turn yields *before* running the tool hook — what
-        /// a consumer has already received by the time a cancellation lands.
+        /// The chunk a streaming submission yields *before* running the tool hook —
+        /// what a consumer has already received by the time a cancellation lands.
         static let firstStreamedChunk = "ok-"
 
-        /// Streams the response in two chunks with ``TurnHook/midTurn`` run
-        /// between them, so a streaming turn suspends inside a tool call exactly like
-        /// a whole-response one — and a test can tell that the consumer kept the
-        /// chunk it had already been handed when the cancellation landed.
+        /// Streams the response in two chunks with ``AnswerHook/midAnswer`` run
+        /// between them, so a streaming submission suspends inside a tool call
+        /// exactly like a whole-response one — and a test can tell that the
+        /// consumer kept the chunk it had already been handed when the
+        /// cancellation landed.
         ///
         /// The transcript entries land in the same places relative to the tool call
         /// as ``respond(to:maxTokens:)`` puts them, so
         /// ``appendsPromptBeforeToolCall`` means the same thing on both paths. They
         /// are written from this stream's own producer task, which can outlive the
-        /// turn's consumption of the stream — see ``transcript``, which is why they
+        /// consumption of the stream by the submission — see ``transcript``, which is why they
         /// are written under a lock.
         func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
             if appendsPromptBeforeToolCall {
@@ -287,9 +289,9 @@ struct TurnCancellationTests {
                 let task = Task {
                     await observer.enter(prompt)
                     continuation.yield(Self.firstStreamedChunk)
-                    if let midTurn = hook.midTurn {
+                    if let midAnswer = hook.midAnswer {
                         do {
-                            try await midTurn(prompt)
+                            try await midAnswer(prompt)
                         } catch {
                             await observer.exit(prompt)
                             continuation.finish(throwing: error)
@@ -301,7 +303,7 @@ struct TurnCancellationTests {
                     }
                     let responseText = "ok-\(prompt)"
                     self.appendResponse(responseText)
-                    self.meterOneTurn()
+                    self.meterOneSubmission()
                     continuation.yield(String(responseText.dropFirst(Self.firstStreamedChunk.count)))
                     await observer.exit(prompt)
                     continuation.finish()
@@ -322,13 +324,13 @@ struct TurnCancellationTests {
             entries
         }
 
-        /// This backend's measured usage, or `nil` until ``startMetering(inputTokensPerTurn:)``
+        /// This backend's measured usage, or `nil` until ``startMetering(inputTokensPerSubmission:)``
         /// is called — the default, and what every test here but the compaction ones
         /// wants: a session with no measured usage has no measured
         /// ``RoutedSession/contextFill``, so no proactive compaction can trigger.
         func usageTokenCounts() -> (input: Int, output: Int)? {
             metering.withLock { state -> (input: Int, output: Int)? in
-                guard state.inputTokensPerTurn != nil else { return nil }
+                guard state.inputTokensPerSubmission != nil else { return nil }
                 return (input: state.totalInputTokens, output: 0)
             }
         }
@@ -336,7 +338,7 @@ struct TurnCancellationTests {
         func makeFork() -> any LanguageModelSessionBackend {
             HookedSessionBackend(
                 hook: hook, observer: observer, appendsPromptBeforeToolCall: appendsPromptBeforeToolCall,
-                entries: entries, inputTokensPerTurn: inputTokensPerTurn)
+                entries: entries, inputTokensPerSubmission: inputTokensPerSubmission)
         }
 
         /// Honors the replacement transcript rather than taking
@@ -346,20 +348,21 @@ struct TurnCancellationTests {
         /// A compaction swaps the session's backend for one seeded with the *compacted*
         /// transcript and sets `persistedEntryCount` from that same transcript, so
         /// a fixture that ignored the replacement would leave the two disagreeing
-        /// and have the next turn's diff record entries no real session would. The
-        /// running usage total deliberately starts over, the way a genuinely new
-        /// session over the same model does; the per-turn measurement carries on.
+        /// and have the diff of the next submission record entries no real
+        /// session would. The running usage total deliberately starts over, the
+        /// way a genuinely new session over the same model does; the measurement
+        /// for each submission carries on.
         func replacingTranscript(_ transcript: Transcript) -> any LanguageModelSessionBackend {
             HookedSessionBackend(
                 hook: hook, observer: observer, appendsPromptBeforeToolCall: appendsPromptBeforeToolCall,
-                entries: Array(transcript), inputTokensPerTurn: inputTokensPerTurn)
+                entries: Array(transcript), inputTokensPerSubmission: inputTokensPerSubmission)
         }
     }
 
     /// A ``LoadedLLMContainer`` vending ``HookedSessionBackend``s wired to one
     /// shared hook and observer.
     ///
-    /// Almost every test here observes turns through the shared ``TurnObserver``
+    /// Almost every test here observes answers through the shared ``AnswerObserver``
     /// and the recorder rather than by reaching for a particular session's
     /// backend; the exception is ``lastVendedBackend``, which the compaction fixture
     /// needs (see its doc), so the vended backend is retained behind a lock.
@@ -367,14 +370,14 @@ struct TurnCancellationTests {
         /// The scripted counter of this container: one token per `Character`.
         let tokenCounter: any TokenCounter = CharacterTokenCounter()
 
-        private let hook: TurnHook
-        private let observer: TurnObserver
+        private let hook: AnswerHook
+        private let observer: AnswerObserver
         private let appendsPromptBeforeToolCall: Bool
 
         /// The most recently vended backend.
         private let lastVended = Mutex<HookedSessionBackend?>(nil)
 
-        init(hook: TurnHook, observer: TurnObserver, appendsPromptBeforeToolCall: Bool) {
+        init(hook: AnswerHook, observer: AnswerObserver, appendsPromptBeforeToolCall: Bool) {
             self.hook = hook
             self.observer = observer
             self.appendsPromptBeforeToolCall = appendsPromptBeforeToolCall
@@ -512,7 +515,7 @@ struct TurnCancellationTests {
     /// prompt, so nothing has been metered yet when the proactive gate reads
     /// ``RoutedSession/contextFill`` and it sees `0` — under even the `0.80`
     /// default. Pinning the trigger above `1.0` keeps the proactive compaction out of
-    /// the way should that test ever grow a turn that does meter usage.
+    /// the way should that test ever grow an answer that does meter usage.
     private static let unreachableFillTrigger = 2.0
 
     /// The fraction of ``noOpCompactionScale`` a compaction aims to come down to, spelled out
@@ -524,7 +527,7 @@ struct TurnCancellationTests {
     private static let inertCompactionTarget = 0.25
 
     /// The auto-compaction opt-in ``cancellationSurvivesIntoTheOverflowRetry(route:)``
-    /// vends its session with: enough to turn on the reactive
+    /// vends its session with: enough to switch on the reactive
     /// compact-and-retry-once recovery, and nothing else.
     private static let unreachableTriggerBudget = TokenBudget(
         limit: noOpCompactionScale,
@@ -534,13 +537,13 @@ struct TurnCancellationTests {
 
     // MARK: - Compaction fixtures
 
-    /// The compaction prompt a compaction test vends its session with, so the mid-turn
-    /// hook can tell a compaction's own **summarizer** call from an ordinary turn: the
+    /// The compaction prompt a compaction test vends its session with, so the mid-answer
+    /// hook can tell a compaction's own **summarizer** call from an ordinary submission: the
     /// prompt ``Summarization`` sends is the rendered span being condensed, a line of
     /// three dashes, then this text. A match on the dashes and this text fires for
     /// exactly the compaction's model calls and for nothing else (see ``isSummarizerCall``).
     private static let compactionSummarizerPrompt = CompactionPrompt(
-        name: "turn-cancellation-compaction-suspend",
+        name: "answer-cancellation-compaction-suspend",
         text: "SUSPEND-INSIDE-THE-COMPACTION"
     )
 
@@ -556,8 +559,8 @@ struct TurnCancellationTests {
     /// there; a regression that then let the compaction degrade to another tier would suspend
     /// a *second* call on a semaphore nothing is left to signal, hanging the suite
     /// instead of failing the assertion that caught it. Letting later calls run
-    /// straight through turns that same regression into a fast, ordinary failure —
-    /// the turn finishes and the `CancellationError` expectation fails.
+    /// straight through makes that same regression a fast, ordinary failure —
+    /// the answer finishes and the `CancellationError` expectation fails.
     ///
     /// - Returns: A predicate that is `true` exactly once, for the first summarizer
     ///   call it sees.
@@ -572,10 +575,10 @@ struct TurnCancellationTests {
         }
     }
 
-    /// How many warm-up turns ``makeCompactionTriggeredSession(_:budget:metersTriggeringFill:)`` drives
-    /// before the turn that compacts, so the compaction has a conversation to
+    /// How many warm-up answers ``makeCompactionTriggeredSession(_:budget:metersTriggeringFill:)`` drives
+    /// before the answer that compacts, so the compaction has a conversation to
     /// summarize and therefore a real summarizer call to make.
-    private static let compactionWarmUpTurnCount = 6
+    private static let compactionWarmUpAnswerCount = 6
 
     /// The measured fill a compaction test's budget compacts at — ``TokenBudget``'s own
     /// default trigger, spelled out because these budgets are built by
@@ -583,7 +586,7 @@ struct TurnCancellationTests {
     private static let compactionFillTrigger = 0.8
 
     /// The share of the session's own resolved context window the last warm-up
-    /// turn measures, above ``compactionFillTrigger`` so the *next* turn compacts.
+    /// answer measures, above ``compactionFillTrigger`` so the *next* answer compacts.
     private static let compactionTriggeringFillFraction = 0.9
 
     /// The fraction of a compaction budget's `limit` its target sits at — an arbitrary
@@ -606,21 +609,23 @@ struct TurnCancellationTests {
         )
     }
 
-    /// The prompt ``cancellingTheReactiveCompactionStopsTheRetry()`` drives its turn with,
-    /// named because its mid-turn hook has to tell that turn's own model call (which
-    /// must overflow) from the compaction's summarizer call (which must suspend).
+    /// The prompt ``cancellingTheReactiveCompactionStopsTheRetry()`` drives its answer with,
+    /// named because its mid-answer hook has to tell the own model call of that
+    /// answer (which must overflow) from the compaction's summarizer call (which
+    /// must suspend).
     private static let overflowingCompactionPrompt = "overflows-then-compacts"
 
     /// The prompt ``makeCompactionTriggeredSession(_:budget:metersTriggeringFill:)``'s
-    /// warm-up turn `index` sends.
+    /// warm-up answer `index` sends.
     private static func warmUpPrompt(_ index: Int) -> String { "warm-\(index)" }
 
-    /// The exact transcript entries those warm-up turns leave behind, computed
+    /// The exact transcript entries those warm-up answers leave behind, computed
     /// without running a session: ``HookedSessionBackend`` appends one `.prompt`
-    /// carrying the turn's own prompt and one `.response` carrying `"ok-"` plus
-    /// it, so both budgets below can be sized up front from this alone.
+    /// carrying the own prompt of the answer and one `.response` carrying
+    /// `"ok-"` plus it, so both budgets below can be sized up front from this
+    /// alone.
     private static func warmUpEntries() -> [Transcript.Entry] {
-        (0..<compactionWarmUpTurnCount).flatMap { index -> [Transcript.Entry] in
+        (0..<compactionWarmUpAnswerCount).flatMap { index -> [Transcript.Entry] in
             let prompt = warmUpPrompt(index)
             return [
                 .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))])),
@@ -640,15 +645,15 @@ struct TurnCancellationTests {
     }
 
     /// A session whose measured ``RoutedSession/contextFill`` has already cleared
-    /// `budget`'s trigger, holding ``compactionWarmUpTurnCount`` turns of real content —
-    /// so the *next* turn on it compacts proactively, before running any model work of
+    /// `budget`'s trigger, holding ``compactionWarmUpAnswerCount`` answers of real content —
+    /// so the *next* answer on it compacts proactively, before running any model work of
     /// its own.
     ///
     /// - Parameters:
     ///   - fixture: The fixture to vend the session from.
     ///   - budget: The auto-compaction opt-in to vend it with, sized by
     ///     ``summarizingCompactionBudget``.
-    ///   - metersTriggeringFill: Whether the last warm-up turn measures enough usage
+    ///   - metersTriggeringFill: Whether the last warm-up answer measures enough usage
     ///     to clear `budget`'s trigger. `true` (the default) for a test about the
     ///     *proactive* compaction; `false` for one about the **reactive**
     ///     compact-and-retry-once compact, where a proactive compaction firing first would
@@ -665,17 +670,18 @@ struct TurnCancellationTests {
         let backend = try #require(fixture.container.lastVendedBackend)
         let contextTokens = try #require(session as? RoutedSessionActor).contextTokens
 
-        for index in 0..<(compactionWarmUpTurnCount - 1) {
+        for index in 0..<(compactionWarmUpAnswerCount - 1) {
             _ = try await session.respond(to: warmUpPrompt(index))
         }
-        // Only the last warm-up turn measures, and its delta between the snapshots
+        // Only the last warm-up answer measures, and its delta between the snapshots
         // taken either side of it is what `contextFill` then reports — see
-        // ``HookedSessionBackend/startMetering(inputTokensPerTurn:)`` for why not
-        // from the first turn.
+        // ``HookedSessionBackend/startMetering(inputTokensPerSubmission:)`` for why not
+        // from the first answer.
         if metersTriggeringFill {
-            backend.startMetering(inputTokensPerTurn: Int(Double(contextTokens) * compactionTriggeringFillFraction))
+            backend.startMetering(
+                inputTokensPerSubmission: Int(Double(contextTokens) * compactionTriggeringFillFraction))
         }
-        _ = try await session.respond(to: warmUpPrompt(compactionWarmUpTurnCount - 1))
+        _ = try await session.respond(to: warmUpPrompt(compactionWarmUpAnswerCount - 1))
 
         #expect((await session.contextFill >= budget.trigger) == metersTriggeringFill)
         return session
@@ -683,22 +689,22 @@ struct TurnCancellationTests {
 
     private static func makeTempDir() -> URL {
         let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("TurnCancellationTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("AnswerCancellationTests-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
 
-    /// Whether one further ordinary turn on `session` runs to completion,
+    /// Whether one further ordinary answer on `session` runs to completion,
     /// observed through `observer` under a bounded spin rather than by awaiting
-    /// the turn.
+    /// the answer.
     ///
     /// The indirection is the point: a regression that strands the pump
-    /// blocks every later message on that session forever, so awaiting such a
-    /// turn directly would hang the whole suite instead of failing an assertion
-    /// in the test that caught it.
-    private static func followUpTurnCompletes(
+    /// blocks every later message on that session forever, so awaiting such an
+    /// answer directly would hang the whole suite instead of failing an
+    /// assertion in the test that caught it.
+    private static func followUpAnswerCompletes(
         on session: any RoutedSession,
-        observer: TurnObserver,
+        observer: AnswerObserver,
         prompt: String = "after"
     ) async -> Bool {
         let task = Task { try await session.respond(to: prompt) }
@@ -712,30 +718,30 @@ struct TurnCancellationTests {
         return (try? await task.value) != nil
     }
 
-    /// The events one further turn on `session` produced, or `nil` when that turn
-    /// never reached the model.
+    /// The events one further answer on `session` produced, or `nil` when that
+    /// answer never reached the model.
     ///
-    /// ``followUpTurnCompletes(on:observer:prompt:)`` for a test that has to *see*
-    /// what the next turn did — its own ``SessionEvent/compaction(_:)``, say — and
+    /// ``followUpAnswerCompletes(on:observer:prompt:)`` for a test that has to *see*
+    /// what the next answer did — its own ``SessionEvent/compaction(_:)``, say — and
     /// bounded by the same spin for the same reason: a regression that stranded
     /// the pump would hang the suite rather than fail the test that caught it.
     ///
     /// Unlike that method, this one *does* await the task on its give-up path, and
     /// the difference is deliberate — do not "fix" the two to match. This task
     /// consumes an `AsyncThrowingStream`, whose `next()` is cancellation-aware and
-    /// ends, so cancelling it always completes it. ``followUpTurnCompletes(on:observer:prompt:)``
+    /// ends, so cancelling it always completes it. ``followUpAnswerCompletes(on:observer:prompt:)``
     /// wraps a bare `respond(to:)` whose answer a stranded pump never gives, so
     /// awaiting it there would hang exactly when the helper exists to avoid
     /// hanging.
     ///
     /// - Parameters:
-    ///   - session: The session to run one more turn on.
-    ///   - observer: The observer that turn's model call reports to.
-    ///   - prompt: That turn's prompt.
-    /// - Returns: The turn's events in order, or `nil` when it never ran or failed.
-    private static func followUpTurnEvents(
+    ///   - session: The session to run one more answer on.
+    ///   - observer: The observer that the model call of that answer reports to.
+    ///   - prompt: The prompt of that answer.
+    /// - Returns: The events of the answer in order, or `nil` when it never ran or failed.
+    private static func followUpAnswerEvents(
         on session: any RoutedSession,
-        observer: TurnObserver,
+        observer: AnswerObserver,
         prompt: String = "after"
     ) async -> [SessionEvent]? {
         let delivered = DeliveredEvents()
@@ -757,8 +763,8 @@ struct TurnCancellationTests {
     /// The one live model handle every session in a test is vended from, plus the
     /// container, observer, and hook wired behind it.
     private struct Fixture {
-        let observer: TurnObserver
-        let hook: TurnHook
+        let observer: AnswerObserver
+        let hook: AnswerHook
         let recorder: InMemoryRecorder
 
         /// The container every session in a test is vended from, for the one
@@ -779,18 +785,18 @@ struct TurnCancellationTests {
     ///
     /// - Parameters:
     ///   - cacheDir: The router's cache/recording root.
-    ///   - appendsPromptBeforeToolCall: Whether the vended backends append this
-    ///     turn's `.prompt` entry before running the mid-turn tool hook — the
-    ///     switch between a cancelled turn that durably delivered its drained
-    ///     outbox events and one that delivered nothing.
+    ///   - appendsPromptBeforeToolCall: Whether the vended backends append the
+    ///     `.prompt` entry of a submission before running the mid-answer tool
+    ///     hook — the switch between a cancelled submission that durably
+    ///     delivered its drained outbox events and one that delivered nothing.
     ///   - pool: The resident-model pool. Defaults to a fresh pool, so parallel suites never share residents.
     private static func makeFixture(
         cacheDir: URL,
         appendsPromptBeforeToolCall: Bool = true,
         pool: ModelPool = ModelPool()
     ) async throws -> Fixture {
-        let hook = TurnHook()
-        let observer = TurnObserver()
+        let hook = AnswerHook()
+        let observer = AnswerObserver()
         let container = HookedLLMContainer(
             hook: hook, observer: observer, appendsPromptBeforeToolCall: appendsPromptBeforeToolCall)
         let recorder = InMemoryRecorder()
@@ -806,7 +812,7 @@ struct TurnCancellationTests {
         return Fixture(observer: observer, hook: hook, recorder: recorder, container: container, profile: profile)
     }
 
-    /// Installs a mid-turn hook that suspends the turn named `prompt` inside a tool
+    /// Installs a mid-answer hook that suspends the answer named `prompt` inside a tool
     /// call which *observes* cancellation: it suspends on a semaphore released by
     /// its own cancellation handler, then re-checks cancellation and reports what
     /// it saw — the shape a real MCP tool awaiting a reply has, rather than a poll
@@ -816,24 +822,18 @@ struct TurnCancellationTests {
     ///   - fixture: The fixture whose hook to install into.
     ///   - suspendsOn: Whether the model call carrying this prompt is the one to
     ///     suspend. Every call it rejects runs straight through, so one hook serves a
-    ///     whole test: an ordinary turn's prompt (see
-    ///     ``suspendInsideCancellationAwareTool(_:prompt:insideTool:humanWait:)``) or
+    ///     whole test: the prompt of an ordinary answer (see
+    ///     ``suspendInsideCancellationAwareTool(_:prompt:insideTool:)``) or
     ///     a compaction's own summarizer call (see ``isSummarizerCall``).
-    ///   - insideTool: Signalled once the turn is provably suspended inside the
+    ///   - insideTool: Signalled once the answer is provably suspended inside the
     ///     tool call, so a test cancels at a known point rather than racing to
     ///     get there.
-    ///   - humanWait: The session to suspend inside ``RoutedSession/awaitingUser(_:)``
-    ///     on — the tool-awaiting-a-person shape — or `nil` to suspend directly in
-    ///     the tool call. The wait itself is identical either way, which is the
-    ///     point of the parameter: the lock-accounting test must exercise the same
-    ///     suspension as the others, not a copy of it.
     /// - Returns: The event the tool signals once it has observed the cancellation,
     ///   so a test waits on that moment instead of polling for it.
     private static func suspendInsideCancellationAwareTool(
         _ fixture: Fixture,
         suspendingOn suspendsOn: @escaping @Sendable (String) -> Bool,
-        insideTool: AsyncSemaphore,
-        humanWait: (any RoutedSession)? = nil
+        insideTool: AsyncSemaphore
     ) -> AwaitedEvent {
         let observer = fixture.observer
         let suspended = AsyncSemaphore(value: 0)
@@ -851,87 +851,80 @@ struct TurnCancellationTests {
                 await observer.noteToolSawCancellation()
                 // Signalled after the observer has been written and never before, so
                 // a test the event resumes always finds
-                // ``TurnObserver/toolSawCancellation`` already set.
+                // ``AnswerObserver/toolSawCancellation`` already set.
                 sawCancellation.signal()
                 throw error
             }
         }
-        fixture.hook.midTurn = { turnPrompt in
-            guard suspendsOn(turnPrompt) else { return }
-            guard let humanWait else {
-                try await suspend()
-                return
-            }
-            try await humanWait.awaitingUser(suspend)
+        fixture.hook.midAnswer = { submittedPrompt in
+            guard suspendsOn(submittedPrompt) else { return }
+            try await suspend()
         }
         return sawCancellation
     }
 
-    /// Suspends the turn whose own prompt is `prompt`, matched as a **suffix** of
-    /// what the backend actually receives: a turn that drained outbox events is
-    /// handed those events as a preamble followed by its own prompt (see
-    /// ``RoutedSessionActor/composedPrompt(pendingEvents:prompt:)``), so an
-    /// equality check would silently never fire for exactly the turns the outbox
-    /// tests suspend.
+    /// Suspends the answer whose own prompt is `prompt`, matched as a **suffix**
+    /// of what the backend actually receives: a submission that drained outbox
+    /// events is handed those events as a preamble followed by its own prompt
+    /// (see ``RoutedSessionActor/composedPrompt(pendingEvents:prompt:)``), so an
+    /// equality check would silently never fire for exactly the submissions the
+    /// outbox tests suspend.
     ///
     /// The common case, and a thin spelling of
-    /// ``suspendInsideCancellationAwareTool(_:suspendingOn:insideTool:humanWait:)`` — a
+    /// ``suspendInsideCancellationAwareTool(_:suspendingOn:insideTool:)`` — a
     /// compaction test suspends on that one's predicate instead, since a summarizer call is
     /// identified by its *prefix*.
     ///
     /// - Parameters:
     ///   - fixture: The fixture whose hook to install into.
-    ///   - prompt: The turn's own prompt text to suspend on.
-    ///   - insideTool: Signalled once the turn is provably suspended inside the
-    ///     tool call.
-    ///   - humanWait: The session to suspend inside ``RoutedSession/awaitingUser(_:)``
-    ///     on, or `nil` to suspend directly in the tool call.
+    ///   - prompt: The own prompt text of the answer to suspend on.
+    ///   - insideTool: Signalled once the answer is provably suspended inside
+    ///     the tool call.
     /// - Returns: The event the tool signals once it has observed the cancellation.
     private static func suspendInsideCancellationAwareTool(
         _ fixture: Fixture,
         prompt: String,
-        insideTool: AsyncSemaphore,
-        humanWait: (any RoutedSession)? = nil
+        insideTool: AsyncSemaphore
     ) -> AwaitedEvent {
         suspendInsideCancellationAwareTool(
-            fixture, suspendingOn: { $0.hasSuffix(prompt) }, insideTool: insideTool, humanWait: humanWait)
+            fixture, suspendingOn: { $0.hasSuffix(prompt) }, insideTool: insideTool)
     }
 
     /// Waits for a cancellation the test has just requested to reach the tool
-    /// suspended by ``suspendInsideCancellationAwareTool(_:prompt:insideTool:humanWait:)``,
-    /// then asserts the turn unwound with `CancellationError`.
+    /// suspended by ``suspendInsideCancellationAwareTool(_:prompt:insideTool:)``,
+    /// then asserts the answer unwound with `CancellationError`.
     ///
-    /// The event first, and never a bare `await turnTask.value`: that tool resumes
+    /// The event first, and never a bare `await answerTask.value`: that tool resumes
     /// only when cancellation reaches it, and it resumes out of
     /// ``AsyncSemaphore/wait()``, which ignores cancellation by design. So a
-    /// regression in propagation leaves the turn suspended where no time limit can
-    /// reach it, and awaiting the turn straight away would hang the whole run instead
+    /// regression in propagation leaves the answer suspended where no time limit can
+    /// reach it, and awaiting the answer straight away would hang the whole run instead
     /// of failing the test that caught the fault. The event is a wait the suite's
     /// `.timeLimit` *can* break, so the fault ends this test instead. Past the event
-    /// the tool has already thrown and the turn is already unwinding, which is what
+    /// the tool has already thrown and the answer is already unwinding, which is what
     /// makes the `await` below safe.
     ///
     /// - Parameters:
-    ///   - turnTask: The task awaiting the cancelled turn, whatever it returns.
-    ///   - sawCancellation: The event ``suspendInsideCancellationAwareTool(_:prompt:insideTool:humanWait:)``
+    ///   - answerTask: The task awaiting the cancelled answer, whatever it returns.
+    ///   - sawCancellation: The event ``suspendInsideCancellationAwareTool(_:prompt:insideTool:)``
     ///     returned for that tool.
     /// - Throws: ``EventNeverArrived`` when the suite's `.timeLimit` ended the wait
     ///   because the cancellation never reached the tool at all.
     private static func awaitCancelledUnwind<Value: Sendable>(
-        _ turnTask: Task<Value, Error>,
+        _ answerTask: Task<Value, Error>,
         sawCancellation: AwaitedEvent
     ) async throws {
         try await sawCancellation.wait()
         await #expect(throws: CancellationError.self) {
-            try await turnTask.value
+            try await answerTask.value
         }
     }
 
     // MARK: - The regression: a stop must reach a running tool call
 
-    @Test("cancel() cancels the in-flight turn's model call, and the tool running inside it sees CancellationError")
+    @Test("cancel() cancels the model call of the running answer, and the tool running inside it sees CancellationError")
     @MainActor
-    func cancellingAnInFlightTurnReachesTheToolCall() async throws {
+    func cancellingARunningAnswerReachesTheToolCall() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -941,14 +934,14 @@ struct TurnCancellationTests {
         let insideTool = AsyncSemaphore(value: 0)
         let sawCancellation = Self.suspendInsideCancellationAwareTool(fixture, prompt: "cancel-me", insideTool: insideTool)
 
-        let turnTask = Task { try await session.respond(to: "cancel-me") }
+        let answerTask = Task { try await session.respond(to: "cancel-me") }
         await insideTool.wait()
 
         #expect(await session.cancel() == .requested)
 
         // The whole point: the tool call *inside* the model call observes the
-        // cancellation, and the turn then unwinds with it.
-        try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
+        // cancellation, and the answer then unwinds with it.
+        try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
         #expect(await fixture.observer.toolSawCancellation)
     }
 
@@ -964,30 +957,30 @@ struct TurnCancellationTests {
         let insideTool = AsyncSemaphore(value: 0)
         let sawCancellation = Self.suspendInsideCancellationAwareTool(fixture, prompt: "caller-cancels", insideTool: insideTool)
 
-        let turnTask = Task { try await session.respond(to: "caller-cancels") }
+        let answerTask = Task { try await session.respond(to: "caller-cancels") }
         await insideTool.wait()
 
         // Router runs the model call in a task of its own so it can cancel it
         // from outside; that must not cost the caller the propagation plan.md
         // always promised from cancelling its own enclosing `Task`.
-        turnTask.cancel()
+        answerTask.cancel()
 
-        try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
+        try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
         #expect(await fixture.observer.toolSawCancellation)
 
-        // Recorded the same way as a turn cancelled through `cancel()`,
+        // Recorded the same way as a submission cancelled through `cancel()`,
         // even though this cancellation unwinds the task the recording itself runs
         // in: nothing on the recording path observes cancellation, so a
-        // caller-cancelled turn is no more half-written than any other failed one.
+        // caller-cancelled submission is no more half-written than any other failed one.
         #expect(await fixture.recorder.events.map(\.kind) == [.session, .prompt, .response])
         #expect(await fixture.recorder.events.last?.text == nil)
     }
 
     // MARK: - Recording
 
-    @Test("a cancelled turn is recorded exactly like any other failed turn, and the session keeps working")
+    @Test("a cancelled submission is recorded exactly like any other failed submission, and the session keeps working")
     @MainActor
-    func cancelledTurnLeavesAConsistentTranscript() async throws {
+    func cancelledSubmissionLeavesAConsistentTranscript() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -997,26 +990,27 @@ struct TurnCancellationTests {
         let insideTool = AsyncSemaphore(value: 0)
         let sawCancellation = Self.suspendInsideCancellationAwareTool(fixture, prompt: "cancel-me", insideTool: insideTool)
 
-        let turnTask = Task { try await session.respond(to: "cancel-me") }
+        let answerTask = Task { try await session.respond(to: "cancel-me") }
         await insideTool.wait()
         #expect(await session.cancel() == .requested)
-        try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
+        try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
 
         // Whatever the SDK durably appended before the cancellation landed (the
-        // turn's `.prompt` entry), plus exactly one close — the synthetic
-        // bodyless `.response` every failed turn gets, never two and never none.
-        let cancelledTurnEvents = await fixture.recorder.events
-        #expect(cancelledTurnEvents.map(\.kind) == [.session, .prompt, .response])
-        let close = try #require(cancelledTurnEvents.last)
+        // `.prompt` entry of the submission), plus exactly one close — the
+        // synthetic bodyless `.response` every failed submission gets, never two
+        // and never none.
+        let cancelledSubmissionEvents = await fixture.recorder.events
+        #expect(cancelledSubmissionEvents.map(\.kind) == [.session, .prompt, .response])
+        let close = try #require(cancelledSubmissionEvents.last)
         #expect(close.text == nil)
         #expect(close.ms != nil)
 
-        // Nothing was left half-written: an ordinary turn on the same session
+        // Nothing was left half-written: an ordinary answer on the same session
         // records its own whole prompt/response pair straight after. Run through
-        // `followUpTurnCompletes` rather than awaited directly, so a regression that
-        // stranded one of this turn's permits fails here instead of suspending the
-        // follow-up turn — and the suite with it — forever.
-        #expect(await Self.followUpTurnCompletes(on: session, observer: fixture.observer))
+        // `followUpAnswerCompletes` rather than awaited directly, so a regression
+        // that stranded the pump fails here instead of suspending the follow-up
+        // answer — and the suite with it — forever.
+        #expect(await Self.followUpAnswerCompletes(on: session, observer: fixture.observer))
         let afterEvents = await fixture.recorder.events
         #expect(afterEvents.map(\.kind) == [.session, .prompt, .response, .prompt, .response])
         #expect(afterEvents.last?.text == "ok-after")
@@ -1024,9 +1018,9 @@ struct TurnCancellationTests {
 
     // MARK: - Nothing stranded
 
-    @Test("cancelling a turn suspended in awaitingUser leaves the session idle and blocks no other session")
+    @Test("cancelling an answer whose tool body waits for a person leaves the session idle and blocks no other session")
     @MainActor
-    func cancellingATurnSuspendedInAwaitingUserLeavesTheSessionIdle() async throws {
+    func cancellingAnAnswerThatWaitsForAPersonLeavesTheSessionIdle() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -1034,39 +1028,40 @@ struct TurnCancellationTests {
         let sessionA = fixture.model.makeSession()
         let sessionB = fixture.model.makeSession()
 
-        // The turn suspends on a person from inside `awaitingUser`, which holds
-        // no generation place, when the cancellation arrives: the interaction
-        // between in-flight cancellation and a wait inside a tool body.
+        // The tool body of the answer waits for a person, directly, when the
+        // cancellation arrives: the interaction between the cancel of a running
+        // answer and a wait inside a tool body. The session has no wrapper for
+        // such a wait, so the wait holds nothing of its own.
         let insideWait = AsyncSemaphore(value: 0)
         let sawCancellation = Self.suspendInsideCancellationAwareTool(
-            fixture, prompt: "cancel-in-wait", insideTool: insideWait, humanWait: sessionA)
+            fixture, prompt: "cancel-in-wait", insideTool: insideWait)
 
-        let turnTask = Task { try await sessionA.respond(to: "cancel-in-wait") }
+        let answerTask = Task { try await sessionA.respond(to: "cancel-in-wait") }
         await insideWait.wait()
         #expect(await sessionA.isPumpRunning)
 
         #expect(await sessionA.cancel() == .requested)
-        try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
+        try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
 
         // The answer ended, and nothing of it waits.
         #expect(await sessionA.becomesIdle())
 
         // The behavioral proof: another session over the same model still
         // generates, and so does the cancelled one.
-        #expect(await Self.followUpTurnCompletes(on: sessionB, observer: fixture.observer, prompt: "other-session"))
-        #expect(await Self.followUpTurnCompletes(on: sessionA, observer: fixture.observer))
+        #expect(await Self.followUpAnswerCompletes(on: sessionB, observer: fixture.observer, prompt: "other-session"))
+        #expect(await Self.followUpAnswerCompletes(on: sessionA, observer: fixture.observer))
         #expect(await sessionA.becomesIdle())
     }
 
     // MARK: - The outbox rule
 
-    @Test("a cancelled turn that durably delivered its drained events records them rather than re-queueing them")
+    @Test("a cancelled submission that durably delivered its drained events records them rather than re-queueing them")
     @MainActor
-    func cancelledTurnKeepsDeliveredEvents() async throws {
+    func cancelledSubmissionKeepsDeliveredEvents() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        // This backend appends the turn's `.prompt` entry before the tool runs,
+        // This backend appends the `.prompt` entry of the submission before the tool runs,
         // so the composed preamble carrying the drained event really did reach
         // the model before the cancellation landed.
         let fixture = try await Self.makeFixture(cacheDir: dir, appendsPromptBeforeToolCall: true)
@@ -1078,27 +1073,27 @@ struct TurnCancellationTests {
         let insideTool = AsyncSemaphore(value: 0)
         let sawCancellation = Self.suspendInsideCancellationAwareTool(fixture, prompt: "cancel-me", insideTool: insideTool)
 
-        let turnTask = Task { try await session.respond(to: "cancel-me") }
+        let answerTask = Task { try await session.respond(to: "cancel-me") }
         await insideTool.wait()
         #expect(await session.cancel() == .requested)
-        try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
+        try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
 
-        // Delivered, so not re-queued: the drained event rode the cancelled
-        // turn's recorded prompt and is not staged again.
+        // Delivered, so not re-queued: the drained event rode the recorded
+        // prompt of the cancelled submission and is not staged again.
         let pending = await session.outbox.pending()
         #expect(pending.events.isEmpty)
         let promptEvent = try #require(await fixture.recorder.events.first { $0.kind == .prompt })
         #expect(promptEvent.text?.contains("run command") == true)
     }
 
-    @Test("a cancelled turn that delivered nothing re-queues its drained events instead of destroying them")
+    @Test("a cancelled submission that delivered nothing re-queues its drained events instead of destroying them")
     @MainActor
-    func cancelledTurnRequeuesUndeliveredEvents() async throws {
+    func cancelledSubmissionRequeuesUndeliveredEvents() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         // This backend appends nothing before the tool runs, so a cancellation
-        // there leaves the turn with no `.prompt` partial for the drained event
+        // there leaves the submission with no `.prompt` partial for the drained event
         // to attach to — it was never durably delivered.
         let fixture = try await Self.makeFixture(cacheDir: dir, appendsPromptBeforeToolCall: false)
         let session = fixture.model.makeSession()
@@ -1109,10 +1104,10 @@ struct TurnCancellationTests {
         let insideTool = AsyncSemaphore(value: 0)
         let sawCancellation = Self.suspendInsideCancellationAwareTool(fixture, prompt: "cancel-me", insideTool: insideTool)
 
-        let turnTask = Task { try await session.respond(to: "cancel-me") }
+        let answerTask = Task { try await session.respond(to: "cancel-me") }
         await insideTool.wait()
         #expect(await session.cancel() == .requested)
-        try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
+        try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
 
         let pending = await session.outbox.pending()
         #expect(pending.events.map(\.event) == [posted])
@@ -1120,9 +1115,9 @@ struct TurnCancellationTests {
 
     // MARK: - The streaming and queue-dispatch entry points
 
-    @Test("cancel() finishes a streamEvents turn with CancellationError, leaving the consumer what it already received")
+    @Test("cancel() finishes a streamEvents answer with CancellationError, leaving the consumer what it already received")
     @MainActor
-    func cancellingAStreamingTurnFinishesTheStreamWithCancellationError() async throws {
+    func cancellingAStreamingAnswerFinishesTheStreamWithCancellationError() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -1135,7 +1130,7 @@ struct TurnCancellationTests {
         // The stream is drained into `delivered` as it arrives, so what the consumer
         // had already been handed survives the error the stream finishes with.
         let delivered = DeliveredEvents()
-        let turnTask = Task { () throws -> Int in
+        let answerTask = Task { () throws -> Int in
             for try await event in await session.streamEvents(to: "stream-cancel") {
                 await delivered.append(event)
             }
@@ -1144,9 +1139,9 @@ struct TurnCancellationTests {
         await insideTool.wait()
 
         #expect(await session.cancel() == .requested)
-        try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
+        try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
 
-        // Everything the turn produced before the cancellation is still the
+        // Everything the answer produced before the cancellation is still the
         // consumer's — a cancelled stream is truncated, not retracted.
         #expect(await delivered.events.contains(.textDelta(HookedSessionBackend.firstStreamedChunk)))
         #expect(await fixture.recorder.events.map(\.kind) == [.session, .prompt, .response])
@@ -1194,7 +1189,7 @@ struct TurnCancellationTests {
 
     // MARK: - No-ops and best-effort honesty
 
-    @Test("cancelling twice, and cancelling after the turn has finished, are safe no-ops")
+    @Test("cancelling twice, and cancelling after the answer has finished, are safe no-ops")
     @MainActor
     func cancellingTwiceAndAfterCompletionIsASafeNoOp() async throws {
         let dir = Self.makeTempDir()
@@ -1203,18 +1198,18 @@ struct TurnCancellationTests {
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = fixture.model.makeSession()
 
-        // Before any turn: nothing to cancel.
+        // Before any answer: nothing to cancel.
         #expect(await session.cancel() == .nothingToCancel)
 
         // This tool unwinds only when the test says so, rather than out of its own
         // cancellation handler: a tool that unwinds the moment cancellation lands
-        // lets the whole turn finish between the two calls below, which makes
-        // "twice against one in-flight turn" a race rather than a test. It still
+        // lets the whole answer finish between the two calls below, which makes
+        // "twice against one running answer" a race rather than a test. It still
         // ends in a real cancellation — it checks for one once released.
         let insideTool = AsyncSemaphore(value: 0)
         let release = AsyncSemaphore(value: 0)
         let observer = fixture.observer
-        fixture.hook.midTurn = { prompt in
+        fixture.hook.midAnswer = { prompt in
             guard prompt.hasSuffix("cancel-me") else { return }
             insideTool.signal()
             await release.wait()
@@ -1226,30 +1221,30 @@ struct TurnCancellationTests {
             }
         }
 
-        let turnTask = Task { try await session.respond(to: "cancel-me") }
+        let answerTask = Task { try await session.respond(to: "cancel-me") }
         await insideTool.wait()
 
-        // Twice while the same turn is provably still in flight: the second call
+        // Twice while the same answer provably still runs: the second call
         // requests what was already requested and changes nothing.
         #expect(await session.cancel() == .requested)
         #expect(await session.cancel() == .requested)
 
         release.signal()
         await #expect(throws: CancellationError.self) {
-            try await turnTask.value
+            try await answerTask.value
         }
         #expect(await fixture.observer.toolSawCancellation)
 
-        // After it has finished: no turn to cancel, and the request left behind
-        // cannot bleed into the next turn — which is a claim about permits too, so
-        // the follow-up turn goes through `followUpTurnCompletes` rather than being
-        // awaited directly.
+        // After it has finished: no answer to cancel, and the request left
+        // behind cannot bleed into the next answer — which is a claim about the
+        // pump too, so the follow-up answer goes through
+        // `followUpAnswerCompletes` rather than being awaited directly.
         #expect(await session.cancel() == .nothingToCancel)
-        #expect(await Self.followUpTurnCompletes(on: session, observer: fixture.observer))
+        #expect(await Self.followUpAnswerCompletes(on: session, observer: fixture.observer))
         #expect(await session.cancel() == .nothingToCancel)
     }
 
-    @Test("a turn whose model work ignores cancellation still completes — Router stopped listening, the work did not stop")
+    @Test("an answer whose model work ignores cancellation still completes — Router stopped listening, the work did not stop")
     @MainActor
     func cancellationIsBestEffortWhenTheWorkIgnoresIt() async throws {
         let dir = Self.makeTempDir()
@@ -1263,27 +1258,27 @@ struct TurnCancellationTests {
         // `notifications/cancelled`.
         let insideTool = AsyncSemaphore(value: 0)
         let release = AsyncSemaphore(value: 0)
-        fixture.hook.midTurn = { prompt in
+        fixture.hook.midAnswer = { prompt in
             guard prompt == "stubborn" else { return }
             insideTool.signal()
             await release.wait()
         }
 
-        let turnTask = Task { try await session.respond(to: "stubborn") }
+        let answerTask = Task { try await session.respond(to: "stubborn") }
         await insideTool.wait()
         #expect(await session.cancel() == .requested)
 
-        // Nothing Router can do makes it stop, so the turn runs to completion and
-        // is recorded as the whole turn it was.
+        // Nothing Router can do makes it stop, so the answer runs to completion
+        // and is recorded as the whole submission it was.
         release.signal()
-        #expect(try await turnTask.value == "ok-stubborn")
+        #expect(try await answerTask.value == "ok-stubborn")
         #expect(await fixture.recorder.events.map(\.kind) == [.session, .prompt, .response])
         #expect(await fixture.recorder.events.last?.text == "ok-stubborn")
     }
 
     @Test("a respond cancelled while its message waits behind another submission never reaches the model, and records nothing")
     @MainActor
-    func cancellingAQueuedTurnNeverReachesTheModel() async throws {
+    func cancellingAQueuedMessageNeverReachesTheModel() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -1293,16 +1288,16 @@ struct TurnCancellationTests {
         // The first submission suspends inside the model without checking
         // cancellation, so the second message provably waits in the outbox
         // rather than racing to start.
-        let insideFirstTurn = AsyncSemaphore(value: 0)
-        let releaseFirstTurn = AsyncSemaphore(value: 0)
-        fixture.hook.midTurn = { prompt in
+        let insideFirstAnswer = AsyncSemaphore(value: 0)
+        let releaseFirstAnswer = AsyncSemaphore(value: 0)
+        fixture.hook.midAnswer = { prompt in
             guard prompt.hasSuffix("holds-the-lock") else { return }
-            insideFirstTurn.signal()
-            await releaseFirstTurn.wait()
+            insideFirstAnswer.signal()
+            await releaseFirstAnswer.wait()
         }
 
         let firstTask = Task { try await session.respond(to: "holds-the-lock") }
-        await insideFirstTurn.wait()
+        await insideFirstAnswer.wait()
 
         let queuedTask = Task { try await session.respond(to: "queued-and-cancelled") }
         #expect(
@@ -1314,7 +1309,7 @@ struct TurnCancellationTests {
         // or the pump drops it when it takes it: it never goes into a
         // submission.
         queuedTask.cancel()
-        releaseFirstTurn.signal()
+        releaseFirstAnswer.signal()
         #expect(try await firstTask.value == "ok-holds-the-lock")
 
         // It throws rather than generating: the model is never called for this
@@ -1331,12 +1326,12 @@ struct TurnCancellationTests {
         let events = await fixture.recorder.events
         #expect(events.map(\.kind) == [.session, .prompt, .response])
         #expect(events.last?.text == "ok-holds-the-lock")
-        #expect(await Self.followUpTurnCompletes(on: session, observer: fixture.observer))
+        #expect(await Self.followUpAnswerCompletes(on: session, observer: fixture.observer))
     }
 
-    @Test("abandoning a stream mid-turn cancels the turn behind it, which is then recorded as cancelled rather than completed")
+    @Test("abandoning a stream while its answer runs cancels the submission behind it, which is then recorded as cancelled rather than completed")
     @MainActor
-    func abandoningAStreamRecordsTheTurnAsCancelled() async throws {
+    func abandoningAStreamRecordsTheSubmissionAsCancelled() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -1344,10 +1339,10 @@ struct TurnCancellationTests {
         let session = fixture.model.makeSession()
 
         // A tool that never checks cancellation, so what is asserted below is the
-        // *turn's* own outcome rather than the tool's cooperation.
+        // own outcome of the *submission* rather than the tool's cooperation.
         let insideTool = AsyncSemaphore(value: 0)
         let release = AsyncSemaphore(value: 0)
-        fixture.hook.midTurn = { prompt in
+        fixture.hook.midAnswer = { prompt in
             guard prompt.hasSuffix("abandon-stream") else { return }
             insideTool.signal()
             await release.wait()
@@ -1362,13 +1357,15 @@ struct TurnCancellationTests {
         #expect(delivered == [HookedSessionBackend.firstStreamedChunk])
 
         // Waiting for the tool to suspend first keeps the assertion below deterministic:
-        // the turn's diff must run while the backend still has no `.response` entry
-        // for this turn, which is exactly the state a cut-short turn is in.
+        // the diff of the submission must run while the backend still has no
+        // `.response` entry for it, which is exactly the state a cut-short
+        // submission is in.
         await insideTool.wait()
         await BoundedWait.spin(until: { await fixture.recorder.events.count == 3 })
 
-        // Not "a turn that finished with a short response": a cancelled turn, with
-        // the same lone bodyless close every other failed turn gets.
+        // Not "a submission that finished with a short response": a cancelled
+        // submission, with the same lone bodyless close every other failed
+        // submission gets.
         let events = await fixture.recorder.events
         #expect(events.map(\.kind) == [.session, .prompt, .response])
         #expect(events.last?.text == nil)
@@ -1380,7 +1377,7 @@ struct TurnCancellationTests {
         #expect(await fixture.observer.exited.contains("abandon-stream"))
     }
 
-    // MARK: - A cancellation is not forgotten between a turn's attempts
+    // MARK: - A cancellation is not forgotten between the submissions of an answer
 
     @Test(
         "a cancellation landing during a failed attempt stops the overflow retry from re-running the model",
@@ -1400,9 +1397,9 @@ struct TurnCancellationTests {
         let insideTool = AsyncSemaphore(value: 0)
         let release = AsyncSemaphore(value: 0)
         let observer = fixture.observer
-        fixture.hook.midTurn = { prompt in
+        fixture.hook.midAnswer = { prompt in
             guard prompt.hasSuffix("overflow-then-cancel") else { return }
-            // A second call means the retry re-ran the model after the turn was
+            // A second call means the retry re-ran the model after the answer was
             // already cancelled — the regression this test exists for. Failing
             // here rather than suspending again keeps that a failed assertion instead
             // of a hung suite.
@@ -1411,30 +1408,30 @@ struct TurnCancellationTests {
             }
             insideTool.signal()
             await release.wait()
-            // The one failure a budgeted turn compacts-and-retries on, raised with
-            // a cancellation already outstanding against this turn.
+            // The one failure a budgeted answer compacts-and-retries on, raised
+            // with a cancellation already outstanding against this answer.
             throw LanguageModelError.contextSizeExceeded(
                 .init(contextSize: 100, tokenCount: 150, debugDescription: "stub context overflow"))
         }
 
-        let turnTask = Task {
+        let answerTask = Task {
             try await session.respond(to: "overflow-then-cancel")
         }
         await insideTool.wait()
         // Both routes must behave identically here: neither may let the retry
-        // re-enter the model on behalf of a turn already cancelled.
+        // re-enter the model on behalf of an answer already cancelled.
         switch route {
         case .routerAPI:
             #expect(await session.cancel() == .requested)
         case .callerTask:
-            turnTask.cancel()
+            answerTask.cancel()
         }
         release.signal()
 
-        // The retry's model call never starts: the turn ends cancelled rather than
-        // silently re-running the whole attempt, tool calls included.
+        // The retry's model call never starts: the answer ends cancelled rather
+        // than silently re-running the whole submission, tool calls included.
         await #expect(throws: CancellationError.self) {
-            try await turnTask.value
+            try await answerTask.value
         }
         #expect(await fixture.observer.entered == ["overflow-then-cancel"])
     }
@@ -1454,18 +1451,18 @@ struct TurnCancellationTests {
         // waits in the outbox.
         let insideTool = AsyncSemaphore(value: 0)
         let sawCancellation = Self.suspendInsideCancellationAwareTool(fixture, prompt: "busy", insideTool: insideTool)
-        let turnTask = Task { try await session.respond(to: "busy") }
+        let answerTask = Task { try await session.respond(to: "busy") }
         await insideTool.wait()
 
         let id = await session.send("queued")
         #expect(await session.cancel(message: id) == .withdrawn)
 
         #expect(await session.cancel() == .requested)
-        try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
+        try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
         #expect(await session.becomesIdle())
 
-        // The withdrawn message never reached the model: the in-flight
-        // primitive left the queue-side one as it was.
+        // The withdrawn message never reached the model: the cancel of the
+        // running answer left the queue-side one as it was.
         #expect(await fixture.observer.entered == ["busy"])
         #expect(await session.pendingMessages().isEmpty)
     }
@@ -1473,7 +1470,7 @@ struct TurnCancellationTests {
     // MARK: - A stop lands during a compaction too
 
     @Test(
-        "cancelling a turn suspended inside its proactive compaction's summarizer call stops the compaction instead of waiting it out",
+        "cancelling an answer suspended inside its proactive compaction's summarizer call stops the compaction instead of waiting it out",
         arguments: CancellationRoute.allCases)
     @MainActor
     func cancellingAProactiveCompactionStopsIt(route: CancellationRoute) async throws {
@@ -1487,20 +1484,20 @@ struct TurnCancellationTests {
         let sawCancellation = Self.suspendInsideCancellationAwareTool(
             fixture, suspendingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
 
-        let turnTask = Task { try await session.respond(to: "compacts-first") }
+        let answerTask = Task { try await session.respond(to: "compacts-first") }
         await insideSummarizer.wait()
 
         switch route {
         case .routerAPI:
             #expect(await session.cancel() == .requested)
         case .callerTask:
-            turnTask.cancel()
+            answerTask.cancel()
         }
 
         // A compaction's summarizer call is a model call like any other, so both routes
-        // reach the work running inside it and the turn unwinds with the same
+        // reach the work running inside it and the answer unwinds with the same
         // `CancellationError` a cancelled generation gives.
-        try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
+        try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
         #expect(await fixture.observer.toolSawCancellation)
 
         // No further model call is *entered* while unwinding: the stop costs no more
@@ -1511,7 +1508,7 @@ struct TurnCancellationTests {
         // what pins the rule.
         #expect(await fixture.observer.entered.filter(Self.isSummarizerCall).count == 1)
 
-        // And the turn the compaction was running for never ran: with nothing under way
+        // And the submission the compaction was running for never ran: with nothing under way
         // once the compaction is gone, its own model call is never made.
         #expect(await fixture.observer.entered.contains("compacts-first") == false)
     }
@@ -1530,9 +1527,9 @@ struct TurnCancellationTests {
         // task group it manages — with nothing cancelled on this side at all. That is
         // an ordinary summarizer failure, so the compaction must degrade to the next tier
         // exactly as it does for any other one, rather than reading the error's
-        // *type* as a stop and killing a turn nobody asked to stop.
+        // *type* as a stop and killing an answer nobody asked to stop.
         let summarizerCalls = Mutex(0)
-        fixture.hook.midTurn = { prompt in
+        fixture.hook.midAnswer = { prompt in
             guard Self.isSummarizerCall(prompt) else { return }
             let isFirstCall = summarizerCalls.withLock { calls -> Bool in
                 calls += 1
@@ -1542,7 +1539,7 @@ struct TurnCancellationTests {
             throw CancellationError()
         }
 
-        // No cancel anywhere in this test, so this turn cannot suspend: it either compacts
+        // No cancel anywhere in this test, so this answer cannot suspend: it either compacts
         // and answers, or fails.
         #expect(try await session.respond(to: "compacts-first") == "ok-compacts-first")
 
@@ -1551,7 +1548,7 @@ struct TurnCancellationTests {
         #expect(await fixture.observer.entered.filter(Self.isSummarizerCall).count == 2)
     }
 
-    @Test("a genuine summarizer fault that coincides with a stop ends the turn as cancelled, and still does not degrade")
+    @Test("a genuine summarizer fault that coincides with a stop ends the answer as cancelled, and still does not degrade")
     @MainActor
     func summarizerFaultCoincidingWithAStopIsAbandonedAsCancelled() async throws {
         let dir = Self.makeTempDir()
@@ -1563,7 +1560,7 @@ struct TurnCancellationTests {
         // The race this pins is the inverse of
         // ``summarizerCancellationErrorWithNoStopOutstandingStillDegrades()``: there a
         // cancellation-shaped error arrives with no stop outstanding, here a plainly
-        // unrelated fault arrives with one. The stop wins — the caller is told its turn
+        // unrelated fault arrives with one. The stop wins — the caller is told its answer
         // was cancelled rather than handed a compaction failure it never asked about, and the
         // compaction is still not degraded to the next tier. What becomes of the discarded
         // fault is a log line rather than a rethrow, which is the one part of this no
@@ -1571,7 +1568,7 @@ struct TurnCancellationTests {
         let insideSummarizer = AsyncSemaphore(value: 0)
         let release = AsyncSemaphore(value: 0)
         let suspendsOn = Self.firstSummarizerCall()
-        fixture.hook.midTurn = { prompt in
+        fixture.hook.midAnswer = { prompt in
             guard suspendsOn(prompt) else { return }
             insideSummarizer.signal()
             await release.wait()
@@ -1582,19 +1579,19 @@ struct TurnCancellationTests {
         // compaction and letting it finish is the ``SessionEvent/compaction(_:)``
         // a finished compaction would deliver — see the assertion below.
         let delivered = DeliveredEvents()
-        let turnTask = Task {
+        let answerTask = Task {
             for try await event in await session.streamEvents(to: "compacts-first") {
                 await delivered.append(event)
             }
         }
         await insideSummarizer.wait()
         #expect(await session.cancel() == .requested)
-        // Released by the test rather than by the cancellation, so this turn unwinds
+        // Released by the test rather than by the cancellation, so this answer unwinds
         // through the fault's path and not through the suspended tool's own.
         release.signal()
 
         await #expect(throws: CancellationError.self) {
-            try await turnTask.value
+            try await answerTask.value
         }
         // Not degraded: a fault is no licence to answer the stop by compaction anyway.
         // This is the assertion that pins the rule — the summarizer-call count below
@@ -1611,8 +1608,8 @@ struct TurnCancellationTests {
         #expect(await fixture.observer.entered.contains("compacts-first") == false)
 
         // And this path stranded nothing either, fault and stop together.
-        fixture.hook.midTurn = nil
-        #expect(await Self.followUpTurnCompletes(on: session, observer: fixture.observer))
+        fixture.hook.midAnswer = nil
+        #expect(await Self.followUpAnswerCompletes(on: session, observer: fixture.observer))
     }
 
     @Test(
@@ -1637,12 +1634,12 @@ struct TurnCancellationTests {
         }
         await insideSummarizer.wait()
 
-        // A manual compaction is not a "turn" a caller ever asked to generate, but the
+        // A manual compaction is not an answer a caller ever asked to generate, but the
         // pump runs it as its work and it runs real model work, so a stop reaches it on
         // exactly the same terms — a caller no longer has to own an enclosing `Task`
         // to get out.
         //
-        // Both routes, because routing the summarizer through the turn's own
+        // Both routes, because routing the summarizer through the session's own
         // cancellable model call *changed* how the caller's route arrives here: a
         // caller's cancellation used to propagate structurally, through the very task
         // that called `compact()`, and now has to reach an unstructured task by
@@ -1659,8 +1656,8 @@ struct TurnCancellationTests {
         #expect(await fixture.observer.toolSawCancellation)
 
         // And it stranded nothing on the way out, so the session still generates.
-        fixture.hook.midTurn = nil
-        #expect(await Self.followUpTurnCompletes(on: session, observer: fixture.observer))
+        fixture.hook.midAnswer = nil
+        #expect(await Self.followUpAnswerCompletes(on: session, observer: fixture.observer))
     }
 
     @Test("a summarizer fault in a caller-driven compact() that coincides with a stop ends it as cancelled, not as the fault")
@@ -1678,7 +1675,7 @@ struct TurnCancellationTests {
         let insideSummarizer = AsyncSemaphore(value: 0)
         let release = AsyncSemaphore(value: 0)
         let suspendsOn = Self.firstSummarizerCall()
-        fixture.hook.midTurn = { prompt in
+        fixture.hook.midAnswer = { prompt in
             guard suspendsOn(prompt) else { return }
             insideSummarizer.signal()
             await release.wait()
@@ -1698,30 +1695,30 @@ struct TurnCancellationTests {
             try await compactTask.value
         }
 
-        fixture.hook.midTurn = nil
-        #expect(await Self.followUpTurnCompletes(on: session, observer: fixture.observer))
+        fixture.hook.midAnswer = nil
+        #expect(await Self.followUpAnswerCompletes(on: session, observer: fixture.observer))
     }
 
-    @Test("cancelling a caller-driven compact() that waits behind a running turn withdraws it at once, and no summarizer runs")
+    @Test("cancelling a caller-driven compact() that waits behind a running answer withdraws it at once, and no summarizer runs")
     @MainActor
     func cancellingAWaitingCallerCompactWithdrawsIt() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
-        // Not metered over the trigger, so the turn that holds the pump runs no
+        // Not metered over the trigger, so the answer that holds the pump runs no
         // proactive compaction of its own.
         let session = try await Self.makeCompactionTriggeredSession(
             fixture, budget: Self.summarizingCompactionBudget, metersTriggeringFill: false)
         let actor = try #require(session as? RoutedSessionActor)
 
-        // The pump runs this turn, so the compaction below waits in the list of
-        // the pump until the turn ends.
+        // The pump runs this answer, so the compaction below waits in the list of
+        // the pump until the answer ends.
         let holdingPrompt = "holds-the-pump"
         let insideTool = AsyncSemaphore(value: 0)
         let sawCancellation = Self.suspendInsideCancellationAwareTool(
             fixture, prompt: holdingPrompt, insideTool: insideTool)
-        let turnTask = Task { try await session.respond(to: holdingPrompt) }
+        let answerTask = Task { try await session.respond(to: holdingPrompt) }
         await insideTool.wait()
 
         let compactTask = Task {
@@ -1731,25 +1728,25 @@ struct TurnCancellationTests {
         #expect(await actor.pendingCompactions.count == 1)
 
         // The cancel of the caller must take the request out of the list while
-        // the turn still runs. The caller does not wait for the end of the turn.
+        // the answer still runs. The caller does not wait for the end of the answer.
         compactTask.cancel()
         await BoundedWait.spin(until: { await actor.pendingCompactions.isEmpty })
         #expect(await actor.pendingCompactions.isEmpty)
         #expect(await actor.isPumpRunning)
 
         #expect(await session.cancel() == .requested)
-        try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
+        try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
         await #expect(throws: CancellationError.self) {
             try await compactTask.value
         }
         #expect(await fixture.observer.entered.filter(Self.isSummarizerCall).isEmpty)
 
-        fixture.hook.midTurn = nil
-        #expect(await Self.followUpTurnCompletes(on: session, observer: fixture.observer))
+        fixture.hook.midAnswer = nil
+        #expect(await Self.followUpAnswerCompletes(on: session, observer: fixture.observer))
     }
 
     @Test(
-        "a turn cancelled inside its own proactive compaction re-queues the outbox events it had drained",
+        "an answer cancelled inside its own proactive compaction re-queues the outbox events it had drained",
         arguments: CancellationRoute.allCases)
     @MainActor
     func cancelledProactiveCompactionRequeuesItsDrainedEvents(route: CancellationRoute) async throws {
@@ -1759,7 +1756,7 @@ struct TurnCancellationTests {
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = try await Self.makeCompactionTriggeredSession(fixture, budget: Self.summarizingCompactionBudget)
 
-        // Staged after the warm-up, so this turn is the one that drains it.
+        // Staged after the warm-up, so this answer is the one that drains it.
         let posted = OperationEvent(
             tool: "shell", op: "run command", correlationID: "1", kind: .completed, detail: "exit 0")
         await session.outbox.post(event: posted)
@@ -1768,7 +1765,7 @@ struct TurnCancellationTests {
         let sawCancellation = Self.suspendInsideCancellationAwareTool(
             fixture, suspendingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
 
-        let turnTask = Task { try await session.respond(to: "compacts-first") }
+        let answerTask = Task { try await session.respond(to: "compacts-first") }
         await insideSummarizer.wait()
         // Both routes, because losing a drained outbox is a silent data-loss bug
         // rather than a visible failure: on the caller-cancels route the re-queue
@@ -1778,12 +1775,12 @@ struct TurnCancellationTests {
         case .routerAPI:
             #expect(await session.cancel() == .requested)
         case .callerTask:
-            turnTask.cancel()
+            answerTask.cancel()
         }
-        try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
+        try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
 
-        // The compaction threw before the turn ever reached the model, so nothing this
-        // turn drained was delivered — and the drain must not have destroyed it.
+        // The compaction threw before the answer ever reached the model, so nothing this
+        // answer drained was delivered — and the drain must not have destroyed it.
         // The re-queue for this window is the whole reason the compaction could not
         // simply be made to throw.
         let pending = await session.outbox.pending()
@@ -1791,7 +1788,7 @@ struct TurnCancellationTests {
     }
 
     @Test(
-        "a turn cancelled inside its own proactive compaction reports no compaction, because none happened",
+        "an answer cancelled inside its own proactive compaction reports no compaction, because none happened",
         arguments: CancellationRoute.allCases)
     @MainActor
     func cancelledProactiveCompactionReportsNoCompaction(route: CancellationRoute) async throws {
@@ -1808,9 +1805,9 @@ struct TurnCancellationTests {
         let recordedBefore = await fixture.recorder.events.count
 
         // Streamed, because ``SessionEvent/compaction(_:)`` is only observable to a
-        // consumer that asked for this turn's events.
+        // consumer that asked for the events of this answer.
         let delivered = DeliveredEvents()
-        let turnTask = Task {
+        let answerTask = Task {
             for try await event in await session.streamEvents(to: "compacts-first") {
                 await delivered.append(event)
             }
@@ -1829,12 +1826,12 @@ struct TurnCancellationTests {
         case .routerAPI:
             #expect(await session.cancel() == .requested)
             // The consumer is not what was cancelled, so it is told: the stream ends
-            // by throwing the turn's own `CancellationError`.
-            try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
+            // by throwing the own `CancellationError` of the answer.
+            try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
         case .callerTask:
             // Cancelling the consumer terminates the stream, which cancels the task
-            // the turn itself runs in — the abandoned-stream shape
-            // ``abandoningAStreamRecordsTheTurnAsCancelled()`` pins from the other
+            // the answer itself runs in — the abandoned-stream shape
+            // ``abandoningAStreamRecordsTheSubmissionAsCancelled()`` pins from the other
             // side. What this route can therefore show is that the compaction let go and
             // the consumer came back at all, not an error it could never observe.
             //
@@ -1842,11 +1839,11 @@ struct TurnCancellationTests {
             // doc takes its measurement from: the stop reaches the compaction only once
             // the cancelled consumer runs again on the shared main actor. Waited
             // on, never timed (task ^bqj719z).
-            turnTask.cancel()
+            answerTask.cancel()
             try await sawCancellation.wait()
-            // Safe to await, for ``followUpTurnEvents(on:observer:prompt:)``'s reason:
+            // Safe to await, for ``followUpAnswerEvents(on:observer:prompt:)``'s reason:
             // a stream consumer's `next()` is cancellation-aware and always ends.
-            _ = try? await turnTask.value
+            _ = try? await answerTask.value
         }
 
         // A cancelled compaction is abandoned outright, not degraded down to the
@@ -1862,12 +1859,12 @@ struct TurnCancellationTests {
         #expect(compactions.isEmpty)
 
         // What the caller-cancels route pins instead, and the reason it is worth
-        // running: a streamed turn cut short inside its compaction is recorded like every
+        // running: a streamed answer cut short inside its compaction is recorded like every
         // other one — a lone bodyless close — even though on that route the recording
         // runs inside an already-cancelled task. Spun for rather than read straight,
         // because a cancelled consumer returns before the producer behind it has
         // finished recording (the same ordering
-        // ``abandoningAStreamRecordsTheTurnAsCancelled()`` waits on).
+        // ``abandoningAStreamRecordsTheSubmissionAsCancelled()`` waits on).
         await BoundedWait.spin(until: { await fixture.recorder.events.count == recordedBefore + 1 })
         let recorded = await fixture.recorder.events
         #expect(recorded.count == recordedBefore + 1)
@@ -1876,7 +1873,7 @@ struct TurnCancellationTests {
     }
 
     @Test(
-        "a turn cancelled inside its own proactive compaction leaves the transcript exactly as it was, plus one close",
+        "an answer cancelled inside its own proactive compaction leaves the transcript exactly as it was, plus one close",
         arguments: CancellationRoute.allCases)
     @MainActor
     func cancelledProactiveCompactionLeavesTheTranscriptUntouched(route: CancellationRoute) async throws {
@@ -1893,19 +1890,19 @@ struct TurnCancellationTests {
         let sawCancellation = Self.suspendInsideCancellationAwareTool(
             fixture, suspendingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
 
-        let turnTask = Task { try await session.respond(to: "compacts-first") }
+        let answerTask = Task { try await session.respond(to: "compacts-first") }
         await insideSummarizer.wait()
         // Both routes, because of the recording assertions below: on the
-        // caller-cancels route the cut-short turn's own recording runs inside an
-        // already-cancelled task, which is the riskier of the two for anything that
-        // must still happen on the way out.
+        // caller-cancels route the own recording of the cut-short answer runs
+        // inside an already-cancelled task, which is the riskier of the two for
+        // anything that must still happen on the way out.
         switch route {
         case .routerAPI:
             #expect(await session.cancel() == .requested)
         case .callerTask:
-            turnTask.cancel()
+            answerTask.cancel()
         }
-        try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
+        try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
 
         // Never a half-applied compaction: a compaction records its new entries, swaps
         // `backend`, and reports its own post-compaction size as this session's fill —
@@ -1913,7 +1910,7 @@ struct TurnCancellationTests {
         // none of it, so measured fill is byte-identical to what it was before.
         #expect(await session.contextFill == fillBefore)
 
-        // Recorded like every other failed turn, and no differently for having
+        // Recorded like every other failed answer, and no differently for having
         // been cut short in a compaction: exactly one close, bodyless, with no `.prompt`
         // of its own because the model was never called.
         let recorded = await fixture.recorder.events
@@ -1922,14 +1919,14 @@ struct TurnCancellationTests {
         #expect(recorded.last?.text == nil)
 
         // The session keeps working, and the abandoned compaction left the transcript it
-        // was compacting alone: the *next* turn compacts for real, and its compaction measures
+        // was compacting alone: the *next* answer compacts for real, and its compaction measures
         // exactly the untouched warm-up transcript. Had the cancelled compaction swapped
         // `backend` for a compacted one, this would measure the smaller, compacted size —
         // which is what makes this an assertion about `backend` itself and not only
         // about the ordering inside `compaction`. The hook is cleared first, or that next
         // compaction would suspend in the summarizer all over again.
-        fixture.hook.midTurn = nil
-        let followUp = try #require(await Self.followUpTurnEvents(on: session, observer: fixture.observer))
+        fixture.hook.midAnswer = nil
+        let followUp = try #require(await Self.followUpAnswerEvents(on: session, observer: fixture.observer))
         let untouchedSize = try characterTokenCounter.count(Transcript(entries: Self.warmUpEntries()))
         let compactions = followUp.compactMap { event -> CompactionResult? in
             guard case .compaction(let result) = event else { return nil }
@@ -1938,7 +1935,7 @@ struct TurnCancellationTests {
         #expect(compactions.map(\.tokensBefore) == [untouchedSize])
     }
 
-    @Test("cancelling a turn inside its reactive compact-and-retry-once compaction stops the retry, leaving one close")
+    @Test("cancelling an answer inside its reactive compact-and-retry-once compaction stops the retry, leaving one close")
     @MainActor
     func cancellingTheReactiveCompactionStopsTheRetry() async throws {
         let dir = Self.makeTempDir()
@@ -1946,7 +1943,7 @@ struct TurnCancellationTests {
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         // Unmetered, so the proactive gate never fires and the only compaction in play is
-        // the one this turn's own context overflow triggers.
+        // the one the own context overflow of this answer triggers.
         let session = try await Self.makeCompactionTriggeredSession(
             fixture, budget: Self.summarizingCompactionBudget, metersTriggeringFill: false)
 
@@ -1954,13 +1951,14 @@ struct TurnCancellationTests {
         let insideSummarizer = AsyncSemaphore(value: 0)
         let sawCancellation = Self.suspendInsideCancellationAwareTool(
             fixture, suspendingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
-        // Composed on top of the summarizer suspension rather than replacing it: this turn
+        // Composed on top of the summarizer suspension rather than replacing it: this answer
         // has to overflow *and then* suspend inside the compaction that overflow triggers.
-        let suspendInSummarizer = fixture.hook.midTurn
-        // The summarizer call renders the whole live context, the failed turn's
-        // own prompt last, so its prompt also ends with the turn's prompt. Only
-        // a call that is not the summarizer's is the turn's own call.
-        fixture.hook.midTurn = { prompt in
+        let suspendInSummarizer = fixture.hook.midAnswer
+        // The summarizer call renders the whole live context, the own prompt of
+        // the failed submission last, so its prompt also ends with the prompt of
+        // the answer. Only a call that is not the summarizer's is the own call of
+        // the answer.
+        fixture.hook.midAnswer = { prompt in
             guard !Self.isSummarizerCall(prompt), prompt.hasSuffix(Self.overflowingCompactionPrompt) else {
                 try await suspendInSummarizer?(prompt)
                 return
@@ -1969,14 +1967,14 @@ struct TurnCancellationTests {
                 .init(contextSize: 100, tokenCount: 150, debugDescription: "stub context overflow"))
         }
 
-        let turnTask = Task {
+        let answerTask = Task {
             try await session.respond(to: Self.overflowingCompactionPrompt)
         }
         await insideSummarizer.wait()
         #expect(await session.cancel() == .requested)
-        try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
+        try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
 
-        // The retry never ran: the model saw this turn exactly once, and what the
+        // The retry never ran: the model saw this answer exactly once, and what the
         // caller gets is the cancellation rather than the overflow it was recovering
         // from.
         #expect(
@@ -1993,7 +1991,7 @@ struct TurnCancellationTests {
         #expect(recorded.last?.text == nil)
     }
 
-    @Test("a compaction with no cancellation outstanding makes its one call and runs its turn exactly as before")
+    @Test("a compaction with no cancellation outstanding makes its one call and runs its answer exactly as before")
     @MainActor
     func compactionWithNoStopOutstandingIsUnaffected() async throws {
         let dir = Self.makeTempDir()
@@ -2013,14 +2011,14 @@ struct TurnCancellationTests {
         #expect(collected.answerFailures.isEmpty)
 
         guard case .compaction(let result) = events.first else {
-            Issue.record("expected the turn's first event to be .compaction, got \(String(describing: events.first))")
+            Issue.record("expected the first event of the answer to be .compaction, got \(String(describing: events.first))")
             return
         }
         let untouchedSize = try characterTokenCounter.count(Transcript(entries: Self.warmUpEntries()))
         #expect(result.tokensBefore == untouchedSize)
         #expect(await fixture.observer.entered.filter(Self.isSummarizerCall).count == 1)
 
-        // And the turn's own work ran normally straight after the compaction.
+        // And the own work of the answer ran normally straight after the compaction.
         let streamedText = events.compactMap { event -> String? in
             guard case .textDelta(let text) = event else { return nil }
             return text

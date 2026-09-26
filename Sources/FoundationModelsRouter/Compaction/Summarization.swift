@@ -191,15 +191,15 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// adds after the snapshot: the last prompt entry of `entries`, or none
     /// when `entries` holds no prompt entry.
     ///
-    /// A compaction runs before a turn, and the turn's call adds its prompt
-    /// entry after the snapshot. The text of that prompt is not known when
+    /// A compaction runs before a submission, and the call of that submission
+    /// adds its prompt entry after the snapshot. The text of that prompt is not known when
     /// the compaction runs, so the last prompt the live context holds takes
     /// its place. The size of the snapshot is then the size that the next
     /// call sees.
     ///
     /// - Parameter entries: The live context the compaction reads.
     /// - Returns: The stand-in entries, in order.
-    static func nextTurnStandIn(in entries: [Transcript.Entry]) -> [Transcript.Entry] {
+    static func nextSubmissionStandIn(in entries: [Transcript.Entry]) -> [Transcript.Entry] {
         entries.last {
             if case .prompt = $0 { return true }
             return false
@@ -397,7 +397,7 @@ struct CompactionCall {
         // The snapshot is counted as the model receives it: with the prompt
         // entry the next call adds. The cost of that prompt entry comes off.
         let placeholder = snapshotEntries(tokensAfter: 0)
-        let conversation = placeholder + Summarization.nextTurnStandIn(in: Array(transcript))
+        let conversation = placeholder + Summarization.nextSubmissionStandIn(in: Array(transcript))
         let tokensAfter = try Summarization.cost(
             of: placeholder, in: conversation,
             wholeTokens: try Summarization.count(conversation, counter: counter), counter: counter)

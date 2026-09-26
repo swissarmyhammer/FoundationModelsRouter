@@ -73,11 +73,11 @@ struct ForkTracingTests {
         }
     }
 
-    /// A tool whose body forks the very session whose turn invoked it. The fork
+    /// A tool whose body forks the very session whose submission invoked it. The fork
     /// reads the settled transcript of that session, so it is served
     /// (task ^dpn2ytt).
     ///
-    /// A failure is caught rather than raised, so the turn answers normally
+    /// A failure is caught rather than raised, so the answer ends normally
     /// and the answer says which branch ran. The child goes into ``child``, and
     /// what the fork recorded on its span is what the test then reads.
     private struct SelfForkingTool: Tool {
@@ -90,7 +90,7 @@ struct ForkTracingTests {
         /// The `Tool` description requirement. The scripted model picks its
         /// call by name and never reads this, but the SDK renders it into the
         /// tool definition it puts in the transcript.
-        let description = "test-only tool that forks the session whose turn invoked it"
+        let description = "test-only tool that forks the session whose submission invoked it"
 
         /// The session this body forks.
         let target: SessionBox
@@ -154,8 +154,8 @@ struct ForkTracingTests {
     /// The fork spans `tracer` holds that have finished, in the order they
     /// finished.
     ///
-    /// Filtered by name rather than counted over the whole tracer: a turn that
-    /// forks from inside a tool opens a turn span of its own that encloses the
+    /// Filtered by name rather than counted over the whole tracer: an answer that
+    /// forks from inside a tool opens a submission span of its own that encloses the
     /// fork span.
     ///
     /// - Parameter tracer: The tracer the driven work reported to.
@@ -220,7 +220,7 @@ struct ForkTracingTests {
         let target = SessionBox()
         let child = SessionBox()
         let fixture = try await ScriptedSessionFixture.make(
-            playing: ScriptedTurnScript(rounds: [
+            playing: ScriptedAnswerScript(rounds: [
                 [
                     ScriptedToolCall(
                         id: "call-1",
@@ -234,7 +234,7 @@ struct ForkTracingTests {
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         target.set(fixture.session)
 
-        // The tool forks the session whose turn is calling it. The fork reads
+        // The tool forks the session whose submission is calling it. The fork reads
         // the settled transcript of that session, so it is served at once
         // (task ^dpn2ytt). The answer is composed from the tool's output, so
         // it says which branch really ran.

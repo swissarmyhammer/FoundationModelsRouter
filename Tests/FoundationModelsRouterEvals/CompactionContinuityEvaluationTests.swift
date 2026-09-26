@@ -65,7 +65,7 @@ struct CompactionContinuityEvaluationHermeticTests {
         // them, so a context over the target also gets a smaller snapshot.
         //
         // The opening step's prompt alone is the conservative bound: the live
-        // context also carries the readiness turn, every reply and the
+        // context also carries the readiness answer, every reply and the
         // instructions. The target is in the tokens the model counts, and
         // this test can only convert characters. Converting at the LARGER
         // measured bytes-per-token rate under-states the real token count —

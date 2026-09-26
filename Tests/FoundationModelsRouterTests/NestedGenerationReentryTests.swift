@@ -7,8 +7,8 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises task ^1zt7vyg: a tool body that generates on the same resident
-/// container as the turn that invoked it must finish, not suspend for the life of
-/// that turn.
+/// container as the submission that invoked it must finish, not suspend for
+/// the life of that submission.
 ///
 /// This mirrors `mlx-swift-lm`'s `ToolBodyContainerReentryTests` at the
 /// router's own layer. Everything runs against stubs — a stub loader, a stub
@@ -29,7 +29,7 @@ import Testing
 /// tool body asks of its own session is served at once, from the settled
 /// transcript of that session (task ^dpn2ytt). Over a container with a
 /// queue, an in-band tool body that waits for a session on the same model is
-/// refused at once (task ^1psqdm9, `GenerationQueueTurnTests`).
+/// refused at once (task ^1psqdm9, `GenerationQueueSubmissionTests`).
 @Suite("Nested generation from inside a tool body")
 struct NestedGenerationReentryTests {
     // MARK: - Test tool
@@ -47,9 +47,10 @@ struct NestedGenerationReentryTests {
     /// A ``NestedTarget`` holds the session a tool body acts on: a tool is
     /// threaded into `makeSession` before that call returns a session, so the
     /// target cannot be an `init` argument, and the test writes it before any
-    /// turn starts. A ``HandedBackRecord`` holds what a backgrounded tool call
-    /// handed back to the turn that made it: the backend writes it from inside
-    /// its model call, and the test polls it while that turn is still open.
+    /// answer starts. A ``HandedBackRecord`` holds what a backgrounded tool
+    /// call handed back to the submission that made it: the backend writes it
+    /// from inside its model call, and the test polls it while that submission
+    /// is still open.
     private final class ThreadSafeBox<Value: Sendable>: Sendable {
         private let storage: Mutex<Value?> = Mutex(nil)
 
@@ -70,18 +71,19 @@ struct NestedGenerationReentryTests {
     /// session exists.
     private typealias NestedTarget = ThreadSafeBox<any RoutedSession>
 
-    /// The text a backgrounded tool call handed back to the turn that made it,
-    /// recorded the moment the call returned — while that turn is still open.
+    /// The text a backgrounded tool call handed back to the submission that
+    /// made it, recorded the moment the call returned — while that submission
+    /// is still open.
     private typealias HandedBackRecord = ThreadSafeBox<String>
 
-    /// A tool whose body drives a whole turn on a routed session — the shape a
-    /// host has whenever a tool ranks or summarizes with a model.
+    /// A tool whose body drives a whole answer on a routed session — the shape
+    /// a host has whenever a tool ranks or summarizes with a model.
     ///
     /// With no ``mount`` it declares nothing, so the session mounts it
     /// run-to-completion: a body that suspends stays running in band instead
     /// of being handed back as a pending envelope. With ``backgroundMount``
     /// it is the agent-tool shape: the call hands back a handle at once and
-    /// the body generates behind the turn that started it.
+    /// the body generates behind the submission that started it.
     private struct NestedGeneratingTool: Tool, BackgroundTool {
         let name = "nested-generation-probe"
         let description = "test-only tool that generates on a routed session"
@@ -192,16 +194,17 @@ struct NestedGenerationReentryTests {
 
     // MARK: - Backend
 
-    /// The backend this suite drives: the first turn of a session that carries
-    /// the fixture tool calls that tool and answers with its output; every
-    /// other turn — a session with no tool, or a drained continuation turn
-    /// after a background run settled — answers from the prompt it was given.
+    /// The backend this suite drives: the first submission of a session that
+    /// carries the fixture tool calls that tool and answers with its output;
+    /// every other submission — a session with no tool, or a submission that
+    /// delivers the mail of a settled background run — answers from the prompt
+    /// it was given.
     ///
     /// `@unchecked Sendable` on the same terms as ``StubSessionBackend``: the
     /// owning session drives one backend method at a time (its pump submits
     /// one item at a time), and the test reads the captures only after the
-    /// driving call returned. The one thing a test reads mid-turn is the
-    /// ``HandedBackRecord``, which carries its own lock.
+    /// driving call returned. The one thing a test reads while a submission
+    /// runs is the ``HandedBackRecord``, which carries its own lock.
     private final class ToolCallingBackend: LanguageModelSessionBackend, @unchecked Sendable {
         /// The prefix a plain answer opens with, so a test can tell a nested
         /// session's own answer from the tool output that carries it.
@@ -212,24 +215,24 @@ struct NestedGenerationReentryTests {
         /// The session's own composed tool list.
         private let tools: [any Tool]
 
-        /// A latch the tool-calling turn waits on after its tool call
+        /// A latch the tool-calling submission waits on after its tool call
         /// returned and before it answers, or `nil` to answer at once. It is
-        /// how a test keeps the turn that started a background run open while
-        /// the run is looked at.
-        private let turnHold: RunLatch?
+        /// how a test keeps the submission that started a background run open
+        /// while the run is looked at.
+        private let answerHold: RunLatch?
 
-        /// Where the tool-calling turn records what its tool call handed back,
-        /// or `nil` to record nothing.
+        /// Where the tool-calling submission records what its tool call handed
+        /// back, or `nil` to record nothing.
         private let handedBack: HandedBackRecord?
 
         /// Whether this backend has made its one tool call.
         private var hasCalledTool = false
 
         init(
-            tools: [any Tool], turnHold: RunLatch? = nil, handedBack: HandedBackRecord? = nil
+            tools: [any Tool], answerHold: RunLatch? = nil, handedBack: HandedBackRecord? = nil
         ) {
             self.tools = tools
-            self.turnHold = turnHold
+            self.answerHold = answerHold
             self.handedBack = handedBack
         }
 
@@ -242,7 +245,7 @@ struct NestedGenerationReentryTests {
             let output = try await mounted.call(
                 arguments: ReentryToolArguments(value: NestedGenerationReentryTests.nestedPrompt))
             handedBack?.set(output)
-            await turnHold?.waitUntilOpen()
+            await answerHold?.waitUntilOpen()
             return output
         }
 
@@ -286,8 +289,8 @@ struct NestedGenerationReentryTests {
         let tokenCounter: any TokenCounter = CharacterTokenCounter()
 
         /// The latch every backend this container vends holds its tool-calling
-        /// turn open on, or `nil` for backends that answer at once.
-        var turnHold: RunLatch?
+        /// submission open on, or `nil` for backends that answer at once.
+        var answerHold: RunLatch?
 
         /// Where the backends this container vends record what a tool call
         /// handed back, or `nil` to record nothing.
@@ -298,7 +301,7 @@ struct NestedGenerationReentryTests {
         }
 
         func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
-            ToolCallingBackend(tools: tools, turnHold: turnHold, handedBack: handedBack)
+            ToolCallingBackend(tools: tools, answerHold: answerHold, handedBack: handedBack)
         }
 
         func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
@@ -308,47 +311,49 @@ struct NestedGenerationReentryTests {
 
     // MARK: - Constants
 
-    /// The prompt the outer turn is given.
+    /// The prompt the outer answer is given.
     private static let outerPrompt = "use the probe"
 
     /// The prompt the tool body submits to the session it generates on.
     private static let nestedPrompt = "rank the candidates"
 
     /// How many transcript entries the settled transcript of a fresh session
-    /// holds while its first turn runs: none. The stub calls the fixture tool
-    /// directly, with no tool-result boundary, so the last settled point is
-    /// the start of the session.
+    /// holds while its first submission runs: none. The stub calls the fixture
+    /// tool directly, with no tool-result boundary, so the last settled point
+    /// is the start of the session.
     ///
-    /// This is what a transcript read of that session reports while the turn
-    /// runs. The live backend holds more by then: the turn's own `.prompt`,
-    /// and the `.response` ``StubSessionBackend`` pairs with it. So the count
-    /// says that the read saw the settled copy, not the live transcript.
+    /// This is what a transcript read of that session reports while the
+    /// submission runs. The live backend holds more by then: the `.prompt` of
+    /// the submission, and the `.response` ``StubSessionBackend`` pairs with
+    /// it. So the count says that the read saw the settled copy, not the live
+    /// transcript.
     private static let entriesAtTheLastSettledPoint = 0
 
-    /// The upper bound one stubbed turn is allowed.
+    /// The upper bound one stubbed answer is allowed.
     ///
-    /// The turn loads no weights, downloads nothing, and answers from a stub,
+    /// The answer loads no weights, downloads nothing, and comes from a stub,
     /// so it finishes far inside one second on any host. Thirty seconds is well
     /// past any scheduling delay, so only a real suspension reaches it. The bound
     /// exists so this suite FAILS instead of hanging: ``AsyncSemaphore/wait()``
-    /// ignores cancellation, so a suspended turn can never be unwound.
-    private static let turnTimeout = Duration.seconds(30)
+    /// ignores cancellation, so a suspended answer can never be unwound.
+    private static let answerTimeout = Duration.seconds(30)
 
     /// The upper bound one background run is allowed before it settles — the
-    /// same bound as ``turnTimeout``, in the unit the mailbox's wait takes.
-    private static let runSettlementTimeoutSeconds = TimeInterval(turnTimeout.components.seconds)
+    /// same bound as ``answerTimeout``, in the unit the mailbox's wait takes.
+    private static let runSettlementTimeoutSeconds = TimeInterval(answerTimeout.components.seconds)
 
     /// The mount a fixture declares to be a background tool: every call hands
-    /// back a handle at once, and the body runs behind the turn that made it.
+    /// back a handle at once, and the body runs behind the submission that
+    /// made it.
     private static let backgroundMount = ToolMount(mode: .background, timeout: nil)
 
-    // MARK: - Turn outcome
+    // MARK: - Answer outcome
 
-    /// What one turn produced, carried out of the turn's own task.
+    /// What one answer produced, carried out of the task that waited for it.
     ///
     /// A failure is carried as its description, plus the typed refusal when it
     /// is one, so a test can compare it.
-    private enum TurnOutcome: Sendable {
+    private enum AnswerOutcome: Sendable {
         case finished(String)
         case failed(refusal: GenerationQueueError?, description: String)
     }
@@ -369,26 +374,26 @@ struct NestedGenerationReentryTests {
         try await RouterTestFixtures.resolveStandardProfile(over: container, cacheDir: dir).profile
     }
 
-    /// Runs `turn` in a task of its own and reports its outcome, or `nil` when
-    /// `timeout` wins.
+    /// Runs `answer` in a task of its own and reports its outcome, or `nil`
+    /// when `timeout` wins.
     ///
-    /// The turn runs unstructured and reports through a stream rather than
-    /// being awaited: a turn suspended on a semaphore cannot be cancelled, and a
-    /// task group implicitly awaits every child, so awaiting the turn directly
-    /// would hang the whole suite instead of failing this one test.
+    /// The answer runs unstructured and reports through a stream rather than
+    /// being awaited: an answer suspended on a semaphore cannot be cancelled,
+    /// and a task group implicitly awaits every child, so awaiting the answer
+    /// directly would hang the whole suite instead of failing this one test.
     ///
     /// - Parameters:
-    ///   - turn: The turn to run.
-    ///   - timeout: How long the turn is allowed.
-    /// - Returns: The turn's outcome, or `nil` when the timeout won.
+    ///   - answer: The work that waits for the answer.
+    ///   - timeout: How long the answer is allowed.
+    /// - Returns: The outcome of the answer, or `nil` when the timeout won.
     private static func outcome(
-        of turn: @escaping @Sendable () async throws -> String,
+        of answer: @escaping @Sendable () async throws -> String,
         within timeout: Duration
-    ) async -> TurnOutcome? {
-        let (outcomes, report) = AsyncStream<TurnOutcome>.makeStream()
-        let turnTask = Task {
+    ) async -> AnswerOutcome? {
+        let (outcomes, report) = AsyncStream<AnswerOutcome>.makeStream()
+        let answerTask = Task {
             do {
-                report.yield(.finished(try await turn()))
+                report.yield(.finished(try await answer()))
             } catch {
                 report.yield(
                     .failed(
@@ -397,8 +402,8 @@ struct NestedGenerationReentryTests {
             }
             report.finish()
         }
-        defer { turnTask.cancel() }
-        return await withTaskGroup(of: TurnOutcome?.self) { group in
+        defer { answerTask.cancel() }
+        return await withTaskGroup(of: AnswerOutcome?.self) { group in
             group.addTask {
                 for await outcome in outcomes { return outcome }
                 return nil
@@ -429,24 +434,24 @@ struct NestedGenerationReentryTests {
     }
 
     /// The answer `outcome` finished with, or `nil` after recording the defect
-    /// this suite covers when the turn suspended or failed instead.
+    /// this suite covers when the answer suspended or failed instead.
     ///
     /// - Parameters:
-    ///   - outcome: The turn's outcome, or `nil` when the bound won.
-    ///   - turn: What the turn is called in the report.
-    /// - Returns: The turn's answer, or `nil` when it produced none.
-    private static func finishedAnswer(_ outcome: TurnOutcome?, describing turn: String) -> String? {
+    ///   - outcome: The outcome of the answer, or `nil` when the bound won.
+    ///   - name: What the answer is called in the report.
+    /// - Returns: The text of the answer, or `nil` when it produced none.
+    private static func finishedAnswer(_ outcome: AnswerOutcome?, describing name: String) -> String? {
         switch outcome {
         case nil:
             Issue.record(
                 """
-                \(turn) did not finish within \(turnTimeout). Work a tool body asks of a \
+                \(name) did not finish within \(answerTimeout). Work a tool body asks of a \
                 routed session has to settle or be refused at once: a wait that could \
                 never end must not suspend the submission it is part of.
                 """)
             return nil
         case .failed(_, let description):
-            Issue.record("\(turn) failed instead of finishing: \(description)")
+            Issue.record("\(name) failed instead of finishing: \(description)")
             return nil
         case .finished(let answer):
             return answer
@@ -454,16 +459,16 @@ struct NestedGenerationReentryTests {
     }
 
     /// Asserts that `outcome` finished with `expected`, naming the defect this
-    /// suite covers when the turn suspended instead.
+    /// suite covers when the answer suspended instead.
     ///
     /// - Parameters:
-    ///   - outcome: The turn's outcome, or `nil` when the bound won.
-    ///   - expected: The answer the turn has to produce.
-    ///   - turn: What the turn is called in the report.
+    ///   - outcome: The outcome of the answer, or `nil` when the bound won.
+    ///   - expected: The text the answer has to produce.
+    ///   - name: What the answer is called in the report.
     private static func expectFinished(
-        _ outcome: TurnOutcome?, is expected: String, describing turn: String
+        _ outcome: AnswerOutcome?, is expected: String, describing name: String
     ) {
-        guard let answer = finishedAnswer(outcome, describing: turn) else { return }
+        guard let answer = finishedAnswer(outcome, describing: name) else { return }
         #expect(answer == expected)
     }
 
@@ -471,8 +476,8 @@ struct NestedGenerationReentryTests {
     /// `record`, once the call has returned — or `nil`, with an issue
     /// recorded, when no call returned a pending envelope inside the bound.
     ///
-    /// The turn that made the call is still open when this returns: the
-    /// backend records the handle before it waits on its turn hold.
+    /// The submission that made the call is still open when this returns: the
+    /// backend records the handle before it waits on its answer hold.
     ///
     /// - Parameter record: Where the backend records what the call handed back.
     /// - Returns: The token the pending envelope names, or `nil`.
@@ -512,7 +517,7 @@ struct NestedGenerationReentryTests {
             Issue.record(
                 """
                 \(run) did not settle within \(runSettlementTimeoutSeconds) seconds (\(outcome)). A \
-                background body has to make progress while the turn that started it is still open.
+                background body has to make progress while the submission that started it is still open.
                 """)
             return nil
         }
@@ -522,21 +527,21 @@ struct NestedGenerationReentryTests {
     /// suite covers when the call suspended or was served instead.
     ///
     /// - Parameters:
-    ///   - outcome: The turn's outcome, or `nil` when the bound won.
+    ///   - outcome: The outcome of the answer, or `nil` when the bound won.
     ///   - expected: The refusal the call has to raise.
     ///   - call: What the refused call is called in the report.
     private static func expectRefused(
-        _ outcome: TurnOutcome?, with expected: GenerationQueueError, describing call: String
+        _ outcome: AnswerOutcome?, with expected: GenerationQueueError, describing call: String
     ) {
         switch outcome {
         case nil:
             Issue.record(
                 """
-                The turn did not finish within \(turnTimeout). \(call) has to be refused, \
+                The answer did not finish within \(answerTimeout). \(call) has to be refused, \
                 never suspended behind the submission that waits for it.
                 """)
         case .finished(let answer):
-            Issue.record("The turn answered \"\(answer)\" instead of refusing \(call).")
+            Issue.record("The answer was \"\(answer)\" instead of a refusal of \(call).")
         case .failed(let refusal, let description):
             #expect(
                 refusal == expected, "The refusal did not name the model of this session: \(description)")
@@ -546,7 +551,7 @@ struct NestedGenerationReentryTests {
     // MARK: - A different session over the same container
 
     @Test(
-        "a tool body generates on a second session over the same resident container while its own turn is in flight"
+        "a tool body generates on a second session over the same resident container while its own submission runs"
     )
     @MainActor
     func aToolBodyGeneratesOnASecondSessionOverTheSameContainer() async throws {
@@ -562,10 +567,10 @@ struct NestedGenerationReentryTests {
         target.set(nested)
 
         let outcome = await Self.outcome(
-            of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.turnTimeout)
+            of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.answerTimeout)
 
         Self.expectFinished(
-            outcome, is: Self.chainedAnswer(through: ["caller"]), describing: "The outer turn")
+            outcome, is: Self.chainedAnswer(through: ["caller"]), describing: "The outer answer")
         withExtendedLifetime(profile) {}
     }
 
@@ -588,14 +593,14 @@ struct NestedGenerationReentryTests {
         middleTarget.set(innermost)
 
         let outcome = await Self.outcome(
-            of: { try await outer.respond(to: Self.outerPrompt) }, within: Self.turnTimeout)
+            of: { try await outer.respond(to: Self.outerPrompt) }, within: Self.answerTimeout)
 
-        // Reading the labels outermost-first proves all three turns ran: the
-        // middle turn, itself started from a tool body, holds nothing the
-        // innermost turn needs while its own tool body runs.
+        // Reading the labels outermost-first proves all three answers ran: the
+        // middle answer, itself started from a tool body, holds nothing the
+        // innermost answer needs while its own tool body runs.
         Self.expectFinished(
             outcome, is: Self.chainedAnswer(through: ["outer", "middle"]),
-            describing: "The outermost turn")
+            describing: "The outermost answer")
         withExtendedLifetime(profile) {}
     }
 
@@ -620,7 +625,7 @@ struct NestedGenerationReentryTests {
         let model = try #require(caller as? RoutedSessionActor).model
 
         let outcome = await Self.outcome(
-            of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.turnTimeout)
+            of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.answerTimeout)
 
         Self.expectRefused(
             outcome, with: .waitInsideOpenSubmission(model: model),
@@ -647,8 +652,8 @@ struct NestedGenerationReentryTests {
         let events = await caller.streamSessionEvents()
 
         let outcome = await Self.outcome(
-            of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.turnTimeout)
-        let sentID = try #require(Self.finishedAnswer(outcome, describing: "The outer turn"))
+            of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.answerTimeout)
+        let sentID = try #require(Self.finishedAnswer(outcome, describing: "The outer answer"))
 
         // No caller asks again: the pump delivers the sent message in the
         // next submission, and that submission names it.
@@ -682,22 +687,22 @@ struct NestedGenerationReentryTests {
         let profile = try await Self.makeProfile(container: ToolCallingLLMContainer(), dir: dir)
 
         let caller = profile.standard.makeSession(tools: [ForkingTool(target: target)])
-        // The tool forks the very session whose turn invoked it. The fork reads
-        // the settled transcript of that session, so it waits for nothing the
-        // turn holds (task ^dpn2ytt).
+        // The tool forks the very session whose submission invoked it. The
+        // fork reads the settled transcript of that session, so it waits for
+        // nothing the submission holds (task ^dpn2ytt).
         target.set(caller)
 
         let outcome = await Self.outcome(
-            of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.turnTimeout)
+            of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.answerTimeout)
 
         // The child names the session it came off.
         Self.expectFinished(
-            outcome, is: caller.id.description, describing: "The turn that forks its own session")
+            outcome, is: caller.id.description, describing: "The answer that forks its own session")
 
         withExtendedLifetime(profile) {}
     }
 
-    @Test("a tool body forks a second session over the same resident container while its own turn is in flight")
+    @Test("a tool body forks a second session over the same resident container while its own submission runs")
     func aToolBodyForksASecondSessionOverTheSameContainer() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -710,18 +715,18 @@ struct NestedGenerationReentryTests {
         target.set(forked)
 
         let outcome = await Self.outcome(
-            of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.turnTimeout)
+            of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.answerTimeout)
 
         // The child names the session it came off, so the refusal above reaches
         // the caller's own session and no other.
         Self.expectFinished(
-            outcome, is: forked.id.description, describing: "The forking turn")
+            outcome, is: forked.id.description, describing: "The forking answer")
         withExtendedLifetime(profile) {}
     }
 
     // MARK: - Reading the transcript from inside a tool body
 
-    @Test("a tool body reads its own session's transcript mid-turn, and gets the settled transcript at once")
+    @Test("a tool body reads its own session's transcript while its submission runs, and gets the settled transcript at once")
     func aToolBodyReadsItsOwnSessionsTranscript() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -730,35 +735,38 @@ struct NestedGenerationReentryTests {
         let profile = try await Self.makeProfile(container: ToolCallingLLMContainer(), dir: dir)
 
         let caller = profile.standard.makeSession(tools: [TranscriptReadingTool(target: target)])
-        // The tool reads the very session whose turn invoked it. The read takes
-        // the settled transcript of that session, so it waits for nothing the
-        // turn holds (task ^dpn2ytt).
+        // The tool reads the very session whose submission invoked it. The
+        // read takes the settled transcript of that session, so it waits for
+        // nothing the submission holds (task ^dpn2ytt).
         target.set(caller)
 
         let outcome = await Self.outcome(
-            of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.turnTimeout)
+            of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.answerTimeout)
 
         // The count is the settled transcript, not the live one: the live
-        // backend already holds the turn's prompt and its answer.
+        // backend already holds the prompt of the submission and its answer.
         Self.expectFinished(
             outcome, is: String(Self.entriesAtTheLastSettledPoint),
-            describing: "The transcript-reading turn")
+            describing: "The transcript-reading answer")
         withExtendedLifetime(profile) {}
     }
 
     // MARK: - A declared background body
 
     /// The scaffolding one background-body test stands on: a profile whose
-    /// tool-calling turn stays open on ``turnHold`` after its tool call
-    /// returned, and records what that call handed back in ``handedBack``.
+    /// tool-calling submission stays open on ``answerHold`` after its tool
+    /// call returned, and records what that call handed back in
+    /// ``handedBack``.
     private struct BackgroundHarness {
         /// The resolved profile sessions are vended from.
         let profile: LanguageModelProfile
 
-        /// The latch the tool-calling turn stays open on after its tool call.
-        let turnHold: RunLatch
+        /// The latch the tool-calling submission stays open on after its tool
+        /// call.
+        let answerHold: RunLatch
 
-        /// Where the tool-calling turn records what its tool call handed back.
+        /// Where the tool-calling submission records what its tool call handed
+        /// back.
         let handedBack: HandedBackRecord
 
         /// The session the fixture tool's body acts on.
@@ -769,41 +777,41 @@ struct NestedGenerationReentryTests {
         /// - Parameter dir: The temporary directory the router caches under.
         /// - Returns: The harness.
         static func make(dir: URL) async throws -> BackgroundHarness {
-            let turnHold = RunLatch()
+            let answerHold = RunLatch()
             let handedBack = HandedBackRecord()
             let profile = try await NestedGenerationReentryTests.makeProfile(
-                container: ToolCallingLLMContainer(turnHold: turnHold, handedBack: handedBack), dir: dir)
+                container: ToolCallingLLMContainer(answerHold: answerHold, handedBack: handedBack), dir: dir)
             return BackgroundHarness(
-                profile: profile, turnHold: turnHold, handedBack: handedBack, target: NestedTarget())
+                profile: profile, answerHold: answerHold, handedBack: handedBack, target: NestedTarget())
         }
 
-        /// Starts `session`'s tool-calling turn in a task of its own, bounded
-        /// by ``turnTimeout``, so the test can look at the run it starts while
-        /// the turn is still open.
+        /// Starts the tool-calling answer of `session` in a task of its own,
+        /// bounded by ``answerTimeout``, so the test can look at the run it
+        /// starts while the submission is still open.
         ///
-        /// - Parameter session: The session whose turn runs.
-        /// - Returns: The task carrying the turn's outcome.
-        func startTurn(on session: any RoutedSession) -> Task<TurnOutcome?, Never> {
+        /// - Parameter session: The session whose answer runs.
+        /// - Returns: The task that carries the outcome of the answer.
+        func startAnswer(on session: any RoutedSession) -> Task<AnswerOutcome?, Never> {
             Task {
                 await NestedGenerationReentryTests.outcome(
                     of: { try await session.respond(to: NestedGenerationReentryTests.outerPrompt) },
-                    within: NestedGenerationReentryTests.turnTimeout)
+                    within: NestedGenerationReentryTests.answerTimeout)
             }
         }
 
-        /// Lets the held turn end, and reports what it produced.
+        /// Lets the held submission end, and reports what its answer produced.
         ///
-        /// - Parameter turn: The task ``startTurn(on:)`` returned.
-        /// - Returns: The turn's outcome, or `nil` when the bound won.
-        func endTurn(_ turn: Task<TurnOutcome?, Never>) async -> TurnOutcome? {
-            await turnHold.open()
-            return await turn.value
+        /// - Parameter answer: The task ``startAnswer(on:)`` returned.
+        /// - Returns: The outcome of the answer, or `nil` when the bound won.
+        func endAnswer(_ answer: Task<AnswerOutcome?, Never>) async -> AnswerOutcome? {
+            await answerHold.open()
+            return await answer.value
         }
     }
 
-    @Test("a declared background body generates on a second session while the turn that started it is still open")
+    @Test("a declared background body generates on a second session while the submission that started it is still open")
     @MainActor
-    func aBackgroundBodyGeneratesOnASecondSessionWhileItsTurnIsOpen() async throws {
+    func aBackgroundBodyGeneratesOnASecondSessionWhileItsSubmissionIsOpen() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -813,21 +821,22 @@ struct NestedGenerationReentryTests {
         let nested = harness.profile.standard.makeSession()
         harness.target.set(nested)
 
-        let turn = harness.startTurn(on: caller)
+        let answer = harness.startAnswer(on: caller)
         let token = await Self.handedBackToken(from: harness.handedBack)
 
-        // The turn is still open, and the run it started settles all the same:
-        // the turn holds nothing the run's own turn on the other session needs.
+        // The submission is still open, and the run it started settles all the
+        // same: the submission holds nothing that the answer of the run on the
+        // other session needs.
         if let token {
             let terminal = await Self.settledTerminal(of: token, on: caller, describing: "The background run")
             #expect(terminal?.outcome == .succeeded)
             #expect(terminal?.detail == Self.chainedAnswer(through: ["caller"]))
         }
 
-        // The run settled before its turn ended, so the drain found nothing to
-        // wait for and the turn answers with the handle it was handed.
+        // The run settled before its submission ended, so the answer is the
+        // handle the submission was handed.
         Self.expectFinished(
-            await harness.endTurn(turn), is: harness.handedBack.value ?? "", describing: "The outer turn")
+            await harness.endAnswer(answer), is: harness.handedBack.value ?? "", describing: "The outer answer")
         withExtendedLifetime(harness) {}
     }
 
@@ -845,14 +854,14 @@ struct NestedGenerationReentryTests {
         // outbox for a later submission of the session.
         harness.target.set(caller)
 
-        let turn = harness.startTurn(on: caller)
+        let answer = harness.startAnswer(on: caller)
         let token = try #require(await Self.handedBackToken(from: harness.handedBack))
 
         // The submission that started the run ends with the handle it was
         // handed. The pump then submits the message of the run, and the run
         // settles with the answer of that submission.
         Self.expectFinished(
-            await harness.endTurn(turn), is: harness.handedBack.value ?? "", describing: "The outer turn")
+            await harness.endAnswer(answer), is: harness.handedBack.value ?? "", describing: "The outer answer")
         // The progress report of the run is mail, so it rides the prompt of
         // that submission in front of the run's own message.
         let terminal = await Self.settledTerminal(of: token, on: caller, describing: "The run that asks its own session")
@@ -874,7 +883,7 @@ struct NestedGenerationReentryTests {
             tools: [ForkingTool(target: harness.target, mount: Self.backgroundMount)])
         harness.target.set(caller)
 
-        let turn = harness.startTurn(on: caller)
+        let answer = harness.startAnswer(on: caller)
         let token = try #require(await Self.handedBackToken(from: harness.handedBack))
         // The submission that started the run is still open. The fork reads
         // the settled transcript, so the run settles all the same, and its
@@ -883,7 +892,7 @@ struct NestedGenerationReentryTests {
         #expect(terminal?.outcome == .succeeded)
         #expect(terminal?.detail == caller.id.description)
 
-        #expect(Self.finishedAnswer(await harness.endTurn(turn), describing: "The forking turn") != nil)
+        #expect(Self.finishedAnswer(await harness.endAnswer(answer), describing: "The forking answer") != nil)
         withExtendedLifetime(harness) {}
     }
 
@@ -898,7 +907,7 @@ struct NestedGenerationReentryTests {
             tools: [TranscriptReadingTool(target: harness.target, mount: Self.backgroundMount)])
         harness.target.set(caller)
 
-        let turn = harness.startTurn(on: caller)
+        let answer = harness.startAnswer(on: caller)
         let token = try #require(await Self.handedBackToken(from: harness.handedBack))
         // The submission that started the run is still open. The read takes
         // the settled transcript, so the run settles all the same, with the
@@ -907,7 +916,7 @@ struct NestedGenerationReentryTests {
         #expect(terminal?.outcome == .succeeded)
         #expect(terminal?.detail == String(Self.entriesAtTheLastSettledPoint))
 
-        #expect(Self.finishedAnswer(await harness.endTurn(turn), describing: "The reading turn") != nil)
+        #expect(Self.finishedAnswer(await harness.endAnswer(answer), describing: "The reading answer") != nil)
         withExtendedLifetime(harness) {}
     }
 
@@ -955,7 +964,7 @@ struct NestedGenerationReentryTests {
         #expect(seen == nil)
     }
 
-    // MARK: - A turn whose submission waits for the worker
+    // MARK: - An answer whose submission waits for the worker
 
     /// The prompt of the session whose submission waits behind the cancelled
     /// one.
@@ -978,7 +987,7 @@ struct NestedGenerationReentryTests {
 
         // The holder's submission runs on the worker, and its pass stays
         // inside the model until the latch opens.
-        let holderTurn = Task { try await holder.respond(to: Self.outerPrompt) }
+        let holderAnswer = Task { try await holder.respond(to: Self.outerPrompt) }
         #expect(
             await BoundedWait.conditionReached("the holder's pass in the model") {
                 await fixture.observer.enteredCount == 1
@@ -987,7 +996,7 @@ struct NestedGenerationReentryTests {
         // The pump of the waiter runs its answer, which has an identity; only
         // its submission waits, in the queue of the model.
         let waiterFinished = AsyncSemaphore(value: 0)
-        let waiterTurn = Task {
+        let waiterAnswer = Task {
             defer { waiterFinished.signal() }
             return try await waiter.respond(to: Self.nestedPrompt)
         }
@@ -996,26 +1005,26 @@ struct NestedGenerationReentryTests {
                 await queue.waitingCount == 1
             })
         // A third submission joins the queue behind the waiter's.
-        let nextTurn = Task { try await next.respond(to: Self.nextPrompt) }
+        let nextAnswer = Task { try await next.respond(to: Self.nextPrompt) }
         #expect(
             await BoundedWait.conditionReached("the next submission waiting behind the waiter's") {
                 await queue.waitingCount == 2
             })
 
-        // So the request reaches the waiting item, and the turn ends at once,
+        // So the request reaches the waiting item, and the answer ends at once,
         // while the holder still runs on the worker.
         #expect(await waiter.cancel() == .requested)
         #expect(
             await BoundedWait.signalArrived(
-                waiterFinished, named: "the end of the cancelled turn, while the holder still runs"))
+                waiterFinished, named: "the end of the cancelled answer, while the holder still runs"))
         #expect(await queue.waitingCount == 1)
 
         await fixture.latch.open()
-        #expect(try await holderTurn.value == PassObservingModel.answer(to: Self.outerPrompt))
-        await #expect(throws: CancellationError.self) { try await waiterTurn.value }
+        #expect(try await holderAnswer.value == PassObservingModel.answer(to: Self.outerPrompt))
+        await #expect(throws: CancellationError.self) { try await waiterAnswer.value }
         // The worker ran the next item after the holder, and never the
         // cancelled one.
-        #expect(try await nextTurn.value == PassObservingModel.answer(to: Self.nextPrompt))
+        #expect(try await nextAnswer.value == PassObservingModel.answer(to: Self.nextPrompt))
         #expect(fixture.passes.recorded.map(\.prompt) == [Self.outerPrompt, Self.nextPrompt])
         #expect(await queue.isRunning == false)
         #expect(await queue.waitingCount == 0)
@@ -1023,9 +1032,9 @@ struct NestedGenerationReentryTests {
         // The cancelled session still generates: its pump and the queue are
         // both free.
         let followUp = await Self.outcome(
-            of: { try await waiter.respond(to: Self.outerPrompt) }, within: Self.turnTimeout)
+            of: { try await waiter.respond(to: Self.outerPrompt) }, within: Self.answerTimeout)
         Self.expectFinished(
-            followUp, is: PassObservingModel.answer(to: Self.outerPrompt), describing: "The follow-up turn")
+            followUp, is: PassObservingModel.answer(to: Self.outerPrompt), describing: "The follow-up answer")
         withExtendedLifetime(profile) {}
     }
 }

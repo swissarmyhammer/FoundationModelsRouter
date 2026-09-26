@@ -19,7 +19,7 @@ import Tracing
 /// through `replacingTranscript(_:)`, which carries that backend's flag.
 ///
 /// `@unchecked Sendable` invariant: every mutable property is touched only
-/// between turns from test code, or from inside ``RoutedSessionActor``'s
+/// between answers from test code, or from inside ``RoutedSessionActor``'s
 /// isolated methods, which serialize every call onto the actor's own executor.
 final class ConfiguredLLMContainer: LoadedLLMContainer, @unchecked Sendable {
     /// The scripted counter of this container: one token per `Character`.
@@ -35,7 +35,7 @@ final class ConfiguredLLMContainer: LoadedLLMContainer, @unchecked Sendable {
     /// including the blank-slate clone a compaction's summarizer builds through
     /// `replacingTranscript(_:)`. On the `flash` container this holds an
     /// automatic compaction's own summarizer calls and nothing else, since a
-    /// warm-up turn never reaches the flash slot.
+    /// warm-up answer never reaches the flash slot.
     let generationLog = StubGenerationLog()
 
     /// The backend the most recent `makeSession(instructions:)` vended, so a
@@ -165,9 +165,9 @@ struct PerSlotModelLoader: ModelLoader {
 /// `AutoCompactionTests` and `CompactionTracingTests` — warm up exactly the
 /// same way and their budgets keep meaning the same thing.
 enum AutoCompactionFixtures {
-    /// A long canned response repeated across every warm-up turn, so a handful
-    /// of turns' worth of transcript already carries a real, non-trivial
-    /// byte-size estimate — mirrors `RoutedSessionCompactTests.cannedText`.
+    /// A long canned response repeated across every warm-up answer, so a
+    /// handful of answers' worth of transcript already carries a real,
+    /// non-trivial byte-size estimate — mirrors `RoutedSessionCompactTests.cannedText`.
     ///
     /// The length is load-bearing for
     /// `AutoCompactionTests.hardCeilingFailsFastThenRecoversWithLivePerAttemptFill()`,
@@ -191,11 +191,11 @@ enum AutoCompactionFixtures {
     /// ``cannedText`` gives the measurements that set this number.
     private static let cannedTextRepeatCount = 60
 
-    /// How many warm-up turns
+    /// How many warm-up answers
     /// ``makeTriggeredSession(budget:tools:summarization:tracer:samplingMode:tempDirPrefix:)``
     /// drives. The warm-up transcript then holds many copies of
     /// ``cannedText``, so a summary of one copy makes it much smaller.
-    static let turnCount = 6
+    static let answerCount = 6
 
     /// The working context every session this fixture vends resolves at — the
     /// denominator of both ``RoutedSession/contextFill`` and, deliberately,
@@ -210,15 +210,16 @@ enum AutoCompactionFixtures {
     static let warmUpContextTokens = 100_000
 
     /// The fraction of ``warmUpContextTokens`` the escalating warm-up adds to
-    /// measured usage on its first turn, growing by the same step each turn —
-    /// 15% a turn over ``turnCount`` turns reaches 90%, so the warm-up crosses
-    /// ``fixedBudgetTriggerFraction`` only on the final warm-up turn.
+    /// measured usage on its first answer, growing by the same step each
+    /// answer — 15% an answer over ``answerCount`` answers reaches 90%, so the
+    /// warm-up crosses ``fixedBudgetTriggerFraction`` only on the final warm-up
+    /// answer.
     private static let warmUpUsageStepTokens = 15_000
 
     /// The fraction of ``fixedBudget``'s limit at which auto-compaction starts.
     ///
     /// This value is the same as ``TokenBudget``'s own default trigger. The
-    /// escalating warm-up crosses it only on the last warm-up turn.
+    /// escalating warm-up crosses it only on the last warm-up answer.
     private static let fixedBudgetTriggerFraction = 0.8
 
     /// A budget whose target is under the warm-up transcript, so every
@@ -239,16 +240,16 @@ enum AutoCompactionFixtures {
 
     /// The exact entries
     /// ``makeTriggeredSession(budget:tools:summarization:tracer:samplingMode:tempDirPrefix:)``'s
-    /// warm-up turns produce, computed without ever running a session —
+    /// warm-up answers produce, computed without ever running a session —
     /// prompt/response text is fixed regardless of the escalating usage those
-    /// turns are driven with, so ``fixedBudget`` can be sized once, up front,
+    /// answers are driven with, so ``fixedBudget`` can be sized once, up front,
     /// from this alone.
     ///
     /// - Returns: The warm-up transcript, in order.
     static func expectedWarmUpEntries() -> [Transcript.Entry] {
-        (0..<turnCount).flatMap { index -> [Transcript.Entry] in
+        (0..<answerCount).flatMap { index -> [Transcript.Entry] in
             [
-                .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "turn \(index)"))])),
+                .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "message \(index)"))])),
                 .response(
                     Transcript.Response(segments: [.text(Transcript.TextSegment(content: cannedText))])),
             ]
@@ -256,14 +257,14 @@ enum AutoCompactionFixtures {
     }
 
     /// Vends a `profile.standard` session with `budget` and drives
-    /// ``turnCount`` warm-up turns whose per-turn measured usage escalates
-    /// (30% of the profile's 100,000-token context on the last turn: 90%),
-    /// crossing ``fixedBudgetTriggerFraction`` only on the final warm-up
-    /// turn — mirrors `ExamplesTests.proactiveCompactionBetweenTurns()`'s
+    /// ``answerCount`` warm-up answers whose measured usage for each answer
+    /// escalates (30% of the profile's 100,000-token context on the last
+    /// answer: 90%), crossing ``fixedBudgetTriggerFraction`` only on the final
+    /// warm-up answer — mirrors `ExamplesTests.proactiveCompactionBetweenAnswers()`'s
     /// own escalating-usage pattern. By the time this returns, the session's
-    /// measured `contextFill` is `0.9`, its backend holds ``turnCount``
-    /// turns of real content, and no compaction has happened yet — a caller then
-    /// drives one more turn (typically via `streamEvents`) to observe the
+    /// measured `contextFill` is `0.9`, its backend holds ``answerCount``
+    /// answers of real content, and no compaction has happened yet — a caller
+    /// then drives one more answer (typically via `streamEvents`) to observe the
     /// proactive auto-compaction this triggers, or calls
     /// ``RoutedSession/compact(prompt:budget:)`` to drive a compaction of its own.
     ///
@@ -283,7 +284,7 @@ enum AutoCompactionFixtures {
     ///     is attributable.
     /// - Returns: The session plus its `standard`/`flash` containers, so a
     ///   test can configure either before driving the compaction.
-    /// - Throws: Whatever profile resolution or a warm-up turn throws.
+    /// - Throws: Whatever profile resolution or a warm-up answer throws.
     static func makeTriggeredSession(
         budget: TokenBudget?,
         tools: [any Tool] = [],
@@ -318,7 +319,7 @@ enum AutoCompactionFixtures {
     ///   - tempDirPrefix: The calling suite's name, so a leaked temp directory
     ///     is attributable.
     /// - Returns: The session plus its `standard` container.
-    /// - Throws: Whatever profile resolution or a warm-up turn throws.
+    /// - Throws: Whatever profile resolution or a warm-up answer throws.
     static func makeTriggeredSession(
         budget: TokenBudget?,
         tools: [any Tool] = [],
@@ -342,9 +343,9 @@ enum AutoCompactionFixtures {
             tools: tools, budget: budget, summarization: summarization)
         let backend = try #require(standardContainer.lastBackend)
 
-        for turn in 0..<turnCount {
-            backend.usageIncrement = (input: (turn + 1) * warmUpUsageStepTokens, output: 0)
-            _ = try await session.respond(to: "turn \(turn)")
+        for answer in 0..<answerCount {
+            backend.usageIncrement = (input: (answer + 1) * warmUpUsageStepTokens, output: 0)
+            _ = try await session.respond(to: "message \(answer)")
         }
 
         return (session, standardContainer)

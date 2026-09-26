@@ -22,22 +22,22 @@ struct SettledTranscriptTests {
     /// attributable.
     private static let tempDirPrefix = "SettledTranscriptTests"
 
-    /// The prompt of the turn that completes before the held one starts.
-    private static let settledPrompt = "a turn that settles"
+    /// The prompt of the submission that completes before the held one starts.
+    private static let settledPrompt = "a message that settles"
 
-    /// The prompt of the turn that the backend holds open inside its model
-    /// call.
-    private static let heldPrompt = "a turn that stays open"
+    /// The prompt of the submission that the backend holds open inside its
+    /// model call.
+    private static let heldPrompt = "a message that stays open"
 
-    /// How many entries one whole turn of ``HeldTurnBackend`` appends: its
-    /// `.prompt` and its `.response`.
-    private static let entriesOfOneWholeTurn = 2
+    /// How many entries one whole submission of ``HeldSubmissionBackend``
+    /// appends: its `.prompt` and its `.response`.
+    private static let entriesOfOneWholeSubmission = 2
 
-    /// How many entries the held turn has appended while it is held: its
+    /// How many entries the held submission has appended while it is held: its
     /// `.prompt` only.
-    private static let entriesOfTheHeldTurnSoFar = 1
+    private static let entriesOfTheHeldSubmissionSoFar = 1
 
-    // MARK: - A backend that holds one turn open
+    // MARK: - A backend that holds one submission open
 
     /// A backend that appends a `.prompt` entry, holds the call whose prompt
     /// is ``heldPrompt`` open on a latch, and then appends a `.response`
@@ -45,7 +45,7 @@ struct SettledTranscriptTests {
     ///
     /// The transcript sits behind a `Mutex`, because the test reads it from
     /// its own task while the held call is suspended.
-    private final class HeldTurnBackend: LanguageModelSessionBackend {
+    private final class HeldSubmissionBackend: LanguageModelSessionBackend {
         /// The latch the held call waits on.
         private let release: RunLatch
 
@@ -71,12 +71,12 @@ struct SettledTranscriptTests {
             if prompt == SettledTranscriptTests.heldPrompt {
                 await release.waitUntilOpen()
             }
-            let answer = HeldTurnBackend.answer(to: prompt)
+            let answer = HeldSubmissionBackend.answer(to: prompt)
             append(.response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: answer))])))
             return answer
         }
 
-        /// Not used by this suite: every turn here is a whole response.
+        /// Not used by this suite: every submission here is a whole response.
         func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
             AsyncThrowingStream { $0.finish() }
         }
@@ -88,7 +88,7 @@ struct SettledTranscriptTests {
 
         /// A new backend over a copy of this transcript.
         func makeFork() -> any LanguageModelSessionBackend {
-            HeldTurnBackend(release: release, entries: transcriptEntries())
+            HeldSubmissionBackend(release: release, entries: transcriptEntries())
         }
 
         /// The transcript so far.
@@ -127,9 +127,9 @@ struct SettledTranscriptTests {
         }
     }
 
-    /// Vends one ``HeldTurnBackend`` for each session, and keeps the last one
-    /// so a test can read its live transcript.
-    private final class HeldTurnContainer: LoadedLLMContainer, Sendable {
+    /// Vends one ``HeldSubmissionBackend`` for each session, and keeps the last
+    /// one so a test can read its live transcript.
+    private final class HeldSubmissionContainer: LoadedLLMContainer, Sendable {
         /// The scripted counter of this container: one token per `Character`.
         let tokenCounter: any TokenCounter = CharacterTokenCounter()
 
@@ -137,10 +137,10 @@ struct SettledTranscriptTests {
         let release = RunLatch()
 
         /// The last backend this container vended.
-        private let vended: Mutex<HeldTurnBackend?> = Mutex(nil)
+        private let vended: Mutex<HeldSubmissionBackend?> = Mutex(nil)
 
         /// The last backend this container vended, or `nil` before the first.
-        var lastBackend: HeldTurnBackend? {
+        var lastBackend: HeldSubmissionBackend? {
             vended.withLock { $0 }
         }
 
@@ -149,7 +149,7 @@ struct SettledTranscriptTests {
         /// - Parameter instructions: The instructions of the session. Not read.
         /// - Returns: The new backend.
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            let backend = HeldTurnBackend(release: release)
+            let backend = HeldSubmissionBackend(release: release)
             vended.withLock { $0 = backend }
             return backend
         }
@@ -193,7 +193,7 @@ struct SettledTranscriptTests {
         let directory = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let container = HeldTurnContainer()
+        let container = HeldSubmissionContainer()
         let profile = try await RouterTestFixtures.resolveStandardProfile(
             over: container, cacheDir: directory
         ).profile
@@ -201,9 +201,9 @@ struct SettledTranscriptTests {
         _ = try await session.respond(to: Self.settledPrompt)
         let backend = try #require(container.lastBackend)
 
-        let heldTurn = Task { try await session.respond(to: Self.heldPrompt) }
-        let heldTurnStarted = await BoundedWait.conditionReached("the held turn appending its prompt") {
-            backend.transcriptEntries().count == Self.entriesOfOneWholeTurn + Self.entriesOfTheHeldTurnSoFar
+        let heldAnswer = Task { try await session.respond(to: Self.heldPrompt) }
+        let heldSubmissionStarted = await BoundedWait.conditionReached("the held submission appending its prompt") {
+            backend.transcriptEntries().count == Self.entriesOfOneWholeSubmission + Self.entriesOfTheHeldSubmissionSoFar
         }
 
         // The read comes from a task that is not the held submission, while
@@ -215,14 +215,14 @@ struct SettledTranscriptTests {
         let read = try await MountFixtures.poll { readBox.entries }
 
         await container.release.open()
-        #expect(try await heldTurn.value == HeldTurnBackend.answer(to: Self.heldPrompt))
+        #expect(try await heldAnswer.value == HeldSubmissionBackend.answer(to: Self.heldPrompt))
 
-        try #require(heldTurnStarted)
+        try #require(heldSubmissionStarted)
         let entries = try #require(read, "The read waited for the running submission.")
-        // The settled point is the end of the first turn: its prompt and its
-        // answer, and nothing of the held turn.
-        #expect(entries.count == Self.entriesOfOneWholeTurn)
-        #expect(entries.map(\.id) == Array(backend.transcriptEntries().prefix(Self.entriesOfOneWholeTurn)).map(\.id))
+        // The settled point is the end of the first submission: its prompt and
+        // its answer, and nothing of the held submission.
+        #expect(entries.count == Self.entriesOfOneWholeSubmission)
+        #expect(entries.map(\.id) == Array(backend.transcriptEntries().prefix(Self.entriesOfOneWholeSubmission)).map(\.id))
     }
 
     // MARK: - A fork from a tool of the same session
@@ -399,7 +399,7 @@ struct SettledTranscriptTests {
         // boundary, which settles the transcript while the call has no
         // output yet. Round two calls the forking tool.
         let fixture = try await ScriptedSessionFixture.make(
-            playing: ScriptedTurnScript(rounds: [
+            playing: ScriptedAnswerScript(rounds: [
                 [
                     ScriptedToolCall(
                         id: "call-marker", toolName: StepMarkerTool.toolName,

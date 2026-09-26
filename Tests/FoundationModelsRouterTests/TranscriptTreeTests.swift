@@ -156,77 +156,77 @@ struct TranscriptTreeTests {
     /// the shape the later restore task's mandated integration test also
     /// needs, so this is written to be reusable beyond this suite.
     ///
-    /// Each session generates the requested number of turns *before* any of
-    /// its own children fork from it (so a child's `forkedAtEntryCount`
-    /// baseline lands exactly where the turn plan intends), then the
+    /// Each session generates the requested number of answers *before* any
+    /// of its own children fork from it (so a child's `forkedAtEntryCount`
+    /// baseline lands exactly where the plan of answers intends), then the
     /// requested number *after* — exercising "an ancestor keeps generating
     /// after a child forks from it" without disturbing the already-taken
-    /// fork's baseline. Every turn's prompt is a distinct, greppable string
-    /// (`"<session>-turn-<n>"`) so a test can identify exactly which turns
-    /// survived a truncation.
+    /// fork's baseline. The prompt of every answer is a distinct, greppable
+    /// string (`"<session>-message-<n>"`) so a test can identify exactly which
+    /// answers survived a truncation.
     ///
     /// - Parameters:
     ///   - profile: The resolved profile to vend sessions from.
-    ///   - rootTurnsBeforeForks: Turns `root` takes before `forkA`/`forkB` fork.
-    ///   - rootTurnsAfterForks: Turns `root` takes after forking, invisible to
+    ///   - rootAnswersBeforeForks: Answers `root` gives before `forkA`/`forkB` fork.
+    ///   - rootAnswersAfterForks: Answers `root` gives after forking, invisible to
     ///     both forks' effective transcripts.
-    ///   - forkATurnsBeforeGrandfork: Turns `forkA` takes before `grandfork`
+    ///   - forkAAnswersBeforeGrandfork: Answers `forkA` gives before `grandfork`
     ///     forks from it.
-    ///   - forkATurnsAfterGrandfork: Turns `forkA` takes after `grandfork`
+    ///   - forkAAnswersAfterGrandfork: Answers `forkA` gives after `grandfork`
     ///     forks, invisible to `grandfork`'s effective transcript.
-    ///   - forkBTurns: Turns `forkB` takes (`forkB` has no children).
-    ///   - grandforkTurns: Turns `grandfork` takes.
+    ///   - forkBAnswers: Answers `forkB` gives (`forkB` has no children).
+    ///   - grandforkAnswers: Answers `grandfork` gives.
     /// - Returns: The four vended sessions.
     private static func buildBranchingTree(
         profile: LanguageModelProfile,
-        rootTurnsBeforeForks: Int = 1,
-        rootTurnsAfterForks: Int = 0,
-        forkATurnsBeforeGrandfork: Int = 1,
-        forkATurnsAfterGrandfork: Int = 0,
-        forkBTurns: Int = 1,
-        grandforkTurns: Int = 1
+        rootAnswersBeforeForks: Int = 1,
+        rootAnswersAfterForks: Int = 0,
+        forkAAnswersBeforeGrandfork: Int = 1,
+        forkAAnswersAfterGrandfork: Int = 0,
+        forkBAnswers: Int = 1,
+        grandforkAnswers: Int = 1
     ) async throws -> (
         root: RoutedSession, forkA: RoutedSession, forkB: RoutedSession, grandfork: RoutedSession
     ) {
         let root = profile.standard.makeSession()
-        if rootTurnsBeforeForks > 0 {
-            for turn in 1...rootTurnsBeforeForks {
-                _ = try await root.respond(to: "root-turn-\(turn)")
+        if rootAnswersBeforeForks > 0 {
+            for answer in 1...rootAnswersBeforeForks {
+                _ = try await root.respond(to: "root-message-\(answer)")
             }
         }
 
         let forkA = try await root.fork(workingDirectory: nil)
         let forkB = try await root.fork(workingDirectory: nil)
 
-        if rootTurnsAfterForks > 0 {
-            for turn in 1...rootTurnsAfterForks {
-                _ = try await root.respond(to: "root-turn-\(rootTurnsBeforeForks + turn)")
+        if rootAnswersAfterForks > 0 {
+            for answer in 1...rootAnswersAfterForks {
+                _ = try await root.respond(to: "root-message-\(rootAnswersBeforeForks + answer)")
             }
         }
 
-        if forkATurnsBeforeGrandfork > 0 {
-            for turn in 1...forkATurnsBeforeGrandfork {
-                _ = try await forkA.respond(to: "forkA-turn-\(turn)")
+        if forkAAnswersBeforeGrandfork > 0 {
+            for answer in 1...forkAAnswersBeforeGrandfork {
+                _ = try await forkA.respond(to: "forkA-message-\(answer)")
             }
         }
 
         let grandfork = try await forkA.fork(workingDirectory: nil)
 
-        if forkATurnsAfterGrandfork > 0 {
-            for turn in 1...forkATurnsAfterGrandfork {
-                _ = try await forkA.respond(to: "forkA-turn-\(forkATurnsBeforeGrandfork + turn)")
+        if forkAAnswersAfterGrandfork > 0 {
+            for answer in 1...forkAAnswersAfterGrandfork {
+                _ = try await forkA.respond(to: "forkA-message-\(forkAAnswersBeforeGrandfork + answer)")
             }
         }
 
-        if forkBTurns > 0 {
-            for turn in 1...forkBTurns {
-                _ = try await forkB.respond(to: "forkB-turn-\(turn)")
+        if forkBAnswers > 0 {
+            for answer in 1...forkBAnswers {
+                _ = try await forkB.respond(to: "forkB-message-\(answer)")
             }
         }
 
-        if grandforkTurns > 0 {
-            for turn in 1...grandforkTurns {
-                _ = try await grandfork.respond(to: "grandfork-turn-\(turn)")
+        if grandforkAnswers > 0 {
+            for answer in 1...grandforkAnswers {
+                _ = try await grandfork.respond(to: "grandfork-message-\(answer)")
             }
         }
 
@@ -337,11 +337,11 @@ struct TranscriptTreeTests {
 
         let forkAEvents = try tree.events(forSession: forkA.id)
         // forkA's own file: one session-meta line, plus one prompt/response
-        // pair for its single turn — never root's or grandfork's entries.
+        // pair for its single answer — never root's or grandfork's entries.
         #expect(forkAEvents.map(\.kind) == [.session, .prompt, .response])
-        #expect(forkAEvents.first { $0.kind == .prompt }?.text == "forkA-turn-1")
-        #expect(!forkAEvents.contains { $0.text == "root-turn-1" })
-        #expect(!forkAEvents.contains { $0.text == "grandfork-turn-1" })
+        #expect(forkAEvents.first { $0.kind == .prompt }?.text == "forkA-message-1")
+        #expect(!forkAEvents.contains { $0.text == "root-message-1" })
+        #expect(!forkAEvents.contains { $0.text == "grandfork-message-1" })
 
         let rootEvents = try tree.events(forSession: root.id)
         #expect(rootEvents.map(\.kind) == [.session, .prompt, .response])
@@ -367,25 +367,25 @@ struct TranscriptTreeTests {
             recordingsDir: recordingsDir
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-        // root takes a second turn *after* forkA/forkB fork; forkA takes a
-        // second turn *after* grandfork forks — both must be invisible to
+        // root gives a second answer *after* forkA/forkB fork; forkA gives a
+        // second answer *after* grandfork forks — both must be invisible to
         // grandfork's effective transcript.
         let (root, forkA, _, grandfork) = try await Self.buildBranchingTree(
             profile: profile,
-            rootTurnsBeforeForks: 1,
-            rootTurnsAfterForks: 1,
-            forkATurnsBeforeGrandfork: 1,
-            forkATurnsAfterGrandfork: 1,
-            forkBTurns: 0,
-            grandforkTurns: 1
+            rootAnswersBeforeForks: 1,
+            rootAnswersAfterForks: 1,
+            forkAAnswersBeforeGrandfork: 1,
+            forkAAnswersAfterGrandfork: 1,
+            forkBAnswers: 0,
+            grandforkAnswers: 1
         )
 
         let tree = try TranscriptTree.load(
             under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
 
-        // Uninstructed turns: one prompt + one response entry each, so
-        // forkA's baseline is 2 (root's one prior turn) and grandfork's
-        // baseline is 4 (root's 2 inherited + forkA's own 1 turn == 2 more).
+        // Uninstructed answers: one prompt + one response entry each, so
+        // forkA's baseline is 2 (root's one prior answer) and grandfork's
+        // baseline is 4 (root's 2 inherited + forkA's own 1 answer == 2 more).
         let forkANode = try #require(tree.session(forkA.id))
         #expect(forkANode.sidecar.forkedAtEntryCount == 2)
         let grandforkNode = try #require(tree.session(grandfork.id))
@@ -394,13 +394,13 @@ struct TranscriptTreeTests {
         let effective = try tree.effectiveEntryEvents(forSession: grandfork.id)
 
         let prompts = effective.filter { $0.kind == .prompt }.map(\.text)
-        #expect(prompts == ["root-turn-1", "forkA-turn-1", "grandfork-turn-1"])
+        #expect(prompts == ["root-message-1", "forkA-message-1", "grandfork-message-1"])
         #expect(effective.map(\.kind) == [.prompt, .response, .prompt, .response, .prompt, .response])
-        // Never the router-only session meta, and never the turns that
+        // Never the router-only session meta, and never the answers that
         // happened after either fork point.
         #expect(!effective.contains { $0.kind == .session })
-        #expect(!effective.contains { $0.text == "root-turn-2" })
-        #expect(!effective.contains { $0.text == "forkA-turn-2" })
+        #expect(!effective.contains { $0.text == "root-message-2" })
+        #expect(!effective.contains { $0.text == "forkA-message-2" })
 
         _ = root
     }
@@ -427,7 +427,7 @@ struct TranscriptTreeTests {
             under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
         let effective = try tree.effectiveEntryEvents(forSession: root.id)
         #expect(effective.map(\.kind) == [.prompt, .response])
-        #expect(effective.first?.text == "root-turn-1")
+        #expect(effective.first?.text == "root-message-1")
     }
 
     // MARK: - A parent that never generated
@@ -455,7 +455,7 @@ struct TranscriptTreeTests {
         // this replaced — it is a fully identified node in the loaded tree.
         let root = profile.standard.makeSession()
         let fork = try await root.fork(workingDirectory: nil)
-        _ = try await fork.respond(to: "fork-turn-1")
+        _ = try await fork.respond(to: "fork-message-1")
 
         let tree = try TranscriptTree.load(
             under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
@@ -473,7 +473,7 @@ struct TranscriptTreeTests {
         // nothing, which is different from its root being unknown.
         let effective = try tree.effectiveEntryEvents(forSession: fork.id)
         #expect(effective.map(\.kind) == [.prompt, .response])
-        #expect(effective.first?.text == "fork-turn-1")
+        #expect(effective.first?.text == "fork-message-1")
     }
 
     // MARK: - A deleted sidecar fails loudly
@@ -579,7 +579,7 @@ struct TranscriptTreeTests {
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let root = profile.standard.makeSession()
-        _ = try await root.respond(to: "root-turn-1")
+        _ = try await root.respond(to: "root-message-1")
 
         let routerDir = RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir)
         let rootDirectory = routerDir.appendingPathComponent(root.id.description, isDirectory: true)
@@ -611,7 +611,7 @@ struct TranscriptTreeTests {
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let root = profile.standard.makeSession()
-        _ = try await root.respond(to: "root-turn-1")
+        _ = try await root.respond(to: "root-message-1")
 
         // Restamp the recorded sidecar with a version this reader does not
         // know, the way a recording written by a newer router would carry it.
@@ -803,7 +803,7 @@ struct TranscriptTreeTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
-        _ = try await root.respond(to: "root-turn-1")
+        _ = try await root.respond(to: "root-message-1")
 
         let routerDir = RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir)
         let tree = try TranscriptTree.load(under: routerDir)

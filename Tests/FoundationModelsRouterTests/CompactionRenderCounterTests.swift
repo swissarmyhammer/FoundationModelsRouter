@@ -40,20 +40,20 @@ struct CompactionRenderCounterTests {
     /// The executor of the render probe model, for its texts.
     private typealias Probe = RenderProbeLanguageModel.Executor
 
-    /// The prompt of the first turn. Each prompt is long, so that a
+    /// The prompt of the first answer. Each prompt is long, so that a
     /// compaction to half of the context has room for the snapshot.
     private static let firstQuestion =
         "Question one: describe the state of the render probe at this step of the work, in full detail."
 
-    /// The prompt of the second turn.
+    /// The prompt of the second answer.
     private static let secondQuestion =
         "Question two: describe the state of the render probe at this step of the work, in full detail."
 
-    /// The prompt of the third turn.
+    /// The prompt of the third answer.
     private static let thirdQuestion =
         "Question three: describe the state of the render probe at this step of the work, in full detail."
 
-    /// The prompts of the three turns, in order.
+    /// The prompts of the three answers, in order.
     private static let questions = [firstQuestion, secondQuestion, thirdQuestion]
 
     /// The text of the first snapshot of a session.
@@ -66,17 +66,17 @@ struct CompactionRenderCounterTests {
     /// prompt: the instructions, the snapshot, and the prompt.
     private static let renderEntriesAfterCompaction = 3
 
-    /// The count of the tool calls of the tool-loop turn. The turn then makes
-    /// one more generation call, which answers.
+    /// The count of the tool calls of the tool-loop answer. The answer then
+    /// makes one more generation call, which answers.
     private static let toolLoopRounds = 2
 
-    /// The output token ceiling of the ceiling-stop turn.
+    /// The output token ceiling of the ceiling-stop answer.
     private static let ceiling = 50
 
     /// The budget of the ceiling-stop session.
     private static let ceilingStopBudget = TokenBudget(limit: meteredContextTokens, trigger: 0.8, target: 0.5)
 
-    /// The usage of the calls of the ceiling-stop turn: two calls that ask for
+    /// The usage of the calls of the ceiling-stop answer: two calls that ask for
     /// the tool, then a call that stops at ``ceiling``. The sum of the calls is
     /// over the trigger of ``ceilingStopBudget``. The last call is under it.
     private static let ceilingStopCalls = [
@@ -87,13 +87,13 @@ struct CompactionRenderCounterTests {
 
     /// Builds a render probe fixture.
     ///
-    /// - Parameter toolRoundsPerTurn: The count of the tool calls that each
-    ///   turn makes before it answers.
+    /// - Parameter toolRoundsPerAnswer: The count of the tool calls that each
+    ///   answer makes before it answers.
     /// - Returns: The fixture.
     /// - Throws: Whatever profile resolution throws.
-    private static func makeProbe(toolRoundsPerTurn: Int) async throws -> RenderProbeSessionFixture {
+    private static func makeProbe(toolRoundsPerAnswer: Int) async throws -> RenderProbeSessionFixture {
         try await RenderProbeSessionFixture.make(
-            instructions: instructions, toolRoundsPerTurn: toolRoundsPerTurn,
+            instructions: instructions, toolRoundsPerAnswer: toolRoundsPerAnswer,
             context: probeContextTokens, tempDirPrefix: tempDirPrefix)
     }
 
@@ -136,11 +136,11 @@ struct CompactionRenderCounterTests {
     }
 
     /// The size of the newest render of `fixture` plus the answer to `prompt`:
-    /// the context after the last generation call of that turn.
+    /// the context after the last generation call of that answer.
     ///
     /// - Parameters:
     ///   - fixture: The fixture whose log to read.
-    ///   - prompt: The prompt of the turn.
+    ///   - prompt: The prompt of the answer.
     /// - Returns: The size, in tokens.
     /// - Throws: When the model received no call.
     private static func contextAfterAnswer(of fixture: RenderProbeSessionFixture, to prompt: String) throws -> Int {
@@ -157,7 +157,7 @@ struct CompactionRenderCounterTests {
 
     @Test("after a compaction, the render is the instructions, the snapshot, and the messages since it")
     func renderAfterCompactionHoldsInstructionsSnapshotAndNewMessages() async throws {
-        let fixture = try await Self.makeProbe(toolRoundsPerTurn: 0)
+        let fixture = try await Self.makeProbe(toolRoundsPerAnswer: 0)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         _ = try await fixture.session.respond(to: Self.firstQuestion)
         _ = try await fixture.session.respond(to: Self.secondQuestion)
@@ -181,7 +181,7 @@ struct CompactionRenderCounterTests {
 
     @Test("after two compactions, the render holds the instructions and the second snapshot, not the first")
     func renderAfterTwoCompactionsHoldsOnlyTheLatestSnapshot() async throws {
-        let fixture = try await Self.makeProbe(toolRoundsPerTurn: 0)
+        let fixture = try await Self.makeProbe(toolRoundsPerAnswer: 0)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         _ = try await fixture.session.respond(to: Self.firstQuestion)
         let first = try await Self.compact(fixture.session)
@@ -208,7 +208,7 @@ struct CompactionRenderCounterTests {
 
     @Test("after two compactions, the recorded transcript keeps each earlier entry and both snapshots, unchanged")
     func recordedTranscriptKeepsEveryEntryAcrossTwoCompactions() async throws {
-        let fixture = try await Self.makeProbe(toolRoundsPerTurn: 0)
+        let fixture = try await Self.makeProbe(toolRoundsPerAnswer: 0)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         _ = try await fixture.session.respond(to: Self.firstQuestion)
         let beforeFirst = await fixture.recorder.events
@@ -237,7 +237,7 @@ struct CompactionRenderCounterTests {
 
     @Test("a tool loop of three calls: the counter is the size of the render, not the sum of the calls")
     func toolLoopCounterIsTheRenderNotTheSum() async throws {
-        let fixture = try await Self.makeProbe(toolRoundsPerTurn: Self.toolLoopRounds)
+        let fixture = try await Self.makeProbe(toolRoundsPerAnswer: Self.toolLoopRounds)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
         let events = try await collect(fixture.session.streamEvents(to: Self.firstQuestion))
@@ -261,7 +261,7 @@ struct CompactionRenderCounterTests {
 
     @Test("the counter goes up, restarts at a compaction from the instructions and the snapshot, and goes up again")
     func counterRestartsAtEachCompaction() async throws {
-        let fixture = try await Self.makeProbe(toolRoundsPerTurn: 1)
+        let fixture = try await Self.makeProbe(toolRoundsPerAnswer: 1)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let session = fixture.session
         let contextTokens = Self.probeContextTokens

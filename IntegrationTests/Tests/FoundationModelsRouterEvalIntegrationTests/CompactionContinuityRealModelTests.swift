@@ -39,12 +39,12 @@ private let compactionContinuityEvalRealEvaluation = CompactionContinuityEvaluat
 /// ## What this tier proves
 ///
 /// For every one of the four tasks the tier names: a real session vended with
-/// a budget compacts ITSELF inside a turn (no caller asks), the compaction's summary is
+/// a budget compacts ITSELF inside an answer (no caller asks), the compaction's summary is
 /// written by a real model, and the final instruction is answered over the
 /// compacted transcript. `CompactionOccurred` counts APPLIED compactions only, so a green
 /// run states that a real compaction changed every task's transcript, and the two
 /// fact floors state that planted facts traveled through the compaction and back
-/// out of a real answering turn at the rates that the floors state.
+/// out of a real final answer at the rates that the floors state.
 ///
 /// ## What it NO LONGER proves (tasks ^k0d30s4 and ^mx4jqrn)
 ///
@@ -73,7 +73,7 @@ private let compactionContinuityEvalRealEvaluation = CompactionContinuityEvaluat
 ///   are regression floors: a compaction-prompt change that loses facts from
 ///   the summaries crashes them.
 /// - **Continuity across MANY compactions of a long conversation.** Each fast task
-///   compacts once, at the final turn, over a span that holds both facts. A
+///   compacts once, at the final answer, over a span that holds both facts. A
 ///   thirteen-step task could compact several times, wherever its growth crossed
 ///   the trigger.
 /// - **The real trigger's placement.** The synthetic trigger proves the

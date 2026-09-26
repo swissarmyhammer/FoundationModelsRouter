@@ -7,7 +7,7 @@ import FoundationModels
 /// driven: suites use it when a test only calls
 /// ``RecordingLanguageModel/sync(_:usage:)`` or
 /// ``RecordingLanguageModel/noteCompaction(_:)`` directly with a fabricated
-/// transcript rather than driving a real `LanguageModelSession` turn.
+/// transcript rather than driving a real `LanguageModelSession` submission.
 struct UndrivenLanguageModel: LanguageModel {
     /// The empty capability set — a stand-in that is never driven advertises
     /// no capabilities.

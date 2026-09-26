@@ -29,7 +29,7 @@ private actor RunCompletion {
 /// route leaves the run suspended forever, and this test target sets no
 /// `.timeLimit` trait, so awaiting such a run directly hangs the whole run of
 /// `swift test` rather than failing the test that caught the fault. That is
-/// the escape hatch `TurnCancellationTests` already carries for a stranded
+/// the escape hatch `AnswerCancellationTests` already carries for a stranded
 /// pump — a bounded wait, then a recorded issue and a give-up
 /// rather than a further await — in the shape the answer-delivery suites need.
 ///

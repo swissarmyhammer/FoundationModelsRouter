@@ -25,68 +25,72 @@ import Testing
 struct RespondRunPlaneDrainTests {
     // MARK: - Backends
 
-    /// A backend scripted to start background work for a set number of turns.
-    /// Each of its first `backgroundingTurns` turns tracks one fresh run on
-    /// the session's own mailbox. Every later turn tracks none. This is the
-    /// shape the delivery chain ends on: a delivery that starts yet more
-    /// background work, until one delivery does not.
+    /// A backend scripted to start background work for a set number of
+    /// submissions. Each of its first `backgroundingSubmissions` submissions
+    /// tracks one fresh run on the session's own mailbox. Every later
+    /// submission tracks none. This is the shape the delivery chain ends on:
+    /// a delivery that starts yet more background work, until one delivery
+    /// does not.
     ///
-    /// It reaches the mailbox through the turn-scope ambient ``ToolContext``
-    /// the session binds around every model call, which is the same route a
-    /// tool of that turn would take.
+    /// It reaches the mailbox through the submission-scope ambient
+    /// ``ToolContext`` the session binds around every model call, which is
+    /// the same route a tool of that submission would take.
     ///
     /// The prompts are behind a `Mutex`: the pump delivers each settled run in
     /// a submission of its own, so a test reads them while a delivery runs.
     private final class ScriptedBackgroundingBackend: LanguageModelSessionBackend {
-        /// The answer one turn produces, so a test can assert which turn's
-        /// answer `respond` returned.
+        /// The answer one submission produces, so a test can assert which
+        /// submission's answer `respond` returned.
         ///
-        /// - Parameter turn: The turn's ordinal, counted from 1.
-        /// - Returns: That turn's answer text.
-        static func answerText(ofTurn turn: Int) -> String {
-            "answer of turn \(turn)"
+        /// - Parameter submission: The submission's ordinal, counted from 1.
+        /// - Returns: That submission's answer text.
+        static func answerText(ofSubmission submission: Int) -> String {
+            "answer of submission \(submission)"
         }
 
-        /// The stub that records each turn's transcript entries and answers
-        /// the surfaces this backend does not script.
+        /// The stub that records each submission's transcript entries and
+        /// answers the surfaces this backend does not script.
         private let inner = StubSessionBackend()
 
-        /// How many turns, counted from the first, track a background run.
-        private let backgroundingTurns: Int
+        /// How many submissions, counted from the first, track a background
+        /// run.
+        private let backgroundingSubmissions: Int
 
         /// Holds every run this backend tracked, so the test can release them
         /// one at a time.
         let releaser = BackgroundRunReleaser()
 
-        /// The prompt of each turn, behind the lock a test reads it through.
+        /// The prompt of each submission, behind the lock a test reads it
+        /// through.
         private let prompts = Mutex<[String]>([])
 
-        /// Every prompt this backend was asked to respond to, in turn order.
+        /// Every prompt this backend was asked to respond to, in submission
+        /// order.
         var receivedPrompts: [String] { prompts.withLock { $0 } }
 
         /// Makes a backend that tracks a background run in each of its first
-        /// `backgroundingTurns` turns.
+        /// `backgroundingSubmissions` submissions.
         ///
-        /// - Parameter backgroundingTurns: How many turns, counted from the
-        ///   first, track a background run.
-        init(backgroundingTurns: Int) {
-            self.backgroundingTurns = backgroundingTurns
+        /// - Parameter backgroundingSubmissions: How many submissions, counted
+        ///   from the first, track a background run.
+        init(backgroundingSubmissions: Int) {
+            self.backgroundingSubmissions = backgroundingSubmissions
         }
 
         func respond(to prompt: String, maxTokens: Int?) async throws -> String {
-            let turn = prompts.withLock { prompts in
+            let submission = prompts.withLock { prompts in
                 prompts.append(prompt)
                 return prompts.count
             }
             _ = try await inner.respond(to: prompt, maxTokens: maxTokens)
-            if turn <= backgroundingTurns, let mailbox = ToolContext.current?.mailbox {
+            if submission <= backgroundingSubmissions, let mailbox = ToolContext.current?.mailbox {
                 let token = await releaser.track(on: mailbox)
                 // The run settles on its own, beside the submission that
                 // started it, as a quick background job does.
                 let releaser = releaser
                 Task { await releaser.release(token: token) }
             }
-            return Self.answerText(ofTurn: turn)
+            return Self.answerText(ofSubmission: submission)
         }
 
         func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
@@ -188,20 +192,20 @@ struct RespondRunPlaneDrainTests {
         /// `nil` before the first call.
         private(set) var lastBackend: ScriptedBackgroundingBackend?
 
-        /// How many turns of each vended backend track a background run.
-        private let backgroundingTurns: Int
+        /// How many submissions of each vended backend track a background run.
+        private let backgroundingSubmissions: Int
 
         /// Makes a container whose every vended backend tracks a background
-        /// run in each of its first `backgroundingTurns` turns.
+        /// run in each of its first `backgroundingSubmissions` submissions.
         ///
-        /// - Parameter backgroundingTurns: How many turns of each vended
-        ///   backend track a background run.
-        init(backgroundingTurns: Int) {
-            self.backgroundingTurns = backgroundingTurns
+        /// - Parameter backgroundingSubmissions: How many submissions of each
+        ///   vended backend track a background run.
+        init(backgroundingSubmissions: Int) {
+            self.backgroundingSubmissions = backgroundingSubmissions
         }
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            let backend = ScriptedBackgroundingBackend(backgroundingTurns: backgroundingTurns)
+            let backend = ScriptedBackgroundingBackend(backgroundingSubmissions: backgroundingSubmissions)
             lastBackend = backend
             return backend
         }
@@ -235,7 +239,7 @@ struct RespondRunPlaneDrainTests {
     /// test. The card ^chw3rc6 sets it: the scripted model starts a run in
     /// each of 6 submissions and then none, so the pump runs one delivery
     /// submission more than this.
-    private static let backgroundingTurnCount = 6
+    private static let backgroundingSubmissionCount = 6
 
     // MARK: - Fixtures
 
@@ -470,7 +474,7 @@ struct RespondRunPlaneDrainTests {
         let dir = RouterTestFixtures.makeTempDir(prefix: "RespondRunPlaneDrainTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let container = ScriptedBackgroundingLLMContainer(backgroundingTurns: Self.backgroundingTurnCount)
+        let container = ScriptedBackgroundingLLMContainer(backgroundingSubmissions: Self.backgroundingSubmissionCount)
         let profile = try await Self.makeProfile(container: container, dir: dir)
         let session = profile.standard.makeSession()
         let backend = try #require(container.lastBackend)
@@ -478,12 +482,12 @@ struct RespondRunPlaneDrainTests {
 
         // The caller gets the answer of its own submission at once.
         let answer = try await session.respond(to: "start")
-        #expect(answer == ScriptedBackgroundingBackend.answerText(ofTurn: 1))
+        #expect(answer == ScriptedBackgroundingBackend.answerText(ofSubmission: 1))
 
         // Each run settles on its own. Its terminal is mail, and its delivery
         // submission starts the next run, until the seventh submission starts
         // none.
-        let submissionCount = Self.backgroundingTurnCount + 1
+        let submissionCount = Self.backgroundingSubmissionCount + 1
         #expect(
             await BoundedWait.conditionReached("\(submissionCount) submissions reaching the backend") {
                 backend.receivedPrompts.count == submissionCount
@@ -504,7 +508,7 @@ struct RespondRunPlaneDrainTests {
 
     // MARK: - streamEvents(to:) still backgrounds
 
-    @Test("streamEvents(to:) still backgrounds: it finishes with the turn's runs still running, and runs no delivery while they run")
+    @Test("streamEvents(to:) still backgrounds: it finishes with the answer's runs still running, and runs no delivery while they run")
     @MainActor
     func streamEventsKeepsBackgroundingItsBackgroundRuns() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "RespondRunPlaneDrainTests")
@@ -543,10 +547,10 @@ struct RespondRunPlaneDrainTests {
         let dir = RouterTestFixtures.makeTempDir(prefix: "RespondRunPlaneDrainTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        // The first turn is held open after its tool call, so the run settles
-        // while the stream is still running.
-        let holdTurn = RunLatch()
-        let container = BackgroundingLLMContainer(holdFirstTurn: holdTurn)
+        // The first submission is held open after its tool call, so the run
+        // settles while the stream is still running.
+        let holdFirstSubmission = RunLatch()
+        let container = BackgroundingLLMContainer(holdFirstAnswer: holdFirstSubmission)
         let profile = try await Self.makeProfile(container: container, dir: dir)
         let gate = RunLatch()
         let session = profile.standard.makeSession(tools: [
@@ -564,7 +568,7 @@ struct RespondRunPlaneDrainTests {
         let token = try #require(await Self.backgroundTokens(atLeast: 1, on: session).first)
         await gate.open()
         let terminal = try await Self.settledTerminal(of: token, on: session)
-        await holdTurn.open()
+        await holdFirstSubmission.open()
 
         let events = try await collecting.value
         #expect(events.contains(.runSettled(terminal)))
@@ -614,8 +618,8 @@ struct RespondRunPlaneDrainTests {
 
         // The first submission is held open after its tool call, so the
         // cancel lands while it runs.
-        let holdTurn = RunLatch()
-        let container = BackgroundingLLMContainer(holdFirstTurn: holdTurn)
+        let holdFirstSubmission = RunLatch()
+        let container = BackgroundingLLMContainer(holdFirstAnswer: holdFirstSubmission)
         let profile = try await Self.makeProfile(container: container, dir: dir)
         let gate = RunLatch()
         let session = profile.standard.makeSession(tools: [
@@ -630,7 +634,7 @@ struct RespondRunPlaneDrainTests {
         // ignores the cancel, so the submission still answers when its hold
         // opens, with the pending envelope.
         responding.cancel()
-        await holdTurn.open()
+        await holdFirstSubmission.open()
         let answer = try await responding.value
         #expect(!answer.hasPrefix(BackgroundingBackend.answerPrefix))
         #expect(backend.receivedPrompts.count == 1)

@@ -93,7 +93,7 @@ private let clockDateFormat = "yyyy-MM-dd"
 /// red, and the model read the clock's date straight out of its own system
 /// header.
 ///
-/// The turn measures 26.2 to 26.3 seconds and the load 3.2, so the suite ran
+/// The submission measures 26.2 to 26.3 seconds and the load 3.2, so the suite ran
 /// at 28 percent of the two-minute budget of that time. The render test needs
 /// no generation and measures 3.5. The suite has no time limit now. A run ends
 /// when it ends, or when the caller stops it.
@@ -128,7 +128,7 @@ struct PinnedChatTemplateDateIntegrationTests {
     ///
     /// The date branch of the template fires only when nothing in the
     /// conversation is a system message, which is what a session vended with
-    /// `instructions: nil` sends. So this conversation holds one user turn and
+    /// `instructions: nil` sends. So this conversation holds one user message and
     /// nothing else.
     private static let conversationWithNoSystemMessage: [[String: any Sendable]] = [
         ["role": "user", "content": "Say 'hi' briefly."]
@@ -162,13 +162,13 @@ struct PinnedChatTemplateDateIntegrationTests {
         await loaded.container.model.evict()
     }
 
-    @Test("a turn with no instructions answers the pinned date rather than today's")
+    @Test("a submission with no instructions answers the pinned date rather than today's")
     func theAnswerCarriesThePinnedDate() async throws {
         var loadDuration: Duration = .zero
-        var turnDuration: Duration = .zero
+        var submissionDuration: Duration = .zero
         defer {
             // swiftlint:disable:next no_direct_standard_out_logs  a grep of the run's output reads this line from standard out
-            print("[\(Self.phaseLabel)] load=\(loadDuration) turn=\(turnDuration)")
+            print("[\(Self.phaseLabel)] load=\(loadDuration) submission=\(submissionDuration)")
         }
 
         let loadStarted = ContinuousClock.now
@@ -189,7 +189,7 @@ struct PinnedChatTemplateDateIntegrationTests {
             to: "What is the current date? Answer with the date alone.",
             maxTokens: GatedRealModelBudget.responseTokenCeiling
         )
-        turnDuration = ContinuousClock.now - startInstant
+        submissionDuration = ContinuousClock.now - startInstant
         let answer = reply.trimmingCharacters(in: .whitespacesAndNewlines)
         // swiftlint:disable:next no_direct_standard_out_logs  a red run shows on standard out what the model answered
         print("[\(Self.phaseLabel)] reply=\(answer)")

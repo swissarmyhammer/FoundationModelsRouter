@@ -5,7 +5,7 @@ import FoundationModelsRouterTestSupport
 /// and `lookup-beta` are two instances of this struct that differ only in
 /// name.
 ///
-/// The tool answers with ``ToolTurnScenario/marker(for:)`` — the
+/// The tool answers with ``ToolAnswerScenario/marker(for:)`` — the
 /// `MARKER-7F3A-<step>` shape the rest of the test suite already speaks — so
 /// a reader of the recording can tell a delivered tool output from model
 /// prose at a glance, and nothing about the marker is restated here.
@@ -33,6 +33,6 @@ struct LookupTool: Tool {
     /// - Parameter arguments: The step name the model asked about.
     /// - Returns: The `MARKER-7F3A-<step>` identifier.
     func call(arguments: StepArguments) async throws -> String {
-        ToolTurnScenario.marker(for: arguments.step)
+        ToolAnswerScenario.marker(for: arguments.step)
     }
 }

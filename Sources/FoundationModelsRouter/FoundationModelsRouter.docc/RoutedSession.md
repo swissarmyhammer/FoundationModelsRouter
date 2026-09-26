@@ -113,4 +113,3 @@ one message, then waits for its answer.
 
 - ``fork(workingDirectory:)``
 - ``close()``
-- ``awaitingUser(_:)``

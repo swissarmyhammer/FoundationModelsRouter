@@ -4,7 +4,7 @@ import os
 /// The logger for a rejected tool call that goes back to the model.
 private let rejectedToolCallLogger = makeModuleLogger(category: "RejectedToolCall")
 
-/// A rejected tool call that goes back to the model, so the turn can continue.
+/// A rejected tool call that goes back to the model, so the answer can continue.
 ///
 /// When the model writes a tool call that the parser cannot accept,
 /// `MLXLanguageModel` throws `RejectedToolCallError`. The parser did not accept
@@ -63,7 +63,7 @@ struct RejectedToolCallRetry {
     /// The retry must send the prompt of the failed attempt again, because
     /// `LanguageModelSession` keeps no entry of an attempt that throws. When
     /// a retry is rejected again, its prompt already holds the earlier tool
-    /// error, so the model sees each rejection of the turn.
+    /// error, so the model sees each rejection of the answer.
     ///
     /// - Parameter failedPrompt: The prompt text of the failed attempt.
     /// - Returns: `failedPrompt`, a blank line, and the tool error.
@@ -74,11 +74,11 @@ struct RejectedToolCallRetry {
     /// Records in the log that a rejected tool call goes back to the model.
     ///
     /// - Parameters:
-    ///   - sessionID: The session whose turn runs the retry.
-    ///   - ordinal: Which retry of the turn this is: 1 for the first retry.
+    ///   - sessionID: The session whose answer runs the retry.
+    ///   - ordinal: Which retry of the answer this is: 1 for the first retry.
     func logRetry(sessionID: ULID, ordinal: Int) {
         rejectedToolCallLogger.warning(
-            "session \(sessionID.description, privacy: .public): a rejected tool call (\(reason, privacy: .public), tool \(toolName ?? "unknown", privacy: .private)) goes back to the model; retry \(ordinal, privacy: .public) of this turn"
+            "session \(sessionID.description, privacy: .public): a rejected tool call (\(reason, privacy: .public), tool \(toolName ?? "unknown", privacy: .private)) goes back to the model; retry \(ordinal, privacy: .public) of this answer"
         )
     }
 }

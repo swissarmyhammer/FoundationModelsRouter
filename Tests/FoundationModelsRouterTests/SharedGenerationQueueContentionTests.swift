@@ -22,7 +22,7 @@ import Testing
 /// ``twoHandBuiltHandlesOverOneContainerContend()``.
 ///
 /// Each container is a ``LiveBackendContainer`` over a ``PassObservingModel``,
-/// so each turn submits its whole SDK call to the queue of the container
+/// so each answer submits its whole SDK call to the queue of the container
 /// (task ^1psqdm9). A pass reports what is concurrently inside the model and
 /// stays there until a latch opens, so the suite needs no network and no GPU,
 /// and it waits on no clock.
@@ -35,10 +35,10 @@ struct SharedGenerationQueueContentionTests {
     /// where the standard and the flash model are the same model.
     private static let sharedRef: ModelRef = "org/shared-llm"
 
-    /// The prompt the first turn is given.
+    /// The prompt the first answer is given.
     private static let firstPrompt = "first"
 
-    /// The prompt the second turn is given.
+    /// The prompt the second answer is given.
     private static let secondPrompt = "second"
 
     // MARK: - Fixtures
@@ -85,13 +85,13 @@ struct SharedGenerationQueueContentionTests {
         try #require(handle.container as? LiveBackendContainer<PassObservingModel>).generationQueue
     }
 
-    /// Runs one turn on `profile.standard` and one on `profile.flash`, and
+    /// Runs one answer on `profile.standard` and one on `profile.flash`, and
     /// holds the pair to the one-queue contract.
     ///
-    /// The standard turn's submission runs on the worker of the queue, and its
-    /// pass stays in the model until the latch opens. The flash turn's
+    /// The standard answer's submission runs on the worker of the queue, and its
+    /// pass stays in the model until the latch opens. The flash answer's
     /// submission then waits in the very same queue, so one pass is in the
-    /// model rather than two. Both turns answer once the latch opens, and the
+    /// model rather than two. Both answers end once the latch opens, and the
     /// queue is left as it was found.
     ///
     /// The two graphs a caller can build -- the resolved pair and the
@@ -114,7 +114,7 @@ struct SharedGenerationQueueContentionTests {
         let holder = profile.standard.makeSession()
         let waiter = profile.flash.makeSession()
 
-        let holderTurn = Task { try await holder.respond(to: Self.firstPrompt) }
+        let holderAnswer = Task { try await holder.respond(to: Self.firstPrompt) }
         #expect(
             await BoundedWait.conditionReached("the standard session's pass in the model") {
                 await fixture.observer.enteredCount == 1
@@ -122,7 +122,7 @@ struct SharedGenerationQueueContentionTests {
 
         // The flash session's submission now waits in the very same queue.
         // This is the contention: two handles, one container, one queue.
-        let waiterTurn = Task { try await waiter.respond(to: Self.secondPrompt) }
+        let waiterAnswer = Task { try await waiter.respond(to: Self.secondPrompt) }
         #expect(
             await BoundedWait.conditionReached("the flash session's submission waiting in the shared queue") {
                 await queue.waitingCount == 1
@@ -133,8 +133,8 @@ struct SharedGenerationQueueContentionTests {
         #expect(await fixture.observer.maximumActive == 1)
 
         await fixture.latch.open()
-        #expect(try await holderTurn.value == PassObservingModel.answer(to: Self.firstPrompt))
-        #expect(try await waiterTurn.value == PassObservingModel.answer(to: Self.secondPrompt))
+        #expect(try await holderAnswer.value == PassObservingModel.answer(to: Self.firstPrompt))
+        #expect(try await waiterAnswer.value == PassObservingModel.answer(to: Self.secondPrompt))
         #expect(await fixture.observer.maximumActive == 1)
         #expect(await queue.isRunning == false)
         #expect(await queue.waitingCount == 0)

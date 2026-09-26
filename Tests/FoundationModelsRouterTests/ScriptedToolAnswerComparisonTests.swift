@@ -5,26 +5,26 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Task ^w8dzvee: the deterministic, GPU-free half of the four-way tool-turn
+/// Task ^w8dzvee: the deterministic, GPU-free half of the four-way tool-answer
 /// comparison.
 ///
-/// One scenario — a turn asking for **two** tool calls at once, so a mis-keyed
-/// completion is visible where one call would hide it — run through both
-/// `RoutedSession` surfaces over a scripted model, and compared as whole
-/// normalized transcripts. The gated `RealToolTurnComparisonTests` runs the
+/// One scenario — an answer asking for **two** tool calls at once, so a
+/// mis-keyed completion is visible where one call would hide it — run through
+/// both `RoutedSession` surfaces over a scripted model, and compared as whole
+/// normalized transcripts. The gated `RealToolAnswerComparisonTests` runs the
 /// same scenario against a real model and compares its outcome to this one.
 ///
 /// **This drives the production backend.** `ScriptedToolCallingContainer` vends
 /// `MLXFoundationModelsSessionBackend` itself, so the real `pumpStream` and the
-/// real `respond` are what a scripted turn runs through. The suite that shipped
-/// alongside defects D1 and D2 used a hand-written stand-in backend carrying its
-/// own copy of the snapshot conversion, which is why neither defect was visible
-/// from a green run.
-@Suite("A scripted tool-using turn behaves identically on both session surfaces")
-struct ScriptedToolTurnComparisonTests {
+/// real `respond` are what a scripted answer runs through. The suite that
+/// shipped alongside defects D1 and D2 used a hand-written stand-in backend
+/// carrying its own copy of the snapshot conversion, which is why neither
+/// defect was visible from a green run.
+@Suite("A scripted tool-using answer behaves identically on both session surfaces")
+struct ScriptedToolAnswerComparisonTests {
     /// The suite's temp-directory prefix, handed to
     /// ``RouterTestFixtures/makeTempDir(prefix:)``.
-    private static let tempDirPrefix = "ScriptedToolTurnComparisonTests"
+    private static let tempDirPrefix = "ScriptedToolAnswerComparisonTests"
 
     /// The model-facing name the scenario's first call names.
     private static let firstTool = "scenario-tool-a"
@@ -42,16 +42,16 @@ struct ScriptedToolTurnComparisonTests {
     /// - Parameter narration: Prose to emit before the calls, or `nil` for the
     ///   shape `MLXLanguageModel`'s own executor produces (a call, no prose).
     /// - Returns: The script to play out.
-    private static func script(narration: String? = nil) -> ScriptedTurnScript {
-        ScriptedTurnScript(
+    private static func script(narration: String? = nil) -> ScriptedAnswerScript {
+        ScriptedAnswerScript(
             rounds: [
                 [
                     ScriptedToolCall(
                         id: "call-first", toolName: firstTool,
-                        argument: .literal(ToolTurnScenario.firstStep)),
+                        argument: .literal(ToolAnswerScenario.firstStep)),
                     ScriptedToolCall(
                         id: "call-second", toolName: secondTool,
-                        argument: .literal(ToolTurnScenario.secondStep)),
+                        argument: .literal(ToolAnswerScenario.secondStep)),
                 ]
             ],
             narration: narration)
@@ -73,7 +73,7 @@ struct ScriptedToolTurnComparisonTests {
     /// - Parameter narration: Prose the model emits before its calls, or `nil`.
     /// - Returns: The run's answer and normalized transcript.
     /// - Throws: Whatever building or driving the session throws.
-    private static func respondRun(narration: String? = nil) async throws -> ToolTurnRunOutcome {
+    private static func respondRun(narration: String? = nil) async throws -> ToolAnswerRunOutcome {
         let fixture = try await ScriptedSessionFixture.make(
             playing: script(narration: narration),
             mounting: makeTools(),
@@ -81,7 +81,7 @@ struct ScriptedToolTurnComparisonTests {
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
         let answer = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
-        return ToolTurnRunOutcome(
+        return ToolAnswerRunOutcome(
             answer: answer,
             calledIds: [],
             completedIds: [],
@@ -91,12 +91,12 @@ struct ScriptedToolTurnComparisonTests {
 
     /// Runs the scenario once through `streamEvents(to:)`, accumulating the
     /// text twice — once applying ``SessionEvent/textReset`` and once ignoring
-    /// it — plus every tool id the turn reported.
+    /// it — plus every tool id the answer reported.
     ///
     /// - Parameter narration: Prose the model emits before its calls, or `nil`.
     /// - Returns: The run's answer, ids, and normalized transcript.
     /// - Throws: Whatever building or driving the session throws.
-    private static func streamRun(narration: String? = nil) async throws -> ToolTurnRunOutcome {
+    private static func streamRun(narration: String? = nil) async throws -> ToolAnswerRunOutcome {
         let fixture = try await ScriptedSessionFixture.make(
             playing: script(narration: narration),
             mounting: makeTools(),
@@ -128,7 +128,7 @@ struct ScriptedToolTurnComparisonTests {
                 break
             }
         }
-        return ToolTurnRunOutcome(
+        return ToolAnswerRunOutcome(
             answer: answer,
             rawAnswer: rawAnswer,
             calledIds: calledIds,
@@ -137,11 +137,11 @@ struct ScriptedToolTurnComparisonTests {
             entries: fixture.transcriptEntries())
     }
 
-    /// The answer the scenario's turn must produce, composed from the two
+    /// The text the answer of the scenario must produce, composed from the two
     /// markers only its tools could have supplied.
     private static var expectedAnswer: String {
         ScriptedToolFixture.answerPrefix
-            + ToolTurnScenario.markers.joined(separator: ScriptedToolFixture.answerSeparator)
+            + ToolAnswerScenario.markers.joined(separator: ScriptedToolFixture.answerSeparator)
     }
 
     @Test("both surfaces produce the same transcript, with no prose before the calls")
@@ -178,7 +178,7 @@ struct ScriptedToolTurnComparisonTests {
             """)
     }
 
-    @Test("the transcript of a two-call turn has the entry kinds a tool turn must have")
+    @Test("the transcript of a two-call answer has the entry kinds a tool-using answer must have")
     func transcriptCarriesToolCallsAndToolOutputs() async throws {
         let kinds = try await Self.streamRun().transcript.map(\.kind)
 
@@ -187,11 +187,11 @@ struct ScriptedToolTurnComparisonTests {
             "unexpected transcript shape: \(kinds.map(\.rawValue))")
     }
 
-    @Test("every completed tool status names a call the turn announced")
+    @Test("every completed tool status names a call the answer announced")
     func completedStatusIdsMatchCalledIds() async throws {
         let outcome = try await Self.streamRun()
 
-        #expect(outcome.calledIds.count == 2, "the scenario asks for two calls in one turn")
+        #expect(outcome.calledIds.count == 2, "the scenario asks for two calls in one answer")
         #expect(Set(outcome.completedIds) == Set(outcome.calledIds))
         #expect(outcome.completedIds.count == outcome.calledIds.count)
         #expect(outcome.failedIds.isEmpty)

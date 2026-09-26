@@ -7,20 +7,20 @@ import Testing
 
 /// Exercises the persistent-``LanguageModelSessionBackend``-per-session seam
 /// (see ``RoutedSessionActor``) purely against stubs: the same backend
-/// instance must serve every turn on a session (not a fresh one rebuilt per
+/// instance must serve every answer on a session (not a fresh one rebuilt per
 /// call), ``RoutedSession/fork(workingDirectory:)`` must seed the child's
 /// backend from a *copy* of the parent's accumulated call history via
-/// ``LanguageModelSessionBackend/makeFork()``, and a fork never waits for an
-/// in-flight turn on the parent: it seeds the child from the settled
+/// ``LanguageModelSessionBackend/makeFork()``, and a fork never waits for a
+/// running submission on the parent: it seeds the child from the settled
 /// transcript of the parent (task ^dpn2ytt).
 ///
 /// The companion gated integration suite
 /// (`Tests/FoundationModelsRouterIntegrationTests/LanguageModelSessionBackendTests.swift`)
 /// proves the same properties against a real `LanguageModelSession`, plus the
-/// harder KV-cache-reuse claim (`cachedTokenCount > 0` on a second turn) that
+/// harder KV-cache-reuse claim (`cachedTokenCount > 0` on a second answer) that
 /// only a real model can demonstrate. This suite needs no network and no GPU.
-@Suite("Multi-turn session state: same backend across turns, fork seeding, no fork/generate race")
-struct MultiTurnSessionTests {
+@Suite("Session state over many messages: same backend across answers, fork seeding, no fork/generate race")
+struct MultiMessageSessionTests {
     // MARK: - Fork-tracking stub backend
 
     /// Wraps a ``StubSessionBackend``, proxying every generation call to it
@@ -118,7 +118,7 @@ struct MultiTurnSessionTests {
         }
     }
 
-    // MARK: - Suspendable stub backend (a fork during a turn)
+    // MARK: - Suspendable stub backend (a fork during a submission)
 
     /// A synchronized event log a test polls without sleeping, recording the
     /// order generation and fork work actually ran in.
@@ -321,7 +321,7 @@ struct MultiTurnSessionTests {
 
     private static func makeTempDir() -> URL {
         let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MultiTurnSessionTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("MultiMessageSessionTests-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
@@ -343,7 +343,7 @@ struct MultiTurnSessionTests {
         )
     }
 
-    // MARK: - Same backend serves every turn
+    // MARK: - Same backend serves every answer
 
     @Test("the same backend instance serves two respond() calls on one session")
     @MainActor
@@ -356,8 +356,8 @@ struct MultiTurnSessionTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
-        _ = try await session.respond(to: "first turn")
-        _ = try await session.respond(to: "second turn")
+        _ = try await session.respond(to: "first message")
+        _ = try await session.respond(to: "second message")
 
         // A fresh backend per call would show callCount == 1 on two distinct
         // instances (or two containers manufactured); a persistent backend
@@ -365,7 +365,7 @@ struct MultiTurnSessionTests {
         // prompts in order.
         let stubBackend = try #require(container.lastBackend)
         #expect(stubBackend.callCount == 2)
-        #expect(stubBackend.receivedPrompts == ["first turn", "second turn"])
+        #expect(stubBackend.receivedPrompts == ["first message", "second message"])
     }
 
     // MARK: - Fork seeds the child from a copy of the parent's history
@@ -395,26 +395,26 @@ struct MultiTurnSessionTests {
         #expect(childBackend.receivedPrompts == ["one", "two"])
         #expect(childBackend.callCount == 0)
 
-        // It is a copy, not a live view: further parent turns do not
+        // It is a copy, not a live view: further parent answers do not
         // retroactively appear in the already-forked child's history, and the
-        // child's own further turns do not appear in the parent's.
+        // child's own further answers do not appear in the parent's.
         _ = try await parent.respond(to: "three")
-        _ = try await child.respond(to: "child turn")
+        _ = try await child.respond(to: "child message")
         #expect(parentBackend.receivedPrompts == ["one", "two", "three"])
-        #expect(childBackend.receivedPrompts == ["one", "two", "child turn"])
+        #expect(childBackend.receivedPrompts == ["one", "two", "child message"])
     }
 
     // MARK: - fork() does not wait for an in-flight respond()
 
-    @Test("fork() does not wait for an in-flight respond(): the fork completes while the turn is still suspended")
+    @Test("fork() does not wait for an in-flight respond(): the fork completes while the submission is still suspended")
     @MainActor
-    func forkDoesNotWaitForAnInFlightTurn() async throws {
+    func forkDoesNotWaitForARunningSubmission() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let log = EventLog()
         // Starts at 0: the in-flight respond() call suspends on this until the
-        // test explicitly signals it, holding the turn open indefinitely.
+        // test explicitly signals it, holding the submission open indefinitely.
         let releaseGate = AsyncSemaphore(value: 0)
         let container = SuspendableLLMContainer(log: log, releaseGate: releaseGate)
         let router = Self.makeRouter(container: container, cacheDir: dir)
@@ -425,29 +425,29 @@ struct MultiTurnSessionTests {
         // Start a respond() call; it suspends inside the backend body. The
         // pump of the session reaches the backend on a task of its own, so the
         // wait is bounded by the wall clock, never by a count of yields.
-        let respondTask = Task { try await session.respond(to: "turn") }
+        let respondTask = Task { try await session.respond(to: "message") }
         #expect(
             await BoundedWait.conditionReached("the respond call entering the backend") {
                 log.events.contains("respond-enter")
             })
 
         // A fork reads the settled transcript of the session, so it does not
-        // wait for the turn above (task ^dpn2ytt). It makes the child's
-        // backend while that turn is still suspended. The fork runs in a task
-        // of its own, so a fork that waited fails this test and does not hang
-        // the suite.
+        // wait for the submission above (task ^dpn2ytt). It makes the child's
+        // backend while that submission is still suspended. The fork runs in a
+        // task of its own, so a fork that waited fails this test and does not
+        // hang the suite.
         let forkTask = Task { try await session.fork(workingDirectory: nil) }
-        let forkedDuringTheTurn = await BoundedWait.conditionReached("the fork making the child's backend") {
+        let forkedDuringTheSubmission = await BoundedWait.conditionReached("the fork making the child's backend") {
             log.events.contains("makeFork")
         }
-        let eventsWhileTheTurnIsSuspended = log.events
+        let eventsWhileTheSubmissionIsSuspended = log.events
 
         releaseGate.signal()
         _ = try await respondTask.value
         let child = try await forkTask.value
 
-        #expect(forkedDuringTheTurn)
-        #expect(eventsWhileTheTurnIsSuspended == ["respond-enter", "makeFork"])
+        #expect(forkedDuringTheSubmission)
+        #expect(eventsWhileTheSubmissionIsSuspended == ["respond-enter", "makeFork"])
         #expect(child.parentId == session.id)
         #expect(log.events == ["respond-enter", "makeFork", "respond-exit"])
     }

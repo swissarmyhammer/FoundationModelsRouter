@@ -9,7 +9,7 @@ import Testing
 // target and the gated `IntegrationTests` package both drive it, and SwiftPM
 // cannot share source between two test targets.
 
-/// One boundary of a tool-using turn that ``PassBoundaryLog`` records.
+/// One boundary of a tool-using submission that ``PassBoundaryLog`` records.
 public enum PassBoundary: Sendable, Equatable {
     /// An executor call started: one generation pass began.
     case executorEntered
@@ -33,7 +33,7 @@ public struct PassBoundaryEvent: Sendable {
     public let instant: ContinuousClock.Instant
 }
 
-/// The boundaries of one turn, in the order they were crossed.
+/// The boundaries of one submission, in the order they were crossed.
 ///
 /// The order is the order of the appends under one lock, so a test reads the
 /// order from each event's position and two events at one clock instant never
@@ -262,7 +262,7 @@ public struct PassBoundaryProbeTool: FoundationModels.Tool {
 
 // MARK: - The shared checks
 
-/// The checks the unit suite and the gated suite both make on one turn's
+/// The checks the unit suite and the gated suite both make on one submission's
 /// ``PassBoundaryLog``.
 public enum PassBoundaryExpectations {
     /// Checks that the pass that emitted the first tool call ended before the
@@ -275,7 +275,7 @@ public enum PassBoundaryExpectations {
     /// started the body.
     ///
     /// - Parameters:
-    ///   - log: The turn's log.
+    ///   - log: The log of the submission.
     ///   - sourceLocation: Where a failure is reported.
     /// - Throws: When the log holds no pass end or no tool body.
     public static func expectFirstPassEndsBeforeItsToolBody(
@@ -285,7 +285,7 @@ public enum PassBoundaryExpectations {
             log.position(of: .executorExited, occurrence: 0), sourceLocation: sourceLocation)
         let bodyStart = try #require(
             log.position(of: .toolBodyStarted, occurrence: 0),
-            "the turn never ran the tool: \(log.boundaries)", sourceLocation: sourceLocation)
+            "the submission never ran the tool: \(log.boundaries)", sourceLocation: sourceLocation)
         let bodyEnd = try #require(
             log.position(of: .toolBodyEnded, occurrence: 0), sourceLocation: sourceLocation)
         #expect(
@@ -300,7 +300,7 @@ public enum PassBoundaryExpectations {
     /// ended, so the tool output reached it.
     ///
     /// - Parameters:
-    ///   - log: The turn's log.
+    ///   - log: The log of the submission.
     ///   - sourceLocation: Where a failure is reported.
     /// - Throws: When the log holds no second pass or no tool body end.
     public static func expectNextPassStartsAfterToolBody(
@@ -310,7 +310,7 @@ public enum PassBoundaryExpectations {
             log.position(of: .toolBodyEnded, occurrence: 0), sourceLocation: sourceLocation)
         let nextPassStart = try #require(
             log.position(of: .executorEntered, occurrence: 1),
-            "the turn made no pass after the tool: \(log.boundaries)", sourceLocation: sourceLocation)
+            "the submission made no pass after the tool: \(log.boundaries)", sourceLocation: sourceLocation)
         #expect(bodyEnd < nextPassStart, "\(log.boundaries)", sourceLocation: sourceLocation)
     }
 

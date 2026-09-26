@@ -24,7 +24,7 @@ fixture.
    mounted. The two redaction settings are applied here in code:
    `workingDirectory` is the synthetic `/recordings/station-archive`, and the
    `recordingRoot:` override stays unset. `RecordingScript.swift` states why.
-2. Drives the six scripted turns in `RecordingScript.swift`, each under a
+2. Sends the six scripted messages in `RecordingScript.swift`, each under a
    900-token reply ceiling.
 3. Flattens the recorded layout to the fixture's shape: the session directory
    sits directly under the output directory, as it sits under the fixture

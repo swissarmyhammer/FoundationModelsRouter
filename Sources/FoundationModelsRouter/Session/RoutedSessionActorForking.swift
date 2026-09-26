@@ -221,7 +221,7 @@ extension RoutedSessionActor {
             agentSpawn: nil,
             // Priming travels with the session for the same reason the
             // auto-compaction opt-in does: a fork continues its parent's
-            // conversation, so it primes its turns exactly like its parent.
+            // conversation, so it primes its answers exactly like its parent.
             discoveryPriming: discoveryPriming,
             // A compaction on a fork keeps what a compaction on its parent keeps: the
             // same host rule protects the same tool outputs.
@@ -260,7 +260,7 @@ extension RoutedSessionActor {
     /// transcript would then say a run ended before it reported the progress
     /// it in fact reported first. Routing through the outbox puts the
     /// teardown write in the same queue as everything else; it stages
-    /// nothing, because there is no next turn for a teardown terminal to
+    /// nothing, because there is no next submission for a teardown terminal to
     /// ride.
     ///
     /// **A run's ending is recorded once, even though three writers can
@@ -292,7 +292,7 @@ extension RoutedSessionActor {
     ///
     /// Journaling brings the session meta line with it: a close that
     /// journals anything first records the `.session` meta event (exactly as
-    /// every turn path does via `recordSessionMetaIfNeeded()`), so the
+    /// every answer path does via `recordSessionMetaIfNeeded()`), so the
     /// journal never opens with a bare `.toolOutput` line. A close with
     /// nothing swept journals nothing at all — a session that never
     /// generated and never backgrounded a run still writes no file, preserving
@@ -306,7 +306,7 @@ extension RoutedSessionActor {
 
         let terminalEvents = await mailbox.sweep()
         guard !terminalEvents.isEmpty else { return }
-        // A run can only be backgrounded from inside a turn, so by here the journal
+        // A run can only be backgrounded from inside an answer, so by here the journal
         // is normally attached already; attaching is idempotent, and doing it
         // unconditionally means this path never depends on that reasoning
         // holding for every future caller.

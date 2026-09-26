@@ -6,7 +6,7 @@ import Testing
 
 /// Exercises task `^zn8n9md`: a background run's own events reach the
 /// transcript when they happen, as real `.toolOutput` entries correlated to
-/// the run by its completion token, instead of only riding the next turn's
+/// the run by its completion token, instead of only riding the next answer's
 /// prompt as text.
 ///
 /// Everything runs against stubs — a plain ``StubSessionBackend`` and an
@@ -93,7 +93,7 @@ struct BackgroundRunTranscriptTests {
         let (session, dir) = try await Self.makeSession(recorder: recorder)
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        // One turn, so the session is live and its journal is attached — the
+        // One answer, so the session is live and its journal is attached — the
         // state a run can only be tracked from.
         _ = try await session.respond(to: "start the long job")
 
@@ -157,7 +157,7 @@ struct BackgroundRunTranscriptTests {
 
     // MARK: - The model still receives the outcome
 
-    @Test("a journaled completion still rides the next turn's prompt as a preamble line and a .prompt segment")
+    @Test("a journaled completion still rides the next answer's prompt as a preamble line and a .prompt segment")
     @MainActor
     func journaledCompletionStillReachesTheModel() async throws {
         let recorder = InMemoryRecorder()
@@ -193,7 +193,7 @@ struct BackgroundRunTranscriptTests {
         let terminal = Self.event(kind: .completed, detail: "exit 0, 2481 lines")
         await session.outbox.post(event: terminal)
 
-        // The next turn drains the event and rides it onto its own `.prompt`
+        // The next answer drains the event and rides it onto its own `.prompt`
         // entry, so the recording now holds the same terminal twice.
         _ = try await session.respond(to: "what happened?")
 
@@ -212,17 +212,17 @@ struct BackgroundRunTranscriptTests {
             events.filter { !$0.operationEvents.isEmpty }.map(\.kind) == [.toolOutput, .prompt])
     }
 
-    // MARK: - The pre-first-turn boundary
+    // MARK: - The pre-first-answer boundary
 
-    @Test("an event posted before the session's first turn is journaled by the turn it rides, not at post time")
+    @Test("an event posted before the session's first answer is journaled by the answer it rides, not at post time")
     @MainActor
-    func eventPostedBeforeTheFirstTurnIsJournaledByTheTurnItRides() async throws {
+    func eventPostedBeforeTheFirstAnswerIsJournaledByTheAnswerItRides() async throws {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder)
         defer { try? FileManager.default.removeItem(at: dir) }
 
         // The restore path posts manufactured `.lost` terminals onto a fresh
-        // outbox before the session has ever run a turn (see
+        // outbox before the session has ever run an answer (see
         // `TranscriptTree.lostRunTerminalEvents(in:)`). A session that never
         // generates must still write no file at all, so nothing is journaled
         // here.

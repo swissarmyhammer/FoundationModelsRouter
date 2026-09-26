@@ -76,7 +76,7 @@ final class GenerationPassObserver: Sendable {
     /// Records that the submission of the call waits behind another item.
     ///
     /// The caller is `RoutedSessionActor.run(_:on:reportingTo:onStart:)` (in
-    /// `RoutedSessionActorTurnExecution.swift`), which
+    /// `RoutedSessionActorAnswerExecution.swift`), which
     /// ``RoutedSessionActor/runCancellableModelCall(composedPrompt:submittingTo:_:)``
     /// uses for each model call. It gives this method to
     /// ``GenerationQueue/submit(isolation:onQueued:_:)`` as `onQueued`, so the
@@ -88,7 +88,7 @@ final class GenerationPassObserver: Sendable {
     /// Records that the worker of the queue started the submission now.
     ///
     /// The caller is `RoutedSessionActor.run(_:on:reportingTo:onStart:)` (in
-    /// `RoutedSessionActorTurnExecution.swift`). It calls this method first in
+    /// `RoutedSessionActorAnswerExecution.swift`). It calls this method first in
     /// the body of the item that it gives to
     /// ``GenerationQueue/submit(isolation:onQueued:_:)``, so the call runs on
     /// the task of the worker when the submission starts.

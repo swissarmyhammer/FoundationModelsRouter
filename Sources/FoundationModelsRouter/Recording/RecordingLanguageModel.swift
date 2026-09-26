@@ -16,9 +16,9 @@ private let recordingLanguageModelLogger = makeModuleLogger(category: "Recording
 ///
 /// Generation passes through to the wrapped model's own executor over the
 /// outer channel. On every call the handle diffs the request transcript
-/// against the last-seen transcript and records what is new. The turn-final
-/// response is not visible at the executor boundary. Call ``sync(_:usage:)``
-/// with `session.transcript` at turn end to record it.
+/// against the last-seen transcript and records what is new. The final
+/// response of a submission is not visible at the executor boundary. Call ``sync(_:usage:)``
+/// with `session.transcript` at the end of each submission to record it.
 struct RecordingLanguageModel: LanguageModel, Sendable {
     /// This handle's per-call mutable state and identity.
     let state: RecordingLanguageModelState
@@ -38,13 +38,13 @@ struct RecordingLanguageModel: LanguageModel, Sendable {
     }
 
     /// Diffs `transcript` against the last-seen transcript and records what
-    /// is new. Call it with `session.transcript` at turn end to record the
-    /// turn-final response. The call is idempotent.
+    /// is new. Call it with `session.transcript` at the end of a submission to record the
+    /// final response of that submission. The call is idempotent.
     ///
     /// - Parameters:
     ///   - transcript: The transcript to sync against the last-seen one.
-    ///   - usage: This turn's `(input, output)` token usage, stamped onto the
-    ///     diff's turn-final `.response` event, or `nil` to leave it unset.
+    ///   - usage: The `(input, output)` token usage of this submission, stamped onto the
+    ///     final `.response` event of the diff, or `nil` to leave it unset.
     func sync(_ transcript: Transcript, usage: (input: Int, output: Int)? = nil) async {
         await state.sync(transcript, usage: usage)
     }
@@ -228,8 +228,8 @@ actor RecordingLanguageModelState {
     ///
     /// - Parameters:
     ///   - transcript: The transcript to sync against the last-seen one.
-    ///   - usage: This turn's `(input, output)` token usage, stamped onto the
-    ///     diff's turn-final `.response` event, or `nil`.
+    ///   - usage: The `(input, output)` token usage of this submission, stamped onto the
+    ///     final `.response` event of the diff, or `nil`.
     func sync(_ transcript: Transcript, usage: (input: Int, output: Int)? = nil) async {
         await diffAndRecordUnderLock(transcript, usage: usage)
     }
@@ -263,7 +263,7 @@ actor RecordingLanguageModelState {
     ///
     /// - Parameters:
     ///   - transcript: The transcript to diff against ``lastSeen``.
-    ///   - usage: This turn's `(input, output)` token usage, or `nil`.
+    ///   - usage: The `(input, output)` token usage of this submission, or `nil`.
     private func diffAndRecordUnderLock(_ transcript: Transcript, usage: (input: Int, output: Int)? = nil) async {
         await enterLockAndRecordMeta(transcript)
         await diffAndRecord(current: transcript, usage: usage)
@@ -285,7 +285,7 @@ actor RecordingLanguageModelState {
     ///
     /// - Parameters:
     ///   - current: The transcript's current state.
-    ///   - usage: This turn's `(input, output)` token usage, or `nil`.
+    ///   - usage: The `(input, output)` token usage of this submission, or `nil`.
     private func diffAndRecord(current: Transcript, usage: (input: Int, output: Int)? = nil) async {
         let baseline = TranscriptDiffer.Baseline(transcript: lastSeen)
         let divergence = TranscriptDiffer.divergence(from: baseline, in: current)

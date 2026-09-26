@@ -19,7 +19,7 @@ enum TranscriptLineDecoding {
     /// Decodes every line of the `transcript.jsonl` at `fileURL`.
     ///
     /// The FINAL line is allowed to be torn: ``JSONLRecorder``'s durability
-    /// policy syncs at turn close, so a crash mid-append tears at most the
+    /// policy syncs at submission close, so a crash mid-append tears at most the
     /// file's last line, and that torn tail is the expected crash artifact.
     /// A final line that fails to decode is therefore dropped, with a warning
     /// naming the file and the line's byte offset. A line that fails to

@@ -208,7 +208,7 @@ struct ToolSharedProfileTests {
 
     @Test("a summarize tool's call flows through the recorded generation chokepoint")
     @MainActor
-    func summarizeToolCallRecordsATurn() async throws {
+    func summarizeToolCallRecordsAnAnswer() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 

@@ -103,7 +103,7 @@ enum BoundedWait {
     /// The one bounded observation every wait in these tests is built from: spin
     /// for the condition, then report rather than wait on something that is
     /// never going to happen. Nothing here is specific to a semaphore, a task,
-    /// or a turn, so each of those observes through this.
+    /// or an answer, so each of those observes through this.
     ///
     /// - Parameters:
     ///   - label: What should have happened, named in the recorded issue.

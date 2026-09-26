@@ -1,10 +1,10 @@
 /// A durable destination a session's `SessionOutbox` records every posted
 /// ``OperationEvent`` into, at the moment it is posted.
 ///
-/// The outbox stages events for a *future* turn — that is what it is for — so
+/// The outbox stages events for a *future* submission — that is what it is for — so
 /// on its own it can only tell the model, and the transcript, about a
 /// long-running run once some later prompt drains it. A background run whose
-/// work finishes minutes after its turn ended would therefore leave no trace
+/// work finishes minutes after its answer ended would therefore leave no trace
 /// of finishing until a person happened to say something else. This protocol
 /// is the second, immediate destination that closes that hole: the outbox
 /// still stages the event for the next prompt, and it also hands the event
@@ -35,10 +35,10 @@ protocol OperationEventJournal: AnyObject, Sendable {
 ///
 /// The delivery-only counterpart of ``OperationEventJournal``, and installed
 /// at the same attach point (``RoutedSessionActor/attachOutboxJournalIfNeeded()``,
-/// at the top of every turn): where the journal *records* an event in the
+/// at the top of every answer): where the journal *records* an event in the
 /// transcript, this observer only *delivers* the record live, as
 /// ``SessionEvent/toolInvocation(_:)`` or ``SessionEvent/toolCallReport(_:)``
-/// — neither is ever staged or recorded, so the post-turn diff stays the one
+/// — neither is ever staged or recorded, so the post-submission diff stays the one
 /// recording authority.
 ///
 /// Class-bound because `SessionOutbox` holds its observer *weakly*, for the

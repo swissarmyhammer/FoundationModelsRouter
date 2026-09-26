@@ -9,8 +9,8 @@ import Testing
 ///
 /// A per-model generation queue holds one place for one executor call. That is
 /// safe only when the call is not open while the tool body runs: a tool that
-/// waits for a child turn on the same model would otherwise wait for a place
-/// its own turn holds. ``PassBoundaryProbeModel`` brackets each executor call
+/// waits for a child answer on the same model would otherwise wait for a place
+/// its own submission holds. ``PassBoundaryProbeModel`` brackets each executor call
 /// of ``ScriptedToolCallingModel`` with two events, and ``PassBoundaryProbeTool``
 /// brackets its body, which holds for ``toolHold``, with two more. The gated
 /// twin over `MLXLanguageModel` is `ExecutorPassBoundaryIntegrationTests`.
@@ -25,13 +25,13 @@ struct ExecutorPassBoundaryTests {
     /// this long.
     private static let slowConsumerPause = Duration.milliseconds(300)
 
-    /// How many executor calls the turn makes: the pass that emits the tool
+    /// How many executor calls the submission makes: the pass that emits the tool
     /// call, and the pass that answers after the tool output.
     private static let expectedPassCount = 2
 
     /// One round with one call of the probe tool, with narration before the
     /// call, so the tool pass sends two events into the channel.
-    private static let script = ScriptedTurnScript(
+    private static let script = ScriptedAnswerScript(
         rounds: [
             [
                 ScriptedToolCall(
@@ -47,7 +47,7 @@ struct ExecutorPassBoundaryTests {
     /// - Returns: A fresh session.
     private static func makeSession(recordingInto log: PassBoundaryLog) -> LanguageModelSession {
         let model = PassBoundaryProbeModel(
-            wrapping: ScriptedToolCallingModel(script: script, log: ScriptedTurnLog()), log: log)
+            wrapping: ScriptedToolCallingModel(script: script, log: ScriptedAnswerLog()), log: log)
         return LanguageModelSession(
             model: model, tools: [PassBoundaryProbeTool(log: log, holdDuration: toolHold)])
     }

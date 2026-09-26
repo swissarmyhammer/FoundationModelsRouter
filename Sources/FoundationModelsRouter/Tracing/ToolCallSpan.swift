@@ -11,8 +11,8 @@ import Tracing
 /// can drift from the other two.
 ///
 /// The span nests in whatever span is current when the call runs, which is the
-/// turn's own span whenever the model invokes the tool from inside the turn's
-/// task. ``TokenCappingTool`` opens no span: it is a pass-through layer over one
+/// span of the submission whenever the model invokes the tool from inside the
+/// task of the submission. ``TokenCappingTool`` opens no span: it is a pass-through layer over one
 /// of the three, and a span there would count a capped call twice.
 ///
 /// ``RouterTracing/AttributeKey/toolOutcome`` is not written here. Only the

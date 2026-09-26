@@ -5,7 +5,7 @@ import Tracing
 /// A decorator that binds a per-call ``ToolContext`` around a non-`String`-output tool and returns its output unchanged. It synthesizes no events.
 struct ContextBindingTool<
     Arguments: ConvertibleFromGeneratedContent, Output: PromptRepresentable
->: Tool, TurnBoundaryTool, ToolDecorator {
+>: Tool, SubmissionBoundaryTool, ToolDecorator {
     /// The wrapped tool. Internal so wiring tests can assert the decorator chain.
     let wrapped: any Tool<Arguments, Output>
 
@@ -56,7 +56,7 @@ struct ContextBindingTool<
     /// Runs one call under a fresh ``ToolContext`` binding, posts an open and a close ``ToolInvocationRecord`` around it, and rethrows the wrapped tool's error unmodified.
     ///
     /// The call runs inside one ``RouterTracing/SpanName/tool`` span, nested in
-    /// the turn's span, reporting ``RouterTracing/ToolRunKind/foreground``.
+    /// the span of its submission, reporting ``RouterTracing/ToolRunKind/foreground``.
     ///
     /// - Throws: The wrapped tool's error, unmodified. `withSpan` records it on the span and raises it again.
     func call(arguments: Arguments) async throws -> Output {

@@ -931,7 +931,7 @@ struct PooledResidencyTests {
     /// which needs no owning profile, and never through `makeSession`.
     ///
     /// A second resolve of the same definition follows the drop. It gives the
-    /// whole eviction path — the pool lock, the loader, the spy — its turn
+    /// whole eviction path — the pool lock, the loader, the spy — time to run
     /// before the counts are read, and its own reuse of the three resident
     /// containers is a second witness that nothing was evicted.
     @Test("a handle a tool holds keeps its pooled model resident after the profile object is dropped")

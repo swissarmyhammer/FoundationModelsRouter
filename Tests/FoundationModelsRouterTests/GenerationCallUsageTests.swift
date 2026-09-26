@@ -4,13 +4,13 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// A turn that calls tools makes more than one generation call, and the
-/// turn-level ``TokenUsage`` sums them. These tests prove that the session
+/// A submission that calls tools makes more than one generation call, and the
+/// submission-level ``TokenUsage`` sums them. These tests prove that the session
 /// reports each call alone, live as ``SessionEvent/generationCall(_:)`` and
 /// in the run journal as a ``TranscriptEvent/Kind/generationCall`` event,
 /// over a real `LanguageModelSession` whose executor reports one usage for
-/// each call, and that the turn-level stamp stays the sum.
-@Suite("Generation call usage: one record for each generation call of a turn")
+/// each call, and that the submission-level stamp stays the sum.
+@Suite("Generation call usage: one record for each generation call of a submission")
 struct GenerationCallUsageTests {
     /// The prefix of each temp directory this suite makes.
     private static let tempDirPrefix = "GenerationCallUsageTests"
@@ -19,7 +19,7 @@ struct GenerationCallUsageTests {
     /// fraction of a round number.
     private static let contextTokens = 1_000
 
-    /// The scripted usage of the three calls of one tool-loop turn: two
+    /// The scripted usage of the three calls of one tool-loop submission: two
     /// calls that ask for the tool, then the call that answers.
     private static let threeCalls = [
         MeteredGenerationCall(tokensIn: 100, tokensOut: 30),
@@ -40,7 +40,7 @@ struct GenerationCallUsageTests {
     /// A ceiling a caller names, smaller than the context of the session.
     private static let requestedCeiling = 256
 
-    /// The prompt every turn is driven with. The metered model never reads it.
+    /// The prompt every answer is driven with. The metered model never reads it.
     private static let prompt = "look things up, then tell me what you found"
 
     /// Builds a fixture over ``threeCalls`` at ``contextTokens``.
@@ -55,12 +55,12 @@ struct GenerationCallUsageTests {
             calls: calls, context: contextTokens, tempDirPrefix: tempDirPrefix)
     }
 
-    /// Drives one turn on `session` and collects every event of it.
+    /// Drives one answer on `session` and collects every event of it.
     ///
     /// - Parameters:
-    ///   - session: The session to drive the turn on.
+    ///   - session: The session to drive the answer on.
     ///   - maxTokens: The ceiling the caller names, or `nil`.
-    /// - Returns: The turn's events, in arrival order.
+    /// - Returns: The events of the answer, in arrival order.
     /// - Throws: Whatever the stream throws.
     private static func collectEvents(on session: RoutedSession, maxTokens: Int?) async throws -> [SessionEvent] {
         var events: [SessionEvent] = []
@@ -72,7 +72,7 @@ struct GenerationCallUsageTests {
 
     /// The ``SessionEvent/generationCall(_:)`` payloads of `events`, in order.
     ///
-    /// - Parameter events: The turn's events.
+    /// - Parameter events: The events of the answer.
     /// - Returns: The usage of each reported call.
     private static func generationCalls(in events: [SessionEvent]) -> [GenerationCallUsage] {
         events.compactMap { event in
@@ -89,9 +89,9 @@ struct GenerationCallUsageTests {
         Double(contextTokens) / Double(Self.contextTokens)
     }
 
-    // MARK: - The records of one turn
+    // MARK: - The records of one submission
 
-    @Test("a turn of three generation calls reports three records with the counts of each call")
+    @Test("a submission of three generation calls reports three records with the counts of each call")
     func threeCallsGiveThreeRecords() async throws {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -112,7 +112,7 @@ struct GenerationCallUsageTests {
     @Test(
         "the usage of the submission and of the answer stays the sum of the calls, and the fill is the context of the last call"
     )
-    func turnStampStaysTheSum() async throws {
+    func submissionStampStaysTheSum() async throws {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
@@ -141,8 +141,8 @@ struct GenerationCallUsageTests {
         let stamped = try #require(journal.last { $0.kind == .response })
         #expect(stamped.tokensIn == Self.summedTokensIn)
         #expect(stamped.tokensOut == Self.summedTokensOut)
-        #expect(stamped.turnUsageStamp?.input == Self.summedTokensIn)
-        #expect(stamped.turnUsageStamp?.output == Self.summedTokensOut)
+        #expect(stamped.submissionUsageStamp?.input == Self.summedTokensIn)
+        #expect(stamped.submissionUsageStamp?.output == Self.summedTokensOut)
     }
 
     @Test("a tool-asking call is reported before its tool opens, and the last call before the submission ends")

@@ -36,11 +36,63 @@ comments:
   id: 01m3cyxmhec7kz764gew9cbc1x
   text: 'Rewritten on 2026-09-25 by the design task ^jdp02p (not deleted). The old plan (rename "turn" to "request", keep `turnLock` as `requestLock`) is dropped: the user rejected a rename and a lock. The new tasks remove the turn itself: ^a0ze9af, ^1psqdm9, ^dpn2ytt, ^3qx0mpt, ^cbhpdjy, ^x7cxsg3, ^5d0qx1b. This task now removes what they leave: `TurnBoundaryTool` becomes `SubmissionBoundaryTool.submissionWillBegin()`, `awaitingUser(_:)` goes, and the other "turn" names and docs go. The consumer updates moved to ^d7d777f. The event choice that the ACP card ^tz867gz asked for is in `generation-queue.md` section 5.6: `submissionStarted`/`submissionEnded` for each SDK call (`submissionEnded` replaces `turnEnded` one for one), and `answered`/`answerFailed` for each final answer. The full old name to new name list is in section 5.6, and ^d7d777f posts it on ^tz867gz.'
   timestamp: 2026-09-25T18:58:22.382444+00:00
+- actor: claude-code
+  id: 01m3e9xj3yaeh75qxrcbwf2pax
+  text: |-
+    2026-09-26, research (implement step).
+
+    Facts found:
+    - The repo has about 3800 uses of "turn" (not "return") in about 240 files: Sources 438, Tests 2985, IntegrationTests 726, Examples 66, Tools 13, Markdown about 110.
+    - `RouterTracing.TurnEntryPoint` and the tracing span names are already gone (^x7cxsg3). The only tracing "turn" left is doc text.
+    - `notifyTurnBoundaryTools()` runs one time for each ANSWER now (in `runFirstSubmission`, the pump), not for each submission. A continuation submission (compaction yield, ceiling stop, overflow retry, rejected tool call, repetition stop) gets no call.
+    - `awaitingUser(_:)` is `try await body()` only. `HumanWaitGateTests` and `TurnCancellationTests` call it.
+    - `modelTurnCount` (test helper `ScriptedTurnLog`) counts executor calls, that is generation passes.
+    - The string "TurnTruncation" is only a fake stage name in two test files and a stage of `compaction_plan.md`.
+
+    Decisions (names, all mine; the user does not choose API names):
+    - Public: `TurnBoundaryTool` -> `SubmissionBoundaryTool`, `turnWillBegin()` -> `submissionWillBegin()`. The session calls it one time before EACH submission: before the first submission of an answer at the same place as now (in the pump, after the take, before the model call), and before each continuation submission (after `takeMessagesJoiningTheAnswer()`, before the model call). Reason: the name says "submission", and the design says "one time before each submission of the pump".
+    - `awaitingUser(_:)` is removed from `RoutedSession` and the actor. Its tests are restated as a tool body that waits for a person with no wrapper, so the test count does not drop.
+    - Internal: `notifyTurnBoundaryTools` -> `notifySubmissionBoundaryTools`; `turnEventSink` -> `answerEventSink`; `currentTurnEventSink` -> `currentAnswerEventSink`; `runTurnWork` -> `runAnswerWork`; `runTurnAttempt` -> `runSubmission`; `recordFailedTurn` -> `recordFailedSubmission`; `finishTurn` -> `finishSubmission`; `finishTurnAndRequeueIfUnattached` -> `finishSubmissionAndRequeueIfUnattached`; `turnEntries` -> `submissionEntries`; `turnUsageStamp` -> `submissionUsageStamp`; `newestTurnRenderSize` -> `newestSubmissionRenderSize`; `nextTurnStandIn` -> `nextSubmissionStandIn`; `turnTextEntryIds` -> `submissionTextEntryIds`; `turnBindingToolStamp`/`turnBindingOpStamp` -> `submissionBindingToolStamp`/`submissionBindingOpStamp`.
+    - Files: `Hosting/TurnBoundaryTool.swift` -> `Hosting/SubmissionBoundaryTool.swift`; `Session/RoutedSessionActorTurnExecution.swift` -> `Session/RoutedSessionActorAnswerExecution.swift`.
+    - Test names: `ScriptedTurnScript` -> `ScriptedAnswerScript`, `ScriptedTurnLog` -> `ScriptedAnswerLog`, `modelTurnCount` -> `generationPassCount`, `recordModelTurn` -> `recordGenerationPass`, `ToolTurnScenario` -> `ToolAnswerScenario`, `ToolTurnRunOutcome` -> `ToolAnswerRunOutcome`, `followUpTurnCompletes`/`followUpTurnEvents` -> `followUpAnswerCompletes`/`followUpAnswerEvents`. Suites and files: `TurnCancellationTests` -> `AnswerCancellationTests`, `TurnTracingTests` -> `SubmissionTracingTests`, `GenerationQueueTurnTests` -> `GenerationQueueSubmissionTests`, `TurnFinishReasonTests` -> `SubmissionFinishReasonTests`, `TurnTokenCeilingTests` -> `AnswerTokenCeilingTests`, `TurnBoundaryToolTests` -> `SubmissionBoundaryToolTests`, `MultiTurnSessionTests` -> `MultiMessageSessionTests`, `ScriptedTurnSizingTests` -> `ScriptedAnswerSizingTests`, `ScriptedToolTurnComparisonTests` -> `ScriptedToolAnswerComparisonTests`, `ToolCallFailureTurnTests` -> `ToolCallFailureAnswerTests`, `RealToolTurnComparisonTests` -> `RealToolAnswerComparisonTests`, `Qwen38ToolTurnIntegrationTests` -> `Qwen38ToolAnswerIntegrationTests`.
+    - Word rule: one SDK call is a "submission"; the chain of submissions for caller messages (or mail) up to the final reply is an "answer"; a caller prompt or mail is a "message". In tests, one `respond(to:)` call is one answer.
+    - Kept: `recoveriesPerTurn` (stored JSON key, `CodingKeys`, and the fixtures), `modelTurnsThinkingOffByTemplateFlag` (English verb "turns off"), the English verb "turn"/"turned" (for example "turns reasoning off"), and a chat-template "assistant turn" of the model.
+  timestamp: 2026-09-26T07:29:48.670892+00:00
+- actor: claude-code
+  id: 01m3ebhe2kzd4zpt972r8cccwe
+  text: |-
+    2026-09-26, implementation landed (not committed).
+
+    What changed:
+    - New public protocol `SubmissionBoundaryTool.submissionWillBegin()` (file `Hosting/SubmissionBoundaryTool.swift`, replaces `TurnBoundaryTool`). The session calls it before the first submission of each answer (in the pump, as before, also for a submission that only mail started) AND before each continuation submission (in `runSubmission(... isContinuation: true ...)`, after `takeMessagesJoiningTheAnswer()`, before the model call). The continuation call is new behavior: `SubmissionBoundaryToolTests.aContinuationSubmissionFiresItsOwnCall` failed before it (log was `[hook, respond, respond]`).
+    - `awaitingUser(_:)` removed from `RoutedSession`, the actor and the DocC topic list. `HumanWaitGateTests` (9 tests) and one `AnswerCancellationTests` test are restated as a tool body that waits for a person with no wrapper; no test was deleted.
+    - Every internal and test name in the decision comment is renamed; 16 files renamed with `git mv` (2 in Sources, 12 in Tests, 2 in IntegrationTests). Docs, Examples, Tools, `generation-queue.md` (new paragraph "The last 'turn' names", the 5.6 "untracked" sentence fixed: tracked since f87c7e8), `compaction_plan.md` and the memory notes are updated.
+    - Public-surface tests: `SubmissionBoundaryToolPublicSurfaceTests` (unit target, plain import, a conformer mounted on a session gets one call for each submission through the decorator chain) and `SubmissionBoundaryToolConformancePublicSurfaceTests` (public-surface target, the `as? any SubmissionBoundaryTool` cast).
+
+    Kept uses of "turn", with the reason:
+    - `recoveriesPerTurn`: the stored JSON key (`RepetitionDetection.CodingKeys`, its doc, `StoredRecoveriesKeyTests`, the two `session.json` fixtures). Old recordings need it.
+    - `"keepRecentTurns": 4` in the fixture `Tests/FoundationModelsRouterRealModelSupport/Fixtures/CompactionRecording/01M0BGQR2DV5T0P9XQ1PS05K8V/session.json`: stored fixture data; no code reads it.
+    - `modelTurnsThinkingOffByTemplateFlag` and the English verb in doc text ("turn it off", "turns reasoning off", "turned off", "turns X into Y", "turn out to be"): not a Router work unit.
+    - "a first assistant turn" (Sources `DiscoveryPriming.swift`, IntegrationTests `PropagationProbeIntegrationTests.swift` two places): the chat-template role of the model.
+    - History only: `generation-queue.md` old-name columns of its rename tables, user quotes, task titles, section 2 and the "Since ^3qx0mpt" history; `UPSTREAM_ASKS.md` "then named `TurnOutcome.contextFill`"; `compaction_plan.md` "in place of the old word 'turn'"; memory notes that say an old name was removed.
+
+    Process notes for the next agent:
+    - In this session the `files` tool `edit file` with `replace_all` replaced only one match for each call, and it echoes the whole file. Three sub-agents (E2, E1c) applied exact phrase-for-phrase replacements with a perl script from the shell to fit their context; the scripts and specs are in the session scratchpad. The result was checked by the full build and test run.
+    - Some test prompt literals changed ("turn N" -> "message N" in `AutoCompactionFixtures`, "text N" in `driveAnswers`); the assertions that read them changed with them.
+    - Consumers (^d7d777f) must rename `TurnBoundaryTool`/`turnWillBegin()` and drop `awaitingUser`.
+  timestamp: 2026-09-26T07:58:08.467472+00:00
+- actor: claude-code
+  id: 01m3ebhkt5z7fckvvekgnjmjwm
+  text: |-
+    ### implement — changed
+    - evidence: 238 files changed (git diff --stat), 16 renamed with git mv, 2 new test files (Tests/FoundationModelsRouterTests/SubmissionBoundaryToolPublicSurfaceTests.swift, Tests/FoundationModelsRouterPublicSurfaceTests/SubmissionBoundaryToolConformancePublicSurfaceTests.swift). `swift build --build-tests`: complete. `swift test`: 1466 + 15 + 19 = 1500 passed (was 1496; +4 new), 2 known issues as before, 0 failed. `swift test --skip-build --filter SubmissionBoundaryTool`: 6 + 1 passed. `AnswerCancellationTests|HumanWaitGateTests|NestedGenerationReentryTests|SubmissionBoundaryToolTests` 3 extra runs: 54 tests passed each time. IntegrationTests `swift build --build-tests`: complete. Only warning: the known mlx "missing creator" line. Criterion 1 command prints nothing; criterion 2 shows 13 verb / chat-template hits only.
+    - next: review
+  timestamp: 2026-09-26T07:58:14.341945+00:00
 depends_on:
 - 01M3CYMT8QK7YBJ904JX7CXSG3
 - 01M3CYN72XRWG9THXXE5D0QX1B
-position_column: todo
-position_ordinal: '8e80'
+position_column: doing
+position_ordinal: '80'
 title: 'Remove the last "turn" names: the boundary tool, awaitingUser, the tracing names and the docs'
 ---
 ## Why
@@ -56,8 +108,8 @@ Rewritten on 2026-09-25 by the design task ^jdp02p. The earlier plan of this tas
 
 ## Acceptance Criteria
 
-- [ ] `rg -n "\b[A-Za-z]*[Tt]urn[A-Z]" Sources` shows only recording keys kept for old files and `modelTurnsThinkingOffByTemplateFlag`.
-- [ ] `rg -n -i "\bturns?\b" Sources` shows no doc comment that names a request-level "turn".
-- [ ] A test: `submissionWillBegin()` is called one time before each submission of the pump, also for a submission that mail started.
-- [ ] Public-surface tests for `SubmissionBoundaryTool`.
-- [ ] Full `swift test` green, 0 new warnings; IntegrationTests build clean. #generation-queue #naming
+- [x] `rg -n "\b[A-Za-z]*[Tt]urn[A-Z]" Sources` shows only recording keys kept for old files and `modelTurnsThinkingOffByTemplateFlag`. <!-- the command prints nothing: `recoveriesPerTurn` and `modelTurnsThinkingOffByTemplateFlag` are still in Sources but the pattern does not match them -->
+- [x] `rg -n -i "\bturns?\b" Sources` shows no doc comment that names a request-level "turn". <!-- 13 hits left: the English verb "turn off" / "turns X into Y", and one chat-template "assistant turn" (DiscoveryPriming.swift) -->
+- [x] A test: `submissionWillBegin()` is called one time before each submission of the pump, also for a submission that mail started. <!-- SubmissionBoundaryToolTests.aSubmissionThatMailStartedFiresACall, .aContinuationSubmissionFiresItsOwnCall (red before the change), .twoAnswersFireTwoCalls, .oneRespondFiresOneCallBeforeTheModelCall -->
+- [x] Public-surface tests for `SubmissionBoundaryTool`. <!-- SubmissionBoundaryToolPublicSurfaceTests.aMountedPublicConformerGetsOneCallForEachSubmission (unit target, plain import, through the decorator chain); SubmissionBoundaryToolConformancePublicSurfaceTests.theCastFindsOnlyAConformer (FoundationModelsRouterPublicSurfaceTests target) -->
+- [x] Full `swift test` green, 0 new warnings; IntegrationTests build clean. <!-- swift test: 1466 + 15 + 19 = 1500 passed (was 1496), 2 known issues as before; IntegrationTests `swift build --build-tests`: complete; only warning: the known mlx "missing creator" line --> #generation-queue #naming

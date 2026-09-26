@@ -6,13 +6,13 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises task 9drp1rz: draining a session's `SessionOutbox` at the
-/// start of a turn, composing the drained events into the model-visible
+/// start of a submission, composing the drained events into the model-visible
 /// prompt as a plain-text preamble, and persisting the same events as typed
 /// ``OperationEventSegment``s on the recorded `.prompt` entry.
 ///
 /// Everything runs against stubs — a plain ``StubSessionBackend`` and an
 /// ``InMemoryRecorder`` — so the suite needs no network and no GPU.
-@Suite("Pending event injection: outbox drain -> turn preamble + persisted custom segment")
+@Suite("Pending event injection: outbox drain -> submission preamble + persisted custom segment")
 struct PendingEventInjectionTests {
     // MARK: - Stub container
 
@@ -213,21 +213,21 @@ struct PendingEventInjectionTests {
         #expect(OperationEventSegment.renderedLine(for: decoded) == expectedLine)
     }
 
-    @Test("a drained event does not reappear on the next turn")
+    @Test("a drained event does not reappear on the next answer")
     @MainActor
-    func drainedEventDoesNotReappearNextTurn() async throws {
+    func drainedEventDoesNotReappearNextAnswer() async throws {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder)
         defer { try? FileManager.default.removeItem(at: dir) }
 
         await session.outbox.post(event: Self.event(correlationID: "1", kind: .completed, detail: "first"))
-        _ = try await session.respond(to: "first turn")
-        _ = try await session.respond(to: "second turn")
+        _ = try await session.respond(to: "first message")
+        _ = try await session.respond(to: "second message")
 
         let events = await recorder.events
         let promptEvents = events.filter { $0.kind == .prompt }
         #expect(promptEvents.count == 2)
-        #expect(promptEvents[1].text == "second turn")
+        #expect(promptEvents[1].text == "second message")
         #expect(promptEvents[1].entry?.segments?.count == 1)
     }
 
@@ -268,13 +268,13 @@ struct PendingEventInjectionTests {
         #expect(segmentEvents == expectedEvents)
     }
 
-    // MARK: - A turn whose backend throws before appending anything survives
+    // MARK: - A submission whose backend throws before appending anything survives
 
     /// Mirrors `MLXFoundationModelsSessionBackend.respond(to:following:maxTokens:)`'s
     /// `.ebnf` path (`Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift`):
     /// it calls `grammar.validateForXGrammar()` and throws *before ever
     /// touching its live session* — so `transcriptEntries()` never gains
-    /// anything for the turn at all, on every single call. Every generation
+    /// anything for the submission at all, on every single call. Every generation
     /// entry point on this backend always throws immediately, without
     /// appending anything to ``entries``.
     ///
@@ -314,7 +314,7 @@ struct PendingEventInjectionTests {
         }
     }
 
-    @Test("a pending event survives a turn whose backend throws before appending anything to its transcript")
+    @Test("a pending event survives a submission whose backend throws before appending anything to its transcript")
     @MainActor
     func pendingEventSurvivesThrowBeforeAnyTranscriptAppend() async throws {
         let recorder = InMemoryRecorder()
@@ -338,7 +338,7 @@ struct PendingEventInjectionTests {
             _ = try await session.respond(to: "hi")
         }
 
-        // The turn produced zero new transcript entries (the backend threw
+        // The submission produced zero new transcript entries (the backend threw
         // before appending anything at all) — nowhere to attach the drained
         // event's segment, and the model never actually received the
         // composed preamble either. The drained event must be re-posted back
@@ -349,7 +349,7 @@ struct PendingEventInjectionTests {
 
     // MARK: - A .prompt partial with no entry payload cannot be augmented
 
-    @Test("a .prompt partial carrying no entry payload reports the events unattached, so the turn re-queues them instead of dropping them")
+    @Test("a .prompt partial carrying no entry payload reports the events unattached, so the submission re-queues them instead of dropping them")
     func promptPartialWithoutEntryReportsUnattached() {
         let posted = Self.event(correlationID: "1", kind: .completed, detail: "first")
         // The differ always populates `entry` today, so this shape is built by
@@ -363,7 +363,7 @@ struct PendingEventInjectionTests {
 
         // Unattached AND untouched: the events are neither embedded in the
         // recorded partial nor claimed attached, so the chokepoint's
-        // attach-or-requeue rule (`finishTurnAndRequeueIfUnattached`) re-posts
+        // attach-or-requeue rule (`finishSubmissionAndRequeueIfUnattached`) re-posts
         // them onto the outbox — the path
         // `pendingEventSurvivesThrowBeforeAnyTranscriptAppend` proves end to
         // end.

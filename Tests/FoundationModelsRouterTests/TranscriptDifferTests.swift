@@ -142,8 +142,8 @@ struct TranscriptDifferTests {
         #expect(result[0].entry != nil)
     }
 
-    @Test("a tool-using turn emits toolCalls, then toolOutput, then response, in order")
-    func toolUsingTurn() {
+    @Test("a tool-using submission emits toolCalls, then toolOutput, then response, in order")
+    func toolUsingSubmission() {
         let prompt = Self.promptEntry()
         let toolCalls = Self.toolCallsEntry()
         let toolOutput = Self.toolOutputEntry()
@@ -292,7 +292,7 @@ struct TranscriptDifferTests {
         // The baseline's boundary is the one `.instructions` entry, at index
         // 0, carrying a tool surface with several properties per schema. The
         // later readings are taken with the heap moved between them, the way
-        // a session turn moves it, so an encoding whose key order follows a
+        // a session submission moves it, so an encoding whose key order follows a
         // storage address cannot agree with the capture by chance.
         let transcript = Transcript(entries: [FixedToolSurface.instructionsEntry(id: "instr-1", text: "be terse")])
         let baseline = TranscriptDiffer.Baseline(transcript: transcript)

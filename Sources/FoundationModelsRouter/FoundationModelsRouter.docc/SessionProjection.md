@@ -7,21 +7,21 @@ that mirror (task ^tf6dwx1).
 
 ``SessionProjection`` is the `@MainActor` and `@Observable` mirror of one
 ``RoutedSession``. A view holds one projection, gives it the events of each
-turn, and reads the projection to draw the conversation. The projection does
+answer, and reads the projection to draw the conversation. The projection does
 the bookkeeping that a view would otherwise do by hand: it collects the text
 fragments into rows, it tracks each tool call through its lifecycle, and it
-adds up the cost of every turn.
+adds up the cost of every answer.
 
 Hold one projection for the whole life of the session. The projection observes
-many turns, and ``SessionProjection/tokensIn`` and
+many answers, and ``SessionProjection/tokensIn`` and
 ``SessionProjection/tokensOut`` accumulate for that whole life.
 
 ## Bind a projection to a view
 
-Give the projection the event stream of a turn with
+Give the projection the event stream of an answer with
 ``SessionProjection/apply(eventsFrom:)``. The call drains the stream and
 updates the projection on the main actor as each event arrives, so the view
-redraws itself while the turn runs:
+redraws itself while the answer runs:
 
 ```swift
 struct ConversationView: View {
@@ -55,7 +55,7 @@ struct ConversationView: View {
 A driver that does its own work between events calls ``SessionProjection/apply(_:)``
 with one ``SessionEvent`` instead, and reads the projection after each call.
 
-For a complete offline example that drives a scripted turn and then asserts
+For a complete offline example that drives a scripted answer and then asserts
 what the projection holds, read `ProjectionExampleTests` in the test target.
 That file imports the router without `@testable`, so it proves the pattern
 above needs the public surface alone.
@@ -71,7 +71,7 @@ array straight into a `List` or a `ForEach`. A row carries one of four kinds:
 - `reasoning` — the reasoning trace of the model.
 - `toolCall` — one ``ToolCallEntry``, with its live
   ``ToolCallStatus``.
-- `compaction` — the result of a compaction that ran in the middle of a turn.
+- `compaction` — the result of a compaction that ran in the middle of an answer.
 
 A row starts with a provisional id. When the session records the matching
 transcript entry, the row adopts the durable id of that entry and reports it as
@@ -84,11 +84,11 @@ call, so a view can show the call and its reason as one disclosure group.
 
 ## What the projection reports
 
-``SessionProjection/phase`` says where the session is in the turn under
+``SessionProjection/phase`` says where the session is in the answer under
 observation. Bind it to show or hide a progress indicator, and to say what the
 session is doing:
 
-- ``SessionProjection/Phase/idle`` — no turn is under observation.
+- ``SessionProjection/Phase/idle`` — no answer is under observation.
 - ``SessionProjection/Phase/generating`` — the model is producing text.
 - ``SessionProjection/Phase/runningTool`` — a tool call is in flight.
 - ``SessionProjection/Phase/compacting`` — a compaction is running.
@@ -103,13 +103,13 @@ named yet, in delivery order. Show them as the messages in flight.
 
 ``SessionProjection/tokensIn``, ``SessionProjection/tokensOut``, and
 ``SessionProjection/contextFill`` carry the metered cost. Show them in a status
-bar. The two token counts accumulate across every turn the projection
+bar. The two token counts accumulate across every answer the projection
 observed. The context fill is the most recent measurement, not a total.
 
 ## Start from a stored conversation
 
 A restored session already has a transcript. Call
-``SessionProjection/seed(from:)`` with that transcript before the first turn.
+``SessionProjection/seed(from:)`` with that transcript before the first answer.
 The call replaces the rows with the rows of the stored conversation and resets
 every other value. A tool call that the stored transcript never answered is
 marked ``ToolCallStatus/failed``, so a view never shows a spinner that cannot

@@ -17,10 +17,10 @@ struct RepetitionStopRestoreTests {
     /// The suite's temp-directory prefix.
     private static let tempDirPrefix = "RepetitionStopRestoreTests"
 
-    /// The prompt of the turn that the live session stops.
+    /// The prompt of the answer that the live session stops.
     private static let prompt = "fix the failing test"
 
-    /// The prompt of the first turn of the restored session.
+    /// The prompt of the first answer of the restored session.
     private static let nextPrompt = "now tell me what you changed"
 
     /// The window of the watch: small, so a short script fills it.
@@ -89,7 +89,7 @@ struct RepetitionStopRestoreTests {
         return (router, profile)
     }
 
-    /// A live session that ran one turn with one repetition stop, and the
+    /// A live session that ran one answer with one repetition stop, and the
     /// router that recorded it.
     private struct StoppedSession {
         /// The router that recorded the session.
@@ -103,12 +103,12 @@ struct RepetitionStopRestoreTests {
         let session: RoutedSessionActor
     }
 
-    /// Makes a live session and runs one turn that the watch stops once.
+    /// Makes a live session and runs one answer that the watch stops once.
     ///
     /// - Parameter directories: The cache and recording directories.
     /// - Returns: The live session and its router.
-    /// - Throws: Whatever the turn throws, or a failed requirement.
-    private static func runStoppedTurn(directories: TestDirectories) async throws -> StoppedSession {
+    /// - Throws: Whatever the answer throws, or a failed requirement.
+    private static func runStoppedAnswer(directories: TestDirectories) async throws -> StoppedSession {
         let (router, profile) = try await resolveProfile(
             routerId: .generate(), script: liveScript, log: RenderProbeLog(), directories: directories)
         let session = try #require(
@@ -234,7 +234,7 @@ struct RepetitionStopRestoreTests {
     func fullHistoryViewKeepsTheFullEntry() async throws {
         let directories = TestDirectories(prefix: Self.tempDirPrefix)
         defer { directories.remove() }
-        let stopped = try await Self.runStoppedTurn(directories: directories)
+        let stopped = try await Self.runStoppedAnswer(directories: directories)
 
         let fullHistory = try Self.reconstructed(stopped, directories: directories, view: .fullHistory)
         let reasoning = try #require(Self.reasoningText(of: fullHistory).first)
@@ -247,7 +247,7 @@ struct RepetitionStopRestoreTests {
     func journalWithNoCutRestoresAsBefore() async throws {
         let directories = TestDirectories(prefix: Self.tempDirPrefix)
         defer { directories.remove() }
-        let stopped = try await Self.runStoppedTurn(directories: directories)
+        let stopped = try await Self.runStoppedAnswer(directories: directories)
         let fullHistory = try Self.reconstructed(stopped, directories: directories, view: .fullHistory)
 
         try Self.rewriteJournal(of: stopped, directories: directories) { event in
@@ -262,7 +262,7 @@ struct RepetitionStopRestoreTests {
     func undecodableCutRefusesTheRestore() async throws {
         let directories = TestDirectories(prefix: Self.tempDirPrefix)
         defer { directories.remove() }
-        let stopped = try await Self.runStoppedTurn(directories: directories)
+        let stopped = try await Self.runStoppedAnswer(directories: directories)
         var cutSeq: Int?
 
         try Self.rewriteJournal(of: stopped, directories: directories) { event in
@@ -292,7 +292,7 @@ struct RepetitionStopRestoreTests {
     func restoredSessionKeepsTheRepeatedPartOutOfItsNextCall() async throws {
         let directories = TestDirectories(prefix: Self.tempDirPrefix)
         defer { directories.remove() }
-        let stopped = try await Self.runStoppedTurn(directories: directories)
+        let stopped = try await Self.runStoppedAnswer(directories: directories)
 
         let restoredLog = RenderProbeLog()
         let (restored, profile) = try await Self.restore(stopped, log: restoredLog, directories: directories)
@@ -314,7 +314,7 @@ struct RepetitionStopRestoreTests {
     func restoredRenderEqualsTheLiveRender() async throws {
         let directories = TestDirectories(prefix: Self.tempDirPrefix)
         defer { directories.remove() }
-        let stopped = try await Self.runStoppedTurn(directories: directories)
+        let stopped = try await Self.runStoppedAnswer(directories: directories)
         let liveRender = await stopped.session.backend.transcriptEntries()
 
         let (restored, profile) = try await Self.restore(stopped, log: RenderProbeLog(), directories: directories)
@@ -329,7 +329,7 @@ struct RepetitionStopRestoreTests {
     func restoredCounterEqualsTheLiveCounter() async throws {
         let directories = TestDirectories(prefix: Self.tempDirPrefix)
         defer { directories.remove() }
-        let stopped = try await Self.runStoppedTurn(directories: directories)
+        let stopped = try await Self.runStoppedAnswer(directories: directories)
         let liveUsage = await stopped.session.usageState
 
         let (restored, profile) = try await Self.restore(stopped, log: RenderProbeLog(), directories: directories)
@@ -345,7 +345,7 @@ struct RepetitionStopRestoreTests {
     func restoredForkRenderEqualsTheLiveForkRender() async throws {
         let directories = TestDirectories(prefix: Self.tempDirPrefix)
         defer { directories.remove() }
-        let stopped = try await Self.runStoppedTurn(directories: directories)
+        let stopped = try await Self.runStoppedAnswer(directories: directories)
         let fork = try #require(try await stopped.session.fork(workingDirectory: nil) as? RoutedSessionActor)
         let liveForkRender = await fork.backend.transcriptEntries()
         #expect(Self.reasoningText(of: Transcript(entries: liveForkRender)) == [Self.keptReasoning])

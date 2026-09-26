@@ -159,7 +159,7 @@ struct ToolContextMountSinkPublicSurfaceTests {
     }
 
     /// What the background case observed at the moment its mounted call
-    /// returned, kept so the assertions can read it once the turn has ended.
+    /// returned, kept so the assertions can read it once the answer has ended.
     private actor ReturnSnapshot {
         /// The events the sink held when the mounted call handed back.
         private(set) var events: [OperationEvent] = []
@@ -212,7 +212,7 @@ struct ToolContextMountSinkPublicSurfaceTests {
     /// records that context's completion token.
     ///
     /// This is how a mount reaches a real context over the public surface: the
-    /// session mounts one of these, the scripted turn calls it, and its body
+    /// session mounts one of these, the scripted answer calls it, and its body
     /// then mounts whatever the test is about on the context it is handed.
     private struct MountingTool: Tool {
         /// The model-facing name a scripted call names to reach this tool.
@@ -240,13 +240,13 @@ struct ToolContextMountSinkPublicSurfaceTests {
 
     // MARK: - Harness
 
-    /// Drives one scripted turn that calls `host` exactly one time.
+    /// Drives one scripted answer that calls `host` exactly one time.
     ///
     /// - Parameter host: The tool the vended session mounts.
-    /// - Throws: Whatever session vending or the turn throws.
-    private static func driveTurn(calling host: MountingTool) async throws {
+    /// - Throws: Whatever session vending or the answer throws.
+    private static func driveAnswer(calling host: MountingTool) async throws {
         let fixture = try await ScriptedSessionFixture.make(
-            playing: ScriptedTurnScript(rounds: [
+            playing: ScriptedAnswerScript(rounds: [
                 [
                     ScriptedToolCall(
                         id: "call-mounting-tool",
@@ -299,7 +299,7 @@ struct ToolContextMountSinkPublicSurfaceTests {
                 arguments: AmbientToolArguments(value: Self.sinkMountedLabel))
         }
 
-        try await Self.driveTurn(calling: host)
+        try await Self.driveAnswer(calling: host)
 
         let events = await sink.events
         let tokens = await log.tokens
@@ -341,7 +341,7 @@ struct ToolContextMountSinkPublicSurfaceTests {
                 arguments: AmbientToolArguments(value: Self.mountingLabel))
         }
 
-        try await Self.driveTurn(calling: host)
+        try await Self.driveAnswer(calling: host)
 
         let events = await sink.events
         let tokens = await log.tokens
@@ -392,7 +392,7 @@ struct ToolContextMountSinkPublicSurfaceTests {
             _ = try await (firstRun, secondRun)
         }
 
-        try await Self.driveTurn(calling: host)
+        try await Self.driveAnswer(calling: host)
 
         let events = await sink.events
         let tokens = await log.tokens
@@ -430,7 +430,7 @@ struct ToolContextMountSinkPublicSurfaceTests {
             let tracked = await context.backgroundRuns()
             await snapshot.record(events: await sink.events, trackedRunCount: tracked.count)
 
-            // Let the run go, and stay in this turn until it has settled.
+            // Let the run go, and stay in this answer until it has settled.
             await handoff.arriveAndWait()
             for run in tracked {
                 _ = await context.wait(
@@ -439,7 +439,7 @@ struct ToolContextMountSinkPublicSurfaceTests {
             }
         }
 
-        try await Self.driveTurn(calling: host)
+        try await Self.driveAnswer(calling: host)
 
         let atReturn = await snapshot.events
         // The read above is proven live by the two facts it did see: the run

@@ -50,7 +50,7 @@ struct TranscriptReconstructionIntegrationTests {
     /// Builds a real ``RoutedSessionActor`` over a freshly loaded tiny model,
     /// recording at `.full` into a durable temp `recordingsDir` so its
     /// transcript can be reloaded through ``TranscriptTree/load(under:)``
-    /// after the turn completes.
+    /// after the answer completes.
     ///
     /// The profile comes from ``RealModelHarness/make(model:context:container:samplingMode:cacheDir:recordingsDir:routerId:)``
     /// and the session is assembled over its `.standard` handle. The hand-built
@@ -138,13 +138,13 @@ struct TranscriptReconstructionIntegrationTests {
     }
 
     /// Task dw0zx8k's core acceptance criterion, proved against a real
-    /// model: after one live turn recorded at `full`, the `Transcript`
+    /// model: after one live answer recorded at `full`, the `Transcript`
     /// ``TranscriptTree/effectiveTranscript(forSession:view:)`` rebuilds
     /// from disk has the same entry kinds and count — one-for-one, in order —
     /// as the live `LanguageModelSession`'s own `transcript` actually
     /// accumulated.
     @Test(
-        "reconstructed Transcript entry kinds and count match the live session.transcript after one live turn"
+        "reconstructed Transcript entry kinds and count match the live session.transcript after one live answer"
     )
     func reconstructedTranscriptMatchesLiveSessionTranscript() async throws {
         let harness = try await makeHarness()

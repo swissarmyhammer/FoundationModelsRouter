@@ -31,7 +31,7 @@ struct ElicitationRoutingTests {
     /// The temp-directory prefix the scripted fixtures of this suite use.
     private static let tempDirPrefix = "ElicitationRoutingTests"
 
-    /// The id of the one scripted call a scripted turn of this suite makes.
+    /// The id of the one scripted call a scripted answer of this suite makes.
     private static let scriptedCallID = "call-elicit"
 
     /// Watches one ``SessionEvent`` stream for
@@ -427,16 +427,16 @@ struct ElicitationRoutingTests {
 
     // MARK: - The pending elicitation reaches a host live (task ^59wvx80)
 
-    /// Builds a session over a scripted model whose one turn calls
+    /// Builds a session over a scripted model whose one answer calls
     /// ``MountFixtures/ElicitOnceTool`` and then answers with what the tool
-    /// returned. The tool runs inside the production backend's turn, so its
-    /// elicitation is raised the way a real tool raises one.
+    /// returned. The tool runs inside the production backend's submission, so
+    /// its elicitation is raised the way a real tool raises one.
     ///
     /// - Returns: The fixture. The caller removes its directory.
     /// - Throws: Whatever profile resolution throws.
     private static func makeElicitingFixture() async throws -> ScriptedSessionFixture {
         let tool = MountFixtures.ElicitOnceTool()
-        let script = ScriptedTurnScript(rounds: [
+        let script = ScriptedAnswerScript(rounds: [
             [
                 ScriptedToolCall(
                     id: scriptedCallID, toolName: tool.name,
@@ -448,7 +448,7 @@ struct ElicitationRoutingTests {
     }
 
     @Test(
-        "a tool that elicits inside a turn reaches streamSessionEvents() as elicitationRequested before respond() resumes it",
+        "a tool that elicits inside a submission reaches streamSessionEvents() as elicitationRequested before respond() resumes it",
         .timeLimit(.minutes(1))
     )
     @MainActor
@@ -457,17 +457,17 @@ struct ElicitationRoutingTests {
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let session = fixture.session
 
-        // Subscribed before the turn starts, so the subscription sees the
-        // request whenever the turn raises it. Each task is cancelled at exit
+        // Subscribed before the answer starts, so the subscription sees the
+        // request whenever the answer raises it. Each task is cancelled at exit
         // so a failed assertion above its await leaves nothing suspended.
         let watch = Self.ElicitationWatch()
         let draining = watch.drain(await session.streamSessionEvents())
         defer { draining.cancel() }
-        let turn = Task { try await session.respond(to: ScriptedToolFixture.prompt) }
-        defer { turn.cancel() }
+        let answer = Task { try await session.respond(to: ScriptedToolFixture.prompt) }
+        defer { answer.cancel() }
 
         // The request arrives while the tool is still suspended: nothing has
-        // answered it yet, and the turn cannot end until something does.
+        // answered it yet, and the answer cannot end until something does.
         let request = try await watch.waitForFirst()
         #expect(request.kind == .elicitation)
         let elicitationId = try #require(request.elicitation?.elicitationId)
@@ -476,7 +476,7 @@ struct ElicitationRoutingTests {
         // The id the event carries is the id the reply surface takes, and the
         // answer resumes the tool with it.
         #expect(await session.respond(elicitationId: elicitationId.description, response: .accept(content: nil)) == .delivered)
-        #expect(try await turn.value == ScriptedToolFixture.answer(fromToolOutputs: [Self.acceptedToolOutput]))
+        #expect(try await answer.value == ScriptedToolFixture.answer(fromToolOutputs: [Self.acceptedToolOutput]))
 
         await session.close()
         try await draining.value
@@ -484,11 +484,11 @@ struct ElicitationRoutingTests {
     }
 
     @Test(
-        "a tool that elicits inside a streamed turn reports elicitationRequested on that turn's stream and on streamSessionEvents(), once each",
+        "a tool that elicits inside a streamed answer reports elicitationRequested on that answer's stream and on streamSessionEvents(), once each",
         .timeLimit(.minutes(1))
     )
     @MainActor
-    func elicitationRequestedReachesTheTurnStream() async throws {
+    func elicitationRequestedReachesTheAnswerStream() async throws {
         let fixture = try await Self.makeElicitingFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let session = fixture.session
@@ -496,17 +496,17 @@ struct ElicitationRoutingTests {
         let sessionWatch = Self.ElicitationWatch()
         let sessionDraining = sessionWatch.drain(await session.streamSessionEvents())
         defer { sessionDraining.cancel() }
-        let turnWatch = Self.ElicitationWatch()
-        let turnDraining = turnWatch.drain(await session.streamEvents(to: ScriptedToolFixture.prompt))
-        defer { turnDraining.cancel() }
+        let answerWatch = Self.ElicitationWatch()
+        let answerDraining = answerWatch.drain(await session.streamEvents(to: ScriptedToolFixture.prompt))
+        defer { answerDraining.cancel() }
 
-        let request = try await turnWatch.waitForFirst()
+        let request = try await answerWatch.waitForFirst()
         let elicitationId = try #require(request.elicitation?.elicitationId)
         #expect(await session.mailbox.pendingElicitationIds() == [elicitationId])
 
         #expect(await session.respond(elicitationId: elicitationId.description, response: .accept(content: nil)) == .delivered)
-        try await turnDraining.value
-        #expect(turnWatch.requests == [request])
+        try await answerDraining.value
+        #expect(answerWatch.requests == [request])
         // The answer reached the tool, and the tool's output reached the model.
         #expect(fixture.log.deliveredToolOutputs == [Self.acceptedToolOutput])
 
@@ -516,18 +516,18 @@ struct ElicitationRoutingTests {
     }
 
     @Test(
-        "an elicitation raised between turns reaches streamSessionEvents()",
+        "an elicitation raised between submissions reaches streamSessionEvents()",
         .timeLimit(.minutes(1))
     )
     @MainActor
-    func elicitationRequestedBetweenTurnsReachesTheSessionStream() async throws {
+    func elicitationRequestedBetweenSubmissionsReachesTheSessionStream() async throws {
         let (session, dir) = try await Self.makeSession()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        // The session installs its journal on the outbox at its first turn. A
-        // real tool always runs inside or after a turn, so this test does the
-        // same before it posts from outside one.
-        _ = try await session.respond(to: "first turn")
+        // The session installs its journal on the outbox at its first
+        // submission. A real tool always runs inside or after a submission, so
+        // this test does the same before it posts from outside one.
+        _ = try await session.respond(to: "first message")
         let watch = Self.ElicitationWatch()
         let draining = watch.drain(await session.streamSessionEvents())
         defer { draining.cancel() }

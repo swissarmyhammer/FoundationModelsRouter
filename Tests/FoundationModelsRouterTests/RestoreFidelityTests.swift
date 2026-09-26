@@ -11,7 +11,7 @@ import Testing
 /// Three gaps close here, each against a real `Router` recording through a
 /// `JSONLRecorder` into a temp directory:
 ///
-/// 1. **Rich content through the full disk path.** A scripted tool turn —
+/// 1. **Rich content through the full disk path.** A scripted tool answer —
 ///    one multi-call round, a `.structure` tool-output segment, and a
 ///    `.reasoning` entry — runs through the production
 ///    ``MLXFoundationModelsSessionBackend``, is reconstructed from disk, and
@@ -23,13 +23,14 @@ import Testing
 ///    and the restored transcript must equal the live
 ///    post-second-compaction transcript — both through ``TranscriptTree`` and
 ///    through a fresh-process `restoreSessionTree(root:)`.
-/// 3. **Driven restored forks.** A restored fork answers a new turn with
+/// 3. **Driven restored forks.** A restored fork answers a new message with
 ///    content that exists only in an entry it inherited from its parent, so
 ///    semantic continuity is proven without the integration gate.
 ///
-/// The warm-up turns and the compaction-budget floor come from the shared compaction
-/// fixtures in `Helpers/CompactionFixtures.swift` — ``driveTurns(_:on:)``
-/// and ``summarizingCompactionBudget(for:)`` — and the recording root comes from
+/// The warm-up answers and the compaction-budget floor come from the shared
+/// compaction fixtures in `Helpers/CompactionFixtures.swift` —
+/// ``driveAnswers(_:on:)`` and ``summarizingCompactionBudget(for:)`` — and the
+/// recording root comes from
 /// ``RouterTestFixtures/routerDirectory(routerId:recordingsDir:)``, so the
 /// path rule and the compaction math live in exactly one place each.
 @Suite("Restore fidelity: rich content, multi-compaction, driven forks (task ^810gdjj)")
@@ -39,18 +40,18 @@ struct RestoreFidelityTests {
     /// The temp-directory prefix, so a leaked directory is attributable.
     private static let tempDirPrefix = "RestoreFidelityTests"
 
-    /// A long-ish canned response, repeated across every stub turn, so six
-    /// turns' worth of transcript carries a real byte-size estimate for the
+    /// A long-ish canned response, repeated across every stub answer, so six
+    /// answers' worth of transcript carries a real byte-size estimate for the
     /// compaction-budget derivation — the same shape
     /// `ForkAfterCompactionRestorationTests` uses.
     private static let cannedText = String(
         repeating: "The quick brown fox jumps over the lazy dog. ", count: 12)
 
-    /// How many warm-up turns each compaction follows, so the live context
+    /// How many warm-up answers each compaction follows, so the live context
     /// holds many copies of ``cannedText`` for the summary to replace.
-    private static let compactionWarmupTurnCount = 6
+    private static let compactionWarmupAnswerCount = 6
 
-    /// The step name the structured tool call in the rich-content turn
+    /// The step name the structured tool call in the rich-content answer
     /// names, distinct from ``ScriptedToolFixture/firstStepName`` so the
     /// two calls in the round stay distinguishable by content.
     private static let structuredStepName = "TWO"
@@ -115,9 +116,9 @@ struct RestoreFidelityTests {
 
     // MARK: - 1. Rich content through the full disk path
 
-    @Test("a scripted tool turn (multi-call, .structure output, .reasoning) restores from disk equal to the live transcript's canonical form, across all six entry kinds")
+    @Test("a scripted tool answer (multi-call, .structure output, .reasoning) restores from disk equal to the live transcript's canonical form, across all six entry kinds")
     @MainActor
-    func richToolTurnRestoresFromDiskEqualToLiveTranscript() async throws {
+    func richToolAnswerRestoresFromDiskEqualToLiveTranscript() async throws {
         let cacheDir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
         let recordingsDir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
         defer {
@@ -128,7 +129,7 @@ struct RestoreFidelityTests {
         // One round asking for two calls at once: a text-output marker tool
         // and a structured-output marker tool, then a `.reasoning` entry
         // before the final answer.
-        let script = ScriptedTurnScript(
+        let script = ScriptedAnswerScript(
             rounds: [
                 [
                     ScriptedToolCall(
@@ -146,7 +147,7 @@ struct RestoreFidelityTests {
             reasoning: "scripted reasoning before the final answer"
         )
         let container = ScriptedToolCallingContainer(
-            model: ScriptedToolCallingModel(script: script, log: ScriptedTurnLog()))
+            model: ScriptedToolCallingModel(script: script, log: ScriptedAnswerLog()))
         let router = RouterTestFixtures.makeRouter(
             cacheDir: cacheDir,
             recordingsDir: recordingsDir,
@@ -191,7 +192,7 @@ struct RestoreFidelityTests {
         // The payoff: the transcript reconstructed from disk equals the
         // live transcript's record-time canonical form, entry for entry —
         // the text tests' entry-array equality check, now over rich content.
-        // Raw live equality is unreachable for a tool turn: see
+        // Raw live equality is unreachable for a tool answer: see
         // ``canonicalized(_:)`` for the one live-only facet no persisted
         // form can keep — a live tool call's arguments GenerationID.
         let tree = try TranscriptTree.load(
@@ -228,28 +229,28 @@ struct RestoreFidelityTests {
         // live context, so the one summarizer call runs — the stub backend's
         // canned response is the scripted summary.
         let root = profile1.standard.makeSession()
-        try await driveTurns(Self.compactionWarmupTurnCount, on: root)
+        try await driveAnswers(Self.compactionWarmupAnswerCount, on: root)
         let firstCompactionBackend = try #require(registry.created.last)
         let firstResult = try await root.compact(
             budget: summarizingCompactionBudget(for: firstCompactionBackend.transcriptEntries()))
         #expect(firstResult.stagesApplied.contains("Summarization"))
 
-        // Second compaction: more turns on the already-compacted session, then compact
-        // again — the fixed checkpoint semantics (^h1008kb, ^6z1msg1) must
-        // hold across repeated live compactions, not just one.
-        try await driveTurns(Self.compactionWarmupTurnCount, on: root)
+        // Second compaction: more answers on the already-compacted session,
+        // then compact again — the fixed checkpoint semantics (^h1008kb,
+        // ^6z1msg1) must hold across repeated live compactions, not just one.
+        try await driveAnswers(Self.compactionWarmupAnswerCount, on: root)
         let secondCompactionBackend = try #require(registry.created.last)
         let secondResult = try await root.compact(
             budget: summarizingCompactionBudget(for: secondCompactionBackend.transcriptEntries()))
         #expect(secondResult.stagesApplied.contains("Summarization"))
 
-        // One post-compaction turn, so the restore must stitch the second
+        // One post-compaction answer, so the restore must stitch the second
         // checkpoint's live window together with entries recorded after it.
-        _ = try await root.respond(to: "turn after the second compaction")
+        _ = try await root.respond(to: "message after the second compaction")
 
         // The live post-second-compaction transcript: the swap clone the second
         // compaction installed is the last backend the registry saw, and the
-        // post-compaction turn appended into it in place.
+        // post-compaction answer appended into it in place.
         let liveBackend = try #require(registry.created.last)
         let live = liveBackend.transcriptEntries()
         #expect(liveBackend !== firstCompactionBackend)
@@ -281,7 +282,7 @@ struct RestoreFidelityTests {
 
     // MARK: - 3. Drive a restored fork whose reply depends on inherited entries
 
-    @Test("a restored fork's new turn answers with content that exists only in an entry inherited from its parent")
+    @Test("a restored fork's new answer holds content that exists only in an entry inherited from its parent")
     @MainActor
     func restoredForkAnswersFromInheritedParentEntries() async throws {
         let cacheDir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
@@ -291,10 +292,10 @@ struct RestoreFidelityTests {
             try? FileManager.default.removeItem(at: recordingsDir)
         }
 
-        // The parent's turn calls the marker tool once; the fixture's
+        // The parent's answer calls the marker tool once; the fixture's
         // scripted model composes every answer from the tool outputs the
         // transcript carries, never from a canned string.
-        let script = ScriptedTurnScript(
+        let script = ScriptedAnswerScript(
             rounds: [
                 [
                     ScriptedToolCall(
@@ -310,7 +311,7 @@ struct RestoreFidelityTests {
 
         let recorder = JSONLRecorder(directory: recordingsDir)
         let container1 = ScriptedToolCallingContainer(
-            model: ScriptedToolCallingModel(script: script, log: ScriptedTurnLog()))
+            model: ScriptedToolCallingModel(script: script, log: ScriptedAnswerLog()))
         let router1 = RouterTestFixtures.makeRouter(
             cacheDir: cacheDir,
             recordingsDir: recordingsDir,
@@ -336,10 +337,10 @@ struct RestoreFidelityTests {
 
         // A fresh process restores the tree. The restored fork's transcript
         // already carries the parent's one tool-calling round, so the
-        // scripted model's very next turn is the answering turn — composed
-        // from whatever `.toolOutput` entries the restored session was
-        // actually seeded with.
-        let log2 = ScriptedTurnLog()
+        // scripted model's very next generation pass is the answering pass —
+        // composed from whatever `.toolOutput` entries the restored session
+        // was actually seeded with.
+        let log2 = ScriptedAnswerLog()
         let container2 = ScriptedToolCallingContainer(
             model: ScriptedToolCallingModel(script: script, log: log2))
         let router2 = RouterTestFixtures.makeRouter(

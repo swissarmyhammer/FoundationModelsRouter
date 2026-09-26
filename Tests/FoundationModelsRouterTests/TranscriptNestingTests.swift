@@ -291,7 +291,7 @@ struct TranscriptNestingTests {
     @Test(
         "a session's first line is the session meta event, then prompt and response with provenance")
     @MainActor
-    func firstLineIsSessionMetaThenTurn() async throws {
+    func firstLineIsSessionMetaThenAnswer() async throws {
         let cacheDir = Self.makeTempDir()
         let recordingsDir = Self.makeTempDir()
         defer {
@@ -333,7 +333,7 @@ struct TranscriptNestingTests {
 
     @Test("a streaming session's first line is also the session meta event, then prompt and response")
     @MainActor
-    func streamResponseFirstLineIsSessionMetaThenTurn() async throws {
+    func streamResponseFirstLineIsSessionMetaThenAnswer() async throws {
         let cacheDir = Self.makeTempDir()
         let recordingsDir = Self.makeTempDir()
         defer {
@@ -348,8 +348,8 @@ struct TranscriptNestingTests {
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
-        // Mirrors firstLineIsSessionMetaThenTurn's root-session assertions but
-        // drives the turn through streamResponse(to:) instead of respond(to:):
+        // Mirrors firstLineIsSessionMetaThenAnswer's root-session assertions but
+        // drives the answer through streamResponse(to:) instead of respond(to:):
         // recordSessionMetaIfNeeded() applies to both generation entry points,
         // so the invariant must hold for streaming too.
         let root = profile.standard.makeSession()
@@ -366,7 +366,7 @@ struct TranscriptNestingTests {
     }
 
     @Test(
-        "an instructed session's first turn opens with an .instructions entry before .prompt/.response")
+        "an instructed session's first answer opens with an .instructions entry before .prompt/.response")
     @MainActor
     func instructedSessionRecordsLeadingInstructionsEntry() async throws {
         let cacheDir = Self.makeTempDir()
@@ -390,7 +390,7 @@ struct TranscriptNestingTests {
         // The chokepoint no longer hand-builds a `.prompt`/`.response` pair —
         // it persists whatever the SDK's real transcript actually accumulated.
         // Here that's the stub's synthesized `.instructions` entry (seeded from
-        // the session's instructions) plus this turn's `.prompt`/`.response`,
+        // the session's instructions) plus the `.prompt`/`.response` of this answer,
         // so the entry-derived sequence gains a case the old hand-built bracket
         // never recorded at all.
         let recorded = try events(in: root.recordingDirectory)
@@ -398,7 +398,7 @@ struct TranscriptNestingTests {
         #expect(recorded.allSatisfy { $0.entry != nil || $0.kind == .session })
     }
 
-    @Test("an instructed streaming session's first turn also opens with an .instructions entry before .prompt/.response")
+    @Test("an instructed streaming session's first answer also opens with an .instructions entry before .prompt/.response")
     @MainActor
     func streamResponseInstructedSessionRecordsLeadingInstructionsEntry() async throws {
         let cacheDir = Self.makeTempDir()
@@ -417,7 +417,7 @@ struct TranscriptNestingTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         // Mirrors instructedSessionRecordsLeadingInstructionsEntry but drives
-        // the turn through streamResponse(to:): the snapshot-diff persistence
+        // the answer through streamResponse(to:): the snapshot-diff persistence
         // and entry mapping in recordTranscriptDelta() apply equally to
         // streaming, so the SDK-generated leading `.instructions` entry must
         // be persisted in order there too.

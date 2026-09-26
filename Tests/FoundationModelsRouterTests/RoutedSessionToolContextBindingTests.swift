@@ -36,7 +36,7 @@ struct RoutedSessionToolContextBindingTests {
     ///
     /// `@unchecked Sendable` on the same terms as ``StubSessionBackend``:
     /// the owning session drives one backend method at a time, and tests
-    /// read captures only after the driving turn returned.
+    /// read captures only after the driving answer returned.
     private final class ContextProbingBackend: LanguageModelSessionBackend, @unchecked Sendable {
         private let inner = StubSessionBackend()
 
@@ -144,14 +144,14 @@ struct RoutedSessionToolContextBindingTests {
     ///
     /// `@unchecked Sendable` on different terms than
     /// ``ContextProbingBackend``: tests poll this backend's observation
-    /// flags *while* the driving turn is still in flight (that concurrent
+    /// flags *while* the driving answer is still in flight (that concurrent
     /// observation is the whole point), so every flag is a `Mutex`-guarded
     /// `Bool` (the ``ModelCallCancellationProbe`` precedent) and the only
     /// other stored property, `inner`, is an immutable reference to a
     /// ``StubSessionBackend``, which guards its own state. That guard is
     /// load-bearing here: the stream's producer task drives `inner` only
-    /// after it observed the cancellation, so it appends the turn's entries
-    /// while the cancelled turn's failed-turn recording reads
+    /// after it observed the cancellation, so it appends the entries of the
+    /// submission while the recording of the cancelled submission reads
     /// `inner.transcriptEntries()` on the actor (task ^9smkhk8).
     private final class CancellationObservingBackend: LanguageModelSessionBackend, @unchecked Sendable {
         private let inner = StubSessionBackend()
@@ -176,7 +176,7 @@ struct RoutedSessionToolContextBindingTests {
         private let observedStreamCancellationFlag = Mutex(false)
 
         /// Flips when `respond` begins polling, so a test can wait for the
-        /// model call to be in flight before cancelling the turn.
+        /// model call to be in flight before cancelling the answer.
         var respondStarted: Bool { respondStartedFlag.withLock { $0 } }
 
         /// Whether the ambient probe `respond` polled ever reported `true`.
@@ -184,7 +184,7 @@ struct RoutedSessionToolContextBindingTests {
 
         /// Flips when `streamResponse`'s production task begins polling, so
         /// a test can wait for the streaming model call to be in flight
-        /// before cancelling the turn.
+        /// before cancelling the answer.
         var streamStarted: Bool { streamStartedFlag.withLock { $0 } }
 
         /// Whether the ambient probe polled on the streaming path ever
@@ -214,9 +214,9 @@ struct RoutedSessionToolContextBindingTests {
         }
 
         func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
-            // Captured at call time — inside the turn's binding — then
-            // polled from the stream's own production task: the probe is a
-            // plain closure, so it stays honest across the task hop, and
+            // Captured at call time — inside the binding of the submission —
+            // then polled from the stream's own production task: the probe is
+            // a plain closure, so it stays honest across the task hop, and
             // the binding contract covers the streaming entry point exactly
             // as it covers `respond`.
             let context = ToolContext.current
@@ -345,8 +345,9 @@ struct RoutedSessionToolContextBindingTests {
 
         // The event posted through the ambient context from inside
         // respond() landed in this session's own outbox — the binding's
-        // sink is the session's SessionOutbox — stamped with the turn
-        // binding's host identity and its per-turn completionToken.
+        // sink is the session's SessionOutbox — stamped with the host
+        // identity of the submission binding and its completionToken for
+        // each submission.
         let pending = await session.outbox.pending()
         let posted = try #require(pending.events.first?.event)
         #expect(posted.kind == .progress)
@@ -370,7 +371,7 @@ struct RoutedSessionToolContextBindingTests {
         #expect(!capture.isCancelled)
 
         // The guided entry point's posted event landed in this session's
-        // own outbox with the turn binding's per-turn completionToken.
+        // own outbox with the completionToken of the submission binding.
         let pending = await session.outbox.pending()
         let posted = try #require(pending.events.first?.event)
         #expect(posted.kind == .progress)
@@ -391,9 +392,9 @@ struct RoutedSessionToolContextBindingTests {
         #expect(!capture.isCancelled)
     }
 
-    @Test("each turn mints a fresh completionToken into its binding — run scope, never session scope")
+    @Test("each submission mints a fresh completionToken into its binding — run scope, never session scope")
     @MainActor
-    func eachTurnMintsFreshCompletionToken() async throws {
+    func eachSubmissionMintsFreshCompletionToken() async throws {
         let (session, backend, dir) = try await Self.makeSession()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -405,31 +406,31 @@ struct RoutedSessionToolContextBindingTests {
         #expect(first.completionToken != second.completionToken)
     }
 
-    @Test("cancelling the turn flips the binding's isCancelled probe to true — it mirrors the model-call task, never a constant")
+    @Test("cancelling the answer flips the binding's isCancelled probe to true — it mirrors the model-call task, never a constant")
     @MainActor
-    func cancellingTheTurnFlipsTheBoundProbe() async throws {
+    func cancellingTheAnswerFlipsTheBoundProbe() async throws {
         let (session, backend, dir) = try await Self.makeCancellationObservingSession()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let turn = Task { try await session.respond(to: "poll the flag") }
+        let answerTask = Task { try await session.respond(to: "poll the flag") }
         for _ in 0..<600 {
             if backend.respondStarted { break }
             try await Task.sleep(nanoseconds: 10_000_000)
         }
         #expect(backend.respondStarted)
         await session.cancel()
-        _ = try? await turn.value
+        _ = try? await answerTask.value
 
         #expect(backend.observedCancellation)
     }
 
-    @Test("cancelling a streaming turn flips the bound probe observed on the streaming path too")
+    @Test("cancelling a streaming answer flips the bound probe observed on the streaming path too")
     @MainActor
-    func cancellingAStreamingTurnFlipsTheBoundProbe() async throws {
+    func cancellingAStreamingAnswerFlipsTheBoundProbe() async throws {
         let (session, backend, dir) = try await Self.makeCancellationObservingSession()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let turn = Task {
+        let answerTask = Task {
             for try await _ in await session.streamResponse(to: "poll the flag") {}
         }
         for _ in 0..<600 {
@@ -438,10 +439,11 @@ struct RoutedSessionToolContextBindingTests {
         }
         #expect(backend.streamStarted)
         await session.cancel()
-        _ = try? await turn.value
+        _ = try? await answerTask.value
 
         // The polling loop runs in the stream's own production task, which
-        // outlives the cancelled turn briefly — wait for its observation.
+        // outlives the cancelled submission briefly — wait for its
+        // observation.
         for _ in 0..<600 {
             if backend.observedStreamCancellation { break }
             try await Task.sleep(nanoseconds: 10_000_000)

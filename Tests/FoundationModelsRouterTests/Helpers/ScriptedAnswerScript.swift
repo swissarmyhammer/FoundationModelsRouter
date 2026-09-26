@@ -1,9 +1,9 @@
 import FoundationModelsRouterTestSupport
 import Synchronization
 
-/// The shared vocabulary of the scripted-tool-turn fixtures: the distinctive
+/// The shared vocabulary of the scripted tool-answer fixtures: the distinctive
 /// marker a mounted tool stamps into its output, the prefix the scripted model
-/// opens its final answer with, and the prompt every scripted turn is driven
+/// opens its final answer with, and the prompt every scripted answer is driven
 /// with.
 ///
 /// One source of truth so the tool that *produces* a marker and the assertion
@@ -12,16 +12,16 @@ import Synchronization
 enum ScriptedToolFixture {
     /// The distinctive token every marker output opens with — long enough that
     /// no model prior could produce it and no other fixture collides with it.
-    static let markerPrefix = ToolTurnScenario.markerPrefix
+    static let markerPrefix = ToolAnswerScenario.markerPrefix
 
     /// The text the scripted model opens its final answer with, before the
     /// marker outputs it read back out of the transcript.
     static let answerPrefix = "answer: "
 
     /// The text the scripted model answers with in place of tool outputs when
-    /// its turn produced none.
+    /// its answer produced none.
     ///
-    /// A turn that calls nothing still has to answer with an exact string a
+    /// An answer that calls nothing still has to answer with an exact string a
     /// test can compare against; without this the answer would end in the
     /// trailing space of ``answerPrefix``, which nothing in the SDK promises to
     /// preserve.
@@ -32,12 +32,12 @@ enum ScriptedToolFixture {
     /// expects without repeating the separator literal per assertion.
     static let answerSeparator = " "
 
-    /// The prompt every scripted turn is driven with. The scripted model
+    /// The prompt every scripted answer is driven with. The scripted model
     /// branches on its transcript alone and never reads the prompt, so one
-    /// wording serves every turn shape.
+    /// wording serves every answer shape.
     static let prompt = "call whatever tools you need, then tell me what you were told"
 
-    /// The step name a one-call scripted turn names — one source of truth, so
+    /// The step name a one-call scripted answer names — one source of truth, so
     /// the script's call argument and the assertion on the tool's recorded
     /// steps cannot drift apart.
     static let firstStepName = "ONE"
@@ -53,7 +53,7 @@ enum ScriptedToolFixture {
     /// The final answer the scripted model composes from what its transcript
     /// carries.
     ///
-    /// Composed from the outputs rather than from a canned string, so a turn
+    /// Composed from the outputs rather than from a canned string, so an answer
     /// whose tool outputs never reached generation cannot produce it.
     ///
     /// - Parameter toolOutputs: The tool output texts the answering generation
@@ -72,7 +72,7 @@ enum ScriptedToolFixture {
 
 /// How one scripted tool call's `value` argument is produced.
 enum ScriptedCallArgument: Sendable, Hashable {
-    /// A fixed argument, independent of anything the turn has produced so far.
+    /// A fixed argument, independent of anything the answer has produced so far.
     case literal(String)
 
     /// The text of the tool output at `index` in the transcript so far.
@@ -121,22 +121,23 @@ struct ScriptedToolCall: Sendable, Hashable {
     let argument: ScriptedCallArgument
 }
 
-/// The turn shape a ``ScriptedToolCallingModel`` plays out: one entry per model
-/// turn that requests tool calls, in order, and then the answering turn.
+/// The answer shape a ``ScriptedToolCallingModel`` plays out: one entry per
+/// generation pass that requests tool calls, in order, and then the answering
+/// generation pass.
 ///
 /// A round holding two calls is emitted as a single `.toolCalls` transcript
 /// entry carrying both — the shape a model produces when it asks for two
 /// independent calls at once. Once every round is spent the model answers with
 /// whatever tool outputs its transcript carries.
-struct ScriptedTurnScript: Sendable, Hashable {
-    /// The tool calls to request, one entry per tool-calling model turn. Empty
-    /// for a turn that answers without calling anything.
+struct ScriptedAnswerScript: Sendable, Hashable {
+    /// The tool calls to request, one entry per tool-calling generation pass.
+    /// Empty for an answer that answers without calling anything.
     let rounds: [[ScriptedToolCall]]
 
     /// Text the model emits into its `.response` entry before each round's tool
     /// calls, or `nil` (the default) for a round that emits calls and no prose.
     ///
-    /// This is what makes a scripted turn's snapshot sequence non-monotonic:
+    /// This is what makes a scripted answer's snapshot sequence non-monotonic:
     /// the SDK closes the narrated `.response` entry at the tool boundary and
     /// resumes into a new one, so the answer's first snapshot does not extend
     /// the narration — the shape defect D2 lives in (task ^w8dzvee).
@@ -148,15 +149,15 @@ struct ScriptedTurnScript: Sendable, Hashable {
     var narration: String? = nil
 
     /// Text the model emits as a `.reasoning` entry immediately before its
-    /// final answer, or `nil` (the default) for a turn with no reasoning.
+    /// final answer, or `nil` (the default) for an answer with no reasoning.
     ///
-    /// This is what puts a `.reasoning` entry into a scripted turn's
+    /// This is what puts a `.reasoning` entry into a scripted answer's
     /// transcript, so a restore-fidelity test can prove that entry kind
     /// survives the recorder -> disk -> reconstruction round trip.
     var reasoning: String? = nil
 }
 
-// MARK: - What a scripted turn was observed to do
+// MARK: - What a scripted answer was observed to do
 
 /// One tool call as the transcript carries it — the model's own view of what it
 /// asked for, rather than the fixture's view of what it meant to ask for.
@@ -183,35 +184,36 @@ struct ScriptedCallRecord: Sendable, Hashable {
     let argumentValue: String
 }
 
-/// What one scripted turn was observed to do, written by the scripted model as
-/// it generates and read by the test once the turn returned.
+/// What one scripted answer was observed to do, written by the scripted model
+/// as it generates and read by the test once the answer returned.
 ///
 /// A class hashed by identity, because it rides in the scripted executor's
 /// `Configuration`: the SDK builds and caches one executor per configuration
 /// value, so a fresh log per run both keys a fresh executor and hands the test
 /// the very object that executor writes into. No global registry, and no two
 /// runs sharing one counter.
-final class ScriptedTurnLog: Sendable, Hashable {
-    /// The observations a scripted turn accumulates.
+final class ScriptedAnswerLog: Sendable, Hashable {
+    /// The observations a scripted answer accumulates.
     private struct Observations {
         /// How many times the executor was asked to generate.
-        var modelTurnCount = 0
+        var generationPassCount = 0
 
-        /// The tool calls the answering turn found in its transcript.
+        /// The tool calls the answering generation pass found in its transcript.
         var requestedCalls: [ScriptedCallRecord] = []
 
-        /// The tool output texts the answering turn read out of its transcript.
+        /// The tool output texts the answering generation pass read out of its
+        /// transcript.
         var deliveredToolOutputs: [String] = []
     }
 
     /// The observations so far, behind a lock: the SDK generates on a task of
     /// its own while the test reads the log back on the task that drove the
-    /// turn.
+    /// answer.
     private let observations: Mutex<Observations> = Mutex(Observations())
 
-    /// How many times the scripted executor was asked to generate — the turn's
-    /// count of model turns.
-    var modelTurnCount: Int { observations.withLock { $0.modelTurnCount } }
+    /// How many times the scripted executor was asked to generate — the count
+    /// of generation passes of the answer.
+    var generationPassCount: Int { observations.withLock { $0.generationPassCount } }
 
     /// The tool calls the answering generation found in its transcript, in
     /// transcript order.
@@ -224,8 +226,8 @@ final class ScriptedTurnLog: Sendable, Hashable {
     var deliveredToolOutputs: [String] { observations.withLock { $0.deliveredToolOutputs } }
 
     /// Records that the executor was asked to generate once more.
-    func recordModelTurn() {
-        observations.withLock { $0.modelTurnCount += 1 }
+    func recordGenerationPass() {
+        observations.withLock { $0.generationPassCount += 1 }
     }
 
     /// Records what the answering generation was handed.
@@ -248,7 +250,7 @@ final class ScriptedTurnLog: Sendable, Hashable {
     ///   - lhs: One log.
     ///   - rhs: The other log.
     /// - Returns: `true` when both names are the same object.
-    static func == (lhs: ScriptedTurnLog, rhs: ScriptedTurnLog) -> Bool {
+    static func == (lhs: ScriptedAnswerLog, rhs: ScriptedAnswerLog) -> Bool {
         lhs === rhs
     }
 

@@ -40,15 +40,15 @@ struct TranscriptReconstructionTests {
     }
 
     /// A ``LanguageModelSessionBackend`` mirroring `StubSessionBackend`'s
-    /// prompt/response-pair-per-turn transcript shape (see that type's own
-    /// doc comment in `Helpers/StubSessionBackend.swift`), but self-registering
-    /// into a shared ``BackendRegistry`` at creation and at every
-    /// ``makeFork()`` — the hook this suite needs to look up a session's own
-    /// in-memory transcript by call order.
+    /// transcript shape of one prompt/response pair for each submission (see
+    /// that type's own doc comment in `Helpers/StubSessionBackend.swift`), but
+    /// self-registering into a shared ``BackendRegistry`` at creation and at
+    /// every ``makeFork()`` — the hook this suite needs to look up a session's
+    /// own in-memory transcript by call order.
     /// `@unchecked Sendable` is safe here for the same reason as
     /// ``BackendRegistry``: every mutation of `shouldThrow`,
     /// `throwsBeforeAppendingAnything`, `customSegment`, and `entries` comes
-    /// either from direct test-code assignment between turns or from
+    /// either from direct test-code assignment between answers or from
     /// `respond`/`streamResponse`/`recordResponse()` invoked through
     /// `RoutedSessionActor`'s chokepoint — and both paths are driven one call
     /// at a time by this suite's single awaited `@MainActor` test method,
@@ -63,12 +63,12 @@ struct TranscriptReconstructionTests {
         /// When `true`, every generation entry point throws immediately,
         /// *before* appending anything to ``entries`` at all — unlike
         /// ``shouldThrow``, which still records the `.prompt` first. This is
-        /// the shape a real SDK backend can produce when it rejects a turn
-        /// before ever durably appending to its own transcript (e.g. a
-        /// guardrail refusal) — the scenario that makes
+        /// the shape a real SDK backend can produce when it rejects a
+        /// submission before ever durably appending to its own transcript
+        /// (e.g. a guardrail refusal) — the scenario that makes
         /// `recordTranscriptDelta(grammar:since:)`'s diff find zero new
         /// entries and the router's synthetic bodyless close become the
-        /// *only* event a failed first turn ever produces.
+        /// *only* event a failed first submission ever produces.
         var throwsBeforeAppendingAnything: Bool = false
         /// A structured segment ``recordResponse()`` appends to the response
         /// entry instead of plain text, when set — the hook the structured
@@ -403,8 +403,8 @@ struct TranscriptReconstructionTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
-        _ = try await root.respond(to: "turn 1")
-        _ = try await root.respond(to: "turn 2")
+        _ = try await root.respond(to: "message 1")
+        _ = try await root.respond(to: "message 2")
 
         let tree = try TranscriptTree.load(
             under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
@@ -438,7 +438,7 @@ struct TranscriptReconstructionTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
-        _ = try await root.respond(to: "root-turn-1")
+        _ = try await root.respond(to: "root-message-1")
         let rootBackend = try #require(registry.created.first)
 
         let forkA = try await root.fork(workingDirectory: nil)
@@ -446,11 +446,11 @@ struct TranscriptReconstructionTests {
         let forkB = try await root.fork(workingDirectory: nil)
         let forkBBackend = try #require(registry.created.last)
 
-        _ = try await forkA.respond(to: "forkA-turn-1")
+        _ = try await forkA.respond(to: "forkA-message-1")
         let grandfork = try await forkA.fork(workingDirectory: nil)
         let grandforkBackend = try #require(registry.created.last)
-        _ = try await grandfork.respond(to: "grandfork-turn-1")
-        _ = try await forkB.respond(to: "forkB-turn-1")
+        _ = try await grandfork.respond(to: "grandfork-message-1")
+        _ = try await forkB.respond(to: "forkB-message-1")
 
         let tree = try TranscriptTree.load(
             under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
@@ -489,7 +489,7 @@ struct TranscriptReconstructionTests {
         let root = profile.standard.makeSession()
         let backend = try #require(registry.created.first)
         backend.noteSegment = NoteSegment(id: "n1", content: Note(body: "hello"))
-        _ = try await root.respond(to: "turn 1")
+        _ = try await root.respond(to: "message 1")
 
         let tree = try TranscriptTree.load(
             under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
@@ -568,14 +568,14 @@ struct TranscriptReconstructionTests {
         }
     }
 
-    @Test("a fabricated v1 turn (prompt then response, both entry-less, response shaped exactly like the router's synthetic close) throws on the prompt event, never silently skipping the response as if it were a failed-turn close")
-    func v1TurnWithResponseShapedLikeBodylessCloseThrowsOnThePromptFirst() throws {
+    @Test("a fabricated v1 submission (prompt then response, both entry-less, response shaped exactly like the router's synthetic close) throws on the prompt event, never silently skipping the response as if it were a failed-answer close")
+    func v1SubmissionWithResponseShapedLikeBodylessCloseThrowsOnThePromptFirst() throws {
         // This pins down the reasoning in `TranscriptEvent.isFailedAnswerClose`'s
         // doc comment: a genuine v1 `.response` event recorded with its body
         // stripped decodes with the exact same shape as the router's legacy
         // synthetic close (`entry == nil`, `text == nil`, `ms` set) — the two
         // are not distinguishable from that one event's fields alone. What
-        // makes this safe is that the turn's own `.prompt` event (also
+        // makes this safe is that the submission's own `.prompt` event (also
         // `entry == nil`, since it is a genuine v1 line) always precedes it
         // in `seq` order and is never `.response`-kind, so
         // `effectiveTranscript` throws on that earlier event first — the
@@ -637,7 +637,7 @@ struct TranscriptReconstructionTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
-        _ = try await root.respond(to: "turn 1")
+        _ = try await root.respond(to: "message 1")
 
         let tree = try TranscriptTree.load(
             under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
@@ -692,11 +692,11 @@ struct TranscriptReconstructionTests {
         }
     }
 
-    // MARK: - Failed-turn bodyless close is skipped, not an error
+    // MARK: - Failed-answer bodyless close is skipped, not an error
 
-    @Test("a recording with a failed-turn bodyless close reconstructs successfully, skipping the close without error")
+    @Test("a recording with a failed-answer bodyless close reconstructs successfully, skipping the close without error")
     @MainActor
-    func failedTurnBodylessCloseIsSkippedWithoutError() async throws {
+    func failedAnswerBodylessCloseIsSkippedWithoutError() async throws {
         let cacheDir = Self.makeTempDir()
         let recordingsDir = Self.makeTempDir()
         defer {
@@ -715,12 +715,12 @@ struct TranscriptReconstructionTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
-        _ = try await root.respond(to: "turn 1")
+        _ = try await root.respond(to: "message 1")
 
         let backend = try #require(registry.created.first)
         backend.shouldThrow = true
         await #expect(throws: (any Error).self) {
-            _ = try await root.respond(to: "turn 2 (fails)")
+            _ = try await root.respond(to: "message 2 (fails)")
         }
 
         let tree = try TranscriptTree.load(
@@ -728,8 +728,8 @@ struct TranscriptReconstructionTests {
         let rawEvents = try tree.events(forSession: root.id)
         let closeEvent = try #require(rawEvents.last)
         #expect(closeEvent.kind == .response)
-        // The close holds an entry with no segment: the turn answered with
-        // nothing. That shape is what reconstruction skips.
+        // The close holds an entry with no segment: the submission answered
+        // with nothing. That shape is what reconstruction skips.
         let closeEntry = try #require(closeEvent.entry)
         #expect(closeEntry.segments?.isEmpty == true)
         #expect(closeEvent.text == nil)
@@ -741,16 +741,16 @@ struct TranscriptReconstructionTests {
         #expect(kinds == [.prompt, .response, .prompt])
     }
 
-    @Test("a session whose very first turn fails before the backend appends anything at all reconstructs to an empty Transcript, not an error")
+    @Test("a session whose very first answer fails before the backend appends anything at all reconstructs to an empty Transcript, not an error")
     @MainActor
-    func firstTurnTotalFailureWithNoBackendEntriesReconstructsEmpty() async throws {
+    func firstAnswerTotalFailureWithNoBackendEntriesReconstructsEmpty() async throws {
         // The sharper edge case behind `TranscriptEvent.isFailedAnswerClose`'s doc
         // comment: unlike a v1 recording (whose bracketing code wrote its
         // `.prompt` event *unconditionally*, before calling into the
         // backend at all — see `RoutedSession.swift` git history at
         // 06f8d16 — a v2 recording only ever gets a `.prompt` event once
         // the SDK backend has actually appended one). A real backend that
-        // rejects a turn before appending anything (e.g. a guardrail
+        // rejects a submission before appending anything (e.g. a guardrail
         // refusal) leaves `recordTranscriptDelta` with zero new entries, so
         // the router's synthetic bodyless close becomes the *only* event
         // this session ever records. That shape can never arise from a
@@ -778,7 +778,7 @@ struct TranscriptReconstructionTests {
         let backend = try #require(registry.created.first)
         backend.throwsBeforeAppendingAnything = true
         await #expect(throws: (any Error).self) {
-            _ = try await root.respond(to: "turn 1 (rejected before anything is appended)")
+            _ = try await root.respond(to: "message 1 (rejected before anything is appended)")
         }
         // Sanity: the backend truly appended nothing for this failed call.
         #expect(backend.transcriptEntries().isEmpty)
@@ -811,8 +811,9 @@ struct TranscriptReconstructionTests {
         let routerId = ULID.generate()
         let sessionDir = try Self.makeSessionDir(
             dir.appendingPathComponent(sessionId.description, isDirectory: true))
-        // The marker is the shape the recorder writes after a diverged turn's
-        // entries: a router-only kind with a description and no entry.
+        // The marker is the shape the recorder writes after a diverged
+        // submission's entries: a router-only kind with a description and no
+        // entry.
         let marker = TranscriptEvent(
             routerId: routerId,
             sessionId: sessionId,
@@ -879,7 +880,7 @@ struct TranscriptReconstructionTests {
                 entryId: "recent-response-1", text: "recent response"),
             TranscriptFixtures.compactionCheckpointEvent(
                 seq: 5, sessionId: sessionId, routerId: routerId, entryId: "checkpoint-1",
-                summaryText: "summary of old turns",
+                summaryText: "summary of old answers",
                 content: CompactionSegment.Content(
                     liveWindowEntryIds: ["instr-1", "checkpoint-1", "recent-prompt-1", "recent-response-1"],
                     compactedEntryIds: ["old-prompt-1", "old-response-1"],
@@ -990,7 +991,7 @@ struct TranscriptReconstructionTests {
                 summaryText: "second compaction",
                 content: CompactionSegment.Content(
                     // The second compaction's live window compacts the *first*
-                    // checkpoint away too, along with the turn after it.
+                    // checkpoint away too, along with the answer after it.
                     liveWindowEntryIds: ["instr-1", "checkpoint-2"],
                     compactedEntryIds: ["checkpoint-1", "mid-prompt-1", "mid-response-1"],
                     tokensBefore: 900,
@@ -1030,8 +1031,8 @@ struct TranscriptReconstructionTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
-        _ = try await root.respond(to: "turn 1")
-        _ = try await root.respond(to: "turn 2")
+        _ = try await root.respond(to: "message 1")
+        _ = try await root.respond(to: "message 2")
 
         let tree = try TranscriptTree.load(
             under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))

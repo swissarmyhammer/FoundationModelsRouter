@@ -259,7 +259,7 @@
                 await configuration.transcripts.record(request.transcript)
 
                 let innerSession = LanguageModelSession(model: configuration.wrapped, tools: [])
-                let response = try await innerSession.respond(to: "delegated probe turn")
+                let response = try await innerSession.respond(to: "delegated probe submission")
 
                 await configuration.responses.record(response.content)
 
@@ -285,8 +285,8 @@
         /// recorders — sharing one `ProbeTranscriptRecorder` between them
         /// conflated the two and produced a bogus double-count (an earlier
         /// version of this test caught exactly that bug: sharing one
-        /// recorder made every outer turn record two transcripts instead of
-        /// one).
+        /// recorder made every outer submission record two transcripts instead
+        /// of one).
         private func setupProbes(
             cannedResponseText: String
         ) -> (ProbeTranscriptRecorder, ProbeTranscriptRecorder, ProbeResponseRecorder, ProbeStubModel, PassthroughProbeModel) {
@@ -299,7 +299,7 @@
         }
 
         /// Fact 1 and Fact 3, single call: asserts the wrapper's executor
-        /// received the full session transcript for the turn, and that it
+        /// received the full session transcript for the submission, and that it
         /// actually possessed (not merely relayed) the response text it
         /// delegated to and re-emitted.
         @Test("a passthrough wrapper observes the transcript passed to a call and the response text it delegates and emits")
@@ -318,15 +318,15 @@
             #expect(response.content == "stub says hello")
 
             // Fact 1: the wrapper's own executor call received the full
-            // session transcript for this turn (the leading `.instructions`
-            // entry plus this turn's new `.prompt` entry) — not just new
+            // session transcript for this submission (the leading `.instructions`
+            // entry plus this submission's new `.prompt` entry) — not just new
             // content since a prior call.
             let recordedWrapperTranscripts = await wrapperTranscripts.transcripts
             let wrapperTranscript = try #require(recordedWrapperTranscripts.first)
             #expect(wrapperTranscript.count == 2)
 
             // Fact 1 also holds at the innermost boundary: the stub's own
-            // executor call (driven by the wrapper's nested, single-turn
+            // executor call (driven by the wrapper's nested, single-submission
             // session) received that session's one `.prompt` entry as its
             // full transcript.
             let recordedStubTranscripts = await stubTranscripts.transcripts
@@ -335,24 +335,24 @@
         }
 
         /// Fact 2, across two calls: asserts the second call's transcript is
-        /// the full accumulated history (not just the new turn's delta),
+        /// the full accumulated history (not just the new submission's delta),
         /// proving the boundary carries no hidden session identity across
         /// calls.
-        @Test("a second call's transcript is the full accumulated history again, not just the new turn's delta")
+        @Test("a second call's transcript is the full accumulated history again, not just the new submission's delta")
         func secondCallReceivesFullAccumulatedTranscriptAgain() async throws {
             let (stubTranscripts, wrapperTranscripts, responses, _, wrapper) =
                 setupProbes(cannedResponseText: "ok")
 
             let session = LanguageModelSession(model: wrapper, tools: [])
-            _ = try await session.respond(to: "first turn")
-            _ = try await session.respond(to: "second turn")
+            _ = try await session.respond(to: "first submission")
+            _ = try await session.respond(to: "second submission")
 
             let recordedTranscripts = await wrapperTranscripts.transcripts
             #expect(recordedTranscripts.count == 2)
-            // First call: just the first turn's own prompt (no instructions).
+            // First call: just the first submission's own prompt (no instructions).
             #expect(recordedTranscripts[0].count == 1)
-            // Second call: full accumulated history so far — first turn's
-            // prompt + response, plus the second turn's new prompt — proving
+            // Second call: full accumulated history so far — first submission's
+            // prompt + response, plus the second submission's new prompt — proving
             // the "no session identity; every respond() call receives the
             // complete history again" contract (see MLXLanguageModel.swift's
             // `preparedInputMappingImageFailures` doc comment) applies at the
@@ -361,14 +361,14 @@
             #expect(recordedTranscripts[1].count == 3)
 
             // Fact 3, across both calls: the wrapper recorded the response
-            // text it delegated to and re-emitted on each of the two turns,
+            // text it delegated to and re-emitted on each of the two submissions,
             // not just the first.
             let recordedResponses = await responses.responses
             #expect(recordedResponses.count == 2)
             #expect(recordedResponses == ["ok", "ok"])
 
             // The stub's own executor was likewise called once per outer
-            // turn (each via a fresh, independent one-turn inner session),
+            // submission (each via a fresh, independent one-submission inner session),
             // each time seeing just that inner session's single `.prompt`
             // entry — the stub has no visibility into (and no dependency on)
             // the outer session's growing history, only the wrapper does.

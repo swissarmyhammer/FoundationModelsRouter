@@ -36,10 +36,10 @@ struct MergedTranscriptPublicSurfaceTests {
     /// `seq`, and its `ts` is derived from that index, so the expected order is
     /// stated once and read back three ways.
     private static let recordedTexts = [
-        "first session, first turn",
-        "second session, first turn",
-        "first session, second turn",
-        "second session, second turn",
+        "first session, first answer",
+        "second session, first answer",
+        "first session, second answer",
+        "second session, second answer",
     ]
 
     // MARK: - The read

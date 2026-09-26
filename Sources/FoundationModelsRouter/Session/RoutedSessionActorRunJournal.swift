@@ -5,7 +5,7 @@ import FoundationModels
 /// moment they are made.
 extension RoutedSessionActor: OperationEventJournal {
     /// Records one posted ``OperationEvent`` as its own entry, in post order.
-    /// Entries of one run can interleave with a turn's entries. A terminal is
+    /// Entries of one run can interleave with the entries of a submission. A terminal is
     /// also delivered live as ``SessionEvent/runSettled(_:)``, and an
     /// elicitation as ``SessionEvent/elicitationRequested(_:)``.
     ///
@@ -22,13 +22,13 @@ extension RoutedSessionActor: OperationEventJournal {
         }
     }
 
-    /// Hands `event` to the turn in flight, or to the session-scoped feed
-    /// between turns.
+    /// Hands `event` to the running answer, or to the session-scoped feed
+    /// between answers.
     ///
     /// - Parameter event: The event to deliver.
     func deliverLive(_ event: SessionEvent) {
-        if let currentTurnEventSink {
-            currentTurnEventSink(event)
+        if let currentAnswerEventSink {
+            currentAnswerEventSink(event)
         } else {
             emitSessionScopedEvent(event)
         }

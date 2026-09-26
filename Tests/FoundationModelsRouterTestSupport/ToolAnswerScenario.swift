@@ -12,7 +12,7 @@ import FoundationModelsRouter
 /// transcripts rather than a hand-picked list of properties is what catches the
 /// defect nobody thought to assert on — which is precisely how D1 and D2 got
 /// through two closed cards.
-public enum ToolTurnScenario {
+public enum ToolAnswerScenario {
     /// The distinctive token a scenario tool stamps into its output.
     ///
     /// Long enough that no model prior can produce it, so an answer carrying it
@@ -39,19 +39,19 @@ public enum ToolTurnScenario {
         [marker(for: firstStep), marker(for: secondStep)]
     }
 
-    /// The text of the last `.response` entry a turn recorded.
+    /// The text of the last `.response` entry an answer recorded.
     ///
-    /// This is what `respond(to:)` returns for that turn, so a streaming
+    /// This is what `respond(to:)` returns for that answer, so a streaming
     /// consumer whose accumulated text equals it has reconstructed the answer
-    /// of **the turn it actually watched**. Holding each surface to its own
-    /// turn is what makes the claim checkable against a real model, which
-    /// picks a fresh trajectory on every turn and so cannot be asked to repeat
-    /// one; see ``ToolTurnRunOutcome/finalResponseText``.
+    /// that it actually watched. Each surface is held to its own answer. That
+    /// makes the claim checkable against a real model, which picks a fresh
+    /// trajectory for each answer and so cannot be asked to repeat one; see
+    /// ``ToolAnswerRunOutcome/finalResponseText``.
     ///
-    /// - Parameter transcript: The session's transcript after the turn, in
+    /// - Parameter transcript: The session's transcript after the answer, in
     ///   order.
     /// - Returns: The last response's text, or the empty string when the
-    ///   transcript records no response — a turn that answered nothing.
+    ///   transcript records no response — an answer with no text.
     public static func finalResponseText(of transcript: [Transcript.Entry]) -> String {
         for entry in transcript.reversed() {
             guard case .response(let response) = entry else { continue }
@@ -60,8 +60,8 @@ public enum ToolTurnScenario {
         return ""
     }
 
-    /// Every scenario marker this turn's own tool outputs delivered, in
-    /// delivery order, each reported once.
+    /// Every scenario marker that the own tool outputs of this answer
+    /// delivered, in delivery order, each reported once.
     ///
     /// A real model decides for itself how many of its tools to call, so what
     /// its answer must carry is what **its** outputs returned rather than what
@@ -70,9 +70,9 @@ public enum ToolTurnScenario {
     /// identifier the model invented for a tool it never called is not a
     /// marker and buys it nothing.
     ///
-    /// - Parameter transcript: The session's transcript after the turn, in
+    /// - Parameter transcript: The session's transcript after the answer, in
     ///   order.
-    /// - Returns: The markers the turn's `.toolOutput` entries carried.
+    /// - Returns: The markers the `.toolOutput` entries of the answer carried.
     public static func deliveredMarkers(in transcript: [Transcript.Entry]) -> [String] {
         var delivered: [String] = []
         for entry in transcript {
@@ -90,7 +90,7 @@ public enum ToolTurnScenario {
 
 /// The concatenated text of every `.text` segment, in order.
 ///
-/// File-scoped so ``ToolTurnScenario``'s transcript readers and the normalizer
+/// File-scoped so ``ToolAnswerScenario``'s transcript readers and the normalizer
 /// below read a segment list exactly one way.
 ///
 /// - Parameter segments: The entry's segments.
@@ -325,15 +325,15 @@ extension NormalizedTranscriptEntry {
 
 /// Everything one run of the scenario produced, gathered identically whichever
 /// surface drove it and whichever model backed it.
-public struct ToolTurnRunOutcome: Sendable {
-    /// The turn's answer text: `respond(to:)`'s return value, or — on the
+public struct ToolAnswerRunOutcome: Sendable {
+    /// The text of the answer: `respond(to:)`'s return value, or — on the
     /// streaming surface — the ``SessionEvent/textDelta(_:)`` fragments
     /// accumulated by a consumer that **honours ``SessionEvent/textReset``**,
     /// clearing what it holds when the model abandons one response for another.
     ///
     /// That is the invariant the two surfaces are held to: applying the
     /// documented rule reconstructs, character for character, what
-    /// `respond(to:)` returns for the same turn.
+    /// `respond(to:)` returns for the same answer.
     public let answer: String
 
     /// The same fragments accumulated by a consumer that **ignores**
@@ -347,7 +347,7 @@ public struct ToolTurnRunOutcome: Sendable {
     /// answer.
     public let rawAnswer: String
 
-    /// Every `.toolCall` id the turn announced, in announcement order.
+    /// Every `.toolCall` id the answer announced, in announcement order.
     public let calledIds: [String]
 
     /// Every id a `.toolStatus` of ``ToolCallStatus/completed`` carried, in
@@ -357,34 +357,35 @@ public struct ToolTurnRunOutcome: Sendable {
     /// Every id a `.toolStatus` of ``ToolCallStatus/failed`` carried.
     public let failedIds: [String]
 
-    /// The session's whole transcript after the turn, normalized.
+    /// The session's whole transcript after the answer, normalized.
     public let transcript: [NormalizedTranscriptEntry]
 
-    /// The text of the last `.response` entry the turn recorded.
+    /// The text of the last `.response` entry the answer recorded.
     ///
-    /// The answer of **this** turn, as the session itself recorded it, and so
+    /// The text of **this** answer, as the session itself recorded it, and so
     /// the thing each surface's ``answer`` must equal character for character:
     /// `respond(to:)` returns it directly, and a streaming consumer applying
     /// the documented reset rule has to arrive at the same string. Comparing a
-    /// surface against its own turn is what makes the claim decidable over a
-    /// real model — see ``ToolTurnScenario/finalResponseText(of:)``.
+    /// surface against its own answer is what makes the claim decidable over a
+    /// real model — see ``ToolAnswerScenario/finalResponseText(of:)``.
     public let finalResponseText: String
 
-    /// Every scenario marker this turn's own tool outputs delivered.
+    /// Every scenario marker that the own tool outputs of this answer
+    /// delivered.
     ///
     /// The answer must carry all of them: they are data the model could only
     /// have read back out of the transcript Router handed it.
     public let deliveredMarkers: [String]
 
-    /// Creates an outcome from the transcript the turn recorded.
+    /// Creates an outcome from the transcript the answer recorded.
     ///
     /// - Parameters:
-    ///   - answer: The turn's answer text, reset rule applied.
+    ///   - answer: The text of the answer, reset rule applied.
     ///   - rawAnswer: Every fragment appended with the reset rule ignored.
     ///   - calledIds: Every announced `.toolCall` id, in order.
     ///   - completedIds: Every completed `.toolStatus` id, in order.
     ///   - failedIds: Every failed `.toolStatus` id.
-    ///   - entries: The session's transcript after the turn, in order. Every
+    ///   - entries: The session's transcript after the answer, in order. Every
     ///     transcript-derived property is read from it here, so no caller has
     ///     to remember to normalize and no two callers can normalize
     ///     differently.
@@ -401,9 +402,9 @@ public struct ToolTurnRunOutcome: Sendable {
         self.calledIds = calledIds
         self.completedIds = completedIds
         self.failedIds = failedIds
-        self.transcript = .normalizing(entries, markers: ToolTurnScenario.markers)
-        self.finalResponseText = ToolTurnScenario.finalResponseText(of: entries)
-        self.deliveredMarkers = ToolTurnScenario.deliveredMarkers(in: entries)
+        self.transcript = .normalizing(entries, markers: ToolAnswerScenario.markers)
+        self.finalResponseText = ToolAnswerScenario.finalResponseText(of: entries)
+        self.deliveredMarkers = ToolAnswerScenario.deliveredMarkers(in: entries)
     }
 
     /// A multi-line rendering of the normalized transcript, for the

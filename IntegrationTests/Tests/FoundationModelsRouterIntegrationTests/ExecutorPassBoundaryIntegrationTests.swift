@@ -7,8 +7,8 @@ import Testing
 @testable import FoundationModelsRouterRealModelSupport
 
 /// The model this suite drives: the 4B that reasons and calls tools, which
-/// `PropagationProbeIntegrationTests` and `RealToolTurnComparisonTests` also use
-/// for a real tool turn.
+/// `PropagationProbeIntegrationTests` and `RealToolAnswerComparisonTests` also use
+/// for a real tool-using answer.
 private let passBoundaryModel: ModelRef = "mlx-community/Qwen3-4B-4bit"
 
 /// Task ^8nqkten, over `MLXLanguageModel`: does one call of the MLX executor end
@@ -32,7 +32,7 @@ struct ExecutorPassBoundaryIntegrationTests {
     /// How long the slow consumer waits after each snapshot.
     ///
     /// The tool path of the MLX executor buffers its output and sends few
-    /// events: the run of 2026-09-24 gave 4 snapshots for a whole tool turn.
+    /// events: the run of 2026-09-24 gave 4 snapshots for a whole tool-using answer.
     /// With so few snapshots, this test cannot show if a much slower consumer
     /// keeps the last pass open for its last send. It shows only that the pass
     /// that emits the tool call still ends before the tool body under a slow
@@ -46,11 +46,11 @@ struct ExecutorPassBoundaryIntegrationTests {
         'alpha', then you answer with the tool's result in one short sentence.
         """
 
-    /// The prompt of each turn.
+    /// The prompt of each answer.
     private static let prompt = "Look up alpha with the \(PassBoundaryProbeTool.toolName) tool."
 
     /// Argmax decoding and the shared reply ceiling of the gated suites.
-    private static let turnOptions = GenerationOptions(
+    private static let answerOptions = GenerationOptions(
         samplingMode: .greedy, maximumResponseTokens: GatedRealModelBudget.responseTokenCeiling)
 
     /// Loads the model, and builds a session over the timed MLX model with the
@@ -75,7 +75,7 @@ struct ExecutorPassBoundaryIntegrationTests {
         let log = PassBoundaryLog()
         let (session, loaded) = try await Self.makeSession(recordingInto: log)
 
-        _ = try await session.respond(to: Self.prompt, options: Self.turnOptions)
+        _ = try await session.respond(to: Self.prompt, options: Self.answerOptions)
 
         try PassBoundaryExpectations.expectFirstPassEndsBeforeItsToolBody(in: log)
         try PassBoundaryExpectations.expectNextPassStartsAfterToolBody(in: log)
@@ -88,7 +88,7 @@ struct ExecutorPassBoundaryIntegrationTests {
         let (session, loaded) = try await Self.makeSession(recordingInto: log)
 
         let snapshotCount = try await PassBoundaryExpectations.consumeSlowly(
-            session.streamResponse(to: Self.prompt, options: Self.turnOptions), pausingAfterEach: .zero)
+            session.streamResponse(to: Self.prompt, options: Self.answerOptions), pausingAfterEach: .zero)
 
         #expect(snapshotCount > 0)
         try PassBoundaryExpectations.expectFirstPassEndsBeforeItsToolBody(in: log)
@@ -103,7 +103,7 @@ struct ExecutorPassBoundaryIntegrationTests {
 
         let consumeStarted = ContinuousClock.now
         let snapshotCount = try await PassBoundaryExpectations.consumeSlowly(
-            session.streamResponse(to: Self.prompt, options: Self.turnOptions),
+            session.streamResponse(to: Self.prompt, options: Self.answerOptions),
             pausingAfterEach: Self.slowConsumerPause)
         let consumeEnded = ContinuousClock.now
 

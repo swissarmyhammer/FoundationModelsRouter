@@ -261,9 +261,9 @@ struct PerSessionRecordingRootTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let sessionA = profile.standard.makeSession(recordingRoot: rootA)
-        _ = try await sessionA.respond(to: "session A turn")
+        _ = try await sessionA.respond(to: "session A answer")
         let sessionB = profile.standard.makeSession(recordingRoot: rootB)
-        _ = try await sessionB.respond(to: "session B turn")
+        _ = try await sessionB.respond(to: "session B answer")
 
         func childDirectoryNames(of directory: URL) throws -> Set<String> {
             Set(

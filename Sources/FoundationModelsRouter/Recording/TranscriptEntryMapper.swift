@@ -104,8 +104,8 @@ enum TranscriptEntryMapper {
 
         @unknown default:
             // A future SDK release added a `Transcript.Entry` case this
-            // mapper predates. A recording library must never turn an SDK
-            // addition into a crash mid-turn, so the entry degrades: it
+            // mapper predates. A recording library must never let an SDK
+            // addition crash a submission in progress, so the entry degrades: it
             // records as ``TranscriptEvent/Kind/unknown``, carrying the
             // entry's own id and its `description` as best-effort text. The
             // case's exact structure is lost until the mapper learns it (see

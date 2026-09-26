@@ -24,18 +24,18 @@ func characterCount(of entries: [Transcript.Entry]) -> Int {
     entries.reduce(0) { $0 + characterTokenCounter.count(CharacterTokenCounter.content(of: $1)) }
 }
 
-/// Drives `count` sequential `respond(to:)` turns on `session`, each with the
-/// prompt `"turn <index>"`. This is the warm-up shape every suite that
+/// Drives `count` sequential `respond(to:)` answers on `session`, each with the
+/// prompt `"text <index>"`. This is the warm-up shape every suite that
 /// compacts uses. It is in one place so the prompts cannot be different
 /// between suites.
 ///
 /// - Parameters:
-///   - count: How many turns to drive.
+///   - count: How many answers to drive.
 ///   - session: The session to drive them on.
 /// - Throws: Whatever `respond(to:)` throws.
-func driveTurns(_ count: Int, on session: RoutedSession) async throws {
+func driveAnswers(_ count: Int, on session: RoutedSession) async throws {
     for index in 0..<count {
-        _ = try await session.respond(to: "turn \(index)")
+        _ = try await session.respond(to: "text \(index)")
     }
 }
 

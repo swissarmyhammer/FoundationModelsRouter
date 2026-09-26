@@ -30,7 +30,7 @@ struct BoundedWaitTests {
     ///
     /// So the late change is a reading of the clock the wait reads, made inside
     /// the wait's own condition. ``BoundedWait/spin(until:)`` reads the condition
-    /// before it reads the deadline on every turn, so a turn that runs late still
+    /// before it reads the deadline on every pass of its loop, so a pass that runs late still
     /// observes the change, however late it runs. The ceiling is what it always
     /// was; nothing here is raised to cover the cause.
     @Test("a change that lands late in wall-clock terms is still observed")

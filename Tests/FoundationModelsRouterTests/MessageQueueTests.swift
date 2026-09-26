@@ -22,7 +22,7 @@ struct MessageQueueTests {
     private final class BasicLLMContainer: PlainTranscriptStubContainer {
         let responseText: String
 
-        /// The per-turn token counts the vended backend meters, or `nil` to
+        /// The token counts of each submission the vended backend meters, or `nil` to
         /// meter nothing. A session whose backend meters nothing sends a
         /// ``SessionEvent/submissionEnded(_:)`` with no usage, so a test that
         /// wants a usage sets this.
@@ -302,7 +302,7 @@ struct MessageQueueTests {
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let blocking = Task { try await session.respond(to: "blocking turn") }
+        let blocking = Task { try await session.respond(to: "blocking message") }
         await backend.started.wait()
         let firstId = await session.send("cancel me")
         let secondId = await session.send("original")
@@ -326,7 +326,7 @@ struct MessageQueueTests {
 
         // Only the edited content reached the model; the withdrawn text never
         // appears anywhere.
-        #expect(await Self.promptTexts(in: recorder) == ["blocking turn", "edited"])
+        #expect(await Self.promptTexts(in: recorder) == ["blocking message", "edited"])
         #expect(await session.pendingMessages().isEmpty)
     }
 
@@ -338,7 +338,7 @@ struct MessageQueueTests {
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let blocking = Task { try await session.respond(to: "blocking turn") }
+        let blocking = Task { try await session.respond(to: "blocking message") }
         await backend.started.wait()
         let id = await session.send("never delivered")
         #expect(await session.cancel(message: id) == .withdrawn)
@@ -543,7 +543,7 @@ struct MessageQueueTests {
 
     @Test("the submission of a sent message opens a frame that names the message, and its answer names it too")
     @MainActor
-    func sentMessageTurnFrameNamesItsMessage() async throws {
+    func sentMessageSubmissionFrameNamesItsMessage() async throws {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -563,7 +563,7 @@ struct MessageQueueTests {
 
     @Test("a respond opens a submission frame that names its one message, and its answer names the same message")
     @MainActor
-    func respondTurnFrameNamesNoMessage() async throws {
+    func respondSubmissionFrameNamesItsOneMessage() async throws {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -585,7 +585,7 @@ struct MessageQueueTests {
 
     @Test("two answers on one session take distinct submission ids, numbered from 1")
     @MainActor
-    func consecutiveTurnsTakeDistinctIds() async throws {
+    func consecutiveAnswersTakeDistinctIds() async throws {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -596,23 +596,23 @@ struct MessageQueueTests {
         await session.close()
 
         let events = await collect(stream)
-        #expect(events.eventsInsideEachAnswerFrame().count == Self.consecutiveTurnCount)
+        #expect(events.eventsInsideEachAnswerFrame().count == Self.consecutiveAnswerCount)
         let expectedIds = [SubmissionID(1), SubmissionID(Self.secondSubmissionNumber)]
-        #expect(events.submissionStarts.count == Self.consecutiveTurnCount)
+        #expect(events.submissionStarts.count == Self.consecutiveAnswerCount)
         #expect(events.submissionStarts.map(\.submissionId) == expectedIds)
         #expect(events.submissionEnds.map(\.submissionId) == expectedIds)
-        #expect(events.answers.count == Self.consecutiveTurnCount)
+        #expect(events.answers.count == Self.consecutiveAnswerCount)
     }
 
     /// The number of the second submission of a session.
     private static let secondSubmissionNumber: UInt64 = 2
 
-    /// How many turns ``consecutiveTurnsTakeDistinctIds()`` drives.
-    private static let consecutiveTurnCount = 2
+    /// How many answers ``consecutiveAnswersTakeDistinctIds()`` drives.
+    private static let consecutiveAnswerCount = 2
 
-    @Test("the session-scoped stream carries the derived events of a turn that hands its caller a response")
+    @Test("the session-scoped stream carries the derived events of an answer that hands its caller a response")
     @MainActor
-    func sessionStreamCarriesRespondTurnEvents() async throws {
+    func sessionStreamCarriesRespondAnswerEvents() async throws {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(
             recorder: recorder,
@@ -638,12 +638,12 @@ struct MessageQueueTests {
         #expect(answerUsages.map(\.tokensOut) == [Self.meteredOutput])
     }
 
-    /// The input tokens ``sessionStreamCarriesRespondTurnEvents()``'s backend
-    /// meters for its one turn.
+    /// The input tokens ``sessionStreamCarriesRespondAnswerEvents()``'s backend
+    /// meters for its one submission.
     private static let meteredInput = 11
 
-    /// The output tokens ``sessionStreamCarriesRespondTurnEvents()``'s backend
-    /// meters for its one turn.
+    /// The output tokens ``sessionStreamCarriesRespondAnswerEvents()``'s backend
+    /// meters for its one submission.
     private static let meteredOutput = 5
 
     // MARK: - Queue depth
@@ -714,7 +714,7 @@ struct MessageQueueTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         // Occupy the pump with a first respond.
-        let blockingTurn = Task { try await session.respond(to: "blocking turn") }
+        let blockingAnswer = Task { try await session.respond(to: "blocking message") }
         await backend.started.wait()
 
         // The second respond is a message that waits in the outbox. Its
@@ -729,10 +729,10 @@ struct MessageQueueTests {
         #expect(await session.cancel(message: id) == .withdrawn)
 
         backend.proceed.signal()
-        _ = try await blockingTurn.value
+        _ = try await blockingAnswer.value
         await #expect(throws: CancellationError.self) { try await waitingRespond.value }
         #expect(await session.becomesIdle())
-        #expect(await Self.promptTexts(in: recorder) == ["blocking turn"])
+        #expect(await Self.promptTexts(in: recorder) == ["blocking message"])
     }
 
     @Test("cancel(message:) of a respond message in a running submission reports cancelledInSubmission")
@@ -743,14 +743,14 @@ struct MessageQueueTests {
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let turn = Task { try await session.respond(to: "racing prompt") }
+        let answer = Task { try await session.respond(to: "racing prompt") }
         await backend.started.wait()
         let id = try #require(await session.messageQueueDepth().running.first)
 
         #expect(await session.cancel(message: id) == .cancelledInSubmission)
 
         backend.proceed.signal()
-        _ = try? await turn.value
+        _ = try? await answer.value
         #expect(await session.becomesIdle())
     }
 

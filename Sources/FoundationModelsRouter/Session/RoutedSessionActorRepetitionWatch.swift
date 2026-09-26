@@ -102,11 +102,11 @@ enum RepeatedPartRemoval {
 }
 
 /// ``RoutedSessionActor``'s repetition watch (task ^1hcwaqy): it reads the
-/// reasoning and the text of each model call of a turn while the call is in
-/// flight, stops a call that no longer writes new lines, and recovers as a
-/// ceiling stop does (``continueAfterCeilingStop(attempt:body:)``): the
+/// reasoning and the text of each model call of a submission while the call
+/// is in flight, stops a call that no longer writes new lines, and recovers as
+/// a ceiling stop does (``continueAfterCeilingStop(attempt:body:)``): the
 /// stopped attempt is recorded whole, the repeated part leaves the render,
-/// and the same turn goes on with ``repetitionStopContinuationPrompt``, at
+/// and the same answer goes on with ``repetitionStopContinuationPrompt``, at
 /// most ``RepetitionDetection/recoveriesPerAnswer`` times in one answer.
 extension RoutedSessionActor {
     /// The prompt of the attempt that goes on after a repetition stop.
@@ -178,7 +178,7 @@ extension RoutedSessionActor {
     /// named by `watchId`.
     ///
     /// Nothing happens when that watch is no longer the active one, when no
-    /// model call is in flight, when a stop is outstanding against the turn,
+    /// model call is in flight, when a stop is outstanding against the answer,
     /// or when a tool result already stopped the call for a compaction.
     /// Otherwise the session logs the stop, sets the stop marker, and cancels
     /// ``inFlightModelCall``.
@@ -206,7 +206,7 @@ extension RoutedSessionActor {
 
     /// Takes the repetition stop marker of the attempt that just failed.
     ///
-    /// A stop outstanding against the turn wins: the failure is then a user
+    /// A stop outstanding against the answer wins: the failure is then a user
     /// stop, and the marker is dropped.
     ///
     /// - Returns: The marker, or `nil` when the watch did not stop the attempt.
@@ -217,10 +217,10 @@ extension RoutedSessionActor {
     }
 
     /// Records the stopped attempt whole, removes its repeated part from the
-    /// render, and runs one more attempt of the same turn when the turn has a
-    /// recovery left.
+    /// render, and runs one more submission of the same answer when the answer
+    /// has a recovery left.
     ///
-    /// 1. The turn emits ``SessionEvent/repetitionStopped(_:)``.
+    /// 1. The answer emits ``SessionEvent/repetitionStopped(_:)``.
     /// 2. The rebuilt transcript (``InFlightTranscript``) goes into
     ///    ``backend``, and the ordinary diff records its entries, whole. The
     ///    attempt closes with ``FinishReason/repeatedLines``.
@@ -229,7 +229,7 @@ extension RoutedSessionActor {
     ///    ``TranscriptEvent/Kind/repeatedPartRemoval`` event records the cut,
     ///    so a restore makes the same cut (task ^gg49g5e).
     /// 4. With a recovery left, the next attempt sends
-    ///    ``repetitionStopContinuationPrompt``. With none, the turn ends with
+    ///    ``repetitionStopContinuationPrompt``. With none, the answer ends with
     ///    the response text of the stopped attempt.
     ///
     /// - Parameters:
@@ -274,7 +274,7 @@ extension RoutedSessionActor {
             settledEntries: backend.transcriptEntries(), sources: [marker.liveEntries],
             entryIdsBeforeAttempt: attempt.entryIdsBeforeAttempt, composedPrompt: attempt.composedPrompt)
         backend = backend.replacingTranscript(Transcript(entries: rebuilt))
-        _ = await finishTurnAndRequeueIfUnattached(
+        _ = await finishSubmissionAndRequeueIfUnattached(
             grammar: attempt.grammar, since: attempt.started,
             usageBefore: Self.usageDelta(before: usageOfAttempt, after: backend.usageTokenCounts()),
             responseTokenCeiling: attempt.responseTokenCeiling.resolved, pendingEvents: attempt.pendingEvents,
@@ -307,7 +307,7 @@ extension RoutedSessionActor {
     /// - Parameters:
     ///   - keptUTF8Lengths: For each watched entry id, the UTF-8 length that
     ///     the render keeps.
-    ///   - grammar: The grammar in force for the turn.
+    ///   - grammar: The grammar in force for the answer.
     private func recordRepeatedPartRemoval(keeping keptUTF8Lengths: [String: Int], grammar: Grammar?) async {
         let segment = RepeatedPartRemovalSegment(content: .init(keptUTF8Lengths: keptUTF8Lengths))
         await append(

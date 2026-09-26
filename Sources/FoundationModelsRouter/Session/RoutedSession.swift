@@ -21,7 +21,7 @@ public enum CancellationResult: Sendable, Equatable {
 /// `LanguageModelSession` is never vended; ``RoutedSession`` is the only
 /// generation surface.
 ///
-/// Every generation method records the turn's new transcript entries, whether
+/// Every generation method records the new transcript entries of each submission, whether
 /// the model returns or throws. A session is a queue of messages with no lock
 /// (`generation-queue.md`, section 5.4): each generation method sends one
 /// message and waits only for its answer. One pump task for each session is
@@ -31,7 +31,7 @@ public enum CancellationResult: Sendable, Equatable {
 /// next submission, and every waiting message that can share one submission
 /// goes into it. The terminal of a settled background run is mail: the pump
 /// delivers it to the model in a later submission, with no caller call. Model
-/// work over one model does not overlap: each model call of a turn is one
+/// work over one model does not overlap: each model call of an answer is one
 /// submission to the ``GenerationQueue`` of that model, and the one worker of
 /// the queue runs the submissions one at a time, first in first out. A
 /// submission is one whole SDK call, with its generation passes and the tool
@@ -75,9 +75,9 @@ public protocol RoutedSession: Actor {
     /// the model, against the profile's resolved working context. The size is
     /// the fed and generated tokens of the newest generation call, not the sum
     /// of the calls of a tool loop. A compaction restarts it from the
-    /// instructions and the new snapshot. `0` before the first turn. A restored
+    /// instructions and the new snapshot. `0` before the first submission. A restored
     /// session reports the fill the live session had at the end of its
-    /// recording: the newest generation call of its newest recorded turn, or
+    /// recording: the newest generation call of its newest recorded submission, or
     /// the snapshot size of a newer compaction. A recording with no generation
     /// call events reports the usage on its last stamped `.response`. It
     /// reports ``unknownContextFill`` when the recording holds no stamp.
@@ -317,24 +317,6 @@ public protocol RoutedSession: Actor {
     ///   open answer.
     @discardableResult
     func cancel(message: MessageID) async -> MessageCancellationResult
-
-    /// Runs `body`, a wait on a person, and returns what it returns.
-    ///
-    /// A tool body runs inside its submission, so the wait holds the worker of
-    /// the ``GenerationQueue`` of the model: every other session on that model
-    /// waits for the end of the submission. To wait for a person without
-    /// holding the model, raise an elicitation from a background run
-    /// (``ToolContext/elicit(_:)``). The pump of this session keeps the answer
-    /// running throughout, so a message that arrives during the wait goes into
-    /// a later submission.
-    ///
-    /// The call releases nothing and acquires nothing, so a throw or a
-    /// cancellation from `body` leaves every lock as it was, and overlapping
-    /// calls, or a call with no turn in flight, need no bookkeeping.
-    ///
-    /// - Precondition: Call this from inside a tool the SDK invoked for this
-    ///   session's own in-flight turn, and do not let the wait outlive that tool call.
-    func awaitingUser<T: Sendable>(_ body: @Sendable () async throws -> T) async rethrows -> T
 
     /// Forks a child session over the same resident model.
     ///

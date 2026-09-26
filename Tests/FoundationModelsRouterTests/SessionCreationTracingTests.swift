@@ -45,7 +45,7 @@ struct SessionCreationTracingTests {
     // MARK: - Fixtures
 
     /// A ``LoadedLLMContainer`` whose sessions answer with the stub backend's
-    /// canned line, so a turn leaves a transcript on disk that a restore can
+    /// canned line, so an answer leaves a transcript on disk that a restore can
     /// read back.
     private struct AnsweringStubContainer: PlainTranscriptStubContainer {
         /// Builds a backend over a fresh stub session.
@@ -89,7 +89,7 @@ struct SessionCreationTracingTests {
     /// finished.
     ///
     /// Filtered by name rather than counted over the whole tracer: a session
-    /// made inside a fork or a turn shares its tracer with the spans those
+    /// made inside a fork or a submission shares its tracer with the spans those
     /// open.
     ///
     /// - Parameter tracer: The tracer the driven work reported to.

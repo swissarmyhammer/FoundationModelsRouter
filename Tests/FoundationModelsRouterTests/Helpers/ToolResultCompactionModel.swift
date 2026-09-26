@@ -5,7 +5,7 @@ import Synchronization
 
 @testable import FoundationModelsRouter
 
-/// A deterministic `LanguageModel` for one tool-using turn that a tool
+/// A deterministic `LanguageModel` for one tool-using answer that a tool
 /// result can stop for a compaction.
 ///
 /// Each executor call reads the transcript it is handed and does one of
@@ -30,7 +30,7 @@ struct ToolResultCompactionModel: LanguageModel {
         Executor.Configuration(toolCallUsage: toolCallUsage)
     }
 
-    /// The executor that plays out the turn.
+    /// The executor that plays out the answer.
     struct Executor: LanguageModelExecutor {
         /// Cache key the SDK creates and reuses this executor by.
         struct Configuration: Sendable, Hashable {
@@ -41,7 +41,7 @@ struct ToolResultCompactionModel: LanguageModel {
         /// The `LanguageModel` this executor conforms for.
         typealias Model = ToolResultCompactionModel
 
-        /// The answer text of the turn.
+        /// The answer text of the submission.
         static let answerText = "The large lookup result is in hand."
 
         /// The summary text of a compaction's summarizer call.
@@ -154,7 +154,7 @@ struct ToolResultCompactionModel: LanguageModel {
 /// A tool that returns one large text result, so the result alone crosses a
 /// session's compaction trigger.
 ///
-/// With ``stopsTurn`` set, the tool asks its session to stop the turn
+/// With ``stopsSubmission`` set, the tool asks its session to stop the submission
 /// before it returns, so a test can prove that a user stop stays a stop.
 final class LargeResultTool: Tool, Sendable {
     /// The name the model calls the tool by.
@@ -179,10 +179,10 @@ final class LargeResultTool: Tool, Sendable {
         self.result = result
     }
 
-    /// Makes every later call stop the turn of `session` before it returns.
+    /// Makes every later call stop the submission of `session` before it returns.
     ///
-    /// - Parameter session: The session whose turn the call stops.
-    func stopsTurn(of session: any RoutedSession) {
+    /// - Parameter session: The session whose submission the call stops.
+    func stopsSubmission(of session: any RoutedSession) {
         sessionToStop.withLock { $0 = session }
     }
 

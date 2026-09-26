@@ -377,7 +377,7 @@ struct ExamplesTests {
         )
         #expect(raw == #"{"intent":"bugfix"}"#)
 
-        // Reusable: `makeGuidedSession` applies the grammar to every turn, and the
+        // Reusable: `makeGuidedSession` applies the grammar to every answer, and the
         // grammar travels with the session (so a fork inherits it).
         let session = profile.standard.makeGuidedSession(grammar: grammar)
         #expect(session.grammar == grammar)
@@ -560,7 +560,7 @@ struct ExamplesTests {
 
         /// Vends the same `backend` instance for every slot — both examples
         /// below only ever open one session over `profile.standard`, and
-        /// mutate `backend` directly between turns rather than
+        /// mutate `backend` directly between answers rather than
         /// reconfiguring the container.
         private struct FixedBackendContainer: LoadedLLMContainer {
             /// The scripted counter of this container: one token per `Character`.
@@ -629,31 +629,31 @@ struct ExamplesTests {
     }
 
     @Test(
-        "Proactive: check contextFill against a TokenBudget's trigger between turns and compact before it gets too high — exercises the shape of RoutedSession.compact(prompt:budget:)'s own doc example"
+        "Proactive: check contextFill against a TokenBudget's trigger between answers and compact before it gets too high — exercises the shape of RoutedSession.compact(prompt:budget:)'s own doc example"
     )
     @MainActor
-    func proactiveCompactionBetweenTurns() async throws {
+    func proactiveCompactionBetweenAnswers() async throws {
         let backend = StubSessionBackend(responseText: "ok")
         let session = try await CompactionExampleHarness.makeSession(over: backend, context: 100_000)
 
         let budget = TokenBudget(limit: 100_000)
-        var compactedAtTurn: Int?
+        var compactedAtAnswer: Int?
 
-        for turn in 0..<3 {
-            // Simulated usage climbing turn over turn — 0.3, 0.6, 0.9 of the
+        for answer in 0..<3 {
+            // Simulated usage climbing answer over answer — 0.3, 0.6, 0.9 of the
             // 100,000-token context, compacted into a genuine measured
             // before/after contextFill delta by the actor's own chokepoint
             // (StubSessionBackend.usageIncrement), the way a real model's
             // own usage grows as a conversation lengthens.
-            backend.usageIncrement = (input: (turn + 1) * 30_000, output: 0)
-            _ = try await session.respond(to: "turn \(turn)")
+            backend.usageIncrement = (input: (answer + 1) * 30_000, output: 0)
+            _ = try await session.respond(to: "message \(answer)")
 
             // The proactive pattern (RoutedSession.compact(prompt:budget:)'s
-            // own doc comment): check fill between turns, compact before it
-            // gets too high — turns never die.
+            // own doc comment): check fill between answers, compact before it
+            // gets too high — answers never die.
             if await session.contextFill >= budget.trigger {
                 try await session.compact(budget: budget)
-                compactedAtTurn = turn
+                compactedAtAnswer = answer
             }
         }
 
@@ -661,8 +661,8 @@ struct ExamplesTests {
         // this assertion is real evidence the pattern's fill-vs-trigger
         // comparison works against genuine measured contextFill, not a
         // tautology: a bug that stopped contextFill from climbing (or that
-        // broke the `>=` comparison) would shift or drop this turn index.
-        #expect(compactedAtTurn == 2)
+        // broke the `>=` comparison) would shift or drop this answer index.
+        #expect(compactedAtAnswer == 2)
 
         // Whether or not this toy transcript had anything left to actually
         // compact (that mechanics, and a real non-empty-stagesApplied compaction, is
@@ -696,15 +696,15 @@ struct ExamplesTests {
     }
 
     /// A backend that throws `LanguageModelError.contextSizeExceeded` on its
-    /// very first call — simulating a turn that overflows the context — and
-    /// responds normally on every call after, so a test can drive the
+    /// very first call — simulating a submission that overflows the context —
+    /// and responds normally on every call after, so a test can drive the
     /// reactive recovery pattern documented on
     /// ``RoutedSession/compact(prompt:budget:)``.
     ///
     /// Can be seeded with prior transcript content at construction, so the
     /// `compact()` call the reactive pattern drives has real content to compact
     /// (rather than a no-op on an empty transcript) — see
-    /// ``seedEntries(turnCount:responseText:)``.
+    /// ``seedEntries(answerCount:responseText:)``.
     ///
     /// `@unchecked Sendable` invariant: `entries` and `hasOverflowed` are
     /// mutated only inside `respond(to:maxTokens:)`, which — like every
@@ -732,18 +732,19 @@ struct ExamplesTests {
             self.replaceSpy = replaceSpy
         }
 
-        /// Synthetic prompt/response turns, long enough in aggregate that a
-        /// tight-enough `TokenBudget` forces a real compaction (one summary
-        /// that replaces the turns) rather than a no-op.
+        /// Synthetic prompt/response pairs, one pair for each answer, long
+        /// enough in aggregate that a tight-enough `TokenBudget` forces a real
+        /// compaction (one summary that replaces the answers) rather than a
+        /// no-op.
         ///
         /// - Parameters:
-        ///   - turnCount: How many turns to build.
+        ///   - answerCount: How many answers to build.
         ///   - responseText: The text of every response.
         /// - Returns: The entries, in order.
-        static func seedEntries(turnCount: Int, responseText: String) -> [Transcript.Entry] {
-            (0..<turnCount).flatMap { index -> [Transcript.Entry] in
+        static func seedEntries(answerCount: Int, responseText: String) -> [Transcript.Entry] {
+            (0..<answerCount).flatMap { index -> [Transcript.Entry] in
                 [
-                    .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "seed turn \(index)"))])),
+                    .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "seed message \(index)"))])),
                     .response(
                         Transcript.Response(segments: [.text(Transcript.TextSegment(content: responseText))])
                     ),
@@ -801,7 +802,7 @@ struct ExamplesTests {
     }
 
     /// The reactive recovery pattern documented on
-    /// ``RoutedSession/compact(prompt:budget:)``: try the turn; if the
+    /// ``RoutedSession/compact(prompt:budget:)``: send the message; if the
     /// backend's context overflowed, compact harder than the default 50% target
     /// and retry exactly once. Copied verbatim from that doc comment's own
     /// code sample so the two cannot silently drift apart.
@@ -829,7 +830,7 @@ struct ExamplesTests {
         // vacuously on the retry alone (which only depends on the stub's
         // one-time-overflow behavior).
         let seedText = String(repeating: "The quick brown fox jumps over the lazy dog. ", count: 12)
-        let seedEntries = OverflowOnceBackend.seedEntries(turnCount: 6, responseText: seedText)
+        let seedEntries = OverflowOnceBackend.seedEntries(answerCount: 6, responseText: seedText)
         let replaceSpy = ReplaceSpy()
         let backend = OverflowOnceBackend(responseText: "recovered", entries: seedEntries, replaceSpy: replaceSpy)
 

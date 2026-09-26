@@ -13,72 +13,73 @@ import Testing
 /// Until task ^6ww73dm this constant was ``RealModels/standard``, the 30B.
 /// Measured in isolation on 2026-08-21, with argmax decoding, one load for
 /// both surfaces, ``GatedRealModelBudget/responseTokenCeiling`` as each
-/// round's reply ceiling and ``RealToolTurnComparisonTests/instructions``
+/// round's reply ceiling and ``RealToolAnswerComparisonTests/instructions``
 /// asking for both calls in one step, on a box that ran a GPU-heavy game for
 /// the whole measurement (load average above 12): the 30B took 3.6 seconds to
-/// load and 51.2 and 49.5 seconds for the two turns, 544 output tokens each,
+/// load and 51.2 and 49.5 seconds for the two answers, 544 output tokens each,
 /// near eleven tokens a second — 104.2 seconds for the both-surfaces test, 87
 /// percent of the two-minute budget of that time. The same code with the old
-/// instructions, which left the round count to the model, took three rounds a
-/// turn and 106.4 seconds, so the round count was not the cost. The turns
-/// are: the two tool calls and the answer are under 60 of the 544 tokens, and
-/// the rest is the `<think>` block the 30B writes before its calls and before
-/// its answer. No Router-side change shortens that block, and this suite never
-/// disables thinking, so on the 30B the test could not reach half that budget.
+/// instructions, which left the round count to the model, took three rounds
+/// for each answer and 106.4 seconds, so the round count was not the cost. The
+/// answers are: the two tool calls and the answer text are under 60 of the 544
+/// tokens, and the rest is the `<think>` block the 30B writes before its calls
+/// and before its answer. No Router-side change shortens that block, and this
+/// suite never disables thinking, so on the 30B the test could not reach half
+/// that budget.
 ///
-/// The 4B makes the same turn: both calls in one round, the same entry kinds,
+/// The 4B makes the same answer: both calls in one round, the same entry kinds,
 /// a `<think>` block before the calls and before the answer, and an answer
 /// that carries both markers. Measured the same way on the same box under
-/// the same load: 1.4 seconds to load, 8.3 and 8.3 seconds for the two turns,
+/// the same load: 1.4 seconds to load, 8.3 and 8.3 seconds for the two answers,
 /// 417 output tokens each — 18.0 seconds for the both-surfaces test and 8.2
 /// for the transcript-shape test. The suite doc states what the move no
 /// longer proves.
-private let realToolTurnModel: ModelRef = "mlx-community/Qwen3-4B-4bit"
+private let realToolAnswerModel: ModelRef = "mlx-community/Qwen3-4B-4bit"
 
 // MARK: - Suite
 
-/// Task ^w8dzvee: the real-model half of the four-way tool-turn comparison.
+/// Task ^w8dzvee: the real-model half of the four-way tool-answer comparison.
 ///
-/// The ungated `ScriptedToolTurnComparisonTests` runs one tool-using scenario
+/// The ungated `ScriptedToolAnswerComparisonTests` runs one tool-using scenario
 /// through both `RoutedSession` surfaces over a deterministic scripted model.
 /// This suite runs the *same* scenario — the same two marker tools, the same
 /// prompt shape, the same normalization — against a real model, and holds the
 /// live path to every property the scripted path proves and a real model can
 /// still decide.
 ///
-/// **Why this suite compares each surface with its own turn, not with the
+/// **Why this suite compares each surface with its own answer, not with the
 /// other's.** Driving a scenario twice against a real model produces two
-/// *independent* turns, and this model does not repeat itself across them.
+/// *independent* answers, and this model does not repeat itself across them.
 /// Measured over four gated runs of this suite on one machine, with sampling
 /// pinned to ``GenerationOptions/SamplingMode/greedy`` and the prompt held
 /// fixed, one surface took **11, 3, 2 and 1** tool rounds — and in one run the
 /// two surfaces even chose different tools first. So an assertion that the two
-/// transcripts are equal, or that the turn made exactly two calls, asserts that
+/// transcripts are equal, or that the answer made exactly two calls, asserts that
 /// the *model* is reproducible. It is not, and no Router change makes it so.
-/// Those cross-turn equalities live in the scripted suite, where the model is
-/// fixed and they are decidable; here every assertion is a claim about a single
-/// turn, and every one of them is still an equality:
+/// Those equalities across answers live in the scripted suite, where the model
+/// is fixed and they are decidable; here every assertion is a claim about a
+/// single answer, and every one of them is still an equality:
 ///
 /// - each surface's answer equals, character for character, the text of the
-///   last `.response` entry **its own** turn recorded (the property defect D2
+///   last `.response` entry **its own** answer recorded (the property defect D2
 ///   corrupted);
-/// - the turn recorded at least one `.toolOutput`, so a tool really ran;
-/// - the answer carries every marker that turn's own tool outputs delivered;
-/// - the call ordinals the turn's `.toolOutput` entries resolve to are, as a
-///   multiset, the ordinals its `.toolCalls` entries announced — so a turn that
-///   answers one call twice and leaves another unanswered fails, which equal
-///   totals alone would let through (the property defect D1 was about, on real
-///   ids);
+/// - the answer recorded at least one `.toolOutput`, so a tool really ran;
+/// - the answer carries every marker that answer's own tool outputs delivered;
+/// - the call ordinals the answer's `.toolOutput` entries resolve to are, as a
+///   multiset, the ordinals its `.toolCalls` entries announced — so an answer
+///   that answers one call twice and leaves another unanswered fails, which
+///   equal totals alone would let through (the property defect D1 was about,
+///   on real ids);
 /// - the streamed completion ids are exactly the streamed call ids.
 ///
 /// Two model choices are not Router defects and are not measured here; both
 /// belong to task ^pw807cp. Calling fewer tools than the scenario asks for is
 /// one. Calling them with an argument the scenario does not name is the other:
-/// ``RealToolTurnComparisonTests/MarkerTool`` answers any argument, so the tool
+/// ``RealToolAnswerComparisonTests/MarkerTool`` answers any argument, so the tool
 /// still runs and Router still delivers its output, but that output carries no
-/// scenario marker and there is nothing left to trace into the answer. Such a
-/// turn is recorded as a known issue rather than failed — recorded, so a turn
-/// this suite could not measure never reads as one it measured.
+/// scenario marker and there is nothing left to trace into the answer. Such an
+/// answer is recorded as a known issue rather than failed — recorded, so an
+/// answer this suite could not measure never reads as one it measured.
 ///
 /// See ``NormalizedTranscriptEntry`` for the normalization and its rationale.
 ///
@@ -92,7 +93,7 @@ private let realToolTurnModel: ModelRef = "mlx-community/Qwen3-4B-4bit"
 /// 2026-08-21 at 109.4 and 110.7 seconds — 92 percent of
 /// the two-minute budget of that time, the dearest test of the target. Four
 /// changes brought the test inside half that budget, and each one is stated on
-/// the declaration that carries it: ``realToolTurnModel`` moves the suite onto
+/// the declaration that carries it: ``realToolAnswerModel`` moves the suite onto
 /// a 4B model that reasons and calls tools, with the measurement that rules
 /// the 30B out; ``loadContainer()`` loads one container for each test;
 /// ``respondRun(over:)`` and ``streamRun(over:)`` pass
@@ -104,7 +105,7 @@ private let realToolTurnModel: ModelRef = "mlx-community/Qwen3-4B-4bit"
 ///
 /// What is no longer proven is:
 ///
-/// - **The standard model's tool turn on both surfaces.** The 30B's
+/// - **The standard model's tool answer on both surfaces.** The 30B's
 ///   `respond(to:)` tool path is still driven by
 ///   ``RecordingHandleIntegrationTests`` and by the tool-calling test of
 ///   ``SessionTreeRestorationIntegrationTests``. No suite drives its
@@ -117,7 +118,7 @@ private let realToolTurnModel: ModelRef = "mlx-community/Qwen3-4B-4bit"
 ///   container, as every session of ``SessionTreeRestorationIntegrationTests``
 ///   does. A second load of the same model in one process is not measured
 ///   here.
-/// - **A round past the ceiling.** Each round of a tool turn stops at
+/// - **A round past the ceiling.** Each round of a tool answer stops at
 ///   ``GatedRealModelBudget/responseTokenCeiling`` tokens. A round that
 ///   generated past it is no longer measured here.
 /// - **A model left to choose its round count.** The instructions ask for both
@@ -130,11 +131,11 @@ private let realToolTurnModel: ModelRef = "mlx-community/Qwen3-4B-4bit"
 /// answer, on the call ordinals and on the streamed ids are exactly what they
 /// were.
 @Suite(
-    "Gated real-model integration: a real tool-using turn delivers its tools' data on both session surfaces (task ^w8dzvee)",
+    "Gated real-model integration: a real tool-using answer delivers its tools' data on both session surfaces (task ^w8dzvee)",
     .serialized,
     .exclusiveRealModel
 )
-struct RealToolTurnComparisonTests {
+struct RealToolAnswerComparisonTests {
     // MARK: - Scenario tools
 
     /// The argument schema both scenario tools take: one required string, the
@@ -162,10 +163,10 @@ struct RealToolTurnComparisonTests {
         /// Returns the marker for the step this call names.
         ///
         /// - Parameter arguments: The call's decoded arguments.
-        /// - Returns: ``ToolTurnScenario/marker(for:)`` for the named step.
+        /// - Returns: ``ToolAnswerScenario/marker(for:)`` for the named step.
         /// - Throws: Never — `throws` comes from the `Tool` requirement.
         func call(arguments: StepArguments) async throws -> String {
-            ToolTurnScenario.marker(for: arguments.step)
+            ToolAnswerScenario.marker(for: arguments.step)
         }
     }
 
@@ -181,21 +182,21 @@ struct RealToolTurnComparisonTests {
     ///
     /// "In one step" is the shape the scripted scenario has — one round that
     /// asks for two independent calls at once (see
-    /// `ScriptedToolTurnComparisonTests`). Before task ^6ww73dm the
+    /// `ScriptedToolAnswerComparisonTests`). Before task ^6ww73dm the
     /// instructions named the two calls and left the round count to the
     /// model, and the 30B took one round per call, each with its own
     /// `<think>` block. No assertion reads this text; the tools, the prompt
     /// and the normalization are unchanged.
     private static let instructions = """
         You have two tools. To answer the user you must call \
-        `\(firstTool)` with step "\(ToolTurnScenario.firstStep)" and \
-        `\(secondTool)` with step "\(ToolTurnScenario.secondStep)". \
+        `\(firstTool)` with step "\(ToolAnswerScenario.firstStep)" and \
+        `\(secondTool)` with step "\(ToolAnswerScenario.secondStep)". \
         Make both calls together, in one step, before you reply. \
         Then reply with both identifiers the tools returned, exactly as they \
         were returned, and nothing else.
         """
 
-    /// The prompt the scenario's turn is driven with.
+    /// The prompt the scenario's answer is driven with.
     private static let prompt = """
         Look up both steps with your tools and tell me the two identifiers.
         """
@@ -207,8 +208,8 @@ struct RealToolTurnComparisonTests {
     /// code produced a different transcript on every run (task `f80n046`).
     /// Argmax decoding consumes no randomness at all, which is what lets a red
     /// run here be attributed to the change under test. It is not enough to
-    /// make two turns identical — the suite doc records four runs in which it
-    /// was not — so nothing here compares one turn against another.
+    /// make two answers identical — the suite doc records four runs in which it
+    /// was not — so nothing here compares one answer against another.
     private static let samplingMode: GenerationOptions.SamplingMode = .greedy
 
     // MARK: - Harness
@@ -237,11 +238,11 @@ struct RealToolTurnComparisonTests {
         over loaded: RealModelContainer
     ) -> (session: RoutedSession, profile: LanguageModelProfile, directory: URL) {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("RealToolTurnComparison-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("RealToolAnswerComparison-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
         let profile = RealModelHarness.make(
-            model: realToolTurnModel,
+            model: realToolAnswerModel,
             // The small, known window the tests state. The harness has no
             // default of its own, and the library has no default context.
             context: ScriptedSessionContext.tokens,
@@ -261,7 +262,7 @@ struct RealToolTurnComparisonTests {
 
     /// Reads the session's own transcript back off its backend.
     ///
-    /// - Parameter session: The session whose turn has already returned.
+    /// - Parameter session: The session whose answer has already returned.
     /// - Returns: The SDK's transcript entries, in order.
     private func transcriptEntries(of session: RoutedSession) async -> [Transcript.Entry] {
         guard let actor = session as? RoutedSessionActor else { return [] }
@@ -271,11 +272,11 @@ struct RealToolTurnComparisonTests {
     /// Reads the session's cumulative token usage back off its backend, as
     /// text for the run's printed record.
     ///
-    /// A session here drives exactly one turn, so the cumulative count is that
-    /// turn's own count. Printed beside the turn's wall clock so a reader of
+    /// A session here drives exactly one answer, so the cumulative count is that
+    /// answer's own count. Printed beside the answer's wall clock so a reader of
     /// the run can state tokens as well as seconds.
     ///
-    /// - Parameter session: The session whose turn has already returned.
+    /// - Parameter session: The session whose answer has already returned.
     /// - Returns: `in=<input> out=<output>`, or `unmetered` when the backend
     ///   cannot report usage.
     private func usageDescription(of session: RoutedSession) async -> String {
@@ -297,25 +298,25 @@ struct RealToolTurnComparisonTests {
     /// - Returns: The loaded container and the pinned mode.
     /// - Throws: Whatever loading throws.
     private static func loadContainer() async throws -> RealModelContainer {
-        try await RealModelContainer.load(ref: realToolTurnModel, samplingMode: samplingMode)
+        try await RealModelContainer.load(ref: realToolAnswerModel, samplingMode: samplingMode)
     }
 
-    /// Drives one real turn through `respond(to:)`.
+    /// Drives one real answer through `respond(to:)`.
     ///
-    /// - Parameter loaded: The loaded model the turn runs over, with its pinned mode.
+    /// - Parameter loaded: The loaded model the answer runs over, with its pinned mode.
     /// - Returns: The run's answer and normalized transcript.
-    /// - Throws: Whatever the turn throws.
-    private func respondRun(over loaded: RealModelContainer) async throws -> ToolTurnRunOutcome {
+    /// - Throws: Whatever the answer throws.
+    private func respondRun(over loaded: RealModelContainer) async throws -> ToolAnswerRunOutcome {
         let (session, profile, directory) = makeSession(over: loaded)
         defer { try? FileManager.default.removeItem(at: directory) }
         // The session's handle holds its owning profile weakly, so the profile
-        // has to stay referenced for the whole turn.
+        // has to stay referenced for the whole answer.
         defer { withExtendedLifetime(profile) {} }
 
         let answer = try await session.respond(
             to: Self.prompt, maxTokens: GatedRealModelBudget.responseTokenCeiling)
         print("REAL-RESPOND usage: \(await usageDescription(of: session))")
-        return ToolTurnRunOutcome(
+        return ToolAnswerRunOutcome(
             answer: answer,
             calledIds: [],
             completedIds: [],
@@ -323,18 +324,18 @@ struct RealToolTurnComparisonTests {
             entries: await transcriptEntries(of: session))
     }
 
-    /// Drives one real turn through `streamEvents(to:)`, accumulating the text
+    /// Drives one real answer through `streamEvents(to:)`, accumulating the text
     /// twice — once applying ``SessionEvent/textReset`` and once ignoring it —
-    /// plus every tool id the turn reported.
+    /// plus every tool id the answer reported.
     ///
-    /// - Parameter loaded: The loaded model the turn runs over, with its pinned mode.
+    /// - Parameter loaded: The loaded model the answer runs over, with its pinned mode.
     /// - Returns: The run's answers, ids, and normalized transcript.
-    /// - Throws: Whatever the turn throws.
-    private func streamRun(over loaded: RealModelContainer) async throws -> ToolTurnRunOutcome {
+    /// - Throws: Whatever the answer throws.
+    private func streamRun(over loaded: RealModelContainer) async throws -> ToolAnswerRunOutcome {
         let (session, profile, directory) = makeSession(over: loaded)
         defer { try? FileManager.default.removeItem(at: directory) }
         // The session's handle holds its owning profile weakly, so the profile
-        // has to stay referenced for the whole turn.
+        // has to stay referenced for the whole answer.
         defer { withExtendedLifetime(profile) {} }
 
         var answer = ""
@@ -364,7 +365,7 @@ struct RealToolTurnComparisonTests {
             }
         }
         print("REAL-STREAM usage: \(await usageDescription(of: session))")
-        return ToolTurnRunOutcome(
+        return ToolAnswerRunOutcome(
             answer: answer,
             rawAnswer: rawAnswer,
             calledIds: calledIds,
@@ -375,7 +376,7 @@ struct RealToolTurnComparisonTests {
 
     // MARK: - Transcript arithmetic
 
-    /// The ordinal of every tool call a turn announced, over every round, in
+    /// The ordinal of every tool call an answer announced, over every round, in
     /// announcement order.
     ///
     /// - Parameter transcript: The run's normalized transcript.
@@ -389,7 +390,7 @@ struct RealToolTurnComparisonTests {
         }
     }
 
-    /// The number of tool calls a turn announced, summed over every round.
+    /// The number of tool calls an answer announced, summed over every round.
     ///
     /// - Parameter transcript: The run's normalized transcript.
     /// - Returns: The total number of calls in every `.toolCalls` entry.
@@ -397,7 +398,7 @@ struct RealToolTurnComparisonTests {
         announcedCallOrdinals(in: transcript).count
     }
 
-    /// The number of `.toolOutput` entries a turn recorded.
+    /// The number of `.toolOutput` entries an answer recorded.
     ///
     /// - Parameter transcript: The run's normalized transcript.
     /// - Returns: The count of tool-output entries.
@@ -434,8 +435,8 @@ struct RealToolTurnComparisonTests {
 
     // MARK: - Tests
 
-    @Test("a real tool-using turn delivers its own tools' data, on each surface, in the answer that surface reports")
-    func realTurnDeliversToolDataOnBothSurfaces() async throws {
+    @Test("a real tool-using answer delivers its own tools' data, on each surface, in the answer that surface reports")
+    func realAnswerDeliversToolDataOnBothSurfaces() async throws {
         // One container for both surfaces; see `loadContainer()`.
         let loadStarted = ContinuousClock.now
         let loaded = try await Self.loadContainer()
@@ -451,10 +452,10 @@ struct RealToolTurnComparisonTests {
 
         // Printed so the scripted-versus-real comparison is checkable by a
         // reader rather than asserted and thrown away, and so a reader of the
-        // run can split the test's cost into its load and its two turns.
+        // run can split the test's cost into its load and its two answers.
         print(
             """
-            REAL load: \(loadDuration), respond turn: \(respondDuration), stream turn: \(streamDuration)
+            REAL load: \(loadDuration), respond answer: \(respondDuration), stream answer: \(streamDuration)
             REAL-RESPOND transcript:
             \(responded.transcriptDescription)
             REAL-RESPOND answer: \(responded.answer.debugDescription)
@@ -468,7 +469,7 @@ struct RealToolTurnComparisonTests {
             """)
 
         for (surface, run) in [("respond(to:)", responded), ("streamEvents(to:)", streamed)] {
-            // The turn really used its tools, proved by the tool outputs its
+            // The answer really used its tools, proved by the tool outputs its
             // own transcript records. Zero tool calls is a real failure of this
             // scenario, not a shape the assertions bend around.
             let recordedToolOutputs = Self.toolOutputCount(in: run.transcript)
@@ -476,19 +477,19 @@ struct RealToolTurnComparisonTests {
                 recordedToolOutputs > 0,
                 "\(surface) recorded no tool output, so nothing proves a tool ran")
 
-            // The markers are how delivery is traced, and they measure only a
-            // turn that called the tools the way the scenario names them.
+            // The markers are how delivery is traced, and they measure only an
+            // answer that called the tools the way the scenario names them.
             // `MarkerTool` answers any argument, so a model that sends `one`
             // for `ONE` still runs the tool and still has Router deliver its
             // output — an output carrying no scenario marker, and so nothing
             // this claim can follow into the answer. That is the same
             // model-compliance family as calling too few tools, which this
             // suite defers to task ^pw807cp, so it is recorded rather than
-            // failed here. Recorded, because a turn the delivery claim could
-            // not measure must never read as a turn it measured. Claimed only
-            // where the turn did record tool output, so a turn that ran no tool
-            // at all is reported once, by the assertion above, and never under
-            // this reason.
+            // failed here. Recorded, because an answer the delivery claim could
+            // not measure must never read as an answer it measured. Claimed only
+            // where the answer did record tool output, so an answer that ran no
+            // tool at all is reported once, by the assertion above, and never
+            // under this reason.
             if recordedToolOutputs > 0 {
                 withKnownIssue(
                     """
@@ -501,7 +502,7 @@ struct RealToolTurnComparisonTests {
                 }
             }
 
-            // The answer carries every identifier this turn's own tools
+            // The answer carries every identifier this answer's own tools
             // returned — data the model could only have read back out of the
             // transcript Router handed it.
             for marker in run.deliveredMarkers {
@@ -510,8 +511,8 @@ struct RealToolTurnComparisonTests {
                     "\(surface) lost \(marker), which its own tool output delivered")
             }
 
-            // The surface reports the answer of the turn it drove, character
-            // for character — the property defect D2 corrupted by appending
+            // The surface reports the answer it drove, character for
+            // character — the property defect D2 corrupted by appending
             // superseded pre-tool text to it.
             #expect(
                 run.answer == run.finalResponseText,
@@ -524,8 +525,8 @@ struct RealToolTurnComparisonTests {
             // Every announced call was answered exactly once, and every answer
             // names the call it answers — the property defect D1 was about, on
             // real ids. Held as a multiset rather than as a total and an
-            // unmatched-output check, because those two pass together on a turn
-            // that keys both of its outputs to call #0 and leaves call #1
+            // unmatched-output check, because those two pass together on an
+            // answer that keys both of its outputs to call #0 and leaves call #1
             // unanswered: the totals still match, and neither output is
             // unmatched. A tally cannot cancel a duplicate against an omission.
             let announced = Self.announcedCallOrdinals(in: run.transcript)
@@ -556,10 +557,10 @@ struct RealToolTurnComparisonTests {
         // against a model that writes text before its tool call, which is what
         // makes the snapshot sequence non-monotonic; `MLXLanguageModel`'s
         // executor buffers its whole output and emits either a tool call or
-        // text, and no live turn measured here has reported a restart — each
+        // text, and no live answer measured here has reported a restart — each
         // one ended with its raw answer equal to its answer. The claim is
         // held exactly, over a model that does restart, by
-        // `ScriptedToolTurnComparisonTests.supersededTextIsDeliveredButNotTheAnswer`.
+        // `ScriptedToolAnswerComparisonTests.supersededTextIsDeliveredButNotTheAnswer`.
         // The raw answer is printed above, so a live restart stays visible to a
         // reader even though this suite cannot assert on one.
     }
@@ -570,7 +571,7 @@ struct RealToolTurnComparisonTests {
         let kinds = try await streamRun(over: loaded).transcript.map(\.kind)
 
         // The scripted scenario's own shape, which
-        // `ScriptedToolTurnComparisonTests.transcriptCarriesToolCallsAndToolOutputs`
+        // `ScriptedToolAnswerComparisonTests.transcriptCarriesToolCallsAndToolOutputs`
         // asserts exactly. A real model may add `.reasoning` entries and may
         // split its work over more than one round, so this asserts the kinds
         // the scripted run produces are all present, in order, rather than
@@ -581,17 +582,17 @@ struct RealToolTurnComparisonTests {
         #expect(kinds.contains(.prompt))
         #expect(kinds.contains(.toolCalls))
         #expect(kinds.contains(.toolOutput))
-        // The turn ends with its answer. The gated model writes a `<think>`
-        // block after that answer, which the SDK appends as a `.reasoning`
+        // The answer ends with its reply. The gated model writes a `<think>`
+        // block after that reply, which the SDK appends as a `.reasoning`
         // entry (see `GatedRealModelBudget`), so the last entry of a real
-        // turn is `.reasoning` and the last entry that is not reasoning is
-        // the `.response`. A turn that stopped after its tool output, with
-        // no answer at all, leaves `.toolOutput` there and still fails this.
+        // answer is `.reasoning` and the last entry that is not reasoning is
+        // the `.response`. An answer that stopped after its tool output, with
+        // no reply at all, leaves `.toolOutput` there and still fails this.
         #expect(
             kinds.last(where: { $0 != .reasoning }) == .response,
-            "the turn should end with its answer; kinds were \(kinds.map(\.rawValue))"
+            "the answer should end with its reply; kinds were \(kinds.map(\.rawValue))"
         )
-        // And that answer comes after the tool work it reports, rather than
+        // And that reply comes after the tool work it reports, rather than
         // before it — the ordering `kinds.last` used to carry on its own.
         let lastResponseIndex = try #require(kinds.lastIndex(of: .response))
         let lastToolOutputIndex = try #require(kinds.lastIndex(of: .toolOutput))

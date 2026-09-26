@@ -6,9 +6,9 @@ This file is the design that the `generation-queue` and `prompt-cache` tasks on 
 
 ## 1. The problem
 
-This section describes the code before ^93kjn94. The turn-long gate is gone now.
+This section describes the code before ^93kjn94. It uses the old names of that code. The gate that one whole `respond` call held is gone now.
 
-There is one GPU, so only one generation runs at a time on one model. Before ^93kjn94, the Router enforced this with one `AsyncSemaphore(value: 1)` for each resident container (`ResidentModelGates.generation`). A turn took it in `RoutedSessionActor.beginTurn()` and kept it until `endTurn()`. The SDK runs the whole tool loop inside one `LanguageModelSession.respond`, so each tool body ran while the turn held the gate.
+There is one GPU, so only one generation runs at a time on one model. Before ^93kjn94, the Router enforced this with one `AsyncSemaphore(value: 1)` for each resident container (`ResidentModelGates.generation`). One `respond` call of the session took it in the old `RoutedSessionActor.beginTurn()` and kept it until the old `endTurn()`. The SDK runs the whole tool loop inside one `LanguageModelSession.respond`, so each tool body ran while that call held the gate.
 
 Results:
 
@@ -196,7 +196,7 @@ The SDK allows one call at a time on one `LanguageModelSession`. Evidence: `Lang
 
 ### 5.5 Compaction, continuations, and tools (questions 3 and 4)
 
-**Compaction happens between two submissions, at the pump.** Before each submission, the pump does the proactive check of `runTurnWork` now (measured tokens against `TokenBudget.triggerTokens`), and compacts first when necessary. Mail and compaction thus share one boundary: the start of a submission.
+**Compaction happens between two submissions, at the pump.** Before each submission, the pump does the proactive check (`runAnswerWork`, measured tokens against `TokenBudget.triggerTokens`), and compacts first when necessary. Mail and compaction thus share one boundary: the start of a submission.
 
 **A continuation is a new submission.** The session makes one more submission for the same answer in five cases: a compaction yield at a tool result (`noteToolResult(_:)` sets the yield and cancels the call), a ceiling stop over the trigger, an overflow retry, a rejected tool call, and a repetition recovery. Each continuation goes to the back of the queue of the model. The messages that wait at that time go into its prompt, after the continuation text (for example `compactionContinuationPrompt`). The chain of submissions from the first delivery to the final answer is one "answer". `compactionYieldsStopped`, the count of repetition recoveries and the one overflow retry reset for each answer, not for each submission (^5d0qx1b).
 
@@ -266,7 +266,7 @@ Decided in ^x7cxsg3: a summarizer call of a compaction is not a submission of th
 | `cancelCurrentTurn()`, `TurnCancellationResult` | `cancel()`, `CancellationResult` (`.requested`, `.nothingToCancel`) | ^cbhpdjy |
 | `cancel(id:)`, `cancelPrompt(id:)`, `PromptCancellationResult` | `cancel(message:)`, `MessageCancellationResult` (`.withdrawn`, `.cancelledInSubmission`, `.alreadyAnswered`) | ^cbhpdjy |
 | `SessionProjection.currentTurn` | `currentSubmission: SubmissionStart?`, and the waiting `MessageID`s | ^x7cxsg3 |
-| `TurnBoundaryTool.turnWillBegin()` | `SubmissionBoundaryTool.submissionWillBegin()`, called one time before each submission of the pump | ^f33q8gw |
+| `TurnBoundaryTool.turnWillBegin()` | `SubmissionBoundaryTool.submissionWillBegin()`, called one time before each submission: the first submission of an answer (also one that only mail started) and each continuation submission | ^f33q8gw |
 | `awaitingUser(_:)` | Gone (5.5 rule 6) | ^f33q8gw |
 | Tracing span `turn`, attributes `turn.id`, `turn.entry_point` | Span `submission`, attributes `submission.id`, `submission.cause` | ^x7cxsg3 |
 | `RepetitionDetection.recoveriesPerTurn` | `recoveriesPerAnswer` in Swift. The key on disk stays `recoveriesPerTurn` (`CodingKeys`), with no `schemaVersion` bump. Old recordings load. | ^5d0qx1b |
@@ -274,7 +274,15 @@ Decided in ^x7cxsg3: a summarizer call of a compaction is not a submission of th
 
 **Cancel.** `cancel()` stops the running submission of the session (the worker cancels its task), removes the waiting submission of the session from the model queue, and withdraws the waiting caller messages (their waiters get `CancellationError`). Mail is not withdrawn: it stays in the outbox for a later submission, because a run terminal must not be lost (5.9).
 
-**The stored key.** `session.json` holds `configuration.repetitionDetection.recoveriesPerTurn` (for example the untracked fixture `Tests/FoundationModelsRouterTests/Fixtures/PreRequestRenameRecording/01M3CWVB5NFSC7HFT40W63E4TX/session.json`). The key stays on disk, and ^5d0qx1b adds a load test over such a fixture.
+**The stored key.** `session.json` holds `configuration.repetitionDetection.recoveriesPerTurn` (for example the fixture `Tests/FoundationModelsRouterTests/Fixtures/PreRequestRenameRecording/01M3CWVB5NFSC7HFT40W63E4TX/session.json`, tracked since commit f87c7e8). The key stays on disk, and ^5d0qx1b adds a load test over such a fixture.
+
+**The last "turn" names (^f33q8gw).** After this task, no name in the Router code, API, events, errors, tracing or docs calls a unit of Router work a "turn". The words are: a submission (one SDK call), an answer (the chain of submissions up to the final reply) and a message (a caller prompt or mail).
+
+- `SubmissionBoundaryTool.submissionWillBegin()` is called one time before each submission, after the session takes the messages of that submission and before its model call. The pump calls it for the first submission of an answer, also when only mail started that answer, at the same place as the old hook (before the proactive compaction). The session also calls it before each continuation submission (a compaction yield, a ceiling stop, an overflow retry, a rejected tool call, a repetition recovery). Tests: `SubmissionBoundaryToolTests`, `SubmissionBoundaryToolPublicSurfaceTests`.
+- `awaitingUser(_:)` is removed from `RoutedSession` (5.5 rule 6). Its tests are restated as a tool body that waits for a person with no wrapper.
+- Internal renames: `runTurnWork` to `runAnswerWork`, `runTurnAttempt` to `runSubmission`, `recordFailedTurn` to `recordFailedSubmission`, `finishTurn` to `finishSubmission`, `finishTurnAndRequeueIfUnattached` to `finishSubmissionAndRequeueIfUnattached`, `turnEventSink` to `answerEventSink`, `currentTurnEventSink` to `currentAnswerEventSink`, `notifyTurnBoundaryTools` to `notifySubmissionBoundaryTools`, `turnUsageStamp` to `submissionUsageStamp`. The file `RoutedSessionActorTurnExecution.swift` is now `RoutedSessionActorAnswerExecution.swift`.
+- Renamed test suites: `TurnCancellationTests` to `AnswerCancellationTests`, `TurnTracingTests` to `SubmissionTracingTests`, `GenerationQueueTurnTests` to `GenerationQueueSubmissionTests`, `TurnFinishReasonTests` to `SubmissionFinishReasonTests`, `TurnTokenCeilingTests` to `AnswerTokenCeilingTests`, `TurnBoundaryToolTests` to `SubmissionBoundaryToolTests`, `MultiTurnSessionTests` to `MultiMessageSessionTests`, `ScriptedTurnSizingTests` to `ScriptedAnswerSizingTests`, `ScriptedToolTurnComparisonTests` to `ScriptedToolAnswerComparisonTests`, `ToolCallFailureTurnTests` to `ToolCallFailureAnswerTests`, `RealToolTurnComparisonTests` to `RealToolAnswerComparisonTests`, `Qwen38ToolTurnIntegrationTests` to `Qwen38ToolAnswerIntegrationTests`.
+- Kept on purpose: the stored key `recoveriesPerTurn`, the English verb "turn off" (for example `modelTurnsThinkingOffByTemplateFlag`), the chat-template turn of the model, and the old names in the history tables of this file.
 
 ### 5.7 Long tools and fairness
 
@@ -284,7 +292,7 @@ Decided in ^x7cxsg3: a summarizer call of a compaction is not a submission of th
 
 ### 5.8 Reads and forks with no lock
 
-A fork and a transcript read wait on `turnLock` now, and a fork from a tool of the same session throws `forkDuringSameSessionTurn`. In the new model:
+Before ^dpn2ytt, a fork and a transcript read waited on the old session lock `turnLock`, and a fork from a tool of the same session threw the old error `forkDuringSameSessionTurn`. In the new model:
 
 - The session actor keeps a settled copy of the transcript. It updates the copy at the end of each submission and at each tool-result boundary (where `noteToolResult(_:)` already reads `backend.transcriptEntries()`).
 - `transcript` returns the settled copy at once, from any task.
@@ -307,7 +315,7 @@ Each item of the memory note `routed-session-cancellation-invariants`, checked a
 | `try Task.checkCancellation()` after the stream loop | **Keep** | The SDK stream still ends (and does not throw) when its consumer is cancelled. |
 | `AsyncSemaphore.wait()` is non-throwing so that a cancel leaves `turnLock` balanced; the queue uses `waitUnlessCancelled()` | **Gone** | No semaphore is left in the session or the queue. Its replacement is the exactly-one-resume rule of the worker (5.3), with its own race test (^a0ze9af). `AsyncSemaphore` may stay for tests and for other code. |
 | The SDK crash `_ContiguousArrayStorage deallocated with non-zero retain count 2` (^vg6bmq6) | **Keep** | It is in FoundationModels frames and exists at HEAD. A stress run of the new code must compare with HEAD before it blames the change. |
-| Tests: never a bare `await session.respond(...)` after a cancel; use `awaitCancelledUnwind` / `followUpTurnCompletes` | **Keep** | A stranded waiter still hangs the suite. The helpers are renamed with the "turn" names (^f33q8gw). |
+| Tests: never a bare `await session.respond(...)` after a cancel; use `awaitCancelledUnwind` / `followUpTurnCompletes` | **Keep** | A stranded waiter still hangs the suite. ^f33q8gw renamed the helpers: they are now `awaitCancelledUnwind`, `followUpAnswerCompletes` and `followUpAnswerEvents` in `AnswerCancellationTests`. |
 
 The memory note `stub-backend-producer-race` stays valid: a stream producer can still outlive a cancelled submission.
 
@@ -318,7 +326,7 @@ The counts are from `rg` over each consumer's sources on 2026-09-25.
 | Consumer | Uses now | Must change |
 |---|---|---|
 | FoundationModelsMultitool | `turnWillBegin` 27, `TurnBoundaryTool` 2, `turnEnded` 3, `turnStarted` 2, `cancelCurrentTurn` 1, `dispatchNextPrompt` 1 | `SubmissionBoundaryTool.submissionWillBegin()`; the submission events; `cancel()`; remove the `dispatchNextPrompt()` driver. `MultiTool.turnWillBegin()` applies a staged registry; `submissionWillBegin()` does the same job at the same place. |
-| AgentViewKit | `cancelCurrentTurn` 11, `turnEnded` 10, `turnStarted` 6, `TurnStart` 1, `TurnID` 1 | `cancel()`; the submission and answer events; `SubmissionStart`, `SubmissionID`; a view of "the turn in flight" shows `currentSubmission` and the waiting messages. |
+| AgentViewKit | `cancelCurrentTurn` 11, `turnEnded` 10, `turnStarted` 6, `TurnStart` 1, `TurnID` 1 | `cancel()`; the submission and answer events; `SubmissionStart`, `SubmissionID`; a view of the running work shows `currentSubmission` and the waiting messages. |
 | FoundationModelsExtras | `TurnOutcome` 1 | `SessionAnswer`. |
 | FoundationModelsAgents | `dispatchNextPrompt` 12, `cancelCurrentTurn` 1 | Remove the external driver (the pump delivers messages and settled runs); `cancel()`; the agent tool must start a child as a background run and return at once. |
 | FoundationModelsACPAgent (not edited by the Router; its own card ^tz867gz) | `turnEnded` 26, `awaitingUser` 10, `turnStarted` 3, `cancelCurrentTurn` 3, `turnWillBegin` 2, `generationCall` 2, `passQueued`/`passStarted` (card ^rfn4m87) | The names above; `awaitingUser` is gone, and a permission wait inside an in-band tool now holds the model for every session on it; `submissionQueued`/`submissionStarted`; `generationCall` stays. |

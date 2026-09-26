@@ -165,7 +165,7 @@ struct SessionOutboxToolWiringTests {
 
     /// A backend that invokes the session's first composed tool from inside
     /// its first `respond` — standing in for the SDK runtime invoking a tool
-    /// mid-generation, so a test can cancel the turn while that tool call
+    /// mid-generation, so a test can cancel the answer while that tool call
     /// is in flight.
     ///
     /// It invokes the tool in its first `respond` only. The terminal of a
@@ -183,8 +183,8 @@ struct SessionOutboxToolWiringTests {
             /// See ``ToolInvokingBackend/renderedToolOutputs``.
             var renderedToolOutputs: [String] = []
 
-            /// See ``ToolInvokingBackend/observedTurnTokens``.
-            var observedTurnTokens: [String?] = []
+            /// See ``ToolInvokingBackend/observedSubmissionTokens``.
+            var observedSubmissionTokens: [String?] = []
         }
 
         private let inner = StubSessionBackend()
@@ -202,10 +202,10 @@ struct SessionOutboxToolWiringTests {
         /// Every rendered output the invoked tool returned, in call order.
         var renderedToolOutputs: [String] { captures.withLock { $0.renderedToolOutputs } }
 
-        /// The turn-scope binding's `completionToken` observed at each
+        /// The submission-scope binding's `completionToken` observed at each
         /// `respond` entry — what a composed tool's own per-call
         /// `correlationID` must differ from.
-        var observedTurnTokens: [String?] { captures.withLock { $0.observedTurnTokens } }
+        var observedSubmissionTokens: [String?] { captures.withLock { $0.observedSubmissionTokens } }
 
         init(tools: [any Tool]) {
             self.tools = tools
@@ -213,8 +213,8 @@ struct SessionOutboxToolWiringTests {
 
         func respond(to prompt: String, maxTokens: Int?) async throws -> String {
             let isFirstCall = captures.withLock { captures in
-                captures.observedTurnTokens.append(ToolContext.current?.completionToken)
-                return captures.observedTurnTokens.count == 1
+                captures.observedSubmissionTokens.append(ToolContext.current?.completionToken)
+                return captures.observedSubmissionTokens.count == 1
             }
             if isFirstCall {
                 try await invokeFirstTool(prompt: prompt)
@@ -234,7 +234,7 @@ struct SessionOutboxToolWiringTests {
                 captures.withLock { $0.renderedToolOutputs.append(rendered) }
             }
             // The non-String counterpart: invokes the binding-only wrapper
-            // from inside the turn — under the turn-scope ambient binding —
+            // from inside the submission — under the submission-scope ambient binding —
             // recording the output's text (the per-call token the tool
             // observed) for the shadowing assertions.
             if let bound = failureDeliveryPeeled(tools.first)
@@ -567,16 +567,16 @@ struct SessionOutboxToolWiringTests {
         #expect(events.map(\.tool) == [emitter.name, emitter.name])
         #expect(events.map(\.op) == [emitter.name, emitter.name])
         // Each call minted its own completionToken — the correlationID the
-        // tool's own ambient posts carried, run scope, never turn scope.
+        // tool's own ambient posts carried, run scope, never submission scope.
         #expect(events.map(\.correlationID) == [first.text, second.text])
         #expect(first.text != second.text)
     }
 
     @Test(
-        "inside a real respond turn, a non-String-output tool's per-call binding shadows the turn-scope binding: its posts carry its own identity and token, never session/respond or the turn's token"
+        "inside a real respond submission, a non-String-output tool's per-call binding shadows the submission-scope binding: its posts carry its own identity and token, never session/respond or the submission's token"
     )
     @MainActor
-    func nonStringToolPerCallBindingShadowsTurnScopeBindingInsideRespond() async throws {
+    func nonStringToolPerCallBindingShadowsSubmissionScopeBindingInsideRespond() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -592,19 +592,19 @@ struct SessionOutboxToolWiringTests {
         let backend = try #require(container.lastBackend)
         #expect(backend.toolCallStarted)
         let perCallToken = try #require(backend.renderedToolOutputs.first)
-        let turnToken = try #require(backend.observedTurnTokens.first ?? nil)
+        let submissionToken = try #require(backend.observedSubmissionTokens.first ?? nil)
 
-        // The tool ran under a live turn-scope binding, and its own
+        // The tool ran under a live submission-scope binding, and its own
         // per-call binding shadowed it: the posted event carries the
         // tool's identity and its call's own freshly minted token — never
-        // the turn binding's "session"/"respond" stamps or the turn's
+        // the submission binding's "session"/"respond" stamps or the submission's
         // completionToken (the exact fallback this task removes).
         let events = await session.outbox.pending().events.map(\.event)
         #expect(events.map(\.detail) == [ToolInvokingBackend.nonStringInvocationDetail])
         #expect(events.map(\.tool) == [emitter.name])
         #expect(events.map(\.op) == [emitter.name])
         #expect(events.map(\.correlationID) == [perCallToken])
-        #expect(perCallToken != turnToken)
+        #expect(perCallToken != submissionToken)
         #expect(perCallToken != "unbound")
     }
 
@@ -1191,10 +1191,10 @@ struct SessionOutboxToolWiringTests {
     // MARK: - Background-run behavior through a session's composed tool list
 
     @Test(
-        "a slow background tool returns the pending envelope, and its later .completed rides the next turn's preamble and lands as a durable OperationEventSegment"
+        "a slow background tool returns the pending envelope, and its later .completed rides the next submission's preamble and lands as a durable OperationEventSegment"
     )
     @MainActor
-    func backgroundSlowToolCompletionRidesNextTurn() async throws {
+    func backgroundSlowToolCompletionRidesNextSubmission() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -1231,7 +1231,7 @@ struct SessionOutboxToolWiringTests {
         #expect(completed.correlationID == envelope.completionToken)
         #expect(completed.detail == "gated: slow")
 
-        // The next turn drains it: the composed prompt the backend receives
+        // The next submission drains it: the composed prompt the backend receives
         // carries the preamble line, and the recorded `.prompt` entry
         // carries the same event as a durable OperationEventSegment.
         _ = try await session.respond(to: "follow-up")
@@ -1327,10 +1327,10 @@ struct SessionOutboxToolWiringTests {
     }
 
     @Test(
-        "cancelling a turn backgrounds an in-flight tool call: it is tracked in the session's mailbox and later settles normally, never dying with the turn"
+        "cancelling an answer backgrounds an in-flight tool call: it is tracked in the session's mailbox and later settles normally, never dying with the answer"
     )
     @MainActor
-    func cancellingATurnBackgroundsInFlightToolCall() async throws {
+    func cancellingAnAnswerBackgroundsInFlightToolCall() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -1342,12 +1342,12 @@ struct SessionOutboxToolWiringTests {
         let session = profile.standard.makeSession(tools: [GatedBackgroundToolRunner(gate: gate)])
         let backend = try #require(container.lastBackend)
 
-        // Drive a turn whose backend invokes the composed background tool,
-        // then cancel the turn while that tool call is in flight. (The
+        // Drive an answer whose backend invokes the composed background tool,
+        // then cancel the answer while that tool call is in flight. (The
         // tool declared background, so the call is handed back as a token
         // with or without the cancel — what this pins is what cancellation
         // does NOT do: kill the background run.)
-        let turn = Task { try await session.respond(to: "cancel me") }
+        let answer = Task { try await session.respond(to: "cancel me") }
         for _ in 0..<600 {
             if backend.toolCallStarted { break }
             try await Task.sleep(nanoseconds: 10_000_000)
@@ -1356,7 +1356,7 @@ struct SessionOutboxToolWiringTests {
         await session.cancel()
 
         // The run was tracked in this session's mailbox, and it is still running
-        // with the turn cancelled. Read the run plane here, while the work is
+        // with the answer cancelled. Read the run plane here, while the work is
         // still in flight: `respond(to:)` drains the run plane before it
         // returns (task ^nmpejc5), so a read after the call would say nothing
         // about what the cancellation did.
@@ -1366,11 +1366,11 @@ struct SessionOutboxToolWiringTests {
             })
         let trackedTokens = await session.mailbox.backgroundRuns().map(\.completionToken)
 
-        // The background run outlived the cancelled turn un-cancelled: opening
-        // the gate lets it settle as a normal success — and lets the turn's
+        // The background run outlived the cancelled answer un-cancelled: opening
+        // the gate lets it settle as a normal success — and lets the answer's
         // own caller finish.
         await gate.open()
-        _ = try? await turn.value
+        _ = try? await answer.value
 
         // The tool call answered with the pending envelope, not a
         // CancellationError, and that envelope's token is the run that was
@@ -1442,7 +1442,7 @@ struct SessionOutboxToolWiringTests {
         await Self.settleBackgroundRuns(on: session, opening: gate)
     }
 
-    @Test("signal 2, I am making progress: a progress report updates the run's latest detail and rides the next dispatched turn's preamble")
+    @Test("signal 2, I am making progress: a progress report updates the run's latest detail and rides the next submission's preamble")
     @MainActor
     func progressSignalReachesTheModel() async throws {
         let dir = Self.makeTempDir()
@@ -1456,7 +1456,7 @@ struct SessionOutboxToolWiringTests {
 
         // The report lands on the run plane and in the staging area.
         #expect(
-            await BoundedWait.conditionReached("the progress report staged for the next turn") {
+            await BoundedWait.conditionReached("the progress report staged for the next submission") {
                 await session.outbox.pending().events.contains { $0.event.kind == .progress }
             })
         let run = try #require(await session.mailbox.backgroundRuns().first)
@@ -1489,14 +1489,14 @@ struct SessionOutboxToolWiringTests {
 
         // The question is staged for the model, addressed by its own id.
         #expect(
-            await BoundedWait.conditionReached("the elicitation staged for the next turn") {
+            await BoundedWait.conditionReached("the elicitation staged for the next submission") {
                 await session.outbox.pending().events.contains { $0.event.kind == .elicitation }
             })
         let staged = try #require(await session.outbox.pending().events.first { $0.event.kind == .elicitation }?.event)
         #expect(staged.elicitation?.elicitationId == elicitationId)
 
-        // Only the run suspends: the session still runs a turn while the
-        // question is pending, and that turn carries the question.
+        // Only the run suspends: the session still runs a submission while the
+        // question is pending, and that submission carries the question.
         _ = try await session.respond(to: "status?")
         let composed = try #require(backend.receivedPrompts.last)
         #expect(composed.contains(OperationEventSegment.renderedLine(for: staged)))

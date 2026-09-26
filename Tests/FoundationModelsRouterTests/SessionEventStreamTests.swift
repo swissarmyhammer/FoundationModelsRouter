@@ -7,7 +7,7 @@ import Testing
 
 /// Exercises task 46adpch: ``RoutedSession/streamEvents(to:maxTokens:)`` — the
 /// event-element variant of ``RoutedSession/streamResponse(to:maxTokens:)``
-/// that surfaces tool calls, tool status, reasoning, and the turn's own
+/// that surfaces tool calls, tool status, reasoning, and the answer's own
 /// closing usage, derived from the same snapshot-diff the chokepoint already
 /// runs (see ``RoutedSessionActor/recordTranscriptDelta(grammar:since:usage:pendingEvents:onEvent:)``).
 ///
@@ -16,13 +16,13 @@ import Testing
 /// — so a test can force exactly the `.toolCalls`/`.toolOutput`/`.reasoning`/`.response`
 /// shape it wants to observe translated into ``SessionEvent``s, with no
 /// network and no GPU.
-@Suite("streamEvents: SessionEvent derivation from the turn's own diff")
+@Suite("streamEvents: SessionEvent derivation from the submission's own diff")
 struct SessionEventStreamTests {
     // MARK: - Scripted backend
 
     /// A backend whose synthetic transcript is fully test-controlled:
     /// `respond`/`streamResponse` never append to ``entries`` themselves — a
-    /// test sets ``entries`` directly to whatever this "turn" should appear
+    /// test sets ``entries`` directly to whatever this "submission" should appear
     /// to have durably produced, mirroring
     /// `TranscriptFidelityTests.VariableTranscriptBackend`.
     ///
@@ -33,7 +33,7 @@ struct SessionEventStreamTests {
     private final class ScriptedTranscriptBackend: LanguageModelSessionBackend, @unchecked Sendable {
         enum StubError: Error, Equatable { case boom }
 
-        /// The transcript this "turn" should appear to have durably produced
+        /// The transcript this "submission" should appear to have durably produced
         /// — set by the test before calling `streamEvents(to:)`.
         var entries: [Transcript.Entry] = []
 
@@ -45,7 +45,7 @@ struct SessionEventStreamTests {
         /// instead of yielding ``responseChunks``.
         var shouldThrow = false
 
-        /// The per-turn token counts added into ``cumulativeUsage`` on every
+        /// The per-submission token counts added into ``cumulativeUsage`` on every
         /// call, or `nil` to report no usage at all — mirrors
         /// ``StubSessionBackend/usageIncrement``.
         var usageIncrement: (input: Int, output: Int)?
@@ -244,9 +244,9 @@ struct SessionEventStreamTests {
 
     // MARK: - Plain text: textDelta only
 
-    @Test("a plain-text turn yields textDelta fragments in order, then the recorded .response entry's id")
+    @Test("a plain-text answer yields textDelta fragments in order, then the recorded .response entry's id")
     @MainActor
-    func plainTextTurnYieldsOnlyTextDeltas() async throws {
+    func plainTextAnswerYieldsOnlyTextDeltas() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -443,7 +443,7 @@ struct SessionEventStreamTests {
         // macOS 27 FoundationModels gives a `.toolOutput` entry the id of the
         // call it answers, so `entry.entryId` normally already is that id. The
         // invariant is the SDK's, undocumented and unenforced, and the id is
-        // the only thing correlating a completion to its call — so this turn
+        // the only thing correlating a completion to its call — so this submission
         // plants output entries keyed in a different space and holds Router to
         // reporting the call ids it announced regardless (task ^w8dzvee, D1).
         // Two calls, because with one the mis-keying is invisible.
@@ -494,7 +494,7 @@ struct SessionEventStreamTests {
         )
     }
 
-    @Test("a tool call with no matching toolOutput in this turn's diff is reported failed")
+    @Test("a tool call with no matching toolOutput in this submission's diff is reported failed")
     @MainActor
     func danglingToolCallIsReportedFailed() async throws {
         let dir = Self.makeTempDir()
@@ -604,11 +604,11 @@ struct SessionEventStreamTests {
         #expect(answer.usage == nil)
     }
 
-    // MARK: - Throwing turn: events recorded before the throw still surface
+    // MARK: - Throwing submission: events recorded before the throw still surface
 
-    @Test("a turn that throws after the SDK durably recorded a tool call still yields that call's events before the stream fails")
+    @Test("a submission that throws after the SDK durably recorded a tool call still yields that call's events before the stream fails")
     @MainActor
-    func throwingTurnStillYieldsEventsRecordedBeforeTheThrow() async throws {
+    func throwingSubmissionStillYieldsEventsRecordedBeforeTheThrow() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -673,7 +673,7 @@ struct SessionEventStreamTests {
 
         // Exactly the same persisted shape `streamResponseEmitsOpenAndClose`
         // (`SessionChokepointTests`) asserts for the plain `streamResponse`
-        // path: a leading `session` meta line, then this turn's `.prompt` and
+        // path: a leading `session` meta line, then this submission's `.prompt` and
         // `.response` — the richer live event stream changes nothing about
         // what lands on disk.
         let events = await recorder.events

@@ -27,7 +27,7 @@ import Tracing
 /// ``StubSessionBackend`` with canned usage counts, and an `InMemoryTracer` —
 /// so the suite needs no network, no GPU and no bootstrapped tracing backend.
 @Suite("Submission tracing")
-struct TurnTracingTests {
+struct SubmissionTracingTests {
     /// The span name every submission opens.
     private static let spanName = RouterTracing.SpanName.submission
 
@@ -39,14 +39,14 @@ struct TurnTracingTests {
     /// its submissions 1, 2, 3, and so on.
     private static let secondSubmissionNumber: UInt64 = 2
 
-    /// The token counts one successful stub turn meters.
-    private static let turnUsage = (input: 11, output: 7)
+    /// The token counts one successful stub submission meters.
+    private static let submissionUsage = (input: 11, output: 7)
 
-    /// The canned text the stub backend answers every turn with.
+    /// The canned text the stub backend answers every submission with.
     private static let cannedAnswer = "stub answer"
 
-    /// The prompt every driven turn carries.
-    private static let prompt = "drive one turn"
+    /// The prompt every driven answer carries.
+    private static let prompt = "drive one answer"
 
     /// A container that vends one caller-supplied backend for every session it
     /// makes, so a test can set the backend's metered usage up front and can
@@ -82,17 +82,17 @@ struct TurnTracingTests {
         }
     }
 
-    /// Everything one driven turn needs, and everything a test reads back off
-    /// it.
-    private struct TurnFixture {
-        /// The session the test drives its turn on.
+    /// Everything one driven answer needs, and everything a test reads back
+    /// off it.
+    private struct AnswerFixture {
+        /// The session the test drives its answer on.
         let session: RoutedSession
 
-        /// The backend that session runs on, so a test can make a later turn
-        /// fail.
+        /// The backend that session runs on, so a test can make a later
+        /// submission fail.
         let backend: StubSessionBackend
 
-        /// The resolved profile, so a test can name the model the turn ran on.
+        /// The resolved profile, so a test can name the model the answer ran on.
         let profile: LanguageModelProfile
 
         /// The router that resolved the profile, so a test can name its
@@ -111,14 +111,14 @@ struct TurnTracingTests {
     ///   - tracer: The tracer every handle of the resolved profile carries, or
     ///     `nil` to read `InstrumentationSystem.tracer` at call time.
     ///   - usageIncrement: The token counts the backend meters on each
-    ///     successful turn, or `nil` to report no usage at all.
+    ///     successful submission, or `nil` to report no usage at all.
     /// - Returns: The fixture the test drives and reads back.
     /// - Throws: Whatever profile resolution throws.
     private static func makeFixture(
         tracer: (any Tracer)?,
-        usageIncrement: (input: Int, output: Int)? = turnUsage
-    ) async throws -> TurnFixture {
-        let directory = RouterTestFixtures.makeTempDir(prefix: "TurnTracingTests")
+        usageIncrement: (input: Int, output: Int)? = submissionUsage
+    ) async throws -> AnswerFixture {
+        let directory = RouterTestFixtures.makeTempDir(prefix: "SubmissionTracingTests")
         let backend = StubSessionBackend(responseText: cannedAnswer, usageIncrement: usageIncrement)
         let router = RouterTestFixtures.makeRouter(
             cacheDir: directory,
@@ -130,7 +130,7 @@ struct TurnTracingTests {
         )
         let profile = try await router.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        return TurnFixture(
+        return AnswerFixture(
             session: profile.standard.makeSession(),
             backend: backend,
             profile: profile,
@@ -199,9 +199,9 @@ struct TurnTracingTests {
 
         let span = try Self.singleSpan(reportedTo: tracer)
         #expect(
-            span.attributes.get(RouterTracing.AttributeKey.tokensIn) == .int64(Int64(Self.turnUsage.input)))
+            span.attributes.get(RouterTracing.AttributeKey.tokensIn) == .int64(Int64(Self.submissionUsage.input)))
         #expect(
-            span.attributes.get(RouterTracing.AttributeKey.tokensOut) == .int64(Int64(Self.turnUsage.output)))
+            span.attributes.get(RouterTracing.AttributeKey.tokensOut) == .int64(Int64(Self.submissionUsage.output)))
     }
 
     @Test("two answers on one session open one submission span each, numbered in their session")
@@ -258,7 +258,7 @@ struct TurnTracingTests {
     }
 
     @Test("a submission that throws keeps its span, with the error recorded")
-    func failedTurnRecordsItsErrorOnTheSpan() async throws {
+    func failedSubmissionRecordsItsErrorOnTheSpan() async throws {
         let tracer = InMemoryTracer()
         let fixture = try await Self.makeFixture(tracer: tracer)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -273,8 +273,8 @@ struct TurnTracingTests {
         #expect(span.errors.count == 1)
     }
 
-    @Test("a turn with no tracer injected and no backend bootstrapped answers normally")
-    func untracedTurnAnswersNormally() async throws {
+    @Test("an answer with no tracer injected and no backend bootstrapped comes normally")
+    func untracedAnswerComesNormally() async throws {
         let fixture = try await Self.makeFixture(tracer: nil)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 

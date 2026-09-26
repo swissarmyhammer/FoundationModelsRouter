@@ -418,7 +418,7 @@ struct ElicitationEnvelopeTests {
         #expect(decoded.kind == .elicitation)
     }
 
-    // MARK: - renderedLine: the elicitation kind in the turn preamble
+    // MARK: - renderedLine: the elicitation kind in the submission preamble
 
     @Test("renderedLine renders an elicitation event with its request message")
     func renderedLineRendersElicitation() {

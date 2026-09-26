@@ -29,14 +29,14 @@ func collect(_ stream: AsyncStream<SessionEvent>) async -> [SessionEvent] {
     await stream.reduce(into: []) { $0.append($1) }
 }
 
-/// Drains `session`'s `streamEvents(to:)` for one turn into an array, in
+/// Drains `session`'s `streamEvents(to:)` for one answer into an array, in
 /// production order.
 ///
 /// - Parameters:
-///   - session: The session to drive one turn on.
-///   - prompt: The prompt the turn answers.
-/// - Returns: The turn's events, in order.
-/// - Throws: Whatever the turn throws.
+///   - session: The session to drive one answer on.
+///   - prompt: The prompt the answer replies to.
+/// - Returns: The events of the answer, in order.
+/// - Throws: Whatever the answer throws.
 func collectEvents(_ session: RoutedSession, prompt: String) async throws -> [SessionEvent] {
     try await collect(session.streamEvents(to: prompt))
 }

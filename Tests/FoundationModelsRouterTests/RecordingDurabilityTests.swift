@@ -5,12 +5,12 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises the recording durability policy: ``JSONLRecorder`` synchronizes
-/// its append handle at each turn close (a `.response`-kind event), and both
+/// its append handle at each submission close (a `.response`-kind event), and both
 /// readers — ``TranscriptTree`` and ``MergedTranscript`` — tolerate the crash
 /// artifact that policy expects — a torn final line in a `transcript.jsonl` —
 /// while failing loudly, with a typed error naming the file, on corruption
 /// anywhere before it.
-@Suite("Recording durability: turn-close sync and torn-tail tolerance")
+@Suite("Recording durability: submission-close sync and torn-tail tolerance")
 struct RecordingDurabilityTests {
     // MARK: - Fixtures
 
@@ -21,7 +21,7 @@ struct RecordingDurabilityTests {
     private static let contextTokens = 4096
 
     /// The event kinds the fixture records: the opening `session` line, then
-    /// two full turns, each closed by a `.response`-kind event.
+    /// two full answers, each closed by a `.response`-kind event.
     private static let fixtureKinds: [TranscriptEvent.Kind] = [
         .session, .prompt, .response, .prompt, .response,
     ]
@@ -101,19 +101,19 @@ struct RecordingDurabilityTests {
         try data.prefix(lastLineStart + keptBytes).write(to: transcriptURL)
     }
 
-    /// Replaces the fixture's first turn-close `.response` line — a line that
+    /// Replaces the fixture's first submission-close `.response` line — a line that
     /// is not the file's last — with bytes that do not decode.
-    private static func corruptFirstTurnClose(of transcriptURL: URL) throws {
+    private static func corruptFirstSubmissionClose(of transcriptURL: URL) throws {
         var lines = try TextFileLines.read(from: transcriptURL)
-        let firstTurnCloseIndex = try #require(lines.firstIndex { $0.contains("response") })
-        lines[firstTurnCloseIndex] = "{\"seq\": torn mid-file bytes"
+        let firstSubmissionCloseIndex = try #require(lines.firstIndex { $0.contains("response") })
+        lines[firstSubmissionCloseIndex] = "{\"seq\": torn mid-file bytes"
         try Data((lines.joined(separator: "\n") + "\n").utf8).write(to: transcriptURL)
     }
 
     // MARK: - Torn final line
 
     @Test(
-        "a torn final line is dropped and the tree loads with the turn-before state",
+        "a torn final line is dropped and the tree loads with the state from before that answer",
         arguments: tornTailKeptByteCounts
     )
     func tornFinalLineIsDroppedOnLoad(keptBytes: Int) async throws {
@@ -148,7 +148,7 @@ struct RecordingDurabilityTests {
         let root = Self.makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         let fixture = try await Self.writeSessionFixture(under: root)
-        try Self.corruptFirstTurnClose(of: fixture.transcriptURL)
+        try Self.corruptFirstSubmissionClose(of: fixture.transcriptURL)
 
         do {
             _ = try TranscriptTree.load(under: root)
@@ -165,7 +165,7 @@ struct RecordingDurabilityTests {
         let root = Self.makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         let fixture = try await Self.writeSessionFixture(under: root)
-        try Self.corruptFirstTurnClose(of: fixture.transcriptURL)
+        try Self.corruptFirstSubmissionClose(of: fixture.transcriptURL)
 
         do {
             _ = try MergedTranscript.merged(under: root)
@@ -176,7 +176,7 @@ struct RecordingDurabilityTests {
         }
     }
 
-    // MARK: - Turn-close sync
+    // MARK: - Submission-close sync
 
     /// One recorded call on ``SpyAppendHandle``.
     private enum HandleCall: Equatable {
@@ -207,8 +207,8 @@ struct RecordingDurabilityTests {
         }
     }
 
-    @Test("the append handle is synchronized exactly when a turn-close `.response` event lands")
-    func synchronizesAtTurnClose() async {
+    @Test("the append handle is synchronized exactly when a submission-close `.response` event lands")
+    func synchronizesAtSubmissionClose() async {
         let directory = Self.makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let spy = SpyAppendHandle()

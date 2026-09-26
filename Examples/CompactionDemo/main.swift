@@ -11,16 +11,16 @@ import Tokenizers
 /// Shows compaction and only compaction, in three steps a person reads off
 /// the terminal:
 ///
-/// 1. Scripted turns read the fixture documents beside this file into a
+/// 1. Scripted messages read the fixture documents beside this file into a
 ///    session whose ``TokenBudget`` puts the compaction trigger low enough
-///    for those documents to cross it in a handful of turns. After every
-///    turn the demo prints measured usage against the trigger, and once
-///    usage crosses it, narrates WHY the next turn will compact.
-/// 2. That next turn compacts the transcript before it generates — nothing
+///    for those documents to cross it in a handful of answers. After every
+///    answer the demo prints measured usage against the trigger, and once
+///    usage crosses it, narrates WHY the next answer will compact.
+/// 2. That next answer compacts the transcript before it generates — nothing
 ///    here ever calls `session.compact()` — and the compaction's checkpoint
 ///    event (``SessionEvent/compaction(_:)``) prints the moment it arrives.
 /// 3. The compacted summary the compaction wrote — the text the model now reads
-///    in place of the compacted turns — prints last.
+///    in place of the compacted answers — prints last.
 ///
 /// The session model is deliberately small (the same 680 MB instruct model
 /// the compaction smoke tests drive), the summary is written by the
@@ -61,7 +61,7 @@ let demoContextTokens = 4096
 /// 901 tokens of the 4096-token window, against the 0.80 production
 /// default — so a handful of one-paragraph documents crosses it in seconds
 /// instead of needing to fill a real window. High enough, though, that the
-/// live context holds several turns: the compaction discards a summary that
+/// live context holds several answers: the compaction discards a summary that
 /// fails to shrink the live context. Measured with `.greedy` decoding on
 /// 2026-08-19: the six fixture documents land at 239, 428, 617, 811, 976 and
 /// 1138 measured tokens, so this share crosses after the fifth document with
@@ -73,7 +73,7 @@ let demoTriggerShare = 0.22
 /// instructions, and the compaction states that room to the summarizer.
 let demoTargetShare = 0.05
 
-/// The reply ceiling every scripted turn is submitted with. Small, so the
+/// The reply ceiling every scripted message is sent with. Small, so the
 /// documents — not the model's replies — decide how fast usage climbs.
 let demoReplyTokenCeiling = 48
 
@@ -98,24 +98,25 @@ let demoCompactionPrompt = CompactionPrompt(
         """
 )
 
-// MARK: - One narrated turn
+// MARK: - One narrated answer
 
-/// Drives one turn through the library's own event compaction —
-/// ``RoutedSession/respond(to:maxTokens:observing:)`` — and prints any
-/// applied compaction's checkpoint event the moment it arrives.
+/// Sends one message and waits for its answer through the library's own
+/// event compaction — ``RoutedSession/respond(to:maxTokens:observing:)`` —
+/// and prints any applied compaction's checkpoint event the moment it
+/// arrives.
 ///
 /// A compaction reaches a caller only as ``SessionEvent/compaction(_:)`` on the
-/// turn's own event stream, so printing it from the `observing` callback IS
+/// answer's own event stream, so printing it from the `observing` callback IS
 /// step 2 of the demo. A compaction whose ``CompactionResult/stagesApplied`` is
 /// empty changed nothing and wrote no checkpoint, so it is not printed and
 /// not returned.
 ///
 /// - Parameters:
-///   - session: The session to drive the turn on.
-///   - prompt: The turn's prompt text.
-/// - Returns: The turn's reply text and every applied compaction, in compaction order.
-/// - Throws: Whatever the turn throws.
-func runTurn(
+///   - session: The session that answers.
+///   - prompt: The prompt text of the message.
+/// - Returns: The reply text of the answer and every applied compaction, in compaction order.
+/// - Throws: Whatever the answer throws.
+func runAnswer(
     on session: RoutedSession, prompt: String
 ) async throws -> (reply: String, compactions: [CompactionResult]) {
     let outcome = try await session.respond(to: prompt, maxTokens: demoReplyTokenCeiling) { event in
@@ -124,7 +125,7 @@ func runTurn(
         print(
             """
 
-            [checkpoint] the compaction checkpoint event arrived, mid-turn, before this turn generated:
+            [checkpoint] the compaction checkpoint event arrived, before this answer generated:
             [checkpoint]   id             = \(result.id)
             [checkpoint]   tokensBefore   = \(result.tokensBefore)
             [checkpoint]   tokensAfter    = \(result.tokensAfter)
@@ -161,9 +162,9 @@ print(
     """
     === CompactionDemo: one automatic compaction, narrated ===
 
-    1. Scripted turns read project documents until measured context usage
+    1. Scripted messages read project documents until measured context usage
        crosses the budget's compaction trigger.
-    2. The next turn then compacts the transcript before it generates, and the
+    2. The next answer then compacts the transcript before it generates, and the
        compaction checkpoint event prints as it arrives.
     3. The compacted summary the compaction wrote prints last.
 
@@ -192,7 +193,7 @@ let router = Router(
 // the same small placeholder the repo's other demos use.
 let demoProfile = ProfileDefinition(
     name: "compaction-demo",
-    description: "One small resident model whose transcript is compacted in place once scripted turns cross the trigger.",
+    description: "One small resident model whose transcript is compacted in place once scripted messages cross the trigger.",
     standard: [demoModel],
     flash: [demoSummarizerModel],
     embedding: ["mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ"],
@@ -237,7 +238,7 @@ print(
     [setup] compaction target: \(budget.targetTokens) tokens (\(demoTargetShare) of the window)
     """)
 
-// MARK: - 1. What the transcript holds, and why the next turn triggers compaction
+// MARK: - 1. What the transcript holds, and why the next answer triggers compaction
 
 // The fixture documents live beside this source file (excluded from the
 // target's compiled sources in Package.swift, exactly like README.md), so
@@ -257,12 +258,12 @@ precondition(!fixtureURLs.isEmpty, "expected fixture documents under \(fixturesD
 print(
     """
 
-    --- 1. what the transcript holds, and why the next turn triggers compaction ---
+    --- 1. what the transcript holds, and why the next answer triggers compaction ---
 
-    Each turn below reads one project document into the transcript. The
-    session measures its context usage after every turn and compares it
-    against the trigger before every turn — once usage is at or over
-    \(budget.triggerTokens) tokens, the NEXT turn compacts the transcript before it
+    Each message below reads one project document into the transcript. The
+    session measures its context usage after every answer and compares it
+    against the trigger before every submission — once usage is at or over
+    \(budget.triggerTokens) tokens, the NEXT answer compacts the transcript before it
     generates. No caller asks for the compaction; the budget on the session is the
     whole mechanism.
 
@@ -272,18 +273,18 @@ var documentsRead = 0
 var usageTokens = 0
 for fixtureURL in fixtureURLs {
     let contents = try String(contentsOf: fixtureURL, encoding: .utf8)
-    let turn = try await runTurn(
+    let answer = try await runAnswer(
         on: session, prompt: "Here is \(fixtureURL.lastPathComponent):\n\n\(contents)")
-    guard turn.compactions.isEmpty else {
+    guard answer.compactions.isEmpty else {
         // swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
-        print("[error] a compaction fired during the document turns; the trigger crossed earlier than this demo narrates")
+        print("[error] a compaction fired during the document answers; the trigger crossed earlier than this demo narrates")
         exit(EXIT_FAILURE)
     }
     documentsRead += 1
     usageTokens = await measuredTokens(of: session, against: budget)
     // swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
     print(
-        "[turn \(documentsRead)] read \(fixtureURL.lastPathComponent) — usage \(usageTokens) of \(budget.triggerTokens) trigger tokens"
+        "[answer \(documentsRead)] read \(fixtureURL.lastPathComponent) — usage \(usageTokens) of \(budget.triggerTokens) trigger tokens"
     )
     if usageTokens >= budget.triggerTokens { break }
 }
@@ -298,8 +299,8 @@ guard usageTokens >= budget.triggerTokens else {
 print(
     """
 
-    The transcript now holds \(documentsRead) document turns and measures \(usageTokens)
-    tokens — at or over the \(budget.triggerTokens)-token trigger. The next turn will
+    The transcript now holds \(documentsRead) document answers and measures \(usageTokens)
+    tokens — at or over the \(budget.triggerTokens)-token trigger. The next answer will
     therefore compact the transcript before it generates: one summarizer call
     reads the whole live context, and the session restarts the live context
     as the instructions and the model-written summary.
@@ -309,12 +310,12 @@ print(
 
 // MARK: - 2. Trigger the compaction; the checkpoint event prints as it arrives
 
-let triggerTurn = try await runTurn(
+let triggerAnswer = try await runAnswer(
     on: session, prompt: "In one sentence: what kind of project do these documents describe?")
 
-guard let compaction = triggerTurn.compactions.last else {
+guard let compaction = triggerAnswer.compactions.last else {
     // swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
-    print("[error] the trigger turn applied no compaction, so there is no checkpoint to show")
+    print("[error] the trigger answer applied no compaction, so there is no checkpoint to show")
     exit(EXIT_FAILURE)
 }
 
@@ -323,8 +324,8 @@ let usageAfterCompaction = await measuredTokens(of: session, against: budget)
 print(
     """
 
-    The turn still answered, from the compacted transcript:
-      reply: "\(triggerTurn.reply)"
+    The session still answered, from the compacted transcript:
+      reply: "\(triggerAnswer.reply)"
       usage after the compaction: \(usageAfterCompaction) tokens (was \(usageTokens) before)
     """)
 

@@ -63,7 +63,7 @@ extension GenerationCallEntryKind {
 /// ``TranscriptEvent/Kind/generationCall`` journal event for each generation
 /// call of an attempt.
 ///
-/// Two moments end a generation call. A tool call of the session's own turn
+/// Two moments end a generation call. A tool call of the session's own submission
 /// opens, so the call that asked for the tool ended. Or the attempt closes,
 /// so its last call ended. At both moments the cumulative usage of the
 /// backend has moved past the ledger, and the difference is the usage of
@@ -112,7 +112,7 @@ extension RoutedSessionActor {
         generationCallLedger?.newestCall = call
         toolResultWatch.noteEndedCall(tokens: call.input + call.output)
         let finishReason = FinishReason(
-            turnEntries: unrecordedTranscriptEntries(), outputTokens: call.output,
+            submissionEntries: unrecordedTranscriptEntries(), outputTokens: call.output,
             lastCallOutputTokens: call.output, responseTokenCeiling: ledger.responseTokenCeiling)
         return GenerationCallUsage(
             tokensIn: call.input,

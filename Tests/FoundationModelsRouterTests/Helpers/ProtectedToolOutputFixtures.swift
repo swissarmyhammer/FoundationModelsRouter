@@ -5,7 +5,7 @@ import FoundationModels
 
 /// Shared fixtures for the tool-output protection tests: a host rule that
 /// protects a loaded skill, and transcripts that hold one protected and one
-/// unprotected tool output, followed by plain turns.
+/// unprotected tool output, followed by plain answers.
 ///
 /// The rule and the transcript shape follow the host that asked for the
 /// protection: a `skills` tool call with the argument `op` equal to
@@ -50,13 +50,13 @@ enum ProtectedToolOutputFixtures {
     /// The id of the call that lists skills, and of its output entry.
     static let listCallId = "call-list"
 
-    /// How many plain turns follow the tool turns, so the tool turns are not
-    /// the newest turns of the transcript.
-    static let recentTurnCount = 4
+    /// How many plain answers follow the tool-using answers, so the
+    /// tool-using answers are not the newest answers of the transcript.
+    static let recentAnswerCount = 4
 
-    /// The index the first plain recent turn takes, above every tool turn's
-    /// index so no two fixture entries share an id.
-    static let firstRecentTurnIndex = 10
+    /// The index the first plain recent answer takes, above the index of
+    /// every tool-using answer so no two fixture entries share an id.
+    static let firstRecentAnswerIndex = 10
 
     /// The arguments of a `skills` call, decoded by the rule.
     private struct SkillsArguments: Decodable {
@@ -144,7 +144,7 @@ enum ProtectedToolOutputFixtures {
                 id: id, segments: [.text(Transcript.TextSegment(id: "\(id)-text", content: "answer \(id)"))]))
     }
 
-    /// The `.toolCalls` entry of the turn that loads the skill.
+    /// The `.toolCalls` entry of the answer that loads the skill.
     ///
     /// - Returns: The entry.
     /// - Throws: What ``skillsCall(id:operation:)`` throws.
@@ -152,26 +152,26 @@ enum ProtectedToolOutputFixtures {
         toolCalls(id: "calls-skill", [try skillsCall(id: skillCallId, operation: useSkillOperation)])
     }
 
-    /// The protected `.toolOutput` entry of the turn that loads the skill.
+    /// The protected `.toolOutput` entry of the answer that loads the skill.
     static var skillOutputEntry: Transcript.Entry {
         toolOutput(callId: skillCallId, toolName: skillsToolName, text: skillBody)
     }
 
-    /// One turn that loads the skill: a prompt, the `skills` call, the skill
+    /// One answer that loads the skill: a prompt, the `skills` call, the skill
     /// body, and a response.
     ///
-    /// - Returns: The turn's entries.
+    /// - Returns: The entries of the answer.
     /// - Throws: What ``skillsCall(id:operation:)`` throws.
-    static func skillTurn() throws -> [Transcript.Entry] {
+    static func skillAnswer() throws -> [Transcript.Entry] {
         [prompt(id: "prompt-skill"), try skillCallsEntry(), skillOutputEntry, response(id: "response-skill")]
     }
 
-    /// One turn that searches: a prompt, the `search` call, its output, and a
-    /// response.
+    /// One answer that searches: a prompt, the `search` call, its output, and
+    /// a response.
     ///
-    /// - Returns: The turn's entries.
+    /// - Returns: The entries of the answer.
     /// - Throws: What ``searchCall(id:)`` throws.
-    static func searchTurn() throws -> [Transcript.Entry] {
+    static func searchAnswer() throws -> [Transcript.Entry] {
         [
             prompt(id: "prompt-search"),
             toolCalls(id: "calls-search", [try searchCall(id: searchCallId)]),
@@ -180,22 +180,25 @@ enum ProtectedToolOutputFixtures {
         ]
     }
 
-    /// The plain turns that follow the tool turns.
+    /// The plain answers that follow the tool-using answers.
     ///
-    /// - Returns: The entries of ``recentTurnCount`` turns with no tool call.
-    static func recentTurns() -> [Transcript.Entry] {
-        (firstRecentTurnIndex..<firstRecentTurnIndex + recentTurnCount).flatMap { index in
+    /// - Returns: The entries of ``recentAnswerCount`` answers with no tool
+    ///   call.
+    static func recentAnswers() -> [Transcript.Entry] {
+        (firstRecentAnswerIndex..<firstRecentAnswerIndex + recentAnswerCount).flatMap { index in
             [prompt(id: "prompt-\(index)"), response(id: "response-\(index)")]
         }
     }
 
-    /// The header, the skill turn, the search turn, then the plain turns.
+    /// The header, the skill answer, the search answer, then the plain
+    /// answers.
     ///
     /// - Returns: The transcript.
     /// - Throws: What the call builders throw.
     static func transcript() throws -> Transcript {
         Transcript(
-            entries: [TranscriptFixtures.makeInstructions()] + (try skillTurn()) + (try searchTurn()) + recentTurns())
+            entries: [TranscriptFixtures.makeInstructions()] + (try skillAnswer()) + (try searchAnswer())
+                + recentAnswers())
     }
 
     /// The text of the `.toolOutput` entry with `id`, or `nil` when `entries`

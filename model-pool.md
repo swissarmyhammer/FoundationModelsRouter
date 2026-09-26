@@ -226,7 +226,7 @@ directly, and the argmax pin is what makes those suites repeatable. Each of
 those sites passes the mode into `makeSession(...samplingMode:)` instead.
 `Examples/CompactionDemo/main.swift` passes it to `Router`;
 `Examples/MultiModelGeneration` names no sampling mode. The DocC link
-``MLXFoundationModelsContainer/samplingMode`` in `RealToolTurnComparisonTests`
+``MLXFoundationModelsContainer/samplingMode`` in `RealToolAnswerComparisonTests`
 and the rationale comment in `GatedEvalSerialGate.swift` ("one container
 cannot carry two strategies") are updated with it.
 

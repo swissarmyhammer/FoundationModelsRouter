@@ -53,12 +53,12 @@ private let autoCompactionTriggerSamplingMode: GenerationOptions.SamplingMode = 
 /// of every call, and it reads that date off the clock. So every scripted
 /// reply, and the compaction that reads them, was a new sample on every calendar
 /// day. Task ^xfj1am4 measured that here, from one binary with only `TZ`
-/// changed: the turn's reply ran to 143 characters on 01 Sep 2026 and to 136
-/// on 02 Sep 2026.
+/// changed: the reply of the answer ran to 143 characters on 01 Sep 2026 and to
+/// 136 on 02 Sep 2026.
 ///
-/// A reply is part of its turn, and the turn is part of the transcript the
+/// A reply is part of its answer, and the answer is part of the transcript the
 /// compaction reads. So a reply that moves with the clock moves the fourth fact
-/// this suite asserts, which is that the fill FELL across the turn.
+/// this suite asserts, which is that the fill FELL across the answer.
 ///
 /// The value comes from ``RealModelContainer/chatTemplateFallbackDate``, which
 /// is the template's own fallback and which states why.
@@ -68,22 +68,22 @@ private let autoCompactionTriggerChatTemplateDate =
 // MARK: - Suite
 
 /// The fast answer to one question: does a session compact its own transcript,
-/// inside a turn, because its budget's trigger was reached?
+/// inside an answer, because its budget's trigger was reached?
 ///
 /// ## What this suite proves
 ///
 /// Four facts about the AUTOMATIC path, and the four the card `^d02ryqj` names:
 ///
-/// 1. Measured context usage crossed the trigger before the turn under test
+/// 1. Measured context usage crossed the trigger before the answer under test
 ///    ran.
-/// 2. A compaction happened inside that turn, and no caller asked for it. The suite
-///    never calls ``RoutedSession/compact(prompt:budget:)``. The compaction arrives
-///    as a ``SessionEvent/compaction(_:)`` on the turn's own stream, which is
-///    the only way a caller learns of one.
-/// 3. The turn still answered.
+/// 2. A compaction happened inside that answer, and no caller asked for it. The
+///    suite never calls ``RoutedSession/compact(prompt:budget:)``. The compaction
+///    arrives as a ``SessionEvent/compaction(_:)`` on the answer's own stream,
+///    which is the only way a caller learns of one.
+/// 3. The answer still came.
 /// 4. The transcript the compaction produced is smaller than the transcript it
 ///    compacted, and the session's own ``RoutedSession/contextFill`` fell across
-///    the turn.
+///    the answer.
 ///
 /// ## What this suite does NOT prove
 ///
@@ -108,9 +108,9 @@ private let autoCompactionTriggerChatTemplateDate =
 /// Auto-compaction had no fast test at all before this one. The automatic path
 /// was measured only by ``CompactionRoundTripIntegrationTests``, at 425
 /// seconds against the 30B model, and that suite had to grow its scripted
-/// turns twice to keep crossing the 0.80 trigger of its own window — once
+/// answers twice to keep crossing the 0.80 trigger of its own window — once
 /// because the fixture reached 41% of the trigger, and once because it stopped
-/// 5 tokens short. ``ScriptedTurnSizingTests`` exists to hold that arithmetic.
+/// 5 tokens short. ``ScriptedAnswerSizingTests`` exists to hold that arithmetic.
 ///
 /// The trigger is a number. When a test sets it low, a short transcript
 /// crosses it, and the whole fixture-sizing arithmetic disappears.
@@ -128,9 +128,9 @@ private let autoCompactionTriggerChatTemplateDate =
 ///
 /// Every number in this section predates task ^pke18c2, which made the
 /// compaction one summarizer call over the whole live context. The suite then
-/// drove three turns and set a target of 4 tokens. Under one call, a target
+/// drove three answers and set a target of 4 tokens. Under one call, a target
 /// that small leaves no room for a summary after the instructions, so the
-/// suite now states ``compactionTargetShareOfContext`` and drives two turns.
+/// suite now states ``compactionTargetShareOfContext`` and drives two answers.
 /// Nobody has measured this suite again since that change.
 ///
 /// Measured on 2026-08-18, on an Apple silicon box with the model already in
@@ -143,7 +143,7 @@ private let autoCompactionTriggerChatTemplateDate =
 /// | 2 | 5.0 s | 2.0 s |
 /// | 3 | 5.0 s | 2.0 s |
 ///
-/// The run made four generations: one for each of the three scripted turns,
+/// The run made four generations: one for each of the three scripted answers,
 /// and one for the compaction's summarizer call. All three runs reported
 /// identical compaction numbers, which is ``autoCompactionTriggerSamplingMode``
 /// doing its job. Measured on 2026-09-01, with
@@ -152,11 +152,11 @@ private let autoCompactionTriggerChatTemplateDate =
 /// | what the run measured | value |
 /// |---|---|
 /// | the synthetic trigger, in tokens | 82 |
-/// | context fill before the turn | 0.167236328125 |
-/// | context fill after the turn | 0.1142578125 |
-/// | compacts inside the turn | 1 |
+/// | context fill before the answer | 0.167236328125 |
+/// | context fill after the answer | 0.1142578125 |
+/// | compacts inside the answer | 1 |
 /// | the compaction's transcript, before and after | 733 -> 426 |
-/// | the turn's own reply | 147 characters |
+/// | the answer's own reply | 147 characters |
 /// | the test's wall clock | 7.2 s, of which 1.8 s the model load |
 ///
 /// The suite reported exactly that row under `TZ=Pacific/Midway`
@@ -173,7 +173,7 @@ private let autoCompactionTriggerChatTemplateDate =
 /// ``RecordedTranscriptCompactionIntegrationTests``. The three answer one
 /// question — does compaction work at all against a real model — in seconds.
 @Suite(
-    "Real-model smoke test: a synthetic trigger compacts a short transcript inside its own turn (task ^d02ryqj)",
+    "Real-model smoke test: a synthetic trigger compacts a short transcript inside its own answer (task ^d02ryqj)",
     .exclusiveRealModel
 )
 struct AutoCompactionTriggerIntegrationTests {
@@ -186,7 +186,7 @@ struct AutoCompactionTriggerIntegrationTests {
     /// under anything a fixture could be sized against. It resolves to 82
     /// tokens of the 4096-token window, against the 3277 tokens
     /// ``TokenBudget/trigger``'s own default of 0.80 resolves to. The first
-    /// scripted turn alone measures several times 82, so the trigger is
+    /// scripted answer alone measures several times 82, so the trigger is
     /// crossed by construction rather than by arithmetic over the fixture.
     private static let syntheticTriggerShareOfContext = 0.02
 
@@ -201,7 +201,7 @@ struct AutoCompactionTriggerIntegrationTests {
     /// stops the compaction with ``CompactionShortfall/targetLeavesNoRoomForSummary(allowedSummaryTokens:)``,
     /// and the assertion below names that shortfall.
     ///
-    /// The target is far under the live context the first turn builds, so the
+    /// The target is far under the live context the first answer builds, so the
     /// compaction always makes its one summarizer call. It does not depend on
     /// how long the model's own replies happen to run, which is the defect
     /// `f80n046` records against ``CompactionRoundTripIntegrationTests``.
@@ -227,25 +227,25 @@ struct AutoCompactionTriggerIntegrationTests {
     /// keeps them in the new snapshot.
     private static let instructions = "You are a terse, literal assistant. Keep every reply to one sentence."
 
-    /// The reply ceiling every scripted turn is submitted with.
+    /// The reply ceiling every scripted answer is submitted with.
     ///
-    /// Small, and load-bearing in one direction only. The priming turn below
+    /// Small, and load-bearing in one direction only. The priming answer below
     /// carries the transcript the compaction reads, and a reply is part of its
-    /// turn — so a large ceiling would let the model, rather than this file,
+    /// answer — so a large ceiling would let the model, rather than this file,
     /// decide how big that transcript is. No assertion reads a reply's
     /// content, so a reply this ceiling stops short costs the suite nothing.
     private static let replyTokenCeiling = 48
 
-    /// The first scripted turn, and the bulk of the live context the
+    /// The first scripted answer, and the bulk of the live context the
     /// compaction summarizes.
     ///
     /// Its length is deliberate and it is the one fixture dimension that
     /// matters. The compaction states the target less the instructions as the
-    /// summary's size, and this turn is many times that size, so a summary
+    /// summary's size, and this answer is many times that size, so a summary
     /// that keeps to the stated size makes the context smaller, and the fill
     /// assertion below measures the wiring rather than the model's own
     /// brevity. A summary the model writes past its stated size and past the
-    /// size of this turn fails ``Compactor``'s did-not-shrink check, which is
+    /// size of this answer fails ``Compactor``'s did-not-shrink check, which is
     /// the shape that discarded 7 of 7 gated compactions in `^fm5ddk9`.
     ///
     /// It holds 2556 bytes of prose, which a character count of the time read
@@ -282,22 +282,22 @@ struct AutoCompactionTriggerIntegrationTests {
         later, and a report that is thrown away leaves nothing to study.
         """
 
-    /// The second scripted turn — the turn under test.
+    /// The second scripted answer — the answer under test.
     ///
     /// Short, so the prompt and its reply add little to the snapshot the
-    /// compaction leaves, and the fill after the turn stays under the fill
-    /// before it. The assertion reads only whether the turn answered at all.
+    /// compaction leaves, and the fill after the answer stays under the fill
+    /// before it. The assertion reads only whether the answer came at all.
     private static let triggeringPrompt = "State how far ahead the rota is published, in one sentence."
 
-    // MARK: - One driven turn
+    // MARK: - One driven answer
 
-    /// What one scripted turn produced.
+    /// What one scripted answer produced.
     private struct DriveResult {
-        /// The reply text, assembled from the turn's own text increments.
+        /// The reply text, assembled from the answer's own text increments.
         let reply: String
 
-        /// Every compaction the turn took on its own, in the order the turn reported
-        /// them.
+        /// Every compaction the answer took on its own, in the order the answer
+        /// reported them.
         ///
         /// A compaction reaches a caller only as a ``SessionEvent/compaction(_:)``,
         /// so this list IS the proof that compaction ran without the caller
@@ -305,7 +305,8 @@ struct AutoCompactionTriggerIntegrationTests {
         /// nowhere.
         let compactions: [CompactionResult]
 
-        /// The compactions this turn APPLIED — the ones that changed the transcript.
+        /// The compactions this answer APPLIED — the ones that changed the
+        /// transcript.
         ///
         /// ``Compactor`` reports its shortfall exits with an empty
         /// ``CompactionResult/stagesApplied`` and the original transcript, and
@@ -314,7 +315,7 @@ struct AutoCompactionTriggerIntegrationTests {
         var appliedCompactions: [CompactionResult] { compactions.filter { !$0.stagesApplied.isEmpty } }
     }
 
-    /// Drives one turn through `session` and reports what it produced.
+    /// Drives one answer through `session` and reports what it produced.
     ///
     /// Written as a static function rather than a closure over the test body's
     /// own locals: a closure that both hops across the session actor and
@@ -323,10 +324,10 @@ struct AutoCompactionTriggerIntegrationTests {
     /// `CompactionContinuityEvalRealSubjectRunner` records the same constraint.
     ///
     /// - Parameters:
-    ///   - session: The session to drive the turn on.
-    ///   - prompt: The turn's prompt text.
-    /// - Returns: The turn's reply and every compaction it took.
-    /// - Throws: Whatever the turn throws.
+    ///   - session: The session to drive the answer on.
+    ///   - prompt: The prompt text of the answer.
+    /// - Returns: The answer's reply and every compaction it took.
+    /// - Throws: Whatever the answer throws.
     private static func drive(_ session: RoutedSession, prompt: String) async throws -> DriveResult {
         var reply = ""
         var compactions: [CompactionResult] = []
@@ -347,9 +348,9 @@ struct AutoCompactionTriggerIntegrationTests {
     // MARK: - The test
 
     @Test(
-        "a session vended with a synthetic trigger compacts inside its own turn: the trigger is crossed, no caller asked, the turn still answers, and the transcript shrinks"
+        "a session vended with a synthetic trigger compacts inside its own answer: the trigger is crossed, no caller asked, the answer still comes, and the transcript shrinks"
     )
-    func aSyntheticTriggerCompactsInsideTheTurn() async throws {
+    func aSyntheticTriggerCompactsInsideTheAnswer() async throws {
         let startedAt = Date()
         var modelLoadSeconds = 0.0
         defer {
@@ -394,22 +395,23 @@ struct AutoCompactionTriggerIntegrationTests {
             budget: budget
         )
 
-        // One priming turn, and it is not the turn under test. A fresh session
-        // measures 0 tokens: `ContextUsageState.none` gives a `measuredTokens`
-        // of 0, not `nil`. Only `.unknown` gives `nil` and stops the
-        // comparison. So the pre-turn check DOES run on the FIRST turn, and it
-        // compares 0 against `budget.triggerTokens`. 0 is below any POSITIVE
-        // trigger, and `syntheticTriggerShareOfContext` sets a positive one — a
-        // trigger of 0.0 resolves to 0 tokens, and the check would fire on turn
-        // one. After this turn the measured usage is past the trigger, so the
-        // NEXT turn's pre-turn check compacts. A second priming turn would take
-        // that compaction itself, and the turn under test would then start
-        // from a context already compacted.
+        // One priming answer, and it is not the answer under test. A fresh
+        // session measures 0 tokens: `ContextUsageState.none` gives a
+        // `measuredTokens` of 0, not `nil`. Only `.unknown` gives `nil` and
+        // stops the comparison. So the check before the first submission DOES
+        // run for the FIRST answer, and it compares 0 against
+        // `budget.triggerTokens`. 0 is below any POSITIVE trigger, and
+        // `syntheticTriggerShareOfContext` sets a positive one — a trigger of
+        // 0.0 resolves to 0 tokens, and the check would fire on the first
+        // answer. After this answer the measured usage is past the trigger, so
+        // the check of the NEXT answer compacts. A second priming answer would
+        // take that compaction itself, and the answer under test would then
+        // start from a context already compacted.
         _ = try await Self.drive(session, prompt: Self.openingBrief)
 
-        let contextFillBeforeTheTurn = await session.contextFill
-        let turn = try await Self.drive(session, prompt: Self.triggeringPrompt)
-        let contextFillAfterTheTurn = await session.contextFill
+        let contextFillBeforeTheAnswer = await session.contextFill
+        let answer = try await Self.drive(session, prompt: Self.triggeringPrompt)
+        let contextFillAfterTheAnswer = await session.contextFill
 
         await loaded.container.model.evict()
 
@@ -418,32 +420,32 @@ struct AutoCompactionTriggerIntegrationTests {
         // assertion failed.
         print(
             "[autoCompactionTrigger] triggerTokens=\(budget.triggerTokens) targetTokens=\(budget.targetTokens) "
-                + "contextFillBefore=\(contextFillBeforeTheTurn) contextFillAfter=\(contextFillAfterTheTurn)"
+                + "contextFillBefore=\(contextFillBeforeTheAnswer) contextFillAfter=\(contextFillAfterTheAnswer)"
         )
         print(
-            "[autoCompactionTrigger] compactionsInTheTurn=\(turn.compactions.count) "
-                + "stages=\(turn.compactions.map(\.stagesApplied)) "
-                + "shortfalls=\(turn.compactions.map { String(describing: $0.shortfall) }) "
-                + "tiers=\(turn.compactions.map { String(describing: $0.summarizerTier) }) "
-                + "tokensBefore=\(turn.compactions.map(\.tokensBefore)) tokensAfter=\(turn.compactions.map(\.tokensAfter)) "
-                + "replyCharacters=\(turn.reply.count)"
+            "[autoCompactionTrigger] compactionsInTheAnswer=\(answer.compactions.count) "
+                + "stages=\(answer.compactions.map(\.stagesApplied)) "
+                + "shortfalls=\(answer.compactions.map { String(describing: $0.shortfall) }) "
+                + "tiers=\(answer.compactions.map { String(describing: $0.summarizerTier) }) "
+                + "tokensBefore=\(answer.compactions.map(\.tokensBefore)) tokensAfter=\(answer.compactions.map(\.tokensAfter)) "
+                + "replyCharacters=\(answer.reply.count)"
         )
 
-        // 1. The trigger was crossed before the turn ran. Read as a fill
+        // 1. The trigger was crossed before the answer ran. Read as a fill
         //    against `budget.trigger` rather than in tokens, which the two are
         //    only interchangeable for because `budget.limit` IS the session's
         //    window — see `autoCompactionTriggerContext`.
         #expect(
-            contextFillBeforeTheTurn >= budget.trigger,
-            "context fill \(contextFillBeforeTheTurn) did not reach the synthetic trigger \(budget.trigger)"
+            contextFillBeforeTheAnswer >= budget.trigger,
+            "context fill \(contextFillBeforeTheAnswer) did not reach the synthetic trigger \(budget.trigger)"
         )
 
-        // 2. A compaction ran inside the turn, and it was APPLIED. Nothing in this
-        //    suite calls `compact(prompt:budget:)`, so the only thing that
+        // 2. A compaction ran inside the answer, and it was APPLIED. Nothing in
+        //    this suite calls `compact(prompt:budget:)`, so the only thing that
         //    could have compacted is the session's own trigger check.
         let compaction = try #require(
-            turn.appliedCompactions.last,
-            "the turn applied no compaction — it reported \(turn.compactions.count) compaction(s), stages \(turn.compactions.map(\.stagesApplied)), shortfalls \(turn.compactions.map { String(describing: $0.shortfall) })"
+            answer.appliedCompactions.last,
+            "the answer applied no compaction — it reported \(answer.compactions.count) compaction(s), stages \(answer.compactions.map(\.stagesApplied)), shortfalls \(answer.compactions.map { String(describing: $0.shortfall) })"
         )
 
         // The stage that compacted, named. A compaction is one summarizer call,
@@ -453,10 +455,10 @@ struct AutoCompactionTriggerIntegrationTests {
             "expected the summary to apply the compaction, got stages \(compaction.stagesApplied)"
         )
 
-        // 3. The turn still answered.
+        // 3. The answer still came.
         #expect(
-            !turn.reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-            "the turn compacted its own transcript and then returned no text"
+            !answer.reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            "the answer compacted its own transcript and then returned no text"
         )
 
         // 4. The transcript the compaction produced is smaller than the one it
@@ -466,8 +468,8 @@ struct AutoCompactionTriggerIntegrationTests {
             "tokensAfter \(compaction.tokensAfter) did not fall under tokensBefore \(compaction.tokensBefore)"
         )
         #expect(
-            contextFillAfterTheTurn < contextFillBeforeTheTurn,
-            "context fill \(contextFillAfterTheTurn) did not fall under the pre-compaction \(contextFillBeforeTheTurn)"
+            contextFillAfterTheAnswer < contextFillBeforeTheAnswer,
+            "context fill \(contextFillAfterTheAnswer) did not fall under the pre-compaction \(contextFillBeforeTheAnswer)"
         )
     }
 }

@@ -61,8 +61,8 @@ struct ForkAfterCompactionRestorationTests {
 
     // MARK: - Fixtures
 
-    /// A canned response, repeated across every turn and given as the answer
-    /// of the summarizer call. Six turns of it are much larger than one copy,
+    /// A canned response, repeated across every answer and given as the answer
+    /// of the summarizer call. Six answers of it are much larger than one copy,
     /// so the summary makes the live context smaller.
     private static let cannedText = String(
         repeating: "The quick brown fox jumps over the lazy dog. ", count: 12)
@@ -130,10 +130,10 @@ struct ForkAfterCompactionRestorationTests {
         let profile1 = try await router1.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
 
-        // Parent records N turns, then compacts: the derived budget's target
+        // Parent records N answers, then compacts: the derived budget's target
         // is under the live context, so the one summarizer call runs.
         let root = profile1.standard.makeSession()
-        try await driveTurns(6, on: root)
+        try await driveAnswers(6, on: root)
         let rootBackend = try #require(container.lastBackend)
         let result = try await root.compact(budget: summarizingCompactionBudget(for: rootBackend.transcriptEntries()))
         #expect(result.stagesApplied == [Summarization.stageName])
@@ -147,7 +147,7 @@ struct ForkAfterCompactionRestorationTests {
         let entryEventCountAtFork = try TranscriptTree.load(under: routerDirectory)
             .effectiveEntryEvents(forSession: root.id).count
 
-        // Both continue after the fork: the parent's later turns must never
+        // Both continue after the fork: the later answers of the parent must never
         // leak into the fork's restored conversation.
         _ = try await fork.respond(to: "fork continues after the compaction")
         _ = try await root.respond(to: "root continues after the fork")
@@ -162,7 +162,7 @@ struct ForkAfterCompactionRestorationTests {
         // Entry-for-entry equality with the fork's live transcript: the live
         // fork was seeded from the parent's post-compaction window (exactly the
         // checkpoint's own live-window ids, boundary included) and then
-        // appended its own turn's entries (exactly what its own file records).
+        // appended the entries of its own answer (exactly what its own file records).
         let forkOwnIds = try Self.ownRecordedEntryIds(in: tree, sessionId: fork.id)
         #expect(!forkOwnIds.isEmpty)
         let restoredForkIds = try tree.effectiveTranscript(forSession: fork.id).map(\.id)
@@ -211,11 +211,11 @@ struct ForkAfterCompactionRestorationTests {
         // A root that compacts and then keeps going, so its recorded history
         // carries a checkpoint with entries after it.
         let root = profile1.standard.makeSession()
-        try await driveTurns(6, on: root)
+        try await driveAnswers(6, on: root)
         let rootBackend = try #require(container.lastBackend)
         let result = try await root.compact(budget: summarizingCompactionBudget(for: rootBackend.transcriptEntries()))
         #expect(result.stagesApplied == [Summarization.stageName])
-        _ = try await root.respond(to: "root turn after the compaction")
+        _ = try await root.respond(to: "root answer after the compaction")
 
         // Fresh process: restore the compacted root, then fork it.
         let router2 = Self.makeRouter(
@@ -280,7 +280,7 @@ struct ForkAfterCompactionRestorationTests {
         let root = profile1.standard.makeSession()
         _ = try await root.respond(to: "remember 42")
         let fork = try await root.fork(workingDirectory: nil)
-        _ = try await fork.respond(to: "fork turn")
+        _ = try await fork.respond(to: "fork answer")
 
         // Rewrite the fork's sidecar without the new key, simulating a
         // recording written before the field existed.
@@ -293,7 +293,7 @@ struct ForkAfterCompactionRestorationTests {
         try JSONSerialization.data(withJSONObject: json).write(to: sidecarURL)
 
         // The legacy field alone still yields the whole effective
-        // conversation: root's turn at fork time plus the fork's own turn.
+        // conversation: the answer of root at fork time plus the own answer of the fork.
         let tree = try TranscriptTree.load(under: routerDirectory)
         let expectedIds =
             try tree.effectiveTranscript(forSession: root.id).map(\.id)

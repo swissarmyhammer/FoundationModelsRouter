@@ -16,7 +16,7 @@ import Testing
 /// The sweep does not always build the terminal. It first runs the run's
 /// canceler, and that call suspends the mailbox. A run that settles in that
 /// window keeps its own natural terminal, and that terminal did reach the sink.
-/// The two tests below hold that window shut and open in turn.
+/// The two tests below hold that window shut and then open.
 ///
 /// The import is `@testable` for two reasons. The mount site under test is
 /// reached from a running tool's own ``ToolContext``, and nothing public builds
@@ -93,7 +93,7 @@ struct MountedRunSweptTerminalTests {
     /// Vends a real ``RoutedSession`` over a stub container that is never
     /// driven, recording through `recorder`.
     ///
-    /// The container is never driven because this suite runs no turn at all.
+    /// The container is never driven because this suite runs no answer at all.
     /// The suite needs the session only for its mailbox, its outbox, and its
     /// `close()`.
     ///
@@ -120,10 +120,10 @@ struct MountedRunSweptTerminalTests {
     /// identity over `session`'s own mailbox and outbox.
     ///
     /// This suite builds the context by hand, and it does so deliberately. A
-    /// real mounting context comes from a running tool inside a turn, and a
-    /// turn cannot serve this suite. The run-plane drain in
+    /// real mounting context comes from a running tool inside a submission, and a
+    /// submission cannot serve this suite. The run-plane drain in
     /// `RoutedSessionActor.respond(to:maxTokens:)` waits for every tracked
-    /// background run to settle. A run held open past its turn would stall
+    /// background run to settle. A run held open past its answer would stall
     /// that call, rather than survive to `close()`. What `mount` reads off a
     /// context is the session identity and the session mailbox. Both are this
     /// session's own here.
@@ -239,10 +239,10 @@ struct MountedRunSweptTerminalTests {
         #expect(posted.correlationID == token)
         #expect(posted.outcome == .succeeded)
 
-        // `close()` journals the very same event. This session ran no turn, so
+        // `close()` journals the very same event. This session ran no answer, so
         // the journal and the mailbox's settlement observer attach only after
         // the sweep, and the sweep's write is the one write here. A session
-        // that ran a turn would journal the natural terminal through the
+        // that ran an answer would journal the natural terminal through the
         // mailbox's forward first, and the sweep's write would be refused. The
         // outcome assertion below is the one line this test adds. A sweep that
         // built a terminal instead would journal `.cancelled`, the outcome the

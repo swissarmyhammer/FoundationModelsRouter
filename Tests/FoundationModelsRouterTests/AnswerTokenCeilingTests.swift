@@ -4,21 +4,21 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// The token ceiling of a turn comes from the context of the resolved model,
-/// and not from a constant.
+/// The token ceiling of an answer comes from the context of the resolved
+/// model, and not from a constant.
 ///
-/// A routed session knows the working context its profile resolved to. A turn
-/// that names no `maxTokens` generates under that context. A turn that names
-/// one keeps it. A caller that gives the live backend no ceiling at all makes
-/// it request the window of its model, so the default ceiling of the engine
-/// never applies.
+/// A routed session knows the working context its profile resolved to. An
+/// answer whose message names no `maxTokens` generates under that context. An
+/// answer whose message names one keeps it. A caller that gives the live
+/// backend no ceiling at all makes it request the window of its model, so the
+/// default ceiling of the engine never applies.
 ///
 /// Each rule is proven on the respond path and on each stream path, because
 /// each path gives the backend its ceiling through a different call.
-@Suite("Turn token ceiling: derived from the resolved context")
-struct TurnTokenCeilingTests {
+@Suite("Answer token ceiling: derived from the resolved context")
+struct AnswerTokenCeilingTests {
     /// The prefix of each temp directory this suite makes.
-    private static let tempDirPrefix = "TurnTokenCeilingTests"
+    private static let tempDirPrefix = "AnswerTokenCeilingTests"
 
     /// A resolved working context that is not `ScriptedSessionContext.tokens`,
     /// the window most fixtures state, so a test cannot pass on a fixture
@@ -28,10 +28,10 @@ struct TurnTokenCeilingTests {
     /// An explicit ceiling a caller names, smaller than any context here.
     private static let requestedCeiling = 256
 
-    /// The prompt each turn of this suite sends.
+    /// The prompt each message of this suite sends.
     private static let prompt = "fix the bug"
 
-    /// A public surface of ``RoutedSession`` that runs one turn.
+    /// A public surface of ``RoutedSession`` that runs one answer.
     enum SessionSurface: CaseIterable, Sendable {
         /// ``RoutedSession/respond(to:maxTokens:)``.
         case respond
@@ -42,21 +42,21 @@ struct TurnTokenCeilingTests {
         /// ``RoutedSession/streamEvents(to:maxTokens:)``.
         case streamEvents
 
-        /// Runs one turn on `session` through this surface, and consumes the
+        /// Runs one answer on `session` through this surface, and consumes the
         /// whole stream of a stream surface.
         ///
         /// - Parameters:
-        ///   - session: The session to run the turn on.
-        ///   - maxTokens: The ceiling the turn names, or `nil`.
-        /// - Throws: Whatever the turn throws.
-        func runTurn(on session: RoutedSession, maxTokens: Int?) async throws {
+        ///   - session: The session to run the answer on.
+        ///   - maxTokens: The ceiling the message names, or `nil`.
+        /// - Throws: Whatever the answer throws.
+        func runAnswer(on session: RoutedSession, maxTokens: Int?) async throws {
             switch self {
             case .respond:
-                let _: String = try await session.respond(to: TurnTokenCeilingTests.prompt, maxTokens: maxTokens)
+                let _: String = try await session.respond(to: AnswerTokenCeilingTests.prompt, maxTokens: maxTokens)
             case .streamResponse:
-                for try await _ in await session.streamResponse(to: TurnTokenCeilingTests.prompt, maxTokens: maxTokens) {}
+                for try await _ in await session.streamResponse(to: AnswerTokenCeilingTests.prompt, maxTokens: maxTokens) {}
             case .streamEvents:
-                for try await _ in await session.streamEvents(to: TurnTokenCeilingTests.prompt, maxTokens: maxTokens) {}
+                for try await _ in await session.streamEvents(to: AnswerTokenCeilingTests.prompt, maxTokens: maxTokens) {}
             }
         }
     }
@@ -79,33 +79,33 @@ struct TurnTokenCeilingTests {
         func runCall(on backend: any LanguageModelSessionBackend, maxTokens: Int?) async throws {
             switch self {
             case .respond:
-                _ = try await backend.respond(to: TurnTokenCeilingTests.prompt, maxTokens: maxTokens)
+                _ = try await backend.respond(to: AnswerTokenCeilingTests.prompt, maxTokens: maxTokens)
             case .streamResponse:
-                for try await _ in backend.streamResponse(to: TurnTokenCeilingTests.prompt, maxTokens: maxTokens) {}
+                for try await _ in backend.streamResponse(to: AnswerTokenCeilingTests.prompt, maxTokens: maxTokens) {}
             }
         }
     }
 
     @Test(
-        "a turn that names no ceiling generates under the resolved context",
+        "an answer whose message names no ceiling generates under the resolved context",
         arguments: SessionSurface.allCases)
-    func turnUsesResolvedContext(surface: SessionSurface) async throws {
+    func answerUsesResolvedContext(surface: SessionSurface) async throws {
         let fixture = try await CeilingProbeSessionFixture.make(
             ending: .finished, context: Self.resolvedContext, tempDirPrefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        try await surface.runTurn(on: fixture.session, maxTokens: nil)
+        try await surface.runAnswer(on: fixture.session, maxTokens: nil)
 
         #expect(fixture.log.requestedCeilings == [Self.resolvedContext])
     }
 
-    @Test("a turn that names a ceiling keeps that ceiling", arguments: SessionSurface.allCases)
+    @Test("an answer whose message names a ceiling keeps that ceiling", arguments: SessionSurface.allCases)
     func explicitCeilingIsKept(surface: SessionSurface) async throws {
         let fixture = try await CeilingProbeSessionFixture.make(
             ending: .finished, context: Self.resolvedContext, tempDirPrefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        try await surface.runTurn(on: fixture.session, maxTokens: Self.requestedCeiling)
+        try await surface.runAnswer(on: fixture.session, maxTokens: Self.requestedCeiling)
 
         #expect(fixture.log.requestedCeilings == [Self.requestedCeiling])
     }

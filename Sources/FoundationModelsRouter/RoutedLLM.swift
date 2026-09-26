@@ -120,7 +120,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// The shared builder behind the plain and guided session surfaces.
     ///
     /// A non-`nil` `grammar` constrains every `respond` on the vended session
-    /// and is stamped onto each recorded turn. The other parameters match
+    /// and is stamped onto each recorded submission. The other parameters match
     /// ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:)``.
     ///
     /// - Parameters:
@@ -200,7 +200,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             originalTools: tools,
             outbox: outbox,
             mailbox: mailbox,
-            // A root session starts with nothing persisted: the first turn's
+            // A root session starts with nothing persisted: the first submission's
             // whole transcript diff (including any leading `.instructions`
             // entry) is new.
             persistedEntryCount: 0,
@@ -345,7 +345,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///
     /// Each call mints a distinct handle with its own session id and
     /// recording directory. Call ``RecordingLanguageModel/sync(_:usage:)`` at
-    /// turn end to record the turn-final response.
+    /// the end of each submission to record its final response.
     ///
     /// - Precondition: The owning ``LanguageModelProfile`` is still alive.
     /// - Returns: A fresh ``RecordingLanguageModel`` handle over this model.

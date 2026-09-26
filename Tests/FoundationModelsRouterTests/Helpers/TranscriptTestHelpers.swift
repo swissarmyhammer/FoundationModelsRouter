@@ -4,15 +4,15 @@ import FoundationModels
 @testable import FoundationModelsRouter
 
 /// Shared fixture builders for constructing ``Transcript``s in tests: a
-/// leading `.instructions` entry and one or more turns. A turn is a
-/// `.prompt`, optionally a `.toolCalls`/`.toolOutput` pair, and a
-/// `.response`.
+/// leading `.instructions` entry and the entries of one or more answers. The
+/// entries of an answer are a `.prompt`, optionally a
+/// `.toolCalls`/`.toolOutput` pair, and a `.response`.
 ///
 /// The suites that build transcripts share these builders, so the fixture
 /// shape is in one place only.
 enum TranscriptFixtures {
     /// A single `.instructions` entry carrying a fixed system prompt — the
-    /// header every fixture transcript below prefixes its turns with.
+    /// header every fixture transcript below prefixes its answers with.
     static func makeInstructions() -> Transcript.Entry {
         .instructions(
             Transcript.Instructions(
@@ -23,18 +23,20 @@ enum TranscriptFixtures {
         )
     }
 
-    /// Builds one turn: a `.prompt`, optionally a `.toolCalls`/`.toolOutput`
-    /// pair (when `toolOutputText` is not `nil`), and a `.response`.
+    /// Builds the entries of one answer: a `.prompt`, optionally a
+    /// `.toolCalls`/`.toolOutput` pair (when `toolOutputText` is not `nil`),
+    /// and a `.response`.
     ///
     /// - Parameters:
-    ///   - index: The turn's index, which every entry id of the turn carries.
+    ///   - index: The index of the answer, which every entry id of the answer
+    ///     carries.
     ///   - promptText: The text of the prompt.
-    ///   - toolOutputText: The text of the tool output, or `nil` for a turn
+    ///   - toolOutputText: The text of the tool output, or `nil` for an answer
     ///     with no tool call.
     ///   - responseText: The text of the response.
-    /// - Returns: The turn's entries, in order.
+    /// - Returns: The entries of the answer, in order.
     /// - Throws: What `GeneratedContent(json:)` throws.
-    static func makeTurn(
+    static func makeAnswerEntries(
         index: Int,
         promptText: String = "question",
         toolOutputText: String? = nil,
@@ -84,10 +86,12 @@ enum TranscriptFixtures {
         return entries
     }
 
-    /// `turnCount` turns, each with a tool-call/tool-output pair, indices
-    /// `1...turnCount`.
-    static func makeTurns(_ turnCount: Int, toolOutputText: String = "tool result") throws -> [[Transcript.Entry]] {
-        try (1...turnCount).map { try Self.makeTurn(index: $0, toolOutputText: toolOutputText) }
+    /// The entries of `answerCount` answers, each with a tool-call/tool-output
+    /// pair, indices `1...answerCount`.
+    static func makeAnswerEntryLists(
+        _ answerCount: Int, toolOutputText: String = "tool result"
+    ) throws -> [[Transcript.Entry]] {
+        try (1...answerCount).map { try Self.makeAnswerEntries(index: $0, toolOutputText: toolOutputText) }
     }
 
     /// Builds a raw compaction boundary `.response` entry: a text segment

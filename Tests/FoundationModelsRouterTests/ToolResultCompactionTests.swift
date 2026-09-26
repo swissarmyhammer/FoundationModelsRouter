@@ -7,17 +7,17 @@ import Testing
 
 /// Task ^9ddjkjm: a tool result that takes the context over the compaction
 /// trigger stops the model call at the tool-result boundary. The session
-/// compacts, and the same turn goes on and answers.
+/// compacts, and the same answer goes on in a new submission.
 ///
 /// Each session test drives the production backend and a real
 /// `LanguageModelSession` over a ``ToolResultCompactionModel``, so the
 /// entries Apple's session keeps and drops are real. No GPU is in the loop.
-@Suite("A tool result that crosses the trigger compacts inside the turn")
+@Suite("A tool result that crosses the trigger compacts inside the answer")
 struct ToolResultCompactionTests {
     /// The suite's temp-directory prefix.
     private static let tempDirPrefix = "ToolResultCompactionTests"
 
-    /// The prompt of every turn of this suite.
+    /// The prompt of every answer of this suite.
     private static let prompt = "look up the large record and tell me when you have it"
 
     /// The budget of every session of this suite: a small limit, so one tool
@@ -41,7 +41,7 @@ struct ToolResultCompactionTests {
     /// A routed session over a ``ToolResultCompactionModel``, with its tool,
     /// its recorder, and the directory the router cached into.
     private struct Fixture {
-        /// The session a test drives its turn on.
+        /// The session a test drives its answer on.
         let session: RoutedSession
 
         /// The one mounted tool.
@@ -55,7 +55,7 @@ struct ToolResultCompactionTests {
     }
 
     /// The usage of a call that reports no count, as the engine does at the
-    /// first tool result of a turn.
+    /// first tool result of an answer.
     private static let unreportedUsage = MeteredGenerationCall(tokensIn: 0, tokensOut: 0)
 
     /// Builds a router and a session with ``budget`` and one tool whose
@@ -79,18 +79,18 @@ struct ToolResultCompactionTests {
         return Fixture(session: session, tool: tool, recorder: recorder, directory: directory)
     }
 
-    /// Runs one streamed turn and collects its events.
-    private static func streamedTurn(on session: RoutedSession) async throws -> [SessionEvent] {
+    /// Runs one streamed answer and collects its events.
+    private static func streamedAnswer(on session: RoutedSession) async throws -> [SessionEvent] {
         try await collect(session.streamEvents(to: prompt, maxTokens: nil))
     }
 
     @Test(
         "the tool result crosses the trigger: one compaction, then a continuation submission, and one answer")
-    func crossingResultCompactsAndTheTurnAnswers() async throws {
+    func crossingResultCompactsAndTheAnswerEnds() async throws {
         let fixture = try await Self.makeFixture(resultLength: Self.largeResultLength)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        let events = try await Self.streamedTurn(on: fixture.session)
+        let events = try await Self.streamedAnswer(on: fixture.session)
 
         let compactions = events.compactionResults
         #expect(compactions.count == 1)
@@ -115,7 +115,7 @@ struct ToolResultCompactionTests {
         let fixture = try await Self.makeFixture(resultLength: Self.largeResultLength)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        _ = try await Self.streamedTurn(on: fixture.session)
+        _ = try await Self.streamedAnswer(on: fixture.session)
 
         let events = await fixture.recorder.events
         let checkpoint = try #require(TranscriptTree.newestCompactionCheckpoint(in: events))
@@ -138,19 +138,19 @@ struct ToolResultCompactionTests {
         let fixture = try await Self.makeFixture(resultLength: Self.largeResultLength, usage: Self.unreportedUsage)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        let events = try await Self.streamedTurn(on: fixture.session)
+        let events = try await Self.streamedAnswer(on: fixture.session)
 
         #expect(events.compactionResults.count == 1)
         #expect(fixture.tool.calls == 1)
         #expect(events.streamedText.contains(ToolResultCompactionModel.Executor.answerText))
     }
 
-    @Test("a tool result under the trigger does not compact, and the turn answers")
+    @Test("a tool result under the trigger does not compact, and the answer ends")
     func resultUnderTheTriggerDoesNotCompact() async throws {
         let fixture = try await Self.makeFixture(resultLength: Self.smallResultLength)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        let events = try await Self.streamedTurn(on: fixture.session)
+        let events = try await Self.streamedAnswer(on: fixture.session)
 
         #expect(events.compactionResults.isEmpty)
         #expect(events.streamedText.contains(ToolResultCompactionModel.Executor.answerText))
@@ -160,7 +160,7 @@ struct ToolResultCompactionTests {
     func userStopStaysAStop() async throws {
         let fixture = try await Self.makeFixture(resultLength: Self.largeResultLength)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        fixture.tool.stopsTurn(of: fixture.session)
+        fixture.tool.stopsSubmission(of: fixture.session)
 
         let stream = await fixture.session.streamEvents(to: Self.prompt, maxTokens: nil)
         let collected = EventLog()

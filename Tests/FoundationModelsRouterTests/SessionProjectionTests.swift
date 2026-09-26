@@ -208,7 +208,7 @@ struct SessionProjectionTests {
         #expect(projection.contextFill == 0)
     }
 
-    @Test("a toolCallReport changes nothing: phase, transcript, turn, and counters stay as they were")
+    @Test("a toolCallReport changes nothing: phase, transcript, answer, and counters stay as they were")
     @MainActor
     func toolCallReportChangesNothing() {
         Self.expectProjectionUnchanged(
@@ -218,7 +218,7 @@ struct SessionProjectionTests {
                     attachments: [MountFixtures.firstAttachment])))
     }
 
-    @Test("an elicitationRequested changes nothing: phase, transcript, turn, and counters stay as they were")
+    @Test("an elicitationRequested changes nothing: phase, transcript, answer, and counters stay as they were")
     @MainActor
     func elicitationRequestedChangesNothing() {
         Self.expectProjectionUnchanged(
@@ -389,11 +389,11 @@ struct SessionProjectionTests {
     @MainActor
     func textDeltaAfterAdoptionOpensANewRow() {
         let projection = SessionProjection()
-        projection.apply(.textDelta("first turn"))
+        projection.apply(.textDelta("first answer"))
         projection.apply(.entryRecorded(id: "resp-1", kind: .response))
-        projection.apply(.textDelta("second turn"))
+        projection.apply(.textDelta("second answer"))
 
-        #expect(projection.transcript.map(\.kind) == [.text("first turn"), .text("second turn")])
+        #expect(projection.transcript.map(\.kind) == [.text("first answer"), .text("second answer")])
         #expect(projection.transcript[0].id == "resp-1")
         #expect(projection.transcript[1].id != "resp-1")
         #expect(projection.transcript[1].sourceEntryId == nil)
@@ -509,11 +509,11 @@ struct SessionProjectionTests {
 
     // MARK: - groupedRows: the computed grouped view (task ^8dc98vs)
 
-    @Test("a tool turn groups as one call group holding the reasoning and the pre-tool text, then the final answer top-level")
+    @Test("a tool answer groups as one call group holding the reasoning and the pre-tool text, then the final answer top-level")
     @MainActor
     func groupedRowsAttachAdjacentContextToTheCallGroup() {
         let projection = SessionProjection()
-        // The live event order of one tool turn: the two text rows stream
+        // The live event order of one tool answer: the two text rows stream
         // first, and the diff then closes the entries in transcript order —
         // reasoning, the superseded pre-tool response, the tool call and its
         // result, and the final answer's response.
@@ -612,9 +612,9 @@ struct SessionProjectionTests {
         #expect(answerRow.kind == .text("the answer"))
     }
 
-    @Test("a turn with no tool call groups nothing: every row stays top-level")
+    @Test("an answer with no tool call groups nothing: every row stays top-level")
     @MainActor
-    func groupedRowsOfAPlainTurnStayTopLevel() throws {
+    func groupedRowsOfAPlainAnswerStayTopLevel() throws {
         let projection = SessionProjection()
         projection.apply(.textDelta("plain answer"))
         projection.apply(.reasoningDelta("thinking"))

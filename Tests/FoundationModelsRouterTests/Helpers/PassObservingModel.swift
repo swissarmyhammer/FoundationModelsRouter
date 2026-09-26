@@ -68,7 +68,8 @@ struct PassObservingModel: LanguageModel {
     /// that go on when the latch opens.
     let step: AsyncSemaphore?
 
-    /// How many passes of one turn call a tool, in a session that mounts one.
+    /// How many passes of one submission call a tool, in a session that mounts
+    /// one.
     let toolRounds: Int
 
     /// The text an answer opens with.
@@ -82,8 +83,8 @@ struct PassObservingModel: LanguageModel {
     ///   - passes: The log each pass records into.
     ///   - step: The semaphore each pass waits on after the latch, or `nil`
     ///     (the default) for no step.
-    ///   - toolRounds: How many passes of one turn call a tool. The default
-    ///     is none, so each turn is one pass that answers.
+    ///   - toolRounds: How many passes of one submission call a tool. The
+    ///     default is none, so each submission is one pass that answers.
     init(
         observer: ConcurrencyPeakObserver, latch: RunLatch, passes: ObservedPassLog,
         step: AsyncSemaphore? = nil, toolRounds: Int = 0
@@ -95,9 +96,9 @@ struct PassObservingModel: LanguageModel {
         self.toolRounds = toolRounds
     }
 
-    /// The answer the last pass of a turn gives to a prompt.
+    /// The answer the last pass of a submission gives to a prompt.
     ///
-    /// - Parameter prompt: The prompt of the turn.
+    /// - Parameter prompt: The prompt of the submission.
     /// - Returns: The answer text.
     static func answer(to prompt: String) -> String {
         answerPrefix + prompt
@@ -134,7 +135,7 @@ struct PassObservingModel: LanguageModel {
             /// The semaphore each pass waits on after the latch, or `nil`.
             let step: AsyncSemaphore?
 
-            /// How many passes of one turn call a tool.
+            /// How many passes of one submission call a tool.
             let toolRounds: Int
 
             /// Equal when the loop lengths are equal and the parts are the
@@ -165,9 +166,9 @@ struct PassObservingModel: LanguageModel {
         /// The model type this executor serves.
         typealias Model = PassObservingModel
 
-        /// The prompt of the turn a transcript ends in, and how many tool
-        /// rounds that turn has played so far.
-        private struct Turn {
+        /// The prompt of the submission a transcript ends in, and how many
+        /// tool rounds that submission has played so far.
+        private struct Submission {
             /// The joined text of the last `.prompt` entry, or the empty
             /// string when the transcript holds no prompt.
             let prompt: String
@@ -199,7 +200,7 @@ struct PassObservingModel: LanguageModel {
 
         /// Records the pass, holds it until the latch opens and its step
         /// arrives, and then calls the first mounted tool or answers the
-        /// prompt of the turn.
+        /// prompt of the submission.
         ///
         /// - Parameters:
         ///   - request: The generation request.
@@ -212,25 +213,25 @@ struct PassObservingModel: LanguageModel {
             model: PassObservingModel,
             streamingInto channel: LanguageModelExecutorGenerationChannel
         ) async throws {
-            let turn = Self.currentTurn(of: request.transcript)
-            configuration.passes.record(ObservedPass(executor: ObjectIdentifier(identity), prompt: turn.prompt))
+            let submission = Self.currentSubmission(of: request.transcript)
+            configuration.passes.record(ObservedPass(executor: ObjectIdentifier(identity), prompt: submission.prompt))
             await configuration.observer.enter()
             await configuration.latch.waitUntilOpen()
             await configuration.step?.wait()
             await configuration.observer.exit()
-            guard let tool = request.enabledToolDefinitions.first, turn.toolRounds < configuration.toolRounds
+            guard let tool = request.enabledToolDefinitions.first, submission.toolRounds < configuration.toolRounds
             else {
                 await channel.send(
                     .response(
                         action: .appendText(
-                            PassObservingModel.answer(to: turn.prompt), tokenCount: Self.emittedTokenCount)))
+                            PassObservingModel.answer(to: submission.prompt), tokenCount: Self.emittedTokenCount)))
                 return
             }
-            await Self.callTool(named: tool.name, in: turn, into: channel)
+            await Self.callTool(named: tool.name, in: submission, into: channel)
         }
 
         /// Emits one call of the tool `name`, whose one argument names the
-        /// round of `turn`.
+        /// round of `submission`.
         ///
         /// The argument is JSON-encoded, so a prompt with quotes or line
         /// breaks (a delivery prompt with a pending-run envelope) gives valid
@@ -238,12 +239,12 @@ struct PassObservingModel: LanguageModel {
         ///
         /// - Parameters:
         ///   - name: The name of the tool to call.
-        ///   - turn: The turn the call belongs to.
+        ///   - submission: The submission the call belongs to.
         ///   - channel: The channel the call is sent into.
         private static func callTool(
-            named name: String, in turn: Turn, into channel: LanguageModelExecutorGenerationChannel
+            named name: String, in submission: Submission, into channel: LanguageModelExecutorGenerationChannel
         ) async {
-            let round = "\(turn.prompt)-\(turn.toolRounds)"
+            let round = "\(submission.prompt)-\(submission.toolRounds)"
             await channel.send(
                 .toolCalls(
                     entryID: round,
@@ -255,25 +256,25 @@ struct PassObservingModel: LanguageModel {
                             tokenCount: emittedTokenCount))))
         }
 
-        /// The turn `transcript` ends in.
+        /// The submission `transcript` ends in.
         ///
         /// - Parameter transcript: The transcript of the pass.
         /// - Returns: The text of the last `.prompt` entry, and the count of
         ///   `.toolCalls` entries after it.
-        private static func currentTurn(of transcript: Transcript) -> Turn {
+        private static func currentSubmission(of transcript: Transcript) -> Submission {
             let entries = Array(transcript)
             let lastPromptIndex = entries.lastIndex { entry in
                 guard case .prompt = entry else { return false }
                 return true
             }
             guard let lastPromptIndex, case .prompt(let prompt) = entries[lastPromptIndex] else {
-                return Turn(prompt: "", toolRounds: 0)
+                return Submission(prompt: "", toolRounds: 0)
             }
             let roundsSincePrompt = entries[lastPromptIndex...].filter { entry in
                 guard case .toolCalls = entry else { return false }
                 return true
             }
-            return Turn(prompt: WatchedText.text(of: prompt.segments), toolRounds: roundsSincePrompt.count)
+            return Submission(prompt: WatchedText.text(of: prompt.segments), toolRounds: roundsSincePrompt.count)
         }
     }
 }

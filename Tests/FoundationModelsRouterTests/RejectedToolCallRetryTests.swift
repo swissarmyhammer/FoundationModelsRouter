@@ -4,14 +4,14 @@ import FoundationModels
 import MLXLMCommon
 import Testing
 
-/// Task ^naqfcqj: a rejected tool call goes back to the model, and the turn
+/// Task ^naqfcqj: a rejected tool call goes back to the model, and the answer
 /// continues.
 ///
 /// When the model writes a tool call that the parser cannot accept,
 /// `MLXLanguageModel` throws `RejectedToolCallError`. Router tells the model
 /// why the call was rejected and runs the attempt again, so the model can
 /// write the call again. The retries have no count: they continue until the
-/// model writes a call the parser accepts, the caller cancels the turn, or
+/// model writes a call the parser accepts, the caller cancels the answer, or
 /// the context fills.
 ///
 /// Each test drives the production backend and a real `LanguageModelSession`
@@ -22,22 +22,22 @@ struct RejectedToolCallRetryTests {
     /// ``RouterTestFixtures/makeTempDir(prefix:)``.
     private static let tempDirPrefix = "RejectedToolCallRetryTests"
 
-    /// The prompt every turn of this suite is driven with.
+    /// The prompt every answer of this suite is driven with.
     private static let prompt = "run the code and tell me the result"
 
-    /// The generation calls of a turn whose first call is rejected once: the
+    /// The generation calls of an answer whose first call is rejected once: the
     /// rejected attempt, and the one retry that answers.
     private static let attemptsWithOneRetry = 2
 
     /// How many rejected calls the model writes before it writes a valid
     /// one, in the test that proves the retries continue past the count the
-    /// turn once stopped at.
+    /// answer once stopped at.
     private static let rejectionsBeforeTheAnswer = 5
 
     /// A routed session over a ``RejectingLanguageModel``, with the log its
     /// model writes into and the directory the router cached into.
     private struct Fixture {
-        /// The vended session a test drives its turn on.
+        /// The vended session a test drives its answer on.
         let session: RoutedSession
 
         /// The log of the transcript of each generation call.
@@ -69,7 +69,7 @@ struct RejectedToolCallRetryTests {
         return Fixture(session: profile.standard.makeSession(), log: log, directory: directory)
     }
 
-    @Test("the retry attempt sees why the call was rejected, and the turn ends with the answer")
+    @Test("the retry attempt sees why the call was rejected, and the answer ends with the reply")
     func retryAttemptSeesTheRejection() async throws {
         let fixture = try await Self.makeFixture(rejectionCount: 1)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }

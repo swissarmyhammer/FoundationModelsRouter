@@ -297,7 +297,7 @@ struct SessionChokepointTests {
         #expect(text == Self.cannedText)
 
         let events = await recorder.events
-        // A first-line `session` meta event precedes the turn's open + close.
+        // A first-line `session` meta event precedes the open + close of the submission.
         #expect(events.count == 3)
         #expect(events.map(\.kind) == [.session, .prompt, .response])
         #expect(events.allSatisfy { $0.routerId == router.id })
@@ -315,7 +315,7 @@ struct SessionChokepointTests {
         let responseEvent = try #require(events.first { $0.kind == .response })
         #expect(responseEvent.entry != nil)
         #expect(responseEvent.text == Self.cannedText)
-        // `ms` lands on the turn's final `.response`-kind entry event, not the
+        // `ms` lands on the submission's final `.response`-kind entry event, not the
         // `.prompt` entry that preceded it.
         #expect(promptEvent.ms == nil)
         #expect(responseEvent.ms != nil)
@@ -345,7 +345,7 @@ struct SessionChokepointTests {
         #expect(collected == Self.cannedText)
 
         let events = await recorder.events
-        // A first-line `session` meta event precedes the turn's open + close.
+        // A first-line `session` meta event precedes the open + close of the submission.
         #expect(events.count == 3)
         #expect(events.map(\.kind) == [.session, .prompt, .response])
         #expect(events.allSatisfy { $0.routerId == router.id })
@@ -361,7 +361,7 @@ struct SessionChokepointTests {
         let responseEvent = try #require(events.first { $0.kind == .response })
         #expect(responseEvent.text == Self.cannedText)
         #expect(responseEvent.entry != nil)
-        // `ms` lands on the turn's final `.response`-kind entry event, not the
+        // `ms` lands on the submission's final `.response`-kind entry event, not the
         // `.prompt` entry that preceded it — mirrors respondEmitsOpenAndClose.
         #expect(promptEvent.ms == nil)
         #expect(responseEvent.ms != nil)
@@ -388,7 +388,7 @@ struct SessionChokepointTests {
         }
 
         let events = await recorder.events
-        // A first-line `session` meta event precedes the turn's open + close,
+        // A first-line `session` meta event precedes the open + close of the submission,
         // which is still recorded on the throwing path.
         #expect(events.count == 3)
         #expect(events.map(\.kind) == [.session, .prompt, .response])
@@ -402,7 +402,7 @@ struct SessionChokepointTests {
         #expect(promptEvent.ms == nil)
 
         // The `.response` close is the router-only synthetic trace every failed
-        // turn leaves — an entry with no segment, no `text`, and `ms` — since
+        // submission leaves — an entry with no segment, no `text`, and `ms` — since
         // the stub never appended a real `.response` entry when it threw.
         let responseEvent = try #require(events.first { $0.kind == .response })
         let closeEntry = try #require(responseEvent.entry)
@@ -433,7 +433,7 @@ struct SessionChokepointTests {
         }
 
         let events = await recorder.events
-        // A first-line `session` meta event precedes the turn's open + close,
+        // A first-line `session` meta event precedes the open + close of the submission,
         // which is still recorded on the throwing streaming path.
         #expect(events.count == 3)
         #expect(events.map(\.kind) == [.session, .prompt, .response])
@@ -447,7 +447,7 @@ struct SessionChokepointTests {
         #expect(promptEvent.ms == nil)
 
         // The `.response` close is the router-only synthetic trace every failed
-        // turn leaves — an entry with no segment, no `text`, and `ms` — since
+        // submission leaves — an entry with no segment, no `text`, and `ms` — since
         // the stub never appended a real `.response` entry when it threw.
         let responseEvent = try #require(events.first { $0.kind == .response })
         let closeEntry = try #require(responseEvent.entry)

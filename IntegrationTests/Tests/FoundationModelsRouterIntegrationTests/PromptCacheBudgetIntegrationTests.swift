@@ -18,7 +18,7 @@ private let twoModelContextTokens = 4096
 /// layers only, and the real embedder of the gated suites. All three are
 /// resident at one time.
 ///
-/// Qwen3 has no recurrent layers, so each of its turns leaves one prompt-cache
+/// Qwen3 has no recurrent layers, so each of its answers leaves one prompt-cache
 /// entry that the fork can write to disk and read again.
 private let twoModelProfile = ProfileDefinition(
     name: "prompt-cache-two-models",
@@ -36,7 +36,7 @@ private let promptCachePrompt = "Say hello in one short sentence."
 private let promptCacheInstructions = "You are a terse assistant."
 
 /// The room the second resolve leaves for the prompt cache above the resident
-/// footprint: 1 MiB. One turn of either model leaves a larger entry, so each
+/// footprint: 1 MiB. One answer of either model leaves a larger entry, so each
 /// entry must go to disk.
 private let promptCacheRoomBytes: Int64 = 1 << 20
 
@@ -77,7 +77,7 @@ private final class AdjustableWorkingSetProbe: MachineProbe {
 /// The first resolve measures the footprint of the profile. The second resolve
 /// runs on a probe whose working set is that footprint plus
 /// ``promptCacheRoomBytes``, so the pool sends a budget of at most that room.
-/// A turn on each model then leaves an entry that is larger than the room, so
+/// An answer on each model then leaves an entry that is larger than the room, so
 /// the fork writes each entry to disk. When the writes end, the weights plus
 /// the resident prompt cache (in memory plus spilling) fit in the working set,
 /// and the files on disk hold the entries. The fork default (one quarter of
@@ -153,12 +153,12 @@ struct PromptCacheBudgetIntegrationTests {
     /// Makes one session on `model` and answers ``promptCachePrompt`` one time,
     /// which leaves one prompt-cache entry.
     ///
-    /// Every turn states ``GatedRealModelBudget/responseTokenCeiling`` as its
+    /// Every answer states ``GatedRealModelBudget/responseTokenCeiling`` as its
     /// reply ceiling, so a `<think>` block that does not stop cannot make the
-    /// turn run without end.
+    /// answer run without end.
     ///
     /// - Parameter model: The resident generation model.
-    /// - Throws: Whatever the turn throws.
+    /// - Throws: Whatever the answer throws.
     private func answerOnce(on model: RoutedLLM) async throws {
         let session = model.makeSession(instructions: promptCacheInstructions)
         _ = try await session.respond(

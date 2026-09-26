@@ -34,7 +34,7 @@ struct NestedRunTerminalForwardingTests {
     /// The `value` argument every mounted call is made with.
     private static let callArgument = "nested"
 
-    /// The prompt of the one stub turn that attaches the session's journal.
+    /// The prompt of the one stub answer that attaches the session's journal.
     private static let attachingPrompt = "attach the journal"
 
     /// The mount every background fixture in this suite is mounted as.
@@ -132,15 +132,15 @@ struct NestedRunTerminalForwardingTests {
         }
     }
 
-    /// Vends a real ``RoutedSession`` over a stub backend, runs one turn so
+    /// Vends a real ``RoutedSession`` over a stub backend, runs one answer so
     /// the session attaches its journal, and subscribes to its event stream.
     ///
-    /// The turn matters. A run can only be backgrounded from inside a turn,
+    /// The answer matters. A run can only be backgrounded from inside a submission,
     /// and the journal attaches at the top of the first one. Without it the
     /// mailbox would forward into no journal at all.
     ///
     /// - Returns: The observation to drive and then close.
-    /// - Throws: Whatever profile resolution or the stub turn throws.
+    /// - Throws: Whatever profile resolution or the stub answer throws.
     private static func observe() async throws -> Observation {
         let recorder = InMemoryRecorder()
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)

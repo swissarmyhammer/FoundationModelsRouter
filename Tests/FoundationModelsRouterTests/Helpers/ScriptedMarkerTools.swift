@@ -13,7 +13,7 @@ final class MarkerToolCallLog: Sendable {
     ///
     /// A `Mutex` because the model call that invokes the tool and the test that
     /// reads the calls back are not the same task: the test reads only after
-    /// its driving turn returned, but the write happens inside the SDK's own
+    /// its driving answer returned, but the write happens inside the SDK's own
     /// tool-calling task.
     private let recorded: Mutex<[String]> = Mutex([])
 
@@ -82,7 +82,7 @@ final class MarkerEmittingTool: MarkerRecordingTool, Sendable {
     /// Records the step this call names and returns that step's marker output.
     ///
     /// The returned text is the only place the step's marker exists anywhere in
-    /// the turn, so an answer carrying it can only have come from this output
+    /// the answer, so a reply carrying it can only have come from this output
     /// reaching the model's next generation.
     ///
     /// - Parameter arguments: The call's decoded arguments; `value` is the step
@@ -98,9 +98,9 @@ final class MarkerEmittingTool: MarkerRecordingTool, Sendable {
 
 /// A `FoundationModels.Tool` that records its call and then always throws.
 ///
-/// The counterpart of ``MarkerEmittingTool`` for the turn shape where a tool
+/// The counterpart of ``MarkerEmittingTool`` for the answer shape where a tool
 /// call fails: the failure carries its own marker, so a test can tell by
-/// content whether the error reached the model's next generation or the turn
+/// content whether the error reached the model's next generation or the answer
 /// simply proceeded as if nothing had been asked.
 final class ThrowingMarkerTool: MarkerRecordingTool, Sendable {
     /// The failure every call raises.
@@ -148,7 +148,7 @@ final class ThrowingMarkerTool: MarkerRecordingTool, Sendable {
 ///
 /// The counterpart of ``ThrowingMarkerTool`` for a true cancellation: the
 /// mount gives an ordinary failure to the model as a tool result, but it must
-/// still throw a cancellation, so a turn that calls this tool must stop.
+/// still throw a cancellation, so an answer that calls this tool must stop.
 final class CancellingMarkerTool: MarkerRecordingTool, Sendable {
     /// The model-facing tool name a scripted call names to reach this tool.
     static let toolName = "marker-cancelled"
@@ -184,7 +184,7 @@ final class CancellingMarkerTool: MarkerRecordingTool, Sendable {
 /// call and then always throws.
 ///
 /// The non-`String` counterpart of ``ThrowingMarkerTool``: the mount sends it
-/// down the binding-only ``ContextBindingTool`` route, so a turn calling it
+/// down the binding-only ``ContextBindingTool`` route, so an answer calling it
 /// proves that route also gives the failure to the model as a tool result.
 final class ThrowingNonStringMarkerTool: MarkerRecordingTool, Sendable {
     /// The model-facing tool name a scripted call names to reach this tool.
@@ -303,7 +303,7 @@ final class StructuredMarkerTool: MarkerRecordingTool, Sendable {
 ///
 /// ``ToolMounting/makeWrapped(tool:sessionID:mailbox:sink:op:configuration:tracer:)`` sends a
 /// non-`String`-output tool down its other path — the binding-only
-/// ``ContextBindingTool`` rather than ``RunToCompletionRunner`` — so a turn calling this
+/// ``ContextBindingTool`` rather than ``RunToCompletionRunner`` — so an answer calling this
 /// tool exercises a mounting route the `String`-output fixtures never reach.
 final class NonStringMarkerTool: MarkerRecordingTool, Sendable {
     /// The model-facing tool name a scripted call names to reach this tool.

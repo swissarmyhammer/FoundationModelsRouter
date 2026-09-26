@@ -5,9 +5,9 @@ import os
 /// The logger for transcript divergence warnings.
 private let sessionRecordingLogger = makeModuleLogger(category: "Recording")
 
-/// The recording path of ``RoutedSessionActor``: the per-turn usage delta,
-/// the transcript diff that becomes recorded events, the re-queue of
-/// unattached events, and the session meta event.
+/// The recording path of ``RoutedSessionActor``: the usage delta of each
+/// submission, the transcript diff that becomes recorded events, the re-queue
+/// of unattached events, and the session meta event.
 extension RoutedSessionActor {
     /// Computes the usage delta of the attempt, records the transcript diff,
     /// and ends the running submission: it sends
@@ -16,18 +16,19 @@ extension RoutedSessionActor {
     ///
     /// - Parameters:
     ///   - grammar: The guided-generation grammar in force.
-    ///   - since: The turn's start instant, used to stamp `ms`.
-    ///   - usageBefore: The token-usage snapshot taken before the turn ran.
-    ///   - responseTokenCeiling: The token ceiling the turn gave its backend,
+    ///   - since: The start instant of the submission, used to stamp `ms`.
+    ///   - usageBefore: The token-usage snapshot taken before the submission ran.
+    ///   - responseTokenCeiling: The token ceiling the submission gave its backend,
     ///     or `nil` when it gave none.
-    ///   - pendingEvents: The events this turn drained from the outbox.
+    ///   - pendingEvents: The events this submission took from the outbox.
     ///   - onEvent: A sink for derived ``SessionEvent``s, or `nil`.
     ///   - stopReason: The reason of a stop that the session made itself, or
     ///     `nil` to read the reason from the entries of the attempt.
-    /// - Returns: Whether the diff included a `.response` entry, the turn's
-    ///   usage delta (`nil` when unknown), whether `pendingEvents` were
-    ///   attached to a persisted `.prompt` entry, and why the attempt stopped.
-    private func finishTurn(
+    /// - Returns: Whether the diff included a `.response` entry, the usage
+    ///   delta of the submission (`nil` when unknown), whether `pendingEvents`
+    ///   were attached to a persisted `.prompt` entry, and why the attempt
+    ///   stopped.
+    private func finishSubmission(
         grammar: Grammar?,
         since: Date,
         usageBefore: (input: Int, output: Int)?,
@@ -42,17 +43,17 @@ extension RoutedSessionActor {
         let usage = Self.usageDelta(before: usageBefore, after: backend.usageTokenCounts())
         // Read before the diff below, which moves the baseline past this
         // attempt's entries.
-        let turnEntries = unrecordedTranscriptEntries()
+        let submissionEntries = unrecordedTranscriptEntries()
         let finishReason =
             stopReason
             ?? FinishReason(
-                turnEntries: turnEntries, outputTokens: usage?.output,
+                submissionEntries: submissionEntries, outputTokens: usage?.output,
                 lastCallOutputTokens: backend.lastGenerationCallOutputTokenCount(),
                 responseTokenCeiling: responseTokenCeiling)
         // The last generation call of the attempt. Taken before the diff for
         // the same reason, and reported after it, so its journal event
         // follows the entries the call left.
-        let lastGenerationCall = takeGenerationCall(leaving: GenerationCallEntryKind(leftBy: turnEntries))
+        let lastGenerationCall = takeGenerationCall(leaving: GenerationCallEntryKind(leftBy: submissionEntries))
         // The newest call of the attempt is the size of the render. Read it
         // before the ledger closes. An open ledger with no ended call gives
         // the delta of the attempt, which is then zero.
@@ -75,11 +76,11 @@ extension RoutedSessionActor {
         // adds each of them. A compaction restarts the counter
         // (``runCompaction(prompt:budget:summarizers:)``).
         //
-        // Only a turn whose diff included a `.response`-kind entry measured
-        // the render. A turn rejected before it touched `backend` (for
-        // example, a guided turn whose grammar validation throws pre-flight)
-        // keeps the last known counter, and does not set it to a meaningless
-        // zero. See ``usageState``.
+        // Only a submission whose diff included a `.response`-kind entry
+        // measured the render. A submission rejected before it touched
+        // `backend` (for example, a guided submission whose grammar validation
+        // throws pre-flight) keeps the last known counter, and does not set it
+        // to a meaningless zero. See ``usageState``.
         if diffIncludedResponse {
             usageState = renderedContext.map { .measured(input: $0.input, output: $0.output) } ?? .unknown
         }
@@ -116,22 +117,22 @@ extension RoutedSessionActor {
         return backend.transcriptEntries().filter { !recordedIds.contains($0.id) }
     }
 
-    /// Finishes the turn and re-queues `pendingEvents` when the diff had no
-    /// `.prompt` partial to attach them to.
+    /// Finishes the submission and re-queues `pendingEvents` when the diff had
+    /// no `.prompt` partial to attach them to.
     ///
     /// - Parameters:
-    ///   - grammar: The guided-generation grammar in force for this turn.
-    ///   - started: The turn's start time.
-    ///   - usageBefore: The token-usage snapshot taken before the turn ran.
-    ///   - responseTokenCeiling: The token ceiling the turn gave its backend,
+    ///   - grammar: The guided-generation grammar in force for this submission.
+    ///   - started: The start time of the submission.
+    ///   - usageBefore: The token-usage snapshot taken before the submission ran.
+    ///   - responseTokenCeiling: The token ceiling the submission gave its backend,
     ///     or `nil` when it gave none.
-    ///   - pendingEvents: The events drained from ``outbox`` for this turn.
+    ///   - pendingEvents: The events taken from ``outbox`` for this submission.
     ///   - onEvent: A sink for derived ``SessionEvent``s, or `nil`.
     ///   - stopReason: The reason of a stop that the session made itself, or
     ///     `nil` to read the reason from the entries of the attempt.
-    /// - Returns: Whether the diff included a `.response` entry, the turn's
-    ///   usage delta, and why the attempt stopped.
-    func finishTurnAndRequeueIfUnattached(
+    /// - Returns: Whether the diff included a `.response` entry, the usage
+    ///   delta of the submission, and why the attempt stopped.
+    func finishSubmissionAndRequeueIfUnattached(
         grammar: Grammar?,
         since started: Date,
         usageBefore: (input: Int, output: Int)?,
@@ -140,20 +141,20 @@ extension RoutedSessionActor {
         onEvent: ((SessionEvent) -> Void)? = nil,
         stopReason: FinishReason? = nil
     ) async -> (diffIncludedResponse: Bool, usage: (input: Int, output: Int)?, finishReason: FinishReason) {
-        let (diffIncludedResponse, usage, pendingEventsAttached, finishReason) = await finishTurn(
+        let (diffIncludedResponse, usage, pendingEventsAttached, finishReason) = await finishSubmission(
             grammar: grammar, since: started, usageBefore: usageBefore,
             responseTokenCeiling: responseTokenCeiling, pendingEvents: pendingEvents, onEvent: onEvent,
             stopReason: stopReason)
         // The pump already destructively took `pendingEvents` from `outbox`
         // before `body()` ran. When this submission's diff produced no
         // `.prompt`-kind partial to attach them to — every `.ebnf`-guided
-        // turn, whose backend validates and throws before touching its live
-        // session at all (see `MLXFoundationModelsSessionBackend.respond(to:
+        // submission, whose backend validates and throws before touching its
+        // live session at all (see `MLXFoundationModelsSessionBackend.respond(to:
         // following:maxTokens:)`) — the
         // composed preamble was never actually delivered to the model and the
-        // events were never persisted either. Re-queue them so a future turn
-        // gets another chance, instead of the drain silently destroying state
-        // a failed turn never got to deliver.
+        // events were never persisted either. Re-queue them so a later
+        // submission gets another chance, instead of the take silently
+        // destroying state a failed submission never got to deliver.
         if !pendingEventsAttached {
             await requeueUnattachedPendingEvents(events: pendingEvents)
         }
@@ -176,10 +177,10 @@ extension RoutedSessionActor {
     /// snapshots.
     ///
     /// - Parameters:
-    ///   - before: The snapshot taken before the turn ran.
-    ///   - after: The snapshot taken after the turn returned or threw.
-    /// - Returns: The turn's `(input, output)` token counts, or `nil` when
-    ///   either snapshot is `nil`.
+    ///   - before: The snapshot taken before the submission ran.
+    ///   - after: The snapshot taken after the submission returned or threw.
+    /// - Returns: The `(input, output)` token counts of the submission, or
+    ///   `nil` when either snapshot is `nil`.
     static func usageDelta(
         before: (input: Int, output: Int)?,
         after: (input: Int, output: Int)?
@@ -205,14 +206,14 @@ extension RoutedSessionActor {
     /// count: every entry of it is then in the record, either from before or
     /// from this diff, so the reset loses nothing. `ms` and `usage` are
     /// stamped on the last `.response` partial only. Each recorded partial
-    /// emits its ``SessionEvent``s on a diverged turn exactly as on a plain
-    /// one.
+    /// emits its ``SessionEvent``s on a diverged submission exactly as on a
+    /// plain one.
     ///
     /// - Parameters:
     ///   - grammar: The guided-generation grammar in force.
-    ///   - since: The turn's start instant used to stamp `ms`, or `nil`.
-    ///   - usage: The turn's `(input, output)` token delta, or `nil`.
-    ///   - pendingEvents: The events this turn drained from the outbox.
+    ///   - since: The start instant of the submission used to stamp `ms`, or `nil`.
+    ///   - usage: The `(input, output)` token delta of the submission, or `nil`.
+    ///   - pendingEvents: The events this submission took from the outbox.
     ///   - onEvent: A sink for derived ``SessionEvent``s, or `nil`.
     /// - Returns: Whether the diff included a `.response` entry, and whether
     ///   `pendingEvents` were attached to a `.prompt` partial (`true` when
@@ -247,14 +248,14 @@ extension RoutedSessionActor {
         // to report any call whose output never arrived within this same
         // diff as ``SessionEvent/toolStatus(id:status:summary:output:)`` `.failed`.
         // Stay empty (and cost nothing further) when `onEvent` is `nil`, which
-        // no turn's own sink is.
+        // the own sink of no answer is.
         var dispatchedToolCallIds: [String] = []
         var completedToolCallIds: Set<String> = []
 
         for (index, recordedPartial) in recordedPartials.enumerated() {
-            let isTurnClose = index == lastResponseIndex
-            let stampSince = (since != nil && isTurnClose) ? since : nil
-            let stampUsage = (usage != nil && isTurnClose) ? usage : nil
+            let isSubmissionClose = index == lastResponseIndex
+            let stampSince = (since != nil && isSubmissionClose) ? since : nil
+            let stampUsage = (usage != nil && isSubmissionClose) ? usage : nil
             await append(
                 partial: makePartialEvent(
                     kind: recordedPartial.kind,
@@ -285,16 +286,16 @@ extension RoutedSessionActor {
     }
 
     /// Logs `divergence` and appends its ``TranscriptEvent/Kind/divergence``
-    /// marker, after the entries the diverged turn recorded.
+    /// marker, after the entries the diverged submission recorded.
     ///
     /// - Parameters:
-    ///   - divergence: The non-append change the turn's diff found.
+    ///   - divergence: The non-append change the diff of the submission found.
     ///   - grammar: The guided-generation grammar in force.
     private func appendDivergenceMarker(_ divergence: TranscriptDiffer.Divergence, grammar: Grammar?) async {
         sessionRecordingLogger.warning(
             """
             \(divergence.description, privacy: .public) for session \
-            \(self.id.description, privacy: .public); the turn's unseen entries are recorded and a \
+            \(self.id.description, privacy: .public); the unseen entries of the submission are recorded and a \
             divergence marker follows them
             """
         )
@@ -306,7 +307,7 @@ extension RoutedSessionActor {
     ///
     /// - Parameters:
     ///   - events: The events to attach, in outbox order.
-    ///   - diffPartials: The turn's diff, in transcript order.
+    ///   - diffPartials: The diff of the submission, in transcript order.
     /// - Returns: The partials to record, and whether the segments were
     ///   attached. `attached` is `true` when `events` is empty and `false`
     ///   when no `.prompt` partial with an entry exists.
@@ -409,10 +410,10 @@ extension RoutedSessionActor {
     ///   - kind: The event kind.
     ///   - grammar: The guided-generation grammar in force, or `nil`.
     ///   - text: The event's flattened body text, or `nil`.
-    ///   - since: The turn's start instant used to stamp `ms`, or `nil`.
+    ///   - since: The start instant of the submission used to stamp `ms`, or `nil`.
     ///   - entry: The structural payload that mirrors `Transcript.Entry`, or `nil`.
-    ///   - tokensIn: The turn's input token delta, or `nil`.
-    ///   - tokensOut: The turn's output token delta, or `nil`.
+    ///   - tokensIn: The input token delta of the submission, or `nil`.
+    ///   - tokensOut: The output token delta of the submission, or `nil`.
     ///   - agentSpawn: The spawn context to stamp, or `nil`. Only the
     ///     `.session` kind carries one.
     /// - Returns: The partial event for the recorder to stamp and append.

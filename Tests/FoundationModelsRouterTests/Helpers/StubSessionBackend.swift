@@ -63,7 +63,7 @@ struct StubGenerationCall: Sendable, Equatable {
 /// `@unchecked Sendable` invariant: ``record(prompt:maxTokens:reasoningOff:)`` runs only
 /// from inside a backend call, ``RoutedSessionActor`` serializes every
 /// backend call onto its own executor, and a test reads ``calls`` only after
-/// the turns that made them returned.
+/// the answers that made them returned.
 final class StubGenerationLog: @unchecked Sendable {
     /// Every call served through this log, in call order.
     private(set) var calls: [StubGenerationCall] = []
@@ -92,7 +92,7 @@ final class StubGenerationLog: @unchecked Sendable {
 /// `compact()` returns is the session's live backend.
 ///
 /// `@unchecked Sendable` invariant: ``record(_:)`` runs either from direct
-/// test-code construction between turns or from backend calls
+/// test-code construction between answers or from backend calls
 /// (`makeFork`/`replacingTranscript`) that `RoutedSessionActor` serializes
 /// one at a time through the owning session's pump. Nothing ever touches
 /// an instance concurrently.
@@ -127,7 +127,7 @@ final class StubBackendRegistry: @unchecked Sendable {
 /// become a `LanguageModelSession`'s transcript's first entry); every
 /// successful `respond`/`streamResponse`/guided-`respond` call then appends a
 /// `.prompt` entry followed by a `.response` entry, so ``transcriptEntries()``
-/// reports the same prompt/response-pair-per-turn shape the live backend's
+/// reports the same prompt/response-pair-per-submission shape the live backend's
 /// real transcript does.
 ///
 /// ``makeFork()`` simulates transcript inheritance without a real model: the
@@ -140,12 +140,12 @@ final class StubBackendRegistry: @unchecked Sendable {
 /// Like the live conformance it stands in for, this is a plain mutable class
 /// rather than an actor, and it is properly `Sendable`: every mutable field
 /// lives behind one ``Mutex``. The owning session drives one backend method
-/// at a time, but a stream's producer can outlive the turn that started it.
+/// at a time, but a stream's producer can outlive the submission that started it.
 /// A wrapper that drives ``streamResponse(to:maxTokens:)`` from a task of its
-/// own keeps writing after a cancelled turn stopped consuming, while that
-/// turn's failed-turn recording reads ``transcriptEntries()`` on the actor
+/// own keeps writing after a cancelled submission stopped consuming, while the
+/// recording of that failed submission reads ``transcriptEntries()`` on the actor
 /// (task ^9smkhk8). The lock lands each call as a whole, so that read sees a
-/// turn complete or not at all.
+/// call complete or not at all.
 final class StubSessionBackend: LanguageModelSessionBackend {
     /// A failure ``respond(to:maxTokens:)``/``streamResponse(to:maxTokens:)``/
     /// the guided `respond` raise when ``shouldThrow`` is `true`.
@@ -218,18 +218,18 @@ final class StubSessionBackend: LanguageModelSessionBackend {
     ///
     /// Seeded from ``instructions`` at construction time (one leading
     /// `.instructions` entry, or none), then grown by one `.prompt` + one
-    /// `.response` entry per successful turn. See ``transcriptEntries()``.
+    /// `.response` entry per successful submission. See ``transcriptEntries()``.
     var entries: [Transcript.Entry] { state.withLock { $0.entries } }
 
-    /// The per-turn token counts this backend adds to its simulated
+    /// The per-submission token counts this backend adds to its simulated
     /// cumulative usage on every successful call, or `nil` (the default) to
     /// report no usage at all — ``usageTokenCounts()`` then always returns
     /// `nil`, mirroring a real backend that cannot meter.
     ///
-    /// Set this before driving a turn to give a test canned, configurable
+    /// Set this before driving an answer to give a test canned, configurable
     /// counts; ``recordCall(prompt:maxTokens:reasoningOff:preflight:)`` is what actually
     /// compacts it into the running total on each successful call, the way a
-    /// real `LanguageModelSession.usage` grows across turns.
+    /// real `LanguageModelSession.usage` grows across submissions.
     var usageIncrement: (input: Int, output: Int)? {
         get { state.withLock { $0.usageIncrement } }
         set { state.withLock { $0.usageIncrement = newValue } }
@@ -271,7 +271,7 @@ final class StubSessionBackend: LanguageModelSessionBackend {
     ///   - entries: The initial transcript — non-nil only for a backend born
     ///     via ``makeFork()``, which snapshots the parent's ``entries`` as of
     ///     fork time. When `nil`, ``entries`` is derived from `instructions`.
-    ///   - usageIncrement: The per-turn token counts to add to the running
+    ///   - usageIncrement: The per-submission token counts to add to the running
     ///     total on every successful call, or `nil` to report no usage. See
     ///     ``usageIncrement``.
     ///   - generationLog: The shared log to record every call into, or `nil`
@@ -445,10 +445,10 @@ final class StubSessionBackend: LanguageModelSessionBackend {
     /// `preflight`; throws ``StubError/boom`` when ``shouldThrow`` is set;
     /// then appends a `.response` entry carrying ``responseText`` and compacts
     /// ``usageIncrement`` (when set) into the running total, so the two
-    /// snapshots ``RoutedSessionActor``'s chokepoint takes around a turn
-    /// differ by exactly one turn's worth of usage. A call that throws
+    /// snapshots ``RoutedSessionActor``'s chokepoint takes around a submission
+    /// differ by exactly one submission's worth of usage. A call that throws
     /// leaves its `.prompt` entry and no `.response` entry, the way a real
-    /// session that failed mid-turn does.
+    /// session that failed during a submission does.
     ///
     /// - Parameters:
     ///   - prompt: The prompt this call was asked to respond to.

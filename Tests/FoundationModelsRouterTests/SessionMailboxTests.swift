@@ -627,7 +627,7 @@ struct SessionMailboxTests {
 
         // The journal opens with the session's meta line — a close that
         // journals anything records the `.session` meta event first, exactly
-        // like every turn path does.
+        // like every answer path does.
         let recorded = await recorder.events
         #expect(recorded.first?.kind == .session)
 

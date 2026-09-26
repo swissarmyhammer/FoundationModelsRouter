@@ -27,7 +27,7 @@ struct PassObservingFixture: Sendable {
     /// Makes a fixture with a closed latch.
     ///
     /// - Parameters:
-    ///   - toolRounds: How many passes of one turn call a tool, in a session
+    ///   - toolRounds: How many passes of one submission call a tool, in a session
     ///     that mounts one. The default is none.
     ///   - step: The semaphore each pass waits on after the latch, or `nil`
     ///     (the default) for no step.

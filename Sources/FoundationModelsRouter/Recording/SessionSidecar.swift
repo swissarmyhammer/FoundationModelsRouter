@@ -44,9 +44,9 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
 
     /// The parent session and the tool call that spawned this session.
     public struct AgentSpawn: Codable, Sendable, Equatable {
-        /// The id of the session whose turn spawned this session.
+        /// The id of the session whose submission spawned this session.
         public let parentSessionId: ULID
-        /// The tool-call id, in the parent's turn, that spawned this session.
+        /// The tool-call id, in the submission of the parent, that spawned this session.
         public let parentToolCallId: String
 
         /// Creates an agent-spawn record.

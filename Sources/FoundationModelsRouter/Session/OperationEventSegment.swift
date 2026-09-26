@@ -12,7 +12,7 @@ import FoundationModels
 /// accepts a plain prompt string (``LanguageModelSessionBackend``'s
 /// `String`-only surface). This segment is the durable, structured
 /// counterpart: the chokepoint appends one of these per drained event
-/// directly onto the turn's *recorded* `.prompt` entry — never into the SDK's
+/// directly onto the *recorded* `.prompt` entry of the submission — never into the SDK's
 /// own live transcript, only into what gets persisted — so a reader
 /// reconstructing the transcript later can recover the original typed
 /// ``OperationEvent`` instead of only its flattened text line.
@@ -50,7 +50,7 @@ struct OperationEventSegment: PersistableStructuredSegment, Equatable, CustomStr
 
     /// The flattened description persisted alongside this segment's JSON.
     ///
-    /// This is the same rendered line the turn's preamble carries for this
+    /// This is the same rendered line the preamble of the submission carries for this
     /// event (see ``renderedLine(for:)``), so the two textual views of one
     /// drained event never drift apart.
     var description: String { Self.renderedLine(for: content) }
@@ -66,7 +66,7 @@ struct OperationEventSegment: PersistableStructuredSegment, Equatable, CustomStr
     /// is absent.
     ///
     /// Shared by every drained event's preamble line
-    /// (``RoutedSessionActor``'s turn chokepoint) and this segment's own
+    /// (``RoutedSessionActor``'s submission chokepoint) and this segment's own
     /// ``description``, so the two textual views of one event never drift.
     ///
     /// - Parameter event: The event to render.
@@ -92,8 +92,8 @@ extension TranscriptEvent {
     /// Read this off EVERY recorded event, and not off the `.toolOutput` ones
     /// alone, because this package writes one event's segment two ways. The run
     /// journal appends its own `.toolOutput` entry at the moment the event is
-    /// posted, and the turn chokepoint appends the same segment again onto the
-    /// turn's recorded `.prompt` entry, once per event that turn drained. A
+    /// posted, and the submission chokepoint appends the same segment again onto the
+    /// recorded `.prompt` entry of the submission, once per event that submission drained. A
     /// reader that took a single entry kind would see one of the two writes.
     ///
     /// A run's identity travels inside the segment and never in the entry that

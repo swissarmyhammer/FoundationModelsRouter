@@ -13,10 +13,10 @@ import Testing
 /// session on the flash slot go through the production backend, and the test
 /// sees whether two of them are inside the model at one time. The standard
 /// slot is the stub warm-up of ``AutoCompactionFixtures``, whose last warm-up
-/// turn leaves the session over the trigger of its budget.
+/// answer leaves the session over the trigger of its budget.
 ///
-/// No wait here is a bare `await` on a turn that can stay suspended: the test
-/// opens the latch before it awaits a turn, so a regression fails the test and
+/// No wait here is a bare `await` on an answer that can stay suspended: the test
+/// opens the latch before it awaits an answer, so a regression fails the test and
 /// does not hang the run.
 @Suite("A summarizer call is one submission on the queue of its container (task ^1psqdm9)")
 struct SummarizerSubmissionTests {
@@ -27,9 +27,9 @@ struct SummarizerSubmissionTests {
     /// The prompt of the session on the flash slot.
     private static let flashPrompt = "flash"
 
-    /// The prompt of the turn whose proactive compaction calls the flash
+    /// The prompt of the answer whose proactive compaction calls the flash
     /// summarizer.
-    private static let triggeringPrompt = "the turn over the trigger"
+    private static let triggeringPrompt = "the answer over the trigger"
 
     /// The count of the passes on the flash model: the one of the flash
     /// session, then the one of the summarizer call.
@@ -44,22 +44,22 @@ struct SummarizerSubmissionTests {
 
         // The flash session's submission runs on the flash worker, and its
         // pass stays inside the model until the latch opens.
-        let flashTurn = Task { try await flashSession.respond(to: Self.flashPrompt) }
+        let flashAnswer = Task { try await flashSession.respond(to: Self.flashPrompt) }
         let flashInside = await BoundedWait.conditionReached("the pass of the flash session") {
             await flash.observer.enteredCount == 1
         }
 
-        // The next turn of the session over the trigger compacts first, and
+        // The next answer of the session over the trigger compacts first, and
         // its flash summarizer call waits behind the flash submission.
-        let (log, compactingTurn) = SessionEventLog.collect(await session.streamEvents(to: Self.triggeringPrompt))
+        let (log, compactingAnswer) = SessionEventLog.collect(await session.streamEvents(to: Self.triggeringPrompt))
         let summarizerWaits = await BoundedWait.conditionReached("the flash summarizer call waiting for the worker") {
             await flash.queue.waitingCount == 1
         }
         let peakWhileTheSummarizerWaits = await flash.observer.maximumActive
 
         await flash.latch.open()
-        _ = try await flashTurn.value
-        try await compactingTurn.value
+        _ = try await flashAnswer.value
+        try await compactingAnswer.value
 
         #expect(flashInside)
         #expect(summarizerWaits)

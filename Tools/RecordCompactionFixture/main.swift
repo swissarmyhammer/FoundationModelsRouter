@@ -17,7 +17,7 @@ import Tokenizers
 ///
 ///     swift run RecordCompactionFixture [output-directory]
 ///
-/// The tool drives one `RoutedSession` through the six scripted turns in
+/// The tool sends the six scripted messages to one `RoutedSession`, in
 /// `RecordingScript.swift`, keeps what the router wrote, verifies the
 /// recording carries every entry kind real traffic has, and runs
 /// `RecordingRedactionScan` over the recorded bytes. It writes into a FRESH
@@ -111,7 +111,7 @@ do {
 
 print("[record] output: \(outputDirectory.path)")
 print("[record] model: \(RecordingScript.recordingModel.stringValue) at context \(RecordingScript.workingContextTokens)")
-print("[record] decoding: argmax, reply ceiling \(RecordingScript.replyTokenCeiling) tokens per turn")
+print("[record] decoding: argmax, reply ceiling \(RecordingScript.replyTokenCeiling) tokens per answer")
 
 // MARK: - Record the conversation
 
@@ -136,7 +136,7 @@ let router = Router(
 
 let definition = ProfileDefinition(
     name: "compaction-fixture-recording",
-    description: "One real 30B model, recorded through six scripted turns to refresh the checked-in compaction fixture.",
+    description: "One real 30B model, recorded through six scripted messages to refresh the checked-in compaction fixture.",
     standard: [RecordingScript.recordingModel],
     flash: [RecordingScript.recordingModel],
     embedding: [RecordingScript.embeddingModel],
@@ -176,9 +176,9 @@ let recordingStartedAt = Date()
 for (index, prompt) in RecordingScript.prompts.enumerated() {
     do {
         let reply = try await session.respond(to: prompt, maxTokens: RecordingScript.replyTokenCeiling)
-        print("[turn \(index + 1)/\(RecordingScript.prompts.count)] replied with \(reply.count) characters")
+        print("[answer \(index + 1)/\(RecordingScript.prompts.count)] replied with \(reply.count) characters")
     } catch {
-        fail("turn \(index + 1) failed: \(error)")
+        fail("answer \(index + 1) failed: \(error)")
     }
 }
 print("[record] \(String(format: "%.0f", Date().timeIntervalSince(recordingStartedAt))) s of recording wall clock")

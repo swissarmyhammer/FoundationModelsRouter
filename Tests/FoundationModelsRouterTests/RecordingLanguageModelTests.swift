@@ -13,10 +13,10 @@ import Testing
 /// Everything runs against a stub `LanguageModel` conformer wrapping a stub
 /// ``LoadedLLMContainer`` and either an ``InMemoryRecorder`` or a
 /// ``GatingRecorder`` wrapping one — so the suite needs no network and no
-/// GPU. The stub model plays two scripts: a plain canned-response turn, and a
-/// two-step tool-calling turn (emit `.toolCalls`, then — once the transcript
+/// GPU. The stub model plays two scripts: a plain canned-response submission, and a
+/// two-step tool-calling submission (emit `.toolCalls`, then — once the transcript
 /// shows a `.toolOutput` — the final response), mirroring how a real model's
-/// executor is invoked twice per tool-using turn.
+/// executor is invoked twice per tool-using submission.
 @Suite("RecordingLanguageModel: recording LanguageModel handle vended by RoutedLLM")
 struct RecordingLanguageModelTests {
     // MARK: - Concurrency observation
@@ -52,12 +52,12 @@ struct RecordingLanguageModelTests {
     /// A configurable `LanguageModel` conformer standing in for the resident
     /// model ``RecordingLanguageModel`` wraps.
     ///
-    /// On a plain turn it emits ``cannedResponseText`` directly. When
+    /// On a plain submission it emits ``cannedResponseText`` directly. When
     /// ``toolName`` is set it instead plays a scripted two-step tool-calling
-    /// turn: emits a `.toolCalls` event naming ``toolName`` while the
+    /// submission: emits a `.toolCalls` event naming ``toolName`` while the
     /// transcript has not yet gained a `.toolOutput` entry, then
     /// ``cannedResponseText`` once one has — mirroring how a real model's
-    /// executor is invoked twice per tool-using turn (once to request the
+    /// executor is invoked twice per tool-using submission (once to request the
     /// call, once more with the tool's output merged into the transcript).
     ///
     /// When ``observer``/``releaseGate`` are set, every call suspends on the
@@ -193,7 +193,7 @@ struct RecordingLanguageModelTests {
         let text: String
     }
 
-    /// A real `FoundationModels.Tool` conformer the tool-using-turn test
+    /// A real `FoundationModels.Tool` conformer the tool-using-submission test
     /// registers on the session, so the SDK's own machinery — not this
     /// suite — invokes it once it observes the stub model's `.toolCalls`
     /// event and merges the result back in as a `.toolOutput` entry.
@@ -377,9 +377,9 @@ struct RecordingLanguageModelTests {
         #expect(handleA.state.recordingDirectory != handleB.state.recordingDirectory)
     }
 
-    // MARK: - Diff-on-generate + sync-at-turn-end
+    // MARK: - Diff-on-generate + sync-at-submission-end
 
-    @Test("generate diffs instructions+prompt; sync(session.transcript) at turn end records the final response")
+    @Test("generate diffs instructions+prompt; sync(session.transcript) at submission end records the final response")
     @MainActor
     func diffOnGenerateAndSyncRecordsFinalResponse() async throws {
         let dir = Self.makeTempDir()
@@ -400,7 +400,7 @@ struct RecordingLanguageModelTests {
         let response = try await session.respond(to: "hi there")
         #expect(response.content == "hello back")
 
-        // The turn-final response isn't observable at the executor boundary:
+        // The final response of the submission isn't observable at the executor boundary:
         // only instructions+prompt are recorded so far.
         var events = await recorder.events
         #expect(events.map(\.kind) == [.session, .instructions, .prompt])
@@ -411,11 +411,11 @@ struct RecordingLanguageModelTests {
         #expect(events.last?.text == "hello back")
     }
 
-    // MARK: - Passthrough fidelity + tool-using turn
+    // MARK: - Passthrough fidelity + tool-using submission
 
-    @Test("a tool-using turn passes toolCalls/toolOutput through the shared channel unmodified")
+    @Test("a tool-using submission passes toolCalls/toolOutput through the shared channel unmodified")
     @MainActor
-    func toolUsingTurnEndToEnd() async throws {
+    func toolUsingSubmissionEndToEnd() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -549,7 +549,7 @@ struct RecordingLanguageModelTests {
 
     // MARK: - Recording level gating
 
-    @Test("RecordingLevel.off records nothing for a handle's turns")
+    @Test("RecordingLevel.off records nothing for the submissions of a handle")
     @MainActor
     func levelOffRecordsNothing() async throws {
         let dir = Self.makeTempDir()
@@ -610,7 +610,7 @@ struct RecordingLanguageModelTests {
 
     // MARK: - Usage stamping
 
-    @Test("sync(_:usage:) stamps tokensIn/tokensOut on the synced turn-final response event")
+    @Test("sync(_:usage:) stamps tokensIn/tokensOut on the synced final response event of the submission")
     @MainActor
     func syncWithUsageStampsTokens() async throws {
         let dir = Self.makeTempDir()
@@ -666,9 +666,9 @@ struct RecordingLanguageModelTests {
         #expect(response.tokensOut == nil)
     }
 
-    @Test("multi-turn sync stamps usage per-turn, not cumulatively")
+    @Test("a sync after each of many submissions stamps the usage of each submission, not the cumulative usage")
     @MainActor
-    func multiTurnSyncStampsPerTurnUsage() async throws {
+    func multiSubmissionSyncStampsPerSubmissionUsage() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 

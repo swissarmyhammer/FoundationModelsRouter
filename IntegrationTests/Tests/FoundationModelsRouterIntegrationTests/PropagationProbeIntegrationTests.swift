@@ -6,29 +6,29 @@ import Testing
 @testable import FoundationModelsRouterRealModelSupport
 
 /// The real `mlx-community` generation model the MLX path drives: a 4B model
-/// that reasons and calls tools, the same one ``RealToolTurnComparisonTests``
+/// that reasons and calls tools, the same one ``RealToolAnswerComparisonTests``
 /// drives.
 ///
 /// Until task ^s49ya8p this constant was ``RealModels/standard``, the 30B.
 /// Measured in isolation on 2026-08-22, with the argmax decoding
-/// ``PropagationProbeIntegrationTests/turnOptions`` states, on a box that ran
+/// ``PropagationProbeIntegrationTests/answerOptions`` states, on a box that ran
 /// a GPU-heavy game for the whole measurement (load average 8 to 9): the 30B
 /// took 3.6 seconds to drop the inherited container, 3.5 seconds for the
-/// clean load and 74.9 seconds for the turn — 82.1 seconds, 68 percent of
+/// clean load and 74.9 seconds for the answer — 82.1 seconds, 68 percent of
 /// the two-minute budget of that time. A second run of the same code measured
 /// 3.7, 3.5 and 74.7, for 82.0 seconds, so argmax decoding takes the spread
-/// out and leaves the work: the turn takes two rounds, and the 30B writes a
+/// out and leaves the work: the answer takes two rounds, and the 30B writes a
 /// `<think>` block ahead of each one. No Router-side change shortens those
 /// blocks, and this suite never disables thinking, so on the 30B the test
 /// could not reach half that budget.
 ///
-/// The 4B makes the same turn, and the turn is what the probe reads: two
+/// The 4B makes the same answer, and the answer is what the probe reads: two
 /// rounds, the same entry kinds — `instructions, prompt, response, reasoning,
 /// toolCalls, toolOutput, response, reasoning` — one recorded
 /// `context_probe` call, `call(arguments:)` run, and the bound
 /// `completionToken` inside it. Measured the same way on the same box under
 /// the same load: 1.5 seconds to drop the inherited container, 1.4 for the
-/// clean load and 5.7 for the turn — 8.6 seconds, and 8.5 on a second run.
+/// clean load and 5.7 for the answer — 8.6 seconds, and 8.5 on a second run.
 /// The suite doc states what the move no longer proves.
 private let propagationProbeModel: ModelRef = "mlx-community/Qwen3-4B-4bit"
 
@@ -36,9 +36,9 @@ private let propagationProbeModel: ModelRef = "mlx-community/Qwen3-4B-4bit"
 ///
 /// Four places have to name the same tool for the probe to mean anything: the
 /// tool's own declaration, the ``ToolContext`` the test binds around
-/// `respond()`, the turn's instructions and prompt, and the transcript scan that
-/// counts how many times the model asked for it. A single constant is what keeps
-/// a rename from silently turning the probe into a test of a tool nobody
+/// `respond()`, the answer's instructions and prompt, and the transcript scan
+/// that counts how many times the model asked for it. A single constant is what
+/// keeps a rename from silently making the probe a test of a tool nobody
 /// mounted.
 private let propagationProbeToolName = "context_probe"
 
@@ -114,25 +114,25 @@ private let propagationProbeToolName = "context_probe"
 /// What `^s4405wc` does contribute is the diagnosis. Its recorded finding — that
 /// upfront prose only shifts the frequency of the zero-tool-call class — is why
 /// this probe no longer treats "no tool call" and "no propagation" as one
-/// outcome, and why the real cause here turned out to be an inherited cache
+/// outcome, and why the real cause here was an inherited cache
 /// rather than the prompt (see ``makeUncontaminatedContainer()``).
 ///
 /// ## What it NO LONGER proves (task ^s49ya8p)
 ///
 /// Until that task the MLX path drove ``RealModels/standard``, the 30B, and its
-/// turn stated a reply ceiling but no sampling mode. Nine whole runs of this
+/// answer stated a reply ceiling but no sampling mode. Nine whole runs of this
 /// target measured that test at 21.0 to 118.7 seconds — the widest spread of
 /// the target, a factor of five with no code change to the suite, and 118.7
 /// is 99 percent of the two-minute budget of that time. The per-phase
 /// clock ``PropagationProbeIntegrationTests/mlxPathPropagationVerdict()`` now
 /// prints named the cost before either change was made: measured in isolation
 /// on 2026-08-22 under the provider default, the two loads took 3.8 and 3.5
-/// seconds and the turn took 79.4, so the two loads were never the cost.
+/// seconds and the answer took 79.4, so the two loads were never the cost.
 ///
 /// Two changes brought the test inside half that budget, and each one is stated on
 /// the declaration that carries it:
-/// ``PropagationProbeIntegrationTests/turnOptions`` pins argmax decoding on
-/// every turn, and ``propagationProbeModel`` moves the MLX path onto a 4B model
+/// ``PropagationProbeIntegrationTests/answerOptions`` pins argmax decoding on
+/// every answer, and ``propagationProbeModel`` moves the MLX path onto a 4B model
 /// that reasons and calls tools, with the measurement that rules the 30B out.
 /// Measured in isolation on 2026-08-22 under both: 8.6 seconds, and 8.5 on a
 /// second run.
@@ -144,7 +144,7 @@ private let propagationProbeToolName = "context_probe"
 ///   ``RecordingHandleIntegrationTests`` and in the tool-calling test of
 ///   ``SessionTreeRestorationIntegrationTests``. The propagation question is
 ///   about that dispatch rather than about the weights behind it, and the 4B
-///   makes the same two-round turn with the same entry kinds, so the shape the
+///   makes the same two-round answer with the same entry kinds, so the shape the
 ///   four stages read is the same; the model is not.
 /// - **The sampled path.** Both paths decode with argmax now, so a red run is
 ///   attributable to the change under test, and the behavior under the
@@ -152,7 +152,7 @@ private let propagationProbeToolName = "context_probe"
 ///   thinking: the model still writes a `<think>` block ahead of each round.
 ///
 /// Everything else is untouched: the probe tool, the instructions, the prompt,
-/// the double load that keeps an inherited prompt cache out of the turn, the
+/// the double load that keeps an inherited prompt cache out of the answer, the
 /// four stages, and every assertion on the arriving context and on its
 /// `completionToken` are exactly what they were. The system-model path drives
 /// the same `SystemLanguageModel.default` it always drove.
@@ -172,7 +172,7 @@ struct PropagationProbeIntegrationTests {
 
     // MARK: - Probe tool
 
-    /// The scripted tool argument schema the turn's prompt reliably drives:
+    /// The scripted tool argument schema the answer's prompt reliably drives:
     /// a single required string field, the smallest surface a model can
     /// reliably fill in when directly instructed to call this tool — the
     /// same shape ``RecordingHandleIntegrationTests``' `EchoArguments` uses.
@@ -252,25 +252,25 @@ struct PropagationProbeIntegrationTests {
         to the user.
         """
 
-    /// The turn prompt that forces the probe-tool call.
+    /// The prompt of the answer that forces the probe-tool call.
     private static let probePrompt =
         "Call the \(propagationProbeToolName) tool with the note 'ping'."
 
-    /// How much of the turn's final answer a diagnostic quotes — enough to tell
-    /// a refusal from an announcement from an answer the model produced out of
-    /// its own training, short enough to keep a failure message readable.
+    /// How much of the final reply of the answer a diagnostic quotes — enough
+    /// to tell a refusal from an announcement from a reply the model produced
+    /// out of its own training, short enough to keep a failure message readable.
     private static let diagnosticAnswerPrefixLength = 400
 
-    /// The options every probe turn passes to `session.respond(to:options:)`.
+    /// The options every probe answer passes to `session.respond(to:options:)`.
     ///
     /// Stated here, and deliberately here rather than through
     /// ``RealModelContainer/samplingMode``, for the reason
-    /// ``RecordingHandleIntegrationTests`` states on its own `turnOptions`: a
+    /// ``RecordingHandleIntegrationTests`` states on its own `answerOptions`: a
     /// mode a suite passes to `makeSession(...samplingMode:)` is read by the
     /// session backend a `RoutedSession` drives, and this suite drives no
     /// `RoutedSession`. It drives a raw `LanguageModelSession` over the
     /// container's own language model, so the only options that reach the
-    /// model are the ones the turn passes.
+    /// model are the ones the answer passes.
     ///
     /// - Argmax decoding, which task ^s49ya8p added. The provider default
     ///   draws at temperature `0.6` from MLX's process-global PRNG, which
@@ -281,8 +281,8 @@ struct PropagationProbeIntegrationTests {
     ///   the model still writes its `<think>` block, and this only fixes which
     ///   tokens it picks.
     /// - ``GatedRealModelBudget/responseTokenCeiling`` as each round's reply
-    ///   ceiling, which this turn already stated.
-    private static let turnOptions = GenerationOptions(
+    ///   ceiling, which this answer already stated.
+    private static let answerOptions = GenerationOptions(
         samplingMode: .greedy, maximumResponseTokens: GatedRealModelBudget.responseTokenCeiling)
 
     /// Builds the ``ToolContext`` the test binds around `respond()` — a
@@ -301,13 +301,13 @@ struct PropagationProbeIntegrationTests {
     }
 
     /// Loads ``propagationProbeModel`` after dropping whatever another gated
-    /// suite left cached for it, so this turn's generation depends on nothing
-    /// but this turn's own prompt.
+    /// suite left cached for it, so this answer's generation depends on nothing
+    /// but this answer's own prompt.
     ///
     /// `MLXLanguageModel` keeps a process-global container cache keyed by model
     /// id, and alongside it a per-model prompt cache that stores each completed
     /// round's KV state as content-addressed chunks shared by *every*
-    /// conversation on that model. ``RealToolTurnComparisonTests`` drives the
+    /// conversation on that model. ``RealToolAnswerComparisonTests`` drives the
     /// same ``propagationProbeModel`` this suite drives, and every round of it
     /// is a tool-calling round, so by the time this suite runs that shared pool
     /// can hold chunks from another suite's tool-calling conversation. The
@@ -315,24 +315,25 @@ struct PropagationProbeIntegrationTests {
     /// stands now, so this drop stays.
     ///
     /// That inheritance decides this probe's outcome. Measured 2026-08-08: run
-    /// alone the turn calls the probe tool every time, but under a full
+    /// alone the answer calls the probe tool every time, but under a full
     /// a full real-model `swift test` run it reproducibly emitted no
     /// tool call and answered `"I have called the context_probe tool with the
     /// note 'ping'."` — narrating a call it never made, exactly as a model does
-    /// when its context already contains one. Dropping the model first turns
-    /// that back into a real dispatched call (task `^f9zt7c5`).
+    /// when its context already contains one. Dropping the model first gives a
+    /// real dispatched call again (task `^f9zt7c5`).
     ///
     /// `MLXLanguageModel.evict()` is the narrow instrument: it drops this one
     /// model from the container cache and purges this one model's prompt cache,
     /// leaving every other model alone. Deliberately not
     /// `MLXLanguageModel.evictAll()`, which also evicts models this suite never
     /// touches and so perturbs sibling suites. This is the same instrument the
-    /// probe already applies when its turn ends, moved to the front as well: the
-    /// probe both leaves a clean cache behind and requires a clean one in front.
+    /// probe already applies when its answer ends, moved to the front as well:
+    /// the probe both leaves a clean cache behind and requires a clean one in
+    /// front.
     ///
     /// The first load is cheap — a container is a small value and
     /// ``LiveModelLoader/preload(container:)`` is a no-op, so weights only
-    /// materialize on the turn's own `respond()`.
+    /// materialize on the answer's own `respond()`.
     ///
     /// - Returns: The container for ``propagationProbeModel`` with no inherited
     ///   prompt-cache state, and each of the two loads' own wall clock.
@@ -356,7 +357,7 @@ struct PropagationProbeIntegrationTests {
     ///
     /// ``makeUncontaminatedContainer()`` loads the model two times on purpose,
     /// so one total cannot say which of the two carries the cost. The MLX-path
-    /// test prints these beside its own turn.
+    /// test prints these beside its own answer.
     private struct UncontaminatedLoad {
         /// The container with no inherited prompt-cache state.
         let container: MLXFoundationModelsContainer
@@ -368,9 +369,9 @@ struct PropagationProbeIntegrationTests {
         let loadDuration: Duration
     }
 
-    // MARK: - One turn's measured facts
+    // MARK: - One answer's measured facts
 
-    /// Everything one probe turn did, gathered before any assertion runs.
+    /// Everything one probe answer did, gathered before any assertion runs.
     ///
     /// The probe originally read only ``observations``, and an empty
     /// `observations` has two completely different causes that a single
@@ -378,21 +379,21 @@ struct PropagationProbeIntegrationTests {
     /// the tool, or it asked and the call never reached `call(arguments:)`. The
     /// session's own transcript settles that, because it records what the model
     /// asked for independently of what the SDK then did about it — so the
-    /// transcript's account of the turn is measured alongside the tool's.
-    private struct ProbeTurn: Sendable {
-        /// The turn's final assistant text.
+    /// transcript's account of the answer is measured alongside the tool's.
+    private struct ProbeAnswer: Sendable {
+        /// The final assistant text of the answer.
         let responseContent: String
 
-        /// Whether the turn's `.instructions` entry advertised the probe tool to
-        /// the model — the difference between a model that declined a tool it
-        /// could see and a tool that was never mounted or never rendered.
+        /// Whether the answer's `.instructions` entry advertised the probe tool
+        /// to the model — the difference between a model that declined a tool
+        /// it could see and a tool that was never mounted or never rendered.
         let toolWasVisibleToModel: Bool
 
         /// How many calls to the probe tool the transcript records — the model's
         /// own decision, independent of whether the SDK then dispatched them.
         let recordedCallCount: Int
 
-        /// Every entry kind the transcript carries after the turn, in order.
+        /// Every entry kind the transcript carries after the answer, in order.
         let transcriptOutline: String
 
         /// What the probe tool recorded from inside `call(arguments:)` — empty
@@ -450,26 +451,26 @@ struct PropagationProbeIntegrationTests {
             + "(clipped from \(text.count) characters)"
     }
 
-    /// Drives one probe turn — binding a fresh ``ToolContext`` around
+    /// Drives one probe answer — binding a fresh ``ToolContext`` around
     /// `session.respond` — and measures what it did without judging it.
     ///
     /// - Parameters:
-    ///   - session: The session to drive one turn on.
+    ///   - session: The session to drive one answer on.
     ///   - log: The probe tool's observation log.
-    /// - Returns: The turn's measured facts.
+    /// - Returns: The answer's measured facts.
     /// - Throws: Whatever `session.respond` throws.
-    private static func runProbeTurn(
+    private static func runProbeAnswer(
         session: LanguageModelSession,
         log: ProbeObservationLog
-    ) async throws -> ProbeTurn {
+    ) async throws -> ProbeAnswer {
         let boundCompletionToken = SessionMailbox.makeCompletionToken()
         let context = makeBoundContext(completionToken: boundCompletionToken)
 
         let response = try await ToolContext.$current.withValue(context) {
-            try await session.respond(to: probePrompt, options: turnOptions)
+            try await session.respond(to: probePrompt, options: answerOptions)
         }
         let transcript = session.transcript
-        return ProbeTurn(
+        return ProbeAnswer(
             responseContent: response.content,
             toolWasVisibleToModel: advertisesTool(propagationProbeToolName, in: transcript),
             recordedCallCount: callCount(in: transcript, to: propagationProbeToolName),
@@ -481,18 +482,18 @@ struct PropagationProbeIntegrationTests {
 
     // MARK: - The verdict
 
-    /// Drives one probe turn and returns the path's definite verdict: whether
+    /// Drives one probe answer and returns the path's definite verdict: whether
     /// the task-local ``ToolContext`` arrived inside the probe's
     /// `call(arguments:)`.
     ///
-    /// Checks the turn in four stages, so a failure names *which* thing failed
+    /// Checks the answer in four stages, so a failure names *which* thing failed
     /// instead of leaving the reader to guess from an empty observation list
     /// (task `^f9zt7c5`):
     ///
-    /// 1. The turn advertised the probe tool to the model. A turn that did not
-    ///    is a mounting or rendering failure, and every later stage is moot.
+    /// 1. The answer advertised the probe tool to the model. An answer that did
+    ///    not is a mounting or rendering failure, and every later stage is moot.
     /// 2. The transcript records at least one call to it — the model decided to
-    ///    call the tool it could see. A turn with none is the zero-tool-call
+    ///    call the tool it could see. An answer with none is the zero-tool-call
     ///    class (a first assistant turn containing no tool call, the class
     ///    `^s4405wc` addresses), never a propagation failure.
     /// 3. `call(arguments:)` ran. A recorded call whose body never executed is a
@@ -503,7 +504,7 @@ struct PropagationProbeIntegrationTests {
     ///    stray one.
     ///
     /// - Parameters:
-    ///   - session: The session to drive one turn on.
+    ///   - session: The session to drive one answer on.
     ///   - log: The probe tool's observation log.
     ///   - pathLabel: The path name every diagnostic is prefixed with.
     /// - Returns: Whether the bound ``ToolContext`` arrived inside the tool.
@@ -515,44 +516,44 @@ struct PropagationProbeIntegrationTests {
         log: ProbeObservationLog,
         pathLabel: String
     ) async throws -> Bool {
-        let turn = try await runProbeTurn(session: session, log: log)
-        #expect(!turn.responseContent.isEmpty)
+        let answer = try await runProbeAnswer(session: session, log: log)
+        #expect(!answer.responseContent.isEmpty)
 
         try #require(
-            turn.toolWasVisibleToModel,
+            answer.toolWasVisibleToModel,
             """
-            \(pathLabel): stage 1 — the turn's instructions advertise no \
+            \(pathLabel): stage 1 — the answer's instructions advertise no \
             \(propagationProbeToolName) definition, so the model never saw the tool. \
             This is a mounting failure, NOT a propagation failure. \
-            Transcript: [\(turn.transcriptOutline)]
+            Transcript: [\(answer.transcriptOutline)]
             """
         )
         try #require(
-            turn.recordedCallCount > 0,
+            answer.recordedCallCount > 0,
             """
-            \(pathLabel): stage 2 — the tool was advertised, but the turn's transcript \
+            \(pathLabel): stage 2 — the tool was advertised, but the answer's transcript \
             records no \(propagationProbeToolName) call, so the model answered without \
             calling it. This is the zero-tool-call class, NOT a propagation failure, and \
-            no propagation verdict was obtained. Transcript: [\(turn.transcriptOutline)]. \
-            Final answer: \(quoted(turn.responseContent))
+            no propagation verdict was obtained. Transcript: [\(answer.transcriptOutline)]. \
+            Final answer: \(quoted(answer.responseContent))
             """
         )
         let first = try #require(
-            turn.observations.first,
+            answer.observations.first,
             """
-            \(pathLabel): stage 3 — the transcript records \(turn.recordedCallCount) \
+            \(pathLabel): stage 3 — the transcript records \(answer.recordedCallCount) \
             \(propagationProbeToolName) call(s), but call(arguments:) never ran. This is a \
             dispatch failure, NOT a propagation failure, and no propagation verdict was \
-            obtained. Transcript: [\(turn.transcriptOutline)]
+            obtained. Transcript: [\(answer.transcriptOutline)]
             """
         )
         #expect(
-            turn.observations.allSatisfy { $0.contextWasPresent == first.contextWasPresent },
-            "\(pathLabel): every probe invocation in the turn must agree on the verdict"
+            answer.observations.allSatisfy { $0.contextWasPresent == first.contextWasPresent },
+            "\(pathLabel): every probe invocation in the answer must agree on the verdict"
         )
         if first.contextWasPresent {
             #expect(
-                first.observedCompletionToken == turn.boundCompletionToken,
+                first.observedCompletionToken == answer.boundCompletionToken,
                 "\(pathLabel): an arriving context must be the test's own binding"
             )
         } else {
@@ -562,9 +563,9 @@ struct PropagationProbeIntegrationTests {
             "[PropagationProbe] \(pathLabel) path verdict: ToolContext.current != nil inside "
                 + "call(arguments:) == \(first.contextWasPresent) "
                 + "(observedCompletionToken=\(first.observedCompletionToken ?? "nil"), "
-                + "bound=\(turn.boundCompletionToken), "
-                + "recordedCallCount=\(turn.recordedCallCount), "
-                + "transcript=[\(turn.transcriptOutline)])"
+                + "bound=\(answer.boundCompletionToken), "
+                + "recordedCallCount=\(answer.recordedCallCount), "
+                + "transcript=[\(answer.transcriptOutline)])"
         )
         return first.contextWasPresent
     }
@@ -579,12 +580,12 @@ struct PropagationProbeIntegrationTests {
         // the same reason.
         var dropDuration: Duration = .zero
         var loadDuration: Duration = .zero
-        var turnDuration: Duration = .zero
+        var answerDuration: Duration = .zero
         var evictDuration: Duration = .zero
         defer {
             print(
                 "[\(Self.phaseLabel)] dropInherited=\(dropDuration) load=\(loadDuration) "
-                    + "turn=\(turnDuration) evict=\(evictDuration)"
+                    + "answer=\(answerDuration) evict=\(evictDuration)"
             )
         }
 
@@ -601,7 +602,7 @@ struct PropagationProbeIntegrationTests {
         let startInstant = ContinuousClock.now
         let propagated = try await Self.probeVerdict(
             session: session, log: log, pathLabel: "MLX")
-        turnDuration = ContinuousClock.now - startInstant
+        answerDuration = ContinuousClock.now - startInstant
         // The observed 2026-08-04 verdict, pinned: the task local
         // propagates on the MLX path. A future toolchain that starts
         // dispatching tools on a detached task must break this loudly.

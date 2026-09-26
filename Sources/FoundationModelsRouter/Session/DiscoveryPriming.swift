@@ -1,16 +1,17 @@
 import Foundation
 import FoundationModels
 
-/// The opt-in that makes a data-facing turn's first tool call deterministic by
-/// construction: a mounted discovery tool runs host-side, and the call it made
-/// is seeded into the turn's own transcript before generation starts.
+/// The opt-in that makes the first tool call of a data-facing answer
+/// deterministic by construction: a mounted discovery tool runs host-side, and
+/// the call it made is seeded into the transcript of the answer before
+/// generation starts.
 ///
-/// A model asked a data question can open its turn in three ways that look
+/// A model asked a data question can open its answer in three ways that look
 /// different and are the same event — a first assistant turn with zero tool
 /// calls: it refuses, it announces what it is about to do and stops, or it
 /// answers from its own training. Upfront prose does not eliminate that class;
 /// it only shifts its frequency. Seeding eliminates it, because nothing is left
-/// for the model to decide: the turn it resumes already holds the discovery
+/// for the model to decide: the answer it resumes already holds the discovery
 /// call and the concrete typed signatures that call returned, which is the
 /// evidence that it *does* have access.
 ///
@@ -22,8 +23,8 @@ import FoundationModels
 ///
 /// Off by default. A host opts one session in when it vends it
 /// (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:)``),
-/// and a fork inherits its parent's opt-in. With it off, a turn's transcript
-/// construction is untouched.
+/// and a fork inherits its parent's opt-in. With it off, the transcript
+/// construction of an answer is untouched.
 ///
 /// Nothing is specific to one tool: any discovery tool whose arguments carry a
 /// single string-valued query property can be primed.
@@ -32,7 +33,7 @@ public struct DiscoveryPriming: Sendable, Equatable, Codable {
     public let tool: String
 
     /// The name of the single string-valued property of ``tool``'s arguments
-    /// the turn's prompt is passed as.
+    /// the prompt of the answer is passed as.
     ///
     /// The seeded call's arguments are exactly `{"<queryProperty>": "<prompt>"}`,
     /// decoded into the tool's own `Arguments` type before the call runs, so a
@@ -48,15 +49,16 @@ public struct DiscoveryPriming: Sendable, Equatable, Codable {
     }
 }
 
-/// A reason one turn's ``DiscoveryPriming`` could not seed.
+/// A reason the ``DiscoveryPriming`` of one answer could not seed.
 ///
-/// Every case is recoverable by the same rule: the turn generates **unseeded**
-/// rather than failing. Priming improves a turn's opening move; it is not a
-/// precondition for having one, so a failure here can never block a turn.
-/// Each one is surfaced as ``SessionEvent/discoveryPrimingFailed(_:)`` so it is
-/// visible rather than silent: on ``RoutedSession/streamSessionEvents()`` for
-/// every turn whichever entry point ran it, and additionally on the turn's own
-/// stream when the turn was started through
+/// Every case is recoverable by the same rule: the answer generates
+/// **unseeded** rather than failing. Priming improves the opening move of an
+/// answer; it is not a precondition for having one, so a failure here can
+/// never block an answer. Each one is surfaced as
+/// ``SessionEvent/discoveryPrimingFailed(_:)`` so it is visible rather than
+/// silent: on ``RoutedSession/streamSessionEvents()`` for every answer
+/// whichever entry point sent its message, and additionally on the own stream
+/// of the answer when its message was sent through
 /// ``RoutedSession/streamEvents(to:maxTokens:)``.
 public enum DiscoveryPrimingFailure: Error, Equatable, Sendable {
     /// No mounted tool answers to ``DiscoveryPriming/tool``.
@@ -76,16 +78,17 @@ public enum DiscoveryPrimingFailure: Error, Equatable, Sendable {
     case callFailed(tool: String, underlying: String)
 }
 
-/// Builds one turn's pre-discovery seed: runs the designated mounted tool
-/// host-side over the turn's prompt and renders the real call it made as the
-/// `.prompt` → `.toolCalls` → `.toolOutput` entries a turn resumes from.
+/// Builds the pre-discovery seed of one answer: runs the designated mounted
+/// tool host-side over the prompt of the answer and renders the real call it
+/// made as the `.prompt` → `.toolCalls` → `.toolOutput` entries an answer
+/// resumes from.
 ///
 /// Deliberately has no knowledge of sessions, backends or recording, so the
 /// actor that owns the transcript decides what to do with the entries and this
 /// stays a pure, directly testable transcript-construction step.
 enum DiscoveryPrimer {
     /// Runs `priming`'s designated tool over `prompt` and returns the entries
-    /// that seed the turn. `prompt` is both the tool's query and the seeded
+    /// that seed the answer. `prompt` is both the tool's query and the seeded
     /// `.prompt` entry.
     ///
     /// - Parameter mountedTools: The session's model-facing tool list — the
@@ -161,7 +164,7 @@ enum DiscoveryPrimer {
         return try await open(tool)
     }
 
-    /// Renders one completed discovery call as the turn's seed.
+    /// Renders one completed discovery call as the seed of the answer.
     ///
     /// The `.toolOutput` entry's id **is** the `Transcript.ToolCall`'s id, which
     /// is what correlates the two — the same pairing an SDK-native call has, and

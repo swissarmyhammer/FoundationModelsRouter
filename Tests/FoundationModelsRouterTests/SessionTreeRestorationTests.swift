@@ -170,7 +170,7 @@ struct SessionTreeRestorationTests {
     // MARK: - Checkpoint-aware restore fixtures
 
     /// Builds a stamped `.response`-kind event carrying real `tokensIn`/
-    /// `tokensOut` — the shape a genuine turn's diffed close takes, needed to
+    /// `tokensOut` — the shape a genuine submission's diffed close takes, needed to
     /// exercise ``TranscriptTree/restoredUsageState(in:)``'s "newest stamp
     /// after the checkpoint" precedence tier.
     private static func stampedResponseEvent(
@@ -217,10 +217,10 @@ struct SessionTreeRestorationTests {
         let root = profile1.standard.makeSession()
         _ = try await root.respond(to: "remember 42")
         let forkA = try await root.fork(workingDirectory: nil)
-        _ = try await forkA.respond(to: "forkA turn")
+        _ = try await forkA.respond(to: "forkA message")
         let forkB = try await root.fork(workingDirectory: nil)
         let grandfork = try await forkA.fork(workingDirectory: nil)
-        _ = try await grandfork.respond(to: "grandfork turn")
+        _ = try await grandfork.respond(to: "grandfork message")
 
         // "Tear down": nothing below reaches back into router1/profile1
         // except reading the ids already captured above — a fresh router
@@ -245,10 +245,10 @@ struct SessionTreeRestorationTests {
 
         // Per-node effective entry counts, verified independently through
         // `TranscriptTree` rather than any private actor state:
-        // root: 1 turn (prompt+response) == 2.
-        // forkA: root's 2 inherited + its own 1 turn == 4.
-        // forkB: root's 2 inherited + no own turn == 2.
-        // grandfork: forkA's 4 inherited + its own 1 turn == 6.
+        // root: 1 answer (prompt+response) == 2.
+        // forkA: root's 2 inherited + its own 1 answer == 4.
+        // forkB: root's 2 inherited + no own answer == 2.
+        // grandfork: forkA's 4 inherited + its own 1 answer == 6.
         let routerDirectory = RouterTestFixtures.routerDirectory(
             routerId: router1.id, recordingsDir: recordingsDir)
         let tree = try TranscriptTree.load(under: routerDirectory)
@@ -257,14 +257,14 @@ struct SessionTreeRestorationTests {
         #expect(try tree.effectiveEntryEvents(forSession: forkB.id).count == 2)
         #expect(try tree.effectiveEntryEvents(forSession: grandfork.id).count == 6)
 
-        // A new turn on a restored leaf that never generated before persists
+        // A new answer on a restored leaf that never generated before persists
         // only its own new delta: its transcript.jsonl did not exist at all
         // before restoration, so the restored session's persistedEntryCount
         // must have started at its reconstructed count (2, inherited from
-        // root), not 0 — else this turn would re-persist the two inherited
+        // root), not 0 — else this answer would re-persist the two inherited
         // entries on top of its own.
         let restoredForkB = try #require(restored.session(forkB.id))
-        _ = try await restoredForkB.respond(to: "forkB's first turn, post-restore")
+        _ = try await restoredForkB.respond(to: "forkB's first message, post-restore")
 
         let reloadedTree = try TranscriptTree.load(under: routerDirectory)
         #expect(try reloadedTree.effectiveEntryEvents(forSession: forkB.id).count == 4)
@@ -505,7 +505,7 @@ struct SessionTreeRestorationTests {
     // MARK: - Guided session restoration
 
     @Test(
-        "a restored guided session's next turn runs through the guided path with its recorded grammar")
+        "a restored guided session's next answer runs through the guided path with its recorded grammar")
     @MainActor
     func restoredGuidedSessionUsesRecordedGrammar() async throws {
         let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
@@ -527,10 +527,10 @@ struct SessionTreeRestorationTests {
 
         #expect(restored.root.grammar == .jsonSchema(grammarSource))
 
-        // Driving a turn goes through the guided path — StubSessionBackend's
+        // Driving an answer goes through the guided path — StubSessionBackend's
         // guided `respond` runs the real (GPU-free) xgrammar-subset
         // validation and, on success, the chokepoint records the grammar
-        // onto the turn's events.
+        // onto the events of the submission.
         _ = try await restored.root.respond(to: "produce an object")
 
         let recordingDirectory = recordingsDir
@@ -595,11 +595,11 @@ struct SessionTreeRestorationTests {
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile1.standard.makeSession()
-        _ = try await root.respond(to: "turn 1")
-        _ = try await root.respond(to: "turn 2")
+        _ = try await root.respond(to: "message 1")
+        _ = try await root.respond(to: "message 2")
 
-        // Learn the real, SDK-assigned entry ids for turn 1 (to be compacted
-        // away) and turn 2 (the surviving tail), then fabricate and append a
+        // Learn the real, SDK-assigned entry ids for answer 1 (to be compacted
+        // away) and answer 2 (the surviving tail), then fabricate and append a
         // compaction checkpoint referencing them directly onto the session's
         // own transcript.jsonl — the exact shape `RoutedSession.compact(prompt:budget:)`
         // itself appends, without driving the whole pipeline through a stub.
@@ -608,10 +608,10 @@ struct SessionTreeRestorationTests {
         let rawEvents = try treeBeforeCheckpoint.events(forSession: root.id)
         let prompts = rawEvents.filter { $0.kind == .prompt }
         let responses = rawEvents.filter { $0.kind == .response }
-        let turn1PromptId = try #require(prompts.first?.entry?.entryId)
-        let turn1ResponseId = try #require(responses.first?.entry?.entryId)
-        let turn2PromptId = try #require(prompts.last?.entry?.entryId)
-        let turn2ResponseId = try #require(responses.last?.entry?.entryId)
+        let answer1PromptId = try #require(prompts.first?.entry?.entryId)
+        let answer1ResponseId = try #require(responses.first?.entry?.entryId)
+        let answer2PromptId = try #require(prompts.last?.entry?.entryId)
+        let answer2ResponseId = try #require(responses.last?.entry?.entryId)
         let sessionContext = try #require(treeBeforeCheckpoint.session(root.id)?.sidecar.context)
 
         let checkpointEvent = try TranscriptFixtures.compactionCheckpointEvent(
@@ -620,8 +620,8 @@ struct SessionTreeRestorationTests {
             routerId: router1.id,
             entryId: "checkpoint-1",
             content: CompactionSegment.Content(
-                liveWindowEntryIds: ["checkpoint-1", turn2PromptId, turn2ResponseId],
-                compactedEntryIds: [turn1PromptId, turn1ResponseId],
+                liveWindowEntryIds: ["checkpoint-1", answer2PromptId, answer2ResponseId],
+                compactedEntryIds: [answer1PromptId, answer1ResponseId],
                 tokensBefore: 1_000,
                 tokensAfter: 321,
                 stagesApplied: ["Summarization"],
@@ -644,10 +644,10 @@ struct SessionTreeRestorationTests {
 
         let reloadedTree = try TranscriptTree.load(under: routerDir)
         let restoredWindow = try reloadedTree.effectiveTranscript(forSession: root.id)
-        #expect(Array(restoredWindow).map(\.id) == ["checkpoint-1", turn2PromptId, turn2ResponseId])
+        #expect(Array(restoredWindow).map(\.id) == ["checkpoint-1", answer2PromptId, answer2ResponseId])
         #expect(reloadedTree.session(root.id)?.sidecar.compactionCount == 1)
 
-        // Under budget: the checkpoint is the newest thing (no turn ran
+        // Under budget: the checkpoint is the newest thing (no answer ran
         // after it before restore), so restored fill reports its own
         // `tokensAfter` — never the full pre-compaction size.
         let fill = await restored.root.contextFill

@@ -4,7 +4,7 @@ import Synchronization
 
 @testable import FoundationModelsRouter
 
-/// A deterministic `LanguageModel` that plays out a ``ScriptedTurnScript`` and
+/// A deterministic `LanguageModel` that plays out a ``ScriptedAnswerScript`` and
 /// then answers with what the tool outputs told it.
 ///
 /// It carries no generation state of its own: every executor call re-reads the
@@ -17,19 +17,19 @@ import Synchronization
 ///   text read back out of the transcript.
 ///
 /// The final branch is the whole point of the fixture. The answer is composed
-/// from what the transcript actually carries, never from a canned string, so a
-/// turn whose tool outputs never reach generation cannot produce it.
+/// from what the transcript actually carries, never from a canned string, so an
+/// answer whose tool outputs never reach generation cannot produce it.
 struct ScriptedToolCallingModel: LanguageModel {
-    /// The turn shape this model plays out.
-    let script: ScriptedTurnScript
+    /// The answer shape this model plays out.
+    let script: ScriptedAnswerScript
 
     /// The log this model's generation writes its observations into, and which
-    /// the driving test reads back once the turn returned.
-    let log: ScriptedTurnLog
+    /// the driving test reads back once the answer returned.
+    let log: ScriptedAnswerLog
 
     /// Declares tool calling, and nothing else. Without it the SDK refuses a
     /// tool-mounted session outright ("The selected model does not support tool
-    /// calling"), so this is the one capability a scripted tool turn needs.
+    /// calling"), so this is the one capability a scripted tool answer needs.
     var capabilities: LanguageModelCapabilities { LanguageModelCapabilities([.toolCalling]) }
 
     /// Builds the executor cache key. The scripted behaviour is fully
@@ -45,11 +45,11 @@ struct ScriptedToolCallingModel: LanguageModel {
         /// Cache key the SDK creates and reuses this executor by: the script it
         /// plays out, and the log it writes into.
         struct Configuration: Sendable, Hashable {
-            /// The turn shape to play out.
-            let script: ScriptedTurnScript
+            /// The answer shape to play out.
+            let script: ScriptedAnswerScript
 
             /// The log to write observations into.
-            let log: ScriptedTurnLog
+            let log: ScriptedAnswerLog
         }
 
         /// The `LanguageModel` this executor conforms for.
@@ -138,7 +138,7 @@ struct ScriptedToolCallingModel: LanguageModel {
         }
 
         /// The transcript entry id the script's `.reasoning` entry is emitted
-        /// under (see ``ScriptedTurnScript/reasoning``).
+        /// under (see ``ScriptedAnswerScript/reasoning``).
         private static let reasoningEntryID = "scripted-reasoning"
 
         /// Emits one scripted round of tool calls, or the final answer once
@@ -157,7 +157,7 @@ struct ScriptedToolCallingModel: LanguageModel {
             model: ScriptedToolCallingModel,
             streamingInto channel: LanguageModelExecutorGenerationChannel
         ) async throws {
-            configuration.log.recordModelTurn()
+            configuration.log.recordGenerationPass()
             let transcript = request.transcript
             let toolOutputs = Self.toolOutputTexts(in: transcript)
             let round = Self.roundCount(in: transcript)
@@ -256,10 +256,10 @@ struct ScriptedToolCallingContainer: LoadedLLMContainer {
     /// Every backend this container has vended, in vending order.
     ///
     /// A comparison of whole transcripts reads them off the vended backend:
-    /// it is the SDK's own live transcript, the same object the turn
+    /// it is the SDK's own live transcript, the same object the submission
     /// chokepoint diffs — one step closer to the source than the read-only
     /// ``RoutedSession/transcript`` accessor built on top of it. Only safe
-    /// to read once the turn has returned, which is the turn-lock discipline
+    /// to read once the answer has returned, as
     /// ``LanguageModelSessionBackend/transcriptEntries()`` documents.
     let vendedBackends = VendedBackendLog()
 
@@ -283,7 +283,7 @@ struct ScriptedToolCallingContainer: LoadedLLMContainer {
     ///
     /// The factory a scripted suite's own session is built through, and the
     /// reason this container implements the `tools:` overloads at all: the
-    /// protocol's default drops the tools, which would leave the turn nothing
+    /// protocol's default drops the tools, which would leave the answer nothing
     /// to call and the test asserting on a fixture defect rather than on
     /// Router.
     ///
@@ -319,11 +319,11 @@ struct ScriptedToolCallingContainer: LoadedLLMContainer {
 }
 
 /// The backends a ``ScriptedToolCallingContainer`` vended, so a test can read
-/// the SDK's own transcript back off the very session a turn ran through.
+/// the SDK's own transcript back off the very session an answer ran through.
 ///
 /// A class behind a lock because the container is a `struct` a `Sendable`
 /// profile holds, while the recording happens on whatever task built the
-/// session and the reading happens on the task that drove the turn.
+/// session and the reading happens on the task that drove the answer.
 final class VendedBackendLog: Sendable {
     /// The backends vended so far, in vending order.
     private let vended: Mutex<[any LanguageModelSessionBackend]> = Mutex([])

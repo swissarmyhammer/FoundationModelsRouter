@@ -6,7 +6,7 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Task ^46bz58k: an attempt that stops at its output token ceiling with the
-/// context at or over the compaction trigger compacts, and the same turn
+/// context at or over the compaction trigger compacts, and the same answer
 /// goes on with one more attempt.
 ///
 /// Each test drives the production backend and a real `LanguageModelSession`
@@ -16,14 +16,14 @@ struct CeilingStopCompactionTests {
     /// The suite's temp-directory prefix.
     private static let tempDirPrefix = "CeilingStopCompactionTests"
 
-    /// The prompt of every turn of this suite.
+    /// The prompt of every answer of this suite.
     private static let prompt = "write the long answer"
 
     /// The budget of every session of this suite: a small limit, so one
     /// scripted call can cross the trigger.
     private static let budget = TokenBudget(limit: 1_000, trigger: 0.8, target: 0.5)
 
-    /// The output token ceiling the caller names for each turn.
+    /// The output token ceiling the caller names for each answer.
     private static let ceiling = 50
 
     /// The size of the cut text of a call over the trigger, in characters
@@ -47,7 +47,7 @@ struct CeilingStopCompactionTests {
 
     /// Builds a router and a session with ``budget`` over a
     /// ``CeilingStopCompactionModel`` whose cut call writes `cutLength`
-    /// characters and reports `cutUsage`, and runs one streamed turn with
+    /// characters and reports `cutUsage`, and runs one streamed answer with
     /// ``ceiling``.
     ///
     /// - Parameters:
@@ -55,8 +55,8 @@ struct CeilingStopCompactionTests {
     ///   - cutUsage: The usage the cut call reports.
     ///   - cutEndsInsideReasoning: Whether the cut call ends inside its
     ///     thought instead of inside its response text.
-    /// - Returns: The events of the turn, in order.
-    private static func turnEvents(
+    /// - Returns: The events of the answer, in order.
+    private static func answerEvents(
         cutLength: Int, cutUsage: MeteredGenerationCall, cutEndsInsideReasoning: Bool = false
     ) async throws -> [SessionEvent] {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
@@ -88,7 +88,7 @@ struct CeilingStopCompactionTests {
     @Test(
         "a ceiling stop over the trigger: one compaction, one continuation submission, and one answer")
     func ceilingStopOverTheTriggerCompactsAndGoesOn() async throws {
-        let events = try await Self.turnEvents(cutLength: Self.largeCutLength, cutUsage: Self.overTriggerUsage)
+        let events = try await Self.answerEvents(cutLength: Self.largeCutLength, cutUsage: Self.overTriggerUsage)
 
         let compactions = events.compactionResults
         #expect(compactions.count == 1)
@@ -110,7 +110,7 @@ struct CeilingStopCompactionTests {
 
     @Test("a ceiling stop under the trigger: no compaction, and the one submission ends as truncated")
     func ceilingStopUnderTheTriggerEndsTruncated() async throws {
-        let events = try await Self.turnEvents(cutLength: Self.smallCutLength, cutUsage: Self.underTriggerUsage)
+        let events = try await Self.answerEvents(cutLength: Self.smallCutLength, cutUsage: Self.underTriggerUsage)
 
         #expect(events.compactionResults.isEmpty)
         #expect(Self.finishReasons(in: events) == [.maxTokens])
@@ -125,7 +125,7 @@ struct CeilingStopCompactionTests {
         let usage = MeteredGenerationCall(tokensIn: Self.overTriggerUsage.tokensIn, tokensOut: Self.ceiling - 1)
         #expect(usage.tokensIn + usage.tokensOut >= Self.budget.triggerTokens)
 
-        let events = try await Self.turnEvents(
+        let events = try await Self.answerEvents(
             cutLength: Self.largeCutLength, cutUsage: usage, cutEndsInsideReasoning: true)
 
         #expect(events.compactionResults.isEmpty)

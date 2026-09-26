@@ -76,7 +76,7 @@ final class TopicDiscoveryTool: Tool, Sendable {
 }
 
 /// A discovery tool that always fails — the fixture behind the "never block the
-/// turn" path.
+/// answer" path.
 final class FailingDiscoveryTool: Tool, Sendable {
     /// The failure every call raises.
     enum Failure: Error, Equatable {
@@ -103,9 +103,9 @@ final class NonTextDiscoveryTool: Tool, Sendable {
     }
 }
 
-/// Exercises pre-discovery seeding (`^s4405wc`): the opt-in that makes a turn's
-/// first tool call deterministic by executing a mounted discovery tool
-/// host-side and building the turn's transcript as
+/// Exercises pre-discovery seeding (`^s4405wc`): the opt-in that makes the
+/// first tool call of an answer deterministic by executing a mounted discovery
+/// tool host-side and building the transcript of the answer as
 /// prompt → toolCalls → toolOutput before generation runs.
 @Suite("Pre-discovery seeding via transcript construction")
 struct DiscoveryPrimingTests {
@@ -121,7 +121,7 @@ struct DiscoveryPrimingTests {
     ///
     /// `@unchecked Sendable` on the same terms as ``StubSessionBackend``: the
     /// owning session drives one backend method at a time, serialized by its
-    /// pump, and tests read the log only after the driving turn returned.
+    /// pump, and tests read the log only after the driving answer returned.
     private final class PrimingLog: @unchecked Sendable {
         /// Every entry list handed to `replacingTranscript(_:)`, in call order.
         private(set) var reseeds: [[Transcript.Entry]] = []
@@ -239,7 +239,7 @@ struct DiscoveryPrimingTests {
     /// ``RouterTestFixtures/makeTempDir(prefix:)``.
     private static let tempDirPrefix = "DiscoveryPrimingTests"
 
-    /// The prompt every turn in this suite submits.
+    /// The prompt every message in this suite sends.
     private static let prompt = "what are today's exchange rates"
 
     /// The canned discovery result the recording fixture returns.
@@ -263,7 +263,7 @@ struct DiscoveryPrimingTests {
         /// The shared observation log its backends write into.
         let log: PrimingLog
 
-        /// The recorder its turns append to.
+        /// The recorder its submissions append to.
         let recorder: InMemoryRecorder
 
         /// The per-test temp directory to clean up.
@@ -325,7 +325,7 @@ struct DiscoveryPrimingTests {
 
     @Test("priming on: the backend receives prompt -> toolCalls -> toolOutput, carrying the tool's real output, before generation")
     @MainActor
-    func primingSeedsTheTurnBeforeGeneration() async throws {
+    func primingSeedsTheAnswerBeforeGeneration() async throws {
         let tool = RecordingDiscoveryTool(output: Self.discoveryOutput)
         let fixture = try await Self.makeFixture(
             tools: [tool],
@@ -335,8 +335,8 @@ struct DiscoveryPrimingTests {
 
         _ = try await fixture.session.respond(to: Self.prompt)
 
-        // The discovery call was real: the tool itself saw the turn's prompt as
-        // its query, exactly once.
+        // The discovery call was real: the tool itself saw the prompt of the
+        // message as its query, exactly once.
         #expect(tool.queries == [Self.prompt])
 
         // The seeded transcript is what the generating backend started from.
@@ -356,12 +356,12 @@ struct DiscoveryPrimingTests {
         #expect(mapped[2].text == Self.discoveryOutput)
         #expect(mapped[2].payload.entryId == call.id)
 
-        // Seeding happened through the transcript, not by rewriting the turn's
-        // own prompt.
+        // Seeding happened through the transcript, not by rewriting the own
+        // prompt of the message.
         #expect(fixture.log.submittedPrompts == [Self.prompt])
     }
 
-    @Test("priming off: no reseed happens and the turn's transcript construction is unchanged")
+    @Test("priming off: no reseed happens and the transcript construction of the answer is unchanged")
     @MainActor
     func primingOffLeavesConstructionUnchanged() async throws {
         let tool = RecordingDiscoveryTool(output: Self.discoveryOutput)
@@ -391,9 +391,9 @@ struct DiscoveryPrimingTests {
 
         _ = try await fixture.session.respond(to: Self.prompt)
 
-        // The turn's ordinary positional diff picked the seeded entries up as
-        // the genuinely new entries they are: the seeded triple, then the
-        // turn's own prompt and response.
+        // The ordinary positional diff of the submission picked the seeded
+        // entries up as the genuinely new entries they are: the seeded triple,
+        // then the own prompt and response of the submission.
         let events = await fixture.recorder.events
         #expect(events.map(\.kind) == [.session, .prompt, .toolCalls, .toolOutput, .prompt, .response])
 
@@ -413,7 +413,7 @@ struct DiscoveryPrimingTests {
         }
     }
 
-    @Test("a failing discovery call never blocks the turn: it generates unseeded and the failure lands on the event stream")
+    @Test("a failing discovery call never blocks the answer: it generates unseeded and the failure lands on the event stream")
     @MainActor
     func failingDiscoveryGeneratesUnseededAndSurfacesTheFailure() async throws {
         let fixture = try await Self.makeFixture(
@@ -510,9 +510,9 @@ struct DiscoveryPrimingTests {
         #expect(property == "topic")
     }
 
-    @Test("every turn primes: a second turn seeds its own discovery pair onto the accumulated transcript")
+    @Test("every answer primes: a second answer seeds its own discovery pair onto the accumulated transcript")
     @MainActor
-    func everyTurnPrimesOnTopOfTheAccumulatedTranscript() async throws {
+    func everyAnswerPrimesOnTopOfTheAccumulatedTranscript() async throws {
         let tool = RecordingDiscoveryTool(output: Self.discoveryOutput)
         let fixture = try await Self.makeFixture(
             tools: [tool],
@@ -526,17 +526,17 @@ struct DiscoveryPrimingTests {
         #expect(tool.queries == ["first", "second"])
         #expect(fixture.log.reseeds.count == 2)
 
-        // The second turn's seed sits on top of the first turn's whole history
-        // — the three entries it seeded plus the prompt/response the SDK
-        // appended — never in place of it.
+        // The seed of the second answer sits on top of the whole history of
+        // the first answer — the three entries it seeded plus the
+        // prompt/response the SDK appended — never in place of it.
         let secondSeed = try #require(fixture.log.entriesAtGeneration.last)
         let kinds = secondSeed.map { TranscriptEntryMapper.event(from: $0).kind }
         #expect(kinds == [.prompt, .toolCalls, .toolOutput, .prompt, .response, .prompt, .toolCalls, .toolOutput])
     }
 
-    @Test("a primed turn with a non-empty outbox attaches the drained events' segments to the turn's own prompt entry")
+    @Test("a primed answer with a non-empty outbox attaches the drained events' segments to the own prompt entry of the submission")
     @MainActor
-    func primedTurnAttachesPendingEventSegmentsToTheRealPrompt() async throws {
+    func primedAnswerAttachesPendingEventSegmentsToTheRealPrompt() async throws {
         let tool = RecordingDiscoveryTool(output: Self.discoveryOutput)
         let fixture = try await Self.makeFixture(
             tools: [tool],
@@ -551,7 +551,8 @@ struct DiscoveryPrimingTests {
         _ = try await fixture.session.respond(to: Self.prompt)
 
         // Two recorded prompts: the synthetic discovery seed first, then the
-        // turn's own prompt — the one the composed preamble was delivered on.
+        // own prompt of the submission — the one the composed preamble was
+        // delivered on.
         let events = await fixture.recorder.events
         let promptEvents = events.filter { $0.kind == .prompt }
         #expect(promptEvents.count == 2)
@@ -629,7 +630,7 @@ struct DiscoveryPrimingTests {
         #expect(mapped[3].payload.entryId == call.id)
     }
 
-    @Test("respond(to:) has no turn stream of its own, and its priming failure still surfaces as an event")
+    @Test("respond(to:) has no answer stream of its own, and its priming failure still surfaces as an event")
     @MainActor
     func respondSurfacesThePrimingFailureAsASessionEvent() async throws {
         let fixture = try await Self.makeFixture(
@@ -641,7 +642,7 @@ struct DiscoveryPrimingTests {
         let sessionEvents = await fixture.session.streamSessionEvents()
         let response = try await fixture.session.respond(to: Self.prompt)
 
-        // The turn ran anyway, unseeded.
+        // The answer ran anyway, unseeded.
         #expect(response == StubSessionBackend().responseText)
         #expect(fixture.log.reseeds.isEmpty)
 
@@ -681,7 +682,7 @@ struct DiscoveryPrimingTests {
         #expect(tool == "findAPIs")
     }
 
-    @Test("a guided session primes its turns exactly like an unguided one")
+    @Test("a guided session primes its answers exactly like an unguided one")
     @MainActor
     func guidedSessionPrimesDiscovery() async throws {
         let tool = RecordingDiscoveryTool(output: Self.discoveryOutput)

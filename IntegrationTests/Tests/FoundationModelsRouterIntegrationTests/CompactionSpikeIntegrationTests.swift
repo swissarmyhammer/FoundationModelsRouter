@@ -17,8 +17,9 @@ private let compactionSpikeTinyModel: ModelRef = RealModels.standard
 /// answers the one question the hermetic suite cannot: whether a live
 /// `LanguageModelSession(transcript:)` — the exact API
 /// ``RoutedSession/compact(prompt:budget:)`` (compaction_plan.md §1.4) will
-/// rebuild the inner session over after a compaction — tolerates and completes a
-/// turn over a transcript containing entries no real turn ever produced in
+/// rebuild the inner session over after a compaction — tolerates and completes
+/// one submission (one SDK call) over a transcript containing entries no real
+/// submission ever produced in
 /// that order: a synthesized summary `.prompt` entry, next to a
 /// `.toolCalls` and `.toolOutput` pair that keeps its old ids.
 ///
@@ -42,8 +43,8 @@ private let compactionSpikeTinyModel: ModelRef = RealModels.standard
 )
 struct CompactionSpikeIntegrationTests {
     /// A synthesized transcript of the entry kinds a compaction's new snapshot
-    /// holds: instructions, a synthesized summary `.prompt` entry no real turn
-    /// produced, and a `.toolCalls` entry and the `.toolOutput` entry it made,
+    /// holds: instructions, a synthesized summary `.prompt` entry no real
+    /// submission produced, and a `.toolCalls` entry and the `.toolOutput` entry it made,
     /// both with their old ids (the new snapshot keeps a protected tool output
     /// and its call word for word).
     ///
@@ -110,16 +111,16 @@ struct CompactionSpikeIntegrationTests {
 
     /// Task dws80ms's core acceptance criterion, proved against a real model:
     /// a live `LanguageModelSession` rebuilt over a transcript containing
-    /// synthesized entries — never produced by any real turn — completes one
-    /// turn without error.
+    /// synthesized entries — never produced by any real submission — completes
+    /// one submission without error.
     ///
     /// Also settles this spike's second written verdict empirically: whether
     /// the synthesized entries' ids (fully controllable at construction, per
     /// `CompactionSpikeTests`'s header comment) survive ingestion into a live
     /// session, or whether the SDK reassigns them. Recorded once observed —
     /// see the assertion below and this test's own inline result.
-    @Test("a live LanguageModelSession rebuilt over a transcript containing a synthesized summary entry and a kept tool output completes one turn without error")
-    func rebuiltSessionOverSynthesizedTranscriptCompletesATurn() async throws {
+    @Test("a live LanguageModelSession rebuilt over a transcript containing a synthesized summary entry and a kept tool output completes one submission without error")
+    func rebuiltSessionOverSynthesizedTranscriptCompletesASubmission() async throws {
         let loaded = try await RealModelContainer.load(ref: compactionSpikeTinyModel)
 
         let synthesizedTranscript = try Self.makeSynthesizedTranscript()
@@ -132,11 +133,11 @@ struct CompactionSpikeIntegrationTests {
 
         // Verdict 2 (empirical half): the ids as the live session actually
         // holds them immediately after `LanguageModelSession(transcript:)`
-        // ingested the synthesized transcript, before any turn runs.
+        // ingested the synthesized transcript, before any submission runs.
         let idsAfterIngest = Array(backend.session.transcript).map(\.id)
         #expect(idsAfterIngest == synthesizedIds)
 
-        // The actual acceptance criterion: one live turn over this transcript
+        // The actual acceptance criterion: one live submission over this transcript
         // completes without throwing.
         let reply = try await backend.respond(
             to: "What is my favorite number? Answer with just the number, digits only.",
@@ -149,9 +150,9 @@ struct CompactionSpikeIntegrationTests {
         #expect(reply.contains("42"))
 
         // The synthesized entries are still present, in order, at the front
-        // of the post-turn transcript — the live session only ever appends.
-        let idsAfterTurn = Array(backend.session.transcript).map(\.id)
-        #expect(Array(idsAfterTurn.prefix(synthesizedIds.count)) == synthesizedIds)
+        // of the transcript after the submission — the live session only ever appends.
+        let idsAfterSubmission = Array(backend.session.transcript).map(\.id)
+        #expect(Array(idsAfterSubmission.prefix(synthesizedIds.count)) == synthesizedIds)
 
         await loaded.container.model.evict()
     }

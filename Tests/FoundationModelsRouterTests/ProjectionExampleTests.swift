@@ -9,7 +9,7 @@ import FoundationModelsRouter
 ///
 /// ``SessionProjection`` is the `@MainActor`/`@Observable` mirror of one
 /// ``RoutedSession``. A SwiftUI view holds one projection, gives it the events
-/// of each turn, and then reads ``SessionProjection/transcript`` and
+/// of each answer, and then reads ``SessionProjection/transcript`` and
 /// ``SessionProjection/phase`` to draw the conversation. The example below is
 /// that pattern, in the shape a reader copies into an application:
 ///
@@ -53,7 +53,7 @@ import FoundationModelsRouter
 struct ProjectionExampleTests {
     // MARK: - Unit-test seam (the ONLY non-production code in this file)
 
-    /// A scripted stand-in for the model, so the example turn runs with no
+    /// A scripted stand-in for the model, so the example answer runs with no
     /// network, GPU, or download.
     private enum ProjectionExampleHarness {
         /// The text fragments the scripted model produces, in order.
@@ -67,21 +67,22 @@ struct ProjectionExampleTests {
         /// fragments back into.
         static var answer: String { answerFragments.joined() }
 
-        /// The input tokens the scripted model meters for each turn.
+        /// The input tokens the scripted model meters for each submission.
         static let promptTokens = 128
 
-        /// The output tokens the scripted model meters for each turn.
+        /// The output tokens the scripted model meters for each submission.
         static let completionTokens = 32
 
         /// A session backend that plays a fixed script instead of running a
         /// model: it streams ``answerFragments``, grows a prompt/response
-        /// transcript for each turn, and meters a fixed cost for each turn.
+        /// transcript for each submission, and meters a fixed cost for each
+        /// submission.
         ///
-        /// The script never reads the prompt. It answers every turn the same
-        /// way, so nothing here can match an input to an expected output.
+        /// The script never reads the prompt. It answers every submission the
+        /// same way, so nothing here can match an input to an expected output.
         ///
         /// The transcript matters. The router reads the backend transcript
-        /// after each turn, and the difference is what produces the
+        /// after each submission, and the difference is what produces the
         /// ``SessionEvent/entryRecorded(id:kind:)`` event that gives a
         /// projection row its durable identity.
         ///
@@ -106,7 +107,7 @@ struct ProjectionExampleTests {
             }
 
             func respond(to prompt: String, maxTokens: Int?) async throws -> String {
-                recordTurn(prompt: prompt)
+                recordSubmission(prompt: prompt)
                 return answer
             }
 
@@ -114,19 +115,19 @@ struct ProjectionExampleTests {
             /// `grammar`. A script is not a model, so nothing here can obey a
             /// grammar. The example makes no guided call.
             func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws -> String {
-                recordTurn(prompt: prompt)
+                recordSubmission(prompt: prompt)
                 return answer
             }
 
-            /// Records the turn, then streams one chunk for each fragment of
-            /// ``answerFragments``.
+            /// Records the submission, then streams one chunk for each
+            /// fragment of ``answerFragments``.
             ///
-            /// The session reads a streaming turn through
+            /// The session reads a streaming submission through
             /// `streamResponseFragments(to:maxTokens:)`, whose `public` default
             /// carries each chunk this stream yields. That is why the harness
             /// writes no fragment method of its own.
             func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
-                recordTurn(prompt: prompt)
+                recordSubmission(prompt: prompt)
                 let fragments = answerFragments
                 return AsyncThrowingStream { continuation in
                     for fragment in fragments {
@@ -148,11 +149,12 @@ struct ProjectionExampleTests {
                 usage
             }
 
-            /// Appends the prompt and the answer of one turn to the transcript,
-            /// and adds that turn's cost to the running totals.
+            /// Appends the prompt and the answer of one submission to the
+            /// transcript, and adds the cost of that submission to the running
+            /// totals.
             ///
-            /// - Parameter prompt: The prompt this turn answers.
-            private func recordTurn(prompt: String) {
+            /// - Parameter prompt: The prompt of the submission.
+            private func recordSubmission(prompt: String) {
                 entries.append(.prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))])))
                 entries.append(
                     .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: answer))])))
@@ -184,7 +186,7 @@ struct ProjectionExampleTests {
         /// Resolves an offline profile and opens one session over the scripted
         /// model.
         ///
-        /// - Returns: A session that answers each turn with ``answer``.
+        /// - Returns: A session that answers each message with ``answer``.
         /// - Throws: Whatever profile resolution throws.
         static func makeSession() async throws -> RoutedSession {
             let router = RouterTestFixtures.makeRouter(
@@ -197,11 +199,11 @@ struct ProjectionExampleTests {
         }
     }
 
-    // MARK: - Bind a projection to a turn
+    // MARK: - Bind a projection to an answer
 
-    @Test("Drive a SessionProjection from a turn's event stream and read the rows it projects")
+    @Test("Drive a SessionProjection from the event stream of an answer and read the rows it projects")
     @MainActor
-    func projectOneStreamedTurn() async throws {
+    func projectOneStreamedAnswer() async throws {
         let session = try await ProjectionExampleHarness.makeSession()
 
         // One projection observes the session for its whole life. In SwiftUI
@@ -211,7 +213,7 @@ struct ProjectionExampleTests {
         #expect(projection.phase == .idle)
         #expect(projection.transcript.isEmpty)
 
-        // `apply(eventsFrom:)` drains the turn's event stream and updates the
+        // `apply(eventsFrom:)` drains the event stream of the answer and updates the
         // projection on the main actor as each event arrives. In SwiftUI this
         // one call is the whole body of a `.task` modifier, and the view
         // redraws itself while the call runs.
@@ -233,11 +235,11 @@ struct ProjectionExampleTests {
         #expect(row.sourceEntryId != nil)
         #expect(row.id == row.sourceEntryId)
 
-        // The turn ended, so the projection is idle again. A view binds this to
+        // The answer ended, so the projection is idle again. A view binds this to
         // show or hide a progress indicator.
         #expect(projection.phase == .idle)
 
-        // The projection also accumulates the metered cost of every turn it
+        // The projection also accumulates the metered cost of every answer it
         // observes, which a view shows in a status bar.
         #expect(projection.tokensIn == ProjectionExampleHarness.promptTokens)
         #expect(projection.tokensOut == ProjectionExampleHarness.completionTokens)

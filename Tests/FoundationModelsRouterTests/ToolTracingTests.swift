@@ -13,7 +13,7 @@ import Tracing
 /// There is no single shared call body to instrument, so the contract is held at
 /// the three outermost decorators ``ToolMounting`` can mount — the foreground
 /// ``RunToCompletionRunner``, the ``BackgroundToolRunner``, and the binding-only
-/// ``ContextBindingTool`` — and this suite drives one scripted turn through each
+/// ``ContextBindingTool`` — and this suite drives one scripted answer through each
 /// of them. It also holds the rule that the pass-through ``TokenCappingTool``
 /// opens no span of its own, so a capped tool is still measured once.
 ///
@@ -37,7 +37,7 @@ struct ToolTracingTests {
     private static let secondStepName = "TWO"
 
     /// The context limit the capped fixture's budget declares. Large enough that
-    /// a scripted turn never reaches the compaction trigger, so the capped run opens
+    /// a scripted answer never reaches the compaction trigger, so the capped run opens
     /// no compaction of its own.
     private static let cappedBudgetLimit = 4_096
 
@@ -53,7 +53,7 @@ struct ToolTracingTests {
     // MARK: - Fixture tools
 
     /// A `FoundationModels.Tool` that declares ``ToolMount/Mode/background`` for
-    /// itself and returns at once, so a scripted turn reaches
+    /// itself and returns at once, so a scripted answer reaches
     /// ``BackgroundToolRunner`` and its run settles without a wall clock.
     private final class BackgroundMarkerTool: Tool, BackgroundTool, Sendable {
         /// The model-facing tool name a scripted call names to reach this tool.
@@ -91,9 +91,9 @@ struct ToolTracingTests {
     ///   - toolName: The model-facing name of the tool to call.
     ///   - step: The `value` argument the call names.
     /// - Returns: The one-round script.
-    private static func script(callingTool toolName: String, naming step: String) -> ScriptedTurnScript
+    private static func script(callingTool toolName: String, naming step: String) -> ScriptedAnswerScript
     {
-        ScriptedTurnScript(
+        ScriptedAnswerScript(
             rounds: [[ScriptedToolCall(id: "call-1", toolName: toolName, argument: .literal(step))]])
     }
 
@@ -112,9 +112,9 @@ struct ToolTracingTests {
         tracer.finishedSpans.filter { $0.operationName == name }
     }
 
-    /// The single tool span a one-call turn opened.
+    /// The single tool span a one-call answer opened.
     ///
-    /// - Parameter tracer: The tracer the turn reported to.
+    /// - Parameter tracer: The tracer the answer reported to.
     /// - Returns: The single finished tool span.
     /// - Throws: When the tracer holds no tool span, or more than one.
     private static func singleToolSpan(reportedTo tracer: InMemoryTracer) throws
@@ -142,7 +142,7 @@ struct ToolTracingTests {
     func twoCallsOpenTwoToolSpansUnderOneSubmissionSpan() async throws {
         let tracer = InMemoryTracer()
         let fixture = try await ScriptedSessionFixture.make(
-            playing: ScriptedTurnScript(rounds: [
+            playing: ScriptedAnswerScript(rounds: [
                 [
                     ScriptedToolCall(
                         id: "call-1",
@@ -194,7 +194,7 @@ struct ToolTracingTests {
     // MARK: - The call that fails
 
     @Test(
-        "a tool call that throws keeps its span, with the error recorded, while the turn goes on",
+        "a tool call that throws keeps its span, with the error recorded, while the answer goes on",
         arguments: FailingToolRow.everyMountRoute)
     func failedToolCallRecordsItsErrorOnTheSpan(_ row: FailingToolRow) async throws {
         let tracer = InMemoryTracer()
@@ -205,7 +205,7 @@ struct ToolTracingTests {
             tracer: tracer)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        // The failure is the call's output, so the turn completes.
+        // The failure is the call's output, so the answer completes.
         _ = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
 
         let span = try Self.singleToolSpan(reportedTo: tracer)

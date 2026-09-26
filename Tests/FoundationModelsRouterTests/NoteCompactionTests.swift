@@ -19,8 +19,8 @@ import Testing
 /// and only the recent tail survives with its original ids. `noteCompaction`
 /// therefore diffs by `Transcript.Entry.id` set membership rather than by
 /// position — appending only entries never before recorded — and resets the
-/// differ baseline to the compacted transcript so post-compaction turns record as
-/// ordinary (count-based) appends again.
+/// differ baseline to the compacted transcript so post-compaction answers record
+/// as ordinary (count-based) appends again.
 ///
 /// Everything runs against a stub `LanguageModel` conformer wrapping a stub
 /// ``LoadedLLMContainer`` and an ``InMemoryRecorder``, so the suite needs no
@@ -188,7 +188,7 @@ struct NoteCompactionTests {
         id: String,
         liveWindowEntryIds: [String],
         compactedEntryIds: [String],
-        summaryText: String = "Summary: prior turns compacted."
+        summaryText: String = "Summary: prior answers compacted."
     ) -> Transcript.Entry {
         .response(
             Transcript.Response(
@@ -202,7 +202,7 @@ struct NoteCompactionTests {
                             compactedEntryIds: compactedEntryIds,
                             tokensBefore: 12_000,
                             tokensAfter: 3_000,
-                            stagesApplied: ["TurnTruncation", "Summarization"],
+                            stagesApplied: ["AnswerTruncation", "Summarization"],
                             promptName: "default"
                         )
                     ).transcriptSegment,
@@ -211,12 +211,13 @@ struct NoteCompactionTests {
         )
     }
 
-    // MARK: - Driven-turn fixture
+    // MARK: - Driven-answer fixture
 
-    /// One handle, driven through `turnCount` turns (prompts `"turn 0"`,
-    /// `"turn 1"`, …), each synced at turn end — the pre-compaction history every
-    /// test in this suite compacts. `entries` is the resulting transcript:
-    /// instructions, then one prompt/response pair per turn.
+    /// One handle, driven through `answerCount` answers (prompts
+    /// `"message 0"`, `"message 1"`, …), each synced at the end of the answer —
+    /// the pre-compaction history every test in this suite compacts. `entries`
+    /// is the resulting transcript: instructions, then one prompt/response pair
+    /// for each answer.
     private struct Fixture {
         let handle: RecordingLanguageModel
         let recorder: InMemoryRecorder
@@ -225,7 +226,7 @@ struct NoteCompactionTests {
     }
 
     @MainActor
-    private static func makeFixture(turnCount: Int) async throws -> Fixture {
+    private static func makeFixture(answerCount: Int) async throws -> Fixture {
         let dir = makeTempDir()
         let recorder = InMemoryRecorder()
         let model = StubUnderlyingModel(responseText: "reply")
@@ -238,8 +239,8 @@ struct NoteCompactionTests {
 
         let handle = profile.standard.makeLanguageModel()
         let session = LanguageModelSession(model: handle, tools: [], instructions: "be terse")
-        for index in 0..<turnCount {
-            _ = try await session.respond(to: "turn \(index)")
+        for index in 0..<answerCount {
+            _ = try await session.respond(to: "message \(index)")
             await handle.sync(session.transcript)
         }
 
@@ -251,7 +252,7 @@ struct NoteCompactionTests {
     @Test("noteCompaction appends exactly the unseen summary entry; retained tail entries are not re-recorded")
     @MainActor
     func appendsOnlyUnseenSummaryEntry() async throws {
-        let fixture = try await Self.makeFixture(turnCount: 2)
+        let fixture = try await Self.makeFixture(answerCount: 2)
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
 
         let beforeEvents = await fixture.recorder.events
@@ -278,7 +279,7 @@ struct NoteCompactionTests {
 
         let appended = try #require(afterEvents.last)
         #expect(appended.kind == .response)
-        #expect(appended.text == "Summary: prior turns compacted.")
+        #expect(appended.text == "Summary: prior answers compacted.")
         #expect(appended.sessionId == fixture.handle.state.sessionId)
 
         // The appended entry round-trips a CompactionSegment through the mapper.
@@ -301,7 +302,7 @@ struct NoteCompactionTests {
     @Test("pre-compaction events remain byte-identical in the recorder after noteCompaction")
     @MainActor
     func preCompactionEventsRemainIntact() async throws {
-        let fixture = try await Self.makeFixture(turnCount: 2)
+        let fixture = try await Self.makeFixture(answerCount: 2)
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
 
         let beforeEvents = await fixture.recorder.events
@@ -327,12 +328,12 @@ struct NoteCompactionTests {
         #expect(afterEvents.prefix(beforeEvents.count).allSatisfy { $0.sessionId == fixture.handle.state.sessionId })
     }
 
-    // MARK: - Baseline reset: post-compaction turns record as ordinary appends
+    // MARK: - Baseline reset: post-compaction answers record as ordinary appends
 
-    @Test("after noteCompaction, a follow-up turn over the same handle records as an ordinary append with no duplicates")
+    @Test("after noteCompaction, a follow-up answer over the same handle records as an ordinary append with no duplicates")
     @MainActor
-    func followUpTurnAfterCompactionRecordsAsOrdinaryAppend() async throws {
-        let fixture = try await Self.makeFixture(turnCount: 2)
+    func followUpAnswerAfterCompactionRecordsAsOrdinaryAppend() async throws {
+        let fixture = try await Self.makeFixture(answerCount: 2)
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
 
         let instructions = fixture.entries[0]
@@ -362,8 +363,9 @@ struct NoteCompactionTests {
         #expect(newEvents.allSatisfy { $0.sessionId == fixture.handle.state.sessionId })
 
         // Nothing pre-compaction or retained-tail was duplicated: exactly 4
-        // .response-kind events total (turn1, turn2, the compaction's own summary
-        // response, and the post-compaction turn) — never re-recording the tail.
+        // .response-kind events total (answer 1, answer 2, the compaction's own
+        // summary response, and the post-compaction answer) — never
+        // re-recording the tail.
         let responseCount = finalEvents.filter { $0.kind == .response }.count
         #expect(responseCount == 4)
         // Same session id, same ULID, on every event across the whole
@@ -376,7 +378,7 @@ struct NoteCompactionTests {
     @Test("noteCompaction is idempotent: calling it twice with the identical compacted transcript appends nothing the second time")
     @MainActor
     func noteCompactionIsIdempotentForIdenticalTranscript() async throws {
-        let fixture = try await Self.makeFixture(turnCount: 2)
+        let fixture = try await Self.makeFixture(answerCount: 2)
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
 
         let instructions = fixture.entries[0]
@@ -401,7 +403,7 @@ struct NoteCompactionTests {
     @Test("a second, later compaction compacts only its own new span — nested compactions never re-record an earlier compaction's summary")
     @MainActor
     func secondLaterCompactionCoversOnlyNewSpan() async throws {
-        let fixture = try await Self.makeFixture(turnCount: 2)
+        let fixture = try await Self.makeFixture(answerCount: 2)
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
 
         let instructions = fixture.entries[0]
@@ -415,7 +417,7 @@ struct NoteCompactionTests {
         let firstCompacted = Transcript(entries: [instructions, firstSummary, tailPrompt2, tailResponse2])
         await fixture.handle.noteCompaction(firstCompacted)
 
-        // Drive one more turn over the compacted handle.
+        // Drive one more answer over the compacted handle.
         let session2 = LanguageModelSession(model: fixture.handle, tools: [], transcript: firstCompacted)
         _ = try await session2.respond(to: "third")
         await fixture.handle.sync(session2.transcript)
@@ -423,15 +425,15 @@ struct NoteCompactionTests {
         let beforeSecondCompaction = await fixture.recorder.events
 
         // Compact again: this time only the ORIGINAL compaction's summary is compacted
-        // away, retaining the third turn's prompt/response as the new tail.
-        let entriesAfterSecondTurn = Array(session2.transcript)
-        let thirdPrompt = entriesAfterSecondTurn[2]
-        let thirdResponse = entriesAfterSecondTurn[3]
+        // away, retaining the third answer's prompt/response as the new tail.
+        let entriesAfterSecondAnswer = Array(session2.transcript)
+        let thirdPrompt = entriesAfterSecondAnswer[2]
+        let thirdResponse = entriesAfterSecondAnswer[3]
         let secondSummary = Self.makeSummaryEntry(
             id: "summary-2",
             liveWindowEntryIds: [instructions.id, "summary-2", thirdPrompt.id, thirdResponse.id],
             compactedEntryIds: ["summary-1"],
-            summaryText: "Summary: everything through turn 2 compacted again."
+            summaryText: "Summary: everything through answer 2 compacted again."
         )
         let secondCompacted = Transcript(entries: [instructions, secondSummary, thirdPrompt, thirdResponse])
         await fixture.handle.noteCompaction(secondCompacted)
@@ -442,7 +444,7 @@ struct NoteCompactionTests {
 
         let appended = try #require(afterSecondCompaction.last)
         #expect(appended.kind == .response)
-        #expect(appended.text == "Summary: everything through turn 2 compacted again.")
+        #expect(appended.text == "Summary: everything through answer 2 compacted again.")
     }
 
     // MARK: - A real one-call compaction, noted on the bare path
@@ -450,15 +452,15 @@ struct NoteCompactionTests {
     @Test("a one-call compaction noted on the handle records exactly its summary entry, whose checkpoint decodes")
     @MainActor
     func oneCallCompactionRecordsItsSummaryEntry() async throws {
-        let turnCount = 6
-        let fixture = try await Self.makeFixture(turnCount: turnCount)
+        let answerCount = 6
+        let fixture = try await Self.makeFixture(answerCount: answerCount)
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
 
         let beforeEvents = await fixture.recorder.events
 
         let (compacted, result) = try await compactWithUnboundedWindow(
             Transcript(entries: fixture.entries), budget: summarizingCompactionBudget(for: fixture.entries),
-            summarizer: RecordingSummarizer(summary: "Summary: every turn compacted."))
+            summarizer: RecordingSummarizer(summary: "Summary: every answer compacted."))
         let summaryEntryId = try #require(result.summaryEntryId)
 
         await fixture.handle.noteCompaction(compacted)
@@ -480,8 +482,8 @@ struct NoteCompactionTests {
     @Test("noting a compaction that left the live context as it was records nothing")
     @MainActor
     func noOpCompactionRecordsNothing() async throws {
-        let turnCount = 2
-        let fixture = try await Self.makeFixture(turnCount: turnCount)
+        let answerCount = 2
+        let fixture = try await Self.makeFixture(answerCount: answerCount)
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
 
         let beforeEvents = await fixture.recorder.events

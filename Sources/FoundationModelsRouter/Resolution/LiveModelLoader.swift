@@ -523,7 +523,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     ///
     /// A snapshot that adds transcript entries and no text gives a fragment
     /// with empty text, whose ``ResponseFragment/progress`` names the newest
-    /// entry. A tool-using turn thus reports its tool calls and tool results
+    /// entry. A tool-using submission thus reports its tool calls and tool results
     /// to the stall watch (task ^4799jxg).
     private final class SnapshotDeltaIterator<Snapshots: AsyncSequence>: @unchecked Sendable {
         /// The snapshot stream's own iterator, driven by ``next()``'s caller.
@@ -814,7 +814,7 @@ public struct LiveModelLoader: ModelLoader {
             // `.reasoning` is declared for every model this loader builds, not
             // only the ones that reason. A model that always reasons and cannot
             // be turned off — Muse Glimmer, the model the gated suites load —
-            // throws at the first unconstrained turn when `.reasoning` is
+            // throws at the first unconstrained submission when `.reasoning` is
             // omitted ("This model always reasons; .reasoning must be declared
             // at MLXLanguageModel init to receive its output"), because the
             // engine would otherwise have to re-render the prompt with thinking

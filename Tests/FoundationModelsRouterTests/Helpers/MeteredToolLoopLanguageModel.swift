@@ -146,7 +146,7 @@ struct MeteredToolLoopLanguageModel: LanguageModel {
 /// ``MeteredToolLoopLanguageModel``, with the tool it mounts, the recorder
 /// that holds its run journal, and the directory the router cached into.
 struct MeteredToolLoopSessionFixture {
-    /// The vended session a test drives its turn on.
+    /// The vended session a test drives its answer on.
     let session: RoutedSession
 
     /// The tool every call but the last asks for.

@@ -1,14 +1,7 @@
 /// ``RoutedSessionActor``'s cancellation: the cancel of the work the pump
-/// runs, the withdrawal of the caller messages that wait, and the wait on a
-/// person inside a tool body (`generation-queue.md`, section 5.6).
+/// runs, and the withdrawal of the caller messages that wait
+/// (`generation-queue.md`, section 5.6).
 extension RoutedSessionActor {
-    /// See ``RoutedSession/awaitingUser(_:)``. Runs `body` and takes or
-    /// releases nothing for it. Inside a tool body, the submission of that
-    /// tool body keeps the worker of the model for the whole wait.
-    func awaitingUser<T: Sendable>(_ body: @Sendable () async throws -> T) async rethrows -> T {
-        try await body()
-    }
-
     /// See ``RoutedSession/cancel()``. Stops the work the pump runs
     /// (``requestCancelOfRunningWork()``), and withdraws every caller
     /// message that waits in ``outbox``: each of their callers gets
@@ -50,9 +43,9 @@ extension RoutedSessionActor {
     /// answer carries stops that answer. Any other open message is marked
     /// (``PumpAnswer/requestCancel()``) and withdrawn from ``outbox``.
     ///
-    /// The check of the running answer and the mark happen in one actor
-    /// turn, and the pump reads the mark in the same actor turn in which it
-    /// makes a message part of its work (``liveMessages(_:)``). So a message
+    /// The check of the running answer and the mark happen with no suspension
+    /// point between them, and the pump reads the mark with no suspension
+    /// point before it makes a message part of its work (``liveMessages(_:)``). So a message
     /// that the pump takes while this call waits for ``outbox`` is dropped
     /// from the work with `CancellationError`, and never reaches a prompt.
     ///

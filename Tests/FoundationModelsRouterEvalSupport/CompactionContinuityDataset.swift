@@ -480,10 +480,10 @@ let compactionContinuityFastInstructions = """
     refuse to state a fact from this conversation, and never invent a value.
     """
 
-/// The fast tier's second step, the newest turn at the moment the compaction
+/// The fast tier's second step, the newest answer at the moment the compaction
 /// runs.
 ///
-/// Short on purpose. The one compaction call summarizes this turn with the
+/// Short on purpose. The one compaction call summarizes this answer with the
 /// rest of the live context, so it adds little to the call's input. It asks
 /// for nothing the final instruction needs, so the answer to the final
 /// instruction can only come from the compaction's own summary.
@@ -506,7 +506,7 @@ let compactionContinuityFastReadinessCheck =
 /// The opening step states BOTH facts and then carries
 /// ``compactionContinuityFastPadding``, so the live context the one compaction
 /// summarizes holds the facts and is over the budget's target. The second step
-/// is ``compactionContinuityFastReadinessCheck``, a short turn that asks for
+/// is ``compactionContinuityFastReadinessCheck``, a short answer that asks for
 /// nothing the final instruction needs. The final instruction is asked over the compacted transcript, so a
 /// correct answer proves the summary carried the facts — the same continuity
 /// property the original seeds measure, through one compaction instead of whichever

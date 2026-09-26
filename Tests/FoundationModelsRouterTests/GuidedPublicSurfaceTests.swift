@@ -29,7 +29,7 @@ struct GuidedPublicSurfaceTests {
     /// a leaked directory is attributable to this suite.
     private static let tempDirPrefix = "GuidedPublicSurfaceTests"
 
-    /// The prompt every turn in this suite is driven with. The scripted model
+    /// The prompt every answer in this suite is driven with. The scripted model
     /// reads no prompt, so one string serves every case.
     private static let prompt = "hi"
 
@@ -122,14 +122,14 @@ struct GuidedPublicSurfaceTests {
 
     // MARK: - Minimal conformance to LoadedLLMContainer and LanguageModelSessionBackend
 
-    /// The chunks ``MinimalBackend`` streams for a turn, in order.
+    /// The chunks ``MinimalBackend`` streams for a submission, in order.
     ///
     /// More than one chunk, because the inherited
     /// `streamResponseFragments(to:maxTokens:)` must carry every chunk of a
-    /// turn, in order. A single chunk would not show that.
+    /// submission, in order. A single chunk would not show that.
     private static let minimalChunks = ["the defaults reach ", "an out-of-module conformer"]
 
-    /// The whole reply a turn over ``MinimalBackend`` must produce.
+    /// The whole reply an answer over ``MinimalBackend`` must produce.
     private static var minimalAnswer: String { minimalChunks.joined() }
 
     /// A session backend that writes only the members
@@ -147,12 +147,12 @@ struct GuidedPublicSurfaceTests {
     /// about the module boundary. Writing the omission out is the whole point
     /// of this type.
     private final class MinimalBackend: LanguageModelSessionBackend {
-        /// The chunks this backend streams for a turn, in order.
+        /// The chunks this backend streams for a submission, in order.
         private let chunks: [String]
 
         /// Creates a backend.
         ///
-        /// - Parameter chunks: The chunks to stream for each turn, in order.
+        /// - Parameter chunks: The chunks to stream for each submission, in order.
         init(chunks: [String]) {
             self.chunks = chunks
         }
@@ -189,7 +189,7 @@ struct GuidedPublicSurfaceTests {
         }
 
         /// Reports no usage, which the protocol admits for a backend that
-        /// cannot meter a turn.
+        /// cannot meter a submission.
         func usageTokenCounts() -> (input: Int, output: Int)? {
             nil
         }
@@ -205,7 +205,7 @@ struct GuidedPublicSurfaceTests {
         /// The scripted counter of this container: one token per `Character`.
         let tokenCounter: any TokenCounter = CharacterTokenCounter()
 
-        /// The chunks every backend this container vends streams for a turn.
+        /// The chunks every backend this container vends streams for a submission.
         let chunks: [String]
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
@@ -217,15 +217,15 @@ struct GuidedPublicSurfaceTests {
         }
     }
 
-    @Test("a container and a backend that write only their required members drive a whole turn")
+    @Test("a container and a backend that write only their required members drive a whole answer")
     @MainActor
-    func minimalConformersDriveATurn() async throws {
+    func minimalConformersDriveAnAnswer() async throws {
         let (profile, directory) = try await Self.makeProfile(
             container: MinimalContainer(chunks: Self.minimalChunks))
         defer { try? FileManager.default.removeItem(at: directory) }
         let session = profile.standard.makeSession(instructions: nil)
 
-        // A streaming turn reads the backend through
+        // A streaming answer reads the backend through
         // `streamResponseFragments(to:maxTokens:)`, which ``MinimalBackend``
         // does not write. The reply therefore measures the inherited default,
         // and it measures the whole of it: a default that dropped a chunk, or

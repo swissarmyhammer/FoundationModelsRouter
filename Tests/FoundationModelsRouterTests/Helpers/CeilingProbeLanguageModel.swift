@@ -9,7 +9,7 @@ import Synchronization
 /// under, one for each generation call, in call order.
 ///
 /// A class behind a lock, because the SDK generates on a task of its own while
-/// the test reads the log on the task that drove the turn. It is `Hashable` by
+/// the test reads the log on the task that drove the answer. It is `Hashable` by
 /// identity, so it can be part of the executor cache key.
 final class CeilingProbeLog: Sendable, Hashable {
     /// The ceilings seen so far. `nil` is a call that named no ceiling.
@@ -421,7 +421,7 @@ struct CeilingProbeLanguageModel: LanguageModel {
 /// ``CeilingProbeLanguageModel``, with the log its model writes into and the
 /// directory the router cached into.
 struct CeilingProbeSessionFixture {
-    /// The vended session a test drives its turn on.
+    /// The vended session a test drives its answer on.
     let session: RoutedSession
 
     /// The log of the ceiling of each generation call.

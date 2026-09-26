@@ -903,7 +903,7 @@ struct TranscriptEntryMapperTests {
     func toolDefinitionSetEncodesToIdenticalBytesAcrossReadings() {
         // `GenerationSchema` encodes its objects from dictionaries, and a
         // dictionary's key order follows its storage address. The readings
-        // are taken with the heap moved between them, the way a session turn
+        // are taken with the heap moved between them, the way a session submission
         // moves it, so an address-dependent encoding cannot pass by chance.
         let entry = FixedToolSurface.instructionsEntry(id: "instr-1", text: "be terse")
         let readings = HeapChurn.readings(count: HeapChurn.readingCount) {

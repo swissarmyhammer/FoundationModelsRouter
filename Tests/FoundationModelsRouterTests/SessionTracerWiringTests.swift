@@ -22,7 +22,7 @@ struct SessionTracerWiringTests {
     private static let tempDirPrefix = "SessionTracerWiringTests"
 
     /// A ``LoadedLLMContainer`` whose sessions answer every prompt with the
-    /// stub backend's canned line, so a turn leaves a transcript on disk that a
+    /// stub backend's canned line, so an answer leaves a transcript on disk that a
     /// restore can read back.
     private struct AnsweringContainer: PlainTranscriptStubContainer {
         /// Builds a backend over a fresh stub session.

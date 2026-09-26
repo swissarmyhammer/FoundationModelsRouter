@@ -27,20 +27,20 @@ public struct ToolCallEntry: Sendable, Equatable, Identifiable {
 ///
 /// A driver feeds it ``SessionEvent``s through ``apply(_:)`` or
 /// ``apply(eventsFrom:)``. One projection can observe a session across many
-/// turns. ``tokensIn`` and ``tokensOut`` accumulate for its whole lifetime.
+/// answers. ``tokensIn`` and ``tokensOut`` accumulate for its whole lifetime.
 @MainActor
 @Observable
 public final class SessionProjection {
-    /// Where a session is in one observed turn, derived from the most recent
+    /// Where a session is in one observed answer, derived from the most recent
     /// ``SessionEvent`` that updated something.
     public enum Phase: Sendable, Equatable {
-        /// No turn is currently being observed.
+        /// No answer is currently being observed.
         case idle
         /// The model is producing, or has just produced, response/reasoning text.
         case generating
-        /// A tool call this turn requested is in flight, or its result just landed.
+        /// A tool call this answer requested is in flight, or its result just landed.
         case runningTool
-        /// A mid-turn auto-compaction is running.
+        /// An auto-compaction inside an answer is running.
         case compacting
     }
 
@@ -60,7 +60,7 @@ public final class SessionProjection {
             case reasoning(String)
             /// A tool invocation and its live lifecycle.
             case toolCall(ToolCallEntry)
-            /// A mid-turn auto-compaction's result.
+            /// The result of an auto-compaction inside an answer.
             case compaction(CompactionResult)
         }
 
@@ -449,7 +449,7 @@ public final class SessionProjection {
             let (kind, payload, text) = TranscriptEntryMapper.event(from: entry)
             switch kind {
             case .prompt:
-                // A compaction boundary is a row, not the start of a turn.
+                // A compaction boundary is a row, not the start of a submission.
                 if let boundary = compactionRow(from: entry, entryId: payload.entryId) {
                     rows.append(boundary)
                 } else {
@@ -628,24 +628,24 @@ public final class SessionProjection {
     }
 
     /// The entry ids of every plain `.response` entry that a later plain
-    /// `.response` entry in the same turn superseded.
+    /// `.response` entry in the same submission superseded.
     ///
     /// - Parameter entries: The cold transcript's entries, oldest first.
     /// - Returns: The superseded text rows' entry ids.
     private nonisolated static func supersededTextEntryIds(in entries: [Transcript.Entry]) -> Set<String> {
         var superseded: Set<String> = []
-        var turnTextEntryIds: [String] = []
+        var submissionTextEntryIds: [String] = []
         for entry in entries {
             let (kind, payload, _) = TranscriptEntryMapper.event(from: entry)
             switch kind {
             case .prompt:
-                // A compaction boundary is not the start of a turn.
+                // A compaction boundary is not the start of a submission.
                 guard compactionRow(from: entry, entryId: payload.entryId) == nil else { break }
-                turnTextEntryIds.removeAll()
+                submissionTextEntryIds.removeAll()
             case .response:
                 guard compactionRow(from: entry, entryId: payload.entryId) == nil else { break }
-                superseded.formUnion(turnTextEntryIds)
-                turnTextEntryIds.append(payload.entryId)
+                superseded.formUnion(submissionTextEntryIds)
+                submissionTextEntryIds.append(payload.entryId)
             case .toolCalls, .toolOutput, .reasoning, .session, .instructions, .embedding, .divergence,
                 .generationCall, .repeatedPartRemoval, .toolCall, .unknown:
                 break

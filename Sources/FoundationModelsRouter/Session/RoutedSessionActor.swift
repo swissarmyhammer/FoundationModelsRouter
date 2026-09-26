@@ -401,10 +401,10 @@ actor RoutedSessionActor: RoutedSession {
     var didAttachOutboxJournal = false
 
     /// The composed event sink of the running answer (see
-    /// ``turnEventSink(_:)``), or `nil` between answers.
+    /// ``answerEventSink(_:)``), or `nil` between answers.
     /// ``deliver(invocation:)`` uses it to hand a live
     /// ``SessionEvent/toolInvocation(_:)`` to the running answer.
-    var currentTurnEventSink: ((SessionEvent) -> Void)?
+    var currentAnswerEventSink: ((SessionEvent) -> Void)?
 
     /// The number of the last submission this session opened. The next
     /// ``SubmissionID`` takes the next number. See
@@ -416,7 +416,7 @@ actor RoutedSessionActor: RoutedSession {
     var runningSubmission: RunningSubmission?
 
     /// The reducer of the running answer: each event of the answer goes
-    /// through it (``turnEventSink(_:)``), and the pump makes the
+    /// through it (``answerEventSink(_:)``), and the pump makes the
     /// ``SessionAnswer`` from it when the chain ends. The pump resets it for
     /// each answer.
     var answerReducer = SessionAnswerReducer()
@@ -437,7 +437,7 @@ actor RoutedSessionActor: RoutedSession {
     var compactionYieldsStopped = false
 
     /// The repetition watch of this session: the watch of the model call in
-    /// flight, its stop marker, and the recoveries of the turn in flight.
+    /// flight, its stop marker, and the recoveries of the running answer.
     /// See ``runWatchedModelCall(composedPrompt:_:)``.
     var repetitionWatch = RepetitionWatchState()
 
@@ -478,8 +478,8 @@ actor RoutedSessionActor: RoutedSession {
     /// (``TranscriptDiffer/divergence(from:in:)``) and takes the whole
     /// current transcript as the next baseline after every recorded diff.
     /// Set at construction from the backend's own prefix, so an identity
-    /// exists before the first turn: empty for a root, the parent's entries
-    /// for a fork, the seed transcript for a restore.
+    /// exists before the first submission: empty for a root, the parent's
+    /// entries for a fork, the seed transcript for a restore.
     var persistedBaseline: TranscriptDiffer.Baseline
 
     /// This session's position in its own append-only recorded history: how
@@ -501,17 +501,17 @@ actor RoutedSessionActor: RoutedSession {
     /// snapshot, and the messages since that snapshot). ``contextFill`` derives
     /// its numerator from it. See ``ContextUsageState``.
     ///
-    /// ``finishTurn(grammar:since:usageBefore:responseTokenCeiling:pendingEvents:onEvent:)``
+    /// ``finishSubmission(grammar:since:usageBefore:responseTokenCeiling:pendingEvents:onEvent:stopReason:)``
     /// sets it to the fed and generated tokens of the newest generation call of
-    /// the attempt, never to the sum of the calls, and only when the turn's diff
-    /// included a `.response` entry. A compaction restarts it from the
-    /// instructions and the new snapshot (task ^tpsc0nf).
+    /// the attempt, never to the sum of the calls, and only when the diff of
+    /// the submission included a `.response` entry. A compaction restarts it
+    /// from the instructions and the new snapshot (task ^tpsc0nf).
     var usageState: ContextUsageState
 
     /// The auto-compaction opt-in, or `nil` for manual-only compaction. When
-    /// set, a turn compacts automatically at ``TokenBudget/triggerTokens``, and a
-    /// turn that overflows mid-generation is compacted harder and retried
-    /// once. A fork carries it forward.
+    /// set, an answer compacts automatically at ``TokenBudget/triggerTokens``,
+    /// and a submission that overflows mid-generation is compacted harder and
+    /// retried once. A fork carries it forward.
     nonisolated let autoCompactionBudget: TokenBudget?
 
     /// The compaction prompt auto-compaction's own compactions send to the
@@ -523,7 +523,7 @@ actor RoutedSessionActor: RoutedSession {
     /// forward.
     nonisolated let summarization: Summarization
 
-    /// The pre-discovery seeding opt-in, or `nil`. When set, each turn runs
+    /// The pre-discovery seeding opt-in, or `nil`. When set, each answer runs
     /// the named tool host-side over its prompt and reseeds ``backend``
     /// before generation (see ``primeDiscoveryIfConfigured(prompt:emit:)``).
     /// A fork carries it forward.

@@ -15,7 +15,7 @@ import Testing
 /// down.
 ///
 /// The suite drives one session through the work that produces content: a
-/// scripted turn, a tool call inside it, a compaction over what the turn
+/// scripted answer, a tool call inside it, a compaction over what the answer
 /// accumulated, and an embed. It then reads *every* attribute of *every*
 /// recorded span, and fails on any value that carries the fixture's own
 /// content. Nothing here names a span, so a card that teaches the router to
@@ -23,7 +23,7 @@ import Testing
 /// this file.
 ///
 /// Card ^zgwmhd0 wrote the suite while the embed span was the only span the
-/// router opened. The five cards it unblocks add the turn, tool, compaction, resolve
+/// router opened. The five cards it unblocks add the submission, tool, compaction, resolve
 /// and session spans, and each of them widens what this one test measures.
 @Suite("No span carries the caller's content")
 struct SpanContentSafetyTests {
@@ -51,7 +51,7 @@ struct SpanContentSafetyTests {
         let tracer = InMemoryTracer()
         let tool = MarkerEmittingTool()
         let fixture = try await ScriptedSessionFixture.make(
-            playing: ScriptedTurnScript(rounds: [
+            playing: ScriptedAnswerScript(rounds: [
                 [
                     ScriptedToolCall(
                         id: "call-1",
@@ -64,14 +64,14 @@ struct SpanContentSafetyTests {
             tracer: tracer)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        // One turn, with one tool call inside it. The answer is composed from
+        // One answer, with one tool call inside it. The answer is composed from
         // the tool output the model read back, so it carries the marker only if
         // the output really reached generation.
         let answer = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
         let toolOutput = ScriptedToolFixture.marker(for: ScriptedToolFixture.firstStepName)
         #expect(answer.contains(toolOutput))
 
-        // A compaction over what the turn accumulated. The budget is derived from
+        // A compaction over what the answer accumulated. The budget is derived from
         // the measured pre-compaction size, and the shrink says the compaction really ran.
         let compaction = try await fixture.session.compact(
             budget: summarizingCompactionBudget(for: fixture.transcriptEntries()))

@@ -138,9 +138,9 @@ struct RoutedSessionCompactTests {
     /// `Character`, the same rule ``ConfiguredLLMContainer`` counts with.
     private static let characterTokenCounter = CharacterTokenCounter()
 
-    /// A canned response, repeated across every turn and given as the answer
-    /// of every summarizer call. Six turns of it are much larger than one
-    /// copy, so a summary of this text makes the live context smaller.
+    /// A canned response, repeated across every answer and given as the
+    /// answer of every summarizer call. Six answers of it are much larger than
+    /// one copy, so a summary of this text makes the live context smaller.
     private static let cannedText = String(
         repeating: "The quick brown fox jumps over the lazy dog. ", count: 12)
 
@@ -201,9 +201,9 @@ struct RoutedSessionCompactTests {
         #expect(standard.receivedSamplingModes == [.greedy])
         #expect(flash.receivedSamplingModes.isEmpty)
 
-        // Measured fill sits at the trigger, so this turn compacts before its own
-        // work runs, summarizing through the flash slot.
-        _ = try await session.respond(to: "turn 6")
+        // Measured fill sits at the trigger, so this answer compacts before its
+        // own work runs, summarizing through the flash slot.
+        _ = try await session.respond(to: "message 6")
 
         #expect(flash.receivedSamplingModes == [.greedy])
     }
@@ -217,26 +217,27 @@ struct RoutedSessionCompactTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let recorder = InMemoryRecorder()
-        // A large per-turn usage delta relative to the tiny stub transcript's
-        // own token count — simulating a session whose measured fill
-        // is already high (why compaction would run), on a fixed scale that
-        // stays comparable across the two turns driven below.
+        // A large usage delta for each answer relative to the tiny stub
+        // transcript's own token count — simulating a session whose measured
+        // fill is already high (why compaction would run), on a fixed scale
+        // that stays comparable across the two answers driven below.
         let container = ConfiguredLLMContainer(responseText: Self.cannedText, usageIncrement: (input: 50_000, output: 0))
         let router = Self.makeRouter(container: container, recorder: recorder, cacheDir: dir)
         let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
-        // Six turns of the canned text are much larger than the one copy of
+        // Six answers of the canned text are much larger than the one copy of
         // it the summarizer answers with, so the summary shrinks the context.
-        try await driveTurns(6, on: session)
+        try await driveAnswers(6, on: session)
 
         let backend = try #require(container.lastBackend)
         let preCompactionTokens = try Self.characterTokenCounter.count(Transcript(entries: backend.transcriptEntries()))
         let preCompactionFill = await session.contextFill
-        // A turn's own usage delta reports the *whole* transcript's size at
-        // that point (generation is stateless) — not a cumulative sum across
-        // turns — so with a constant 50,000-token delta per turn against a
-        // 100,000-token context, fill sits at 0.5 regardless of turn count.
+        // A submission's own usage delta reports the *whole* transcript's size
+        // at that point (generation is stateless) — not a cumulative sum across
+        // answers — so with a constant 50,000-token delta for each answer
+        // against a 100,000-token context, fill sits at 0.5 whatever the count
+        // of answers.
         #expect(preCompactionFill == 0.5)
 
         // A target under the live context, so the compaction makes its one
@@ -270,7 +271,7 @@ struct RoutedSessionCompactTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let recorder = InMemoryRecorder()
-        // A *small* per-turn measured usage against a transcript the
+        // A *small* measured usage for each answer against a transcript the
         // pipeline's own counter sizes far higher — the arrangement that
         // exposed the unit mismatch on real hardware, where an over-counting
         // character-ratio estimate (the count of that time) written into
@@ -279,14 +280,14 @@ struct RoutedSessionCompactTests {
         // after a compaction from 0.89453). The compaction's own accounting has to be
         // denominated in the same tokens the pre-compaction fill was, or a caller
         // comparing the two compares incommensurable numbers.
-        let measuredTokensPerTurn = 200
+        let measuredTokensPerAnswer = 200
         let container = ConfiguredLLMContainer(
-            responseText: Self.cannedText, usageIncrement: (input: measuredTokensPerTurn, output: 0))
+            responseText: Self.cannedText, usageIncrement: (input: measuredTokensPerAnswer, output: 0))
         let router = Self.makeRouter(container: container, recorder: recorder, cacheDir: dir)
         let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
-        try await driveTurns(6, on: session)
+        try await driveAnswers(6, on: session)
 
         let backend = try #require(container.lastBackend)
         let preCompactionTokens = try Self.characterTokenCounter.count(Transcript(entries: backend.transcriptEntries()))
@@ -301,12 +302,12 @@ struct RoutedSessionCompactTests {
         // The premise of this test: the counter's size of the new snapshot is
         // larger than everything the session has measured, so to report the
         // compaction's own count raw could only raise fill.
-        #expect(result.tokensAfter > measuredTokensPerTurn)
+        #expect(result.tokensAfter > measuredTokensPerAnswer)
 
         let postCompactionFill = await session.contextFill
         #expect(postCompactionFill < preCompactionFill)
         let expectedPostCompactionTokens =
-            (Double(measuredTokensPerTurn) * Double(result.tokensAfter) / Double(preCompactionTokens)).rounded()
+            (Double(measuredTokensPerAnswer) * Double(result.tokensAfter) / Double(preCompactionTokens)).rounded()
         #expect(postCompactionFill == expectedPostCompactionTokens / 100_000)
     }
 
@@ -324,7 +325,7 @@ struct RoutedSessionCompactTests {
         let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
-        try await driveTurns(6, on: session)
+        try await driveAnswers(6, on: session)
 
         let sessionId = session.id
         let recordingDirectory = session.recordingDirectory
@@ -370,9 +371,9 @@ struct RoutedSessionCompactTests {
         #expect(!compactionSegment.content.compactedEntryIds.isEmpty)
     }
 
-    // MARK: - Post-compact turns work normally
+    // MARK: - Answers after a compaction work normally
 
-    @Test("respond() works normally after compaction; a follow-up turn records as a normal append")
+    @Test("respond() works normally after compaction; a follow-up answer records as a normal append")
     @MainActor
     func respondWorksNormallyAfterCompaction() async throws {
         let dir = Self.makeTempDir()
@@ -384,21 +385,21 @@ struct RoutedSessionCompactTests {
         let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
-        try await driveTurns(6, on: session)
+        try await driveAnswers(6, on: session)
 
         let backend = try #require(container.lastBackend)
         let preCompactionTokens = try Self.characterTokenCounter.count(Transcript(entries: backend.transcriptEntries()))
         let budget = TokenBudget(limit: preCompactionTokens * 2, target: 0.25)
         try await session.compact(budget: budget)
 
-        let beforeTurnEvents = await recorder.events
+        let beforeAnswerEvents = await recorder.events
 
-        let response = try await session.respond(to: "one more turn")
+        let response = try await session.respond(to: "one more message")
         #expect(response == Self.cannedText)
 
-        let afterTurnEvents = await recorder.events
-        #expect(Array(afterTurnEvents.prefix(beforeTurnEvents.count)) == beforeTurnEvents)
-        let newEvents = Array(afterTurnEvents.suffix(from: beforeTurnEvents.count))
+        let afterAnswerEvents = await recorder.events
+        #expect(Array(afterAnswerEvents.prefix(beforeAnswerEvents.count)) == beforeAnswerEvents)
+        let newEvents = Array(afterAnswerEvents.suffix(from: beforeAnswerEvents.count))
         #expect(newEvents.map(\.kind) == [.prompt, .response])
         #expect(newEvents.allSatisfy { $0.sessionId == session.id })
     }
@@ -415,14 +416,14 @@ struct RoutedSessionCompactTests {
         let container = ConfiguredLLMContainer(responseText: Self.cannedText)
         let router = Self.makeRouter(container: container, recorder: recorder, cacheDir: dir)
 
-        // Drive turns first (against a throwaway large-context profile) so
+        // Drive answers first (against a throwaway large-context profile) so
         // the size of the live context is known before the test picks a
         // context whose *default* budget (the default target of this
         // profile's own context) is just under that size.
         let scratchProfile = try await router.resolve(
             profile: Self.profile(context: 1_000_000), reporting: ResolutionProgress())
         let scratchSession = scratchProfile.standard.makeSession()
-        try await driveTurns(6, on: scratchSession)
+        try await driveAnswers(6, on: scratchSession)
         let scratchBackend = try #require(container.lastBackend)
         let liveTokens = characterCount(of: scratchBackend.transcriptEntries())
 
@@ -435,7 +436,7 @@ struct RoutedSessionCompactTests {
         let profile2 = try await router2.resolve(
             profile: Self.profile(context: tightContext), reporting: ResolutionProgress())
         let session2 = profile2.standard.makeSession()
-        try await driveTurns(6, on: session2)
+        try await driveAnswers(6, on: session2)
 
         let result = try await session2.compact()
 
@@ -472,7 +473,7 @@ struct RoutedSessionCompactTests {
         let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
-        try await driveTurns(6, on: session)
+        try await driveAnswers(6, on: session)
 
         let backend = try #require(container.lastBackend)
         let budget = summarizingCompactionBudget(for: backend.transcriptEntries())
@@ -513,7 +514,7 @@ struct RoutedSessionCompactTests {
         let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
-        try await driveTurns(6, on: session)
+        try await driveAnswers(6, on: session)
 
         let sessionId = session.id
         let recordingDirectory = session.recordingDirectory
@@ -545,7 +546,7 @@ struct RoutedSessionCompactTests {
         let afterEvents = await recorder.events
         #expect(afterEvents == beforeEvents)
 
-        // A subsequent turn still works normally — the session's backend was
+        // A later answer still works normally — the session's backend was
         // never swapped for the (failed) compaction attempt's summarizer backend.
         backend.shouldThrow = false
         let response = try await session.respond(to: "still fine")
@@ -566,9 +567,9 @@ struct RoutedSessionCompactTests {
         let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
-        try await driveTurns(2, on: session)
+        try await driveAnswers(2, on: session)
 
-        // A generous budget the tiny two-turn transcript is already well
+        // A generous budget the tiny transcript of two answers is already well
         // under.
         let budget = TokenBudget(limit: 1_000_000, target: 0.9)
         let beforeEvents = await recorder.events
@@ -582,7 +583,7 @@ struct RoutedSessionCompactTests {
         let afterEvents = await recorder.events
         #expect(afterEvents == beforeEvents)
 
-        // A follow-up turn still works normally.
+        // A follow-up answer still works normally.
         let response = try await session.respond(to: "still working")
         #expect(response == Self.cannedText)
     }
@@ -623,7 +624,7 @@ struct RoutedSessionCompactTests {
         let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
-        try await driveTurns(6, on: session)
+        try await driveAnswers(6, on: session)
 
         let latch = RunLatch()
         let token = await trackFakeRun(on: session.mailbox, latch: latch)
@@ -682,7 +683,7 @@ struct RoutedSessionCompactTests {
         let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
-        try await driveTurns(6, on: session)
+        try await driveAnswers(6, on: session)
 
         let backend = try #require(container.lastBackend)
         let budget = summarizingCompactionBudget(for: backend.transcriptEntries())
@@ -716,7 +717,7 @@ struct RoutedSessionCompactTests {
         let profile = try await router.resolve(
             profile: Self.profile(context: contextTokens), reporting: ResolutionProgress())
         let session = profile.standard.makeSession()
-        try await driveTurns(6, on: session)
+        try await driveAnswers(6, on: session)
 
         let backend = try #require(container.lastBackend)
         let callsBeforeCompaction = container.generationLog.calls.count
@@ -732,23 +733,23 @@ struct RoutedSessionCompactTests {
         #expect(call.maxTokens == allowedTokens)
         // The summarizer call turns reasoning off (task ^dvyt1dx).
         #expect(call.reasoningOff)
-        #expect(call.prompt.contains("User: turn 0"))
-        #expect(call.prompt.contains("User: turn 5"))
+        #expect(call.prompt.contains("User: text 0"))
+        #expect(call.prompt.contains("User: text 5"))
         #expect(result.summarizerTier == .ownModel)
         #expect(result.summary == Self.cannedText)
     }
 
     // MARK: - A compaction records its checkpoint (task ^h1008kb)
 
-    /// The per-turn measured usage delta the two checkpoint tests below
-    /// configure their stub backend with — large against the tiny stub
+    /// The measured usage delta for each answer that the two checkpoint tests
+    /// below configure their stub backend with — large against the tiny stub
     /// transcript's own token count, so the compaction's measured-scale
     /// rescale (``RoutedSessionActor``'s `compactedUsage`) is a real conversion
     /// rather than a near-identity.
-    private static let measuredTokensPerCheckpointTurn = 50_000
+    private static let measuredTokensPerCheckpointAnswer = 50_000
 
     /// The resolved working context those tests run against, sized so the
-    /// measured per-turn delta above reports a mid-scale `contextFill`.
+    /// measured delta for each answer above reports a mid-scale `contextFill`.
     private static let checkpointTestContext = 100_000
 
     @Test(
@@ -762,13 +763,13 @@ struct RoutedSessionCompactTests {
         let recorder = InMemoryRecorder()
         let container = ConfiguredLLMContainer(
             responseText: Self.cannedText,
-            usageIncrement: (input: Self.measuredTokensPerCheckpointTurn, output: 0))
+            usageIncrement: (input: Self.measuredTokensPerCheckpointAnswer, output: 0))
         let router = Self.makeRouter(container: container, recorder: recorder, cacheDir: dir)
         let profile = try await router.resolve(
             profile: Self.profile(context: Self.checkpointTestContext), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
-        try await driveTurns(6, on: session)
+        try await driveAnswers(6, on: session)
 
         let backend = try #require(container.lastBackend)
         let budget = summarizingCompactionBudget(for: backend.transcriptEntries())
@@ -798,9 +799,9 @@ struct RoutedSessionCompactTests {
         // numbers the live session now reports through `contextFill` — so a
         // restore reads post-compaction usage rather than a pre-compaction stamp.
         let expectedMeasuredTokensAfter = Int(
-            (Double(Self.measuredTokensPerCheckpointTurn) * Double(result.tokensAfter)
+            (Double(Self.measuredTokensPerCheckpointAnswer) * Double(result.tokensAfter)
                 / Double(result.tokensBefore)).rounded())
-        #expect(compactionSegment.content.tokensBefore == Self.measuredTokensPerCheckpointTurn)
+        #expect(compactionSegment.content.tokensBefore == Self.measuredTokensPerCheckpointAnswer)
         #expect(compactionSegment.content.tokensAfter == expectedMeasuredTokensAfter)
         let postCompactionFill = await session.contextFill
         #expect(postCompactionFill == Double(expectedMeasuredTokensAfter) / Double(Self.checkpointTestContext))
@@ -820,7 +821,7 @@ struct RoutedSessionCompactTests {
 
         let container = ConfiguredLLMContainer(
             responseText: Self.cannedText,
-            usageIncrement: (input: Self.measuredTokensPerCheckpointTurn, output: 0))
+            usageIncrement: (input: Self.measuredTokensPerCheckpointAnswer, output: 0))
         let router = Self.makeRouter(
             container: container, recorder: JSONLRecorder(directory: recordingsDir),
             cacheDir: cacheDir, recordingsDir: recordingsDir)
@@ -828,7 +829,7 @@ struct RoutedSessionCompactTests {
             profile: Self.profile(context: Self.checkpointTestContext), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession(instructions: "You are a test assistant.")
-        try await driveTurns(6, on: session)
+        try await driveAnswers(6, on: session)
 
         let backend = try #require(container.lastBackend)
         let preCompactionEntries = backend.transcriptEntries()
@@ -836,8 +837,8 @@ struct RoutedSessionCompactTests {
         let summary = try #require(result.summary)
         let postCompactionFill = await session.contextFill
 
-        // The new snapshot keeps the instructions word for word and no turn of
-        // the conversation.
+        // The new snapshot keeps the instructions word for word and no message
+        // of the conversation.
         let expectedWindow = preCompactionEntries.filter {
             if case .instructions = $0 { return true }
             return false
@@ -848,7 +849,7 @@ struct RoutedSessionCompactTests {
         // pointed at the same router id and recordings directory.
         let container2 = ConfiguredLLMContainer(
             responseText: Self.cannedText,
-            usageIncrement: (input: Self.measuredTokensPerCheckpointTurn, output: 0))
+            usageIncrement: (input: Self.measuredTokensPerCheckpointAnswer, output: 0))
         let router2 = Self.makeRouter(
             id: router.id, container: container2, recorder: JSONLRecorder(directory: recordingsDir),
             cacheDir: cacheDir, recordingsDir: recordingsDir)

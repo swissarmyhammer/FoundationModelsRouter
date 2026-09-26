@@ -21,7 +21,7 @@ Please supply one of these two:
 
 The answer side is ready: `RoutedSession.respond(elicitationId:response:)` (RoutedSession.swift:344) and `RoutedSession.complete(elicitationId:)` (RoutedSession.swift:350) are public. Only the request side is missing. Until this lands, the ACP agent cannot relay `elicitation/create` to its client, and a tool that elicits stays suspended until the session closes.
 
-**Answer:** Router commit ef772c0 adds the public case `SessionEvent.elicitationRequested(OperationEvent)` in `Sources/FoundationModelsRouter/Session/SessionEvent.swift`. The case carries the `.elicitation` `OperationEvent` at the moment the session journals it. It is always on `streamSessionEvents()`, and on the turn's stream when the elicitation is raised inside a turn. The suites `ElicitationRoutingTests`, `SessionProjectionTests`, and `TurnOutcomeTests` in `Tests/FoundationModelsRouterTests` show this. Known limit: an elicitation posted through `ToolContext.mount(_:op:as:postingTo:)` with a sink that does not forward to the session outbox never reaches the session journal, so it never reaches this event.
+**Answer:** Router commit ef772c0 adds the public case `SessionEvent.elicitationRequested(OperationEvent)` in `Sources/FoundationModelsRouter/Session/SessionEvent.swift`. The case carries the `.elicitation` `OperationEvent` at the moment the session journals it. It is always on `streamSessionEvents()`, and on the stream of the answer when the elicitation is raised inside an answer. The suites `ElicitationRoutingTests`, `SessionProjectionTests`, and `SessionAnswerTests` in `Tests/FoundationModelsRouterTests` show this. Known limit: an elicitation posted through `ToolContext.mount(_:op:as:postingTo:)` with a sink that does not forward to the session outbox never reaches the session journal, so it never reaches this event.
 
 ## Ask 2 — expose the subagent spawn fact on TranscriptEvent
 
@@ -29,7 +29,7 @@ From: FoundationModelsACPAgent, task ^nh9myws.
 
 A host can learn that a run spawned a subagent only from `session.json`. Please expose the spawn fact on `TranscriptEvent`, so a live consumer sees it without a file read.
 
-**Answer:** Router commit 1e4552b adds the public field `TranscriptEvent.agentSpawn` and its partial `TranscriptEvent.Partial.agentSpawn` in `Sources/FoundationModelsRouter/Recording/TranscriptEvent.swift`. The recorder stamps the value on the `.session` event only. The value is the same `SessionSidecar.AgentSpawn` that `session.json` holds. The suites `TranscriptEventSchemaTests`, `SessionSidecarTests`, and `MergedAndRedactionTests` in `Tests/FoundationModelsRouterTests` show this. Known limit: the `.session` event lands at the first turn, not at `makeSession`, so a live sink sees the spawn fact when the first turn starts. A fork carries `nil`.
+**Answer:** Router commit 1e4552b adds the public field `TranscriptEvent.agentSpawn` and its partial `TranscriptEvent.Partial.agentSpawn` in `Sources/FoundationModelsRouter/Recording/TranscriptEvent.swift`. The recorder stamps the value on the `.session` event only. The value is the same `SessionSidecar.AgentSpawn` that `session.json` holds. The suites `TranscriptEventSchemaTests`, `SessionSidecarTests`, and `MergedAndRedactionTests` in `Tests/FoundationModelsRouterTests` show this. Known limit: the `.session` event lands at the first submission, not at `makeSession`, so a live sink sees the spawn fact when the first submission starts. A fork carries `nil`.
 
 ## Ask 3 — a public read of the resolved standard-slot context in tokens
 
@@ -42,7 +42,7 @@ The resolved working context in tokens is not public at commit 87c660b:
 - `RoutedModel` shows only `chosen` (:22) and `footprintBytes` (:25) publicly.
 - `ProfileDefinition.context` (Core/ProfileDefinition.swift:44) is the requested value, not the resolved value; the resolution ladder can select a smaller context (Resolution/JointFit.swift:548).
 - `RestoredSession.ContextMismatch.resolved` (Recording/SessionRestoration.swift:26) is public, but only a restore that finds a mismatch supplies it.
-- `TurnOutcome.contextFill` and `SessionEvent` usage give fractions after a turn, not a token limit before `makeSession`.
+- `SessionAnswer.contextFill` (then named `TurnOutcome.contextFill`) and `SessionEvent` usage give fractions after an answer, not a token limit before `makeSession`.
 
 Please supply a public read — for example a public `RoutedModel.contextTokens`, or a public `SlotResolution.contextTokens` together with a public `RoutedModel.resolution`.
 

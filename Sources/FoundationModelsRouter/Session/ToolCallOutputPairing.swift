@@ -27,8 +27,9 @@ enum ToolCallOutputPairing {
     /// call in request order.
     ///
     /// The pairing scope is the caller's: the live path scopes `dispatched`
-    /// and `completed` to one turn's diff, and the cold path resets them at
-    /// each `.prompt` entry, which is where a turn's diff begins.
+    /// and `completed` to the diff of one submission, and the cold path resets
+    /// them at each `.prompt` entry, which is where the diff of a submission
+    /// begins.
     ///
     /// - Parameters:
     ///   - outputEntryId: The `.toolOutput` entry's own id.

@@ -56,8 +56,8 @@ final class RenderProbeLog: Sendable {
 ///   it answers with ``Executor/snapshotText(number:)``, and the log counts
 ///   the summary;
 /// - any other call: the log records the transcript of the call. The call asks
-///   for the ``MarkerEmittingTool`` while the turn has made fewer than
-///   ``toolRoundsPerTurn`` tool calls, and answers with
+///   for the ``MarkerEmittingTool`` while the submission has made fewer than
+///   ``toolRoundsPerAnswer`` tool calls, and answers with
 ///   ``Executor/answerText(to:)`` after that.
 ///
 /// The fed tokens that each call reports are the count of the
@@ -67,8 +67,8 @@ struct RenderProbeLanguageModel: LanguageModel {
     /// The log that the executor writes.
     let log: RenderProbeLog
 
-    /// The count of the tool calls that each turn makes before it answers.
-    let toolRoundsPerTurn: Int
+    /// The count of the tool calls that each answer makes before it answers.
+    let toolRoundsPerAnswer: Int
 
     /// Declares tool calling, because a tool-mounted session refuses a model
     /// without it.
@@ -76,7 +76,7 @@ struct RenderProbeLanguageModel: LanguageModel {
 
     /// Builds the executor cache key from the log and the tool rounds.
     var executorConfiguration: Executor.Configuration {
-        Executor.Configuration(log: log, toolRoundsPerTurn: toolRoundsPerTurn)
+        Executor.Configuration(log: log, toolRoundsPerAnswer: toolRoundsPerAnswer)
     }
 
     /// The executor that plays out each call.
@@ -88,17 +88,17 @@ struct RenderProbeLanguageModel: LanguageModel {
             /// The log that the executor writes.
             let log: RenderProbeLog
 
-            /// The count of the tool calls that each turn makes before it
+            /// The count of the tool calls that each answer makes before it
             /// answers.
-            let toolRoundsPerTurn: Int
+            let toolRoundsPerAnswer: Int
 
             static func == (lhs: Self, rhs: Self) -> Bool {
-                lhs.log === rhs.log && lhs.toolRoundsPerTurn == rhs.toolRoundsPerTurn
+                lhs.log === rhs.log && lhs.toolRoundsPerAnswer == rhs.toolRoundsPerAnswer
             }
 
             func hash(into hasher: inout Hasher) {
                 hasher.combine(ObjectIdentifier(log))
-                hasher.combine(toolRoundsPerTurn)
+                hasher.combine(toolRoundsPerAnswer)
             }
         }
 
@@ -132,27 +132,27 @@ struct RenderProbeLanguageModel: LanguageModel {
             "Snapshot number \(number) of the earlier work."
         }
 
-        /// The answer text of a turn whose prompt is `prompt`.
+        /// The answer text of a submission whose prompt is `prompt`.
         ///
-        /// - Parameter prompt: The text of the prompt of the turn.
+        /// - Parameter prompt: The text of the prompt of the submission.
         /// - Returns: The answer text.
         static func answerText(to prompt: String) -> String {
             "Answer to: \(prompt)"
         }
 
-        /// The step name that tool call `round` of a turn gives the tool as
-        /// its `value` argument.
+        /// The step name that tool call `round` of a submission gives the tool
+        /// as its `value` argument.
         ///
         /// - Parameter round: The zero-based position of the tool call in the
-        ///   turn.
+        ///   submission.
         /// - Returns: The step name.
         static func toolStep(round: Int) -> String {
             "probe-\(round)"
         }
 
         /// The entries of `transcript` after its last `.prompt` entry: the
-        /// entries of the turn in flight.
-        private static func entriesOfTurn(in transcript: Transcript) -> ArraySlice<Transcript.Entry> {
+        /// entries of the running submission.
+        private static func entriesOfSubmission(in transcript: Transcript) -> ArraySlice<Transcript.Entry> {
             let entries = Array(transcript)
             let lastPrompt = entries.lastIndex { entry in
                 guard case .prompt = entry else { return false }
@@ -161,9 +161,9 @@ struct RenderProbeLanguageModel: LanguageModel {
             return entries[(lastPrompt.map { $0 + 1 } ?? entries.startIndex)...]
         }
 
-        /// The count of the tool calls that the turn in flight made.
+        /// The count of the tool calls that the running submission made.
         private static func toolRounds(in transcript: Transcript) -> Int {
-            entriesOfTurn(in: transcript).filter { entry in
+            entriesOfSubmission(in: transcript).filter { entry in
                 guard case .toolCalls = entry else { return false }
                 return true
             }.count
@@ -202,7 +202,7 @@ struct RenderProbeLanguageModel: LanguageModel {
             }
             configuration.log.record(render: transcript)
             let round = Self.toolRounds(in: transcript)
-            guard round < configuration.toolRoundsPerTurn else {
+            guard round < configuration.toolRoundsPerAnswer else {
                 let text = Self.answerText(to: prompts.last ?? "")
                 await Self.send(text: text, entryID: Self.newEntryID("answer"), fedTokens: fedTokens, into: channel)
                 return
@@ -221,8 +221,8 @@ struct RenderProbeLanguageModel: LanguageModel {
             await send(fedTokens: fedTokens, generatedTokens: counter.count(text), entryID: entryID, into: channel)
         }
 
-        /// Sends tool call `round` of the turn, and its usage: `fedTokens` in,
-        /// and the size of the tool name and the arguments out.
+        /// Sends tool call `round` of the submission, and its usage:
+        /// `fedTokens` in, and the size of the tool name and the arguments out.
         private static func sendToolCall(
             round: Int, fedTokens: Int, into channel: LanguageModelExecutorGenerationChannel
         ) async {
@@ -258,7 +258,7 @@ struct RenderProbeLanguageModel: LanguageModel {
 /// ``RenderProbeLanguageModel``, with the log of the model and the recorder
 /// that holds the run journal of the session.
 struct RenderProbeSessionFixture {
-    /// The vended session a test drives its turns on.
+    /// The vended session a test drives its answers on.
     let session: RoutedSession
 
     /// The log that the model writes.
@@ -275,7 +275,7 @@ struct RenderProbeSessionFixture {
     ///
     /// - Parameters:
     ///   - instructions: The instructions of the session.
-    ///   - toolRoundsPerTurn: The count of the tool calls that each turn
+    ///   - toolRoundsPerAnswer: The count of the tool calls that each answer
     ///     makes before it answers.
     ///   - context: The working context the profile resolves at.
     ///   - tempDirPrefix: The calling suite's name, so a leaked temp directory
@@ -284,14 +284,14 @@ struct RenderProbeSessionFixture {
     /// - Throws: Whatever profile resolution throws.
     static func make(
         instructions: String,
-        toolRoundsPerTurn: Int,
+        toolRoundsPerAnswer: Int,
         context: Int,
         tempDirPrefix: String
     ) async throws -> RenderProbeSessionFixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let recorder = InMemoryRecorder()
         let log = RenderProbeLog()
-        let model = RenderProbeLanguageModel(log: log, toolRoundsPerTurn: toolRoundsPerTurn)
+        let model = RenderProbeLanguageModel(log: log, toolRoundsPerAnswer: toolRoundsPerAnswer)
         let router = RouterTestFixtures.makeRouter(
             cacheDir: directory,
             recorder: recorder,

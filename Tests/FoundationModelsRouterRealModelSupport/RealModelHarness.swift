@@ -62,7 +62,7 @@ public enum RealModelHarness {
         /// given into all three slots. So the empty answer is not a result, and
         /// this states that rather than letting a caller read it as one.
         ///
-        /// ``RealToolTurnComparisonTests`` carried this same tripwire on its own
+        /// ``RealToolAnswerComparisonTests`` carried this same tripwire on its own
         /// copy of the stub. It is here now, so every harness caller has it, and
         /// ``RealModelHarnessTests`` holds it.
         ///

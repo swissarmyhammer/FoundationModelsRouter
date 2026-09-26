@@ -77,7 +77,7 @@ enum CompactionContinuityEvaluationError: Error {
 /// `limit` is deliberately far below any real model's working context: the
 /// point of this evaluation is that a *multi-step task* forces at least one
 /// live compaction partway through, and a small limit is what makes that happen
-/// within a dozen-odd turns instead of hundreds. Since ``TokenBudget/trigger``
+/// within a dozen-odd answers instead of hundreds. Since ``TokenBudget/trigger``
 /// resolves against this `limit` rather than against the session's own resolved
 /// window (see ``TokenBudget/triggerTokens``), the trigger fires at 1638 real
 /// tokens however large the model's window is — which is exactly the property
@@ -170,12 +170,12 @@ let compactionContinuityFastFactsSurvivedFloor = 0.7
 /// of 2026-08-21 under the subject of that time, Qwen2.5-3B-Instruct, over
 /// the same four tasks,
 /// measured 3 of 4. The one miss was `migration-script-and-rollback`, whose
-/// compaction summary carried both paths verbatim and whose answering turn wrote
+/// compaction summary carried both paths verbatim and whose answering submission wrote
 /// `rollback_2266_07` for `rollback_2026_07` — the answer's loss, not the
 /// compaction's. One task under 3 of 4 is 2 of 4, which is 0.5. Written as 0.45,
 /// which sits under 2/4 and over 1/4, so the tier must answer exactly those 2.
 /// The 0.8 bar the 30B tier held is NOT reachable by a small model whose
-/// answering turn drops a digit from an identifier its own compaction summary
+/// answering submission drops a digit from an identifier its own compaction summary
 /// carries verbatim, and a bar the subject cannot reach measures the model,
 /// not the compaction prompt. The suite's doc comment states this trade in
 /// full.
@@ -197,7 +197,7 @@ let compactionContinuityFastAnswersCorrectFloor = 0.45
 /// session *remained usable and continuable* across whatever compactions its own
 /// budget forced along the way.
 ///
-/// This evaluation drives a live, multi-turn session end to end — the
+/// This evaluation drives a live session of many messages end to end — the
 /// dataset is sized so at least one compaction is forced somewhere in the
 /// middle of the task, not staged as the whole point of a single call — and
 /// measures whether the *session itself* stayed continuable, not just

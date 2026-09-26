@@ -15,10 +15,10 @@ import Testing
 ///
 /// The session window is a small test number. The prompt is one short
 /// request, under the trigger. The one tool returns a result of a few hundred
-/// tokens that takes the context over the trigger. The turn is one turn: the
-/// model calls the tool, the session compacts at the tool-result boundary,
-/// and the same turn answers. The count of tool calls is not the subject of
-/// this test.
+/// tokens that takes the context over the trigger. The test drives one
+/// answer: the model calls the tool, the session compacts at the tool-result
+/// boundary, and a continuation of the same answer replies. The count of
+/// tool calls is not the subject of this test.
 ///
 /// The test sizes the tool result with the model's own tokenizer, as a share
 /// of the window.
@@ -49,7 +49,7 @@ extension Qwen38CompactionIntegrationTests {
     /// The name of the one tool.
     fileprivate static let toolName = "lookup_record"
 
-    /// The request of the one turn. It does not turn reasoning off: the run of
+    /// The request of the one answer. It does not turn reasoning off: the run of
     /// 2026-09-23 with the Qwen 3 `/no_think` switch took 32.4 s against
     /// 20.7 s without it.
     private static let toolResultRequest =
@@ -76,7 +76,7 @@ extension Qwen38CompactionIntegrationTests {
         return text
     }
 
-    @Test("a tool call triggers a compaction: one compaction inside the turn, a smaller snapshot, and an answer")
+    @Test("a tool call triggers a compaction: one compaction inside the answer, a smaller snapshot, and a reply")
     func toolResultTriggersCompaction() async throws {
         let loaded = try await Qwen38ResidentModel.shared.container()
         let counter = loaded.container.tokenCounter
@@ -90,8 +90,8 @@ extension Qwen38CompactionIntegrationTests {
         let session = harness.profile.standard.makeSession(
             instructions: Self.instructions, tools: [tool], budget: Self.toolResultBudget)
 
-        let turn = try await Qwen38TurnRecord.drive(session, prompt: Self.toolResultRequest)
-        turn.report(
+        let record = try await Qwen38AnswerRecord.drive(session, prompt: Self.toolResultRequest)
+        record.report(
             label: qwen38CompactionLabel,
             detail: """
                 case 2 toolCalls=\(tool.calls) resultTokens=\(counter.count(listing)) \
@@ -99,7 +99,7 @@ extension Qwen38CompactionIntegrationTests {
                 """)
 
         #expect(tool.calls >= 1, "the model did not call the tool")
-        try Self.expectOneCompactionAndAnAnswer(turn, holding: Self.recordKey)
+        try Self.expectOneCompactionAndAnAnswer(record, holding: Self.recordKey)
     }
 }
 

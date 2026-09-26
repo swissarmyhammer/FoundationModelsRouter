@@ -4,7 +4,7 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Ungated proof that ``CompactionRoundTripFixture``'s scripted turns are
+/// Ungated proof that ``CompactionRoundTripFixture``'s scripted answers are
 /// still sized to reach the 0.80 compaction trigger the gated
 /// `CompactionRoundTripIntegrationTests` waits on (tasks 5m97h14 and
 /// ^wnj3ka3).
@@ -13,7 +13,7 @@ import Testing
 /// real-model target selected and a GPU present, so nothing under a plain
 /// `swift test` noticed when its fixtures were less than half the size the
 /// trigger needs — that suite's own doc comment claimed "a handful of
-/// scripted turns crosses the 0.80 compaction trigger" and a live run measured
+/// scripted answers crosses the 0.80 compaction trigger" and a live run measured
 /// a `contextFill` of 0.41 against a 0.80 trigger. These assertions are
 /// mechanical, need no model, and fail loudly if the fixtures shrink or grow
 /// out of range again — which is why they live in this hermetic target, where
@@ -30,7 +30,7 @@ import Testing
 /// ``CharacterTokenCounter`` and converts the count with a ratio it measured
 /// itself. See ``realTokensPerCharacter``.
 @Suite("CompactionRoundTripFixture sizing (ungated)")
-struct ScriptedTurnSizingTests {
+struct ScriptedAnswerSizingTests {
     /// The counter this suite counts the scripted prompts with: one token per
     /// `Character`, so each count below is a character count.
     private static let counter = CharacterTokenCounter()
@@ -44,30 +44,30 @@ struct ScriptedTurnSizingTests {
     }
 
     /// The tokens the gated model's own tokenizer counted for the scripted
-    /// turns on the gated run of task ^wnj3ka3.
+    /// answers on the gated run of task ^wnj3ka3.
     private static let measuredRealTokens = 1496
 
-    /// The characters the scripted turns held at the time of that
-    /// measurement: the eight turns the fixture had before task ^wnj3ka3
-    /// added two more. ``counter`` counts those eight turns as this many
+    /// The characters the scripted answers held at the time of that
+    /// measurement: the eight answers the fixture had before task ^wnj3ka3
+    /// added two more. ``counter`` counts those eight answers as this many
     /// tokens.
     private static let measuredCharacters = 7338
 
     /// What one character of scripted prose is worth in tokens the model
     /// really counts: ``measuredRealTokens`` over ``measuredCharacters``,
     /// about 0.204. The gated model's own tokenizer reads the English prose
-    /// of the scripted turns at about 4.9 characters for each token.
+    /// of the scripted answers at about 4.9 characters for each token.
     private static let realTokensPerCharacter = Double(measuredRealTokens) / Double(measuredCharacters)
 
     /// The tokens a live run measures on top of the scripted prompt text.
     ///
     /// Measured usage covers the whole rendered conversation, not the prompts
     /// alone: the instructions entry, the chat template's own tokens for each
-    /// message, and the reply of the turn that was just made. The replies add
+    /// message, and the reply of the answer that was just made. The replies add
     /// almost nothing, because ``CompactionRoundTripFixture/replyMaxTokens``
     /// is small and this model spends that budget on a `<think>` block the
     /// template does not carry forward. Measured on the gated run of the
-    /// scripted turns: 1633 tokens against 1496 real prompt tokens.
+    /// scripted answers: 1633 tokens against 1496 real prompt tokens.
     private static let liveOverheadTokens = 137
 
     /// How far past the trigger the fixture must carry the live run.
@@ -86,24 +86,24 @@ struct ScriptedTurnSizingTests {
         Int(Double(characters) * realTokensPerCharacter)
     }
 
-    /// The tokens a live run is expected to measure once every scripted turn
+    /// The tokens a live run is expected to measure once every scripted answer
     /// has run: the prompt text converted out of its character count, plus
-    /// the overhead every live turn carries.
+    /// the overhead every live answer carries.
     ///
-    /// The gated loop stops at the first turn that crosses the trigger, so it
+    /// The gated loop stops at the first answer that crosses the trigger, so it
     /// normally measures less than this. This is the figure both bounds below
     /// are stated against, because both are about the fixture as a whole.
     private static var predictedLiveTokens: Int {
-        measuredTokens(forCharacters: perTurnCharacters.reduce(0, +)) + liveOverheadTokens
+        measuredTokens(forCharacters: perAnswerCharacters.reduce(0, +)) + liveOverheadTokens
     }
 
-    /// The character count of each scripted turn's prompt text, in order.
-    private static var perTurnCharacters: [Int] {
-        CompactionRoundTripFixture.scriptedTurns.map { counter.count($0) }
+    /// The character count of each scripted answer's prompt text, in order.
+    private static var perAnswerCharacters: [Int] {
+        CompactionRoundTripFixture.scriptedAnswers.map { counter.count($0) }
     }
 
-    @Test("the scripted turns carry the live run past the 0.80 trigger, with margin")
-    func scriptedTurnsReachTheTriggerWithMargin() throws {
+    @Test("the scripted answers carry the live run past the 0.80 trigger, with margin")
+    func scriptedAnswersReachTheTriggerWithMargin() throws {
         // The lower bound of the band the fixture must sit in. Stated in
         // measured tokens, and with a margin, because the uncalibrated
         // estimate of that time cleared the trigger on a fixture the live run
@@ -111,21 +111,21 @@ struct ScriptedTurnSizingTests {
         let required = Int(Double(Self.triggerTokens) * Self.triggerClearance)
         #expect(
             Self.predictedLiveTokens > required,
-            "the scripted turns predict \(Self.predictedLiveTokens) measured tokens, which does not clear the trigger's \(Self.triggerTokens) by \(Self.triggerClearance)"
+            "the scripted answers predict \(Self.predictedLiveTokens) measured tokens, which does not clear the trigger's \(Self.triggerTokens) by \(Self.triggerClearance)"
         )
     }
 
-    @Test("the whole fixture still fits the working context, so no scripted turn can die of overflow")
+    @Test("the whole fixture still fits the working context, so no scripted answer can die of overflow")
     func theWholeFixtureFitsTheWorkingContext() throws {
         // The upper bound of the same band. The gated loop stops at the first
-        // turn that crosses the trigger, so it normally never submits the last
-        // turn — but a run that needs every turn must still fit the window, or
-        // that turn fails instead of compaction. Bounding the whole fixture
+        // answer that crosses the trigger, so it normally never submits the last
+        // answer — but a run that needs every answer must still fit the window,
+        // or that answer fails instead of compaction. Bounding the whole fixture
         // subsumes the crossing-prefix bound this replaces, because a prefix is
         // never larger than the whole.
         #expect(
             Self.predictedLiveTokens <= CompactionRoundTripFixture.context,
-            "the scripted turns predict \(Self.predictedLiveTokens) measured tokens, over the \(CompactionRoundTripFixture.context)-token working context"
+            "the scripted answers predict \(Self.predictedLiveTokens) measured tokens, over the \(CompactionRoundTripFixture.context)-token working context"
         )
     }
 

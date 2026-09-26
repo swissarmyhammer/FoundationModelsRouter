@@ -11,13 +11,13 @@ import Testing
 /// nothing, and changes no answer.
 ///
 /// The suite pins the two things the report has to get right. First, the signal
-/// reaches a caller on both routes — the turn's own
+/// reaches a caller on both routes — the answer's own
 /// ``RoutedSession/streamEvents(to:maxTokens:)`` stream and the session-wide
 /// ``RoutedSession/streamSessionEvents()`` feed a
 /// ``RoutedSession/respond(to:maxTokens:)`` caller subscribes to. Second, the
-/// report says honestly what the session could see: a streaming turn counts
-/// real fragments, and a `respond` turn counts none, because the backend hands
-/// it one whole string.
+/// report says honestly what the session could see: a streaming answer counts
+/// real fragments, and a `respond` answer counts none, because the backend
+/// hands it one whole string.
 @Suite("Generation stall diagnostic")
 struct GenerationStallDiagnosticTests {
     // MARK: - Stalling backend
@@ -43,7 +43,8 @@ struct GenerationStallDiagnosticTests {
         /// only that a chunk was written into a buffer nobody has read yet.
         let suspended = AsyncSemaphore(value: 0)
 
-        /// Awaited by the suspended model call; signalling it lets the turn finish.
+        /// Awaited by the suspended model call; signalling it lets the answer
+        /// finish.
         let release = AsyncSemaphore(value: 0)
 
         /// How many stream chunks to produce before suspending.
@@ -127,14 +128,14 @@ struct GenerationStallDiagnosticTests {
     // MARK: - Tool-using backend
 
     /// A ``LanguageModelSessionBackend`` whose stream reports appends with no
-    /// text, as the snapshots of a tool-using turn do: each append is a
+    /// text, as the snapshots of a tool-using submission do: each append is a
     /// fragment with empty text and a ``GenerationProgressKind`` such as
     /// ``GenerationProgressKind/toolCall``. After the last append the stream
     /// either writes one line of text and finishes, or suspends until a test
     /// releases it.
     ///
     /// Plain `Sendable`: every stored property is a `let` of a `Sendable` type.
-    private final class ToolTurnBackend: LanguageModelSessionBackend, Sendable {
+    private final class ToolAnswerBackend: LanguageModelSessionBackend, Sendable {
         /// The plain stub every behaviour other than the stream delegates to.
         private let inner = StubSessionBackend()
 
@@ -151,7 +152,7 @@ struct GenerationStallDiagnosticTests {
         let release = AsyncSemaphore(value: 0)
 
         /// The text the stream writes after its last append, when it does not hold.
-        static let answer = "tool turn answer"
+        static let answer = "tool answer text"
 
         /// Creates a tool-using backend.
         ///
@@ -214,17 +215,17 @@ struct GenerationStallDiagnosticTests {
         }
     }
 
-    /// Vends one retained ``ToolTurnBackend`` per session.
+    /// Vends one retained ``ToolAnswerBackend`` per session.
     ///
     /// Plain `Sendable`: its one stored property is a `let` of a `Sendable` type.
-    private final class ToolTurnLLMContainer: PlainTranscriptStubContainer, Sendable {
+    private final class ToolAnswerLLMContainer: PlainTranscriptStubContainer, Sendable {
         /// The backend this container vends.
-        let backend: ToolTurnBackend
+        let backend: ToolAnswerBackend
 
         /// Creates a container that vends `backend`.
         ///
         /// - Parameter backend: The backend to vend.
-        init(backend: ToolTurnBackend) {
+        init(backend: ToolAnswerBackend) {
             self.backend = backend
         }
 
@@ -246,12 +247,12 @@ struct GenerationStallDiagnosticTests {
     /// waiting test gives it.
     private static let testReportInterval: Duration = .milliseconds(50)
 
-    /// A reporting interval no test turn can reach — installed by the negative
-    /// test, so a turn that finishes normally is proved to report nothing
-    /// rather than merely to have outrun a short clock.
+    /// A reporting interval no test answer can reach — installed by the
+    /// negative test, so an answer that finishes normally is proved to report
+    /// nothing rather than merely to have outrun a short clock.
     private static let unreachableReportInterval: Duration = .seconds(600)
 
-    /// The prompt every test turn sends.
+    /// The prompt every test answer sends.
     private static let prompt = "generate something"
 
     /// Builds a fresh router, resolved profile, and vended session over a
@@ -301,45 +302,45 @@ struct GenerationStallDiagnosticTests {
 
     // MARK: - The signal a `respond` caller can see
 
-    @Test("a respond turn that stops progressing reports a stall on the session-wide feed")
+    @Test("a respond answer that stops progressing reports a stall on the session-wide feed")
     @MainActor
-    func respondTurnReportsAStallOnTheSessionWideFeed() async throws {
+    func respondAnswerReportsAStallOnTheSessionWideFeed() async throws {
         let (session, backend, dir) = try await Self.makeStallingSession()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let (log, drain) = await SessionEventLog.watch(session)
-        let turn = Task { try await session.respond(to: Self.prompt) }
+        let answerTask = Task { try await session.respond(to: Self.prompt) }
         try await BoundedWait.awaitSignal(backend.suspended, named: "the model call suspended")
 
         let reported = await BoundedWait.conditionReached("a stall report") {
             await !log.stalls.isEmpty
         }
         backend.release.signal()
-        _ = try await turn.value
+        _ = try await answerTask.value
         drain.cancel()
 
         #expect(reported)
         let stall = try #require(await log.stalls.first)
-        // The honest half: a `respond` turn's backend hands back one whole
+        // The honest half: a `respond` answer's backend hands back one whole
         // string, so there is no increment to time and the report says so.
         #expect(stall.visibility == .wholeAnswer)
         #expect(stall.timeWithoutProgress > .zero)
         #expect(stall.timeInFlight >= stall.timeWithoutProgress)
     }
 
-    @Test("a stalling turn is still answered — the report bounds nothing")
+    @Test("a stalling answer is still given — the report bounds nothing")
     @MainActor
-    func aStallingTurnIsStillAnswered() async throws {
+    func aStallingAnswerIsStillGiven() async throws {
         let (session, backend, dir) = try await Self.makeStallingSession()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let (log, drain) = await SessionEventLog.watch(session)
-        let turn = Task { try await session.respond(to: Self.prompt) }
+        let answerTask = Task { try await session.respond(to: Self.prompt) }
         try await BoundedWait.awaitSignal(backend.suspended, named: "the model call suspended")
         _ = await BoundedWait.conditionReached("a stall report") { await !log.stalls.isEmpty }
 
         backend.release.signal()
-        let answer = try await turn.value
+        let answer = try await answerTask.value
         drain.cancel()
 
         #expect(answer == "stub response")
@@ -348,24 +349,24 @@ struct GenerationStallDiagnosticTests {
     // MARK: - The signal a streaming caller can see
 
     @Test(
-        "a streaming turn reports the stall against the fragments it counted",
+        "a streaming answer reports the stall against the fragments it counted",
         .timeLimit(.minutes(1)))
     @MainActor
-    func streamingTurnReportsTheStallAgainstCountedFragments() async throws {
+    func streamingAnswerReportsTheStallAgainstCountedFragments() async throws {
         let producedFragments = 2
         let (session, backend, dir) = try await Self.makeStallingSession(
             fragmentsBeforeStall: producedFragments)
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        // Read the turn's own stream here, rather than drain it into a log this
-        // test then polls: each element is a suspension the turn itself resumes,
-        // so a loaded machine makes this test slower and never red.
+        // Read the answer's own stream here, rather than drain it into a log
+        // this test then polls: each element is a suspension the answer itself
+        // resumes, so a loaded machine makes this test slower and never red.
         //
         // Which report the test takes is the whole claim. The session counts a
         // fragment before it publishes the matching ``SessionEvent/textDelta(_:)``
         // — see ``RoutedSessionActor``'s streaming body — so a
         // ``SessionEvent/generationStalled(_:)`` seen *after* every `.textDelta`
-        // was measured against every fragment the turn produced. A report the
+        // was measured against every fragment the answer produced. A report the
         // session made while a chunk was still unread counts fewer, honestly, and
         // is a different report; a stalled generation reports again on each
         // further interval, so the one this test is about always follows.
@@ -392,17 +393,17 @@ struct GenerationStallDiagnosticTests {
         #expect(reported.visibility == .fragments(observed: producedFragments))
     }
 
-    // MARK: - A healthy turn reports nothing
+    // MARK: - A healthy answer reports nothing
 
-    @Test("a turn that finishes reports no stall")
+    @Test("an answer that finishes reports no stall")
     @MainActor
-    func aTurnThatFinishesReportsNoStall() async throws {
+    func anAnswerThatFinishesReportsNoStall() async throws {
         let (session, backend, dir) = try await Self.makeStallingSession(
             reportInterval: Self.unreachableReportInterval)
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let (log, drain) = await SessionEventLog.watch(session)
-        // Released up front, so the backend never suspends and the turn runs
+        // Released up front, so the backend never suspends and the answer runs
         // straight through.
         backend.release.signal()
         _ = try await session.respond(to: Self.prompt)
@@ -423,13 +424,13 @@ struct GenerationStallDiagnosticTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let (log, drain) = await SessionEventLog.watch(session)
-        let turn = Task { try await session.respond(to: Self.prompt) }
+        let answerTask = Task { try await session.respond(to: Self.prompt) }
         try await BoundedWait.awaitSignal(backend.suspended, named: "the model call suspended")
         try await Task.sleep(for: silence)
         let stallsDuringSilence = await log.stalls
 
         backend.release.signal()
-        _ = try await turn.value
+        _ = try await answerTask.value
         drain.cancel()
 
         #expect(await session.installedGenerationStallReportInterval == .zero)
@@ -446,12 +447,12 @@ struct GenerationStallDiagnosticTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let (log, drain) = await SessionEventLog.watch(session)
-        let turn = Task { try await session.respond(to: Self.prompt) }
+        let answerTask = Task { try await session.respond(to: Self.prompt) }
         try await BoundedWait.awaitSignal(backend.suspended, named: "the model call suspended")
         let reported = await BoundedWait.conditionReached("a stall report") { await !log.stalls.isEmpty }
 
         backend.release.signal()
-        _ = try await turn.value
+        _ = try await answerTask.value
         drain.cancel()
 
         #expect(reported)
@@ -482,12 +483,12 @@ struct GenerationStallDiagnosticTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let (log, drain) = await SessionEventLog.watch(session)
-        let turn = Task { try await session.respond(to: Self.prompt) }
+        let answerTask = Task { try await session.respond(to: Self.prompt) }
         try await BoundedWait.awaitSignal(backend.suspended, named: "the model call suspended")
         _ = await BoundedWait.conditionReached("a stall report") { await !log.stalls.isEmpty }
 
         backend.release.signal()
-        _ = try await turn.value
+        _ = try await answerTask.value
         drain.cancel()
 
         try assertLogged(containing: "generation has made no progress", since: start)
@@ -496,7 +497,7 @@ struct GenerationStallDiagnosticTests {
     // MARK: - Tool calls and snapshots are progress (task ^4799jxg)
 
     @Test(
-        "a turn that makes tool calls with no text for longer than the interval reports no stall",
+        "an answer that makes tool calls with no text for longer than the interval reports no stall",
         .timeLimit(.minutes(1)))
     @MainActor
     func toolCallsWithNoTextReportNoStall() async throws {
@@ -507,9 +508,9 @@ struct GenerationStallDiagnosticTests {
         let pause: Duration = .milliseconds(20)
         let appendCount = 40
         let appends = (0..<appendCount).map { $0.isMultiple(of: 2) ? GenerationProgressKind.toolCall : .toolResult }
-        let backend = ToolTurnBackend(appends: appends, pause: pause, holdsAfterLastAppend: false)
+        let backend = ToolAnswerBackend(appends: appends, pause: pause, holdsAfterLastAppend: false)
         let (session, dir) = try await Self.makeSession(
-            over: ToolTurnLLMContainer(backend: backend), reportInterval: reportInterval)
+            over: ToolAnswerLLMContainer(backend: backend), reportInterval: reportInterval)
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let start = ContinuousClock.now
@@ -528,18 +529,18 @@ struct GenerationStallDiagnosticTests {
 
         #expect(start.duration(to: .now) > reportInterval)
         #expect(stalls.isEmpty)
-        #expect(text == ToolTurnBackend.answer)
+        #expect(text == ToolAnswerBackend.answer)
     }
 
     @Test(
-        "a turn that stops after a tool result reports a stall that names the tool result",
+        "an answer that stops after a tool result reports a stall that names the tool result",
         .timeLimit(.minutes(1)))
     @MainActor
-    func aTurnThatStopsAfterAToolResultNamesIt() async throws {
-        let backend = ToolTurnBackend(
+    func anAnswerThatStopsAfterAToolResultNamesIt() async throws {
+        let backend = ToolAnswerBackend(
             appends: [.toolCall, .toolResult], pause: .zero, holdsAfterLastAppend: true)
         let (session, dir) = try await Self.makeSession(
-            over: ToolTurnLLMContainer(backend: backend), reportInterval: Self.testReportInterval)
+            over: ToolAnswerLLMContainer(backend: backend), reportInterval: Self.testReportInterval)
         defer { try? FileManager.default.removeItem(at: dir) }
 
         // A report made before the tool result reached the watch names an
@@ -560,16 +561,16 @@ struct GenerationStallDiagnosticTests {
     }
 
     @Test(
-        "a respond turn measures its stall from the last tool invocation record",
+        "a respond answer measures its stall from the last tool invocation record",
         .timeLimit(.minutes(1)))
     @MainActor
-    func aRespondTurnMeasuresFromTheLastToolInvocation() async throws {
+    func aRespondAnswerMeasuresFromTheLastToolInvocation() async throws {
         let (session, backend, dir) = try await Self.makeStallingSession()
         defer { try? FileManager.default.removeItem(at: dir) }
         let actor = try #require(session as? RoutedSessionActor)
 
         let (log, drain) = await SessionEventLog.watch(session)
-        let turn = Task { try await session.respond(to: Self.prompt) }
+        let answerTask = Task { try await session.respond(to: Self.prompt) }
         try await BoundedWait.awaitSignal(backend.suspended, named: "the model call suspended")
 
         let open = ToolInvocationRecord(
@@ -581,7 +582,7 @@ struct GenerationStallDiagnosticTests {
             await log.stalls.contains { $0.lastProgress == .toolResult }
         }
         backend.release.signal()
-        _ = try await turn.value
+        _ = try await answerTask.value
         drain.cancel()
 
         #expect(reported)

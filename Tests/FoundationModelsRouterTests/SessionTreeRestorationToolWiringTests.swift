@@ -339,7 +339,7 @@ struct SessionTreeRestorationToolWiringTests {
         let root = profile1.standard.makeSession()
         _ = try await root.respond(to: "hello")
         let fork = try await root.fork(workingDirectory: nil)
-        _ = try await fork.respond(to: "fork turn")
+        _ = try await fork.respond(to: "fork answer")
 
         let container2 = ToolCapturingRestoreContainer()
         let router2 = Self.makeRouter(
@@ -392,7 +392,7 @@ struct SessionTreeRestorationToolWiringTests {
         let root = profile1.standard.makeSession()
         _ = try await root.respond(to: "hello")
         let fork = try await root.fork(workingDirectory: nil)
-        _ = try await fork.respond(to: "fork turn")
+        _ = try await fork.respond(to: "fork answer")
 
         let container2 = ToolCapturingRestoreContainer()
         let router2 = Self.makeRouter(

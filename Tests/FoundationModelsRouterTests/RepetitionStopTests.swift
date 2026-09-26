@@ -17,7 +17,7 @@ struct RepetitionStopTests {
     /// The suite's temp-directory prefix.
     private static let tempDirPrefix = "RepetitionStopTests"
 
-    /// The prompt of every turn of this suite.
+    /// The prompt of every answer of this suite.
     private static let prompt = "fix the failing test"
 
     /// The window of the tests that stop: small, so a short script fills it.
@@ -63,14 +63,14 @@ struct RepetitionStopTests {
         (newLines + cycle).map { $0 + "\n" }.joined()
     }
 
-    /// Runs one streamed turn over a fresh fixture.
+    /// Runs one streamed answer over a fresh fixture.
     ///
     /// - Parameters:
     ///   - script: What the first call writes.
     ///   - repeatsAfterStop: Whether a continuation call repeats again.
     ///   - detection: The repetition detection of the session.
-    /// - Returns: The fixture and the events of the turn, in order.
-    private static func runTurn(
+    /// - Returns: The fixture and the events of the answer, in order.
+    private static func runAnswer(
         script: RepeatingReasoningScript, repeatsAfterStop: Bool, detection: RepetitionDetection
     ) async throws -> (fixture: RepeatingReasoningSessionFixture, events: [SessionEvent]) {
         let fixture = try await RepeatingReasoningSessionFixture.make(
@@ -110,7 +110,7 @@ struct RepetitionStopTests {
     @Test("a call whose new-line share stays at zero for one window stops, with a log line and an event record")
     func repeatingCallStopsWithLogAndEvent() async throws {
         let start = Date()
-        let (fixture, events) = try await Self.runTurn(
+        let (fixture, events) = try await Self.runAnswer(
             script: Self.repeatingScript(hold: Self.stoppedHold), repeatsAfterStop: false, detection: Self.detection)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
@@ -144,7 +144,7 @@ struct RepetitionStopTests {
         let lines = longLines.flatMap { line in [line] + Array(repeating: shortLines, count: Self.cycleCount).flatMap { $0 } }
         let script = RepeatingReasoningScript(reasoningLines: lines, hold: Self.unstoppedHold)
 
-        let (fixture, events) = try await Self.runTurn(script: script, repeatsAfterStop: false, detection: Self.detection)
+        let (fixture, events) = try await Self.runAnswer(script: script, repeatsAfterStop: false, detection: Self.detection)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
         #expect(Self.stops(in: events).isEmpty)
@@ -154,7 +154,7 @@ struct RepetitionStopTests {
 
     @Test("after a stop, the next call does not receive the repeated part, and the record keeps the full entry")
     func repeatedPartLeavesTheRenderAndStaysInTheRecord() async throws {
-        let (fixture, events) = try await Self.runTurn(
+        let (fixture, events) = try await Self.runAnswer(
             script: Self.repeatingScript(hold: Self.stoppedHold), repeatsAfterStop: false, detection: Self.detection)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         #expect(Self.stops(in: events).count == 1)
@@ -174,7 +174,7 @@ struct RepetitionStopTests {
 
     @Test("recoveries stop at the configured number per answer")
     func recoveriesStopAtTheConfiguredCount() async throws {
-        let (fixture, events) = try await Self.runTurn(
+        let (fixture, events) = try await Self.runAnswer(
             script: Self.repeatingScript(hold: Self.stoppedHold), repeatsAfterStop: true, detection: Self.detection)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
@@ -198,7 +198,7 @@ struct RepetitionStopTests {
         var detection = Self.detection
         detection.isEnabled = false
 
-        let (fixture, events) = try await Self.runTurn(
+        let (fixture, events) = try await Self.runAnswer(
             script: Self.repeatingScript(hold: Self.unstoppedHold), repeatsAfterStop: false, detection: detection)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 

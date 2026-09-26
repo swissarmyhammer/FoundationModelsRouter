@@ -45,26 +45,26 @@ struct OneCallCompactionTierTests {
 
     /// The size, in tokens, of the prompt and of the response of the live
     /// context most tests here compact.
-    private static let turnTokens = 400
+    private static let answerTokens = 400
 
     /// The size, in tokens, of the prompt and of the response of the live
     /// context the runaway-summarizer test compacts. The snapshot carries a
     /// checkpoint beside the summary, and the character counter counts it.
-    /// With turns of this size, a summary of the allowed size and the
+    /// With answers of this size, a summary of the allowed size and the
     /// checkpoint together are smaller than the live context.
-    private static let longTurnTokens = 4_000
+    private static let longAnswerTokens = 4_000
 
     /// The live context and the budget a test here compacts: a small
-    /// instructions entry and one turn, with the default target.
+    /// instructions entry and one answer, with the default target.
     ///
-    /// - Parameter turnTokens: The size of the prompt and of the response,
+    /// - Parameter answerTokens: The size of the prompt and of the response,
     ///   in tokens.
     /// - Returns: The live context and its budget.
-    private static func sizedContext(turnTokens: Int = turnTokens) -> (transcript: Transcript, budget: TokenBudget) {
+    private static func sizedContext(answerTokens: Int = answerTokens) -> (transcript: Transcript, budget: TokenBudget) {
         let transcript = Transcript(entries: [
             SizedEntries.instructions(id: "instructions", tokens: instructionsTokens),
-            SizedEntries.prompt(id: "prompt", tokens: turnTokens),
-            SizedEntries.response(id: "response", tokens: turnTokens),
+            SizedEntries.prompt(id: "prompt", tokens: answerTokens),
+            SizedEntries.response(id: "response", tokens: answerTokens),
         ])
         return (transcript, summarizingCompactionBudget(for: Array(transcript)))
     }
@@ -173,7 +173,7 @@ struct OneCallCompactionTierTests {
 
     @Test("a summarizer that would write forever stops at the allowed size, and the summary applies because it shrinks the context")
     func runawaySummarizerStopsAtTheAllowedSize() async throws {
-        let (transcript, budget) = Self.sizedContext(turnTokens: Self.longTurnTokens)
+        let (transcript, budget) = Self.sizedContext(answerTokens: Self.longAnswerTokens)
         let (inputTokens, allowedTokens) = try await Self.probe(transcript, budget: budget)
         let tokensBefore = characterCount(of: Array(transcript))
         // The window leaves room for the whole live context after the input,

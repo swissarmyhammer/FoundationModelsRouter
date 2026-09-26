@@ -23,7 +23,7 @@ private let sessionBackendModel: ModelRef = RealModels.standard
 ///
 /// This backend's whole reason to hold one `LanguageModelSession` per instance —
 /// instead of rebuilding a fresh one per call, as it did before — is to
-/// accumulate conversation state (the transcript) across turns, and to let
+/// accumulate conversation state (the transcript) across answers, and to let
 /// ``MLXFoundationModelsSessionBackend/makeFork()`` seed a child from that
 /// accumulated transcript via `LanguageModelSession.init(model:tools:transcript:)`.
 /// Both are only observable against a real, generating model — there is nothing
@@ -42,7 +42,7 @@ private let sessionBackendModel: ModelRef = RealModels.standard
 /// ## What it NO LONGER proves (task ^g1s1efb)
 ///
 /// Until that task every container this suite loaded took the provider's own
-/// sampling, and each turn stated a reply ceiling alone. Eleven whole runs of
+/// sampling, and each answer stated a reply ceiling alone. Eleven whole runs of
 /// this target measured `makeFork() seeds the child's transcript from the
 /// parent's` at 28.8 to 76.3 seconds. The 76.3 was 64 percent of the two-minute
 /// budget of that time, and the very next run of the same code on the same
@@ -52,36 +52,36 @@ private let sessionBackendModel: ModelRef = RealModels.standard
 /// The per-phase clock ``makeForkSeedsFromParentTranscript()`` now prints named
 /// the cost before the pin was made. Measured in isolation on 2026-08-22, on a
 /// box at load average 2.3, under the provider default: the load took 3.4
-/// seconds, the parent's first turn 23.5, the fork's own turn 9.4, the parent's
-/// second turn 2.3 and the eviction 0.1, for 38.6 seconds in total. A second
-/// run of the same code measured 3.1, 24.6, 13.4, 2.2 and 0.1, for 43.4. So the
-/// load is 8 percent of the test and a repair aimed at it buys nothing; the
-/// three turns are the test, and the fork's own turn moved by 43 percent
-/// between two runs of identical code on a quiet box.
+/// seconds, the parent's first answer 23.5, the fork's own answer 9.4, the
+/// parent's second answer 2.3 and the eviction 0.1, for 38.6 seconds in total.
+/// A second run of the same code measured 3.1, 24.6, 13.4, 2.2 and 0.1, for
+/// 43.4. So the load is 8 percent of the test and a repair aimed at it buys
+/// nothing; the three answers are the test, and the fork's own answer moved by
+/// 43 percent between two runs of identical code on a quiet box.
 ///
 /// ``samplingMode`` pins argmax decoding on every container this suite loads,
 /// which takes the spread out rather than the work. Measured in isolation on
 /// the same box directly after: 45.6 seconds, then 44.7. The two splits agree
-/// phase by phase — the fork's own turn measured 13.157 and then 13.126
+/// phase by phase — the fork's own answer measured 13.157 and then 13.126
 /// seconds — so what is left of the spread is the box, not the decode.
 ///
 /// What is no longer proven is:
 ///
-/// - **The sampled path.** Every turn of this suite decodes with argmax now, so
+/// - **The sampled path.** Every answer of this suite decodes with argmax now, so
 ///   a red run is attributable to the change under test, and the behavior under
 ///   the provider's default sampling is not measured here. This never disables
 ///   thinking: the model still writes a `<think>` block ahead of each answer,
-///   and ``permittedTurnEntryKinds`` still admits the `.reasoning` entry that
+///   and ``permittedAnswerEntryKinds`` still admits the `.reasoning` entry that
 ///   block leaves.
 /// - **That each recalled fact survives a sampled decode.** The three recall
-///   checks — teal in ``secondRespondSeesPriorTurn()``, and 42 across the fork
+///   checks — teal in ``secondRespondSeesPriorAnswer()``, and 42 across the fork
 ///   and across a seeding transcript — each read one deterministic reply now
 ///   rather than a fresh draw on every run. A subject that recalls the fact at
 ///   argmax and loses it at temperature `0.6` would pass here.
 ///   ``SessionTreeRestorationIntegrationTests`` records the same trade for its
 ///   own recall step.
 ///
-/// Everything else is untouched: the model, the eleven tests, each turn's reply
+/// Everything else is untouched: the model, the eleven tests, each answer's reply
 /// ceiling, the transcript-count checks, the per-kind entry checks, the
 /// chokepoint fidelity pair, the usage delta, the KV-cache bounds and the
 /// timing print are exactly what they were.
@@ -116,7 +116,7 @@ struct LanguageModelSessionBackendIntegrationTests {
     ///
     /// The pin is stated one time, at load, on ``RealModelContainer/samplingMode``,
     /// and read back into each `makeSession(...samplingMode:)` call rather than
-    /// stated on each turn's `GenerationOptions`, because every test here drives
+    /// stated on each answer's `GenerationOptions`, because every test here drives
     /// ``MLXFoundationModelsSessionBackend``, and that backend is the one type
     /// that reads the decoding the call that made it named. The container
     /// stores no mode (`model-pool.md` §2.5). A suite that drives a raw
@@ -137,8 +137,8 @@ struct LanguageModelSessionBackendIntegrationTests {
         try await RealModelContainer.load(ref: sessionBackendModel, samplingMode: samplingMode)
     }
 
-    @Test("a second respond() call on the same backend sees the first turn's content in context")
-    func secondRespondSeesPriorTurn() async throws {
+    @Test("a second respond() call on the same backend sees the first answer's content in context")
+    func secondRespondSeesPriorAnswer() async throws {
         let loaded = try await Self.makeContainer()
         let backend = try #require(
             loaded.container.makeSession(
@@ -148,21 +148,21 @@ struct LanguageModelSessionBackendIntegrationTests {
 
         _ = try await backend.respond(
             to: "My favorite color is teal. Reply with just \"OK\".", maxTokens: GatedRealModelBudget.responseTokenCeiling)
-        let entriesAfterFirstTurn = backend.session.transcript.count
-        #expect(entriesAfterFirstTurn > 0)
+        let entriesAfterFirstAnswer = backend.session.transcript.count
+        #expect(entriesAfterFirstAnswer > 0)
 
         // The proof this backend is conversation-preserving (not rebuilding a
         // fresh, context-free session per call, as it did before this change):
-        // the second turn's answer must reflect the first turn's content.
+        // the second answer must reflect the content of the first answer.
         let secondReply = try await backend.respond(
             to: "What is my favorite color? Answer with just the color, lowercase.",
             maxTokens: GatedRealModelBudget.responseTokenCeiling
         )
         #expect(secondReply.lowercased().contains("teal"))
 
-        // And the same session accumulated a second turn on top of the first,
+        // And the same session accumulated a second answer on top of the first,
         // rather than starting over.
-        #expect(backend.session.transcript.count > entriesAfterFirstTurn)
+        #expect(backend.session.transcript.count > entriesAfterFirstAnswer)
 
         await loaded.container.model.evict()
     }
@@ -173,18 +173,18 @@ struct LanguageModelSessionBackendIntegrationTests {
         // cost can be read against the phase that carries it rather than
         // against the total alone. `PropagationProbeIntegrationTests` and
         // `IntegrationTests` print the same split for the same reason. This
-        // test drives three turns on one load, so a total alone cannot say
+        // test drives three answers on one load, so a total alone cannot say
         // which of the four costs the run.
         var loadDuration: Duration = .zero
-        var parentTurnDuration: Duration = .zero
-        var childTurnDuration: Duration = .zero
-        var parentSecondTurnDuration: Duration = .zero
+        var parentAnswerDuration: Duration = .zero
+        var childAnswerDuration: Duration = .zero
+        var parentSecondAnswerDuration: Duration = .zero
         var evictDuration: Duration = .zero
         defer {
             print(
-                "[\(Self.phaseLabel)] load=\(loadDuration) parentTurn=\(parentTurnDuration) "
-                    + "childTurn=\(childTurnDuration) "
-                    + "parentSecondTurn=\(parentSecondTurnDuration) evict=\(evictDuration)"
+                "[\(Self.phaseLabel)] load=\(loadDuration) parentAnswer=\(parentAnswerDuration) "
+                    + "childAnswer=\(childAnswerDuration) "
+                    + "parentSecondAnswer=\(parentSecondAnswerDuration) evict=\(evictDuration)"
             )
         }
 
@@ -199,7 +199,7 @@ struct LanguageModelSessionBackendIntegrationTests {
 
         let parentStartInstant = ContinuousClock.now
         _ = try await parent.respond(to: "Remember the number 42.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
-        parentTurnDuration = ContinuousClock.now - parentStartInstant
+        parentAnswerDuration = ContinuousClock.now - parentStartInstant
         let parentEntryCountAtForkTime = parent.session.transcript.count
 
         let child = try #require(parent.makeFork() as? MLXFoundationModelsSessionBackend)
@@ -210,10 +210,10 @@ struct LanguageModelSessionBackendIntegrationTests {
         #expect(child.session.transcript.count == parentEntryCountAtForkTime)
 
         // The transcript-count check above only proves the entry count matches;
-        // it does not prove the fork can actually *see* the parent's prior-turn
-        // content. Drive the fork with a real turn and assert its answer
-        // reflects the number the parent was told to remember before the fork —
-        // the same content-awareness proof ``secondRespondSeesPriorTurn`` above
+        // it does not prove the fork can actually *see* the content of the
+        // parent's earlier answer. Drive the fork with a real answer and assert
+        // it reflects the number the parent was told to remember before the fork —
+        // the same content-awareness proof ``secondRespondSeesPriorAnswer`` above
         // uses for same-backend continuity, applied here across the fork
         // boundary.
         let childStartInstant = ContinuousClock.now
@@ -221,17 +221,17 @@ struct LanguageModelSessionBackendIntegrationTests {
             to: "What number should I remember? Answer with just the number.",
             maxTokens: GatedRealModelBudget.responseTokenCeiling
         )
-        childTurnDuration = ContinuousClock.now - childStartInstant
+        childAnswerDuration = ContinuousClock.now - childStartInstant
         #expect(childReply.contains("42"))
-        let childEntryCountAfterOwnTurn = child.session.transcript.count
+        let childEntryCountAfterOwnAnswer = child.session.transcript.count
 
-        // The two then diverge independently: a further parent turn does not
+        // The two then diverge independently: a further parent answer does not
         // retroactively change the child's already-seeded (and now
         // independently-grown) transcript.
         let parentSecondStartInstant = ContinuousClock.now
         _ = try await parent.respond(to: "Remember the number 7 too.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
-        parentSecondTurnDuration = ContinuousClock.now - parentSecondStartInstant
-        #expect(child.session.transcript.count == childEntryCountAfterOwnTurn)
+        parentSecondAnswerDuration = ContinuousClock.now - parentSecondStartInstant
+        #expect(child.session.transcript.count == childEntryCountAfterOwnAnswer)
 
         let evictStarted = ContinuousClock.now
         await loaded.container.model.evict()
@@ -272,50 +272,50 @@ struct LanguageModelSessionBackendIntegrationTests {
         await loaded.container.model.evict()
     }
 
-    // MARK: - Transcript growth and fork seeding (per-turn entry kinds)
+    // MARK: - Transcript growth and fork seeding (per-answer entry kinds)
 
-    /// The entry kinds a turn is permitted to leave in the transcript.
+    /// The entry kinds an answer is permitted to leave in the transcript.
     ///
-    /// A turn owes exactly one `.prompt` and one `.response`. A reasoning
+    /// An answer owes exactly one `.prompt` and one `.response`. A reasoning
     /// model leaves a third kind: the gated model writes a `<think>` block,
     /// which lands as a `.reasoning` entry (see ``GatedRealModelBudget``).
-    /// It does not write one on every turn — a measured pair of turns left 5
+    /// It does not write one on every answer — a measured pair of answers left 5
     /// entries where the same pair once left 4 — so a total entry count is
-    /// not a function of the turn count, and the checks below hold the
+    /// not a function of the answer count, and the checks below hold the
     /// per-kind counts instead. Naming the permitted kinds here keeps an
     /// unexpected extra kind from going unnoticed.
-    private static let permittedTurnEntryKinds: Set<TranscriptEvent.Kind> = [
+    private static let permittedAnswerEntryKinds: Set<TranscriptEvent.Kind> = [
         .prompt, .response, .reasoning,
     ]
 
-    /// Checks that `backend`'s live transcript holds what `turns` turns owe:
-    /// one `.prompt` and one `.response` for each turn, and no kind outside
-    /// ``permittedTurnEntryKinds``.
+    /// Checks that `backend`'s live transcript holds what `answers` answers owe:
+    /// one `.prompt` and one `.response` for each answer, and no kind outside
+    /// ``permittedAnswerEntryKinds``.
     ///
     /// - Parameters:
     ///   - backend: The live backend whose session transcript is read.
-    ///   - turns: How many turns the transcript is expected to hold.
+    ///   - answers: How many answers the transcript is expected to hold.
     private static func expectTranscriptHolds(
         _ backend: MLXFoundationModelsSessionBackend,
-        turns: Int
+        answers: Int
     ) {
         let kinds = backend.session.transcript.map { TranscriptEntryMapper.event(from: $0).kind }
-        #expect(kinds.filter { $0 == .prompt }.count == turns, "prompt entries in \(kinds)")
-        #expect(kinds.filter { $0 == .response }.count == turns, "response entries in \(kinds)")
+        #expect(kinds.filter { $0 == .prompt }.count == answers, "prompt entries in \(kinds)")
+        #expect(kinds.filter { $0 == .response }.count == answers, "response entries in \(kinds)")
         #expect(
-            kinds.allSatisfy { permittedTurnEntryKinds.contains($0) },
+            kinds.allSatisfy { permittedAnswerEntryKinds.contains($0) },
             "an entry kind outside the permitted set in \(kinds)"
         )
     }
 
     @Test(
-        "each respond() call leaves exactly one prompt entry and one response entry across two turns"
+        "each respond() call leaves exactly one prompt entry and one response entry across two answers"
     )
-    func eachTurnLeavesOnePromptAndOneResponse() async throws {
+    func eachAnswerLeavesOnePromptAndOneResponse() async throws {
         let loaded = try await Self.makeContainer()
         // No instructions: an instructions-carrying session's transcript opens
-        // with an extra `.instructions` entry, which no turn owes. Omitting
-        // instructions leaves only turn-driven entries to check.
+        // with an extra `.instructions` entry, which no answer owes. Omitting
+        // instructions leaves only the entries that the answers made.
         let backend = try #require(
             loaded.container.makeSession(instructions: nil, samplingMode: loaded.samplingMode)
                 as? MLXFoundationModelsSessionBackend
@@ -324,14 +324,14 @@ struct LanguageModelSessionBackendIntegrationTests {
         _ = try await backend.respond(to: "Say 'hi' briefly.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
         _ = try await backend.respond(to: "Say 'hi' again, briefly.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
 
-        let drivenTurns = 2
-        Self.expectTranscriptHolds(backend, turns: drivenTurns)
+        let drivenAnswers = 2
+        Self.expectTranscriptHolds(backend, answers: drivenAnswers)
 
         await loaded.container.model.evict()
     }
 
-    @Test("a fork taken after one turn begins holding exactly that turn's entries")
-    func forkAfterOneTurnHoldsThatTurnsEntries() async throws {
+    @Test("a fork taken after one answer begins holding exactly that answer's entries")
+    func forkAfterOneAnswerHoldsThatAnswersEntries() async throws {
         let loaded = try await Self.makeContainer()
         let parent = try #require(
             loaded.container.makeSession(instructions: nil, samplingMode: loaded.samplingMode)
@@ -342,15 +342,15 @@ struct LanguageModelSessionBackendIntegrationTests {
 
         let child = try #require(parent.makeFork() as? MLXFoundationModelsSessionBackend)
 
-        let drivenTurns = 1
-        Self.expectTranscriptHolds(child, turns: drivenTurns)
+        let drivenAnswers = 1
+        Self.expectTranscriptHolds(child, answers: drivenAnswers)
 
         await loaded.container.model.evict()
     }
 
     // MARK: - transcriptEntries() matches the test-only transcript accessor
 
-    @Test("transcriptEntries().count equals session.transcript.count and grows across turns")
+    @Test("transcriptEntries().count equals session.transcript.count and grows across answers")
     func transcriptEntriesMatchesSessionTranscriptAndGrows() async throws {
         let loaded = try await Self.makeContainer()
         let backend = try #require(
@@ -358,18 +358,18 @@ struct LanguageModelSessionBackendIntegrationTests {
                 as? MLXFoundationModelsSessionBackend
         )
 
-        // Before any turn, the public seam and the test-only accessor agree.
+        // Before any answer, the public seam and the test-only accessor agree.
         #expect(backend.transcriptEntries().count == backend.session.transcript.count)
 
         _ = try await backend.respond(to: "Say 'hi' briefly.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
-        let countAfterFirstTurn = backend.transcriptEntries().count
-        #expect(countAfterFirstTurn == backend.session.transcript.count)
-        #expect(countAfterFirstTurn > 0)
+        let countAfterFirstAnswer = backend.transcriptEntries().count
+        #expect(countAfterFirstAnswer == backend.session.transcript.count)
+        #expect(countAfterFirstAnswer > 0)
 
         _ = try await backend.respond(to: "Say 'hi' again, briefly.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
-        let countAfterSecondTurn = backend.transcriptEntries().count
-        #expect(countAfterSecondTurn == backend.session.transcript.count)
-        #expect(countAfterSecondTurn > countAfterFirstTurn)
+        let countAfterSecondAnswer = backend.transcriptEntries().count
+        #expect(countAfterSecondAnswer == backend.session.transcript.count)
+        #expect(countAfterSecondAnswer > countAfterFirstAnswer)
 
         await loaded.container.model.evict()
     }
@@ -498,11 +498,11 @@ struct LanguageModelSessionBackendIntegrationTests {
     }
 
     /// Task qb9p7gs's core acceptance criterion, proved against a real model:
-    /// after one live turn, what ``RoutedSessionActor``'s snapshot-diff
+    /// after one live answer, what ``RoutedSessionActor``'s snapshot-diff
     /// persisted matches — kind for kind, in order — what the live
     /// `LanguageModelSession`'s own `transcript` actually accumulated.
     @Test(
-        "recorded entry kinds match the real session.transcript kinds one-for-one after a live turn")
+        "recorded entry kinds match the real session.transcript kinds one-for-one after a live answer")
     func recordedEntryKindsMatchSessionTranscriptKinds() async throws {
         let harness = try await makeChokepointHarness()
         defer {
@@ -531,12 +531,12 @@ struct LanguageModelSessionBackendIntegrationTests {
     }
 
     /// Mirrors ``recordedEntryKindsMatchSessionTranscriptKinds()`` but drives
-    /// the live turn through ``RoutedSessionActor/streamResponse(to:maxTokens:)``
+    /// the live answer through ``RoutedSessionActor/streamResponse(to:maxTokens:)``
     /// instead of `respond(to:maxTokens:)`: both generation entry points funnel
     /// through the same snapshot-diff chokepoint, so the fidelity invariant
     /// must hold identically for the streaming path against a real model too.
     @Test(
-        "recorded entry kinds match the real session.transcript kinds one-for-one after a live streaming turn"
+        "recorded entry kinds match the real session.transcript kinds one-for-one after a live streaming answer"
     )
     func recordedEntryKindsMatchSessionTranscriptKindsStreaming() async throws {
         let harness = try await makeChokepointHarness()
@@ -583,7 +583,7 @@ struct LanguageModelSessionBackendIntegrationTests {
     /// records is `tokensIn=62 tokensOut=149`, from one run of 2026-08-21. The
     /// input count is the same because the prompt is; only the generated count
     /// moved.
-    @Test("recorded tokensIn/tokensOut on the turn's response event exactly match the live backend's own usageTokenCounts() delta")
+    @Test("recorded tokensIn/tokensOut on the submission's response event exactly match the live backend's own usageTokenCounts() delta")
     func recordedTokenUsageMatchesLiveBackendDelta() async throws {
         let harness = try await makeChokepointHarness()
         defer {
@@ -623,12 +623,12 @@ struct LanguageModelSessionBackendIntegrationTests {
         await harness.container.model.evict()
     }
 
-    // MARK: - KV cache reuse across turns (the hard proof)
+    // MARK: - KV cache reuse across answers (the hard proof)
 
     @Test(
-        "turn 2's usage.input.cachedTokenCount is positive, covers turn 1's whole prompt, and does not exceed everything turn 1 processed — the KV cache is reused, not recomputed"
+        "answer 2's usage.input.cachedTokenCount is positive, covers answer 1's whole prompt, and does not exceed everything answer 1 processed — the KV cache is reused, not recomputed"
     )
-    func secondTurnReusesFirstTurnsKVCache() async throws {
+    func secondAnswerReusesFirstAnswersKVCache() async throws {
         let loaded = try await Self.makeContainer()
         let backend = try #require(
             loaded.container.makeSession(
@@ -638,27 +638,27 @@ struct LanguageModelSessionBackendIntegrationTests {
 
         _ = try await backend.respond(
             to: "My favorite color is teal. Reply with just \"OK\".", maxTokens: GatedRealModelBudget.responseTokenCeiling)
-        let turn1Usage = backend.session.usage
+        let answer1Usage = backend.session.usage
 
-        // Nothing could have been cached before the very first turn ever ran.
-        #expect(turn1Usage.input.cachedTokenCount == 0)
-        #expect(turn1Usage.input.totalTokenCount > 0)
-        #expect(turn1Usage.output.totalTokenCount > 0)
+        // Nothing could have been cached before the very first answer ever ran.
+        #expect(answer1Usage.input.cachedTokenCount == 0)
+        #expect(answer1Usage.input.totalTokenCount > 0)
+        #expect(answer1Usage.output.totalTokenCount > 0)
 
-        // The two bounds of what turn 2 can reuse. Turn 1's prompt (the
-        // instructions entry included) is the prefix of the transcript turn 2
-        // sends, so it is the least turn 2 can serve from cache. Turn 1's
-        // prompt plus its own generated response is everything turn 1
-        // processed, so it is the most turn 2 can serve from cache.
-        let turn1PromptTokenCount = turn1Usage.input.totalTokenCount
-        let turn1ProcessedTokenCount =
-            turn1PromptTokenCount + turn1Usage.output.totalTokenCount
+        // The two bounds of what answer 2 can reuse. Answer 1's prompt (the
+        // instructions entry included) is the prefix of the transcript answer 2
+        // sends, so it is the least answer 2 can serve from cache. Answer 1's
+        // prompt plus its own generated response is everything answer 1
+        // processed, so it is the most answer 2 can serve from cache.
+        let answer1PromptTokenCount = answer1Usage.input.totalTokenCount
+        let answer1ProcessedTokenCount =
+            answer1PromptTokenCount + answer1Usage.output.totalTokenCount
 
         _ = try await backend.respond(
             to: "What is my favorite color? Answer with just the color, lowercase.",
             maxTokens: GatedRealModelBudget.responseTokenCeiling
         )
-        let turn2Usage = backend.session.usage
+        let answer2Usage = backend.session.usage
 
         // THE required proof. The fork's executor keeps a live cache for each
         // session (ExecutorPromptCache.swift) and stamps
@@ -671,48 +671,48 @@ struct LanguageModelSessionBackendIntegrationTests {
         // resolved before you trust any claim about the fork. This assertion is
         // deliberately never weakened or made non-fatal.
         #expect(
-            turn2Usage.input.cachedTokenCount > 0,
-            "turn 2 must reuse turn 1's KV cache; cachedTokenCount == 0 means no cache reuse happened"
+            answer2Usage.input.cachedTokenCount > 0,
+            "answer 2 must reuse answer 1's KV cache; cachedTokenCount == 0 means no cache reuse happened"
         )
 
-        // Printed, not asserted: the split of turn 1 between prompt and
-        // response, beside what turn 2 reused, for a human to read when a
+        // Printed, not asserted: the split of answer 1 between prompt and
+        // response, beside what answer 2 reused, for a human to read when a
         // bound below fails.
         print(
-            "[secondTurnReusesFirstTurnsKVCache] turn1In=\(turn1PromptTokenCount) "
-                + "turn1Out=\(turn1Usage.output.totalTokenCount) "
-                + "turn2Cached=\(turn2Usage.input.cachedTokenCount)"
+            "[secondAnswerReusesFirstAnswersKVCache] answer1In=\(answer1PromptTokenCount) "
+                + "answer1Out=\(answer1Usage.output.totalTokenCount) "
+                + "answer2Cached=\(answer2Usage.input.cachedTokenCount)"
         )
 
         // Bounds, not an approximate equality against prompt plus response.
-        // Turn 2 reuses turn 1's prompt, but it does not always reuse turn 1's
-        // response. The fork's cache ledger holds turn 1's render plus every
-        // token turn 1 generated, and `TranscriptConverter` drops prior-turn
-        // `.reasoning` entries from the chat history on purpose. A reasoning
-        // model such as Muse Glimmer reasons in a `to=self` channel directly
-        // after the generation prompt, so turn 2's render diverges from the
-        // ledger at the first generated token, and the fork rewinds the cache
-        // to the end of turn 1's prompt. Measured 2026-08-22 at fork pin
-        // 41e9f41, under the argmax decoding `samplingMode` pins:
-        // turn1In=49 turn1Out=76 turn2Cached=50. Two whole runs of the target
-        // printed those same three numbers, because a pinned decode repeats.
-        // The sampled measurement this comment held before printed
-        // turn1Out=84 on one run and 93 on another. An equality against
+        // Answer 2 reuses answer 1's prompt, but it does not always reuse
+        // answer 1's response. The fork's cache ledger holds answer 1's render
+        // plus every token answer 1 generated, and `TranscriptConverter` drops
+        // the `.reasoning` entries of earlier answers from the chat history on
+        // purpose. A reasoning model such as Muse Glimmer reasons in a
+        // `to=self` channel directly after the generation prompt, so answer 2's
+        // render diverges from the ledger at the first generated token, and the
+        // fork rewinds the cache to the end of answer 1's prompt. Measured
+        // 2026-08-22 at fork pin 41e9f41, under the argmax decoding
+        // `samplingMode` pins: answer1In=49 answer1Out=76 answer2Cached=50. Two
+        // whole runs of the target printed those same three numbers, because a
+        // pinned decode repeats. The sampled measurement this comment held before
+        // printed answer1Out=84 on one run and 93 on another. An equality against
         // prompt plus response thus rests on a premise that is false for a
         // reasoning model. The two bounds still fail on a zero, on a partial
         // reuse of the prompt, and on an over-report. Decision: card ^dmxsxb0.
         #expect(
-            turn2Usage.input.cachedTokenCount >= turn1PromptTokenCount,
+            answer2Usage.input.cachedTokenCount >= answer1PromptTokenCount,
             """
-            cachedTokenCount (\(turn2Usage.input.cachedTokenCount)) must cover turn 1's whole prompt \
-            (\(turn1PromptTokenCount)); less means turn 2 recomputed part of the prefix
+            cachedTokenCount (\(answer2Usage.input.cachedTokenCount)) must cover answer 1's whole prompt \
+            (\(answer1PromptTokenCount)); less means answer 2 recomputed part of the prefix
             """
         )
         #expect(
-            turn2Usage.input.cachedTokenCount <= turn1ProcessedTokenCount,
+            answer2Usage.input.cachedTokenCount <= answer1ProcessedTokenCount,
             """
-            cachedTokenCount (\(turn2Usage.input.cachedTokenCount)) must not exceed everything turn 1 \
-            processed (\(turn1ProcessedTokenCount)); more is an over-report
+            cachedTokenCount (\(answer2Usage.input.cachedTokenCount)) must not exceed everything answer 1 \
+            processed (\(answer1ProcessedTokenCount)); more is an over-report
             """
         )
 
@@ -722,11 +722,11 @@ struct LanguageModelSessionBackendIntegrationTests {
     // MARK: - Timing signal (best-effort, non-fatal)
 
     @Test(
-        "turn 2 tends to be faster than turn 1 on a session with a long system instruction (heuristic timing signal, never fails CI)"
+        "answer 2 tends to be faster than answer 1 on a session with a long system instruction (heuristic timing signal, never fails CI)"
     )
-    func secondTurnTendsToBeFasterThanFirst() async throws {
+    func secondAnswerTendsToBeFasterThanFirst() async throws {
         let loaded = try await Self.makeContainer()
-        // A long instruction makes the fixed, cacheable prefix turn 2 should
+        // A long instruction makes the fixed, cacheable prefix answer 2 should
         // reuse a much larger share of the input than a short one would, so a
         // real speed-up (if the cache is working) is more likely to be
         // visible above run-to-run noise.
@@ -740,22 +740,22 @@ struct LanguageModelSessionBackendIntegrationTests {
                 as? MLXFoundationModelsSessionBackend
         )
 
-        let turn1Start = Date()
+        let answer1Start = Date()
         _ = try await backend.respond(to: "Say just 'OK'.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
-        let turn1Duration = Date().timeIntervalSince(turn1Start)
+        let answer1Duration = Date().timeIntervalSince(answer1Start)
 
-        let turn2Start = Date()
+        let answer2Start = Date()
         _ = try await backend.respond(to: "Say just 'OK' again.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
-        let turn2Duration = Date().timeIntervalSince(turn2Start)
+        let answer2Duration = Date().timeIntervalSince(answer2Start)
 
         // Heuristic/warning only: logged for a human to read, never asserted.
         // A ratio near (or above) 1.0 would be a signal worth investigating —
-        // that the cache is not meaningfully speeding up turn 2 even if
+        // that the cache is not meaningfully speeding up answer 2 even if
         // `cachedTokenCount` reports reuse — but flaky wall-clock timing on
         // shared CI hardware must never fail this suite.
-        let ratio = turn1Duration > 0 ? turn2Duration / turn1Duration : .nan
+        let ratio = answer1Duration > 0 ? answer2Duration / answer1Duration : .nan
         print(
-            "[secondTurnTendsToBeFasterThanFirst] turn1=\(turn1Duration)s turn2=\(turn2Duration)s ratio=\(ratio)"
+            "[secondAnswerTendsToBeFasterThanFirst] answer1=\(answer1Duration)s answer2=\(answer2Duration)s ratio=\(ratio)"
         )
 
         await loaded.container.model.evict()

@@ -61,20 +61,20 @@ fixture. It is the largest live context a fast suite compacts.
 ## How it was made
 
 Recorded on 2026-08-18, on an Apple silicon box, in 253 s of wall clock, by
-driving one `RoutedSession` through six scripted turns and keeping what the
+driving one `RoutedSession` through six scripted answers and keeping what the
 router wrote. The recipe is code, not this file: `RecordCompactionFixture` —
 the tool at `Tools/RecordCompactionFixture/` (task `^4bb3mjv`) — carries the
 model, the context, the decoding, the reply ceiling, the two lookup tools and
-the six scripted turns as named constants in
+the six scripted answers as named constants in
 `Tools/RecordCompactionFixture/RecordingScript.swift`, and speaks the same
 conversation this recording holds.
 
 The conversation is a synthetic engineering discussion — an ingest-path
 replacement for a "station archive" and its migration plan — written for this
-fixture. Two turns carry long prose, one turn asks the model to call a tool, and
-three short turns follow. The long turns make the live context large, so a
+fixture. Two answers carry long prose, one answer asks the model to call a tool, and
+three short answers follow. The long answers make the live context large, so a
 summary that keeps to the size the compaction states is much smaller than the
-context it replaces. The short turns end the conversation.
+context it replaces. The short answers end the conversation.
 
 The model's own replies, its reasoning, its tool calls and the tool outputs are
 whatever the model produced. Nothing was written by hand into the recording.

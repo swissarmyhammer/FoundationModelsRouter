@@ -63,7 +63,7 @@ import Testing
 /// for that half, and its own header comment for the verdict once run.
 @Suite("Compaction spike: synthesized Transcript.Entry round-trip through the recording mirror")
 struct CompactionSpikeTests {
-    // MARK: - Fixtures: synthesized entries no real model turn ever produced
+    // MARK: - Fixtures: synthesized entries no real model answer ever produced
 
     /// The id an "old" `.toolOutput` entry carried before compaction compacted
     /// it — reused, deliberately, by ``makeElisionPlaceholder()`` below.
@@ -126,7 +126,7 @@ struct CompactionSpikeTests {
     }
 
     /// The synthesized summary entry a `Summarization` stage would append: a
-    /// `.response` entry no real model turn produced, carrying a fresh id and
+    /// `.response` entry no real model answer produced, carrying a fresh id and
     /// a single text segment — compaction_plan.md §1.2's "text segment the
     /// model reads as prior context" (minus its `CompactionSegment`, a later
     /// build-order step this spike does not need).
@@ -148,7 +148,7 @@ struct CompactionSpikeTests {
 
     // MARK: - Direct mapper round trips
 
-    @Test("a synthesized summary .response entry (never produced by a real turn) round-trips through the mapper with an identical id and text")
+    @Test("a synthesized summary .response entry (never produced by a real answer) round-trips through the mapper with an identical id and text")
     func summaryEntryRoundTripsThroughMapper() throws {
         let original = Self.makeSummaryEntry()
         let (kind, payload, text) = TranscriptEntryMapper.event(from: original)
@@ -221,11 +221,11 @@ struct CompactionSpikeTests {
         // Drives the chokepoint once so its post-generation diff persists
         // `synthesized`. SpikeBackend never mutates `entries` itself (see its
         // own doc comment), so with a `persistedEntryCount` baseline of 0 this
-        // turn's diff finds and persists exactly the four synthesized entries
+        // answer's diff finds and persists exactly the four synthesized entries
         // above, unchanged — precisely what a real `compact()` call would do:
         // hand the recorder a freshly rewritten transcript to persist, not a
-        // transcript the SDK itself produced turn by turn.
-        _ = try await session.respond(to: "irrelevant — this turn exists only to trigger the recording chokepoint")
+        // transcript the SDK itself produced one answer after the other.
+        _ = try await session.respond(to: "irrelevant — this answer exists only to trigger the recording chokepoint")
 
         let routerDirectory = recordingsDir.appendingPathComponent(router.id.description, isDirectory: true)
         let tree = try TranscriptTree.load(under: routerDirectory)

@@ -32,13 +32,13 @@ private let compactionRoundTripModel: ModelRef = "mlx-community/Qwen2.5-3B-Instr
 /// §5): the same five-step loop `Examples/CompactionDemo` prints for a human
 /// to read, asserted mechanically here against a real model instead:
 ///
-/// 1. `contextFill` climbs across scripted turns that grow the transcript.
+/// 1. `contextFill` climbs across scripted answers that grow the transcript.
 /// 2. Compacting once the 0.80 trigger is reached — against
 ///    ``CompactionRoundTripFixture/compactionBudget``, whose target the live
 ///    context is over, so the compaction makes its one summarizer call —
 ///    shrinks `contextFill` and never changes the session's identity (id,
 ///    recording directory, router id).
-/// 3. A turn after compaction succeeds and recalls a fact planted only in
+/// 3. An answer after compaction succeeds and recalls a fact planted only in
 ///    the compacted conversation — proof the summary, not just the mechanism,
 ///    worked.
 /// 4. Restoring from disk (a fresh `Router`/`LanguageModelProfile`,
@@ -46,7 +46,7 @@ private let compactionRoundTripModel: ModelRef = "mlx-community/Qwen2.5-3B-Instr
 ///    ``SessionTreeRestorationIntegrationTests`` uses) yields the
 ///    checkpointed live window: fewer entries than the full recorded
 ///    history.
-/// 5. A further turn on the restored session succeeds.
+/// 5. A further answer on the restored session succeeds.
 ///
 /// ## What it NO LONGER proves (task ^k0d30s4)
 ///
@@ -76,9 +76,9 @@ private let compactionRoundTripModel: ModelRef = "mlx-community/Qwen2.5-3B-Instr
 /// surface without paying for two extra downloads.
 ///
 /// Every fixture dimension this loop drives — the working context, the reply
-/// ceiling, the instructions, the compaction budget, and the scripted turns — lives
+/// ceiling, the instructions, the compaction budget, and the scripted answers — lives
 /// in ``CompactionRoundTripFixture``, in the plain support target, so the
-/// hermetic `ScriptedTurnSizingTests` in the unit target bounds the SAME
+/// hermetic `ScriptedAnswerSizingTests` in the unit target bounds the SAME
 /// values this gated run submits (task ^cvsh3m9). `Self.samplingMode` is the
 /// one knob that stays here: it shapes the live decoding, not the fixture.
 ///
@@ -110,7 +110,7 @@ struct CompactionRoundTripIntegrationTests {
     private static let samplingMode: GenerationOptions.SamplingMode = .greedy
 
     @Test(
-        "contextFill climbs, compact() compacts at the 0.80 trigger preserving identity, a post-compact turn recalls the compacted fact, restore yields the checkpointed window, and a further turn succeeds"
+        "contextFill climbs, compact() compacts at the 0.80 trigger preserving identity, an answer after the compaction recalls the compacted fact, restore yields the checkpointed window, and a further answer succeeds"
     )
     func compactionRoundTrip() async throws {
         let cacheDir = FileManager.default.temporaryDirectory
@@ -147,17 +147,17 @@ struct CompactionRoundTripIntegrationTests {
         let sessionId = session.id
         let recordingDirectoryBefore = session.recordingDirectory
 
-        // 1. contextFill climbs across scripted turns.
+        // 1. contextFill climbs across scripted answers.
         var fills: [Double] = []
-        for turn in CompactionRoundTripFixture.scriptedTurns {
-            _ = try await session.respond(to: turn, maxTokens: CompactionRoundTripFixture.replyMaxTokens)
+        for prompt in CompactionRoundTripFixture.scriptedAnswers {
+            _ = try await session.respond(to: prompt, maxTokens: CompactionRoundTripFixture.replyMaxTokens)
             fills.append(await session.contextFill)
             if fills.last! >= 0.80 { break }
         }
-        #expect(fills.count > 1, "expected more than one turn before crossing the trigger")
+        #expect(fills.count > 1, "expected more than one answer before crossing the trigger")
         #expect(
             zip(fills, fills.dropFirst()).allSatisfy { $0 <= $1 },
-            "contextFill should never decrease turn over turn before compaction"
+            "contextFill should never decrease from one answer to the next before compaction"
         )
         let fillBeforeCompaction = try #require(fills.last)
         #expect(fillBeforeCompaction >= 0.80)
@@ -199,7 +199,7 @@ struct CompactionRoundTripIntegrationTests {
         #expect(session.recordingDirectory == recordingDirectoryBefore)
         #expect(session.routerId == routerId)
 
-        // 3. A turn after compaction succeeds and recalls the compacted
+        // 3. An answer after compaction succeeds and recalls the compacted
         //    fact — proof the summary, not just the mechanism, worked.
         let recall = try await session.respond(
             to: "Without re-reading anything, what is the exact vault code from the project brief?",
@@ -245,7 +245,7 @@ struct CompactionRoundTripIntegrationTests {
             "the checkpointed restore view should be strictly smaller than the full recorded history"
         )
 
-        // 5. A further turn on the restored session succeeds.
+        // 5. A further answer on the restored session succeeds.
         let restoredReply = try await restoredSession.respond(
             to: "Reply with just the word \"restored\".", maxTokens: GatedRealModelBudget.responseTokenCeiling)
         #expect(!restoredReply.isEmpty)

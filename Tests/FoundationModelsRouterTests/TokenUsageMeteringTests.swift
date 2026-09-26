@@ -6,9 +6,9 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises task v22nv1g: `RoutedSessionActor.generate(grammar:_:)` meters
-/// `tokensIn`/`tokensOut` on each turn's final `.response`-kind event from the
+/// `tokensIn`/`tokensOut` on each submission's final `.response`-kind event from the
 /// backend's own ``LanguageModelSessionBackend/usageTokenCounts()`` delta —
-/// captured as two snapshots immediately before and after the turn's body
+/// captured as two snapshots immediately before and after the submission's body
 /// runs, never the backend's raw cumulative totals. See
 /// ``StubSessionBackend/usageIncrement`` for the stub's configurable canned
 /// counts.
@@ -23,7 +23,7 @@ struct TokenUsageMeteringTests {
     /// Vends a single, test-configured ``StubSessionBackend`` per session, so
     /// a test can control ``StubSessionBackend/usageIncrement`` up front —
     /// and, via ``lastBackend``, mutate the already-vended backend afterward
-    /// (e.g. flip ``StubSessionBackend/shouldThrow`` to force a failed turn).
+    /// (e.g. flip ``StubSessionBackend/shouldThrow`` to force a failed answer).
     ///
     /// `@unchecked Sendable` invariant: `lastBackend` is written synchronously
     /// inside `makeSession(instructions:)` — itself called synchronously (no
@@ -202,7 +202,7 @@ struct TokenUsageMeteringTests {
     /// Builds a router wired with a durable, on-disk recordings root over a
     /// caller-supplied container, so the caller can retain a reference to it
     /// and mutate its ``ConfiguredLLMContainer/lastBackend`` after vending a
-    /// session (e.g. to force a later turn to fail).
+    /// session (e.g. to force a later answer to fail).
     private static func makeDurableRouter(
         id: ULID = .generate(),
         container: ConfiguredLLMContainer,
@@ -222,11 +222,11 @@ struct TokenUsageMeteringTests {
         )
     }
 
-    // MARK: - Canned counts: per-turn deltas, not cumulative totals
+    // MARK: - Canned counts: per-submission deltas, not cumulative totals
 
-    @Test("two turns with canned usage counts record correct per-turn deltas, not cumulative totals")
+    @Test("two answers with canned usage counts record correct per-submission deltas, not cumulative totals")
     @MainActor
-    func twoTurnsRecordPerTurnDeltasNotCumulativeTotals() async throws {
+    func twoAnswersRecordPerSubmissionDeltasNotCumulativeTotals() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -241,13 +241,13 @@ struct TokenUsageMeteringTests {
         let events = await recorder.events
         let responseEvents = events.filter { $0.kind == .response }
         #expect(responseEvents.count == 2)
-        // Each turn's own delta is 10/5 — a bug that surfaced the backend's
+        // Each submission's own delta is 10/5 — a bug that surfaced the backend's
         // raw cumulative total instead of the before/after delta would show
         // [10, 20] and [5, 10] here instead.
         #expect(responseEvents.map(\.tokensIn) == [10, 10])
         #expect(responseEvents.map(\.tokensOut) == [5, 5])
 
-        // Only the turn's final `.response`-kind event carries the usage
+        // Only the submission's final `.response`-kind event carries the usage
         // delta — not the `.prompt` event.
         let promptEvents = events.filter { $0.kind == .prompt }
         #expect(promptEvents.allSatisfy { $0.tokensIn == nil && $0.tokensOut == nil })
@@ -302,9 +302,9 @@ struct TokenUsageMeteringTests {
         let profile2 = try await router2.resolve(profile: Self.profile(context: 1000), reporting: ResolutionProgress())
 
         let restored = try await profile2.standard.restoreSessionTree(root: rootId)
-        // Each turn's own delta is 150 tokens (100 + 50); the newest stamp is
+        // Each submission's own delta is 150 tokens (100 + 50); the newest stamp is
         // what a restored session's fill derives from, over the 1000-token
-        // resolved context — never the two turns' 300-token cumulative sum.
+        // resolved context — never the two submissions' 300-token cumulative sum.
         #expect(await restored.root.contextFill == 0.15)
     }
 
@@ -336,10 +336,10 @@ struct TokenUsageMeteringTests {
     }
 
     @Test(
-        "a failed turn's synthetic bodyless-close event is never mistaken for a real usage stamp on restore"
+        "a failed submission's synthetic bodyless-close event is never mistaken for a real usage stamp on restore"
     )
     @MainActor
-    func restoredFillIgnoresFailedTurnSyntheticCloseStamp() async throws {
+    func restoredFillIgnoresFailedSubmissionSyntheticCloseStamp() async throws {
         let cacheDir = Self.makeTempDir()
         let recordingsDir = Self.makeTempDir()
         defer {
@@ -355,13 +355,13 @@ struct TokenUsageMeteringTests {
         _ = try await root.respond(to: "first")
         let rootId = root.id
 
-        // A failed turn after the successful one: `shouldThrow` makes the
+        // A failed answer after the successful one: `shouldThrow` makes the
         // backend throw before `recordResponse()` adds `usageIncrement`
         // into its cumulative total (see `StubSessionBackend.respond(to:
         // maxTokens:)`), so the delta the router synthesizes for the
         // resulting bodyless close is a meaningless (0, 0) — restored fill
-        // must still reflect the prior successful turn's 150/1000 = 0.15,
-        // never this failed turn's bogus zero.
+        // must still reflect the prior successful submission's 150/1000 = 0.15,
+        // never this failed submission's bogus zero.
         container.lastBackend?.shouldThrow = true
         _ = try? await root.respond(to: "second")
 
@@ -375,7 +375,7 @@ struct TokenUsageMeteringTests {
 
     // MARK: - Restored fork inherits the parent's stamp
 
-    @Test("a restored fork with no turns of its own inherits the parent's stamped fill up to the fork's cut point")
+    @Test("a restored fork with no answers of its own inherits the parent's stamped fill up to the fork's cut point")
     @MainActor
     func restoredForkInheritsParentStamp() async throws {
         let cacheDir = Self.makeTempDir()
@@ -401,7 +401,7 @@ struct TokenUsageMeteringTests {
 
         let restored = try await profile2.standard.restoreSessionTree(root: rootId)
         let restoredFork = try #require(restored.session(forkId))
-        // The fork itself never ran a turn, so it has no stamp of its own;
+        // The fork itself never ran a submission, so it has no stamp of its own;
         // it inherits the root's 150/1000 = 0.15 up to its fork cut point,
         // mirroring live `fork()`'s own choice to inherit `usageState`
         // rather than starting the restored fork at an unknown/zero fill.

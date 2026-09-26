@@ -10,8 +10,8 @@ import Tokenizers
 /// One observation story, from resolve to reply. `Router.resolve` makes two
 /// generation models co-resident at once, reporting each resolution phase
 /// through ``ResolutionProgress/phases``; the program then routes a cheap
-/// triage turn to `profile.flash` and a heavyweight turn to
-/// `profile.standard`, reading BOTH turns off
+/// triage message to `profile.flash` and a heavyweight message to
+/// `profile.standard`, reading BOTH answers off
 /// ``RoutedSession/streamEvents(to:maxTokens:)``
 /// so the named ``SessionEvent`` cases print as they arrive:
 /// `submissionStarted`, the `textDelta` fragments, `entryRecorded`,
@@ -27,23 +27,23 @@ import Tokenizers
 /// is capped at ``demoReplyTokenCeiling`` tokens, so the run finishes in
 /// under two minutes.
 
-// MARK: - One observed turn
+// MARK: - One observed answer
 
-/// The reply ceiling every observed turn is submitted with.
+/// The reply ceiling every observed message is sent with.
 ///
 /// Load-bearing for the demo's wall clock: SmolLM-135M in `flash` rambles
 /// until the window of the model when nothing caps it, because an uncapped
-/// turn runs to the resolved context of its session (measured
-/// on 2026-08-19: that one uncapped triage turn put the whole run at 121.7
+/// answer runs to the resolved context of its session (measured
+/// on 2026-08-19: that one uncapped triage answer put the whole run at 121.7
 /// seconds). Both real answers fit comfortably inside this cap — the triage
 /// wants one word, and the measured `standard` reply ran 59 tokens.
 let demoReplyTokenCeiling = 160
 
-/// Drives one turn through ``RoutedSession/streamEvents(to:maxTokens:)``,
+/// Sends one message through ``RoutedSession/streamEvents(to:maxTokens:)``,
 /// capped at ``demoReplyTokenCeiling``, and prints each named
-/// ``SessionEvent`` case as it arrives.
+/// ``SessionEvent`` case of its answer as it arrives.
 ///
-/// Both turns below run through this one helper, so the flash triage and the
+/// Both answers below run through this one helper, so the flash triage and the
 /// standard reply read as one observed session flow. Five cases carry a
 /// plain text answer, in this order:
 ///
@@ -70,12 +70,12 @@ let demoReplyTokenCeiling = 160
 /// from the stream.
 ///
 /// - Parameters:
-///   - session: The session to drive the turn on.
+///   - session: The session that answers.
 ///   - label: The slot name printed before each event line.
-///   - prompt: The turn's prompt text.
-/// - Returns: The turn's accumulated reply text.
-/// - Throws: Whatever the turn throws.
-func runObservedTurn(
+///   - prompt: The prompt text of the message.
+/// - Returns: The accumulated reply text of the answer.
+/// - Throws: Whatever the answer throws.
+func runObservedAnswer(
     on session: RoutedSession, label: String, prompt: String
 ) async throws -> String {
     var reply = ""
@@ -199,7 +199,7 @@ let demo = ProfileDefinition(
 // each phase transition arrives as one element — sizing -> downloading ->
 // loading -> ready — and the sequence ends at ready/failed. The resolve runs
 // as a structured `async let` child while this top-level code prints each
-// transition, so the observation starts here and simply continues, per turn,
+// transition, so the observation starts here and simply continues, per answer,
 // once the sessions below generate.
 let progress = ResolutionProgress()
 async let resolvedProfile = router.resolve(profile: demo, reporting: progress)
@@ -222,13 +222,13 @@ print(
 // MARK: - Cheap triage on `flash`, observed
 
 // Route the light classification work to the small, fast model, and read the
-// turn off its own event stream instead of awaiting a final string.
+// answer off its own event stream instead of awaiting a final string.
 let triage = profile.flash.makeSession(
     instructions: "Classify the support ticket into one category word."
 )
 // swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
 print("\n[flash] session on \(profile.flash.chosen.stringValue)")
-let category = try await runObservedTurn(
+let category = try await runObservedAnswer(
     on: triage,
     label: "flash",
     prompt: "My Q3 invoice has a discrepancy in the refund total."
@@ -243,7 +243,7 @@ let answer = profile.standard.makeSession(
 )
 // swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
 print("\n[standard] session on \(profile.standard.chosen.stringValue)")
-_ = try await runObservedTurn(
+_ = try await runObservedAnswer(
     on: answer,
     label: "standard",
     prompt: "Explain our \(category) policy for the customer's Q3 invoice."

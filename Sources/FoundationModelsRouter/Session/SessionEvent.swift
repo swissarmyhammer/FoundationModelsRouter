@@ -46,19 +46,19 @@ public enum SessionEvent: Sendable, Equatable {
     /// attached at least one record. Its ``ToolCallReport/correlationID`` is the
     /// run's `completionToken`, the same value as the call's
     /// ``ToolInvocationRecord/correlationID``, never a `Transcript.ToolCall.id`.
-    /// Always on ``RoutedSession/streamSessionEvents()``; on the turn's stream
-    /// when the call closes inside a turn.
+    /// Always on ``RoutedSession/streamSessionEvents()``; on the stream of the
+    /// answer when the call closes inside an answer.
     case toolCallReport(ToolCallReport)
 
-    /// The turn's diff recorded one SDK transcript entry under its durable id.
+    /// The diff of a submission recorded one SDK transcript entry under its durable id.
     /// Emitted once per recorded `.response`, `.reasoning`, or `.toolCalls` entry.
     /// `id` is the `Transcript.Entry.id`, never a `Transcript.ToolCall.id`.
     case entryRecorded(id: String, kind: RecordedEntryKind)
 
-    /// An auto-compaction completed against this session, mid-turn.
+    /// An auto-compaction completed against this session, inside an answer.
     case compaction(CompactionResult)
 
-    /// This turn's ``DiscoveryPriming`` could not seed, so the turn generated unseeded.
+    /// The ``DiscoveryPriming`` of this answer could not seed, so the answer generated unseeded.
     /// This is a report, not a failure.
     case discoveryPrimingFailed(DiscoveryPrimingFailure)
 
@@ -124,7 +124,7 @@ public enum SessionEvent: Sendable, Equatable {
     case repetitionStopped(RepetitionStop)
 
     /// A background run of this session settled: its one terminal ``OperationEvent``.
-    /// Always on ``RoutedSession/streamSessionEvents()``; on the turn's stream when it settles inside a turn.
+    /// Always on ``RoutedSession/streamSessionEvents()``; on the stream of the answer when it settles inside an answer.
     case runSettled(OperationEvent)
 
     /// A run of this session asked the user a question through
@@ -141,8 +141,8 @@ public enum SessionEvent: Sendable, Equatable {
     /// mounted through ``ToolContext/mount(_:op:as:)`` it is the mounting
     /// run's token.
     ///
-    /// Always on ``RoutedSession/streamSessionEvents()``; on the turn's stream
-    /// when the elicitation is raised inside a turn.
+    /// Always on ``RoutedSession/streamSessionEvents()``; on the stream of the
+    /// answer when the elicitation is raised inside an answer.
     ///
     /// Known limit: an elicitation posted through
     /// ``ToolContext/mount(_:op:as:postingTo:)`` with a sink that does not
@@ -220,7 +220,7 @@ public enum ToolCallStatus: String, Sendable, Equatable, Codable {
     /// The SDK recorded a matching `.toolOutput` entry, correlated by id.
     case completed
 
-    /// The turn ended with no matching `.toolOutput` recorded for this call.
+    /// The submission ended with no matching `.toolOutput` recorded for this call.
     case failed
 }
 

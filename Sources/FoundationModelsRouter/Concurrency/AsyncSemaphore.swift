@@ -116,7 +116,7 @@ public final class AsyncSemaphore: Sendable {
     ///
     /// Returns once a permit has been acquired. Cancelling the calling task
     /// does not interrupt the acquire: the waiter keeps its place and is served
-    /// in turn, so the gate this semaphore stands over stays balanced. Use
+    /// in its FIFO position, so the gate this semaphore stands over stays balanced. Use
     /// ``waitUnlessCancelled()`` where the caller must be able to walk away.
     ///
     /// The check-and-suspend is atomic: the permit is either taken immediately

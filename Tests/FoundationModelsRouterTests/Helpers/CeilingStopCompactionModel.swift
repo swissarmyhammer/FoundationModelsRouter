@@ -4,7 +4,7 @@ import FoundationModelsRouterTestSupport
 
 @testable import FoundationModelsRouter
 
-/// A deterministic `LanguageModel` for one turn whose first attempt stops at
+/// A deterministic `LanguageModel` for one answer whose first attempt stops at
 /// its output token ceiling (task ^46bz58k).
 ///
 /// Each executor call reads the transcript it is handed and does one of
@@ -39,7 +39,7 @@ struct CeilingStopCompactionModel: LanguageModel {
         Executor.Configuration(cutText: cutText, cutUsage: cutUsage, cutEndsInsideReasoning: cutEndsInsideReasoning)
     }
 
-    /// The executor that plays out the turn.
+    /// The executor that plays out the answer.
     struct Executor: LanguageModelExecutor {
         /// Cache key the SDK creates and reuses this executor by.
         struct Configuration: Sendable, Hashable {

@@ -61,7 +61,7 @@ struct OperationEventsPublicSurfaceTests {
             .structure(
                 id: "foreign-schema-segment",
                 schemaName: Self.foreignSchemaName,
-                contentJSON: #"{"turnsCompacted":3}"#
+                contentJSON: #"{"answersCompacted":3}"#
             ),
             // A structured segment under the operation-event schema whose body
             // is missing every required field, so decoding it throws.

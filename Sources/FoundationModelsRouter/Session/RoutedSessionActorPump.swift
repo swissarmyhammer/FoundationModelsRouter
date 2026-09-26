@@ -188,7 +188,7 @@ extension RoutedSessionActor: SessionMailObserver {
             ? Self.settledRunDeliveryPrompt : messages.map(\.text).joined(separator: Self.messageSeparator)
         await attachOutboxJournalIfNeeded()
         await recordSessionMetaIfNeeded()
-        await notifyTurnBoundaryTools()
+        await notifySubmissionBoundaryTools()
         return try await ServiceContext.$current.withValue(first?.serviceContext) {
             try await runAnswerChain(
                 grammar: work.grammar, pendingEvents: mail, ownPrompt: ownPrompt,
@@ -226,8 +226,8 @@ extension RoutedSessionActor: SessionMailObserver {
     /// The messages of `messages` whose callers are not cancelled. Each
     /// cancelled message gets `CancellationError` at once.
     ///
-    /// The pump reads the cancel mark of each message here, in the same
-    /// actor turn in which it makes them part of the work, so a cancel that
+    /// The pump reads the cancel mark of each message here, with no suspension
+    /// point before it makes them part of the work, so a cancel that
     /// arrives while the pump takes them is not lost.
     ///
     /// - Parameter messages: The messages the pump took.

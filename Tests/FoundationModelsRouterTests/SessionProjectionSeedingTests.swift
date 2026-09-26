@@ -10,7 +10,7 @@ import Testing
 /// The pure grouping (``SessionProjection/transcriptRows(from:)``) is driven
 /// with hand-built `Transcript.Entry` values, and the end-to-end claim — the
 /// seeded rows equal the rows a live projection produced during the original
-/// run, row for row by id — runs through a real recorded tool turn, a
+/// run, row for row by id — runs through a real recorded tool answer, a
 /// fresh-process
 /// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:)``,
 /// and the new read-only ``RoutedSession/transcript`` accessor.
@@ -54,8 +54,8 @@ struct SessionProjectionSeedingTests {
 
     // MARK: - The pure grouping
 
-    @Test("a tool turn's entries group into rows in transcript order, pairing outputs to calls by id")
-    func toolTurnEntriesGroupIntoRowsInTranscriptOrder() throws {
+    @Test("a tool answer's entries group into rows in transcript order, pairing outputs to calls by id")
+    func toolAnswerEntriesGroupIntoRowsInTranscriptOrder() throws {
         let callA = Transcript.ToolCall(
             id: "call-a", toolName: "search", arguments: try GeneratedContent(json: #"{"city":"NYC"}"#))
         let callB = Transcript.ToolCall(
@@ -213,10 +213,10 @@ struct SessionProjectionSeedingTests {
         #expect(call.summary == nil)
     }
 
-    @Test("the pairing scope resets at each .prompt entry, so a stray later output cannot complete an earlier turn's failed call")
+    @Test("the pairing scope resets at each .prompt entry, so a stray later output cannot complete an earlier submission's failed call")
     func pairingScopeResetsAtEachPromptEntry() throws {
         let entries: [Transcript.Entry] = [
-            .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "turn one"))])),
+            .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "message one"))])),
             .toolCalls(
                 Transcript.ToolCalls(
                     id: "calls-1",
@@ -224,7 +224,7 @@ struct SessionProjectionSeedingTests {
                         Transcript.ToolCall(
                             id: "call-1", toolName: "search", arguments: try GeneratedContent(json: "{}"))
                     ])),
-            .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "turn two"))])),
+            .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "message two"))])),
             .toolOutput(
                 Transcript.ToolOutput(
                     id: "stray-output", toolName: "search",
@@ -233,10 +233,11 @@ struct SessionProjectionSeedingTests {
 
         let rows = SessionProjection.transcriptRows(from: entries)
 
-        // The stray output pairs to nothing: turn two announced no call, and
-        // turn one's call is out of scope — so the call stays .failed and the
-        // output yields no row, exactly as the live projection drops an
-        // untracked ``SessionEvent/toolStatus(id:status:summary:output:)``.
+        // The stray output pairs to nothing: the second submission announced
+        // no call, and the call of the first submission is out of scope — so
+        // the call stays .failed and the output yields no row, exactly as the
+        // live projection drops an untracked
+        // ``SessionEvent/toolStatus(id:status:summary:output:)``.
         #expect(rows.map(\.id) == ["call-1"])
         guard case .toolCall(let call) = rows.first?.kind else {
             Issue.record("expected one .toolCall row, got \(rows)")
@@ -285,10 +286,10 @@ struct SessionProjectionSeedingTests {
 
     // MARK: - groupedRows: seeded and live agree (task ^8dc98vs)
 
-    @Test("the grouped view of a seeded projection equals the grouped view of the live projection for the same turn")
+    @Test("the grouped view of a seeded projection equals the grouped view of the live projection for the same answer")
     @MainActor
     func groupedRowsOfASeededProjectionEqualTheLiveProjections() throws {
-        // One tool turn, in transcript order: reasoning, the superseded
+        // One tool answer, in transcript order: reasoning, the superseded
         // pre-tool text, one call, its result, and the final answer.
         let call = Transcript.ToolCall(
             id: "call-1", toolName: "search", arguments: try GeneratedContent(json: #"{"city":"NYC"}"#))
@@ -317,7 +318,7 @@ struct SessionProjectionSeedingTests {
         let seeded = SessionProjection()
         seeded.seed(from: Transcript(entries: entries))
 
-        // The live projection observes the same turn in live order: the text
+        // The live projection observes the same answer in live order: the text
         // streams first, then the diff closes the entries in transcript order.
         let live = SessionProjection()
         live.apply(.textDelta("Let me check. "))
@@ -348,7 +349,7 @@ struct SessionProjectionSeedingTests {
 
     // MARK: - seed(from:)
 
-    @Test("seed installs the grouped rows, and a live turn after the seed appends a new row without duplication")
+    @Test("seed installs the grouped rows, and a live answer after the seed appends a new row without duplication")
     @MainActor
     func seedInstallsRowsAndLiveEventsAppendNormally() {
         let projection = SessionProjection()
@@ -363,13 +364,13 @@ struct SessionProjectionSeedingTests {
         #expect(projection.transcript.map(\.id) == ["resp-1"])
         #expect(projection.phase == .idle)
 
-        // A later live turn appends its own row: the seeded text row already
+        // A later live answer appends its own row: the seeded text row already
         // adopted its entry id, so the new fragment must not coalesce into it.
-        projection.apply(.textDelta("new turn"))
+        projection.apply(.textDelta("new answer"))
         projection.apply(.entryRecorded(id: "resp-2", kind: .response))
 
         #expect(projection.transcript.map(\.id) == ["resp-1", "resp-2"])
-        #expect(projection.transcript.map(\.kind) == [.text("restored answer"), .text("new turn")])
+        #expect(projection.transcript.map(\.kind) == [.text("restored answer"), .text("new answer")])
     }
 
     /// The usage of the stale submission that the seed must clear.
@@ -414,11 +415,11 @@ struct SessionProjectionSeedingTests {
         #expect(projection.phase == .idle)
     }
 
-    // MARK: - Acceptance: restore a recorded tool turn and compare against the live projection
+    // MARK: - Acceptance: restore a recorded tool answer and compare against the live projection
 
-    @Test("a restored tool-turn session seeds a projection whose rows equal the live projection's rows by id, and a live turn after the seed appends without duplication")
+    @Test("a restored tool-answer session seeds a projection whose rows equal the live projection's rows by id, and a live answer after the seed appends without duplication")
     @MainActor
-    func restoredToolTurnSeedsRowsEqualToTheLiveProjection() async throws {
+    func restoredToolAnswerSeedsRowsEqualToTheLiveProjection() async throws {
         let cacheDir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
         let recordingsDir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
         defer {
@@ -428,10 +429,10 @@ struct SessionProjectionSeedingTests {
 
         // One round asking for two marker calls at once, with narrated
         // pre-tool text the SDK strands in a superseded `.response` entry,
-        // then a `.reasoning` entry before the final answer — the tool-turn
+        // then a `.reasoning` entry before the final answer — the tool-answer
         // shape the acceptance names, with two same-name calls so the id
         // pairing is load-bearing (tasks ^5aky6xr and ^8dc98vs).
-        let script = ScriptedTurnScript(
+        let script = ScriptedAnswerScript(
             rounds: [
                 [
                     ScriptedToolCall(
@@ -451,7 +452,7 @@ struct SessionProjectionSeedingTests {
         )
         let recorder = JSONLRecorder(directory: recordingsDir)
         let container1 = ScriptedToolCallingContainer(
-            model: ScriptedToolCallingModel(script: script, log: ScriptedTurnLog()))
+            model: ScriptedToolCallingModel(script: script, log: ScriptedAnswerLog()))
         let router1 = RouterTestFixtures.makeRouter(
             cacheDir: cacheDir,
             recordingsDir: recordingsDir,
@@ -461,7 +462,7 @@ struct SessionProjectionSeedingTests {
         let profile1 = try await router1.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
 
-        // The original run: a live projection mirrors the whole turn stream.
+        // The original run: a live projection mirrors the whole answer stream.
         let session = profile1.standard.makeSession(tools: [MarkerEmittingTool()])
         let liveProjection = SessionProjection()
         try await liveProjection.apply(eventsFrom: session.streamEvents(to: ScriptedToolFixture.prompt))
@@ -469,7 +470,7 @@ struct SessionProjectionSeedingTests {
         // A fresh process restores the session tree, and the projection is
         // seeded from the restored session's own transcript accessor.
         let container2 = ScriptedToolCallingContainer(
-            model: ScriptedToolCallingModel(script: script, log: ScriptedTurnLog()))
+            model: ScriptedToolCallingModel(script: script, log: ScriptedAnswerLog()))
         let router2 = RouterTestFixtures.makeRouter(
             id: router1.id,
             cacheDir: cacheDir,
@@ -494,7 +495,7 @@ struct SessionProjectionSeedingTests {
         let seededById = Dictionary(uniqueKeysWithValues: seeded.transcript.map { ($0.id, $0) })
         #expect(seededById.count == seeded.transcript.count)
         #expect(seededById == liveById)
-        // Shape sanity: the turn produced the superseded narration row, two
+        // Shape sanity: the answer produced the superseded narration row, two
         // tool rows, a reasoning row, and the answer's text row — all
         // adopted, none provisional.
         #expect(seeded.transcript.count == 5)
@@ -511,9 +512,10 @@ struct SessionProjectionSeedingTests {
         #expect(firstGroup.id == "call-one")
         #expect(firstGroup.context.map(\.kind) == [.text("Let me look both of those up. ")])
 
-        // A live turn after the seed appends new rows without duplicating any
+        // A live answer after the seed appends new rows without duplicating any
         // seeded row. The script's one round is already in the restored
-        // transcript, so this turn is the answering turn: one new text row.
+        // transcript, so the one generation pass of this answer is the
+        // answering pass: one new text row.
         let seededRows = seeded.transcript
         try await seeded.apply(eventsFrom: restoredSession.streamEvents(to: ScriptedToolFixture.prompt))
 

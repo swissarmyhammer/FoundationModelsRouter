@@ -147,7 +147,7 @@ struct AsyncSemaphoreTests {
         #expect(semaphore.availablePermits == 1)
     }
 
-    @Test("a cancelled suspended waiter still acquires in turn and strands no one")
+    @Test("a cancelled suspended waiter still acquires in FIFO order and strands no one")
     func cancelledWaiterDoesNotLeakOrStrand() async {
         let semaphore = AsyncSemaphore(value: 1)
         let probe = OrderProbe()
@@ -170,7 +170,7 @@ struct AsyncSemaphoreTests {
         while semaphore.waiterCount < 2 { await Task.yield() }
 
         // Cancel the front waiter while it is suspended. The non-interrupting
-        // acquire keeps it queued, so it must still be served in FIFO turn and
+        // acquire keeps it queued, so it must still be served in FIFO order and
         // must not strand the waiter behind it.
         first.cancel()
 
@@ -262,8 +262,8 @@ struct AsyncSemaphoreTests {
         #expect(semaphore.waiterCount == 0)
     }
 
-    @Test("an uncancelled waitUnlessCancelled acquires in FIFO turn beside plain waiters")
-    func cancellableWaiterKeepsFIFOTurn() async {
+    @Test("an uncancelled waitUnlessCancelled acquires in FIFO order beside plain waiters")
+    func cancellableWaiterKeepsFIFOOrder() async {
         let semaphore = AsyncSemaphore(value: 1)
         let probe = OrderProbe()
 

@@ -79,7 +79,7 @@ enum ToolOutputCapping {
 /// `summary` — see the capped text, never the oversized original.
 struct TokenCappingTool<
     Arguments: ConvertibleFromGeneratedContent
->: Tool, TurnBoundaryTool, ToolDecorator {
+>: Tool, SubmissionBoundaryTool, ToolDecorator {
     let wrapped: any Tool<Arguments, String>
 
     /// The tokens each call's result may hold.

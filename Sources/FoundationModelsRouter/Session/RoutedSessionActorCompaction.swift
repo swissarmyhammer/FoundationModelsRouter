@@ -26,7 +26,7 @@ private struct BackendCompactionSummarizer: CompactionSummarizer {
 
     func summarize(_ prompt: String, maxTokens: Int) async throws -> String {
         // The compaction's own ceiling, passed down to the generation path rather
-        // than left to resolve to its generic per-turn default — see
+        // than left to resolve to its generic default for each submission — see
         // ``CompactionSummarizer/summarize(_:maxTokens:)``.
         try await backend.replacingTranscript(Transcript(entries: []))
             .respondWithoutReasoning(to: prompt, maxTokens: maxTokens)
@@ -34,7 +34,7 @@ private struct BackendCompactionSummarizer: CompactionSummarizer {
 }
 
 /// Wraps another ``CompactionSummarizer`` so every model call it makes runs
-/// inside the owning session's turn-cancellation boundary
+/// inside the cancellation boundary of the work of the owning session
 /// (``RoutedSessionActor/runCancellableModelCall(composedPrompt:submittingTo:_:)``),
 /// as one submission to the queue of the container that runs it. This lets
 /// ``RoutedSession/cancel()`` and task cancellation stop a
@@ -44,7 +44,7 @@ private struct CancellableCompactionSummarizer: CompactionSummarizer {
     /// The summarizer whose calls are made cancellable.
     let base: any CompactionSummarizer
 
-    /// The session whose in-flight turn those calls belong to.
+    /// The session whose running work those calls belong to.
     let session: RoutedSessionActor
 
     /// The queue each call is one submission to, and its model, or `nil` when
@@ -84,7 +84,7 @@ private struct BackendSummarizerTier {
     /// The slot of this tier, whose summarizer runs each call as one
     /// cancellable submission of `session` to the queue of ``backend``.
     ///
-    /// - Parameter session: The session whose turn owns the calls.
+    /// - Parameter session: The session whose running work owns the calls.
     /// - Returns: The slot.
     func slot(for session: RoutedSessionActor) -> CompactionSummarizerSlot {
         let target = backend.generationQueue.map { SubmissionTarget(queue: $0, model: model) }
@@ -131,7 +131,7 @@ extension RoutedSessionActor {
             // `cancel(compaction:)` is defined in RoutedSessionActorPump.swift
             // (`func cancel(compaction request: CompactionRequest)`). It takes a
             // waiting request out of `pendingCompactions`, or stops the running
-            // compaction. TurnCancellationTests proves both paths:
+            // compaction. AnswerCancellationTests proves both paths:
             // `cancellingAWaitingCallerCompactWithdrawsIt` and
             // `cancellingACallerDrivenCompactStopsIt(route: .callerTask)`.
             Task { await self.cancel(compaction: request) }
@@ -174,7 +174,7 @@ extension RoutedSessionActor {
     ///   and ``CompactionResult/summarizerTier`` name the tier that wrote the
     ///   applied summary.
     /// - Throws: What the own model throws. `CancellationError` when a tier
-    ///   fails and a cancellation is outstanding against this turn
+    ///   fails and a cancellation is outstanding against the running work
     ///   (``isWorkCancelled``). That case does not go on to the next tier. The
     ///   abandoned tier's own failure is logged
     ///   (``noteAbandonedCompaction(discarding:tier:)``).
@@ -238,23 +238,23 @@ extension RoutedSessionActor {
     }
 
     /// Abandons the compaction a summarizer tier just failed when a stop is
-    /// outstanding against this turn. Otherwise returns, so the compaction
-    /// goes on to the next tier or throws the failure. Keyed on
+    /// outstanding against the running work. Otherwise returns, so the
+    /// compaction goes on to the next tier or throws the failure. Keyed on
     /// ``isWorkCancelled``, never on the failure's type.
     ///
     /// - Parameters:
     ///   - error: The failure the tier threw.
     ///   - tier: The tier that threw it.
     /// - Throws: `CancellationError` when a cancellation is outstanding against
-    ///   this turn.
+    ///   the running work.
     private func abandonCompactionIfCancelled(discarding error: Error, tier: CompactionSummarizerTier) throws {
-        // `isWorkCancelled` is defined in RoutedSessionActorTurnExecution.swift
+        // `isWorkCancelled` is defined in RoutedSessionActorAnswerExecution.swift
         // (`var isWorkCancelled: Bool`), the one cancel predicate of the work of
         // the pump. With it always `false`, a one-tier caller compaction gives
         // the fault in place of the stop
-        // (TurnCancellationTests.callerCompactFaultCoincidingWithAStopIsCancelled).
+        // (AnswerCancellationTests.callerCompactFaultCoincidingWithAStopIsCancelled).
         // With it always `true`, a failed tier never degrades
-        // (TurnCancellationTests.summarizerCancellationErrorWithNoStopOutstandingStillDegrades).
+        // (AnswerCancellationTests.summarizerCancellationErrorWithNoStopOutstandingStillDegrades).
         guard isWorkCancelled else { return }
         noteAbandonedCompaction(discarding: error, tier: tier)
         throw CancellationError()
@@ -272,7 +272,7 @@ extension RoutedSessionActor {
         sessionCompactionLogger.warning(
             """
             abandoning the \(tier.rawValue, privacy: .public) summarizer tier's compaction for session \
-            \(self.id.description, privacy: .public) because a stop is outstanding against its turn; \
+            \(self.id.description, privacy: .public) because a stop is outstanding against its running work; \
             discarding the \(String(describing: type(of: error)), privacy: .public) it raised: \
             \(error.localizedDescription)
             """
@@ -327,8 +327,8 @@ extension RoutedSessionActor {
             // count of the model's tokenizer.
             counter: tokenCounter,
             // Wrapped, never handed over bare: a compaction's summarizer call is a model
-            // call this session's turn owns, and must be cancellable as one, and
-            // one submission to the queue of its model (see
+            // call that the running work of this session owns, and must be
+            // cancellable as one, and one submission to the queue of its model (see
             // ``CancellableCompactionSummarizer``).
             summarizers: summarizers.map { $0.slot(for: self) },
             summarization: summarization,
@@ -351,7 +351,7 @@ extension RoutedSessionActor {
         // a compaction checkpoint reports its segment's own `tokensAfter`
         // (compaction_plan.md §1.5). `result.tokensAfter` is the tokenizer's
         // count, made before any call ran on the snapshot; the engine's
-        // `usage.input` of the next live turn replaces it. Rescaled onto the
+        // `usage.input` of the next live submission replaces it. Rescaled onto the
         // measured scale first — see `compactedUsage(tokensBefore:tokensAfter:)`.
         // Computed before `usageState` is overwritten below, since the rescale
         // calibrates against the pre-compaction measurement.
@@ -373,7 +373,7 @@ extension RoutedSessionActor {
         // `entries.prefix(persistedEntryCount)` is exactly what this
         // session has already recorded to `transcript.jsonl` — the same
         // baseline `recordTranscriptDelta(grammar:since:usage:pendingEvents:)`
-        // diffs an ordinary turn's positional growth against. A compaction is not
+        // diffs the positional growth of an ordinary submission against. A compaction is not
         // a mere extension of it (`applied` is shorter and reorders entries
         // relative to it), so the diff here is by entry id rather than
         // position — see ``TranscriptDiffer/diffByEntryId(lastSeen:current:routerId:sessionId:parentId:slot:model:)``.
@@ -411,8 +411,8 @@ extension RoutedSessionActor {
         // not the session's position in its own append-only history.
         persistedEntryCount = applied.count
         // The new snapshot is what the backend now holds, so its identity is
-        // what later turns' non-append-divergence checks verify against — see
-        // ``persistedBaseline``.
+        // what the non-append-divergence checks of later submissions verify
+        // against — see ``persistedBaseline``.
         persistedBaseline = TranscriptDiffer.Baseline(transcript: applied)
         usageState = .measured(input: measuredTokensAfter, output: 0)
         // The new backend runs no call yet: the compacted window is the new

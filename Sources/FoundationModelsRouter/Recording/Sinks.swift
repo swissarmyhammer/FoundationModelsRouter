@@ -17,11 +17,11 @@ private let recordingLogger = makeModuleLogger(category: "Recording")
 /// ## Durability
 ///
 /// Each appended event is one `write` call: a whole line, written once. The
-/// sync point is the turn close — after appending a `.response`-kind event
-/// (the turn-final event both diff paths stamp the turn's usage onto), the
-/// target directory's handle is synchronized (fsync), so a completed turn is
-/// durable the moment its closing event lands. Between turn closes the window
-/// is the OS's: a power cut or a kill can lose the open turn's events and can
+/// sync point is the submission close — after appending a `.response`-kind event
+/// (the final event of a submission, onto which both diff paths stamp its usage), the
+/// target directory's handle is synchronized (fsync), so a completed submission is
+/// durable the moment its closing event lands. Between submission closes the window
+/// is the OS's: a power cut or a kill can lose the events of the open submission and can
 /// tear at most the final line of a `transcript.jsonl`. That torn tail is the
 /// policy's expected crash artifact, and ``TranscriptTree`` tolerates it on
 /// load by dropping the torn line with a warning. Synchronization is
@@ -114,7 +114,7 @@ package actor JSONLRecorder: TranscriptRecorder {
     }
 
     /// Stamps and appends an event into `directory`, or into the recorder's
-    /// default directory when `nil`. A `.response`-kind event is a turn close,
+    /// default directory when `nil`. A `.response`-kind event is a submission close,
     /// so it additionally synchronizes the target's handle (see Durability).
     ///
     /// The first append also claims the recording root (see ``rootOwnership``);
@@ -161,7 +161,7 @@ package actor JSONLRecorder: TranscriptRecorder {
     }
 
     /// Best-effort fsync of `directory`'s cached append handle, called after a
-    /// turn-close append (see Durability). A directory with no cached handle
+    /// submission-close append (see Durability). A directory with no cached handle
     /// recorded nothing — the append itself already failed and was logged — so
     /// there is nothing to synchronize.
     ///
@@ -173,7 +173,7 @@ package actor JSONLRecorder: TranscriptRecorder {
         } catch {
             recordingLogger.error(
                 """
-                transcript sync after turn-close seq \(eventSeq, privacy: .public) failed: \
+                transcript sync after submission-close seq \(eventSeq, privacy: .public) failed: \
                 \(error.localizedDescription, privacy: .public)
                 """
             )

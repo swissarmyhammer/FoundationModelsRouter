@@ -13,7 +13,7 @@ import Testing
 /// `Character`, so each size in a test is exact.
 @Suite("One-call compaction: input, allowed size, snapshot and checkpoint")
 struct OneCallCompactionTests {
-    /// A live context of instructions and one turn with a tool call. Each
+    /// A live context of instructions and one answer with a tool call. Each
     /// text is distinct, so a test can find it in the prompt the summarizer
     /// got.
     ///
@@ -22,7 +22,7 @@ struct OneCallCompactionTests {
     private static func distinctTranscript() throws -> Transcript {
         Transcript(
             entries: [TranscriptFixtures.makeInstructions()]
-                + (try TranscriptFixtures.makeTurn(
+                + (try TranscriptFixtures.makeAnswerEntries(
                     index: 1, promptText: "distinct-question", toolOutputText: "distinct-output",
                     responseText: "distinct-answer")))
     }
@@ -183,7 +183,7 @@ struct OneCallCompactionTests {
 
     // MARK: - Snapshot
 
-    @Test("the snapshot is the instructions, one summary entry and the kept protected entries, and no turn of the conversation")
+    @Test("the snapshot is the instructions, one summary entry and the kept protected entries, and no answer of the conversation")
     func snapshotShape() async throws {
         let transcript = try ProtectedToolOutputFixtures.transcript()
         let summary = "1. Intent — the summary."

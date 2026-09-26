@@ -39,8 +39,8 @@ public protocol BackgroundTool {
     /// answers with the pending envelope, exactly as a tool that declares
     /// nothing here does.
     ///
-    /// Keep the value small. It is an in-band wait inside the submission of
-    /// the turn, so it holds the model for every session on it for its whole
+    /// Keep the value small. It is an in-band wait inside the submission that
+    /// called the tool, so it holds the model for every session on it for its whole
     /// time (task ^1psqdm9), and a run on the same model can never settle
     /// inside it. It buys a short run one round trip and costs a long run
     /// that same small delay.

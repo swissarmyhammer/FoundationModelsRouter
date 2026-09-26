@@ -84,7 +84,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// Restores one recorded root session from disk, by its id.
     ///
     /// This is the resume surface. The session keeps its own id, its parent
-    /// id, and its recording directory, so the next turn appends to the
+    /// id, and its recording directory, so the next submission appends to the
     /// transcript already on disk. Its model and slot resolve from its
     /// ``SessionSidecar`` against this call's owning profile, and a mismatch
     /// is a typed error. See
@@ -106,7 +106,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     replaces the recorded one on the restored session. It also replaces
     ///     the leading `.instructions` entry of the transcript the restored
     ///     model reads. So the model obeys the supplied string from its next
-    ///     turn. A supplied string equal to the recorded one changes nothing
+    ///     submission. A supplied string equal to the recorded one changes nothing
     ///     and writes nothing. A supplied string that differs appends one
     ///     ``TranscriptEvent/Kind/divergence`` event to the session's
     ///     transcript. A later reader of that file then learns the session

@@ -37,7 +37,7 @@ struct CompactionSegmentTests {
         compactedEntryIds: [String] = ["old-instr-1", "old-prompt-1", "old-response-1"],
         tokensBefore: Int = 12_000,
         tokensAfter: Int = 3_000,
-        stagesApplied: [String] = ["ToolOutputElision", "TurnTruncation", "Summarization"],
+        stagesApplied: [String] = ["ToolOutputElision", "AnswerTruncation", "Summarization"],
         promptName: String = "default",
         pendingRuns: [CompactionSegment.PendingRunSummary]? = [fixturePendingRun]
     ) -> CompactionSegment.Content {
@@ -106,7 +106,7 @@ struct CompactionSegmentTests {
                 "compactedEntryIds": ["old-prompt-1", "old-response-1"],
                 "tokensBefore": 12000,
                 "tokensAfter": 3000,
-                "stagesApplied": ["ToolOutputElision", "TurnTruncation", "Summarization"],
+                "stagesApplied": ["ToolOutputElision", "AnswerTruncation", "Summarization"],
                 "promptName": "default"
             }
             """.utf8)
@@ -116,7 +116,7 @@ struct CompactionSegmentTests {
         #expect(decoded.compactedEntryIds == ["old-prompt-1", "old-response-1"])
         #expect(decoded.tokensBefore == 12_000)
         #expect(decoded.tokensAfter == 3_000)
-        #expect(decoded.stagesApplied == ["ToolOutputElision", "TurnTruncation", "Summarization"])
+        #expect(decoded.stagesApplied == ["ToolOutputElision", "AnswerTruncation", "Summarization"])
         #expect(decoded.promptName == "default")
     }
 
@@ -128,7 +128,7 @@ struct CompactionSegmentTests {
             "foldedEntryIds": ["old-prompt-1", "old-response-1"],
             "tokensBefore": 12000,
             "tokensAfter": 3000,
-            "stagesApplied": ["ToolOutputElision", "TurnTruncation", "Summarization"],
+            "stagesApplied": ["ToolOutputElision", "AnswerTruncation", "Summarization"],
             "promptName": "default"
         }
         """
@@ -273,7 +273,7 @@ struct CompactionSegmentTests {
     }
 
     /// The synthesized transcript a `Summarization` stage would produce: the
-    /// original instructions, a compacted old turn compaction subsequently
+    /// original instructions, a compacted old answer that compaction later
     /// replaces, and a synthesized summary `.response` entry carrying both a
     /// text segment and its ``CompactionSegment``.
     private static func makeSynthesizedTranscript() -> [Transcript.Entry] {
@@ -293,7 +293,7 @@ struct CompactionSegmentTests {
                 Transcript.Response(
                     id: "summary-1",
                     segments: [
-                        .text(Transcript.TextSegment(id: "summary-text-1", content: "Summary: prior turns compacted.")),
+                        .text(Transcript.TextSegment(id: "summary-text-1", content: "Summary: prior answers compacted.")),
                         CompactionSegment(id: "compaction-1", content: content).transcriptSegment,
                     ]
                 )
@@ -432,7 +432,7 @@ struct CompactionSegmentTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
-        _ = try await session.respond(to: "irrelevant — this turn exists only to trigger the recording chokepoint")
+        _ = try await session.respond(to: "irrelevant — this answer exists only to trigger the recording chokepoint")
 
         let tree = try TranscriptTree.load(under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
         // No caller setup at all: the segment rebuilds from its own persisted
@@ -477,7 +477,7 @@ struct CompactionSegmentTests {
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile1.standard.makeSession()
-        _ = try await root.respond(to: "irrelevant — this turn exists only to trigger the recording chokepoint")
+        _ = try await root.respond(to: "irrelevant — this answer exists only to trigger the recording chokepoint")
 
         // "Fresh process": a second, independently constructed Router/profile
         // pointed at the same router id and recordings directory — mirrors
@@ -530,8 +530,8 @@ struct CompactionSegmentTests {
         // Record a synthesized transcript carrying a CompactionSegment onto a
         // fresh handle by syncing directly — sync(_:) diffs any given
         // Transcript against last-seen and records what's new, so this needs
-        // no real model turn (see RecordingLanguageModel.sync(_:)'s doc
-        // comment: "typically session.transcript at turn end", but any
+        // no real model answer (see RecordingLanguageModel.sync(_:)'s doc
+        // comment: "typically session.transcript at the end of an answer", but any
         // Transcript works).
         let parentHandle = profile.standard.makeLanguageModel()
         let synthesized = Self.makeSynthesizedTranscript()

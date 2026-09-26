@@ -54,7 +54,7 @@ struct ToolOutputProtectionTests {
     @Test("the one-call compaction reduces a toolCalls entry to its protected calls, so each kept output keeps its call")
     func compactionReducesAMixedToolCallsEntry() async throws {
         let skillCall = try Fixtures.skillsCall(id: Fixtures.skillCallId, operation: Fixtures.useSkillOperation)
-        let mixedTurn: [Transcript.Entry] = [
+        let mixedAnswer: [Transcript.Entry] = [
             Fixtures.prompt(id: "prompt-mixed"),
             Fixtures.toolCalls(id: "calls-mixed", [try Fixtures.searchCall(id: Fixtures.searchCallId), skillCall]),
             Fixtures.toolOutput(
@@ -63,7 +63,7 @@ struct ToolOutputProtectionTests {
             Fixtures.response(id: "response-mixed"),
         ]
         let transcript = Transcript(
-            entries: [TranscriptFixtures.makeInstructions()] + mixedTurn + Fixtures.recentTurns())
+            entries: [TranscriptFixtures.makeInstructions()] + mixedAnswer + Fixtures.recentAnswers())
 
         let (compacted, _) = try await Self.compact(
             transcript, summarizer: RecordingSummarizer(summary: Self.summaryText), protection: Fixtures.rule)
@@ -76,7 +76,7 @@ struct ToolOutputProtectionTests {
 
     @Test("the rule sees the call, so a skills call that loads no skill is not protected")
     func ruleReadsTheCallArguments() async throws {
-        let listTurn: [Transcript.Entry] = [
+        let listAnswer: [Transcript.Entry] = [
             Fixtures.prompt(id: "prompt-list"),
             Fixtures.toolCalls(
                 id: "calls-list",
@@ -86,7 +86,7 @@ struct ToolOutputProtectionTests {
             Fixtures.response(id: "response-list"),
         ]
         let transcript = Transcript(
-            entries: [TranscriptFixtures.makeInstructions()] + listTurn + Fixtures.recentTurns())
+            entries: [TranscriptFixtures.makeInstructions()] + listAnswer + Fixtures.recentAnswers())
 
         let (compacted, result) = try await Self.compact(
             transcript, summarizer: RecordingSummarizer(summary: Self.summaryText), protection: Fixtures.rule)

@@ -239,7 +239,7 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
                     // same filter for the same reason.
                     guard !result.stagesApplied.isEmpty else { break }
                     // The summary text, on the trail. A red run cannot tell a
-                    // fact the compaction dropped from a fact the answering turn
+                    // fact the compaction dropped from a fact the final answer
                     // ignored without it — the debugging of 2026-08-19 read
                     // exactly this line to find that 9 of 10 summaries
                     // carried both facts verbatim while the answers did not.
@@ -311,7 +311,7 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
         let finalAnswer = finalStepResult.reply
         // The answer text, on the trail beside the compaction summary above, for the
         // same reason: the metrics score the answer, and a red run has to show
-        // what the answering turn wrote before anyone can say whether the
+        // what the final answer wrote before anyone can say whether the
         // compaction or the answer lost the fact. The framework's own per-sample
         // record is written nowhere unless an attachments path is configured.
         // swiftlint:disable:next no_direct_standard_out_logs  the eval trail is read from standard out

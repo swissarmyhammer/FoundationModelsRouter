@@ -1,10 +1,10 @@
 @testable import FoundationModelsRouter
 
 /// Collects the events that a session stream delivered, so the test task can
-/// read them while the turn that makes them is still in flight.
+/// read them while the answer that makes them is still in flight.
 ///
 /// ``watch(_:)`` drains the session-wide feed of one session into a new log,
-/// and ``collect(_:)`` drains the stream of one turn into a new log. Each
+/// and ``collect(_:)`` drains the stream of one answer into a new log. Each
 /// returns the task that drains, which the test cancels or awaits when it is
 /// done.
 actor SessionEventLog {
@@ -51,11 +51,11 @@ actor SessionEventLog {
         return (log, drain)
     }
 
-    /// Drains the stream of one turn into a new log.
+    /// Drains the stream of one answer into a new log.
     ///
-    /// - Parameter stream: The stream of the turn.
-    /// - Returns: The log, and the draining task. The task ends when the turn
-    ///   ends, and throws what the turn throws.
+    /// - Parameter stream: The stream of the answer.
+    /// - Returns: The log, and the draining task. The task ends when the answer
+    ///   ends, and throws what the answer throws.
     static func collect(
         _ stream: AsyncThrowingStream<SessionEvent, Error>
     ) -> (log: SessionEventLog, drain: Task<Void, Error>) {

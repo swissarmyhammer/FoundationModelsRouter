@@ -3,16 +3,16 @@
 Runnable demo of one automatic compaction, narrated. It shows compaction and
 only compaction, in three steps a person reads off the terminal:
 
-1. Scripted turns read the project documents under `Fixtures/` into a
+1. Scripted messages read the project documents under `Fixtures/` into a
    `RoutedSession` whose `TokenBudget` puts the compaction trigger at a
-   synthetic, low fraction of the working context. After each turn the demo
+   synthetic, low fraction of the working context. After each answer the demo
    prints measured usage against the trigger, and once usage crosses it, the
-   demo says why the next turn will compact.
-2. That next turn compacts the transcript before it generates — no caller ever
+   demo says why the next answer will compact.
+2. That next answer compacts the transcript before it generates — no caller ever
    invokes `session.compact()` — and the compaction's checkpoint event
    (`SessionEvent.compaction`) prints the moment it arrives.
 3. The compacted summary the compaction wrote — the text the model now reads in
-   place of the compacted turns — prints last.
+   place of the compacted answers — prints last.
 
 The session model is small (`mlx-community/Llama-3.2-1B-Instruct-4bit`, the
 same one the compaction smoke tests drive), the summary is written by the

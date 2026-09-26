@@ -7,10 +7,10 @@ import Testing
 
 /// Exercises task 8213x39 (auto-compaction opt-in): ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:)``'s
 /// `budget`/`compactionPrompt` parameters, the proactive compaction
-/// ``RoutedSessionActor/runTurn(grammar:turnId:entryPoint:messageId:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:_:)``
-/// runs before a turn once measured fill reaches the budget's trigger, the
+/// ``RoutedSessionActor/runAnswerChain(grammar:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:_:)``
+/// runs before an answer once measured fill reaches the budget's trigger, the
 /// reactive compact-and-retry-once recovery
-/// ``RoutedSessionActor/runTurnAttempt(grammar:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetries:_:)``
+/// ``RoutedSessionActor/runSubmission(grammar:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetries:isContinuation:_:)``
 /// runs on `LanguageModelError.contextSizeExceeded`, the flash-then-own-model
 /// summarizer preference, and ``SessionEvent/compaction(_:)`` emission.
 ///
@@ -55,13 +55,17 @@ struct AutoCompactionTests {
     /// ``RouterTestFixtures/makeTempDir(prefix:)``.
     private static let tempDirPrefix = "AutoCompactionTests"
 
-    /// The canned response every warm-up turn answers with. See
+    /// The canned response every warm-up answer gives. See
     /// ``AutoCompactionFixtures/cannedText``.
     private static let cannedText = AutoCompactionFixtures.cannedText
 
-    /// How many warm-up turns each triggered session drives. See
-    /// ``AutoCompactionFixtures/turnCount``.
-    private static let turnCount = AutoCompactionFixtures.turnCount
+    /// How many warm-up answers each triggered session drives. See
+    /// ``AutoCompactionFixtures/answerCount``.
+    private static let answerCount = AutoCompactionFixtures.answerCount
+
+    /// The prompt of the answer that the warm-up brings to the trigger. It
+    /// follows the warm-up prompts of ``AutoCompactionFixtures``.
+    private static let triggeringPrompt = "message \(answerCount)"
 
     /// The budget every compaction this suite drives runs against. See
     /// ``AutoCompactionFixtures/fixedBudget``.
@@ -79,8 +83,8 @@ struct AutoCompactionTests {
     ///     unchanged from every pre-existing test in this suite.
     /// - Returns: The session plus its `standard`/`flash` containers, so a
     ///   test can configure `shouldThrow` on either before driving the
-    ///   triggering turn.
-    /// - Throws: Whatever profile resolution or a warm-up turn throws.
+    ///   triggering answer.
+    /// - Throws: Whatever profile resolution or a warm-up answer throws.
     private static func makeTriggeredSession(
         budget: TokenBudget?,
         tools: [any Tool] = []
@@ -92,18 +96,18 @@ struct AutoCompactionTests {
     // MARK: - Proactive compaction, preferring flash
 
     @Test(
-        "a session vended with a budget proactively compacts before a turn once measured fill reaches the trigger, summarizing with the profile's flash slot"
+        "a session vended with a budget proactively compacts before an answer once measured fill reaches the trigger, summarizing with the profile's flash slot"
     )
     @MainActor
     func proactiveCompactionPrefersFlashSummarizer() async throws {
         let (session, _, _) = try await Self.makeTriggeredSession(budget: Self.fixedBudget)
 
-        // contextFill is 0.9 (>= the 0.8 trigger) after the warm-up turns —
-        // the very next turn should compact automatically, before its own work
-        // runs, with no caller-side compact() call anywhere in this test.
+        // contextFill is 0.9 (>= the 0.8 trigger) after the warm-up answers —
+        // the very next answer should compact automatically, before its own
+        // work runs, with no caller-side compact() call anywhere in this test.
         #expect(await session.contextFill == 0.9)
 
-        let events = eventsInsideAnswerFrame(try await collectEvents(session, prompt: "turn 6"))
+        let events = eventsInsideAnswerFrame(try await collectEvents(session, prompt: Self.triggeringPrompt))
 
         guard case .compaction(let result) = events.first else {
             Issue.record("expected the first event to be .compaction, got \(String(describing: events.first))")
@@ -118,21 +122,21 @@ struct AutoCompactionTests {
         // against the model that wrote it.
         #expect(result.summarizerModel == "org/flash-a")
 
-        // The triggering turn's own work still ran normally afterward.
+        // The triggering answer's own work still ran normally afterward.
         #expect(events.contains(.textDelta(Self.cannedText)))
     }
 
-    // MARK: - A long context compacts at turn start (task ^yyjvyga)
+    // MARK: - A long context compacts at the start of the answer (task ^yyjvyga)
 
     @Test(
-        "a context over the trigger at turn start: one compaction before the turn, the turn answers, and the snapshot is smaller"
+        "a context over the trigger at the start of an answer: one compaction before the answer, the answer is given, and the snapshot is smaller"
     )
     @MainActor
-    func contextOverTheTriggerCompactsOnceBeforeTheTurn() async throws {
+    func contextOverTheTriggerCompactsOnceBeforeTheAnswer() async throws {
         let (session, _, _) = try await Self.makeTriggeredSession(budget: Self.fixedBudget)
         #expect(await session.contextFill >= Self.fixedBudget.trigger)
 
-        let events = eventsInsideAnswerFrame(try await collectEvents(session, prompt: "turn 6"))
+        let events = eventsInsideAnswerFrame(try await collectEvents(session, prompt: Self.triggeringPrompt))
         let compactions = events.compactMap { event -> CompactionResult? in
             guard case .compaction(let result) = event else { return nil }
             return result
@@ -158,11 +162,11 @@ struct AutoCompactionTests {
     func proactiveCompactionFallsBackToOwnModelWhenFlashFails() async throws {
         let (session, standard, flash) = try await Self.makeTriggeredSession(budget: Self.fixedBudget)
         flash.shouldThrow = true
-        // The session's own live backend (driving the warm-up turns above)
+        // The session's own live backend (driving the warm-up answers above)
         // is untouched, so the own-model fallback tier succeeds.
         #expect(standard.lastBackend?.shouldThrow == false)
 
-        let events = eventsInsideAnswerFrame(try await collectEvents(session, prompt: "turn 6"))
+        let events = eventsInsideAnswerFrame(try await collectEvents(session, prompt: Self.triggeringPrompt))
 
         guard case .compaction(let result) = events.first else {
             Issue.record("expected the first event to be .compaction, got \(String(describing: events.first))")
@@ -179,7 +183,7 @@ struct AutoCompactionTests {
         // the fallback tier is just as visible as the preferred one.
         #expect(result.summarizerModel == "org/std-a")
 
-        // The triggering turn's own work still ran normally afterward.
+        // The triggering answer's own work still ran normally afterward.
         #expect(events.contains(.textDelta(Self.cannedText)))
     }
 
@@ -191,14 +195,14 @@ struct AutoCompactionTests {
         let (session, _, _) = try await Self.makeTriggeredSession(budget: nil)
         #expect(await session.contextFill == 0.9)
 
-        let events = try await collectEvents(session, prompt: "turn 6")
+        let events = try await collectEvents(session, prompt: Self.triggeringPrompt)
 
         #expect(!events.contains { if case .compaction = $0 { return true }; return false })
     }
 
     // MARK: - Fork inherits the opt-in
 
-    @Test("a fork inherits its parent's auto-compaction budget and compacts on its own first turn if inherited fill is already at trigger")
+    @Test("a fork inherits its parent's auto-compaction budget and compacts on its own first answer if inherited fill is already at trigger")
     @MainActor
     func forkInheritsAutoCompactionBudget() async throws {
         let (session, _, _) = try await Self.makeTriggeredSession(budget: Self.fixedBudget)
@@ -206,11 +210,11 @@ struct AutoCompactionTests {
 
         let forked = try await session.fork(workingDirectory: nil)
         // The fork inherits the parent's measured fill as of fork time
-        // (already at/above trigger), so its very first turn should compact
+        // (already at/above trigger), so its very first answer should compact
         // proactively before running, with no warm-up of its own.
         #expect(await forked.contextFill == 0.9)
 
-        let events = eventsInsideAnswerFrame(try await collectEvents(forked, prompt: "fork turn"))
+        let events = eventsInsideAnswerFrame(try await collectEvents(forked, prompt: "fork message"))
 
         guard case .compaction(let result) = events.first else {
             Issue.record("expected the fork's first event to be .compaction, got \(String(describing: events.first))")
@@ -243,7 +247,7 @@ struct AutoCompactionTests {
         /// ``replacingTranscript(_:)``) — unlike a plain instance counter,
         /// which would reset to a misleadingly-fresh `0` on the very compaction
         /// that swaps in the retry's own backend instance, this keeps one
-        /// running count across the whole logical turn regardless of how
+        /// running count across the whole answer regardless of how
         /// many physical backend objects served it.
         let callLog: CallLog
 
@@ -263,10 +267,10 @@ struct AutoCompactionTests {
             self.callLog = callLog
         }
 
-        static func seedEntries(turnCount: Int, responseText: String) -> [Transcript.Entry] {
-            (0..<turnCount).flatMap { index -> [Transcript.Entry] in
+        static func seedEntries(answerCount: Int, responseText: String) -> [Transcript.Entry] {
+            (0..<answerCount).flatMap { index -> [Transcript.Entry] in
                 [
-                    .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "seed turn \(index)"))])),
+                    .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "seed message \(index)"))])),
                     .response(
                         Transcript.Response(segments: [.text(Transcript.TextSegment(content: responseText))])),
                 ]
@@ -277,8 +281,9 @@ struct AutoCompactionTests {
             try answer(prompt)
         }
 
-        /// Streams the same outcome ``respond(to:maxTokens:)`` gives, so a turn that
-        /// ``RoutedSession/streamEvents(to:maxTokens:)`` drives overflows the same way.
+        /// Streams the same outcome ``respond(to:maxTokens:)`` gives, so an
+        /// answer that ``RoutedSession/streamEvents(to:maxTokens:)`` drives
+        /// overflows the same way.
         func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
             AsyncThrowingStream { continuation in
                 do {
@@ -350,8 +355,8 @@ struct AutoCompactionTests {
     /// ``ScriptedOverflowBackend`` and every clone it produces — see that
     /// type's own ``ScriptedOverflowBackend/callLog`` doc comment for why a
     /// plain per-instance counter cannot answer "how many physical attempts
-    /// did this logical turn take" once a compaction swaps in a new instance
-    /// mid-turn.
+    /// did this answer take" once a compaction swaps in a new instance
+    /// during the answer.
     private final class CallLog: @unchecked Sendable {
         private(set) var count = 0
         func increment() { count += 1 }
@@ -406,7 +411,7 @@ struct AutoCompactionTests {
 
         // No `do`/`catch` here at all — unlike `ExamplesTests.respondWithReactiveCompaction`,
         // which the caller must wrap manually, this session recovers on its
-        // own. The turn names no ceiling, so the retry compacts to the
+        // own. The answer names no ceiling, so the retry compacts to the
         // configured target of the budget.
         let response = try await session.respond(to: "keep going")
 
@@ -490,7 +495,7 @@ struct AutoCompactionTests {
         session: RoutedSession, standard: OverflowLLMContainer, profile: LanguageModelProfile
     ) {
         let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
-        let seedEntries = ScriptedOverflowBackend.seedEntries(turnCount: 6, responseText: Self.cannedText)
+        let seedEntries = ScriptedOverflowBackend.seedEntries(answerCount: 6, responseText: Self.cannedText)
         let standardContainer = OverflowLLMContainer(
             responseText: "recovered", seedEntries: seedEntries, overflowsRemaining: overflowsRemaining,
             overflowingCalls: overflowingCalls)
@@ -510,7 +515,7 @@ struct AutoCompactionTests {
     func reactiveRetrySurfacesAfterOneFailedRetry() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
         let recorder = InMemoryRecorder()
-        let seedEntries = ScriptedOverflowBackend.seedEntries(turnCount: 6, responseText: Self.cannedText)
+        let seedEntries = ScriptedOverflowBackend.seedEntries(answerCount: 6, responseText: Self.cannedText)
         // Overflows on every call this test could plausibly make (initial +
         // the one retry) — proving the session gives up after one retry
         // rather than looping.
@@ -544,7 +549,8 @@ struct AutoCompactionTests {
     func hardCeilingFailsFastThenRecoversWithLivePerAttemptFill() async throws {
         // `trigger: 2.0` never fires proactively (fill tops out at 0.9 across
         // this suite) — isolating the hard-ceiling pre-check in
-        // `runTurnAttempt` from the trigger-driven proactive compaction in `runTurn`.
+        // `runSubmission` from the trigger-driven proactive compaction in
+        // `runAnswerWork`.
         // Built by overriding ``fixedBudget`` rather than restating its
         // numbers: the recovery this test asserts depends on the retry's own
         // compaction *actually shrinking* the transcript, which is exactly what
@@ -555,14 +561,14 @@ struct AutoCompactionTests {
         let (session, standard, _) = try await Self.makeTriggeredSession(budget: hardCeilingBudget)
         #expect(await session.contextFill == 0.9)
 
-        // A small increment for the triggering turn's own (retried) generate
-        // call, distinct from the warm-up turns' escalating increments, so
+        // A small increment for the triggering answer's own (retried) generate
+        // call, distinct from the warm-up answers' escalating increments, so
         // the retry's own measured fill is unambiguously lower than the
         // blocked attempt's stale 0.9 — proving the meter actually moved
-        // mid-turn rather than only once the whole turn finished.
+        // during the answer rather than only once the whole answer finished.
         standard.lastBackend?.usageIncrement = (input: Self.hardCeilingRetryInputTokens, output: 0)
 
-        let events = try await collect(session.streamEvents(to: "turn 6"))
+        let events = try await collect(session.streamEvents(to: Self.triggeringPrompt))
         let inside = eventsInsideAnswerFrame(events)
 
         // Two submissions end: the refused submission, then the retry.
@@ -657,17 +663,17 @@ struct AutoCompactionTests {
         // depending on precise compaction-sizing math to land above some
         // threshold. `hardCeiling: 0.85` reuses the same window as
         // `hardCeilingFailsFastThenRecoversWithLivePerAttemptFill` — above
-        // every warm-up turn's own pre-turn fill (≤ 0.75) but at/below the
-        // triggering turn's own 0.9.
+        // the fill before each warm-up answer (≤ 0.75) but at/below the
+        // triggering answer's own 0.9.
         let hardCeilingBudget = TokenBudget(limit: 100_000, trigger: 2.0, target: 0.9, hardCeiling: 0.85)
         let (session, standard, _) = try await Self.makeTriggeredSession(budget: hardCeilingBudget)
         #expect(await session.contextFill == 0.9)
-        let callsBeforeTriggeringTurn = standard.lastBackend?.callCount
+        let callsBeforeTriggeringAnswer = standard.lastBackend?.callCount
 
         var collected: [SessionEvent] = []
         var caught: Error?
         do {
-            for try await event in await session.streamEvents(to: "turn 6") {
+            for try await event in await session.streamEvents(to: Self.triggeringPrompt) {
                 collected.append(event)
             }
         } catch {
@@ -694,27 +700,27 @@ struct AutoCompactionTests {
         #expect(result.stagesApplied.isEmpty)
 
         // Both attempts were blocked pre-flight; the original backend was
-        // never asked to generate again after the warm-up turns.
-        #expect(standard.lastBackend?.callCount == callsBeforeTriggeringTurn)
+        // never asked to generate again after the warm-up answers.
+        #expect(standard.lastBackend?.callCount == callsBeforeTriggeringAnswer)
     }
 
-    // MARK: - The retry compacts to the room the turn needs (task m39wmx1)
+    // MARK: - The retry compacts to the room the answer needs (task m39wmx1)
 
     /// The window, in tokens, of the sessions the room tests vend.
     private static let roomTestWindowTokens = 10_000
 
-    /// The size, in tokens, of the prompt of an overflowing turn that fits the
-    /// window. ``OverflowLLMContainer`` counts one token per `Character`.
+    /// The size, in tokens, of the prompt of an overflowing answer that fits
+    /// the window. ``OverflowLLMContainer`` counts one token per `Character`.
     private static let roomTestPromptTokens = 1_000
 
-    /// The response ceiling, in tokens, the overflowing turn names.
+    /// The response ceiling, in tokens, the overflowing answer names.
     private static let roomTestResponseCeiling = 2_000
 
-    /// A configured target above the room the turn leaves: 8,000 of the
+    /// A configured target above the room the answer leaves: 8,000 of the
     /// 10,000-token window.
     private static let targetAboveRoom = 0.8
 
-    /// A configured target below the room the turn leaves: 5,000 of the
+    /// A configured target below the room the answer leaves: 5,000 of the
     /// 10,000-token window.
     private static let targetBelowRoom = 0.5
 
@@ -752,15 +758,16 @@ struct AutoCompactionTests {
         }
     }
 
-    /// Drives one turn with a ``roomTestPromptTokens``-token prompt on a session
-    /// whose backend overflows once, and returns the target its retry computed.
+    /// Drives one answer with a ``roomTestPromptTokens``-token prompt on a
+    /// session whose backend overflows once, and returns the target its retry
+    /// computed.
     ///
     /// - Parameters:
     ///   - target: The configured target of the budget.
-    ///   - responseCeiling: The response ceiling the turn names, or `nil` for a
-    ///     turn that names none.
-    /// - Returns: The retry's target, and the number of model calls the turn made.
-    /// - Throws: Whatever the turn throws, or a failed `#require`.
+    ///   - responseCeiling: The response ceiling the answer names, or `nil` for
+    ///     an answer that names none.
+    /// - Returns: The retry's target, and the number of model calls the answer made.
+    /// - Throws: Whatever the answer throws, or a failed `#require`.
     private static func retryTargetOfOneOverflow(
         target: Double, responseCeiling: Int?
     ) async throws -> (target: OverflowRetryTarget, calls: Int) {
@@ -776,7 +783,7 @@ struct AutoCompactionTests {
         "an overflow with a 1,000-token prompt on a 10,000-token window with a 2,000-token ceiling compacts to 7,000 tokens"
     )
     @MainActor
-    func overflowRetryCompactsToTheRoomTheTurnNeeds() async throws {
+    func overflowRetryCompactsToTheRoomTheAnswerNeeds() async throws {
         let (target, calls) = try await Self.retryTargetOfOneOverflow(
             target: Self.targetAboveRoom, responseCeiling: Self.roomTestResponseCeiling)
 
@@ -807,7 +814,7 @@ struct AutoCompactionTests {
     // MARK: - With no caller ceiling, the retry compacts to the configured target (task n1khnxa)
 
     @Test(
-        "an overflow of a turn that names no ceiling compacts to the configured target of 8,000 tokens and retries once"
+        "an overflow of an answer that names no ceiling compacts to the configured target of 8,000 tokens and retries once"
     )
     @MainActor
     func overflowRetryWithNoCallerCeilingCompactsToTheConfiguredTarget() async throws {
@@ -826,7 +833,7 @@ struct AutoCompactionTests {
         #expect(calls == 2)
     }
 
-    @Test("the retry of a turn that names no ceiling runs against the configured budget unchanged")
+    @Test("the retry of an answer that names no ceiling runs against the configured budget unchanged")
     func overflowRetryWithNoCallerCeilingKeepsTheConfiguredBudget() {
         let configured = TokenBudget(limit: Self.roomTestWindowTokens, target: Self.targetBelowRoom)
         let target = OverflowRetryTarget(
@@ -854,7 +861,7 @@ struct AutoCompactionTests {
         var isOverflow = false
         if case .contextSizeExceeded? = caught { isOverflow = true }
         #expect(isOverflow)
-        // One attempt, and no compaction: no compaction can make the turn fit.
+        // One attempt, and no compaction: no compaction can make the answer fit.
         #expect(container.callLog.count == 1)
         #expect(!events.contains { if case .compaction = $0 { return true }; return false })
     }
@@ -894,12 +901,12 @@ struct AutoCompactionTests {
         #expect(innerTools.contains { $0 is EchoTool })
         #expect(innerTools.contains { $0 is FailingTool })
 
-        // contextFill is 0.9 (>= the 0.8 trigger) after the warm-up turns —
+        // contextFill is 0.9 (>= the 0.8 trigger) after the warm-up answers —
         // identical to the no-tools case above; the presence of tools must
         // not change compaction-triggering behavior at all.
         #expect(await session.contextFill == 0.9)
 
-        let events = eventsInsideAnswerFrame(try await collectEvents(session, prompt: "turn 6"))
+        let events = eventsInsideAnswerFrame(try await collectEvents(session, prompt: Self.triggeringPrompt))
 
         guard case .compaction(let result) = events.first else {
             Issue.record("expected the first event to be .compaction, got \(String(describing: events.first))")
@@ -912,15 +919,15 @@ struct AutoCompactionTests {
     // MARK: - The automatic compaction is one flash call over the whole context
 
     @Test(
-        "an automatic compaction makes one flash call whose prompt holds every warm-up turn, and no call on the session's own model"
+        "an automatic compaction makes one flash call whose prompt holds every warm-up message, and no call on the session's own model"
     )
     @MainActor
     func autoCompactionMakesOneFlashCallOverTheWholeContext() async throws {
         let (session, standard, flash) = try await Self.makeTriggeredSession(budget: Self.fixedBudget)
-        let ownCallsBeforeTurn = standard.generationLog.calls.count
+        let ownCallsBeforeAnswer = standard.generationLog.calls.count
 
-        // No caller-side compact(): the triggering turn compacts on its own.
-        let events = eventsInsideAnswerFrame(try await collectEvents(session, prompt: "turn \(Self.turnCount)"))
+        // No caller-side compact(): the triggering answer compacts on its own.
+        let events = eventsInsideAnswerFrame(try await collectEvents(session, prompt: Self.triggeringPrompt))
         guard case .compaction(let result) = events.first else {
             Issue.record("expected the first event to be .compaction, got \(String(describing: events.first))")
             return
@@ -930,10 +937,10 @@ struct AutoCompactionTests {
         let flashCalls = flash.generationLog.calls
         #expect(flashCalls.count == 1)
         let prompt = try #require(flashCalls.first?.prompt)
-        for turn in 0..<Self.turnCount {
-            #expect(prompt.contains("User: turn \(turn)"))
+        for answer in 0..<Self.answerCount {
+            #expect(prompt.contains("User: message \(answer)"))
         }
-        // The session's own model served the triggering turn only: one call.
-        #expect(standard.generationLog.calls.count == ownCallsBeforeTurn + 1)
+        // The session's own model served the triggering answer only: one call.
+        #expect(standard.generationLog.calls.count == ownCallsBeforeAnswer + 1)
     }
 }

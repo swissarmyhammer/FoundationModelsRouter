@@ -2,9 +2,9 @@ import FoundationModels
 
 /// How the session mount gives a failed tool call to the model.
 ///
-/// Apple's `LanguageModelSession` runs the calls of one turn together. When one
-/// call throws, the session cancels the other calls of the turn, and then it
-/// ends the turn, so the model never reads the failure. On the model-facing
+/// Apple's `LanguageModelSession` runs the tool calls of one round together.
+/// When one call throws, the session cancels the other calls of the round, and
+/// then it ends the submission, so the model never reads the failure. On the model-facing
 /// mount, an ordinary failure therefore must not cross the `Tool.call`
 /// boundary as a throw. The decorators of this file give the failure to the
 /// model as the call's output, so the model can read it and make another call.
@@ -67,7 +67,7 @@ protocol FailureDeliveringTool: Tool {
 /// is the call's `String` output, so the transcript records text as before.
 struct FailureDeliveringTextTool<
     Arguments: ConvertibleFromGeneratedContent
->: FailureDeliveringTool, TurnBoundaryTool, ToolDecorator {
+>: FailureDeliveringTool, SubmissionBoundaryTool, ToolDecorator {
     /// The tool beneath this decorator.
     let wrapped: any Tool<Arguments, String>
 
@@ -99,7 +99,7 @@ struct FailureDeliveringTextTool<
 /// or the failure text.
 struct FailureDeliveringResultTool<
     Arguments: ConvertibleFromGeneratedContent, WrappedOutput: PromptRepresentable
->: FailureDeliveringTool, TurnBoundaryTool, ToolDecorator {
+>: FailureDeliveringTool, SubmissionBoundaryTool, ToolDecorator {
     /// The tool beneath this decorator.
     let wrapped: any Tool<Arguments, WrappedOutput>
 

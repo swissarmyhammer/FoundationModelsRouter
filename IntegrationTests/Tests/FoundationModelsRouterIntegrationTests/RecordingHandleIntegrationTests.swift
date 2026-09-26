@@ -14,15 +14,15 @@ private let recordingHandleTinyModel: ModelRef = RealModels.standard
 
 /// Gated real-model coverage for task 0n38p3w: the FIRST live traffic ever
 /// exercised for the tool-aware recording schema (`Kind.toolCalls` /
-/// `Kind.toolOutput` / `ToolDefinitionPayload`), proving a tool-using turn
+/// `Kind.toolOutput` / `ToolDefinitionPayload`), proving a tool-using answer
 /// driven directly over a ``RecordingLanguageModel`` handle (`RoutedModel/makeLanguageModel()`)
 /// round-trips to disk: everything up through `.toolOutput` back-fills live,
-/// during the turn (alongside an empty, metadata-only `.response` entry the
+/// during the answer (alongside an empty, metadata-only `.response` entry the
 /// tool-calling round registers before it ever decides to call a tool — real,
-/// verified executor behavior, not a recording bug), and the turn's real,
-/// populated final answer only lands once the caller closes the
-/// executor-boundary gap with `handle.sync(session.transcript)` at turn end —
-/// exactly as a harness frontend is expected to.
+/// verified executor behavior, not a recording bug), and the answer's real,
+/// populated final reply only lands once the caller closes the
+/// executor-boundary gap with `handle.sync(session.transcript)` at the end of
+/// the answer — exactly as a harness frontend is expected to.
 ///
 /// Builds a real ``LanguageModelProfile`` directly over an already-loaded tiny
 /// model's ``MLXFoundationModelsContainer`` through ``RealModelHarness`` — the
@@ -38,34 +38,34 @@ private let recordingHandleTinyModel: ModelRef = RealModels.standard
 /// (`IntegrationTests/Package.resolved`), passed its one test in 21.4 seconds
 /// of test wall clock, and 29.9 seconds for the whole command, build included.
 /// That run confirmed each assertion below against a real session: the
-/// on-disk event sequence, the mid-turn back-fill snapshot before `sync`, the
-/// `session.json` sidecar fields, and the `MergedTranscript` and
+/// on-disk event sequence, the back-fill snapshot inside the answer before
+/// `sync`, the `session.json` sidecar fields, and the `MergedTranscript` and
 /// `TranscriptTree` reconstruction, which matched the live transcript. A root
 /// `swift test` leaves this suite out, because the root package cannot see
 /// this package.
 ///
 /// ## What it NO LONGER proves (task ^bpwfbyz)
 ///
-/// Until that task the turn took the provider's default sampling, temperature
+/// Until that task the answer took the provider's default sampling, temperature
 /// 0.6 out of MLX's clock-seeded, process-global PRNG, and no reply ceiling.
 /// The three runs of 2026-08-20 measured this suite's one test at 16.7, then
 /// 40.9, then 101.5 seconds, with no code change between the runs, and the run
 /// of 2026-08-21 above measured it at 21.4 seconds. The 101.5 was six times
 /// run 1 and 85 percent of the two-minute budget of that time. The 30B writes a
-/// `<think>` block before each round of a tool turn, and under the sampler
-/// that block, and the number of rounds, differed on every run. Two changes
-/// brought the test inside half that budget, and ``turnOptions`` states both:
-/// argmax decoding, and ``GatedRealModelBudget/responseTokenCeiling`` as each
-/// round's reply ceiling. Measured in isolation on 2026-08-21 under those
-/// options: 32.5 seconds, of which 3.4 seconds the load and 28.9 seconds the
-/// turn, in two rounds.
+/// `<think>` block before each round of a tool-using answer, and under the
+/// sampler that block, and the number of rounds, differed on every run. Two
+/// changes brought the test inside half that budget, and ``answerOptions``
+/// states both: argmax decoding, and ``GatedRealModelBudget/responseTokenCeiling``
+/// as each round's reply ceiling. Measured in isolation on 2026-08-21 under
+/// those options: 32.5 seconds, of which 3.4 seconds the load and 28.9 seconds
+/// the answer, in two rounds.
 ///
 /// What is no longer proven is:
 ///
-/// - **The sampled path.** The turn decodes with argmax, so a red run is
+/// - **The sampled path.** The answer decodes with argmax, so a red run is
 ///   attributable to the change under test, and the round trip under the
 ///   provider's default sampling is not measured here.
-/// - **A round past the ceiling.** Each round of the tool turn stops at
+/// - **A round past the ceiling.** Each round of the tool-using answer stops at
 ///   ``GatedRealModelBudget/responseTokenCeiling`` tokens. A round that
 ///   generated past it, and what the recording shows of such a round, is no
 ///   longer measured here.
@@ -74,14 +74,14 @@ private let recordingHandleTinyModel: ModelRef = RealModels.standard
 /// the instructions, and every assertion on the disk sequence, the sidecar and
 /// the reconstruction are exactly what they were.
 @Suite(
-    "Gated real-model integration: a tool-using turn over a RecordingLanguageModel handle round-trips to disk (task 0n38p3w)",
+    "Gated real-model integration: a tool-using answer over a RecordingLanguageModel handle round-trips to disk (task 0n38p3w)",
     .serialized,
     .exclusiveRealModel
 )
 struct RecordingHandleIntegrationTests {
     // MARK: - Test tool
 
-    /// The scripted tool argument schema the turn's prompt reliably drives:
+    /// The scripted tool argument schema the answer's prompt reliably drives:
     /// a single required string field, the smallest surface a tiny model can
     /// reliably fill in when directly instructed to call this tool with the
     /// user's exact text.
@@ -103,9 +103,9 @@ struct RecordingHandleIntegrationTests {
         }
     }
 
-    // MARK: - The turn's options
+    // MARK: - The answer's options
 
-    /// The options the one turn below passes to `session.respond(to:options:)`.
+    /// The options the one answer below passes to `session.respond(to:options:)`.
     ///
     /// Two things are stated here, and deliberately here rather than through
     /// ``RealModelContainer/samplingMode``. A mode a suite passes to
@@ -114,18 +114,18 @@ struct RecordingHandleIntegrationTests {
     /// drives a raw `LanguageModelSession` over a ``RecordingLanguageModel``
     /// handle, which wraps the container's language model directly and passes
     /// each request through untouched. The only options that reach the model
-    /// on that path are the ones the turn passes.
+    /// on that path are the ones the answer passes.
     ///
     /// - Argmax decoding, for the reason ``SessionTreeRestorationIntegrationTests``
     ///   pins it: the provider default samples at temperature `0.6` from MLX's
     ///   process-global PRNG, which seeds itself from the clock, so the
-    ///   `<think>` block before each round of this tool turn, and the number of
-    ///   rounds, differed on every run of identical code. Argmax decoding
-    ///   consumes no randomness at all.
+    ///   `<think>` block before each round of this tool-using answer, and the
+    ///   number of rounds, differed on every run of identical code. Argmax
+    ///   decoding consumes no randomness at all.
     /// - ``GatedRealModelBudget/responseTokenCeiling`` as each round's reply
-    ///   ceiling, the same ceiling every other gated turn of this target states,
-    ///   where this turn stated none.
-    private static let turnOptions = GenerationOptions(
+    ///   ceiling, the same ceiling every other gated answer of this target
+    ///   states, where this answer stated none.
+    private static let answerOptions = GenerationOptions(
         samplingMode: .greedy, maximumResponseTokens: GatedRealModelBudget.responseTokenCeiling)
 
     // MARK: - Harness
@@ -140,7 +140,7 @@ struct RecordingHandleIntegrationTests {
     /// Builds a real ``LanguageModelProfile`` directly over a freshly loaded
     /// tiny model, recording into a durable temp `recordingsDir` so its
     /// transcript can be reloaded through ``TranscriptTree``/``MergedTranscript``
-    /// after the turn completes.
+    /// after the answer completes.
     ///
     /// The profile comes from ``RealModelHarness/make(model:context:container:samplingMode:cacheDir:recordingsDir:routerId:)``,
     /// the one real-profile build every real-model suite of this target uses.
@@ -220,16 +220,17 @@ struct RecordingHandleIntegrationTests {
     }
 
     /// Task 0n38p3w's core acceptance criteria, proved against a real model:
-    /// a tool-using turn driven directly over a ``RecordingLanguageModel``
+    /// a tool-using answer driven directly over a ``RecordingLanguageModel``
     /// handle back-fills `.session`/`.instructions`/`.prompt`/`.toolCalls`/
-    /// `.toolOutput` to disk live (before any `sync`), the turn-final
-    /// `.response` only lands once `sync(session.transcript)` closes the
-    /// executor-boundary gap at turn end, the handle's own session appears in
-    /// its own `session.json` with the right slot/model, and reconstruction via
-    /// ``TranscriptTree``/``MergedTranscript`` over the recorded directory
-    /// matches the live session's own transcript kind-for-kind.
-    @Test("a tool-using turn over a RecordingLanguageModel handle round-trips to disk: mid-turn back-fill before sync, final response only after sync(session.transcript)")
-    func toolUsingTurnRoundTripsToDisk() async throws {
+    /// `.toolOutput` to disk live (before any `sync`), the final `.response`
+    /// of the answer only lands once `sync(session.transcript)` closes the
+    /// executor-boundary gap at the end of the answer, the handle's own session
+    /// appears in its own `session.json` with the right slot/model, and
+    /// reconstruction via ``TranscriptTree``/``MergedTranscript`` over the
+    /// recorded directory matches the live session's own transcript
+    /// kind-for-kind.
+    @Test("a tool-using answer over a RecordingLanguageModel handle round-trips to disk: back-fill inside the answer before sync, final response only after sync(session.transcript)")
+    func toolUsingAnswerRoundTripsToDisk() async throws {
         let harness = try await makeHarness()
         defer {
             try? FileManager.default.removeItem(at: harness.recordingsDir)
@@ -248,13 +249,13 @@ struct RecordingHandleIntegrationTests {
         )
 
         let response = try await session.respond(
-            to: "Call the echo tool with the text 'ping'.", options: Self.turnOptions)
+            to: "Call the echo tool with the text 'ping'.", options: Self.answerOptions)
         #expect(!response.content.isEmpty)
 
         // Before sync: the diff-on-generate chokepoint has already back-filled
-        // everything up through .toolOutput to disk, live, during the turn —
-        // the turn-final .response is the one thing the executor boundary
-        // cannot see.
+        // everything up through .toolOutput to disk, live, during the answer —
+        // the final .response of the answer is the one thing the executor
+        // boundary cannot see.
         let recordingDirectory = handle.state.recordingDirectory
         let beforeSync = try Self.recordedEvents(in: recordingDirectory)
         #expect(
@@ -267,12 +268,12 @@ struct RecordingHandleIntegrationTests {
         // metadata-only `.response` channel event (`updateMetadata`, no text)
         // before it ever decides to call a tool — confirmed empirically
         // against a real model: every `.response`-kind event recorded before
-        // `sync` has `text == nil`. The turn's real, populated final answer
+        // `sync` has `text == nil`. The answer's real, populated final reply
         // is still invisible at the executor boundary until `sync` closes
         // the gap below.
         #expect(beforeSync.filter { $0.kind == .response }.allSatisfy { $0.text == nil })
 
-        // sync(session.transcript) at turn end closes that one gap.
+        // sync(session.transcript) at the end of the answer closes that one gap.
         await handle.sync(session.transcript)
 
         let afterSync = try Self.recordedEvents(in: recordingDirectory)
@@ -282,7 +283,7 @@ struct RecordingHandleIntegrationTests {
                 of: afterSync.map(\.kind)
             )
         )
-        // The turn's final answer is now on disk, and nothing of the turn
+        // The answer's final reply is now on disk, and nothing of the answer
         // stands after it except the model's own reasoning: the gated model
         // writes a `<think>` block, which the SDK appends as a `.reasoning`
         // entry after the `.response` (see `GatedRealModelBudget`). So this
@@ -293,7 +294,7 @@ struct RecordingHandleIntegrationTests {
         let afterSyncKinds = afterSync.map(\.kind)
         #expect(
             afterSyncKinds.last(where: { $0 != .reasoning }) == .response,
-            "the turn should end with its final response; kinds were \(afterSyncKinds)"
+            "the answer should end with its final response; kinds were \(afterSyncKinds)"
         )
 
         // The handle's own directory carries its sidecar, with the right

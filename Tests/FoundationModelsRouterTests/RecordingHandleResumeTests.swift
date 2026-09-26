@@ -33,12 +33,12 @@ struct RecordingHandleResumeTests {
     ///
     /// Behavior is driven purely by what each call observes, not by any fixed
     /// per-instance script, so the same stub instance can serve a toolless
-    /// turn before a resume and a tool-using turn after it: with no enabled
-    /// tool definitions it replies with ``plainResponseText`` directly; with
-    /// one or more enabled it emits a `.toolCalls` event naming the first
-    /// tool until the transcript shows a `.toolOutput` entry, then replies
-    /// with ``toolResponseText`` — mirroring how a real model's executor is
-    /// invoked twice per tool-using turn.
+    /// answer before a resume and a tool-using answer after it: with no
+    /// enabled tool definitions it replies with ``plainResponseText``
+    /// directly; with one or more enabled it emits a `.toolCalls` event naming
+    /// the first tool until the transcript shows a `.toolOutput` entry, then
+    /// replies with ``toolResponseText`` — mirroring how a real model's
+    /// executor is invoked twice per tool-using answer.
     private struct StubUnderlyingModel: LanguageModel {
         let plainResponseText: String
         let toolResponseText: String
@@ -108,7 +108,7 @@ struct RecordingHandleResumeTests {
 
     /// A real `FoundationModels.Tool` conformer only ever attached to a
     /// resumed handle's session — never to the parent's — so a passing
-    /// tool-using turn after resume proves resuming with a different tool set
+    /// tool-using answer after resume proves resuming with a different tool set
     /// works.
     private struct UppercaseTool: Tool {
         let name = "uppercase"
@@ -270,7 +270,7 @@ struct RecordingHandleResumeTests {
         await parentHandle.sync(parentSession.transcript)
         let parentEntryCount = parentSession.transcript.count  // instructions, prompt, response == 3
 
-        // Resume from the parent's session id and continue one turn.
+        // Resume from the parent's session id and continue with one answer.
         let (childHandle, restored) = try profile.standard.makeLanguageModel(
             resuming: parentHandle.state.sessionId)
         #expect(restored.count == parentEntryCount)
@@ -302,7 +302,7 @@ struct RecordingHandleResumeTests {
 
     // MARK: - Different tool set
 
-    @Test("resuming with a different tool set drives a tool-using turn over the resumed transcript")
+    @Test("resuming with a different tool set drives a tool-using answer over the resumed transcript")
     @MainActor
     func resumingWithDifferentToolSetWorks() async throws {
         let cacheDir = Self.makeTempDir()
@@ -403,7 +403,7 @@ struct RecordingHandleResumeTests {
         #expect(!fullConversation.contains { $0.text == "parent continues after resume" })
 
         // MergedTranscript sees every recorded event across both sessions
-        // (parent's 6, after its extra post-resume turn, + child's 3), unlike
+        // (parent's 6, after its extra post-resume answer, + child's 3), unlike
         // the tree's truncated/entry-kind-only view — a second, independent
         // confirmation that nothing was lost or duplicated across the resume
         // boundary.
@@ -413,30 +413,30 @@ struct RecordingHandleResumeTests {
 
     // MARK: - Resume after a compaction: cut in append-only history coordinates (task ^bw2gts3)
 
-    /// How many turns the parent handle records before it compacts.
-    private static let compactionWarmupTurnCount = 6
+    /// How many answers the parent handle records before it compacts.
+    private static let compactionWarmupAnswerCount = 6
 
-    /// A canned response, repeated across every turn, so six turns' worth of
-    /// transcript is much larger than the summary that replaces it.
+    /// A canned response, repeated across every answer, so six answers' worth
+    /// of transcript is much larger than the summary that replaces it.
     private static let compactableCannedText = String(
         repeating: "The quick brown fox jumps over the lazy dog. ", count: 12)
 
-    /// Drives `count` sequential turns on `session` (prompts `"turn 0"`,
-    /// `"turn 1"`, …), syncing `handle` after each so every turn-final
-    /// response is recorded — the bare-handle counterpart of the shared
-    /// `driveTurns(_:on:)` fixture, which drives a ``RoutedSession``.
+    /// Drives `count` sequential answers on `session` (prompts `"line 0"`,
+    /// `"line 1"`, …), syncing `handle` after each so the final response of
+    /// every answer is recorded — the bare-handle counterpart of the shared
+    /// `driveAnswers(_:on:)` fixture, which drives a ``RoutedSession``.
     ///
     /// - Parameters:
-    ///   - count: How many turns to drive.
+    ///   - count: How many answers to drive.
     ///   - session: The session to drive them on.
-    ///   - handle: The recording handle to sync after each turn.
+    ///   - handle: The recording handle to sync after each answer.
     /// - Throws: Whatever `respond(to:)` throws.
     @MainActor
-    private static func driveTurns(
+    private static func driveAnswers(
         _ count: Int, on session: LanguageModelSession, syncing handle: RecordingLanguageModel
     ) async throws {
         for index in 0..<count {
-            _ = try await session.respond(to: "turn \(index)")
+            _ = try await session.respond(to: "line \(index)")
             await handle.sync(session.transcript)
         }
     }
@@ -473,18 +473,18 @@ struct RecordingHandleResumeTests {
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
-        // The parent handle records six turns, then compacts in one summarizer
-        // call and notes the new snapshot on the handle.
+        // The parent handle records six answers, then compacts in one
+        // summarizer call and notes the new snapshot on the handle.
         let parentHandle = profile.standard.makeLanguageModel()
         let parentSession = LanguageModelSession(
             model: parentHandle, tools: [], instructions: "be terse")
-        try await Self.driveTurns(Self.compactionWarmupTurnCount, on: parentSession, syncing: parentHandle)
+        try await Self.driveAnswers(Self.compactionWarmupAnswerCount, on: parentSession, syncing: parentHandle)
 
         let preCompactionEntries = Array(parentSession.transcript)
         let (compacted, result) = try await compactWithUnboundedWindow(
             Transcript(entries: preCompactionEntries),
             budget: summarizingCompactionBudget(for: preCompactionEntries),
-            summarizer: RecordingSummarizer(summary: "Summary: the six turns."))
+            summarizer: RecordingSummarizer(summary: "Summary: the six answers."))
         #expect(result.stagesApplied == [Summarization.stageName])
         await parentHandle.noteCompaction(compacted)
 

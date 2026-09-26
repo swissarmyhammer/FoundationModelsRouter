@@ -165,7 +165,7 @@ struct RepeatingReasoningModel: LanguageModel {
 /// ``RepeatingReasoningModel``, with the log of the model and the recorder
 /// that holds the recorded transcript of the session.
 struct RepeatingReasoningSessionFixture {
-    /// The vended session a test drives its turns on.
+    /// The vended session a test drives its answers on.
     let session: RoutedSession
 
     /// The log that the model writes.

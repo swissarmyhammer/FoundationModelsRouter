@@ -51,7 +51,7 @@ struct RealModelHarnessTests {
     /// visible.
     ///
     /// The number ``CompactionRoundTripIntegrationTests`` resolves at, which is
-    /// the smaller window that makes its scripted turns cross the trigger.
+    /// the smaller window that makes its scripted answers cross the trigger.
     private static let context = 2048
 
     /// Makes a fresh, empty pair of directories for one profile to cache and
@@ -242,7 +242,7 @@ struct RealModelHarnessTests {
         // embedding model at all. A call that reaches it is a suite driving a
         // slot the harness never loaded for, and the empty answer alone would
         // read as a result rather than as a mistake. This is the tripwire
-        // `RealToolTurnComparisonTests` carried on its own copy of the stub
+        // `RealToolAnswerComparisonTests` carried on its own copy of the stub
         // before that suite moved onto the harness (task ^zz6kam0); it is here
         // now, so every harness caller has it.
         await withKnownIssue("the harness embedding stub records an issue when it is driven") {

@@ -4,12 +4,12 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Everything one scripted turn was observed to do, gathered the same way
+/// Everything one scripted answer was observed to do, gathered the same way
 /// whichever `RoutedSession` surface drove it.
 ///
-/// Every field is content the turn produced or a count of work the turn did.
-/// None of them is a count of stream events: a turn where every call was
-/// announced and none failed can still leave the model uninformed (task
+/// Every field is content the answer produced or a count of work the answer
+/// did. None of them is a count of stream events: an answer where every call
+/// was announced and none failed can still leave the model uninformed (task
 /// ^cvtfem3), so only ``deliveredToolOutputs`` and ``answer`` are allowed to
 /// stand for delivery.
 ///
@@ -20,8 +20,8 @@ import Testing
 /// property has a `// periphery:ignore` marker. Do not delete a property: the
 /// code then does not compile. If you delete all of them, then any two outcomes
 /// become equal, and the harness asserts nothing but continues to pass.
-struct SurfaceTurnOutcome: Equatable {
-    /// The turn's final answer text.
+struct SurfaceAnswerOutcome: Equatable {
+    /// The final answer text.
     // Only the synthesized `Equatable` `==` reads this property.
     // periphery:ignore
     let answer: String
@@ -37,10 +37,10 @@ struct SurfaceTurnOutcome: Equatable {
     // periphery:ignore
     let deliveredToolOutputs: [String]
 
-    /// How many times the model was asked to generate.
+    /// How many times the model was asked to generate: the generation passes.
     // Only the synthesized `Equatable` `==` reads this property.
     // periphery:ignore
-    let modelTurnCount: Int
+    let generationPassCount: Int
 
     /// How many mounted tool bodies actually ran, across every mounted tool.
     // Only the synthesized `Equatable` `==` reads this property.
@@ -48,20 +48,20 @@ struct SurfaceTurnOutcome: Equatable {
     let toolExecutionCount: Int
 
     /// The normalized description of the error the surface threw, or `nil` when
-    /// the turn completed. See
+    /// the answer completed. See
     /// ``SurfaceParityTests/failureDescription(of:)`` for what is kept.
     // Only the synthesized `Equatable` `==` reads this property.
     // periphery:ignore
     let failureDescription: String?
 }
 
-/// One turn shape the parity harness holds both session surfaces to.
+/// One answer shape the parity harness holds both session surfaces to.
 struct SurfaceParityRow: Sendable, CustomTestStringConvertible {
     /// The shape's name, which also names the case in test output.
     let name: String
 
-    /// The turn shape the scripted model plays out.
-    let script: ScriptedTurnScript
+    /// The answer shape the scripted model plays out.
+    let script: ScriptedAnswerScript
 
     /// Builds a fresh set of tools to mount — called once per surface, so
     /// neither surface reads the other's call log.
@@ -78,13 +78,13 @@ struct SurfaceParityRow: Sendable, CustomTestStringConvertible {
     let expectedDeliveredToolOutputs: [String]
 
     /// The normalized description of the error both surfaces must end with, or
-    /// `nil` when the turn must complete.
+    /// `nil` when the answer must complete.
     let expectedFailureDescription: String?
 
-    /// The number of model turns the shape takes: one generation per scripted
-    /// round, plus the one that answers — unless the turn aborts, in which case
-    /// the answering generation never runs.
-    var expectedModelTurnCount: Int {
+    /// The number of generation passes the shape takes: one pass per scripted
+    /// round, plus the one that answers — unless the answer aborts, in which
+    /// case the answering generation never runs.
+    var expectedGenerationPassCount: Int {
         expectedFailureDescription == nil ? script.rounds.count + 1 : script.rounds.count
     }
 
@@ -92,12 +92,12 @@ struct SurfaceParityRow: Sendable, CustomTestStringConvertible {
     var expectedToolExecutionCount: Int { script.rounds.reduce(0) { $0 + $1.count } }
 
     /// The whole outcome both surfaces must produce.
-    var expectedOutcome: SurfaceTurnOutcome {
-        SurfaceTurnOutcome(
+    var expectedOutcome: SurfaceAnswerOutcome {
+        SurfaceAnswerOutcome(
             answer: expectedAnswer,
             requestedCalls: expectedCalls,
             deliveredToolOutputs: expectedDeliveredToolOutputs,
-            modelTurnCount: expectedModelTurnCount,
+            generationPassCount: expectedGenerationPassCount,
             toolExecutionCount: expectedToolExecutionCount,
             failureDescription: expectedFailureDescription)
     }
@@ -108,7 +108,7 @@ struct SurfaceParityRow: Sendable, CustomTestStringConvertible {
 
 /// Task ^vhjhaey: holds `RoutedSession`'s two generation surfaces —
 /// `respond(to:)` and `streamEvents(to:)` — to one observable outcome on a
-/// tool-using turn.
+/// tool-using answer.
 ///
 /// Every Router feature a host wants arrives by moving that host off a plain
 /// `LanguageModelSession` and onto a `RoutedSession`. That move has to be
@@ -117,11 +117,11 @@ struct SurfaceParityRow: Sendable, CustomTestStringConvertible {
 /// output. Task ^cvtfem3 fixed one such defect; this suite is the guard that
 /// stops the next one taking a different shape.
 ///
-/// The suite is table-driven: one row per turn shape, and one new row covers a
-/// new case rather than a new test. Each row is asserted twice — the two
+/// The suite is table-driven: one row per answer shape, and one new row covers
+/// a new case rather than a new test. Each row is asserted twice — the two
 /// surfaces against each other, and each of them against the outcome the row
 /// states — so a shape that breaks identically on both surfaces still fails.
-@Suite("respond(to:) and streamEvents(to:) behave identically on a tool-using turn")
+@Suite("respond(to:) and streamEvents(to:) behave identically on a tool-using answer")
 struct SurfaceParityTests {
     /// The suite's temp-directory prefix, handed to
     /// ``RouterTestFixtures/makeTempDir(prefix:)``.
@@ -151,8 +151,8 @@ struct SurfaceParityTests {
         static let second = "marker-independent-b"
     }
 
-    /// The position of the turn's first tool output in the transcript — where a
-    /// chained call reads its argument from.
+    /// The position of the answer's first tool output in the transcript —
+    /// where a chained call reads its argument from.
     private static let firstOutputIndex = 0
 
     /// The tool output a call naming ``Step/first`` produces.
@@ -172,7 +172,7 @@ struct SurfaceParityTests {
     private static let failureOutput = String(
         describing: ThrowingMarkerTool.CallFailure(step: Step.failing))
 
-    /// The stable text a thrown turn is compared by: the failing tool's name
+    /// The stable text a thrown answer is compared by: the failing tool's name
     /// and the error its body raised.
     ///
     /// The SDK wraps a tool failure in a `LanguageModelSession.ToolCallError`
@@ -216,11 +216,11 @@ struct SurfaceParityTests {
             argument: .priorToolOutput(index: index))
     }
 
-    /// The turn shapes both surfaces are held to.
+    /// The answer shapes both surfaces are held to.
     static let rows: [SurfaceParityRow] = [
         SurfaceParityRow(
             name: "one call, one output, answer",
-            script: ScriptedTurnScript(
+            script: ScriptedAnswerScript(
                 rounds: [[call(on: MarkerEmittingTool.toolName, naming: Step.first)]]),
             makeTools: { [MarkerEmittingTool()] },
             expectedAnswer: ScriptedToolFixture.answerPrefix + firstOutput,
@@ -233,7 +233,7 @@ struct SurfaceParityTests {
 
         SurfaceParityRow(
             name: "two sequential calls, each output feeding the next",
-            script: ScriptedTurnScript(
+            script: ScriptedAnswerScript(
                 rounds: [
                     [call(on: MarkerEmittingTool.toolName, naming: Step.first)],
                     [call(on: MarkerEmittingTool.toolName, readingOutput: firstOutputIndex)],
@@ -251,8 +251,8 @@ struct SurfaceParityTests {
             expectedFailureDescription: nil),
 
         SurfaceParityRow(
-            name: "two independent calls in one turn",
-            script: ScriptedTurnScript(
+            name: "two independent calls in one answer",
+            script: ScriptedAnswerScript(
                 rounds: [
                     [
                         call(on: IndependentTool.first, naming: Step.first),
@@ -275,13 +275,13 @@ struct SurfaceParityTests {
             expectedFailureDescription: nil),
 
         // The failing shape feeds the error back into generation. The mount
-        // gives the failure to the model as the call's output, so the turn does
-        // not end: the answering generation runs and reads the failure text,
-        // which names the step the call was made with. Both surfaces do exactly
-        // that, which is the parity claim this row locks.
+        // gives the failure to the model as the call's output, so the answer
+        // does not end: the answering generation runs and reads the failure
+        // text, which names the step the call was made with. Both surfaces do
+        // exactly that, which is the parity claim this row locks.
         SurfaceParityRow(
             name: "a call that throws",
-            script: ScriptedTurnScript(
+            script: ScriptedAnswerScript(
                 rounds: [[call(on: ThrowingMarkerTool.toolName, naming: Step.failing)]]),
             makeTools: { [ThrowingMarkerTool()] },
             expectedAnswer: ScriptedToolFixture.answerPrefix + failureOutput,
@@ -293,7 +293,7 @@ struct SurfaceParityTests {
 
         SurfaceParityRow(
             name: "a tool with non-String output",
-            script: ScriptedTurnScript(
+            script: ScriptedAnswerScript(
                 rounds: [[call(on: NonStringMarkerTool.toolName, naming: Step.first)]]),
             makeTools: { [NonStringMarkerTool()] },
             expectedAnswer: ScriptedToolFixture.answerPrefix + firstOutput,
@@ -305,11 +305,11 @@ struct SurfaceParityTests {
             expectedFailureDescription: nil),
 
         // A tool is still mounted here, so this shape also says that mounting
-        // one does not by itself put a call, an output, or an extra model turn
-        // into a turn that asked for none.
+        // one does not by itself put a call, an output, or an extra generation
+        // pass into an answer that asked for none.
         SurfaceParityRow(
             name: "no calls at all",
-            script: ScriptedTurnScript(rounds: []),
+            script: ScriptedAnswerScript(rounds: []),
             makeTools: { [MarkerEmittingTool()] },
             expectedAnswer: ScriptedToolFixture.answerPrefix
                 + ScriptedToolFixture.noToolOutputsMarker,
@@ -318,20 +318,20 @@ struct SurfaceParityTests {
             expectedFailureDescription: nil),
     ]
 
-    /// Drives one turn for `row` and gathers what it did.
+    /// Drives one answer for `row` and gathers what it did.
     ///
     /// - Parameters:
-    ///   - row: The turn shape to play out.
-    ///   - answering: How this surface produces the turn's answer text from the
+    ///   - row: The answer shape to play out.
+    ///   - answering: How this surface produces the answer text from the
     ///     vended session — the one thing the two surfaces do differently.
-    /// - Returns: The turn's observed outcome.
+    /// - Returns: The observed outcome of the answer.
     /// - Throws: Whatever building the session throws. A failure raised by the
-    ///   turn itself is captured into the outcome instead, so a surface that
+    ///   answer itself is captured into the outcome instead, so a surface that
     ///   throws can be compared against one that does not.
-    private static func runTurn(
+    private static func runAnswer(
         _ row: SurfaceParityRow,
         answering: (RoutedSession) async throws -> String
-    ) async throws -> SurfaceTurnOutcome {
+    ) async throws -> SurfaceAnswerOutcome {
         let tools = row.makeTools()
         let fixture = try await ScriptedSessionFixture.make(
             playing: row.script,
@@ -346,21 +346,21 @@ struct SurfaceParityTests {
         } catch {
             failureDescription = Self.failureDescription(of: error)
         }
-        return SurfaceTurnOutcome(
+        return SurfaceAnswerOutcome(
             answer: answer,
             requestedCalls: fixture.log.requestedCalls,
             deliveredToolOutputs: fixture.log.deliveredToolOutputs,
-            modelTurnCount: fixture.log.modelTurnCount,
+            generationPassCount: fixture.log.generationPassCount,
             toolExecutionCount: tools.reduce(0) { $0 + $1.calledSteps.count },
             failureDescription: failureDescription)
     }
 
-    /// Concatenates the text a `streamEvents(to:)` turn yields, ignoring every
-    /// other event: an event's presence is not evidence of delivery, only the
-    /// text is.
+    /// Concatenates the text a `streamEvents(to:)` answer yields, ignoring
+    /// every other event: an event's presence is not evidence of delivery,
+    /// only the text is.
     ///
-    /// - Parameter session: The session to stream a turn on.
-    /// - Returns: The turn's answer text.
+    /// - Parameter session: The session to stream an answer on.
+    /// - Returns: The answer text.
     /// - Throws: Whatever the stream throws.
     private static func streamedAnswer(from session: RoutedSession) async throws -> String {
         var answer = ""
@@ -372,11 +372,11 @@ struct SurfaceParityTests {
     }
 
     @Test("both surfaces produce the same observable outcome", arguments: rows)
-    func surfacesAgreeOnOneToolUsingTurn(_ row: SurfaceParityRow) async throws {
-        let responded = try await Self.runTurn(row) {
+    func surfacesAgreeOnOneToolUsingAnswer(_ row: SurfaceParityRow) async throws {
+        let responded = try await Self.runAnswer(row) {
             try await $0.respond(to: ScriptedToolFixture.prompt)
         }
-        let streamed = try await Self.runTurn(row) { try await Self.streamedAnswer(from: $0) }
+        let streamed = try await Self.runAnswer(row) { try await Self.streamedAnswer(from: $0) }
 
         #expect(
             responded == streamed,

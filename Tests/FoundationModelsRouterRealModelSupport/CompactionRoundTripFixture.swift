@@ -1,11 +1,11 @@
 import FoundationModelsRouter
 
 /// The scripted fixture ``CompactionRoundTripIntegrationTests`` drives and
-/// `ScriptedTurnSizingTests` bounds: the working context, the reply ceiling,
-/// the system instructions, the compaction budget, and the scripted turns.
+/// `ScriptedAnswerSizingTests` bounds: the working context, the reply ceiling,
+/// the system instructions, the compaction budget, and the scripted messages.
 ///
 /// One type carries all five because they are one measurement, not five
-/// settings: the turns are sized against the context's 0.80 trigger, the
+/// settings: the messages are sized against the context's 0.80 trigger, the
 /// sizing suite multiplies the reply ceiling into its worst case, and the
 /// compaction budget sets the size the one summarizer call states. The
 /// gated suite lives in the real-model integration target and the sizing
@@ -18,33 +18,34 @@ import FoundationModelsRouter
 /// limit now. The sizing suite is still the cheaper of the two.
 public enum CompactionRoundTripFixture {
     /// The working context the round trip resolves the tiny model at —
-    /// smaller than ``RealModels/context`` so scripted turns cross the 0.80
+    /// smaller than ``RealModels/context`` so scripted messages cross the 0.80
     /// compaction trigger without needing huge prompts.
     public static let context = 2048
 
-    /// The reply ceiling every scripted turn below is submitted with, and the
-    /// worst case `ScriptedTurnSizingTests` bounds a turn's total size by.
+    /// The reply ceiling every scripted message below is submitted with, and
+    /// the worst case `ScriptedAnswerSizingTests` bounds the total size of an
+    /// answer by.
     ///
     /// Deliberately local, and deliberately not
     /// `GatedRealModelBudget.responseTokenCeiling` — the shared ceiling every
-    /// other gated turn in this package now uses. This constant is a fixture
-    /// dimension, not only a limit on one reply: `ScriptedTurnSizingTests`
-    /// sizes the live context of the scripted turns on the condition that
+    /// other gated answer in this package now uses. This constant is a fixture
+    /// dimension, not only a limit on one reply: `ScriptedAnswerSizingTests`
+    /// sizes the live context of the scripted answers on the condition that
     /// each reply adds almost nothing, and a small ceiling is what keeps a
     /// reply small. The shared ceiling of 4096 is twice the whole working
     /// context of ``context`` (2048), so one long reply could fill the window
-    /// before the scripted turns reach the trigger. Raise this value only
+    /// before the scripted answers reach the trigger. Raise this value only
     /// together with the fixture it sizes.
     ///
-    /// The turns of the gated loop assert nothing about their own replies, so
-    /// a reply this ceiling truncates costs the round trip nothing. The two
-    /// turns that do read a reply — the post-compaction recall and the turn on
-    /// the restored session — carry the shared ceiling instead.
+    /// The answers of the gated loop assert nothing about their own replies,
+    /// so a reply this ceiling truncates costs the round trip nothing. The two
+    /// answers that do read a reply — the post-compaction recall and the
+    /// answer on the restored session — carry the shared ceiling instead.
     public static let replyMaxTokens = 64
 
     /// The system instructions the round trip's session is created with —
     /// part of the transcript's header, which the new snapshot keeps word for
-    /// word, so `ScriptedTurnSizingTests` counts it too.
+    /// word, so `ScriptedAnswerSizingTests` counts it too.
     public static let instructions =
         "You are a terse assistant. Follow each instruction exactly and keep replies to one sentence."
 
@@ -58,7 +59,7 @@ public enum CompactionRoundTripFixture {
     /// A 0.25 target of this fixture's 2048-token working context is 512
     /// tokens. The live context that crossed the 1638-token trigger is over
     /// that target, so the compaction makes its call.
-    /// `ScriptedTurnSizingTests/compactionTargetLeavesRoomForASummary()`
+    /// `ScriptedAnswerSizingTests/compactionTargetLeavesRoomForASummary()`
     /// holds the target over the instructions, so the stated size is more
     /// than zero and the call writes the summary whose recall step 3
     /// measures. The value 0.25 predates task ^pke18c2: task f80n046 chose it
@@ -71,33 +72,33 @@ public enum CompactionRoundTripFixture {
     /// reason about. See that comment for why the value is 0.25.
     private static let compactionTargetShare = 0.25
 
-    /// Long, distinct scripted documents fed into the session one per turn —
+    /// Long, distinct scripted documents fed into the session one per message —
     /// enough cumulative text, against ``context``'s small 2048-token budget,
-    /// to cross the 0.80 compaction trigger within a handful of turns. The
+    /// to cross the 0.80 compaction trigger within a handful of answers. The
     /// first plants a fact only recoverable, after compaction, from the
     /// compaction's summary — mirroring `Examples/CompactionDemo`'s own fixtures.
     ///
-    /// Each turn is a long paragraph, and the length is load-bearing rather
+    /// Each message is a long paragraph, and the length is load-bearing rather
     /// than decorative: crossing the trigger takes 1638 measured tokens
-    /// (`0.80 * 2048`), so the turns have to carry that much text between them
-    /// before the gated loop runs out of them. The shorter versions these
+    /// (`0.80 * 2048`), so the messages have to carry that much text between
+    /// them before the gated loop runs out of them. The shorter versions these
     /// replaced totalled roughly 718 estimated tokens across all eight — the
     /// live run measured 846 and stalled at a `contextFill` of 0.41, less than
     /// half the trigger, because the suite had never actually executed against
     /// real hardware to find out (task 5m97h14).
     ///
-    /// The list grew from eight turns to ten for the same reason a second time
-    /// (task ^wnj3ka3). Eight turns estimated 1836 tokens, which reads as a
-    /// comfortable margin over the 1638-token trigger and is not one: the live
-    /// run measured 1633 and stopped at a `contextFill` of 0.79736328125, five
-    /// tokens short. The estimate counts about 1.23 tokens for each token the
-    /// model's own tokenizer counts, so the two added turns are what carry the
-    /// live run past the trigger rather than up to it.
+    /// The list grew from eight messages to ten for the same reason a second
+    /// time (task ^wnj3ka3). Eight messages estimated 1836 tokens, which reads
+    /// as a comfortable margin over the 1638-token trigger and is not one: the
+    /// live run measured 1633 and stopped at a `contextFill` of 0.79736328125,
+    /// five tokens short. The estimate counts about 1.23 tokens for each token
+    /// the model's own tokenizer counts, so the two added messages are what
+    /// carry the live run past the trigger rather than up to it.
     ///
-    /// `ScriptedTurnSizingTests` holds both bounds mechanically, in the tokens
+    /// `ScriptedAnswerSizingTests` holds both bounds mechanically, in the tokens
     /// a live run measures, so the fixture can neither shrink below the trigger
     /// nor grow past the working context without a red `swift test`.
-    public static let scriptedTurns: [String] = [
+    public static let scriptedAnswers: [String] = [
         """
         Project brief: this session's internal vault code is CRIMSON-77.
         Remember it precisely; you will be asked about it later. The project

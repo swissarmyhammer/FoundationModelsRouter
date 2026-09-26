@@ -17,8 +17,8 @@ import Testing
 /// submission goes through the production backend and its per-session
 /// ``SessionLanguageModel``, which reports each pass to the session.
 ///
-/// No wait here is a bare `await` on a turn that can stay suspended: the test
-/// opens every latch and releases every step before it awaits a turn, so a
+/// No wait here is a bare `await` on an answer that can stay suspended: the test
+/// opens every latch and releases every step before it awaits an answer, so a
 /// regression fails the test and does not hang the run.
 @Suite("A wait for the worker is not a stalled generation (tasks ^ake8sax, ^1psqdm9)")
 struct QueuedPassStallWatchTests {
@@ -95,11 +95,11 @@ struct QueuedPassStallWatchTests {
         await waiting.setGenerationStallReportInterval(Self.reportInterval)
         let (holdingLog, holdingDrain) = await SessionEventLog.watch(holding)
 
-        let holdingTurn = Task { try await holding.respond(to: Self.holdingPrompt) }
+        let holdingAnswer = Task { try await holding.respond(to: Self.holdingPrompt) }
         let holdingInside = await BoundedWait.conditionReached("the pass of the holding session") {
             fixture.passes.recorded.count == 1
         }
-        let (waitingLog, waitingTurn) = SessionEventLog.collect(await waiting.streamEvents(to: Self.waitingPrompt))
+        let (waitingLog, waitingAnswer) = SessionEventLog.collect(await waiting.streamEvents(to: Self.waitingPrompt))
         let waitReported = await BoundedWait.conditionReached("the report of the wait") {
             await !Self.queuedIds(in: waitingLog.events).isEmpty
         }
@@ -108,8 +108,8 @@ struct QueuedPassStallWatchTests {
         let stillWaiting = await fixture.queue.waitingCount == 1
 
         await fixture.latch.open()
-        _ = try await holdingTurn.value
-        try await waitingTurn.value
+        _ = try await holdingAnswer.value
+        try await waitingAnswer.value
         let holdingAnswered = await BoundedWait.conditionReached("the answer of the holding session on its feed") {
             await holdingLog.events.contains(where: \.isAnswerEnd)
         }
@@ -158,8 +158,8 @@ struct QueuedPassStallWatchTests {
         let session = resolved.profile.standard.makeSession(tools: [Self.makeHoldingTool()])
         await session.setGenerationStallReportInterval(Self.reportInterval)
 
-        let (log, turn) = SessionEventLog.collect(await session.streamEvents(to: Self.holdingPrompt))
-        try await turn.value
+        let (log, answer) = SessionEventLog.collect(await session.streamEvents(to: Self.holdingPrompt))
+        try await answer.value
 
         let events = await log.events
         let bodyOpened = try #require(events.firstIndex { Self.isToolInvocation($0, closed: false) })
@@ -183,12 +183,12 @@ struct QueuedPassStallWatchTests {
         let session = resolved.profile.standard.makeSession()
         await session.setGenerationStallReportInterval(Self.reportInterval)
 
-        let (log, turn) = SessionEventLog.collect(await session.streamEvents(to: Self.holdingPrompt))
+        let (log, answer) = SessionEventLog.collect(await session.streamEvents(to: Self.holdingPrompt))
         let reported = await BoundedWait.conditionReached("a stall report of the held pass") {
             await !log.stalls.isEmpty
         }
         await fixture.latch.open()
-        try await turn.value
+        try await answer.value
 
         #expect(reported)
         let stall = try #require(await log.stalls.first)
@@ -211,11 +211,11 @@ struct QueuedPassStallWatchTests {
         let waiting = resolved.profile.standard.makeSession(tools: [Self.makeHoldingTool()])
         await waiting.setGenerationStallReportInterval(Self.reportInterval)
 
-        let holdingTurn = Task { try await holding.respond(to: Self.holdingPrompt) }
+        let holdingAnswer = Task { try await holding.respond(to: Self.holdingPrompt) }
         let holdingInside = await BoundedWait.conditionReached("the pass of the holding session") {
             fixture.passes.recorded.count == 1
         }
-        let (log, waitingTurn) = SessionEventLog.collect(await waiting.streamEvents(to: Self.waitingPrompt))
+        let (log, waitingAnswer) = SessionEventLog.collect(await waiting.streamEvents(to: Self.waitingPrompt))
         let waitReported = await BoundedWait.conditionReached("the report of the wait") {
             await !Self.queuedIds(in: log.events).isEmpty
         }
@@ -230,8 +230,8 @@ struct QueuedPassStallWatchTests {
         }
         let stalls = await log.stalls
         step.signal()
-        _ = try await holdingTurn.value
-        try await waitingTurn.value
+        _ = try await holdingAnswer.value
+        try await waitingAnswer.value
 
         #expect(holdingInside)
         #expect(waitReported)

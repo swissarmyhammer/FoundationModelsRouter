@@ -24,8 +24,8 @@ import Testing
 ///
 /// Two more tests hold the substitution itself. The substituted entry keeps
 /// the recorded entry id and the recorded tool definitions, so a restored
-/// session keeps its tool declarations. A turn after a restore appends only
-/// that turn's own entries, so an override never enters the recorded
+/// session keeps its tool declarations. An answer after a restore appends only
+/// that answer's own entries, so an override never enters the recorded
 /// `transcript.jsonl`.
 ///
 /// Everything runs against stubs — a stub ``ModelLoader``, a plain stub
@@ -131,7 +131,7 @@ struct SessionRestorationTests {
     /// sidecar are both on disk before a restore reads them.
     private static let recordedPrompt = "remember 42"
 
-    /// The prompt the restored session answers. A turn after a restore is what
+    /// The prompt the restored session answers. An answer after a restore is what
     /// makes the restored session diff its backend transcript and append to
     /// the recorded file.
     private static let resumedPrompt = "what did I ask you to remember"
@@ -334,20 +334,20 @@ struct SessionRestorationTests {
     }
 
     /// Records a root session whose transcript holds no `.instructions` entry,
-    /// restores it under ``freshInstructions``, and runs one turn on it.
+    /// restores it under ``freshInstructions``, and runs one answer on it.
     ///
-    /// The turn is what makes the restored session diff its backend transcript
+    /// The answer is what makes the restored session diff its backend transcript
     /// against the entries it counts as persisted. A restore that undercounts
     /// them writes recorded entries to disk a second time.
     ///
     /// - Parameters:
     ///   - cacheDir: The per-test cache directory.
     ///   - recordingsDir: The per-test durable transcripts root.
-    ///   - answersAPrompt: Whether the recording holds one turn of its own
+    ///   - answersAPrompt: Whether the recording holds one answer of its own
     ///     before the restore.
     /// - Returns: The recording, so a test can read what it now holds on disk.
     @MainActor
-    private static func takeOneTurnAfterRestoring(
+    private static func takeOneAnswerAfterRestoring(
         cacheDir: URL, recordingsDir: URL, answersAPrompt: Bool
     ) async throws -> Recording {
         let container = SeedCapturingContainer(recordsInstructionsEntry: false)
@@ -636,11 +636,11 @@ struct SessionRestorationTests {
                 == [Self.recordedToolDescription])
     }
 
-    // MARK: - A turn after a restore records only that turn
+    // MARK: - An answer after a restore records only that answer
 
-    @Test("a turn after a restore with an override records no instructions event")
+    @Test("an answer after a restore with an override records no instructions event")
     @MainActor
-    func aTurnAfterARestoreRecordsNoInstructionsEvent() async throws {
+    func anAnswerAfterARestoreRecordsNoInstructionsEvent() async throws {
         let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionRestorationTests")
         let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionRestorationTests")
         defer {
@@ -648,7 +648,7 @@ struct SessionRestorationTests {
             try? FileManager.default.removeItem(at: recordingsDir)
         }
 
-        let recording = try await Self.takeOneTurnAfterRestoring(
+        let recording = try await Self.takeOneAnswerAfterRestoring(
             cacheDir: cacheDir, recordingsDir: recordingsDir, answersAPrompt: false)
 
         let recorded = try Self.recordedEvents(
@@ -656,9 +656,9 @@ struct SessionRestorationTests {
         #expect(recorded.isEmpty)
     }
 
-    @Test("a turn after a restore with an override records only that turn's entries")
+    @Test("an answer after a restore with an override records only that answer's entries")
     @MainActor
-    func aTurnAfterARestoreRecordsOnlyItsOwnEntries() async throws {
+    func anAnswerAfterARestoreRecordsOnlyItsOwnEntries() async throws {
         let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionRestorationTests")
         let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionRestorationTests")
         defer {
@@ -666,7 +666,7 @@ struct SessionRestorationTests {
             try? FileManager.default.removeItem(at: recordingsDir)
         }
 
-        let recording = try await Self.takeOneTurnAfterRestoring(
+        let recording = try await Self.takeOneAnswerAfterRestoring(
             cacheDir: cacheDir, recordingsDir: recordingsDir, answersAPrompt: true)
 
         let kinds = try Self.recordedEntryKinds(

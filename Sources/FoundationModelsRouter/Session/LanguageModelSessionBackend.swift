@@ -5,7 +5,7 @@ import FoundationModels
 /// begins a new one.
 ///
 /// The element type of ``LanguageModelSessionBackend/streamResponseFragments(to:maxTokens:)``.
-/// A tool-using turn can close one response and start a new one. An
+/// A tool-using submission can close one response and start a new one. An
 /// accumulator uses ``restartsResponse`` to drop the superseded text.
 ///
 /// A fragment can also report progress with no new text: a snapshot that adds
@@ -17,7 +17,7 @@ public struct ResponseFragment: Sendable, Equatable {
     public let text: String
 
     /// `true` when this fragment begins a new response that supersedes every
-    /// fragment delivered so far this turn.
+    /// fragment delivered so far in this submission.
     public let restartsResponse: Bool
 
     /// The kind of append this fragment reports to the stall watch.
@@ -98,7 +98,7 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error>
 
     /// Streams a text response as ``ResponseFragment``s. A backend that
-    /// abandons one response and begins another mid-turn reports that here.
+    /// abandons one response and begins another in one submission reports it.
     ///
     /// There is a default implementation. Only a backend that can restart a
     /// response overrides it.
@@ -169,7 +169,7 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// of the owning session's own submission, where the model waits in the
     /// tool and no concurrent writer exists
     /// (``RoutedSessionActor/reportGenerationCallAtToolOpen()``). The counts
-    /// are running totals since the session began, not a per-turn delta.
+    /// are running totals since the session began, not the delta of one submission.
     func usageTokenCounts() -> (input: Int, output: Int)?
 
     /// The output token count of the last generation call that the most

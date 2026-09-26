@@ -9,7 +9,7 @@ import Tracing
 /// at once with ``GenerationQueueError/waitInsideOpenSubmission(model:)``. Long work belongs in a background tool.
 struct RunToCompletionRunner<
     Arguments: ConvertibleFromGeneratedContent & Sendable
->: Tool, TurnBoundaryTool, ToolDecorator {
+>: Tool, SubmissionBoundaryTool, ToolDecorator {
     /// The wrapped tool. Internal so wiring tests can assert the decorator chain.
     let wrapped: any Tool<Arguments, String>
 
@@ -65,7 +65,7 @@ struct RunToCompletionRunner<
     /// Runs one call in band and returns the wrapped tool's output.
     ///
     /// The call runs inside one ``RouterTracing/SpanName/tool`` span, nested in
-    /// the turn's span, reporting ``RouterTracing/ToolRunKind/foreground``. The
+    /// the span of its submission, reporting ``RouterTracing/ToolRunKind/foreground``. The
     /// span carries the run's own terminal outcome, so a call that timed out is
     /// distinguishable from one that failed.
     ///

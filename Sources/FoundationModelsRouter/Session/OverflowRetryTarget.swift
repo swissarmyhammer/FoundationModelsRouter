@@ -15,7 +15,7 @@ private let overflowRetryLogger = makeModuleLogger(category: "OverflowRetry")
 ///   ``promptTokens`` minus the ceiling. The retry compacts to that room, and
 ///   never to more than the configured target of the budget
 ///   (``configuredTargetTokens``).
-/// - ``Rule/configuredTarget``: the caller named no ceiling, so the turn gave
+/// - ``Rule/configuredTarget``: the caller named no ceiling, so the submission gave
 ///   the backend the whole window. No room can be computed from that ceiling.
 ///   The retry compacts to the configured target of the budget.
 ///
@@ -95,7 +95,7 @@ public struct OverflowRetryTarget: Sendable, Equatable {
         return min(roomTokens, configuredTargetTokens)
     }
 
-    /// Whether a compaction can make the turn fit. When ``targetTokens`` is not
+    /// Whether a compaction can make the submission fit. When ``targetTokens`` is not
     /// positive, no compaction helps.
     public var leavesRoom: Bool {
         targetTokens > 0
@@ -118,14 +118,14 @@ public struct OverflowRetryTarget: Sendable, Equatable {
     }
 
     /// Records in the log which rule chose the target, what the retry aims
-    /// for, or that no compaction can make the turn fit.
+    /// for, or that no compaction can make the submission fit.
     ///
-    /// - Parameter sessionID: The session whose turn overflowed.
+    /// - Parameter sessionID: The session whose submission overflowed.
     func log(sessionID: ULID) {
         let outcome =
             leavesRoom
             ? "the retry compacts the transcript to \(targetTokens) tokens"
-            : "no compaction makes the turn fit, so the turn does not retry"
+            : "no compaction makes the submission fit, so the answer does not retry"
         overflowRetryLogger.warning(
             "session \(sessionID.description, privacy: .public): context overflow; window \(contextTokens, privacy: .public), prompt \(promptTokens, privacy: .public), configured target \(configuredTargetTokens, privacy: .public) tokens; \(ruleDescription, privacy: .public); \(outcome, privacy: .public)"
         )

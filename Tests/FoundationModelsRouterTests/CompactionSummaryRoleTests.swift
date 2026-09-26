@@ -9,7 +9,7 @@ import Testing
 /// message with a header, and that a cold transcript still reads it as a
 /// compaction row (task ^5t72pdx).
 ///
-/// Measured on Qwen3.8-27B before this task: after a turn-start compaction,
+/// Measured on Qwen3.8-27B before this task: after a compaction at the start of an answer,
 /// the summary kept "Port 6543", but the summary was an assistant message
 /// that the model did not write. The model answered "I do not have access
 /// to your specific infrastructure configuration".

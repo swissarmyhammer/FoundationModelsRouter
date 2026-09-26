@@ -9,7 +9,7 @@ import Foundation
 /// and the text of the call in flight, line by line. When one window of
 /// generated tokens holds no new line, the session stops the call, keeps the
 /// repeated part out of the render that the model receives next, and runs
-/// one more attempt of the same turn with a short prompt that tells the
+/// one more submission of the same answer with a short prompt that tells the
 /// model to act.
 ///
 /// A host passes this value through ``SessionConfiguration/repetitionDetection``.
@@ -29,7 +29,7 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
     /// The default of ``recoveriesPerAnswer``: 2 recoveries.
     public static let defaultRecoveriesPerAnswer = 2
 
-    /// Whether the session watches the calls of its turns. When `false`, no
+    /// Whether the session watches the calls of its submissions. When `false`, no
     /// call stops for repetition.
     public var isEnabled: Bool
 
@@ -67,7 +67,7 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
     /// Creates the settings. Each parameter defaults to its named default.
     ///
     /// - Parameters:
-    ///   - isEnabled: Whether the session watches the calls of its turns.
+    ///   - isEnabled: Whether the session watches the calls of its submissions.
     ///   - windowTokens: The window, in generated tokens, that must hold at
     ///     least one new line.
     ///   - minimumLineLength: The minimum length of a line that counts.

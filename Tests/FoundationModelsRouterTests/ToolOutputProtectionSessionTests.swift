@@ -10,7 +10,7 @@ import Testing
 ///
 /// Each session starts with a transcript that holds one protected tool output
 /// (a loaded skill body) and one unprotected tool output (a search result),
-/// then takes some plain turns. A compaction must keep the skill body word for
+/// then answers some plain messages. A compaction must keep the skill body word for
 /// word next to the summary and remove the search result.
 ///
 /// Everything runs against stubs: a ``StubSessionBackend``-backed container
@@ -27,7 +27,7 @@ struct ToolOutputProtectionSessionTests {
     // MARK: - Stub container
 
     /// Vends a ``StubSessionBackend`` per session. A fresh session starts with
-    /// ``seedEntries``, as if it already took the two tool turns. A restored
+    /// ``seedEntries``, as if it already gave the two tool answers. A restored
     /// session starts with the transcript the restore rebuilt.
     private struct SeededLLMContainer: LoadedLLMContainer {
         /// The scripted counter of this container: one token per `Character`.
@@ -68,8 +68,8 @@ struct ToolOutputProtectionSessionTests {
     private static func resolveProfile(in directories: TestDirectories, routerId: ULID) async throws
         -> LanguageModelProfile {
         let container = SeededLLMContainer(
-            seedEntries: [TranscriptFixtures.makeInstructions()] + (try Fixtures.skillTurn())
-                + (try Fixtures.searchTurn()))
+            seedEntries: [TranscriptFixtures.makeInstructions()] + (try Fixtures.skillAnswer())
+                + (try Fixtures.searchAnswer()))
         let router = RouterTestFixtures.makeRouter(
             id: routerId,
             cacheDir: directories.cacheDir,
@@ -108,7 +108,7 @@ struct ToolOutputProtectionSessionTests {
         defer { directories.remove() }
         let profile = try await Self.resolveProfile(in: directories, routerId: .generate())
         let session = profile.standard.makeSession(toolOutputProtection: Fixtures.rule)
-        try await driveTurns(Fixtures.recentTurnCount, on: session)
+        try await driveAnswers(Fixtures.recentAnswerCount, on: session)
 
         let result = try await Self.compact(session: session)
 
@@ -125,7 +125,7 @@ struct ToolOutputProtectionSessionTests {
         let profile = try await Self.resolveProfile(in: directories, routerId: .generate())
         let session = profile.standard.makeSession(
             configuration: SessionConfiguration(toolOutputProtection: Fixtures.rule))
-        try await driveTurns(Fixtures.recentTurnCount, on: session)
+        try await driveAnswers(Fixtures.recentAnswerCount, on: session)
 
         let result = try await Self.compact(session: session)
 
@@ -139,7 +139,7 @@ struct ToolOutputProtectionSessionTests {
         defer { directories.remove() }
         let profile = try await Self.resolveProfile(in: directories, routerId: .generate())
         let session = profile.standard.makeSession()
-        try await driveTurns(Fixtures.recentTurnCount, on: session)
+        try await driveAnswers(Fixtures.recentAnswerCount, on: session)
 
         let result = try await Self.compact(session: session)
 
@@ -157,7 +157,7 @@ struct ToolOutputProtectionSessionTests {
         let profile = try await Self.resolveProfile(in: directories, routerId: .generate())
         let session = profile.standard.makeSession(
             configuration: SessionConfiguration(toolOutputProtection: Fixtures.rule))
-        try await driveTurns(Fixtures.recentTurnCount, on: session)
+        try await driveAnswers(Fixtures.recentAnswerCount, on: session)
 
         let fork = try await session.fork(workingDirectory: nil)
         try await Self.compact(session: fork)
@@ -175,7 +175,7 @@ struct ToolOutputProtectionSessionTests {
         let original = try await Self.resolveProfile(in: directories, routerId: routerId)
         let session = original.standard.makeSession(
             configuration: SessionConfiguration(toolOutputProtection: Fixtures.rule))
-        try await driveTurns(Fixtures.recentTurnCount, on: session)
+        try await driveAnswers(Fixtures.recentAnswerCount, on: session)
 
         let restoring = try await Self.resolveProfile(in: directories, routerId: routerId)
         let restored = try await restoring.standard.restoreSession(
@@ -194,7 +194,7 @@ struct ToolOutputProtectionSessionTests {
         let original = try await Self.resolveProfile(in: directories, routerId: routerId)
         let session = original.standard.makeSession(
             configuration: SessionConfiguration(toolOutputProtection: Fixtures.rule))
-        try await driveTurns(Fixtures.recentTurnCount, on: session)
+        try await driveAnswers(Fixtures.recentAnswerCount, on: session)
         try await Self.compact(session: session)
         let liveTranscript = await session.transcript
         let liveIds = liveTranscript.map(\.id)

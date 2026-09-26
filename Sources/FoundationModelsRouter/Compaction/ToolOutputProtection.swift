@@ -32,8 +32,8 @@ public typealias ToolOutputProtection = @Sendable (_ call: Transcript.ToolCall, 
 /// that made them, found by a ``ToolOutputProtection`` rule.
 ///
 /// The pairing scope starts again at each `.prompt` entry, the same scope a
-/// turn's diff uses (see ``ToolCallOutputPairing``). Thus one value can read
-/// one turn, or a whole transcript whose header holds kept pairs.
+/// submission diff uses (see ``ToolCallOutputPairing``). Thus one value can read
+/// one submission, or a whole transcript whose header holds kept pairs.
 struct ProtectedToolOutputs {
     /// The id suffix of a `.toolCalls` entry reduced to its protected calls.
     ///

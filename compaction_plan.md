@@ -14,6 +14,12 @@ token usage from the live backend and the recorded event stamps (the fill —
 (restore). Putting it anywhere else would mean injecting all four through
 seams; putting it here makes every default real.
 
+Words: a *submission* is one SDK call (`respond`/`streamResponse`, with all of
+its passes and tool bodies); an *answer* is the chain of submissions from the
+delivery of a message to the final reply; a *message* is a caller prompt or
+mail. This plan was written before those words existed; task ^f33q8gw put them
+in place of the old word "turn".
+
 Hard requirements:
 
 1. **Compaction is invoked on a `RoutedSession`** with a passed-in compaction
@@ -64,14 +70,14 @@ like any other entry. Router registers `CompactionSegment` in its own
 Deterministic first, model-assisted last; stages run in order until the
 transcript is under target:
 
-1. **`ToolOutputElision(keepRecentTurns: 4)`** — replace `toolOutput` payloads
+1. **`ToolOutputElision(keepRecentAnswers: 4)`** — replace `toolOutput` payloads
    older than the recency window with a one-line placeholder naming the tool.
    Tool traffic is the bulk of an agentic transcript and old outputs are stale
    anyway; this is the near-free win. `toolCalls`/`toolOutput` pairing is
    preserved — only payloads shrink.
-2. **`TurnTruncation(keepRecentTurns: 4)`** — drop the oldest complete turns,
-   never splitting a turn or orphaning a tool pair. Alone, this is the
-   model-free fallback.
+2. **`AnswerTruncation(keepRecentAnswers: 4)`** — drop the oldest complete
+   answers, never splitting an answer or orphaning a tool pair. Alone, this is
+   the model-free fallback.
 3. **`Summarization`** — render the compacted span to text, summarize it with the
    compaction prompt (§2), synthesize the summary entry with its
    `CompactionSegment`. Long spans summarize in chunks, then summarize the
@@ -157,12 +163,12 @@ the `tokensIn`/`tokensOut` fields of `.response`-kind events.
   it. Apple's `LanguageModelSession` exposes `usage`;
   `LanguageModelSessionBackend.usageTokenCounts()` reads it
   (`usage.input.totalTokenCount` / `usage.output.totalTokenCount`). Because
-  models are stateless over transcripts, **the newest turn's input count *is*
-  the whole transcript tokenized by the actual model — chat template
-  included** — something no external tokenizer pass can match. Current size =
-  newest turn's `tokensIn + tokensOut`. Both entry points can measure live:
-  `RoutedSessionActor` through its backend, a bare-session owner by reading
-  `session.usage` directly.
+  models are stateless over transcripts, **the input count of the newest
+  submission *is* the whole transcript tokenized by the actual model — chat
+  template included** — something no external tokenizer pass can match.
+  Current size = the `tokensIn + tokensOut` of the newest submission. Both
+  entry points can measure live: `RoutedSessionActor` through its backend, a
+  bare-session owner by reading `session.usage` directly.
 - **How does it know its total?** The resolved **working context** from
   `JointFit` (caller-fixed `ProfileDefinition.context`, or ladder-derived —
   the sizing already prices KV cache against it). Today that number informs
@@ -171,35 +177,36 @@ the `tokensIn`/`tokensOut` fields of `.response`-kind events.
 - **How does it know after restore?** *Only* from stamps persisted in that
   session's `transcript.jsonl` — and here today's two recording paths
   differ, verified against source:
-  - `RoutedSessionActor` **does** stamp: it computes per-turn usage deltas
-    and writes them as `tokensIn`/`tokensOut` on the diff's `.response`
-    events (`recordTranscriptDelta(grammar:since:usage:)`).
+  - `RoutedSessionActor` **does** stamp: it computes the usage delta of each
+    submission and writes it as `tokensIn`/`tokensOut` on the diff's
+    `.response` events (`recordTranscriptDelta(grammar:since:usage:)`).
   - The `RecordingLanguageModel` handle **does not**: `TranscriptDiffer` is
-    deliberately narrow — its doc states turn-specific stamps
+    deliberately narrow — its doc states that the stamps of a submission
     (`grammar`, `ms`, `tokensIn`/`tokensOut`) are *the caller's concern* —
     and no caller on the handle path supplies them, so handle-recorded
     events carry `tokensIn: nil`. The handle also cannot fix this itself:
     it sits below the session and cannot read `session.usage` (the spike
     established its channel view is write-only).
 
-  **The fix is part of this plan**: extend the handle's existing turn-end
-  hook to `sync(_ transcript: Transcript, usage: (input: Int, output: Int)?)`.
-  The turn owner *does* hold the session and can read `session.usage` — the
-  same call site that already syncs the turn-final response now carries the
-  turn's usage, and the handle stamps it onto the synced `.response` event.
+  **The fix is part of this plan**: extend the existing hook of the handle
+  at the end of a call to `sync(_ transcript: Transcript, usage: (input:
+  Int, output: Int)?)`. The owner of the call *does* hold the session and can
+  read `session.usage` — the same call site that already syncs the final
+  response now carries the usage of the call, and the handle stamps it onto
+  the synced `.response` event.
   With that, both paths persist stamps, and restored fill is: the newest
   stamped `.response` event **after the newest checkpoint** in
   `transcript.jsonl`; if the compaction entry is the newest thing, the
   `CompactionSegment`'s `tokensAfter`; if neither exists (recorded before
   this change, or metadata-stripped), fill is *unknown* — reported as such,
-  never guessed — until the restored session's first turn measures it
-  exactly.
+  never guessed — until the first submission of the restored session
+  measures it exactly.
 
-The only other unmeasured moments: a brand-new session before its first turn
-(instructions only — fill ≈ 0), and the *prospective* check that a planned
-compaction will land under target, where the pipeline uses a character-ratio
-estimate calibrated by the measured pre-compaction count — safe because the next
-real turn re-measures exactly.
+The only other unmeasured moments: a brand-new session before its first
+submission (instructions only — fill ≈ 0), and the *prospective* check that a
+planned compaction will land under target, where the pipeline uses a
+character-ratio estimate calibrated by the measured pre-compaction count —
+safe because the next real submission re-measures exactly.
 
 **The bare-session path** (a caller not using `RoutedSession` — e.g. the ACP
 bridge — drives bare `LanguageModelSession`s over the recording handle
@@ -217,15 +224,15 @@ baseline. The caller then rebuilds
 `RoutedSessionActor.compact` is implemented on top of exactly these two
 primitives — one mechanism, two entry points.
 
-Proactive use (check `contextFill` ≥ `trigger` between turns — turns never
-die) is preferred; reactive use (catch `exceededContextWindowSize`, compact
-with a lowered target, retry once) is the documented recovery path.
+Proactive use (check `contextFill` ≥ `trigger` between answers — the session
+never dies) is preferred; reactive use (catch `exceededContextWindowSize`,
+compact with a lowered target, retry once) is the documented recovery path.
 
 ### 1.6 Loop policy: the auto-compaction opt-in
 
 §1.4/§1.5 above document the proactive/reactive *pattern* as something a
 caller drives by hand. `FoundationModelsAgentHarness`'s plan §5 asked for a
-loop that owns that policy itself — check fill at each turn, compact
+loop that owns that policy itself — check fill before each answer, compact
 automatically, retry once on overflow — so an agent loop never has to
 remember to call `compact()`. At the 2026-07-23 collapse (plan.md's
 "Guiding principle: constructor-fed, zero configuration"), that policy
@@ -240,39 +247,40 @@ let session = profile.standard.makeSession(
 )
 ```
 
-When `budget` is set, every turn (`respond`/`streamResponse`/
+When `budget` is set, every answer (`respond`/`streamResponse`/
 `streamEvents`) checks measured `contextFill` against `budget.trigger`
-**before** submitting its generate call and compacts proactively if it is
+**before** it submits its generate call and compacts proactively if it is
 already over; if the call still fails with
-`LanguageModelError.contextSizeExceeded` (or the mid-turn
-`ContextBudgetError.hardCeilingExceeded` from §1.7 below), the session
-compacts with a lowered target and **retries exactly once** before surfacing
-the error — never looping. The retry re-runs the turn's own tool calls, so
-non-idempotent side effects can happen twice; the recorded transcript
-keeps both attempts, exactly as compaction_plan.md §1.7 called out. A session
-with no `budget` set never auto-compacts; `compact()` remains the manual,
-always-available entry point (e.g. for a `/compact` command upstairs).
+`LanguageModelError.contextSizeExceeded` (or the
+`ContextBudgetError.hardCeilingExceeded` inside a submission, from §1.7
+below), the session compacts with a lowered target and **retries exactly
+once** before surfacing the error — never looping. The retry re-runs the tool
+calls of the failed submission, so non-idempotent side effects can happen
+twice; the recorded transcript keeps both attempts, exactly as
+compaction_plan.md §1.7 called out. A session with no `budget` set never
+auto-compacts; `compact()` remains the manual, always-available entry point
+(e.g. for a `/compact` command upstairs).
 
-### 1.7 Mid-turn strategy: the two in-loop seams
+### 1.7 Strategy inside a submission: the two in-loop seams
 
 The hard case compaction_plan.md §1.7 identified stands regardless of who owns
 the loop: Apple's `LanguageModelSession` runs the whole model → tool →
 model cycle inside one `respond`/`streamResponse` call, and nothing outside
-it regains control until the turn ends — a tool-heavy turn can blow the
-window in the middle, where a between-turns check can't reach. Router
-guards at the same two seams the harness plan identified, both directly in
-`RoutedSessionActor` rather than in an external wrapper a caller would
-otherwise have to maintain:
+it regains control until that submission ends — a tool-heavy submission can
+blow the window in the middle, where a check between answers can't reach.
+Router guards at the same two seams the harness plan identified, both
+directly in `RoutedSessionActor` rather than in an external wrapper a caller
+would otherwise have to maintain:
 
 1. **The generate boundary.** Every inner generate call this package
-   submits measures fill first; the mid-turn events on `streamEvents`
-   report it live, and `TokenBudget.hardCeiling`, when set, fails the call
-   fast with `ContextBudgetError.hardCeilingExceeded` instead of submitting
-   a doomed generate — deterministic, and compacted into the same
+   submits measures fill first; the events on `streamEvents` during the
+   submission report it live, and `TokenBudget.hardCeiling`, when set, fails
+   the call fast with `ContextBudgetError.hardCeilingExceeded` instead of
+   submitting a doomed generate — deterministic, and compacted into the same
    retry-once recovery as a real `contextSizeExceeded`.
-2. **Tool outputs**, not prompts, are what blow a turn's window mid-turn.
-   `TokenBudget.toolOutputLimit`, when set, caps any single tool's own
-   result before it ever reaches the model or gets recorded
+2. **Tool outputs**, not prompts, are what blow the window of a submission
+   in its middle. `TokenBudget.toolOutputLimit`, when set, caps any single
+   tool's own result before it ever reaches the model or gets recorded
    (`ToolOutputCapping`), truncating with an explicit
    `"… [truncated: N of M tokens]"` marker — never silent — and reflecting
    the truncation on `SessionEvent/toolStatus(id:status:summary:output:)`. This
@@ -330,7 +338,7 @@ a gated compaction eval run of 2026-08-09, the seven-section form
 compacted "the office printer's spare toner cartridges are kept in the third-floor
 supply closet" into `1. Intent — Inform the assistant about the location of
 spare toner cartridges.` with `2. Constraints & decisions — None.`: it recorded
-THAT a fact was communicated and discarded WHAT it was, and no answering turn
+THAT a fact was communicated and discarded WHAT it was, and no later answer
 could recover the location from that summary. That prompt was named
 `router-default-v4`. The verbatim-value demand and the size-budget paragraph
 are task `^xx02yn6`'s, measured on the 2-seed Qwen3.8-27B probe of 2026-08-20:
@@ -360,19 +368,20 @@ might add "always list test commands"); the prompt's `name` is recorded in the
   entry (with its `CompactionSegment`) to the *same* `transcript.jsonl`.
   Nothing before it is touched. Full history is always reconstructable.
 - **Checkpoint on restore** (requirement 3): `effectiveTranscript` — which
-  already interprets events (it skips failed-turn bodyless closes) — learns
-  the segment: the default (restore) view finds the **newest** compaction
-  entry and rebuilds the live window from its ordered entry ids plus every
-  entry recorded after it. `restoreSessionTree` therefore hands back a
-  session that is compacted and under budget. A `fullHistory` option keeps
-  every entry in `seq` order for browsers, rendering the compaction entry as
-  a compaction marker rather than duplicating the summary against what it replaced.
+  already interprets events (it skips the bodyless closes of failed
+  submissions) — learns the segment: the default (restore) view finds the
+  **newest** compaction entry and rebuilds the live window from its ordered
+  entry ids plus every entry recorded after it. `restoreSessionTree`
+  therefore hands back a session that is compacted and under budget. A
+  `fullHistory` option keeps every entry in `seq` order for browsers,
+  rendering the compaction entry as a compaction marker rather than
+  duplicating the summary against what it replaced.
   Repeated compactions nest naturally: only the newest checkpoint governs
   restore; earlier ones are historical markers.
 - **Identity** (requirement 4): same `sessionId` on every event, same
   directory, same sidecar. `SessionSidecar` gains an optional compaction
   count so browsers can badge compacted sessions.
-- The differ baseline reset (`noteCompaction`) keeps post-compaction turns recording
+- The differ baseline reset (`noteCompaction`) keeps post-compaction answers recording
   as ordinary appends — no divergence, no double-recording (retained tail
   entries keep their entry ids, so they are recognized as already recorded).
 
@@ -381,8 +390,8 @@ might add "always list test commands"); the prompt's `name` is recorded in the
 A small executable beside `MultiModelGeneration` proving the loop end to end:
 
 1. Resolve a profile; open a `RoutedSession`.
-2. Drive scripted long turns (reading fixture files into the conversation)
-   while printing `contextFill` after each — watch it climb.
+2. Send scripted long messages (reading fixture files into the conversation)
+   while printing `contextFill` after each answer — watch it climb.
 3. At the 0.80 trigger, call `session.compact()` — print the
    `CompactionResult` (tokens before/after, stages) and the summary text.
 4. Continue the conversation; show the model still answers questions about
@@ -475,10 +484,10 @@ their own targets in the nested `IntegrationTests/` package
    rebuilds a real `LanguageModelSession` via
    `MLXFoundationModelsContainer.makeSession(transcript:)` — the exact factory
    `compact()`/restore will rebuild through — over a transcript containing
-   the same synthesized shape, and asserts the turn completes, the model
+   the same synthesized shape, and asserts the answer completes, the model
    recalls a fact planted only in the synthesized summary entry, and the
    synthesized ids are unchanged both immediately after ingest and after the
-   turn. (This was long recorded here as blocked by a `default.metallib` load
+   answer. (This was long recorded here as blocked by a `default.metallib` load
    failure that no gated integration suite could get past, and described as an
    environment limitation. That diagnosis was wrong: the failure was a
    resource-colocation bug in `swift test`'s binary layout, now fixed by
@@ -488,7 +497,7 @@ their own targets in the nested `IntegrationTests/` package
    **Gotcha for `CompactionSegment` (§1.2) implementers:** none found on the
    hermetic (disk) half. Both synthesis directions (fresh id, reused id)
    round-trip cleanly; there is no observed id-reassignment or collision
-   hazard synthesizing entries outside of a real model turn. The live-session
+   hazard synthesizing entries outside of a real model call. The live-session
    half of this verdict — whether `LanguageModelSession(transcript:)` itself
    preserves ids on ingest — is now empirically confirmed too:
    `CompactionSpikeIntegrationTests` passes against a real model under
@@ -511,22 +520,22 @@ their own targets in the nested `IntegrationTests/` package
 ## 7. Decisions
 
 - **Harness plan §5/§5.1 loop policy absorbed (2026-07-23 collapse)** — the
-  proactive-check/reactive-retry-once policy and the two mid-turn guard
-  seams (generate-boundary hard ceiling, tool-output capping) that
+  proactive-check/reactive-retry-once policy and the two guard seams inside
+  a submission (generate-boundary hard ceiling, tool-output capping) that
   `FoundationModelsAgentHarness` would have implemented over `RoutedSession`
-  are implemented directly on it instead (§1.6, §1.7):
-  `makeSession(budget:compactionPrompt:)`'s auto-compaction opt-in,
-  `TokenBudget.hardCeiling`, and `TokenBudget.toolOutputLimit`. See plan.md's
-  "Guiding principle: constructor-fed, zero configuration" for the collapse
-  decision itself.
+   are implemented directly on it instead (§1.6, §1.7):
+   `makeSession(budget:compactionPrompt:)`'s auto-compaction opt-in,
+   `TokenBudget.hardCeiling`, and `TokenBudget.toolOutputLimit`. See plan.md's
+   "Guiding principle: constructor-fed, zero configuration" for the collapse
+   decision itself.
 - **In Router, not a peer package** — the budget (resolved working context),
   the fill (measured usage: live backend counts and recorded stamps), the
   persistence (recording mirror), and the restore path (reconstruction) all
   live here; a peer package would inject all four through seams to end up
   with worse defaults.
 - **Measured over tokenized** (§1.5) — the runtime's own usage accounting is
-  the source of truth for fill (the newest turn's input count is the whole
-  transcript, chat template included); recorded `tokensIn`/`tokensOut` stamps
+  the source of truth for fill (the input count of the newest submission is
+  the whole transcript, chat template included); recorded `tokensIn`/`tokensOut` stamps
   and the segment's `tokensAfter` carry that truth across restore. External
   tokenizer passes are never load-bearing.
 - **One mechanism, two entry points** — `RoutedSession.compact()` (and its

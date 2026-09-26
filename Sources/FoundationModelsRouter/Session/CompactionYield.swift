@@ -51,7 +51,7 @@ struct ToolResultWatch {
 }
 
 /// The marker a session sets when a tool result crosses the compaction
-/// trigger inside a turn, and the facts it needs to go on after the stop.
+/// trigger inside an answer, and the facts it needs to go on after the stop.
 ///
 /// It is different from a user stop (``RoutedSession/cancel()``):
 /// only the tool-result boundary sets it, and a user stop wins over it.

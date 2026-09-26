@@ -11,13 +11,13 @@ import Testing
 ///
 /// ``RealModels/standard`` is `Muse-Glimmer-30B-mxfp4`. Its `4bit`
 /// predecessor is what the fork-tree test drove until task ^bpwfbyz, and the
-/// measurements below are of that repository. That test drives five turns and
-/// no tool, and three of its turns are filler turns whose reply nothing reads.
-/// The 30B writes a `<think>` block of 196 to 275 tokens before it answers a
-/// filler prompt, so the three fillers were 74 of the test's 112 seconds, and
-/// the test could not reach half of the two-minute budget of that time on the
-/// 30B. The suite doc states the measurements and what the change no longer
-/// proves.
+/// measurements below are of that repository. That test drives five answers
+/// and no tool, and three of its answers are filler answers whose reply
+/// nothing reads. The 30B writes a `<think>` block of 196 to 275 tokens before
+/// it answers a filler prompt, so the three fillers were 74 of the test's 112
+/// seconds, and the test could not reach half of the two-minute budget of that
+/// time on the 30B. The suite doc states the measurements and what the change
+/// no longer proves.
 ///
 /// `Qwen2.5-3B-Instruct-4bit` writes no `<think>` block, and it is the subject
 /// ``CompactionRoundTripIntegrationTests`` already recalls a planted fact
@@ -42,12 +42,12 @@ private let sessionTreeToolCallingModel: ModelRef = RealModels.standard
 /// section, "Reconstruction end-to-end"), proving the whole design works
 /// against a real model:
 ///
-/// 1. Start a router, make a root session, drive a real `respond(to:)` turn
+/// 1. Start a router, make a root session, drive a real `respond(to:)` answer
 ///    carrying a memorable fact.
 /// 2. Fork the root twice and fork one child again — a genuine branching,
-///    3-level tree — driving a real turn on each fork.
+///    3-level tree — driving a real answer on each fork.
 /// 3. Assert, before any teardown, that each session's `transcript.jsonl` on
-///    disk already contains its turn's entry events (sync-as-they-happen,
+///    disk already contains the entry events of its answer (sync-as-they-happen,
 ///    not only at teardown).
 /// 4. Discard the router and every in-memory session (everything from step
 ///    1-3 lives inside ``driveOriginalTree(cacheDir:recordingsDir:)`` alone,
@@ -56,9 +56,9 @@ private let sessionTreeToolCallingModel: ModelRef = RealModels.standard
 ///    `id`, same `recordingsDir` — simulating a fresh process.
 /// 6. Restore the whole tree, passing only the root session's id.
 /// 7. Assert the restored tree matches: structure, each node's own recorded
-///    turns (via the reconstructed effective entry counts, unchanged from
+///    answers (via the reconstructed effective entry counts, unchanged from
 ///    what step 3 observed), and an unchanged root `session.json`.
-/// 8. Drive a **new** live turn on a restored node — the deepest one, the
+/// 8. Drive a **new** live answer on a restored node — the deepest one, the
 ///    grandfork — asking for the earlier fact, asserting the response
 ///    recalls it: the proof that `LanguageModelSession(transcript:)` seeded
 ///    from a reconstructed `Transcript` behaves indistinguishably from a
@@ -93,21 +93,21 @@ private let sessionTreeToolCallingModel: ModelRef = RealModels.standard
 /// - ``sessionTreeForkTreeModel`` moves the fork-tree test onto a 3B model
 ///   that writes no `<think>` block. Measured in isolation on 2026-08-21 with
 ///   argmax decoding: on the 30B the fork-tree test took 112.4 seconds, 74 of
-///   them the three filler turns (275, 208 and 196 tokens of `<think>` at 37.0,
-///   19.2 and 18.4 seconds), beside a 16.0-second root turn, a 14.2-second
-///   recall turn and two 3.5-second loads. A filler turn cut inside its
-///   `<think>` block at 32 tokens took the test to 65.0 seconds, but the cut
-///   transcript made the recall turn grow from 151 to 267 tokens and pushed the
-///   tool-calling test's turn over the restored root past the two-minute
-///   limit, so a cut filler is not a technique. With complete filler replies
-///   the 30B's root turn, recall turn and two loads are 37 seconds before the
-///   first filler, and no complete filler reply of the 30B is under 100 tokens,
-///   so the test could not reach half that budget on the 30B. On the 3B the same
-///   test measures 3.0 seconds.
+///   them the three filler answers (275, 208 and 196 tokens of `<think>` at
+///   37.0, 19.2 and 18.4 seconds), beside a 16.0-second root answer, a
+///   14.2-second recall answer and two 3.5-second loads. A filler answer cut
+///   inside its `<think>` block at 32 tokens took the test to 65.0 seconds,
+///   but the cut transcript made the recall answer grow from 151 to 267 tokens
+///   and pushed the tool-calling test's answer over the restored root past the
+///   two-minute limit, so a cut filler is not a technique. With complete
+///   filler replies the 30B's root answer, recall answer and two loads are 37
+///   seconds before the first filler, and no complete filler reply of the 30B
+///   is under 100 tokens, so the test could not reach half that budget on the
+///   30B. On the 3B the same test measures 3.0 seconds.
 /// - ``sessionTreeToolCallingModel`` keeps the tool-calling test on the 30B,
 ///   because the 3B garbled its tool call. That test measured 51.6 seconds in
-///   isolation with argmax decoding: a 25.7-second filler turn, an 18.5-second
-///   two-round tool turn, and two loads.
+///   isolation with argmax decoding: a 25.7-second filler answer, an
+///   18.5-second two-round tool-using answer, and two loads.
 ///
 /// What is no longer proven is:
 ///
@@ -115,8 +115,9 @@ private let sessionTreeToolCallingModel: ModelRef = RealModels.standard
 ///   test restores and continues a tree the 3B recorded. That tree holds no
 ///   `.reasoning` entry, because the 3B writes no `<think>` block, so this test
 ///   no longer shows a tree of reasoning entries surviving the trip to disk
-///   and back. The tool-calling test still does: its root turn is a 30B turn
-///   with a reasoning entry, and the restored root drives a live turn over it.
+///   and back. The tool-calling test still does: its root answer is a 30B
+///   answer with a reasoning entry, and the restored root drives a live answer
+///   over it.
 /// - **The standard model's recall through a restored tree.** That the 3B
 ///   recalls 42 three levels down says nothing about the 30B, and a fact this
 ///   subject lost might survive under the larger one.
@@ -126,7 +127,7 @@ private let sessionTreeToolCallingModel: ModelRef = RealModels.standard
 ///   attributable to the change under test, and the behavior under the
 ///   provider's default sampling is not measured here.
 ///
-/// Everything else is untouched: the five-turn tree, the sync-as-they-happen
+/// Everything else is untouched: the five-answer tree, the sync-as-they-happen
 /// check, the two routers, the restore by root id, every structural and
 /// byte-level assertion, the live recall, and the tool-calling round trip are
 /// exactly what they were.
@@ -146,7 +147,7 @@ private let sessionTreeToolCallingModel: ModelRef = RealModels.standard
 struct SessionTreeRestorationIntegrationTests {
     // MARK: - Test tool (task jkdae4b: tools threaded through restoreSessionTree)
 
-    /// The scripted tool argument schema the turn's prompt reliably drives —
+    /// The scripted tool argument schema the answer's prompt reliably drives —
     /// mirrors ``RecordingHandleIntegrationTests/EchoArguments``.
     @Generable
     struct EchoArguments {
@@ -258,10 +259,10 @@ struct SessionTreeRestorationIntegrationTests {
         let effectiveEntryCounts: [ULID: Int]
     }
 
-    /// Steps 1-4: builds a fresh profile, drives a root turn carrying a
+    /// Steps 1-4: builds a fresh profile, drives a root answer carrying a
     /// memorable fact plus a genuine branching 3-level fork tree (root ->
-    /// forkA, forkB; forkA -> grandfork), each with its own live turn,
-    /// asserts every session's `transcript.jsonl` already reflects its turn
+    /// forkA, forkB; forkA -> grandfork), each with its own live answer,
+    /// asserts every session's `transcript.jsonl` already reflects its answer
     /// before this function returns, and returns only plain data — every
     /// `Router`/`LanguageModelProfile`/`RoutedSession` this function built
     /// goes out of scope with it, simulating discarding the router and every
@@ -290,7 +291,7 @@ struct SessionTreeRestorationIntegrationTests {
         _ = try await grandfork.respond(to: "Say hi in one word.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
 
         // Step 3: sync-as-they-happen — every session's transcript.jsonl
-        // already contains its own turn's entry events, before any teardown.
+        // already contains the entry events of its own answer, before any teardown.
         for session in [root, forkA, forkB, grandfork] {
             let events = try Self.recordedEvents(in: session.recordingDirectory)
             let entryKinds: Set<TranscriptEvent.Kind> = [.instructions, .prompt, .toolCalls, .toolOutput, .response, .reasoning]
@@ -360,7 +361,7 @@ struct SessionTreeRestorationIntegrationTests {
         #expect(restored.children(of: original.forkAId).map(\.id) == [original.grandforkId])
         #expect(restored.children(of: original.forkBId).isEmpty)
 
-        // Each node's own recorded turns are unchanged from what was
+        // Each node's own recorded answers are unchanged from what was
         // observed on disk before restoration.
         let routerDirectory = recordingsDir.appendingPathComponent(original.routerId.description, isDirectory: true)
         let reloadedTree = try TranscriptTree.load(under: routerDirectory)
@@ -376,7 +377,7 @@ struct SessionTreeRestorationIntegrationTests {
         )
         #expect(rootSidecarBytesAfterRestore == original.rootSidecarBytes)
 
-        // Step 8: the fidelity payoff. A brand-new live turn on the deepest
+        // Step 8: the fidelity payoff. A brand-new live answer on the deepest
         // restored node (three levels down from the root that was told the
         // fact) recalls it — proof the `LanguageModelSession(transcript:)`
         // seed behaves indistinguishably from a never-torn-down session.
@@ -398,12 +399,12 @@ struct SessionTreeRestorationIntegrationTests {
     /// `tools: []` a restore used to hardcode all the way down through
     /// ``LoadedLLMContainer/makeSession(transcript:)``. A root session is
     /// recorded with no tools, torn down, then restored in a fresh `Router`
-    /// with a real ``EchoTool`` passed via `tools:`; a new turn instructing
+    /// with a real ``EchoTool`` passed via `tools:`; a new answer instructing
     /// the model to call it is recorded with `.toolCalls`/`.toolOutput`
     /// entries and a response reflecting the tool's own output — proof the
     /// restored `LanguageModelSession` was actually built with the tool
     /// threaded to it, not silently ignoring it.
-    @Test("restoreSessionTree(tools:) gives a restored session real tool-calling: a new turn on the restored root calls the echo tool")
+    @Test("restoreSessionTree(tools:) gives a restored session real tool-calling: a new answer on the restored root calls the echo tool")
     func restoredSessionCallsThreadedTool() async throws {
         let cacheDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("SessionTreeRestorationIntegrationTests-tools-cache-\(UUID().uuidString)", isDirectory: true)

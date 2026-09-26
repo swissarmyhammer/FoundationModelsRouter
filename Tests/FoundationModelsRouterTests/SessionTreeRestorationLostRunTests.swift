@@ -15,7 +15,7 @@ import Testing
 /// closes that hole at restore time: it manufactures exactly one terminal
 /// `.completed` event with outcome ``OperationOutcome/lost`` per orphaned
 /// run and posts it to the restored node's own fresh outbox, so the next
-/// turn's drain journals it durably and the model learns the run died. (The
+/// answer's drain journals it durably and the model learns the run died. (The
 /// orderly-shutdown case is ``RoutedSessionActor/close()``'s mailbox sweep —
 /// see `SessionMailboxTests`; this suite covers only the crash edge.)
 ///
@@ -181,7 +181,7 @@ struct SessionTreeRestorationLostRunTests {
     }
 
     /// Records a root session under a fresh router, riding `journaled` into
-    /// its single turn (each is drained from the outbox and journaled as an
+    /// its single answer (each is drained from the outbox and journaled as an
     /// ``OperationEventSegment`` on the recorded `.prompt` entry), then
     /// restores that root under a second router sharing the same recording
     /// root — the crashed-process simulation: the first session's
@@ -400,7 +400,7 @@ struct SessionTreeRestorationLostRunTests {
         await root.outbox.post(event: Self.event(correlationID: "run-1", kind: .progress, detail: "dangling"))
         _ = try await root.respond(to: "hello")
         let fork = try await root.fork(workingDirectory: nil)
-        _ = try await fork.respond(to: "fork turn")
+        _ = try await fork.respond(to: "fork answer")
 
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
@@ -434,12 +434,12 @@ struct SessionTreeRestorationLostRunTests {
         await root.outbox.post(event: Self.event(correlationID: "run-1", kind: .progress, detail: "running"))
         _ = try await root.respond(to: "hello")
         let fork = try await root.fork(workingDirectory: nil)
-        _ = try await fork.respond(to: "fork turn")
+        _ = try await fork.respond(to: "fork answer")
         // The completion lands in the parent only after the fork's cut point
         // was fixed — it never enters the fork's inherited prefix.
         await root.outbox.post(
             event: Self.event(correlationID: "run-1", kind: .completed, detail: "exit 0", outcome: .succeeded))
-        _ = try await root.respond(to: "parent turn two")
+        _ = try await root.respond(to: "parent answer two")
 
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
@@ -558,7 +558,7 @@ struct SessionTreeRestorationLostRunTests {
         let firstPending = await firstRestore.root.outbox.pending()
         #expect(firstPending.events.map(\.event.outcome) == [.lost])
 
-        // (3) A live turn on the restored session drains the pending .lost
+        // (3) A live answer on the restored session drains the pending .lost
         // and journals it as an OperationEventSegment on the recorded
         // .prompt entry — the durable half of the manufacture.
         _ = try await firstRestore.root.respond(to: "continue")

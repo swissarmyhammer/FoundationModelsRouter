@@ -163,7 +163,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// Restores a whole session tree from disk, rooted at a root session's id.
     ///
     /// Each node keeps its original id, parent id, and recording directory,
-    /// so a turn on a restored node appends to its existing transcript.
+    /// so a submission on a restored node appends to its existing transcript.
     /// Each node's model and slot resolve from its ``SessionSidecar`` against
     /// this call's owning profile. A mismatch is a typed error.
     /// `instructions`, ``Grammar``, and the recorded configuration envelope
@@ -371,14 +371,14 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 transcript: seedTranscript, tools: instancedTools, samplingMode: routedLLM.samplingMode)
             // ``RoutedSession/contextFill``'s restored numerator: the counter
             // the live session had at the end of its recording (task
-            // ^tcep2pc). It is the size of the render after the newest turn
+            // ^tcep2pc). It is the size of the render after the newest submission
             // that recorded a stamped `.response` after the newest
             // ``CompactionSegment`` checkpoint: the fed and generated tokens
-            // of the `.generationCall` event that closed that turn, not the
-            // sum on the `.response` stamp (task ^tpsc0nf). When no such turn
+            // of the `.generationCall` event that closed that submission, not the
+            // sum on the `.response` stamp (task ^tpsc0nf). When no such submission
             // follows the checkpoint, the checkpoint's own
             // ``CompactionSegment/Content/tokensAfter``. With no checkpoint at
-            // all, the same turn anywhere in the stream; else unknown, never
+            // all, the same submission anywhere in the stream; else unknown, never
             // a guess. An old journal with no `.generationCall` event gives
             // the `.response` stamp. See
             // ``TranscriptTree/restoredUsageState(in:)``.
@@ -387,7 +387,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // plus, for a fork, the inherited prefix of its ancestors'), with
             // the `.generationCall` events kept. Deliberately
             // ancestor-inclusive, not scoped to this node's own file alone: a
-            // freshly restored fork with no turns of its own yet should
+            // freshly restored fork with no submissions of its own yet should
             // inherit its parent's last known fill rather than report
             // unknown, mirroring live `fork()`'s own choice to inherit
             // `usageState` from the session it forked from (see
@@ -412,7 +412,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // ``RoutedSessionActor/close()``'s `SessionMailbox.sweep()`).
             // Manufacture exactly one terminal `.completed` with outcome
             // ``OperationOutcome/lost`` per orphaned run and post it to this
-            // node's fresh outbox: the next turn's drain journals it durably,
+            // node's fresh outbox: the drain of the next submission journals it durably,
             // so the record has no holes and the model learns the run died.
             // This is the only place `.lost` is manufactured outside an MCP
             // transport drop.
@@ -452,7 +452,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 mailbox: mailbox,
                 // The transcript the backend really holds, which an
                 // instructions override can make one entry longer. The next
-                // turn's diff must treat every entry of it as persisted, or
+                // submission diff must treat every entry of it as persisted, or
                 // it records a substituted entry as new.
                 persistedEntryCount: seedTranscript.count,
                 // The restored session's position in its own append-only

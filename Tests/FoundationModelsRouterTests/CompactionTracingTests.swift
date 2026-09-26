@@ -38,15 +38,15 @@ struct CompactionTracingTests {
     /// ``AutoCompactionFixtures/makeTriggeredSession(budget:tools:summarization:tracer:samplingMode:tempDirPrefix:)``.
     private static let tempDirPrefix = "CompactionTracingTests"
 
-    /// The prompt the turn that triggers an automatic compaction carries — the turn
+    /// The prompt of the answer that triggers an automatic compaction — the answer
     /// after the warm-up, so its index continues the warm-up's own sequence.
-    private static let triggeringPrompt = "turn \(AutoCompactionFixtures.turnCount)"
+    private static let triggeringPrompt = "message \(AutoCompactionFixtures.answerCount)"
 
     /// The one compaction span the driven work opened.
     ///
     /// Filtered by name rather than counted over the whole tracer: a warm-up
-    /// turn opens a turn span of its own, and an automatic compaction runs inside
-    /// the very turn whose span encloses it.
+    /// answer opens a submission span of its own, and an automatic compaction runs inside
+    /// the very answer whose submission span encloses it.
     ///
     /// - Parameter tracer: The tracer the driven work reported to.
     /// - Returns: The single finished compaction span.
@@ -59,8 +59,8 @@ struct CompactionTracingTests {
 
     /// The first compaction result `events` reported.
     ///
-    /// - Parameter events: One turn's events, in production order.
-    /// - Returns: The compaction the turn ran.
+    /// - Parameter events: The events of one answer, in production order.
+    /// - Returns: The compaction the answer ran.
     /// - Throws: When no event reported a compaction.
     private static func compactionResult(in events: [SessionEvent]) throws -> CompactionResult {
         try #require(
@@ -70,14 +70,14 @@ struct CompactionTracingTests {
             }.first)
     }
 
-    /// Drains one turn's `streamEvents(to:)` into an array, in production
+    /// Drains the `streamEvents(to:)` of one answer into an array, in production
     /// order.
     ///
     /// - Parameters:
-    ///   - session: The session to drive the turn on.
-    ///   - prompt: The turn's prompt.
-    /// - Returns: Every event the turn produced.
-    /// - Throws: Whatever the turn throws.
+    ///   - session: The session to drive the answer on.
+    ///   - prompt: The prompt of the answer.
+    /// - Returns: Every event the answer produced.
+    /// - Throws: Whatever the answer throws.
     private static func drive(_ session: RoutedSession, prompt: String) async throws -> [SessionEvent] {
         var events: [SessionEvent] = []
         for try await event in await session.streamEvents(to: prompt, maxTokens: nil) {

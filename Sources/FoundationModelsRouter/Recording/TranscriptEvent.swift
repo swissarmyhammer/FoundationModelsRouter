@@ -39,11 +39,11 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         /// recorded baseline (see ``TranscriptDiffer/divergence(from:in:)``).
         /// Router-only. ``TranscriptEvent/text`` holds the description.
         case divergence
-        /// One generation call of a turn ended (see
+        /// One generation call of a submission ended (see
         /// ``SessionEvent/generationCall(_:)``). Router-only.
         /// ``TranscriptEvent/tokensIn`` and ``TranscriptEvent/tokensOut`` hold
         /// the counts of that one call, and ``TranscriptEvent/text`` holds the
-        /// ``GenerationCallUsage/description``. A reader of the turn's usage
+        /// ``GenerationCallUsage/description``. A reader of the usage of the submission
         /// stamp skips it: the stamp stays on the last `.response` event.
         case generationCall
         /// The session removed the repeated part of a stopped attempt from
@@ -113,13 +113,14 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     /// `agentSpawn`. `nil` for a root session, for a fork, on every other
     /// kind, and on a recording made before this key existed. The value
     /// matches ``SessionSidecar/agentSpawn`` in the session's `session.json`.
-    /// A live sink sees it when the session's first turn begins, because the
-    /// `session` event is recorded at the first turn, not at session creation.
+    /// A live sink sees it when the first submission of the session begins,
+    /// because the `session` event is recorded at the first submission, not at
+    /// session creation.
     public let agentSpawn: SessionSidecar.AgentSpawn?
 
     /// `true` when this event is the close the router appends to a submission
     /// of an answer that ended with no `.response` entry from the SDK (see
-    /// `RoutedSessionActor.recordFailedTurn`). The close is a `.response`
+    /// `RoutedSessionActor.recordFailedSubmission`). The close is a `.response`
     /// with no body text and a duration stamp whose entry holds no segment:
     /// the submission answered with nothing. A recording made before the
     /// close carried an entry has `entry == nil` on the same event. The SDK
@@ -127,16 +128,15 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     /// the router's close and nothing else. A reader that rebuilds the SDK's
     /// transcript, or that reads a usage stamp, skips this event.
     ///
-    /// The name changed from `isFailedTurnClose` (task ^5d0qx1b). The bytes
-    /// on disk did not change: this value is read from the shape of the
-    /// event, and no key holds it.
+    /// The name changed in task ^5d0qx1b. The bytes on disk did not change:
+    /// this value is read from the shape of the event, and no key holds it.
     public var isFailedAnswerClose: Bool {
         kind == .response && text == nil && ms != nil && (entry?.segments?.isEmpty ?? true)
     }
 
     /// `true` when this event mirrors a `FoundationModels.Transcript.Entry`
     /// that a reader can rebuild: an entry kind that is not the router's
-    /// failed-turn close. `false` for every router-only marker (``Kind/session``,
+    /// close of a failed submission. `false` for every router-only marker (``Kind/session``,
     /// ``Kind/embedding``, ``Kind/divergence``, ``Kind/generationCall``,
     /// ``Kind/repeatedPartRemoval``, the legacy ``Kind/toolCall``)
     /// and for the close, none of which mirrors an entry. A reader that

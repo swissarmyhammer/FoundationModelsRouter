@@ -454,7 +454,7 @@ struct MergedAndRedactionTests {
 
     // MARK: - Wiring through the router (session + embed)
 
-    @Test("redact wired through the router transforms session turn text, and an embed records nothing")
+    @Test("redact wired through the router transforms session answer text, and an embed records nothing")
     @MainActor
     func redactWiredThroughRouter() async throws {
         let cacheDir = Self.makeTempDir()

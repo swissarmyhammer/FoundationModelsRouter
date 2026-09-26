@@ -4,20 +4,20 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Task ^dvkxz7n: a tool call that fails does not end the turn.
+/// Task ^dvkxz7n: a tool call that fails does not end the submission.
 ///
-/// Apple's `LanguageModelSession` cancels the other calls of a turn when one
-/// call throws, and then it ends the turn. The mount decorators therefore give
-/// an ordinary failure to the model as a tool result, and they throw only for a
-/// true cancellation. This suite drives real turns over the scripted model and
-/// holds the three conditions of the card: the good calls beside a failed call
-/// complete, the model reads the failure and can call again, and a
-/// cancellation still stops the turn.
-@Suite("A failed tool call is a tool result, and a cancellation still stops the turn")
-struct ToolCallFailureTurnTests {
+/// Apple's `LanguageModelSession` cancels the other calls of a submission when
+/// one call throws, and then it ends the submission. The mount decorators
+/// therefore give an ordinary failure to the model as a tool result, and they
+/// throw only for a true cancellation. This suite drives real answers over the
+/// scripted model and holds the three conditions of the card: the good calls
+/// beside a failed call complete, the model reads the failure and can call
+/// again, and a cancellation still stops the submission.
+@Suite("A failed tool call is a tool result, and a cancellation still stops the submission")
+struct ToolCallFailureAnswerTests {
     /// The suite's temp-directory prefix, handed to
     /// ``RouterTestFixtures/makeTempDir(prefix:)``.
-    private static let tempDirPrefix = "ToolCallFailureTurnTests"
+    private static let tempDirPrefix = "ToolCallFailureAnswerTests"
 
     /// The step names the scripted calls use, named once so a script and its
     /// assertions cannot drift apart.
@@ -53,8 +53,8 @@ struct ToolCallFailureTurnTests {
     /// Whether `error` is a true cancellation: a `CancellationError`, or the
     /// SDK's `ToolCallError` around one.
     ///
-    /// - Parameter error: The error the turn threw.
-    /// - Returns: `true` when the turn ended as cancelled.
+    /// - Parameter error: The error the answer threw.
+    /// - Returns: `true` when the answer ended as cancelled.
     private static func isCancellation(_ error: any Error) -> Bool {
         if let toolCallError = error as? LanguageModelSession.ToolCallError {
             return toolCallError.underlyingError is CancellationError
@@ -62,7 +62,7 @@ struct ToolCallFailureTurnTests {
         return error is CancellationError
     }
 
-    @Test("a turn with one failed call and three good calls completes the three and answers", arguments: FailingToolRow.everyMountRoute)
+    @Test("an answer with one failed call and three good calls completes the three and answers", arguments: FailingToolRow.everyMountRoute)
     func goodCallsBesideAFailedCallComplete(_ row: FailingToolRow) async throws {
         let failingTool = row.makeTool()
         let markerTool = MarkerEmittingTool()
@@ -70,7 +70,7 @@ struct ToolCallFailureTurnTests {
             [Self.call(on: row.toolName, with: .literal(Step.failing))]
             + Step.good.map { Self.call(on: MarkerEmittingTool.toolName, with: .literal($0)) }
         let fixture = try await ScriptedSessionFixture.make(
-            playing: ScriptedTurnScript(rounds: [round]),
+            playing: ScriptedAnswerScript(rounds: [round]),
             mounting: [failingTool, markerTool],
             tempDirPrefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -89,7 +89,7 @@ struct ToolCallFailureTurnTests {
         let failingTool = row.makeTool()
         let markerTool = MarkerEmittingTool()
         let fixture = try await ScriptedSessionFixture.make(
-            playing: ScriptedTurnScript(rounds: [
+            playing: ScriptedAnswerScript(rounds: [
                 [Self.call(on: row.toolName, with: .literal(Step.failing))],
                 [
                     Self.call(
@@ -110,11 +110,11 @@ struct ToolCallFailureTurnTests {
         #expect(answer == ScriptedToolFixture.answer(fromToolOutputs: expectedOutputs))
     }
 
-    @Test("a tool call that ends as cancelled still stops the turn")
-    func cancellationStillStopsTheTurn() async throws {
+    @Test("a tool call that ends as cancelled still stops the submission")
+    func cancellationStillStopsTheSubmission() async throws {
         let cancellingTool = CancellingMarkerTool()
         let fixture = try await ScriptedSessionFixture.make(
-            playing: ScriptedTurnScript(rounds: [
+            playing: ScriptedAnswerScript(rounds: [
                 [Self.call(on: CancellingMarkerTool.toolName, with: .literal(Step.failing))]
             ]),
             mounting: [cancellingTool],
@@ -125,11 +125,11 @@ struct ToolCallFailureTurnTests {
             _ = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
         }
 
-        #expect(error.map(Self.isCancellation) == true, "the turn ended with \(String(describing: error))")
+        #expect(error.map(Self.isCancellation) == true, "the answer ended with \(String(describing: error))")
         #expect(cancellingTool.calledSteps == [Step.failing])
         // Only the round that asked for the call generated: the answering
         // generation never ran.
-        #expect(fixture.log.modelTurnCount == 1)
+        #expect(fixture.log.generationPassCount == 1)
         #expect(fixture.log.deliveredToolOutputs.isEmpty)
     }
 }

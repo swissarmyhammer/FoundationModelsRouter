@@ -266,10 +266,10 @@ package struct TranscriptTree: Sendable {
     ///   ``restoredUsageState(in:)`` reads the context counter from. A fork
     ///   keeps its parent's events up to the parent's next entry-kind event
     ///   after the fork cut point. So the fork keeps the call that closed the
-    ///   parent's last turn before the fork, which the session records after
-    ///   the entries of that turn. The kept events can also hold the calls
-    ///   that asked for a tool in the parent's next turn, which come before
-    ///   that turn's entries. The reader never reads those calls (see
+    ///   last submission of the parent before the fork, which the session records after
+    ///   the entries of that submission. The kept events can also hold the calls
+    ///   that asked for a tool in the next submission of the parent, which come before
+    ///   the entries of that submission. The reader never reads those calls (see
     ///   ``restoredUsageState(in:)``).
     /// - ``TranscriptEvent/Kind/repeatedPartRemoval``: the events
     ///   ``effectiveTranscript(forSession:view:)`` rebuilds the render from

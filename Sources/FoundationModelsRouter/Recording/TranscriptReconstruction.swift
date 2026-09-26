@@ -170,10 +170,10 @@ extension TranscriptTree {
     ///
     /// The live counter is the size of the render, and a compaction restarts
     /// it (task ^tpsc0nf). So the order is: the render size of the newest
-    /// measured turn after the newest checkpoint (see
-    /// ``newestTurnRenderSize(in:)``); else the checkpoint's own
+    /// measured submission after the newest checkpoint (see
+    /// ``newestSubmissionRenderSize(in:)``); else the checkpoint's own
     /// ``CompactionSegment/Content/tokensAfter``; else, with no checkpoint,
-    /// the render size of the newest measured turn; else
+    /// the render size of the newest measured submission; else
     /// ``ContextUsageState/unknown``.
     ///
     /// - Parameter events: A session's effective events, in `seq` order. They
@@ -182,18 +182,20 @@ extension TranscriptTree {
     ///   not read.
     static func restoredUsageState(in events: [TranscriptEvent]) -> ContextUsageState {
         guard let checkpoint = newestCompactionCheckpoint(in: events) else {
-            return newestTurnRenderSize(in: events).map { .measured(input: $0.input, output: $0.output) } ?? .unknown
+            return newestSubmissionRenderSize(in: events).map { .measured(input: $0.input, output: $0.output) }
+                ?? .unknown
         }
         let afterCheckpoint = Array(events[(checkpoint.index + 1)...])
-        if let size = newestTurnRenderSize(in: afterCheckpoint) {
+        if let size = newestSubmissionRenderSize(in: afterCheckpoint) {
             return .measured(input: size.input, output: size.output)
         }
         return .measured(input: checkpoint.content.tokensAfter, output: 0)
     }
 
-    /// The size of the render after the newest measured turn in `events`, as
-    /// `(fed, generated)` tokens, or `nil` when no turn in `events` recorded a
-    /// stamped `.response` (``TranscriptEvent/turnUsageStamp``).
+    /// The size of the render after the newest measured submission in
+    /// `events`, as `(fed, generated)` tokens, or `nil` when no submission in
+    /// `events` recorded a stamped `.response`
+    /// (``TranscriptEvent/submissionUsageStamp``).
     ///
     /// The live session sets its counter only when an attempt records a
     /// `.response`, and it sets it to the newest call of that attempt. The
@@ -201,21 +203,21 @@ extension TranscriptTree {
     /// that asked for a tool come before those entries. So the call that
     /// closed the newest stamped `.response` is the first
     /// ``TranscriptEvent/Kind/generationCall`` event after it. A later call
-    /// belongs to a turn that recorded no `.response` (a failed turn, or a
-    /// turn that stopped with the process), and the live counter never read
-    /// it.
+    /// belongs to a submission that recorded no `.response` (a failed
+    /// submission, or a submission that stopped with the process), and the
+    /// live counter never read it.
     ///
     /// An old journal records no `.generationCall` event. Then the size is the
     /// `.response` stamp: the sum of the calls of the attempt, which is the
     /// best measure such a journal holds.
     ///
     /// - Parameter events: The events to read, in `seq` order.
-    private static func newestTurnRenderSize(in events: [TranscriptEvent]) -> (input: Int, output: Int)? {
-        guard let responseIndex = events.lastIndex(where: { $0.turnUsageStamp != nil }) else {
+    private static func newestSubmissionRenderSize(in events: [TranscriptEvent]) -> (input: Int, output: Int)? {
+        guard let responseIndex = events.lastIndex(where: { $0.submissionUsageStamp != nil }) else {
             return nil
         }
         let closingCall = events[(responseIndex + 1)...].lazy.compactMap(\.generationCallCounts).first
-        return closingCall ?? events[responseIndex].turnUsageStamp
+        return closingCall ?? events[responseIndex].submissionUsageStamp
     }
 }
 
@@ -311,8 +313,8 @@ extension TranscriptTree {
         entries.reserveCapacity(events.count)
         for event in events {
             // A router-only marker (a `divergence` marker among them) and the
-            // close of a failed turn mirror no `Transcript.Entry`, so
-            // reconstruction skips them through one predicate. A v1 turn
+            // close of a failed submission mirror no `Transcript.Entry`, so
+            // reconstruction skips them through one predicate. A v1 submission
             // always records a `.prompt` first, which throws below before this
             // check applies.
             guard event.mirrorsTranscriptEntry else {

@@ -47,9 +47,9 @@ struct LatchedBackgroundToolRunner: Tool, BackgroundTool {
     }
 }
 
-/// The backend the background-run suites drive: its first turn calls every
+/// The backend the background-run suites drive: its first call calls every
 /// composed ``LatchedBackgroundToolRunner`` — each of which backgrounds its call —
-/// and answers with the last pending envelope; every later turn answers
+/// and answers with the last pending envelope; every later call answers
 /// ``answerPrefix`` plus the prompt it was given, so an answer grounded in
 /// settled results is provable by reading the answer.
 ///
@@ -58,9 +58,9 @@ struct LatchedBackgroundToolRunner: Tool, BackgroundTool {
 /// submission of its own, with no caller call (task ^3qx0mpt), so a test can
 /// read the captures while such a submission runs.
 final class BackgroundingBackend: LanguageModelSessionBackend {
-    /// The prefix every non-first turn's answer opens with, so a test can
-    /// tell a delivery submission's answer from the first turn's pending
-    /// envelope.
+    /// The prefix the answer of every call after the first opens with, so a
+    /// test can tell a delivery submission's answer from the pending envelope
+    /// of the first call.
     static let answerPrefix = "answered from: "
 
     /// The fields a call writes and a test reads.
@@ -80,17 +80,17 @@ final class BackgroundingBackend: LanguageModelSessionBackend {
     /// The session's own composed tool list.
     private let tools: [any Tool]
 
-    /// Holds the first turn open after its tool calls until a test opens it,
-    /// or `nil` to let that turn return at once.
-    private let holdFirstTurn: RunLatch?
+    /// Holds the first answer open after its tool calls until a test opens
+    /// it, or `nil` to let that answer return at once.
+    private let holdFirstAnswer: RunLatch?
 
     /// The one lock the captures are behind.
     private let captures = Mutex(Captures())
 
-    /// Every prompt this backend was asked to respond to, in turn order.
+    /// Every prompt this backend was asked to respond to, in call order.
     var receivedPrompts: [String] { captures.withLock { $0.receivedPrompts } }
 
-    /// How many composed tool calls this backend made, across every turn.
+    /// How many composed tool calls this backend made, across every call.
     var toolCallCount: Int { captures.withLock { $0.toolCallCount } }
 
     /// What each composed tool call handed back to the model, in call order.
@@ -100,20 +100,20 @@ final class BackgroundingBackend: LanguageModelSessionBackend {
     ///
     /// - Parameters:
     ///   - tools: The session's composed tool list.
-    ///   - holdFirstTurn: A latch that holds the first turn open after its
+    ///   - holdFirstAnswer: A latch that holds the first answer open after its
     ///     tool calls, or `nil`.
-    init(tools: [any Tool], holdFirstTurn: RunLatch? = nil) {
+    init(tools: [any Tool], holdFirstAnswer: RunLatch? = nil) {
         self.tools = tools
-        self.holdFirstTurn = holdFirstTurn
+        self.holdFirstAnswer = holdFirstAnswer
     }
 
     func respond(to prompt: String, maxTokens: Int?) async throws -> String {
-        let isFirstTurn = captures.withLock { captures in
+        let isFirstCall = captures.withLock { captures in
             captures.receivedPrompts.append(prompt)
             return captures.toolCallCount == 0
         }
         _ = try await inner.respond(to: prompt, maxTokens: maxTokens)
-        guard isFirstTurn else {
+        guard isFirstCall else {
             return Self.answerPrefix + prompt
         }
         var rendered = ""
@@ -126,7 +126,7 @@ final class BackgroundingBackend: LanguageModelSessionBackend {
             rendered = try await mounted.call(arguments: BackgroundFixtureArguments(value: prompt))
             captures.withLock { [rendered] in $0.toolOutputs.append(rendered) }
         }
-        await holdFirstTurn?.waitUntilOpen()
+        await holdFirstAnswer?.waitUntilOpen()
         return rendered
     }
 
@@ -174,15 +174,15 @@ final class BackgroundingLLMContainer: LoadedLLMContainer, @unchecked Sendable {
     /// The backend the last vend produced.
     private(set) var lastBackend: BackgroundingBackend?
 
-    /// Handed to every vended backend as its first-turn hold.
-    private let holdFirstTurn: RunLatch?
+    /// Handed to every vended backend as its first-answer hold.
+    private let holdFirstAnswer: RunLatch?
 
     /// Creates a container.
     ///
-    /// - Parameter holdFirstTurn: A latch every vended backend holds its
-    ///   first turn open on, or `nil`.
-    init(holdFirstTurn: RunLatch? = nil) {
-        self.holdFirstTurn = holdFirstTurn
+    /// - Parameter holdFirstAnswer: A latch every vended backend holds its
+    ///   first answer open on, or `nil`.
+    init(holdFirstAnswer: RunLatch? = nil) {
+        self.holdFirstAnswer = holdFirstAnswer
     }
 
     func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
@@ -190,7 +190,7 @@ final class BackgroundingLLMContainer: LoadedLLMContainer, @unchecked Sendable {
     }
 
     func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
-        let backend = BackgroundingBackend(tools: tools, holdFirstTurn: holdFirstTurn)
+        let backend = BackgroundingBackend(tools: tools, holdFirstAnswer: holdFirstAnswer)
         lastBackend = backend
         return backend
     }

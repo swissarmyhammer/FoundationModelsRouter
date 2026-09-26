@@ -2,7 +2,7 @@ import FoundationModels
 
 /// Diffs a recorded `FoundationModels.Transcript` baseline against a current
 /// one and maps each new entry to an identity-stamped
-/// ``TranscriptEvent/Partial`` via ``TranscriptEntryMapper``. Turn-specific
+/// ``TranscriptEvent/Partial`` via ``TranscriptEntryMapper``. Submission-specific
 /// stamps (`grammar`, `ms`, token counts) are the caller's concern.
 enum TranscriptDiffer {
     /// The partials a recorder appends for `current` against `baseline`: the
@@ -72,7 +72,7 @@ enum TranscriptDiffer {
     /// Returns the ordered partial events for every entry in `current` whose
     /// `Transcript.Entry.id` is not in `baseline`. A diverged transcript's
     /// recorded set is the baseline's ids, not its positional prefix, so this
-    /// is the diff for a turn ``divergence(from:in:)`` reported on.
+    /// is the diff for a submission ``divergence(from:in:)`` reported on.
     ///
     /// - Returns: The partial events, in `current`'s order.
     static func diffByEntryId(

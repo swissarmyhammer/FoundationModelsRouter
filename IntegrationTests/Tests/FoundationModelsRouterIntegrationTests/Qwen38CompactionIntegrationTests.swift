@@ -6,8 +6,8 @@ import Testing
 @testable import FoundationModelsRouter
 @testable import FoundationModelsRouterRealModelSupport
 
-/// The value the built context plants in its tool output. The answer of the
-/// turn after the compaction must hold it.
+/// The value the built context plants in its tool output. The answer after
+/// the compaction must hold it.
 private let qwen38CompactionPlantedValue = "6543"
 
 /// The tag every printed line of this suite carries.
@@ -18,12 +18,12 @@ let qwen38CompactionLabel = "qwen38Compaction"
 ///
 /// 1. We can compact: one compaction of a live context that the suite builds
 ///    directly. The only generation is the one summarizer call.
-/// 2. A tool call triggers a compaction: inside one turn, a tool result
-///    crosses the trigger, one compaction runs, and the same turn answers.
+/// 2. A tool call triggers a compaction: inside one answer, a tool result
+///    crosses the trigger, one compaction runs, and the same answer goes on.
 ///    This test is in `Qwen38ToolResultCompactionIntegrationTests.swift`.
 /// 3. A long context compacts: a small window and a seeded context over the
-///    trigger at the start of a turn. The compaction runs before the turn,
-///    and the turn answers.
+///    trigger at the start of an answer. The compaction runs before the first
+///    submission of the answer, and the answer comes after it.
 ///
 /// Each context is a few hundred tokens, and each window is a small test
 /// number, so each test costs seconds after the load. ``Qwen38ResidentModel``
@@ -32,7 +32,7 @@ let qwen38CompactionLabel = "qwen38Compaction"
 ///
 /// Each test asserts the same four facts about its compaction: one
 /// compaction, a summary with text, a snapshot smaller than the context it
-/// replaced, and (for a turn) an answer that holds the planted value.
+/// replaced, and (for an answer) a reply that holds the planted value.
 @Suite(
     "Gated real-model tests: the three compaction cases on Qwen 3.8 27B over one load (task ^yyjvyga)",
     .serialized,
@@ -97,25 +97,25 @@ struct Qwen38CompactionIntegrationTests {
         Change policy: schema changes go through the migration pipeline, never by hand on the server.
         """
 
-    // MARK: - Case 3: the window of the turn-start test
+    // MARK: - Case 3: the window of the answer-start test
 
-    /// The small session window of the turn-start test, in tokens.
-    private static let turnStartWindow = 2048
+    /// The small session window of the answer-start test, in tokens.
+    private static let answerStartWindow = 2048
 
-    /// The share of ``turnStartWindow`` at which the turn-start test
+    /// The share of ``answerStartWindow`` at which the answer-start test
     /// compacts. It is far under the seeded context, so the context is over
-    /// the trigger at the start of the turn.
-    private static let turnStartTriggerShare = 0.1
+    /// the trigger at the start of the answer.
+    private static let answerStartTriggerShare = 0.1
 
-    /// The budget of the turn-start test. The target is the trigger's own
+    /// The budget of the answer-start test. The target is the trigger's own
     /// share.
-    private static let turnStartBudget = TokenBudget(
-        limit: turnStartWindow, trigger: turnStartTriggerShare, target: turnStartTriggerShare)
+    private static let answerStartBudget = TokenBudget(
+        limit: answerStartWindow, trigger: answerStartTriggerShare, target: answerStartTriggerShare)
 
-    /// The prompt of the one turn of the turn-start test. It ends with the
-    /// Qwen 3 switch that turns reasoning off for this turn, so the turn costs
-    /// a short answer and no reasoning.
-    private static let turnStartPrompt = "Which port does the staging database listen on? /no_think"
+    /// The prompt of the one answer of the answer-start test. It ends with the
+    /// Qwen 3 switch that turns reasoning off for this message, so the answer
+    /// costs a short reply and no reasoning.
+    private static let answerStartPrompt = "Which port does the staging database listen on? /no_think"
 
     // MARK: - Case 1
 
@@ -139,7 +139,7 @@ struct Qwen38CompactionIntegrationTests {
     // MARK: - Case 3
 
     @Test(
-        "a long context compacts: a seeded context over the trigger compacts one time before the turn, the snapshot is smaller, and the turn answers"
+        "a long context compacts: a seeded context over the trigger compacts one time before the answer, the snapshot is smaller, and the answer comes"
     )
     func contextOverTheTriggerCompactsBeforeTheAnswer() async throws {
         let loaded = try await Qwen38ResidentModel.shared.container()
@@ -147,26 +147,26 @@ struct Qwen38CompactionIntegrationTests {
         let transcript = try Self.builtLiveContext()
         let seededTokens = try counter.count(transcript)
         try #require(
-            seededTokens >= Self.turnStartBudget.triggerTokens,
-            "the seeded context counts \(seededTokens) tokens, under the trigger of \(Self.turnStartBudget.triggerTokens)")
+            seededTokens >= Self.answerStartBudget.triggerTokens,
+            "the seeded context counts \(seededTokens) tokens, under the trigger of \(Self.answerStartBudget.triggerTokens)")
 
-        let harness = try Qwen38SessionHarness(container: loaded, window: Self.turnStartWindow)
+        let harness = try Qwen38SessionHarness(container: loaded, window: Self.answerStartWindow)
         defer { harness.removeDirectory() }
         let session = harness.profile.standard.makeSession(
-            instructions: Self.instructions, budget: Self.turnStartBudget)
+            instructions: Self.instructions, budget: Self.answerStartBudget)
         let actor = try #require(session as? RoutedSessionActor)
         await actor.seed(liveContext: transcript, measuredTokens: seededTokens)
 
-        let turn = try await Qwen38TurnRecord.drive(session, prompt: Self.turnStartPrompt)
-        turn.report(label: qwen38CompactionLabel, detail: "case 3 seededTokens=\(seededTokens)")
+        let record = try await Qwen38AnswerRecord.drive(session, prompt: Self.answerStartPrompt)
+        record.report(label: qwen38CompactionLabel, detail: "case 3 seededTokens=\(seededTokens)")
 
-        #expect(turn.textBeforeCompaction.isEmpty, "the turn wrote text before its compaction")
-        try Self.expectOneCompactionAndAnAnswer(turn, holding: qwen38CompactionPlantedValue)
+        #expect(record.textBeforeCompaction.isEmpty, "the answer wrote text before its compaction")
+        try Self.expectOneCompactionAndAnAnswer(record, holding: qwen38CompactionPlantedValue)
     }
 
     // MARK: - The shared assertions
 
-    /// Asserts that `turn` holds one applied compaction, and an answer after
+    /// Asserts that `record` holds one applied compaction, and an answer after
     /// it that holds `plantedValue`.
     ///
     /// An answer that is not empty is not enough: before task ^5t72pdx, the
@@ -175,15 +175,15 @@ struct Qwen38CompactionIntegrationTests {
     /// configuration". The answer must use the compacted context.
     ///
     /// - Parameters:
-    ///   - turn: The record of the turn.
+    ///   - record: The record of the answer.
     ///   - plantedValue: The value the context planted, which the answer must hold.
-    /// - Throws: When the turn holds no compaction.
-    static func expectOneCompactionAndAnAnswer(_ turn: Qwen38TurnRecord, holding plantedValue: String) throws {
-        #expect(turn.compactions.count == 1, "expected one compaction in the turn, got \(turn.compactions.count)")
-        try expectAppliedCompaction(try #require(turn.compactions.first))
+    /// - Throws: When the answer holds no compaction.
+    static func expectOneCompactionAndAnAnswer(_ record: Qwen38AnswerRecord, holding plantedValue: String) throws {
+        #expect(record.compactions.count == 1, "expected one compaction in the answer, got \(record.compactions.count)")
+        try expectAppliedCompaction(try #require(record.compactions.first))
         #expect(
-            turn.answer.contains(plantedValue),
-            "the answer after the compaction does not hold \(plantedValue): \(turn.answer.debugDescription)")
+            record.answer.contains(plantedValue),
+            "the answer after the compaction does not hold \(plantedValue): \(record.answer.debugDescription)")
     }
 
     /// Asserts that `result` applied a summary with text and made the
@@ -202,7 +202,7 @@ struct Qwen38CompactionIntegrationTests {
     }
 }
 
-// MARK: - The session and the turn of a compaction test
+// MARK: - The session and the answer of a compaction test
 
 /// A profile over the resident model at a small window, and the temporary
 /// directory it caches and records under.
@@ -234,26 +234,26 @@ struct Qwen38SessionHarness {
     }
 }
 
-/// What one turn of a compaction test produced.
-struct Qwen38TurnRecord {
-    /// Every compaction of the turn, in order.
+/// What one answer of a compaction test produced.
+struct Qwen38AnswerRecord {
+    /// Every compaction of the answer, in order.
     var compactions: [CompactionResult] = []
 
-    /// The text the turn wrote before its first compaction.
+    /// The text the answer wrote before its first compaction.
     var textBeforeCompaction = ""
 
-    /// The text the turn wrote after its first compaction: the answer.
+    /// The text the answer wrote after its first compaction: the reply.
     var answer = ""
 
-    /// Drives one turn of `session` and records its compactions and its text.
+    /// Drives one answer of `session` and records its compactions and its text.
     ///
     /// - Parameters:
     ///   - session: The session.
-    ///   - prompt: The prompt of the turn.
-    /// - Returns: The record of the turn.
-    /// - Throws: What the turn throws.
-    static func drive(_ session: RoutedSession, prompt: String) async throws -> Qwen38TurnRecord {
-        var record = Qwen38TurnRecord()
+    ///   - prompt: The prompt of the message.
+    /// - Returns: The record of the answer.
+    /// - Throws: What the answer throws.
+    static func drive(_ session: RoutedSession, prompt: String) async throws -> Qwen38AnswerRecord {
+        var record = Qwen38AnswerRecord()
         for try await event in await session.streamEvents(to: prompt, maxTokens: nil) {
             switch event {
             case .compaction(let result):
@@ -291,7 +291,8 @@ struct Qwen38TurnRecord {
 
 extension RoutedSessionActor {
     /// Replaces the live context of this session with `liveContext`, and sets
-    /// its measured usage to `measuredTokens`, as if a turn had built it.
+    /// its measured usage to `measuredTokens`, as if earlier answers had built
+    /// it.
     ///
     /// A test seeds a context this way so that it does not generate one.
     ///

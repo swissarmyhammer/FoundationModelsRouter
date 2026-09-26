@@ -62,7 +62,7 @@ struct PendingRunEnvelopeTests {
         Self.expect(
             next,
             saysInOrder: [
-                // The run goes on behind the turn.
+                // The run goes on behind the answer.
                 "continues in the background",
                 // Do not answer, and do not invent the result.
                 "not answer",

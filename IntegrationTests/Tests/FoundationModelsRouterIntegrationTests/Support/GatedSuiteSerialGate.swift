@@ -45,8 +45,8 @@ import Testing
 /// - `swift test --package-path IntegrationTests --filter Qwen38CompactionIntegrationTests`
 ///   runs the three compaction cases on Qwen 3.8 27B alone, over one load of
 ///   the model: one compaction of a built context, a tool result that
-///   triggers a compaction inside its turn, and a context over the trigger
-///   that compacts at the start of a turn.
+///   triggers a compaction inside its answer, and a context over the trigger
+///   that compacts at the start of an answer.
 ///
 /// The package boundary needs no guard script: a run of this package executes
 /// every suite in it, so a green run always measured something.

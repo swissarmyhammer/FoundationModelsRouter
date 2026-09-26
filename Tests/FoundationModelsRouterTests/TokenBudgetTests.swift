@@ -213,7 +213,7 @@ struct TokenBudgetTests {
 
     // MARK: - Brand-new session
 
-    @Test("a brand-new session reports contextFill ≈ 0 before its first turn")
+    @Test("a brand-new session reports contextFill ≈ 0 before its first answer")
     @MainActor
     func newSessionReportsZeroFill() async throws {
         let dir = Self.makeTempDir()
@@ -228,11 +228,11 @@ struct TokenBudgetTests {
         #expect(await session.contextFill == 0)
     }
 
-    // MARK: - Live fill: last-turn delta, never the cumulative total
+    // MARK: - Live fill: last-answer delta, never the cumulative total
 
-    @Test("contextFill after one turn is that turn's usage delta over the resolved context")
+    @Test("contextFill after one answer is that answer's usage delta over the resolved context")
     @MainActor
-    func singleTurnFillIsDeltaOverContext() async throws {
+    func singleAnswerFillIsDeltaOverContext() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -248,10 +248,10 @@ struct TokenBudgetTests {
     }
 
     @Test(
-        "after multiple turns contextFill reflects only the newest turn's delta, not the cumulative total"
+        "after multiple answers contextFill reflects only the newest answer's delta, not the cumulative total"
     )
     @MainActor
-    func multiTurnFillReflectsOnlyNewestDelta() async throws {
+    func multiAnswerFillReflectsOnlyNewestDelta() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -265,15 +265,15 @@ struct TokenBudgetTests {
         _ = try await session.respond(to: "second")
 
         // A bug reading the backend's raw cumulative total instead of the
-        // per-turn delta would report 300/1000 = 0.3 here instead of 0.15.
+        // delta of each answer would report 300/1000 = 0.3 here instead of 0.15.
         #expect(await session.contextFill == 0.15)
     }
 
-    // MARK: - A failed turn that never reached the backend leaves fill unchanged
+    // MARK: - A failed answer that never reached the backend leaves fill unchanged
 
-    @Test("a turn that fails before the backend records anything leaves contextFill unchanged")
+    @Test("an answer that fails before the backend records anything leaves contextFill unchanged")
     @MainActor
-    func failedTurnLeavesFillUnchanged() async throws {
+    func failedAnswerLeavesFillUnchanged() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 

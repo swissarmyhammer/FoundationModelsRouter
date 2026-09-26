@@ -114,27 +114,27 @@ struct CompactionPartCostTests {
         #expect(instructionsCost + keptCost + (try counter.count(Transcript(entries: rest))) == wholeTokens)
     }
 
-    @Test("the snapshot is counted as the model receives it: with the next turn's prompt entry, whose cost comes off")
-    func snapshotCountsWithTheNextTurnPrompt() async throws {
+    @Test("the snapshot is counted as the model receives it: with the prompt entry of the next submission, whose cost comes off")
+    func snapshotCountsWithTheNextSubmissionPrompt() async throws {
         let counter = Self.strictCounter()
         let (live, compacted, result) = try await Self.compactFixture(counter: counter)
 
-        let standIn = Summarization.nextTurnStandIn(in: Array(live))
+        let standIn = Summarization.nextSubmissionStandIn(in: Array(live))
         #expect(standIn.count == 1)
         let conversation = Transcript(entries: Array(compacted) + standIn)
         let expected = try counter.count(conversation) - (try counter.count(Transcript(entries: standIn)))
         #expect(result.tokensAfter == expected)
     }
 
-    @Test("the next-turn stand-in is the last prompt entry, or none when the live context holds no prompt")
-    func nextTurnStandInIsTheLastPrompt() throws {
+    @Test("the next-submission stand-in is the last prompt entry, or none when the live context holds no prompt")
+    func nextSubmissionStandInIsTheLastPrompt() throws {
         let entries = Array(try ProtectedToolOutputFixtures.transcript())
         let lastPrompt = try #require(entries.last {
             if case .prompt = $0 { return true }
             return false
         })
 
-        #expect(Summarization.nextTurnStandIn(in: entries) == [lastPrompt])
-        #expect(Summarization.nextTurnStandIn(in: Self.instructions(of: entries)).isEmpty)
+        #expect(Summarization.nextSubmissionStandIn(in: entries) == [lastPrompt])
+        #expect(Summarization.nextSubmissionStandIn(in: Self.instructions(of: entries)).isEmpty)
     }
 }

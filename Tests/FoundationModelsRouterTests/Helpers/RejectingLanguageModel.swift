@@ -7,7 +7,7 @@ import Synchronization
 /// generation call, in call order.
 ///
 /// A class behind a lock, because the SDK generates on a task of its own while
-/// the test reads the log on the task that drove the turn. It is `Hashable` by
+/// the test reads the log on the task that drove the answer. It is `Hashable` by
 /// identity, so it can be part of the executor cache key.
 final class RejectingModelLog: Sendable, Hashable {
     /// The text of each transcript seen so far, one array for each call.

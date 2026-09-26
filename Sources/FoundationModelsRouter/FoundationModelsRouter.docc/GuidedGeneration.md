@@ -1,6 +1,6 @@
 # Guided generation
 
-Constrain a turn to a JSON Schema the caller supplies at run time, and read the
+Constrain an answer to a JSON Schema the caller supplies at run time, and read the
 answer back as data (task ^jp93e7c).
 
 ## Overview
@@ -12,7 +12,7 @@ of parsing free text and repairing what the model wrote.
 Use ``RoutedModel/respond(to:matching:maxTokens:)`` when the shape arrives at
 run time — from a tool manifest, a configuration file, or the user — so there is
 no Swift type to decode into. The method takes the JSON Schema source, runs one
-constrained turn, and parses the output into a ``JSONValue``:
+constrained answer, and parses the output into a ``JSONValue``:
 
 ```swift
 let profile = try await router.resolve(profile: definition, reporting: progress)
@@ -29,7 +29,7 @@ print(name)
 Hold the resolved ``LanguageModelProfile`` for as long as the call runs. A slot
 handle holds its profile weakly.
 
-To constrain every turn of a conversation rather than one turn, vend a session
+To constrain every answer of a conversation rather than one answer, vend a session
 with ``RoutedModel/makeGuidedSession(grammar:instructions:workingDirectory:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``.
 The session carries its ``Grammar`` for its whole life, and a fork inherits it.
 

@@ -23,14 +23,14 @@ struct RoutedSessionPublicSurfaceTests {
     /// back off the transcript.
     private static let sentPromptText = "sent over the public surface"
 
-    /// Builds a scripted session whose turn answers without calling a tool —
+    /// Builds a scripted session whose answer comes without a tool call —
     /// enough machinery for the queue members, and no tool to script.
     ///
     /// - Returns: The vended session and the temp directory the caller removes.
     /// - Throws: Whatever profile resolution throws.
     private static func makeQueueFixture() async throws -> ScriptedSessionFixture {
         try await ScriptedSessionFixture.make(
-            playing: ScriptedTurnScript(rounds: []), mounting: [], tempDirPrefix: tempDirPrefix)
+            playing: ScriptedAnswerScript(rounds: []), mounting: [], tempDirPrefix: tempDirPrefix)
     }
 
     /// Reads the text of a prompt back out of its segments.
@@ -56,7 +56,7 @@ struct RoutedSessionPublicSurfaceTests {
         let result = try await fixture.session.compact()
 
         // The default budget is the session's resolved working context, which
-        // one scripted turn comes nowhere near: the pipeline measured a real
+        // one scripted answer comes nowhere near: the pipeline measured a real
         // transcript and correctly compacted nothing.
         #expect(result.tokensBefore > 0)
         #expect(result.tokensAfter == result.tokensBefore)

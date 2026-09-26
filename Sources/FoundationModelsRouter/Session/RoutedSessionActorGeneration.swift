@@ -236,8 +236,8 @@ extension RoutedSessionActor {
         wrapFragment: @Sendable (ResponseFragment) -> [Element]
     ) async throws -> String {
         var response = ""
-        // This turn's stall watch counts real increments (task ^z6xcmnh):
-        // declared here so a streaming turn that has produced nothing yet is
+        // The stall watch of this submission counts real increments (task ^z6xcmnh):
+        // declared here so a streaming submission that has produced nothing yet is
         // still reported as one the session can see fragments on, and noted per
         // append below so the report is measured from the last one. A fragment
         // with no text still reports an append: a tool call, a tool result, or

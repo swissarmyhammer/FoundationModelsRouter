@@ -39,8 +39,8 @@ struct TokenizerTokenCounterTests {
                 signature: nil
             )
         )
-        let turn = try TranscriptFixtures.makeTurn(index: 1, toolOutputText: "tool result")
-        return Transcript(entries: [instructions] + turn.dropLast() + [reasoning, turn[turn.count - 1]])
+        let answerEntries = try TranscriptFixtures.makeAnswerEntries(index: 1, toolOutputText: "tool result")
+        return Transcript(entries: [instructions] + answerEntries.dropLast() + [reasoning, answerEntries[answerEntries.count - 1]])
     }
 
     @Test("count(text) is the number of tokens the tokenizer encodes, with no special tokens")
@@ -120,7 +120,7 @@ struct TokenizerTokenCounterTests {
     func transcriptCountGivesNoToolsWithoutDefinitions() throws {
         let tokenizer = ScriptedChatTokenizer(hasChatTemplate: true)
         let counter = TokenizerTokenCounter(tokenizer: tokenizer)
-        let transcript = Transcript(entries: [TranscriptFixtures.makeInstructions()] + (try TranscriptFixtures.makeTurn(index: 1)))
+        let transcript = Transcript(entries: [TranscriptFixtures.makeInstructions()] + (try TranscriptFixtures.makeAnswerEntries(index: 1)))
 
         _ = try counter.count(transcript)
 

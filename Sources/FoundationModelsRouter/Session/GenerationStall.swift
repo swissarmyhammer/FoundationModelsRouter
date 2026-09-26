@@ -7,13 +7,13 @@ private let generationStallLogger = makeModuleLogger(category: "Generation")
 
 /// What a session could observe about a generation's progress.
 public enum GenerationProgressVisibility: Sendable, Equatable {
-    /// The turn streams. `observed` is how many text fragments of the whole
+    /// The submission streams. `observed` is how many text fragments of the whole
     /// model call arrived before the stall. ``GenerationStall/timeWithoutProgress``
     /// is measured from the last append of any ``GenerationProgressKind``, or
     /// from the start of the current pass when that is later.
     case fragments(observed: Int)
 
-    /// The turn returns one whole `String`, so there is no text fragment to
+    /// The submission returns one whole `String`, so there is no text fragment to
     /// count. ``GenerationStall/timeWithoutProgress`` is measured from the last
     /// tool call or tool result, or from the start of the submission before
     /// the first, or from the start of the current pass when that is later.
@@ -145,7 +145,7 @@ public struct GenerationStall: Sendable, Equatable, CustomStringConvertible {
             return "\(stalled) (\(observed) fragments so far, \(inFlight)s in flight)"
         case .wholeAnswer:
             return """
-                \(stalled) (this turn returns one whole answer, so there is no fragment to count; \
+                \(stalled) (this submission returns one whole answer, so there is no fragment to count; \
                 \(inFlight)s in flight)
                 """
         }
@@ -308,7 +308,7 @@ extension RoutedSessionActor {
 
     /// Reports one interval of stall for the watch named by `id`, when that
     /// watch is still installed and has gone the whole interval without
-    /// progress. Reports to the module log and to ``currentTurnEventSink``.
+    /// progress. Reports to the module log and to ``currentAnswerEventSink``.
     ///
     /// It first takes the call phases not yet applied
     /// (``drainGenerationPassPhases()``), so the report reads whether a pass
@@ -333,7 +333,7 @@ extension RoutedSessionActor {
         generationStallLogger.warning(
             "session \(self.id.description, privacy: .public): \(stall.description, privacy: .public)"
         )
-        currentTurnEventSink?(.generationStalled(stall))
+        currentAnswerEventSink?(.generationStalled(stall))
         return true
     }
 

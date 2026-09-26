@@ -63,12 +63,12 @@ struct ToolResultAppend: Sendable {
     }
 }
 
-/// The tool-result append boundary of one model call of a turn.
+/// The tool-result append boundary of one model call of a submission.
 ///
 /// ``RoutedSessionActor/runCancellableModelCall(composedPrompt:_:)`` binds
 /// one boundary around each model call. The model-facing tool decorators
 /// read ``current`` and give each tool result to it. A tool result is the one
-/// place where the context of a turn grows while the model call is in
+/// place where the context of a submission grows while the model call is in
 /// flight, so the session checks the compaction trigger there (see
 /// ``RoutedSessionActor/noteToolResult(_:)``).
 ///

@@ -7,7 +7,7 @@ import Tracing
 /// A tool that declares ``BackgroundTool/inlineSettleGrace`` waits that long before it answers, and a run that settles inside the wait puts its result in the same envelope.
 struct BackgroundToolRunner<
     Arguments: ConvertibleFromGeneratedContent & Sendable
->: Tool, TurnBoundaryTool, ToolDecorator {
+>: Tool, SubmissionBoundaryTool, ToolDecorator {
     /// The wrapped tool. Internal so wiring tests can assert the decorator chain.
     let wrapped: any Tool<Arguments, String>
 
@@ -63,7 +63,7 @@ struct BackgroundToolRunner<
     /// Starts one call in the background and returns ``PendingRunEnvelope/rendered`` for the run.
     ///
     /// The call runs inside one ``RouterTracing/SpanName/tool`` span, nested in
-    /// the turn's span, reporting ``RouterTracing/ToolRunKind/background``. That
+    /// the span of its submission, reporting ``RouterTracing/ToolRunKind/background``. That
     /// span covers the accept-and-launch step the model sees and ends with the
     /// envelope; the run itself settles later, in ``mailbox``, and is measured
     /// by the run plane rather than by this span.

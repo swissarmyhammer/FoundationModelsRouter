@@ -78,7 +78,7 @@ private let recordedTranscriptCompactionChatTemplateDate =
 ///    on disk become a real `FoundationModels.Transcript` through
 ///    ``TranscriptTree/load(under:)`` and
 ///    ``TranscriptTree/effectiveTranscript(forSession:view:)``, and
-///    ``Compactor`` compacts that transcript. No session is opened and no turn is
+///    ``Compactor`` compacts that transcript. No session is opened and no answer is
 ///    driven; the only generation the suite makes is the compaction's own
 ///    summarizer call.
 /// 2. **The recording still has the shape real traffic has.** The reconstructed

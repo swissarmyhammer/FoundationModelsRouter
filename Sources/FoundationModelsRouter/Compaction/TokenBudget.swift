@@ -92,7 +92,7 @@ let unknownContextFill = Double.nan
 
 /// The measured usage state that ``RoutedSessionActor/contextFill`` reads.
 enum ContextUsageState: Sendable, Equatable {
-    /// No turn has completed and no persisted stamp was found.
+    /// No submission has completed and no persisted stamp was found.
     case none
 
     /// The most recently measured size of the render: the fed and generated
@@ -132,15 +132,15 @@ extension ContextUsageState {
 }
 
 extension TranscriptEvent {
-    /// The `(tokensIn, tokensOut)` usage stamp of a turn, or `nil` when this
-    /// event carries none.
+    /// The `(tokensIn, tokensOut)` usage stamp of a submission, or `nil` when
+    /// this event carries none.
     ///
     /// Only a `.response` event with an entry carries a stamp that is a real
     /// measurement. An event with no entry (a v1 line) and the close of a
-    /// failed turn (``isFailedAnswerClose``) give `nil`. The stamp is the sum of
-    /// the generation calls of the attempt: the cost of the attempt, not the
-    /// size of the render.
-    var turnUsageStamp: (input: Int, output: Int)? {
+    /// failed submission (``isFailedAnswerClose``) give `nil`. The stamp is the
+    /// sum of the generation calls of the attempt: the cost of the attempt, not
+    /// the size of the render.
+    var submissionUsageStamp: (input: Int, output: Int)? {
         guard kind == .response, entry != nil, !isFailedAnswerClose, let tokensIn, let tokensOut else {
             return nil
         }

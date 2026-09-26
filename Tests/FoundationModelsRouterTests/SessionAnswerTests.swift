@@ -42,15 +42,15 @@ struct SessionAnswerTests {
     /// - Throws: Whatever building the session throws.
     private static func makeFixture() async throws -> ScriptedSessionFixture {
         try await ScriptedSessionFixture.make(
-            playing: ScriptedTurnScript(
+            playing: ScriptedAnswerScript(
                 rounds: [
                     [
                         ScriptedToolCall(
                             id: "call-first", toolName: firstTool,
-                            argument: .literal(ToolTurnScenario.firstStep)),
+                            argument: .literal(ToolAnswerScenario.firstStep)),
                         ScriptedToolCall(
                             id: "call-second", toolName: secondTool,
-                            argument: .literal(ToolTurnScenario.secondStep)),
+                            argument: .literal(ToolAnswerScenario.secondStep)),
                     ]
                 ],
                 narration: narration),
@@ -61,7 +61,7 @@ struct SessionAnswerTests {
     /// The reply the scenario must produce, composed from the two markers
     /// only its tools could have supplied.
     private static var expectedAnswer: String {
-        ScriptedToolFixture.answer(fromToolOutputs: ToolTurnScenario.markers)
+        ScriptedToolFixture.answer(fromToolOutputs: ToolAnswerScenario.markers)
     }
 
     // MARK: - The reply invariant (acceptance)
@@ -143,7 +143,7 @@ struct SessionAnswerTests {
         #expect(outcome.toolCalls.map(\.id) == ["call-first", "call-second"])
         #expect(outcome.toolCalls.map(\.name) == [Self.firstTool, Self.secondTool])
         #expect(outcome.toolCalls.map(\.status) == [.completed, .completed])
-        #expect(outcome.toolCalls.map(\.summary) == ToolTurnScenario.markers)
+        #expect(outcome.toolCalls.map(\.summary) == ToolAnswerScenario.markers)
         // The full output segments ride along too: each marker tool's output
         // entry carries one `.text` segment whose content is the marker.
         let outputTexts = outcome.toolCalls.map { call -> String? in
@@ -152,7 +152,7 @@ struct SessionAnswerTests {
             else { return nil }
             return content
         }
-        #expect(outputTexts == ToolTurnScenario.markers)
+        #expect(outputTexts == ToolAnswerScenario.markers)
 
         // The live view: one record per run (the close record replaced the
         // open record), in the completionToken id space.

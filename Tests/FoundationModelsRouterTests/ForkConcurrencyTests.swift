@@ -377,18 +377,18 @@ struct ForkConcurrencyTests {
         let parentBackend = try #require(container.lastBackend)
         let childBackend = try #require(parentBackend.lastFork)
 
-        // A turn on the child does not retroactively appear in the parent's
+        // An answer on the child does not retroactively appear in the parent's
         // history…
-        let childText = try await child.respond(to: "child turn")
+        let childText = try await child.respond(to: "child answer")
         #expect(childText == "ok")
-        #expect(childBackend.receivedPrompts == ["child turn"])
+        #expect(childBackend.receivedPrompts == ["child answer"])
         #expect(parentBackend.receivedPrompts.isEmpty)
 
-        // …and a further parent turn is independent of the (now-diverged) child.
-        let parentText = try await parent.respond(to: "parent turn")
+        // …and a further parent answer is independent of the (now-diverged) child.
+        let parentText = try await parent.respond(to: "parent answer")
         #expect(parentText == "ok")
-        #expect(parentBackend.receivedPrompts == ["parent turn"])
-        #expect(childBackend.receivedPrompts == ["child turn"])
+        #expect(parentBackend.receivedPrompts == ["parent answer"])
+        #expect(childBackend.receivedPrompts == ["child answer"])
     }
 
     // MARK: - Grammar inheritance on a guided-session fork
@@ -465,7 +465,7 @@ struct ForkConcurrencyTests {
         #expect(await observer.entryOrder == [0])
         #expect(await observer.maxActive == 1)
 
-        // Release the chain; FIFO must admit them 1, 2, 3 in turn.
+        // Release the chain; FIFO must admit them 1, 2, 3 in that order.
         for _ in 0..<callers.count { releaseGate.signal() }
 
         _ = try await task0.value

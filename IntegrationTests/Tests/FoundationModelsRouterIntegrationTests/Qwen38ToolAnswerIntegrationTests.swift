@@ -10,29 +10,29 @@ import Testing
 /// The Qwen 3.8 generation model this suite drives: a dense 27B model in the
 /// `mxfp4` quantization, with the `qwen3_5` architecture that MLX loads.
 ///
-/// This is the largest model any tool-turn suite of this package drives. The
-/// sibling `RealToolTurnComparisonTests` moved from the 30B to a 4B for cost,
-/// and this suite exists so that one tool turn on a model of this size is
-/// measured at all. It drives the `respond(to:)` surface only, one turn, one
-/// load, so its cost is the load plus one turn.
-private let qwen38ToolTurnModel: ModelRef = "mlx-community/Qwen3.8-27B-mxfp4"
+/// This is the largest model any tool-answer suite of this package drives. The
+/// sibling `RealToolAnswerComparisonTests` moved from the 30B to a 4B for cost,
+/// and this suite exists so that one tool-using answer on a model of this size
+/// is measured at all. It drives the `respond(to:)` surface only, one answer,
+/// one load, so its cost is the load plus one answer.
+private let qwen38ToolAnswerModel: ModelRef = "mlx-community/Qwen3.8-27B-mxfp4"
 
 // MARK: - Suite
 
-/// One real tool-using turn on Qwen 3.8 27B mxfp4.
+/// One real tool-using answer on Qwen 3.8 27B mxfp4.
 ///
-/// The scenario is the one `ScriptedToolTurnComparisonTests` and
-/// `RealToolTurnComparisonTests` share: two marker tools, one prompt that asks
+/// The scenario is the one `ScriptedToolAnswerComparisonTests` and
+/// `RealToolAnswerComparisonTests` share: two marker tools, one prompt that asks
 /// for both, and an answer that must quote the identifiers the tools returned.
-/// Every assertion is a claim about this one turn:
+/// Every assertion is a claim about this one answer:
 ///
-/// - the turn recorded at least one `.toolOutput`, so a tool really ran;
-/// - every marker the turn's own tool outputs delivered is in the answer;
-/// - the answer equals the text of the last `.response` entry the turn recorded;
+/// - the answer recorded at least one `.toolOutput`, so a tool really ran;
+/// - every marker the answer's own tool outputs delivered is in the answer;
+/// - the answer equals the text of the last `.response` entry the answer recorded;
 /// - every announced call is answered exactly once, as a multiset of ordinals;
 /// - the transcript ends with the answer, after the tool work it reports.
 ///
-/// A turn that called the tools with an argument the scenario does not name
+/// An answer that called the tools with an argument the scenario does not name
 /// still runs a tool and still records its output, but that output carries no
 /// marker. That is a model choice and not a Router defect, so it is recorded
 /// as a known issue rather than failed, as the sibling suite does.
@@ -41,7 +41,7 @@ private let qwen38ToolTurnModel: ModelRef = "mlx-community/Qwen3.8-27B-mxfp4"
     .serialized,
     .exclusiveRealModel
 )
-struct Qwen38ToolTurnIntegrationTests {
+struct Qwen38ToolAnswerIntegrationTests {
     // MARK: - Scenario tools
 
     /// The argument schema both scenario tools take: one required string.
@@ -63,10 +63,10 @@ struct Qwen38ToolTurnIntegrationTests {
         /// Returns the marker for the step this call names.
         ///
         /// - Parameter arguments: The call's decoded arguments.
-        /// - Returns: ``ToolTurnScenario/marker(for:)`` for the named step.
+        /// - Returns: ``ToolAnswerScenario/marker(for:)`` for the named step.
         /// - Throws: Never. `throws` comes from the `Tool` requirement.
         func call(arguments: StepArguments) async throws -> String {
-            ToolTurnScenario.marker(for: arguments.step)
+            ToolAnswerScenario.marker(for: arguments.step)
         }
     }
 
@@ -81,14 +81,14 @@ struct Qwen38ToolTurnIntegrationTests {
     /// identifiers.
     private static let instructions = """
         You have two tools. To answer the user you must call \
-        `\(firstTool)` with step "\(ToolTurnScenario.firstStep)" and \
-        `\(secondTool)` with step "\(ToolTurnScenario.secondStep)". \
+        `\(firstTool)` with step "\(ToolAnswerScenario.firstStep)" and \
+        `\(secondTool)` with step "\(ToolAnswerScenario.secondStep)". \
         Make both calls together, in one step, before you reply. \
         Then reply with both identifiers the tools returned, exactly as they \
         were returned, and nothing else.
         """
 
-    /// The prompt the scenario's turn is driven with.
+    /// The prompt the scenario's answer is driven with.
     private static let prompt = """
         Look up both steps with your tools and tell me the two identifiers.
         """
@@ -112,11 +112,11 @@ struct Qwen38ToolTurnIntegrationTests {
         over container: RealModelContainer
     ) -> (session: RoutedSession, profile: LanguageModelProfile, directory: URL) {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("Qwen38ToolTurn-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("Qwen38ToolAnswer-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
         let profile = RealModelHarness.make(
-            model: qwen38ToolTurnModel,
+            model: qwen38ToolAnswerModel,
             context: ScriptedSessionContext.tokens,
             container: container.container,
             samplingMode: container.samplingMode,
@@ -134,7 +134,7 @@ struct Qwen38ToolTurnIntegrationTests {
 
     /// Reads the session's own transcript back off its backend.
     ///
-    /// - Parameter session: The session whose turn has already returned.
+    /// - Parameter session: The session whose answer has already returned.
     /// - Returns: The SDK's transcript entries, in order.
     private func transcriptEntries(of session: RoutedSession) async -> [Transcript.Entry] {
         guard let actor = session as? RoutedSessionActor else { return [] }
@@ -144,7 +144,7 @@ struct Qwen38ToolTurnIntegrationTests {
     /// Reads the session's cumulative token usage back off its backend, as
     /// text for the run's printed record.
     ///
-    /// - Parameter session: The session whose turn has already returned.
+    /// - Parameter session: The session whose answer has already returned.
     /// - Returns: `in=<input> out=<output>`, or `unmetered` when the backend
     ///   cannot report usage.
     private func usageDescription(of session: RoutedSession) async -> String {
@@ -156,7 +156,7 @@ struct Qwen38ToolTurnIntegrationTests {
 
     // MARK: - Transcript arithmetic
 
-    /// The ordinal of every tool call the turn announced, in announcement
+    /// The ordinal of every tool call the answer announced, in announcement
     /// order.
     ///
     /// - Parameter transcript: The run's normalized transcript.
@@ -190,25 +190,25 @@ struct Qwen38ToolTurnIntegrationTests {
 
     // MARK: - Test
 
-    @Test("a tool-using turn on Qwen 3.8 records its tool calls and outputs, and its answer carries the markers")
-    func toolTurnRecordsCallsAndDeliversMarkers() async throws {
+    @Test("a tool-using answer on Qwen 3.8 records its tool calls and outputs, and carries the markers")
+    func toolAnswerRecordsCallsAndDeliversMarkers() async throws {
         let loadStarted = ContinuousClock.now
         let container = try await RealModelContainer.load(
-            ref: qwen38ToolTurnModel, samplingMode: Self.samplingMode)
+            ref: qwen38ToolAnswerModel, samplingMode: Self.samplingMode)
         let loadDuration = ContinuousClock.now - loadStarted
 
         let (session, profile, directory) = makeSession(over: container)
         defer { try? FileManager.default.removeItem(at: directory) }
         // The session's handle holds its owning profile weakly, so the profile
-        // has to stay referenced for the whole turn.
+        // has to stay referenced for the whole answer.
         defer { withExtendedLifetime(profile) {} }
 
         let startInstant = ContinuousClock.now
         let answer = try await session.respond(
             to: Self.prompt, maxTokens: GatedRealModelBudget.responseTokenCeiling)
-        let turnDuration = ContinuousClock.now - startInstant
+        let answerDuration = ContinuousClock.now - startInstant
 
-        let run = ToolTurnRunOutcome(
+        let run = ToolAnswerRunOutcome(
             answer: answer,
             calledIds: [],
             completedIds: [],
@@ -216,50 +216,49 @@ struct Qwen38ToolTurnIntegrationTests {
             entries: await transcriptEntries(of: session))
         let usage = await usageDescription(of: session)
 
-        // The turn is over and every fact the assertions read is in `run`, so
-        // the 14 GB of weights go back before the assertions run rather than
-        // after them. Every other gated suite of this target evicts what it
-        // loads. The CI run of 2026-09-08 for commit 422023d measured what a
-        // suite that does not evict costs the suites after it: on the runner,
-        // the Muse Glimmer load that took 6 seconds before this suite ran took
-        // 104 seconds after it, and four Muse suites timed out at the time
-        // limit of that day.
+        // The answer is complete and every fact the assertions read is in
+        // `run`, so the 14 GB of weights go back before the assertions run
+        // rather than after them. Every other gated suite of this target
+        // evicts what it loads. The CI run of 2026-09-08 for commit 422023d
+        // measured what a suite that does not evict costs the suites after it:
+        // on the runner, the Muse Glimmer load that took 6 seconds before this
+        // suite ran took 104 seconds after it, and four Muse suites timed out
+        // at the time limit of that day.
         await container.container.model.evict()
 
         // Printed so a reader can see what the model did, and so the cost
-        // splits into the load and the turn.
+        // splits into the load and the answer.
         print(
             """
-            QWEN38 load: \(loadDuration), respond turn: \(turnDuration), usage: \(usage)
+            QWEN38 load: \(loadDuration), respond answer: \(answerDuration), usage: \(usage)
             QWEN38 transcript:
             \(run.transcriptDescription)
             QWEN38 answer: \(run.answer.debugDescription)
             """)
 
-        // The turn really used its tools, proved by the tool outputs its own
+        // The answer really used its tools, proved by the tool outputs its own
         // transcript records.
         let recordedToolOutputs = run.transcript.filter { $0.kind == .toolOutput }.count
-        #expect(recordedToolOutputs > 0, "the turn recorded no tool output, so nothing proves a tool ran")
+        #expect(recordedToolOutputs > 0, "the answer recorded no tool output, so nothing proves a tool ran")
 
-        // The markers trace delivery, and only a turn that called the tools
+        // The markers trace delivery, and only an answer that called the tools
         // the way the scenario names them delivers one. A different argument
         // is a model choice, recorded rather than failed.
         if recordedToolOutputs > 0 {
             withKnownIssue(
-                "the turn called its tools with arguments the scenario does not name, so no output carried a marker",
+                "the answer called its tools with arguments the scenario does not name, so no output carried a marker",
                 isIntermittent: true
             ) {
                 #expect(!run.deliveredMarkers.isEmpty)
             }
         }
 
-        // The answer carries every identifier this turn's own tools returned.
+        // The answer carries every identifier its own tools returned.
         for marker in run.deliveredMarkers {
             #expect(run.answer.contains(marker), "the answer lost \(marker), which a tool output delivered")
         }
 
-        // The surface reports the answer of the turn it drove, character for
-        // character.
+        // The surface reports the answer it drove, character for character.
         #expect(
             run.answer == run.finalResponseText,
             """
@@ -274,7 +273,7 @@ struct Qwen38ToolTurnIntegrationTests {
         #expect(
             Self.tally(answered) == Self.tally(announced.map { ordinal -> Int? in ordinal }),
             """
-            the turn did not answer each announced call exactly once.
+            the answer did not answer each announced call exactly once.
             announced: \(announced)
             answered:  \(answered.map { $0.map(String.init) ?? "UNMATCHED" })
             """)
@@ -289,7 +288,7 @@ struct Qwen38ToolTurnIntegrationTests {
         #expect(kinds.contains(.toolOutput))
         #expect(
             kinds.last(where: { $0 != .reasoning }) == .response,
-            "the turn should end with its answer; kinds were \(kinds.map(\.rawValue))")
+            "the answer should end with its reply; kinds were \(kinds.map(\.rawValue))")
         let lastResponseIndex = try #require(kinds.lastIndex(of: .response))
         let lastToolOutputIndex = try #require(kinds.lastIndex(of: .toolOutput))
         #expect(lastResponseIndex > lastToolOutputIndex)

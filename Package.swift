@@ -149,7 +149,7 @@ let package = Package(
         ),
         // Depends on the RealModelSupport target below as well, because the
         // hermetic proofs of that target's machinery — `RealModelHarnessTests`,
-        // `ScriptedTurnSizingTests`, `RecordedFixtureRedactionTests` — load no
+        // `ScriptedAnswerSizingTests`, `RecordedFixtureRedactionTests` — load no
         // model and therefore live HERE, where every root `swift test` run
         // measures them (task ^cvsh3m9).
         .testTarget(
@@ -177,7 +177,7 @@ let package = Package(
         // `@testable import` cannot resolve. A plain `.target` both can
         // depend on is the only way to keep one copy of that code. It is
         // published as a product (see `products` above) so the nested
-        // package's test targets can import it. It also carries `ToolTurnScenario` — the one
+        // package's test targets can import it. It also carries `ToolAnswerScenario` — the one
         // tool-using scenario, its transcript normalization, and the outcome
         // shape — which the ungated scripted suite and the gated real-model
         // suite each run and then compare against the other (task ^w8dzvee),
@@ -233,7 +233,7 @@ let package = Package(
         ),
         // Runnable demo (live twin of the offline `ExamplesTests` example): one
         // `Router.resolve` makes two local generation models co-resident and the
-        // program routes a quick turn to `profile.flash` and a heavyweight turn to
+        // program routes a quick prompt to `profile.flash` and a heavyweight prompt to
         // `profile.standard`. Links the same Hub client + tokenizer products as
         // the gated integration test target, since it also constructs a live
         // `LiveModelLoader` through the `MLXHuggingFace` macros.
@@ -246,7 +246,7 @@ let package = Package(
         // Runnable demo of the compaction loop end to end (compaction_plan.md
         // §4), with real tool traffic (task 4ce0a1k): open a `RoutedSession`
         // vended with sample tools (`SampleTools.swift`) and a tiny
-        // auto-compaction `TokenBudget` (task 8213x39), drive scripted turns
+        // auto-compaction `TokenBudget` (task 8213x39), send scripted messages
         // — fixture reads and explicit tool calls — while `contextFill`
         // climbs, let the budget compact automatically at the 0.80 trigger, keep
         // talking to the same session, then restore it from disk. `Fixtures`
@@ -264,7 +264,7 @@ let package = Package(
         // The regeneration tool for the checked-in compaction recording (task
         // ^4bb3mjv): `swift run RecordCompactionFixture` records the fixture
         // under `Tests/.../Fixtures/CompactionRecording/` again — the six
-        // scripted turns, the redaction settings and the redaction scan are
+        // scripted messages, the redaction settings and the redaction scan are
         // code here rather than prose in the fixture's README. An executable
         // rather than a test, because the run drives the 30B real model for
         // minutes, and every integration test must finish in under two. It

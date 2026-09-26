@@ -61,7 +61,7 @@ print(answer)
 
 A second, smaller `flash` model resolves alongside `standard` from the same
 call, so cheap work (triage, classification) can route to it while `standard`
-handles the heavy turns — see `Examples/MultiModelGeneration` for a runnable,
+handles the heavy answers — see `Examples/MultiModelGeneration` for a runnable,
 two-model demo.
 
 ## Residency is process-wide

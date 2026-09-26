@@ -233,7 +233,7 @@
             let person = try await profile.standard.respond(to: "hi", generating: Person.self)
             #expect(person == Person(name: "Ada", age: 36))
 
-            // The turn still funnels through the recorder-bracketed chokepoint,
+            // The answer still funnels through the recorder-bracketed chokepoint,
             // stamped with the derived schema. `GenerationSchema` encodes with
             // nondeterministic key ordering, so compare the stamped grammar to the
             // derived schema *semantically* (parsed) rather than byte-for-byte.

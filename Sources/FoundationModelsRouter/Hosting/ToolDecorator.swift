@@ -13,7 +13,7 @@ import FoundationModels
 /// never the tool the caller registered.
 ///
 /// Naming the tool underneath lets one shared rule walk the chain down to that
-/// original — see ``TurnBoundaryTool``'s default `turnWillBegin()`.
+/// original — see ``SubmissionBoundaryTool``'s default `submissionWillBegin()`.
 protocol ToolDecorator {
     /// The wrapped tool's type. Each decorator fixes it for itself, since the
     /// output type it accepts differs: `any Tool<Arguments, String>` for the
@@ -27,13 +27,13 @@ protocol ToolDecorator {
     var wrapped: Wrapped { get }
 }
 
-extension TurnBoundaryTool where Self: ToolDecorator {
-    /// Passes the turn boundary to the next link of the decorator chain when
-    /// that link conforms, and does nothing when it does not.
+extension SubmissionBoundaryTool where Self: ToolDecorator {
+    /// Passes the submission boundary to the next link of the decorator chain
+    /// when that link conforms, and does nothing when it does not.
     ///
     /// Every decorator shares this one body, so the chain cannot forward the
     /// boundary at one link and drop it at another.
-    func turnWillBegin() async {
-        await (wrapped as? any TurnBoundaryTool)?.turnWillBegin()
+    func submissionWillBegin() async {
+        await (wrapped as? any SubmissionBoundaryTool)?.submissionWillBegin()
     }
 }

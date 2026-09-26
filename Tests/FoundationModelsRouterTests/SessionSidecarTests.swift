@@ -497,9 +497,9 @@ struct SessionSidecarTests {
 
     // MARK: - The cut point is the diff baseline, not a second fact
 
-    @Test("an uninstructed session's fork taken after one turn records forkedAtEntryCount == 2")
+    @Test("an uninstructed session's fork taken after one answer records forkedAtEntryCount == 2")
     @MainActor
-    func uninstructedForkAfterOneTurnRecordsForkedAtEntryCountOfTwo() async throws {
+    func uninstructedForkAfterOneAnswerRecordsForkedAtEntryCountOfTwo() async throws {
         let cacheDir = Self.makeTempDir()
         let recordingsDir = Self.makeTempDir()
         defer {
@@ -523,7 +523,7 @@ struct SessionSidecarTests {
             .appendingPathComponent(router.id.description, isDirectory: true)
             .appendingPathComponent(root.id.description, isDirectory: true)
             .appendingPathComponent(fork.id.description, isDirectory: true)
-        // One turn == one `.prompt` entry + one `.response` entry == 2 — the
+        // One answer == one `.prompt` entry + one `.response` entry == 2 — the
         // same baseline the fork's own transcript diff persists from.
         #expect(try SessionSidecar.read(in: forkDir)?.forkedAtEntryCount == 2)
     }

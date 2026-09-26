@@ -2,8 +2,8 @@ import FoundationModels
 
 /// Why one generate attempt stopped, carried by ``TokenUsage/finishReason``.
 ///
-/// A turn that runs out of output tokens gives text and then stops, as a
-/// finished turn does. This value tells the two apart, so a host can report
+/// A submission that runs out of output tokens gives text and then stops, as a
+/// finished submission does. This value tells the two apart, so a host can report
 /// an honest stop reason.
 public enum FinishReason: Sendable, Equatable {
     /// The model ended its response itself.
@@ -79,7 +79,7 @@ extension FinishReason {
     ///   - responseTokenCeiling: The ceiling the attempt gave the backend, or
     ///     `nil` when the attempt gave none.
     init(
-        turnEntries entries: some BidirectionalCollection<Transcript.Entry>,
+        submissionEntries entries: some BidirectionalCollection<Transcript.Entry>,
         outputTokens: Int?,
         lastCallOutputTokens: Int?,
         responseTokenCeiling: Int?

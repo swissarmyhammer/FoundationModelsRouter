@@ -7,7 +7,7 @@ import Testing
 
 /// Exercises milestone 8a: grammar-constrained decoding — the ``Grammar`` value,
 /// the xgrammar-subset validation, the guided ``RoutedSession`` surface, and the
-/// recorder-bracketed chokepoint stamping the grammar onto each turn.
+/// recorder-bracketed chokepoint stamping the grammar onto each submission.
 ///
 /// Everything runs against stubs — a guided stub ``LoadedLLMContainer`` that
 /// performs the real (GPU-free) grammar validation and returns canned text, plus
@@ -375,7 +375,7 @@ struct GuidedGenerationTests {
             _ = try await session.respond(to: "hi")
         }
 
-        // The chokepoint still brackets the failed turn: a `session` meta line,
+        // The chokepoint still brackets the failed submission: a `session` meta line,
         // then one open + one close.
         let events = await recorder.events
         #expect(events.map(\.kind) == [.session, .prompt, .response])
@@ -414,7 +414,7 @@ struct GuidedGenerationTests {
     /// above, this needs no `maxTokensSpy` wrapping and no separate guided
     /// container: ``StubSessionBackend``'s guided `respond(to:following:maxTokens:)`
     /// already runs the real xgrammar-subset validation, so a plain stub
-    /// backend serves both the warm-up turns and the triggering turn.
+    /// backend serves both the warm-up answers and the triggering answer.
     ///
     /// `@unchecked Sendable` invariant: `lastBackend` is written exactly once
     /// per container, inside `makeSession(instructions:)`, when
@@ -481,24 +481,32 @@ struct GuidedGenerationTests {
         func preload(container: any LoadedModelContainer) async throws {}
     }
 
-    /// A long-ish canned response repeated across every warm-up turn, so a
-    /// handful of turns' worth of transcript already carries a real,
+    /// A long-ish canned response repeated across every warm-up answer, so a
+    /// handful of answers' worth of transcript already carries a real,
     /// non-trivial byte-size estimate — mirrors `AutoCompactionTests.cannedText`.
     private static let autoCompactionCannedText = String(
         repeating: "The quick brown fox jumps over the lazy dog. ", count: 12)
 
-    /// How many warm-up turns the guided trigger test drives, so the live
+    /// How many warm-up answers the guided trigger test drives, so the live
     /// context holds many copies of the canned text. Mirrors
-    /// `AutoCompactionTests.turnCount`.
-    private static let autoCompactionTurnCount = 6
+    /// `AutoCompactionTests.answerCount`.
+    private static let autoCompactionAnswerCount = 6
 
-    /// The exact entries the guided trigger test's warm-up turns produce,
+    /// The prompt of the warm-up answer at `index`.
+    ///
+    /// - Parameter index: The zero-based position of the answer.
+    /// - Returns: The prompt text.
+    private static func warmUpPrompt(_ index: Int) -> String {
+        "message \(index)"
+    }
+
+    /// The exact entries the guided trigger test's warm-up answers produce,
     /// computed without ever running a session — mirrors
     /// `AutoCompactionTests.expectedWarmUpEntries()`.
     private static func autoCompactionWarmUpEntries() -> [Transcript.Entry] {
-        (0..<autoCompactionTurnCount).flatMap { index -> [Transcript.Entry] in
+        (0..<autoCompactionAnswerCount).flatMap { index -> [Transcript.Entry] in
             [
-                .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "turn \(index)"))])),
+                .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: warmUpPrompt(index)))])),
                 .response(
                     Transcript.Response(
                         segments: [.text(Transcript.TextSegment(content: autoCompactionCannedText))])),
@@ -555,24 +563,25 @@ struct GuidedGenerationTests {
             grammar: .jsonSchema(Self.smallSchema), budget: Self.autoCompactionFixedBudget)
         let backend = try #require(standardContainer.lastBackend)
 
-        // Warm-up turns run through the guided path — `RoutedSessionActor.respond(to:maxTokens:)`
+        // Warm-up answers run through the guided path — `RoutedSessionActor.respond(to:maxTokens:)`
         // forwards this session's own `grammar` to `backend.respond(to:following:maxTokens:)`
         // (see that method's own doc comment) — with escalating measured
         // usage crossing the fixed budget's 0.8 trigger only on the final
-        // warm-up turn, exactly like `AutoCompactionTests.makeTriggeredSession(budget:)`
+        // warm-up answer, exactly like `AutoCompactionTests.makeTriggeredSession(budget:)`
         // drives for the unguided path.
-        for turn in 0..<Self.autoCompactionTurnCount {
-            backend.usageIncrement = (input: (turn + 1) * 15_000, output: 0)
-            _ = try await session.respond(to: "turn \(turn)")
+        for index in 0..<Self.autoCompactionAnswerCount {
+            backend.usageIncrement = (input: (index + 1) * 15_000, output: 0)
+            _ = try await session.respond(to: Self.warmUpPrompt(index))
         }
         #expect(await session.contextFill == 0.9)
 
-        // The next turn should compact automatically, before its own work runs,
+        // The next answer should compact automatically, before its own work runs,
         // with no caller-side `compact()` call anywhere in this test — the
         // same proof `AutoCompactionTests.proactiveCompactionPrefersFlashSummarizer()`
         // gives for the unguided path, now for a session vended through
         // `makeGuidedSession`.
-        let events = eventsInsideAnswerFrame(try await collect(session.streamEvents(to: "turn 6", maxTokens: nil)))
+        let triggeringPrompt = Self.warmUpPrompt(Self.autoCompactionAnswerCount)
+        let events = eventsInsideAnswerFrame(try await collect(session.streamEvents(to: triggeringPrompt, maxTokens: nil)))
 
         guard case .compaction(let result) = events.first else {
             Issue.record("expected the first event to be .compaction, got \(String(describing: events.first))")
@@ -584,7 +593,7 @@ struct GuidedGenerationTests {
         // unguided proof.
         #expect(result.summary == "FLASH-SUMMARY")
 
-        // The triggering turn's own work still ran normally afterward.
+        // The triggering answer's own work still ran normally afterward.
         #expect(events.contains(.textDelta(Self.autoCompactionCannedText)))
     }
 

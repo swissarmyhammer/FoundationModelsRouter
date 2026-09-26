@@ -220,7 +220,7 @@
             return false
         }
 
-        @Test("an uninstructed stub's transcriptEntries() has 4 entries in prompt/response/prompt/response order after two turns")
+        @Test("an uninstructed stub's transcriptEntries() has 4 entries in prompt/response/prompt/response order after two answers")
         func uninstructedStubAccumulatesPromptResponsePairs() async throws {
             let backend = StubSessionBackend(responseText: "ok")
             _ = try await backend.respond(to: "first", maxTokens: nil)
@@ -258,7 +258,7 @@
         }
 
         @Test(
-            "a fork taken after turn 1 has exactly the parent's entries at fork time; the parent's turn 2 does not appear in the child"
+            "a fork taken after answer 1 has exactly the parent's entries at fork time; the parent's answer 2 does not appear in the child"
         )
         func forkSnapshotsEntriesAtForkTime() async throws {
             let parent = StubSessionBackend(instructions: "be terse")
@@ -271,7 +271,7 @@
             _ = try await parent.respond(to: "second", maxTokens: nil)
 
             // The child's snapshot does not retroactively grow with the
-            // parent's further turn…
+            // parent's further answer…
             #expect(child.transcriptEntries() == entriesAtForkTime)
             // …while the parent's own transcript has grown independently.
             #expect(parent.transcriptEntries().count == entriesAtForkTime.count + 2)
@@ -287,7 +287,7 @@
     /// transcript; this GPU-free counterpart proves the stub side of the seam:
     /// a container's `makeSession(transcript:)` seeds ``StubSessionBackend``'s
     /// synthetic entries directly from the given transcript's entries, so a
-    /// freshly manufactured backend already reports them before any new turn.
+    /// freshly manufactured backend already reports them before any new answer.
     @Suite("LoadedLLMContainer.makeSession(transcript:) seeds a stub backend from transcript entries")
     struct TranscriptSeededSessionTests {
         /// A minimal container whose `makeSession(transcript:)` seeds a
@@ -300,8 +300,8 @@
             }
         }
 
-        @Test("a stub backend made from a 4-entry transcript reports those 4 entries via transcriptEntries() before any new turn")
-        func stubBackendReportsSeededTranscriptEntriesBeforeAnyNewTurn() {
+        @Test("a stub backend made from a 4-entry transcript reports those 4 entries via transcriptEntries() before any new answer")
+        func stubBackendReportsSeededTranscriptEntriesBeforeAnyNewAnswer() {
             let entries: [Transcript.Entry] = [
                 .instructions(
                     Transcript.Instructions(

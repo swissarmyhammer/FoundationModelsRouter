@@ -15,12 +15,12 @@ struct TranscriptEntryKindsTests {
     func eachKindIsNamedOnceInFirstAppearanceOrder() throws {
         let entries: [Transcript.Entry] =
             [TranscriptFixtures.makeInstructions()]
-            + (try TranscriptFixtures.makeTurn(index: 1, toolOutputText: "tool result"))
-            + (try TranscriptFixtures.makeTurn(index: 2))
+            + (try TranscriptFixtures.makeAnswerEntries(index: 1, toolOutputText: "tool result"))
+            + (try TranscriptFixtures.makeAnswerEntries(index: 2))
 
         let names = TranscriptEntryKinds.names(of: Transcript(entries: entries))
 
-        // Two turns carry repeated prompts and responses; each kind is still
+        // Two answers carry repeated prompts and responses; each kind is still
         // named one time, at its first appearance.
         #expect(names == ["instructions", "prompt", "toolCalls", "toolOutput", "response"])
     }
@@ -47,7 +47,7 @@ struct TranscriptEntryKindsTests {
         // list, so the list and `names(of:)` must speak the same vocabulary.
         let entries: [Transcript.Entry] =
             [TranscriptFixtures.makeInstructions()]
-            + (try TranscriptFixtures.makeTurn(index: 1, toolOutputText: "tool result"))
+            + (try TranscriptFixtures.makeAnswerEntries(index: 1, toolOutputText: "tool result"))
             + [
                 .reasoning(
                     Transcript.Reasoning(

@@ -7,15 +7,15 @@ import Testing
 /// Exercises task ^zfd8e69: the per-call binding layers post a typed
 /// ``ToolInvocationRecord`` when a call opens and when it closes, and the
 /// session actor delivers those records live as ``SessionEvent/toolInvocation(_:)``
-/// — during the turn, not after it.
+/// — during the answer, not after it.
 ///
 /// The identity rule these tests hold the design to (cards ^zn8n9md,
 /// ^way106d): a record's ``ToolInvocationRecord/correlationID`` is the run's
 /// `completionToken`, and it never appears inside a
 /// ``SessionEvent/toolCall(id:name:argumentsJSON:)`` /
 /// ``SessionEvent/toolStatus(id:status:summary:output:)`` id — those stay Apple's
-/// `Transcript.ToolCall.id` space, derived by the post-turn diff.
-@Suite("Tool invocation liveness: records from the binding layers, delivered mid-turn")
+/// `Transcript.ToolCall.id` space, derived by the diff of the submission.
+@Suite("Tool invocation liveness: records from the binding layers, delivered while the submission runs")
 struct ToolInvocationLivenessTests {
     // MARK: - Fixtures
 
@@ -172,7 +172,7 @@ struct ToolInvocationLivenessTests {
         #expect(output == ScriptedToolFixture.marker(for: "ONE"))
 
         // Both records were already delivered when the call returned — the
-        // in-band ordering guarantee the live turn test relies on.
+        // in-band ordering guarantee the live answer test relies on.
         let records = await sink.invocations
         #expect(records.count == 2)
         #expect(records.first?.tool == MarkerEmittingTool.toolName)
@@ -181,14 +181,14 @@ struct ToolInvocationLivenessTests {
         #expect(records.first?.correlationID == records.last?.correlationID)
     }
 
-    // MARK: - Live delivery during a real scripted turn
+    // MARK: - Live delivery during a real scripted answer
 
-    @Test("a scripted tool turn delivers the open invocation event while the tool still runs, and every live record inside its submission frame")
+    @Test("a scripted tool answer delivers the open invocation event while the tool still runs, and every live record inside its submission frame")
     @MainActor
     func liveInvocationEventArrivesWhileTheToolStillRuns() async throws {
         let slowTool = GatedMarkerTool()
         let fixture = try await ScriptedSessionFixture.make(
-            playing: ScriptedTurnScript(rounds: [
+            playing: ScriptedAnswerScript(rounds: [
                 [
                     ScriptedToolCall(
                         id: "call-slow", toolName: GatedMarkerTool.toolName,
@@ -281,7 +281,7 @@ struct ToolInvocationLivenessTests {
     func invocationRecordsAreDeliveryOnlyAndChangeNoRecording() async throws {
         let markerTool = MarkerEmittingTool()
         let fixture = try await ScriptedSessionFixture.make(
-            playing: ScriptedTurnScript(rounds: [
+            playing: ScriptedAnswerScript(rounds: [
                 [
                     ScriptedToolCall(
                         id: "call-1", toolName: MarkerEmittingTool.toolName,
@@ -304,13 +304,14 @@ struct ToolInvocationLivenessTests {
         let pending = await fixture.session.outbox.pending()
         #expect(pending.events.isEmpty)
 
-        // Not recorded: the persisted shape of a tool-using turn is the
+        // Not recorded: the persisted shape of a tool-using answer is the
         // session meta line, the usage of the generation call that asked for
-        // the tool (written at the tool's open, before the diff), the turn's
-        // own SDK entries as the post-turn diff records them (instructions
-        // included, the same shape `ScriptedToolTurnComparisonTests` asserts
-        // on the raw transcript), and the usage of the answering call. No
-        // invocation record reaches the recorder.
+        // the tool (written at the tool's open, before the diff), the
+        // submission's own SDK entries as the diff after the submission
+        // records them (instructions included, the same shape
+        // `ScriptedToolAnswerComparisonTests` asserts on the raw transcript),
+        // and the usage of the answering call. No invocation record reaches
+        // the recorder.
         let recordedKinds = await fixture.recorder.events.map(\.kind)
         #expect(
             recordedKinds == [
@@ -342,7 +343,7 @@ struct ToolInvocationLivenessTests {
 
     @Test("a background run's late close does not disturb an idle projection")
     @MainActor
-    func lateCloseAfterTurnEndDoesNotDisturbAnIdleProjection() {
+    func lateCloseAfterSubmissionEndDoesNotDisturbAnIdleProjection() {
         let projection = SessionProjection()
         let open = ToolInvocationRecord(
             tool: "search", op: "search", correlationID: "token-1", sessionID: .generate(),
@@ -357,9 +358,9 @@ struct ToolInvocationLivenessTests {
         #expect(projection.phase == .idle)
     }
 
-    @Test("a stale open from a prior turn does not pin the next turn's phase to runningTool")
+    @Test("a stale open from a prior submission does not pin the next submission's phase to runningTool")
     @MainActor
-    func staleOpenFromAPriorTurnDoesNotPinTheNextTurn() {
+    func staleOpenFromAPriorSubmissionDoesNotPinTheNextSubmission() {
         let projection = SessionProjection()
         let staleOpen = ToolInvocationRecord(
             tool: "search", op: "search", correlationID: "token-background", sessionID: .generate(),
@@ -420,7 +421,7 @@ struct ToolInvocationLivenessTests {
         return .submissionEnded(SubmissionEnd(submissionId: submission, usage: usage, finishReason: .completed))
     }
 
-    // MARK: - Tool call reports: delivered live on the turn's stream, or on the session feed
+    // MARK: - Tool call reports: delivered live on the answer's stream, or on the session feed
 
     /// Builds the report a test posts for one closed call, with the same
     /// identity the call's close record carries.
@@ -459,13 +460,13 @@ struct ToolInvocationLivenessTests {
         }
     }
 
-    @Test("a report posted mid-turn arrives on the turn's stream after the close record it follows")
+    @Test("a report posted while the submission runs arrives on the answer's stream after the close record it follows")
     @MainActor
-    func reportPostedMidTurnArrivesOnTheTurnStreamAfterTheCloseRecord() async throws {
+    func reportPostedDuringTheSubmissionArrivesOnTheAnswerStreamAfterTheCloseRecord() async throws {
         let quickTool = MarkerEmittingTool()
         let slowTool = GatedMarkerTool()
         let fixture = try await ScriptedSessionFixture.make(
-            playing: ScriptedTurnScript(rounds: [
+            playing: ScriptedAnswerScript(rounds: [
                 [
                     ScriptedToolCall(
                         id: "call-quick", toolName: MarkerEmittingTool.toolName,
@@ -481,9 +482,9 @@ struct ToolInvocationLivenessTests {
             tempDirPrefix: "ToolInvocationLivenessTests")
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        // Read the turn's stream up to the quick call's close record. The gated
-        // call of the second round has not returned, so the turn is in flight
-        // when the report is posted.
+        // Read the answer's stream up to the quick call's close record. The
+        // gated call of the second round has not returned, so the submission
+        // runs when the report is posted.
         let stream = await fixture.session.streamEvents(to: ScriptedToolFixture.prompt)
         var events: [SessionEvent] = []
         var quickClose: ToolInvocationRecord?
@@ -514,11 +515,11 @@ struct ToolInvocationLivenessTests {
         #expect(reportIndex < submissionEndIndex)
     }
 
-    @Test("a report posted between turns arrives on streamSessionEvents()")
+    @Test("a report posted between answers arrives on streamSessionEvents()")
     @MainActor
-    func reportPostedBetweenTurnsArrivesOnTheSessionStream() async throws {
+    func reportPostedBetweenAnswersArrivesOnTheSessionStream() async throws {
         let fixture = try await ScriptedSessionFixture.make(
-            playing: ScriptedTurnScript(rounds: [
+            playing: ScriptedAnswerScript(rounds: [
                 [
                     ScriptedToolCall(
                         id: "call-1", toolName: MarkerEmittingTool.toolName,
@@ -529,8 +530,9 @@ struct ToolInvocationLivenessTests {
             tempDirPrefix: "ToolInvocationLivenessTests")
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        // One turn first: the session installs itself as the outbox's observer
-        // at the top of its first turn. A report posted before that is dropped.
+        // One answer first: the session installs itself as the outbox's
+        // observer at the start of its first submission. A report posted
+        // before that is dropped.
         let answer: SessionAnswer = try await fixture.session.respond(to: ScriptedToolFixture.prompt, observing: nil)
         let close = try #require(answer.toolInvocations.first)
 
@@ -564,8 +566,8 @@ struct ToolInvocationLivenessTests {
     ///
     /// - Parameter tool: The tool the one call names.
     /// - Returns: The one-round script.
-    private static func oneCallScript(calling tool: any Tool) -> ScriptedTurnScript {
-        ScriptedTurnScript(rounds: [
+    private static func oneCallScript(calling tool: any Tool) -> ScriptedAnswerScript {
+        ScriptedAnswerScript(rounds: [
             [
                 ScriptedToolCall(
                     id: "call-1", toolName: tool.name,
@@ -608,12 +610,12 @@ struct ToolInvocationLivenessTests {
         #expect(report.attachments == MountFixtures.attachmentsInCallOrder)
     }
 
-    /// Drives one scripted turn that calls `tool` one time, and asserts the
-    /// turn's stream carries the open record, the close record, and then one
-    /// report for that call.
+    /// Drives one scripted answer that calls `tool` one time, and asserts the
+    /// answer's stream carries the open record, the close record, and then
+    /// one report for that call.
     ///
     /// - Parameter tool: The in-band attaching tool the one call names.
-    /// - Throws: Whatever the fixture or the turn throws.
+    /// - Throws: Whatever the fixture or the answer throws.
     private static func expectInBandCallReportsItsAttachments(calling tool: any Tool) async throws {
         let fixture = try await ScriptedSessionFixture.make(
             playing: oneCallScript(calling: tool), mounting: [tool], tempDirPrefix: tempDirPrefix)
@@ -625,15 +627,15 @@ struct ToolInvocationLivenessTests {
         try expectOneReportFollowsClose(in: events)
     }
 
-    @Test("a run-to-completion call that attaches produces open, close, then one report under the same correlationID on the turn's stream")
+    @Test("a run-to-completion call that attaches produces open, close, then one report under the same correlationID on the answer's stream")
     @MainActor
-    func runToCompletionCallReportsItsAttachmentsOnTheTurnStream() async throws {
+    func runToCompletionCallReportsItsAttachmentsOnTheAnswerStream() async throws {
         try await Self.expectInBandCallReportsItsAttachments(calling: MountFixtures.AttachingTool())
     }
 
-    @Test("a ContextBindingTool call that attaches produces open, close, then one report under the same correlationID on the turn's stream")
+    @Test("a ContextBindingTool call that attaches produces open, close, then one report under the same correlationID on the answer's stream")
     @MainActor
-    func contextBindingToolCallReportsItsAttachmentsOnTheTurnStream() async throws {
+    func contextBindingToolCallReportsItsAttachmentsOnTheAnswerStream() async throws {
         try await Self.expectInBandCallReportsItsAttachments(
             calling: MountFixtures.AttachingNonStringOutputTool())
     }
@@ -647,8 +649,8 @@ struct ToolInvocationLivenessTests {
             playing: Self.oneCallScript(calling: tool), mounting: [tool], tempDirPrefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        // The turn returns while the run waits on its gate, so the close record
-        // and the report can only arrive on the session stream.
+        // The answer returns while the run waits on its gate, so the close
+        // record and the report can only arrive on the session stream.
         let answer: SessionAnswer = try await fixture.session.respond(to: ScriptedToolFixture.prompt, observing: nil)
         let open = try #require(answer.toolInvocations.first)
         #expect(open.closedAt == nil)
@@ -704,10 +706,10 @@ struct ToolInvocationLivenessTests {
         #expect(events.compactMap(\.carriedReport).count == 1)
         let pending = await fixture.session.outbox.pending()
         #expect(pending.events.isEmpty)
-        // The persisted shape is the one the post-turn diff and the per-call
-        // usage reports record, the same shape
-        // `invocationRecordsAreDeliveryOnlyAndChangeNoRecording` asserts for a
-        // turn with no attachments. No report reaches the recorder.
+        // The persisted shape is the one the diff after the submission and
+        // the per-call usage reports record, the same shape
+        // `invocationRecordsAreDeliveryOnlyAndChangeNoRecording` asserts for an
+        // answer with no attachments. No report reaches the recorder.
         let recordedKinds = await fixture.recorder.events.map(\.kind)
         #expect(
             recordedKinds == [
@@ -790,4 +792,3 @@ struct ToolInvocationLivenessTests {
         #expect(await recording.invocations.isEmpty)
     }
 }
-

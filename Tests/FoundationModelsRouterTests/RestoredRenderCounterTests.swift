@@ -9,10 +9,10 @@ import Testing
 /// counter that the live session had at the same point.
 ///
 /// The live counter is the size of the render: the fed and generated tokens
-/// of the newest generation call of the newest turn that recorded a
+/// of the newest generation call of the newest submission that recorded a
 /// `.response` (task ^tpsc0nf). A compaction restarts it. The `.response`
-/// stamp of a turn is the sum of the calls of the attempt, which is the cost
-/// of the attempt and not a size of the render. So the restore reads the
+/// stamp of a submission is the sum of the calls of the attempt, which is the
+/// cost of the attempt and not a size of the render. So the restore reads the
 /// `.generationCall` event that closes the newest stamped `.response`. It
 /// reads the stamp only for an old journal, which records no call.
 @Suite("Restored render counter: the newest generation call, not the sum on the response stamp")
@@ -24,7 +24,7 @@ struct RestoredRenderCounterTests {
     /// fraction of a round number.
     private static let contextTokens = 1_000
 
-    /// The scripted usage of the three calls of one tool-loop turn: two
+    /// The scripted usage of the three calls of one tool-loop submission: two
     /// calls that ask for the tool, then the call that answers.
     private static let threeCalls = [
         MeteredGenerationCall(tokensIn: 100, tokensOut: 30),
@@ -32,7 +32,7 @@ struct RestoredRenderCounterTests {
         MeteredGenerationCall(tokensIn: 300, tokensOut: 70),
     ]
 
-    /// The prompt every live turn is driven with. The metered model never
+    /// The prompt every live answer is driven with. The metered model never
     /// reads it.
     private static let prompt = "look things up, then tell me what you found"
 
@@ -44,9 +44,10 @@ struct RestoredRenderCounterTests {
 
     // MARK: - Event fixtures
 
-    /// The usage of a call of a later turn that asked for a tool, and then
-    /// stopped before the turn recorded its entries. It is larger than any
-    /// call of ``threeCalls``, so a reader that reads it gives a wrong count.
+    /// The usage of a call of a later submission that asked for a tool, and
+    /// then stopped before the submission recorded its entries. It is larger
+    /// than any call of ``threeCalls``, so a reader that reads it gives a wrong
+    /// count.
     private static let unfinishedCall = MeteredGenerationCall(tokensIn: 900, tokensOut: 40)
 
     /// The ids every synthetic event of one journal carries.
@@ -103,7 +104,7 @@ struct RestoredRenderCounterTests {
     }
 
     /// Builds an entry-kind event with one text segment and, when both
-    /// counts are given, the usage stamp of a turn.
+    /// counts are given, the usage stamp of a submission.
     ///
     /// - Parameters:
     ///   - kind: The entry kind of the event.
@@ -156,16 +157,16 @@ struct RestoredRenderCounterTests {
         )
     }
 
-    /// The journal of one tool-loop turn in the order the session records
-    /// it: the two calls that ask for the tool at each tool open, then the
-    /// entries of the attempt with the sum of the calls stamped on the
+    /// The journal of one tool-loop submission in the order the session
+    /// records it: the two calls that ask for the tool at each tool open, then
+    /// the entries of the attempt with the sum of the calls stamped on the
     /// `.response`, then the call that answered.
     ///
     /// - Parameters:
     ///   - firstSeq: The sequence number of the first event.
     ///   - ids: The ids of the journal.
     /// - Returns: The events, oldest first.
-    private static func toolLoopTurn(firstSeq: Int, ids: JournalIds) -> [TranscriptEvent] {
+    private static func toolLoopSubmission(firstSeq: Int, ids: JournalIds) -> [TranscriptEvent] {
         let summedIn = threeCalls.map(\.tokensIn).reduce(0, +)
         let summedOut = threeCalls.map(\.tokensOut).reduce(0, +)
         return [
@@ -190,7 +191,7 @@ struct RestoredRenderCounterTests {
     func toolLoopRestoresTheLastCall() {
         let ids = JournalIds()
 
-        let state = TranscriptTree.restoredUsageState(in: Self.toolLoopTurn(firstSeq: 0, ids: ids))
+        let state = TranscriptTree.restoredUsageState(in: Self.toolLoopSubmission(firstSeq: 0, ids: ids))
 
         #expect(state == .measured(input: Self.threeCalls[2].tokensIn, output: Self.threeCalls[2].tokensOut))
     }
@@ -198,10 +199,10 @@ struct RestoredRenderCounterTests {
     @Test("a journal with a compaction checkpoint and no call after it restores the tokensAfter of the checkpoint")
     func checkpointWithNoCallAfterItRestoresTokensAfter() throws {
         let ids = JournalIds()
-        let turn = Self.toolLoopTurn(firstSeq: 0, ids: ids)
-        let checkpoint = try Self.checkpointEvent(seq: turn.count, ids: ids)
+        let submission = Self.toolLoopSubmission(firstSeq: 0, ids: ids)
+        let checkpoint = try Self.checkpointEvent(seq: submission.count, ids: ids)
 
-        let state = TranscriptTree.restoredUsageState(in: turn + [checkpoint])
+        let state = TranscriptTree.restoredUsageState(in: submission + [checkpoint])
 
         #expect(state == .measured(input: Self.snapshotTokens, output: 0))
     }
@@ -217,34 +218,35 @@ struct RestoredRenderCounterTests {
         #expect(TranscriptTree.restoredUsageState(in: journal) == .measured(input: 10, output: 5))
     }
 
-    @Test("a call of a later turn that recorded no response does not move the restored counter, as it does not move the live one")
-    func callOfATurnWithNoResponseIsNotRead() {
+    @Test("a call of a later submission that recorded no response does not move the restored counter, as it does not move the live one")
+    func callOfASubmissionWithNoResponseIsNotRead() {
         let ids = JournalIds()
-        let turn = Self.toolLoopTurn(firstSeq: 0, ids: ids)
-        // A later turn asked for a tool, and then the process stopped before
-        // the turn recorded its entries. The live counter never read this call.
-        let unfinishedEvent = Self.unfinishedCallEvent(seq: turn.count, ids: ids)
+        let submission = Self.toolLoopSubmission(firstSeq: 0, ids: ids)
+        // A later submission asked for a tool, and then the process stopped
+        // before the submission recorded its entries. The live counter never
+        // read this call.
+        let unfinishedEvent = Self.unfinishedCallEvent(seq: submission.count, ids: ids)
 
-        let state = TranscriptTree.restoredUsageState(in: turn + [unfinishedEvent])
+        let state = TranscriptTree.restoredUsageState(in: submission + [unfinishedEvent])
 
         #expect(state == .measured(input: Self.threeCalls[2].tokensIn, output: Self.threeCalls[2].tokensOut))
     }
 
-    @Test("a call after the checkpoint of a turn that recorded no response leaves the tokensAfter of the checkpoint")
+    @Test("a call after the checkpoint of a submission that recorded no response leaves the tokensAfter of the checkpoint")
     func callAfterCheckpointWithNoResponseLeavesTokensAfter() throws {
         let ids = JournalIds()
-        let turn = Self.toolLoopTurn(firstSeq: 0, ids: ids)
-        let checkpoint = try Self.checkpointEvent(seq: turn.count, ids: ids)
-        let unfinishedEvent = Self.unfinishedCallEvent(seq: turn.count + 1, ids: ids)
+        let submission = Self.toolLoopSubmission(firstSeq: 0, ids: ids)
+        let checkpoint = try Self.checkpointEvent(seq: submission.count, ids: ids)
+        let unfinishedEvent = Self.unfinishedCallEvent(seq: submission.count + 1, ids: ids)
 
-        let state = TranscriptTree.restoredUsageState(in: turn + [checkpoint, unfinishedEvent])
+        let state = TranscriptTree.restoredUsageState(in: submission + [checkpoint, unfinishedEvent])
 
         #expect(state == .measured(input: Self.snapshotTokens, output: 0))
     }
 
     // MARK: - The live journal
 
-    @Test("the journal a live tool-loop turn records restores the counter the live session reports")
+    @Test("the journal a live tool-loop answer records restores the counter the live session reports")
     func liveJournalRestoresTheLiveCounter() async throws {
         let fixture = try await MeteredToolLoopSessionFixture.make(
             calls: Self.threeCalls, context: Self.contextTokens, tempDirPrefix: Self.tempDirPrefix)
@@ -299,8 +301,8 @@ struct RestoredRenderCounterTests {
     }
 
     /// Appends to the recorded transcript of `sessionId` one call of a later
-    /// turn that asked for a tool and then stopped before it recorded its
-    /// entries, as a process that stops in a tool loop leaves it.
+    /// submission that asked for a tool and then stopped before it recorded
+    /// its entries, as a process that stops in a tool loop leaves it.
     ///
     /// - Parameters:
     ///   - sessionId: The session whose transcript gets the call.

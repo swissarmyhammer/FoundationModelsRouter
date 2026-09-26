@@ -25,7 +25,7 @@ public enum RealModels {
     /// `mxfp4` replaced the affine `4bit` repository on 2026-09-08. The two
     /// hold the same weights at the same bit width; `mxfp4` stores a shared
     /// floating-point scale for each block of 32, which MLX decodes through
-    /// its own `fp_quantized` kernels. The Qwen 3.8 tool-turn suite drives
+    /// its own `fp_quantized` kernels. The Qwen 3.8 tool-answer suite drives
     /// the same quantization, so every large model this package loads reads
     /// the same weight format.
     public static let standard: ModelRef = "mlx-community/Muse-Glimmer-30B-mxfp4"
@@ -50,7 +50,7 @@ public enum RealModels {
     /// The context budget every gated suite requests when loading
     /// `standard`/`flash`. The former tiny profile's `512`/`2048`
     /// budgets were too small even for the SmolLM suite's own cumulative
-    /// multi-turn prompts (a real run overflowed a 2048-token structural
+    /// prompts of many messages (a real run overflowed a 2048-token structural
     /// cap); Muse Glimmer's own window is far larger than this.
     public static let context = 8192
 }

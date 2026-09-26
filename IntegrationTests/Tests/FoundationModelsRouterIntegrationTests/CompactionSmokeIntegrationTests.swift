@@ -106,8 +106,9 @@ private let compactionSmokeChatTemplateDate = RealModelContainer.chatTemplateFal
 /// - One fixture, not a dataset.
 /// - ONE generation: the one summarizer call of
 ///   ``Compactor/compact(_:prompt:budget:counter:summarizers:summarization:pendingRuns:protection:abandoning:)``,
-///   and nothing after it. No resumed session and no answering turn — that is
-///   another generation, and "works at all" does not need one.
+///   and nothing after it. No resumed session and no answer after the
+///   compaction — that is another generation, and "works at all" does not
+///   need one.
 ///
 /// ## What this suite measured before task ^pke18c2
 ///
@@ -177,35 +178,35 @@ struct CompactionSmokeIntegrationTests {
     /// compaction keeps the header in the new snapshot.
     private static let instructions = "You are a terse, literal assistant."
 
-    /// The reply text every turn after the second carries.
+    /// The reply text to every message after the second.
     ///
     /// Short on purpose. The fixture's size has to sit in the PROMPTS, because
     /// this suite builds the transcript itself rather than generating it: a
     /// long scripted reply would inflate the conversation without making the
-    /// fixture any more like a real conversation. The two long turns do not
-    /// carry it. ``longTurnReplies`` states why.
+    /// fixture any more like a real conversation. The replies to the two long
+    /// messages do not carry it. ``longMessageReplies`` states why.
     private static let scriptedReply = "Acknowledged."
 
-    /// The reply text of each of the two LONG turns, in turn order: one
+    /// The reply text to each of the two LONG messages, in message order: one
     /// distinct restatement of the prompt it answers, in the voice of the
     /// terse assistant ``instructions`` names.
     ///
     /// Distinct, and not ``scriptedReply``, because of a measurement that
     /// predates task ^pke18c2. Task ^3dy1ry9 measured what one identical reply
-    /// on both long turns cost. The rendered conversation then read
+    /// to both long messages cost. The rendered conversation then read
     /// `Assistant: Acknowledged.` twice, and ``compactionSmokeModel`` wrote
     /// that line back after almost every bullet of its summary: 25 of its 47
     /// content lines repeated an earlier line. With these replies the model
     /// wrote a summary that stated ``plantedFactValue`` in sections 2 and 3.
-    private static let longTurnReplies: [String] = [
+    private static let longMessageReplies: [String] = [
         "Noted: the replacement streams each file, commits in bounded batches, keeps a rejects file beside the index, "
             + "and reads batch size from a setting.",
         "Clear: both paths run for one release, stations cut over oldest first after seven clean reports, "
             + "and the old index stays until the release after.",
     ]
 
-    /// The distinctive value planted at the END of the second long turn, and
-    /// the one thing ``aPlantedFactLateInTheConversationSurvivesTheCompaction``
+    /// The distinctive value planted at the END of the second long message,
+    /// and the one thing ``aPlantedFactLateInTheConversationSurvivesTheCompaction``
     /// reads the summary for.
     ///
     /// A coined proper noun rather than a phrase, because the assertion has to
@@ -223,7 +224,7 @@ struct CompactionSmokeIntegrationTests {
     private static let plantedFactValue = "Kestrel"
 
     /// The sentence carrying ``plantedFactValue``, appended as the last thing
-    /// the second long turn says.
+    /// the second long message says.
     ///
     /// Its position is the whole point. A model writes about a conversation in
     /// the order the conversation states it, so a summary that runs out of
@@ -236,8 +237,8 @@ struct CompactionSmokeIntegrationTests {
     /// The scripted prompts, oldest first — the fixture's whole size budget.
     ///
     /// The compaction summarizes the whole live context in one call: the
-    /// header, both long turns and the four short turns. The fixture is sized
-    /// to two properties at once.
+    /// header, both long messages and the four short messages, each with its
+    /// reply. The fixture is sized to two properties at once.
     ///
     /// - Small enough that the call's input fits ``compactionSmokeContext``
     ///   with room left for the summary. The call's output ceiling is the
@@ -252,12 +253,12 @@ struct CompactionSmokeIntegrationTests {
     ///   did-not-shrink check still discards such a summary, and the first test
     ///   fails on it.
     ///
-    /// The second turn ends with ``plantedFact``, which is the whole fixture
+    /// The second message ends with ``plantedFact``, which is the whole fixture
     /// for ``aPlantedFactLateInTheConversationSurvivesTheCompaction``.
     ///
-    /// The last four turns are short questions about the long turns. They make
-    /// the fixture a real exchange of six turns, and the call summarizes them
-    /// with the rest.
+    /// The last four messages are short questions about the long messages.
+    /// They make the fixture a real exchange of six messages and six replies,
+    /// and the call summarizes them with the rest.
     private static let scriptedPrompts: [String] = [
         """
         Project brief. We are replacing the ingest path for the station archive. The present path reads each
@@ -295,8 +296,9 @@ struct CompactionSmokeIntegrationTests {
 
     // MARK: - Fixture construction
 
-    /// Builds the fixture transcript: the header, then one turn per entry of
-    /// ``scriptedPrompts``, each a `.prompt` and a `.response`.
+    /// Builds the fixture transcript: the header, then one message and its
+    /// reply per entry of ``scriptedPrompts``, each a `.prompt` and a
+    /// `.response`.
     ///
     /// - Returns: The transcript to compact.
     private static func makeTranscript() -> Transcript {
@@ -325,7 +327,7 @@ struct CompactionSmokeIntegrationTests {
                         segments: [
                             .text(
                                 Transcript.TextSegment(
-                                    id: "response-\(index)-text", content: reply(forTurn: index)))
+                                    id: "response-\(index)-text", content: reply(forMessage: index)))
                         ]
                     )
                 )
@@ -334,14 +336,14 @@ struct CompactionSmokeIntegrationTests {
         return Transcript(entries: entries)
     }
 
-    /// The reply the turn at `index` of ``scriptedPrompts`` carries: its own
-    /// entry of ``longTurnReplies`` for a long turn, and ``scriptedReply``
-    /// for a short turn.
+    /// The reply to the message at `index` of ``scriptedPrompts``: its own
+    /// entry of ``longMessageReplies`` for a long message, and
+    /// ``scriptedReply`` for a short message.
     ///
-    /// - Parameter index: The turn's position in ``scriptedPrompts``.
+    /// - Parameter index: The message's position in ``scriptedPrompts``.
     /// - Returns: The reply text.
-    private static func reply(forTurn index: Int) -> String {
-        index < longTurnReplies.count ? longTurnReplies[index] : scriptedReply
+    private static func reply(forMessage index: Int) -> String {
+        index < longMessageReplies.count ? longMessageReplies[index] : scriptedReply
     }
 
     // MARK: - One compacted run
@@ -444,18 +446,18 @@ struct CompactionSmokeIntegrationTests {
         )
     }
 
-    @Test("a fact planted at the end of the long turns is still in the summary the compaction stores")
+    @Test("a fact planted at the end of the long messages is still in the summary the compaction stores")
     func aPlantedFactLateInTheConversationSurvivesTheCompaction() async throws {
         // The property a compaction exists for. Shrinking a transcript is the cost a
         // compaction pays; carrying the facts forward is what it is paid FOR, and a
         // compaction that shrank the transcript and dropped the fact has not worked.
         //
         // Before task ^pke18c2, three measured causes took this fact, and each
-        // took it from the END of the long turns, where `plantedFact` stands:
+        // took it from the END of the long messages, where `plantedFact` stands:
         // a bound that kept the first part of the answer (`^azd033m`), a model
         // that wrote one line again and again until its output ran out
         // (`^49dy082`), and a fixture reply the model copied into its summary
-        // (`^3dy1ry9`). `longTurnReplies` records the last one.
+        // (`^3dy1ry9`). `longMessageReplies` records the last one.
         let (outcome, counter) = try await Self.compactTheFixture()
         let summary = try #require(
             outcome.result.summary, "the compaction was discarded, so there is no summary to read")
@@ -464,7 +466,7 @@ struct CompactionSmokeIntegrationTests {
         #expect(
             summary.contains(Self.plantedFactValue),
             """
-            the compaction dropped \(Self.plantedFactValue), stated last in the long turns it replaced.
+            the compaction dropped \(Self.plantedFactValue), stated last in the long messages it replaced.
             answer \(outcome.answerTokens(counter: counter)) tokens, stored summary \
             \(counter.count(summary)), span \(spanTokens).
             the answer the model gave was:

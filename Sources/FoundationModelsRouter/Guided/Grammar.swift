@@ -14,8 +14,8 @@ import Foundation
 ///   EBNF path, for shapes a JSON schema cannot express.
 ///
 /// A `Grammar` is a plain value: it travels with a guided ``RoutedSession`` (so a
-/// milestone-9 fork inherits it) and is recorded onto each guided turn's
-/// ``TranscriptEvent/grammar``.
+/// milestone-9 fork inherits it) and is recorded onto the
+/// ``TranscriptEvent/grammar`` of each guided submission.
 public enum Grammar: Sendable, Equatable, Codable {
     /// A JSON Schema source string constraining the output to schema-valid JSON.
     case jsonSchema(String)
@@ -26,8 +26,8 @@ public enum Grammar: Sendable, Equatable, Codable {
     /// The underlying grammar source string handed to the xgrammar engine — the
     /// JSON-schema text for ``jsonSchema(_:)`` or the EBNF text for ``ebnf(_:)``.
     ///
-    /// This is also the value stamped onto a guided turn's
-    /// ``TranscriptEvent/grammar``.
+    /// This is also the value stamped onto the
+    /// ``TranscriptEvent/grammar`` of a guided submission.
     var source: String {
         switch self {
         case .jsonSchema(let source), .ebnf(let source):

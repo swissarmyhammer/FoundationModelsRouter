@@ -4,7 +4,7 @@ import Synchronization
 import Tracing
 import os
 
-/// The logger for a turn's failed pre-discovery seeding.
+/// The logger for a failed pre-discovery seeding of an answer.
 private let sessionPrimingLogger = makeModuleLogger(category: "DiscoveryPriming")
 
 /// ``RoutedSessionActor``'s answer execution: the recorder-bracketed chain of
@@ -12,14 +12,14 @@ private let sessionPrimingLogger = makeModuleLogger(category: "DiscoveryPriming"
 /// recovery from an overflow or a rejected tool call,
 /// and cancellation.
 extension RoutedSessionActor {
-    /// The token ceiling a turn gives its backend.
+    /// The token ceiling a submission gives its backend.
     ///
     /// A ceiling the caller names wins. Otherwise the ceiling is the resolved
     /// working context of the session: a response cannot be longer than the
     /// context it decodes in, so the context is the one ceiling that comes from
-    /// the model. The length of a turn below that is for the bounds made to
-    /// govern it, such as the stall report and a host watchdog, and not for a
-    /// constant.
+    /// the model. The length of a submission below that is for the bounds made
+    /// to govern it, such as the stall report and a host watchdog, and not for
+    /// a constant.
     ///
     /// - Parameters:
     ///   - requested: The ceiling the caller named, or `nil`.
@@ -33,7 +33,8 @@ extension RoutedSessionActor {
         return contextTokens
     }
 
-    /// Builds the closure that submits a turn's composed prompt to `backend`.
+    /// Builds the closure that submits the composed prompt of a submission to
+    /// `backend`.
     ///
     /// - Parameters:
     ///   - grammar: The grammar that constrains the response, or `nil`.
@@ -51,19 +52,21 @@ extension RoutedSessionActor {
         }
     }
 
-    /// Calls ``TurnBoundaryTool/turnWillBegin()`` once on every mounted tool
-    /// that conforms, in mount order — the clock tick a tool uses to apply a
-    /// change it prepared at the side (task w77k41m).
+    /// Calls ``SubmissionBoundaryTool/submissionWillBegin()`` once on every
+    /// mounted tool that conforms, in mount order — the clock tick a tool uses
+    /// to apply a change it prepared at the side (task w77k41m).
     ///
-    /// The pump calls it one time for each answer, after it took the batch
-    /// of the answer and before the model call of its first submission — so
-    /// an answer that fails before the model call still made the hook call,
-    /// and a fork's hook fires only on the fork's own tools (``ForkableTool``
-    /// composition).
-    func notifyTurnBoundaryTools() async {
+    /// The session calls it one time before each submission, after it took
+    /// the messages of that submission and before its model call. The pump
+    /// calls it for the first submission of an answer, before the proactive
+    /// compaction, so an answer that fails before the model call still made
+    /// the hook call. ``runSubmission(grammar:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetries:isContinuation:_:)``
+    /// calls it for each continuation submission. A fork's hook fires only on
+    /// the fork's own tools (``ForkableTool`` composition).
+    func notifySubmissionBoundaryTools() async {
         for tool in tools {
-            guard let boundaryTool = tool as? any TurnBoundaryTool else { continue }
-            await boundaryTool.turnWillBegin()
+            guard let boundaryTool = tool as? any SubmissionBoundaryTool else { continue }
+            await boundaryTool.submissionWillBegin()
         }
     }
 
@@ -74,7 +77,7 @@ extension RoutedSessionActor {
     ///
     /// - Parameter onEvent: The own sink of the answer, or `nil`.
     /// - Returns: The composed sink.
-    private func turnEventSink(_ onEvent: ((SessionEvent) -> Void)?) -> (SessionEvent) -> Void {
+    private func answerEventSink(_ onEvent: ((SessionEvent) -> Void)?) -> (SessionEvent) -> Void {
         { [self] event in
             answerReducer.apply(event)
             onEvent?(event)
@@ -111,12 +114,12 @@ extension RoutedSessionActor {
         onEvent: ((SessionEvent) -> Void)? = nil,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
-        let emit = turnEventSink(onEvent)
+        let emit = answerEventSink(onEvent)
         answerReducer = SessionAnswerReducer()
         let result: Result<String, any Error>
         do {
             result = .success(
-                try await runTurnWork(
+                try await runAnswerWork(
                     grammar: grammar, pendingEvents: pendingEvents, ownPrompt: ownPrompt,
                     responseTokenCeiling: responseTokenCeiling, emit: emit, body))
         } catch {
@@ -139,11 +142,11 @@ extension RoutedSessionActor {
     ///   - pendingEvents: The mail the pump took from ``outbox`` for it.
     ///   - ownPrompt: The prompt text of its caller messages.
     ///   - responseTokenCeiling: The token ceiling `body` gives the backend, and the ceiling the caller named.
-    ///   - emit: The composed sink of the answer (see ``turnEventSink(_:)``).
+    ///   - emit: The composed sink of the answer (see ``answerEventSink(_:)``).
     ///   - body: The model work to run.
     /// - Returns: The response text `body` produced.
     /// - Throws: Whatever `body` throws, or `CancellationError` from the compaction.
-    private func runTurnWork(
+    private func runAnswerWork(
         grammar: Grammar?,
         pendingEvents: [OperationEvent],
         ownPrompt: String,
@@ -154,14 +157,14 @@ extension RoutedSessionActor {
         // Installed for exactly this answer's duration so a live
         // ``ToolInvocationRecord`` posted during the answer reaches the answer's
         // own stream — see ``deliver(invocation:)`` and
-        // ``RoutedSessionActor/currentTurnEventSink``.
-        currentTurnEventSink = emit
-        defer { currentTurnEventSink = nil }
+        // ``RoutedSessionActor/currentAnswerEventSink``.
+        currentAnswerEventSink = emit
+        defer { currentAnswerEventSink = nil }
 
         // Compared in tokens against ``TokenBudget/triggerTokens``, never as
         // `contextFill >= budget.trigger` — see the matching note on the
         // hard-ceiling pre-check in
-        // ``runTurnAttempt(grammar:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetries:_:)``
+        // ``runSubmission(grammar:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetries:isContinuation:_:)``
         // and ``TokenBudget/triggerTokens`` itself for why those two fractions
         // are not interchangeable.
         if let budget = autoCompactionBudget,
@@ -176,7 +179,7 @@ extension RoutedSessionActor {
             } catch {
                 // A compaction can now throw — a stop landing inside its summarizer call
                 // unwinds it (see ``CancellableCompactionSummarizer``) — and this
-                // answer has not reached `runTurnAttempt`, where a failed
+                // answer has not reached `runSubmission`, where a failed
                 // submission's recording and the outbox's attach-or-requeue rule
                 // both live. So the compaction's failure path has to run them
                 // here, or the mail the pump already *destructively* took would
@@ -184,7 +187,7 @@ extension RoutedSessionActor {
                 // abandoned compaction leaves `backend` exactly as it was, so the diff
                 // finds no `.prompt` partial to attach those events to and
                 // re-queues them, and the synthetic close is the trace.
-                await recordFailedTurn(
+                await recordFailedSubmission(
                     grammar: grammar, since: started, usageBefore: usageBefore,
                     responseTokenCeiling: responseTokenCeiling.resolved, pendingEvents: pendingEvents, onEvent: emit)
                 throw error
@@ -193,14 +196,14 @@ extension RoutedSessionActor {
 
         await primeDiscoveryIfConfigured(prompt: ownPrompt, emit: emit)
 
-        return try await runTurnAttempt(
+        return try await runSubmission(
             grammar: grammar, pendingEvents: pendingEvents, ownPrompt: ownPrompt,
             responseTokenCeiling: responseTokenCeiling, onEvent: emit,
             allowOverflowRetry: autoCompactionBudget != nil, body
         )
     }
 
-    /// Seeds this turn's pre-discovery entries into ``backend`` when ``discoveryPriming`` is set.
+    /// Seeds the pre-discovery entries of this answer into ``backend`` when ``discoveryPriming`` is set.
     ///
     /// Must run before the attempt takes its `usageBefore` snapshot. Never throws: a
     /// failure is logged and reported as ``SessionEvent/discoveryPrimingFailed(_:)``.
@@ -218,15 +221,15 @@ extension RoutedSessionActor {
             sessionPrimingLogger.warning(
                 "generating unseeded: discovery priming failed for session \(self.id.description, privacy: .public): \(String(describing: error), privacy: .public)"
             )
-            // One call, two routes: `emit` is this turn's composed sink, which
-            // already fans out to this turn's own stream (when the caller
-            // started the turn through ``streamEvents(to:maxTokens:)``) *and* to
-            // every session-scoped subscription — the route that reaches a
-            // subscriber whichever entry point ran the turn, including
-            // ``respond(to:maxTokens:)``, which hands its caller a response
-            // rather than a stream, and ``send(_:)-(Transcript.Prompt)``,
+            // One call, two routes: `emit` is the composed sink of this answer,
+            // which already fans out to the own stream of the answer (when the
+            // caller sent the message through ``streamEvents(to:maxTokens:)``)
+            // *and* to every session-scoped subscription — the route that
+            // reaches a subscriber whichever entry point sent the message,
+            // including ``respond(to:maxTokens:)``, which hands its caller a
+            // response rather than a stream, and ``send(_:)-(Transcript.Prompt)``,
             // which hands its caller nothing but an id (see
-            // ``turnEventSink(_:)`` and ``RoutedSession/streamSessionEvents()``).
+            // ``answerEventSink(_:)`` and ``RoutedSession/streamSessionEvents()``).
             emit(.discoveryPrimingFailed(error))
         }
     }
@@ -257,13 +260,13 @@ extension RoutedSessionActor {
     /// goes on in ``continueAfterRepetitionStop(_:attempt:body:)``.
     ///
     /// - Parameters:
-    ///   - grammar: The grammar in force for this turn.
+    ///   - grammar: The grammar in force for this answer.
     ///   - pendingEvents: The events this attempt carries in its preamble.
     ///   - ownPrompt: This attempt's own prompt text.
     ///   - responseTokenCeiling: The token ceiling `body` gives the backend, and the ceiling the caller named.
-    ///   - onEvent: A sink for this turn's ``SessionEvent``s, or `nil`.
+    ///   - onEvent: A sink for the ``SessionEvent``s of this answer, or `nil`.
     ///   - allowOverflowRetry: Whether a recoverable context overflow compacts and retries once.
-    ///   - rejectedCallRetries: How many rejected tool calls this turn has already sent back to the model. The first attempt of a turn has sent none.
+    ///   - rejectedCallRetries: How many rejected tool calls this answer has already sent back to the model. The first attempt of an answer has sent none.
     ///   - isContinuation: Whether this attempt is a continuation submission
     ///     of the answer. A continuation first takes the messages that wait
     ///     (``takeMessagesJoiningTheAnswer()``): the mail goes into its
@@ -272,7 +275,7 @@ extension RoutedSessionActor {
     ///   - body: The model work to run.
     /// - Returns: The response text `body` produced.
     /// - Throws: Whatever `body` throws, or the retry's own outcome when a retry ran.
-    func runTurnAttempt(
+    func runSubmission(
         grammar: Grammar?,
         pendingEvents: [OperationEvent],
         ownPrompt: String,
@@ -287,6 +290,7 @@ extension RoutedSessionActor {
         var ownPrompt = ownPrompt
         if isContinuation {
             let joining = await takeMessagesJoiningTheAnswer()
+            await notifySubmissionBoundaryTools()
             pendingEvents += joining.events
             ownPrompt = ([ownPrompt] + joining.texts).joined(separator: Self.messageSeparator)
             beginSubmission(cause: .continuation, messageIds: joining.ids)
@@ -298,10 +302,10 @@ extension RoutedSessionActor {
 
         let started = Date()
         let usageBefore = backend.usageTokenCounts()
-        // Open for this attempt alone. `finishTurn` closes it on both exits.
+        // Open for this attempt alone. `finishSubmission` closes it on both exits.
         openGenerationCallLedger(usageBefore: usageBefore, responseTokenCeiling: responseTokenCeiling.resolved)
         toolResultWatch.composedPrompt = composedPrompt
-        // The facts a compaction inside the turn needs, when the attempt stops
+        // The facts a compaction inside the answer needs, when the attempt stops
         // at a tool result or at its ceiling. The ledger above set the entry ids.
         let attempt = StoppedAttempt(
             grammar: grammar, composedPrompt: composedPrompt,
@@ -319,8 +323,8 @@ extension RoutedSessionActor {
             // large to fit (typically because the proactive compaction above
             // couldn't bring it down far enough) fails fast rather than
             // wasting a real generation call on a doomed submission. Thrown
-            // from inside this `do` block, exactly like a guided turn's
-            // pre-flight grammar-validation failure, so it is recorded as any
+            // from inside this `do` block, exactly like the pre-flight
+            // grammar-validation failure of a guided submission, so it is recorded as any
             // other failed attempt below (zero-delta usage, since `backend`
             // is never touched) and, via ``isRecoverableContextOverflow(_:)``,
             // recovered by the same compact-harder-and-retry-once path as
@@ -344,12 +348,12 @@ extension RoutedSessionActor {
                     fill: budget.fill(measuredTokens: measuredTokens), ceiling: hardCeiling)
             }
             response = try await runWatchedModelCall(composedPrompt: composedPrompt, body)
-            // A turn can succeed (return a response) yet still leave the SDK's
+            // A submission can succeed (return a response) yet still leave the SDK's
             // transcript unchanged for some future conformer — attach-or-requeue
             // applies uniformly on both exits (see the catch branch's matching
             // comment), not just the throwing one; that uniform check lives in
-            // ``finishTurnAndRequeueIfUnattached(grammar:since:usageBefore:responseTokenCeiling:pendingEvents:onEvent:)``.
-            finishReason = await finishTurnAndRequeueIfUnattached(
+            // ``finishSubmissionAndRequeueIfUnattached(grammar:since:usageBefore:responseTokenCeiling:pendingEvents:onEvent:)``.
+            finishReason = await finishSubmissionAndRequeueIfUnattached(
                 grammar: grammar, since: started, usageBefore: usageBefore,
                 responseTokenCeiling: responseTokenCeiling.resolved, pendingEvents: pendingEvents, onEvent: onEvent
             ).finishReason
@@ -361,7 +365,7 @@ extension RoutedSessionActor {
                 return try await continueAfterRepetitionStop(repetitionStop, attempt: attempt, body: body)
             }
             recordSubmissionError(error)
-            await recordFailedTurn(
+            await recordFailedSubmission(
                 grammar: grammar, since: started, usageBefore: usageBefore,
                 responseTokenCeiling: responseTokenCeiling.resolved, pendingEvents: pendingEvents, onEvent: onEvent)
             return try await recoverFailedAttempt(
@@ -396,7 +400,7 @@ extension RoutedSessionActor {
         prompt continuationPrompt: String,
         body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
-        try await runTurnAttempt(
+        try await runSubmission(
             grammar: attempt.grammar, pendingEvents: [], ownPrompt: continuationPrompt,
             responseTokenCeiling: attempt.responseTokenCeiling, onEvent: attempt.onEvent,
             allowOverflowRetry: attempt.allowOverflowRetry, rejectedCallRetries: attempt.rejectedCallRetries,
@@ -411,16 +415,16 @@ extension RoutedSessionActor {
     ///   error that says which call was rejected and why, so the model can
     ///   write the call again. The retries have no count: they continue until
     ///   the model writes a call the parser accepts, the caller cancels the
-    ///   turn, or the context fills. Each retry's prompt carries the earlier
+    ///   answer, or the context fills. Each retry's prompt carries the earlier
     ///   tool errors, so a model that never corrects its call reaches the
     ///   overflow path.
     /// - A recoverable context overflow compacts and retries once, when
     ///   `allowOverflowRetry` is set. ``OverflowRetryTarget`` chooses the
     ///   target. When the caller named a response ceiling, the target is the
-    ///   room the turn needs; when the prompt and that ceiling alone fill the
-    ///   window, no compaction helps: the turn does not retry, and `error`
-    ///   reaches the caller. When the caller named no ceiling, the target is
-    ///   the configured target of the budget.
+    ///   room the submission needs; when the prompt and that ceiling alone
+    ///   fill the window, no compaction helps: the answer does not retry, and
+    ///   `error` reaches the caller. When the caller named no ceiling, the
+    ///   target is the configured target of the budget.
     ///
     /// The caller has already recorded the failed attempt, so the retry
     /// carries none of its mail. The retry is a continuation: it carries the
@@ -428,12 +432,12 @@ extension RoutedSessionActor {
     ///
     /// - Parameters:
     ///   - error: The error the failed attempt threw.
-    ///   - grammar: The grammar in force for this turn.
+    ///   - grammar: The grammar in force for this answer.
     ///   - ownPrompt: The prompt text of the failed attempt.
     ///   - responseTokenCeiling: The token ceiling `body` gives the backend, and the ceiling the caller named.
-    ///   - onEvent: A sink for this turn's ``SessionEvent``s, or `nil`.
+    ///   - onEvent: A sink for the ``SessionEvent``s of this answer, or `nil`.
     ///   - allowOverflowRetry: Whether a recoverable context overflow compacts and retries once.
-    ///   - rejectedCallRetries: How many rejected tool calls this turn has already sent back to the model.
+    ///   - rejectedCallRetries: How many rejected tool calls this answer has already sent back to the model.
     ///   - body: The model work to run.
     /// - Returns: The response text of the retry.
     /// - Throws: `error` when no recovery applies, or the retry's own outcome.
@@ -450,7 +454,7 @@ extension RoutedSessionActor {
         if let retry = RejectedToolCallRetry(error: error) {
             let ordinal = rejectedCallRetries + 1
             retry.logRetry(sessionID: id, ordinal: ordinal)
-            return try await runTurnAttempt(
+            return try await runSubmission(
                 grammar: grammar, pendingEvents: [], ownPrompt: retry.prompt(retrying: ownPrompt),
                 responseTokenCeiling: responseTokenCeiling, onEvent: onEvent,
                 allowOverflowRetry: allowOverflowRetry,
@@ -473,28 +477,28 @@ extension RoutedSessionActor {
             prompt: autoCompactionPrompt, budget: retryTarget.budget(lowering: budget))
         onEvent?(.compaction(result.withOverflowRetryTarget(retryTarget)))
 
-        return try await runTurnAttempt(
+        return try await runSubmission(
             grammar: grammar, pendingEvents: [], ownPrompt: ownPrompt,
             responseTokenCeiling: responseTokenCeiling, onEvent: onEvent,
             allowOverflowRetry: false, rejectedCallRetries: rejectedCallRetries, isContinuation: true, body
         )
     }
 
-    /// Records a turn that ended in a failure: the transcript diff, the
+    /// Records a submission that ended in a failure: the transcript diff, the
     /// attach-or-requeue of pending events, and a `.response` close when the
     /// diff did not already include one. The close carries an entry that
-    /// mirrors a `Transcript.Response` with no segment — the turn answered
-    /// with nothing — so the record holds an entry for every turn it closes
-    /// (see ``TranscriptEvent/isFailedAnswerClose``).
+    /// mirrors a `Transcript.Response` with no segment — the submission
+    /// answered with nothing — so the record holds an entry for every
+    /// submission it closes (see ``TranscriptEvent/isFailedAnswerClose``).
     ///
     /// - Parameters:
-    ///   - grammar: The grammar in force for this turn.
-    ///   - started: The turn's start time.
+    ///   - grammar: The grammar in force for this answer.
+    ///   - started: The start time of the submission.
     ///   - usageBefore: The token-usage snapshot taken before the failed work ran.
-    ///   - responseTokenCeiling: The token ceiling the turn gave its backend, or `nil`.
-    ///   - pendingEvents: The events this turn drained from ``outbox``.
-    ///   - onEvent: A sink for this turn's ``SessionEvent``s, or `nil`.
-    private func recordFailedTurn(
+    ///   - responseTokenCeiling: The token ceiling the submission gave its backend, or `nil`.
+    ///   - pendingEvents: The events this submission took from ``outbox``.
+    ///   - onEvent: A sink for the ``SessionEvent``s of this answer, or `nil`.
+    private func recordFailedSubmission(
         grammar: Grammar?,
         since started: Date,
         usageBefore: (input: Int, output: Int)?,
@@ -502,7 +506,7 @@ extension RoutedSessionActor {
         pendingEvents: [OperationEvent],
         onEvent: ((SessionEvent) -> Void)? = nil
     ) async {
-        let (diffIncludedResponse, usage, _) = await finishTurnAndRequeueIfUnattached(
+        let (diffIncludedResponse, usage, _) = await finishSubmissionAndRequeueIfUnattached(
             grammar: grammar, since: started, usageBefore: usageBefore,
             responseTokenCeiling: responseTokenCeiling, pendingEvents: pendingEvents, onEvent: onEvent)
         guard !diffIncludedResponse else { return }
@@ -519,14 +523,14 @@ extension RoutedSessionActor {
         )
     }
 
-    /// The `tool` identity stamped on the turn-scope ambient ``ToolContext`` binding.
-    private static let turnBindingToolStamp = "session"
+    /// The `tool` identity stamped on the ambient ``ToolContext`` binding of a submission.
+    private static let submissionBindingToolStamp = "session"
 
-    /// The `op` stamped on the turn-scope ambient binding.
-    private static let turnBindingOpStamp = "respond"
+    /// The `op` stamped on the ambient binding of a submission.
+    private static let submissionBindingOpStamp = "respond"
 
     /// Mirrors one model-call task's cancellation into a synchronous probe that
-    /// the turn's ambient ``ToolContext`` binding reports. The unbound window reads `false`.
+    /// the ambient ``ToolContext`` binding of the submission reports. The unbound window reads `false`.
     private final class ModelCallCancellationProbe: Sendable {
         /// The model-call task being probed, bound once it exists.
         private let modelCall = Mutex<Task<String, any Error>?>(nil)
@@ -629,12 +633,12 @@ extension RoutedSessionActor {
         // cancellation (bound just after creation, because the context must
         // exist before the task it probes).
         let cancellationProbe = ModelCallCancellationProbe()
-        let turnContext = ToolContext(
+        let ambientToolContext = ToolContext(
             sessionID: id,
             mailbox: mailbox,
             sink: outbox,
-            tool: Self.turnBindingToolStamp,
-            op: Self.turnBindingOpStamp,
+            tool: Self.submissionBindingToolStamp,
+            op: Self.submissionBindingOpStamp,
             completionToken: SessionMailbox.makeCompletionToken(),
             isCancelled: { cancellationProbe.isCancelled }
         )
@@ -670,7 +674,7 @@ extension RoutedSessionActor {
         // the model reads next goes through it (see ``noteToolResult(_:)``).
         let submission = Self.submission(
             of: body, composedPrompt: composedPrompt, mark: modelCallMark,
-            boundary: ToolResultAppendBoundary(session: self), context: turnContext,
+            boundary: ToolResultAppendBoundary(session: self), context: ambientToolContext,
             serviceContext: submissionServiceContext)
         let observer = generationPassObserver
         let modelCall = Task {

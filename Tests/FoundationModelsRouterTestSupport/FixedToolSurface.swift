@@ -2,8 +2,8 @@ import FoundationModels
 
 /// A fixed surface of four tools, like the one a consuming agent mounts for
 /// the life of one `LanguageModelSession`: the declared tool set never
-/// changes from turn to turn, so the `.instructions` entry that carries it
-/// must read the same on every turn.
+/// changes from answer to answer, so the `.instructions` entry that carries it
+/// must read the same on every answer.
 ///
 /// The argument schemas carry several properties each. `GenerationSchema`
 /// encodes its objects from dictionaries, so a schema with several keys is

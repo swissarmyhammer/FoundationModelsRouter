@@ -6,9 +6,10 @@ import Testing
 
 /// The wall-clock ceiling this suite runs under.
 ///
-/// Every test drives a scripted turn, and one of them reads the turn's stream
-/// until the report arrives. A turn that never produced the report would
-/// suspend on the gated second round for ever, so the suite states a bound.
+/// Every test drives a scripted answer, and one of them reads the answer's
+/// stream until the report arrives. An answer that never produced the report
+/// would suspend on the gated second round for ever, so the suite states a
+/// bound.
 private let mountedRunAttachmentCarrierTimeLimitMinutes = 1
 
 /// The document ``MountFixtures/firstAttachment`` carries, decoded back into
@@ -38,7 +39,7 @@ private struct FileChangeSetProbe: Decodable, Equatable {
 /// client, and each test below holds one of them:
 ///
 /// 1. **Live delivery.** The record reaches ``SessionEvent/toolCallReport(_:)``
-///    on the turn's own stream, DURING the turn, and not only through the
+///    on the answer's own stream, DURING the answer, and not only through the
 ///    recording.
 /// 2. **The correct key.** That report carries the MOUNTING run's
 ///    `completionToken` — the outer call's token, the one `toolCallId` a wire
@@ -48,7 +49,7 @@ private struct FileChangeSetProbe: Decodable, Equatable {
 /// `ToolContextMountTests` proves the correlation at the decorator level,
 /// against a recording sink with no session behind it, and
 /// `ToolInvocationLivenessTests` proves live delivery for a call that attaches
-/// on its OWN context. This suite is the join: a real session turn whose tool
+/// on its OWN context. This suite is the join: a real session answer whose tool
 /// mounts another tool, read off `streamEvents(to:)`.
 @Suite(
     "Mounted-run attach carrier: a nested call's records ride the mounting run's live report",
@@ -65,7 +66,7 @@ struct MountedRunAttachmentCarrierTests {
     /// `Transcript.ToolCall.id` space, never a run's `completionToken`.
     private static let mountingCallID = "call-mounting"
 
-    /// The scripted id of the call that holds the turn open.
+    /// The scripted id of the call that holds the answer open.
     private static let gatedCallID = "call-gated"
 
     /// The tool the mounting call names: it mounts ``MountFixtures/AttachingTool``
@@ -91,45 +92,45 @@ struct MountedRunAttachmentCarrierTests {
     /// Builds a session whose only tools are `tools`, playing `script`.
     ///
     /// - Parameters:
-    ///   - script: The turn shape the scripted model plays out.
+    ///   - script: The answer shape the scripted model plays out.
     ///   - tools: The tools the session mounts.
     /// - Returns: The vended fixture. The caller removes its directory.
     /// - Throws: Whatever profile resolution throws.
     private static func makeFixture(
-        playing script: ScriptedTurnScript, mounting tools: [any Tool]
+        playing script: ScriptedAnswerScript, mounting tools: [any Tool]
     ) async throws -> ScriptedSessionFixture {
         try await ScriptedSessionFixture.make(
             playing: script, mounting: tools, tempDirPrefix: tempDirPrefix)
     }
 
-    /// Drives one turn whose single call reaches ``mountingTool``, and returns
-    /// the turn's events in stream order.
+    /// Drives one answer whose single call reaches ``mountingTool``, and
+    /// returns the answer's events in stream order.
     ///
-    /// - Returns: Every event the turn's stream carried.
-    /// - Throws: Whatever the fixture or the turn throws.
-    private static func mountingTurnEvents() async throws -> [SessionEvent] {
+    /// - Returns: Every event the answer's stream carried.
+    /// - Throws: Whatever the fixture or the answer throws.
+    private static func mountingAnswerEvents() async throws -> [SessionEvent] {
         let fixture = try await makeFixture(
-            playing: ScriptedTurnScript(rounds: [round(id: mountingCallID, calling: mountingTool)]),
+            playing: ScriptedAnswerScript(rounds: [round(id: mountingCallID, calling: mountingTool)]),
             mounting: [mountingTool])
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
         return try await collectEvents(fixture.session, prompt: ScriptedToolFixture.prompt)
     }
 
-    // MARK: - Fact 1: the report is delivered live, during the turn
+    // MARK: - Fact 1: the report is delivered live, during the answer
 
     @Test(
-        "a mounted call's records reach the turn's own stream as one toolCallReport, while the turn is still in flight"
+        "a mounted call's records reach the answer's own stream as one toolCallReport, while the answer is still in flight"
     )
     @MainActor
-    func mountedCallReportArrivesOnTheTurnStreamMidTurn() async throws {
-        // The second round blocks until this test opens the gate, so the turn
+    func mountedCallReportArrivesOnTheAnswerStreamMidAnswer() async throws {
+        // The second round blocks until this test opens the gate, so the answer
         // cannot end before then. A report read off the stream above that line
-        // was therefore delivered mid-turn, and not by the turn's completion.
+        // was therefore delivered during the answer, and not by its completion.
         let gate = RunLatch()
         let gatedTool = Fixtures.GatedTool(gate: gate)
         let fixture = try await Self.makeFixture(
-            playing: ScriptedTurnScript(rounds: [
+            playing: ScriptedAnswerScript(rounds: [
                 Self.round(id: Self.mountingCallID, calling: Self.mountingTool),
                 Self.round(id: Self.gatedCallID, calling: gatedTool),
             ]),
@@ -145,7 +146,7 @@ struct MountedRunAttachmentCarrierTests {
             liveReport = event.carriedReport
         }
 
-        // The report arrived with the gate still shut: the turn is in flight.
+        // The report arrived with the gate still shut: the answer is in flight.
         let report = try #require(liveReport)
         #expect(report.attachments == Fixtures.attachmentsInCallOrder)
 
@@ -155,14 +156,14 @@ struct MountedRunAttachmentCarrierTests {
         }
 
         // The premise of the reading above: the gated round really ran, so the
-        // turn genuinely could not have ended before the gate opened.
+        // answer genuinely could not have ended before the gate opened.
         #expect(
             events.contains {
                 if case .toolCall(let id, _, _) = $0 { return id == Self.gatedCallID }
                 return false
             })
 
-        // Exactly one report for the whole turn, and it follows the mounting
+        // Exactly one report for the whole answer, and it follows the mounting
         // call's close record — the mounted call posted none of its own.
         let closeIndex = try #require(events.firstIndex { $0.isCloseInvocation })
         let reportIndex = try #require(events.firstIndex { $0.carriedReport != nil })
@@ -177,7 +178,7 @@ struct MountedRunAttachmentCarrierTests {
     )
     @MainActor
     func liveReportIsKeyedToTheMountingRun() async throws {
-        let events = try await Self.mountingTurnEvents()
+        let events = try await Self.mountingAnswerEvents()
 
         // Only the mounting call's own records reach a host: one open and one
         // close, both stamped with the mounting tool. The mounted call's
@@ -202,7 +203,7 @@ struct MountedRunAttachmentCarrierTests {
     @Test("each record the mounted call attached decodes back unchanged from the live report")
     @MainActor
     func attachedRecordsDecodeBackUnchanged() async throws {
-        let events = try await Self.mountingTurnEvents()
+        let events = try await Self.mountingAnswerEvents()
 
         let report = try #require(events.compactMap(\.carriedReport).first)
         // The records arrive whole, and in the order the mounted call attached
