@@ -1,7 +1,5 @@
 import Testing
 
-@testable import FoundationModelsRouter
-
 /// Holds ``AwaitedEvent`` to the three properties every wait built on it rests
 /// on: a signal already sent is still observed, a signal sent while a waiter is
 /// suspended resumes it, and a cancelled wait ends rather than suspending on an

@@ -247,7 +247,7 @@ struct ToolOutputCappingTests {
     /// synchronization. No test in this suite does that: every test here
     /// only calls `makeSession(tools:budget:)`/`fork(workingDirectory:)`,
     /// both of which drive `makeSession(instructions:tools:)` synchronously
-    /// from the `@MainActor` test method, and reads `lastTools`/`lastBackend`
+    /// from the `@MainActor` test method, and reads `lastTools`
     /// only afterward, from that same method — so every write and every read
     /// this suite actually performs land on the same thread, never
     /// concurrently. A future test that adds `.compact()` coverage against
@@ -257,19 +257,14 @@ struct ToolOutputCappingTests {
         let tokenCounter: any TokenCounter = CharacterTokenCounter()
 
         private(set) var lastTools: [any Tool] = []
-        private(set) var lastBackend: StubSessionBackend?
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            let backend = StubSessionBackend()
-            lastBackend = backend
-            return backend
+            StubSessionBackend()
         }
 
         func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
             lastTools = tools
-            let backend = StubSessionBackend()
-            lastBackend = backend
-            return backend
+            return StubSessionBackend()
         }
 
         func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {

@@ -176,13 +176,6 @@ struct SessionRestorationTests {
         /// The profile a restore runs against — a second router over the same
         /// recording root, standing in for a fresh process.
         let resumingProfile: LanguageModelProfile
-
-        /// The recording profile, retained so its resident models outlive the
-        /// restore.
-        let recordingProfile: LanguageModelProfile
-
-        /// The one live writer on the recording root, shared by both routers.
-        let recorder: JSONLRecorder
     }
 
     /// Records one root session and resolves a second router over the same
@@ -241,9 +234,7 @@ struct SessionRestorationTests {
             workingDirectory: root.workingDirectory,
             routerDirectory: RouterTestFixtures.routerDirectory(
                 routerId: recordingRouter.id, recordingsDir: recordingsDir),
-            resumingProfile: resumingProfile,
-            recordingProfile: recordingProfile,
-            recorder: recorder
+            resumingProfile: resumingProfile
         )
     }
 

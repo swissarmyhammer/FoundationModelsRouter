@@ -289,7 +289,7 @@ enum MountFixtures {
             return "never returned"
         }
 
-        func timeout(from arguments: GeneratedContent) -> TimeInterval? {
+        func timeout(from _: GeneratedContent) -> TimeInterval? {
             timeoutSeconds
         }
     }
@@ -304,7 +304,7 @@ enum MountFixtures {
             return "never returned"
         }
 
-        func timeout(from arguments: GeneratedContent) -> TimeInterval? {
+        func timeout(from _: GeneratedContent) -> TimeInterval? {
             nil
         }
     }

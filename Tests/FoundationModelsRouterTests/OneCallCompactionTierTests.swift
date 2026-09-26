@@ -19,9 +19,13 @@ struct OneCallCompactionTierTests {
     /// closure.
     private struct Abandoned: Equatable {
         /// The failure, or `nil` when it is not a ``FailingSummarizer/Failure``.
+        // The synthesized `Equatable` conformance reads this property. Periphery cannot see that read.
+        // periphery:ignore
         let failure: FailingSummarizer.Failure?
 
         /// The tier that raised it.
+        // The synthesized `Equatable` conformance reads this property. Periphery cannot see that read.
+        // periphery:ignore
         let tier: CompactionSummarizerTier
     }
 

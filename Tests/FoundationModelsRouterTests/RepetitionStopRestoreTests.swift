@@ -95,10 +95,6 @@ struct RepetitionStopRestoreTests {
         /// The router that recorded the session.
         let router: Router
 
-        /// The profile the session was made from, which keeps the session's
-        /// handle alive.
-        let profile: LanguageModelProfile
-
         /// The live session.
         let session: RoutedSessionActor
     }
@@ -120,7 +116,7 @@ struct RepetitionStopRestoreTests {
             return true
         }
         #expect(stops.count == 1)
-        return StoppedSession(router: router, profile: profile, session: session)
+        return StoppedSession(router: router, session: session)
     }
 
     /// Restores the tree that `stopped` recorded, over a model that plays

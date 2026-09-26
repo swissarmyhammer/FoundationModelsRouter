@@ -86,14 +86,6 @@ enum TranscriptFixtures {
         return entries
     }
 
-    /// The entries of `answerCount` answers, each with a tool-call/tool-output
-    /// pair, indices `1...answerCount`.
-    static func makeAnswerEntryLists(
-        _ answerCount: Int, toolOutputText: String = "tool result"
-    ) throws -> [[Transcript.Entry]] {
-        try (1...answerCount).map { try Self.makeAnswerEntries(index: $0, toolOutputText: toolOutputText) }
-    }
-
     /// Builds a raw compaction boundary `.response` entry: a text segment
     /// with `summaryText` (id `<entryId>-text`) plus a `.structure`
     /// ``CompactionSegment`` — the shape

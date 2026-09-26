@@ -60,7 +60,7 @@ struct JointFitTests {
     /// `nativeMaxContext` closure that fails the test if invoked — for a
     /// profile with an explicit context, the window search must never run, so
     /// this closure must never be called.
-    private static func neverCalledNativeMaxContext(_ ref: ModelRef) -> Result<Int, RepoMetadataError> {
+    private static func neverCalledNativeMaxContext(_: ModelRef) -> Result<Int, RepoMetadataError> {
         Issue.record("nativeMaxContext must not be called when ProfileDefinition.context is explicit")
         return .failure(.metadataUnavailable("nativeMaxContext should not be called"))
     }
@@ -71,7 +71,7 @@ struct JointFitTests {
     /// cache, so a profile whose slots name no one container twice must never
     /// reach this closure.
     private static func neverCalledSessionBytes(
-        _ ref: ModelRef, _ context: Int
+        _: ModelRef, _: Int
     ) -> Result<Int64, RepoMetadataError> {
         Issue.record("sessionBytes must not be called when no two slots share one container")
         return .failure(.metadataUnavailable("sessionBytes should not be called"))

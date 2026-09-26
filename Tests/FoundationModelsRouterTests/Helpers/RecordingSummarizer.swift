@@ -65,6 +65,8 @@ struct FailingSummarizer: CompactionSummarizer {
     struct Failure: Error, Equatable {
         /// The name of the summarizer that failed, so a test can tell two
         /// failures apart.
+        // The synthesized `Equatable` conformance reads this property. Periphery cannot see that read.
+        // periphery:ignore
         let name: String
     }
 

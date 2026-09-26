@@ -16,9 +16,6 @@ struct MessageQueuePublicSurfaceTests {
     struct SentMessage {
         /// The id ``RoutedSession/send(_:)-(String)`` gave the message.
         let id: MessageID
-
-        /// The text the consumer sent.
-        let text: String
     }
 
     /// Sends `text` to `session`, as a consumer's queue view does, and keeps
@@ -29,7 +26,7 @@ struct MessageQueuePublicSurfaceTests {
     ///   - session: The session to send it to.
     /// - Returns: The sent message.
     static func send(_ text: String, to session: any RoutedSession) async -> SentMessage {
-        SentMessage(id: await session.send(text), text: text)
+        SentMessage(id: await session.send(text))
     }
 
     /// Takes back a sent message, as a consumer's "remove" button does, and

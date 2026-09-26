@@ -3,8 +3,6 @@ import FoundationModels
 import FoundationModelsRouterTestSupport
 import Testing
 
-@testable import FoundationModelsRouter
-
 /// Holds ``TranscriptEntryKinds`` to its contract: the kind-listing helper
 /// the recorded-fixture suite and the `RecordCompactionFixture` tool share
 /// (task `^4bb3mjv`).

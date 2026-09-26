@@ -1,6 +1,5 @@
 import Foundation
 import FoundationModels
-import FoundationModelsRouterTestSupport
 import MLXFoundationModels
 import Testing
 

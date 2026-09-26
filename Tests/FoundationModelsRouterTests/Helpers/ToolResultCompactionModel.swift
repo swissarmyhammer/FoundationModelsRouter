@@ -1,6 +1,5 @@
 import Foundation
 import FoundationModels
-import FoundationModelsRouterTestSupport
 import Synchronization
 
 @testable import FoundationModelsRouter

@@ -46,6 +46,9 @@ struct MeteredToolLoopLanguageModel: LanguageModel {
         /// The failure a generation call past the end of the script raises.
         struct UnscriptedCall: Error {
             /// The zero-based position of the call the script does not name.
+            // A test failure shows this error through `String(describing:)`, which reads this property by
+            // reflection. Periphery cannot see that read.
+            // periphery:ignore
             let callIndex: Int
         }
 

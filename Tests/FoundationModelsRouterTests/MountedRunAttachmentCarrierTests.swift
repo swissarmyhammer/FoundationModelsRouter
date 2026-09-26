@@ -21,13 +21,19 @@ private struct FileChangeSetProbe: Decodable, Equatable {
     /// One changed path, and what happened to it.
     struct Change: Decodable, Equatable {
         /// The path that changed.
+        // `Decodable` sets this property and the synthesized `Equatable` conformance reads it. Periphery cannot see that read.
+        // periphery:ignore
         let path: String
 
         /// What the verb did to it.
+        // `Decodable` sets this property and the synthesized `Equatable` conformance reads it. Periphery cannot see that read.
+        // periphery:ignore
         let kind: String
     }
 
     /// Every change the record names, in the order the record holds them.
+    // `Decodable` sets this property and the synthesized `Equatable` conformance reads it. Periphery cannot see that read.
+    // periphery:ignore
     let changes: [Change]
 }
 

@@ -1,5 +1,4 @@
 import FoundationModels
-@testable import FoundationModelsRouter
 import MLXLMCommon
 import Synchronization
 

@@ -1,8 +1,6 @@
 import FoundationModels
 import Testing
 
-@testable import FoundationModelsRouter
-
 /// Holds ``StubSessionBackend`` to the one concurrency contract the session
 /// needs from a backend: a read of ``StubSessionBackend/transcriptEntries()``
 /// is safe beside a stream producer that is still writing, and it sees a

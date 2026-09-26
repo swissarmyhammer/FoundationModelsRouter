@@ -1,8 +1,6 @@
 import Foundation
 import Testing
 
-@testable import FoundationModelsRouter
-
 /// Thrown by ``AnswerDrivenRun/deliveredAnswer()`` when no answer ever reached
 /// the background run, so the test that caught the fault stops there instead of
 /// asserting on a result it never received.

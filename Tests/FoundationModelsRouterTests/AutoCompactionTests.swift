@@ -374,7 +374,6 @@ struct AutoCompactionTests {
         let overflowingCalls: Set<Int>
         let replaceSpy = ReplaceSpy()
         let callLog = CallLog()
-        private(set) var lastBackend: ScriptedOverflowBackend?
 
         init(
             responseText: String, seedEntries: [Transcript.Entry], overflowsRemaining: Int,
@@ -387,11 +386,9 @@ struct AutoCompactionTests {
         }
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            let backend = ScriptedOverflowBackend(
+            ScriptedOverflowBackend(
                 responseText: responseText, entries: seedEntries, overflowsRemaining: overflowsRemaining,
                 overflowingCalls: overflowingCalls, replaceSpy: replaceSpy, callLog: callLog)
-            lastBackend = backend
-            return backend
         }
 
         func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {

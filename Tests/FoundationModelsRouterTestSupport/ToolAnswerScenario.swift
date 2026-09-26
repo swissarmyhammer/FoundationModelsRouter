@@ -1,5 +1,4 @@
 import FoundationModels
-import FoundationModelsRouter
 
 /// One tool-using scenario, expressed once and run four ways: scripted model
 /// through `respond(to:)`, scripted model through `streamEvents(to:)`, real

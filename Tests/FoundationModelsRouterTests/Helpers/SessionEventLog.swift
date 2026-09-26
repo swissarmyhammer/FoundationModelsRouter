@@ -26,14 +26,6 @@ actor SessionEventLog {
         }
     }
 
-    /// Whether `event` was delivered.
-    ///
-    /// - Parameter event: The event to look for.
-    /// - Returns: `true` when the log holds an event equal to `event`.
-    func contains(_ event: SessionEvent) -> Bool {
-        events.contains(event)
-    }
-
     /// Subscribes to the session-wide feed of `session` and drains it into a
     /// new log.
     ///
