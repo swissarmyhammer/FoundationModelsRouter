@@ -79,8 +79,24 @@ comments:
     - evidence: cause = the 5 s wall clock of `BoundedWait` under scheduler starvation (CPU load), not an ordering race. Files: Tests/FoundationModelsRouterTests/HumanWaitGateTests.swift, Tests/FoundationModelsRouterTests/Helpers/BoundedWait.swift, Tests/FoundationModelsRouterTests/Helpers/SessionPlumbingAccess.swift, Tests/FoundationModelsRouterTests/Helpers/AwaitedCondition.swift (new), Tests/FoundationModelsRouterTests/AwaitedConditionTests.swift (new). Before: 60 full runs (load 14.7-21.1) + 68,400 suite runs (load 16.5-23.9), 0 failures; 6 s hook delay fails after 5.012 s. After: 6 s hook delay passes; `stress.sh after-suite-p6 6 1000 HumanWaitGateTests` 54,000 runs 0 issues (load 12.4-21.7); `sequential.sh after-seq 30` 30/30 x 1461 passed (load 14.2-20.8); `swift test` 1461 + 17 + 19 = 1497, only the known mlx warning. Other timing failure (not filed): 1 crash in 60 full runs, "_ContiguousArrayStorage deallocated with non-zero retain count 2".
     - next: /review
   timestamp: 2026-09-26T19:27:20.564256+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m3fkhwhfz9xqrxke140fe5bp
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 53d7979). 0 findings, 0 confirmed, 0 refuted. The engine examined 5 files. It did not examine 2 files in `.kanban/` because of `.reviewignore`. The task had no earlier findings.
+    - next: The task is in done. Nothing more to do.
+  timestamp: 2026-09-26T19:37:26.319778+00:00
+- actor: claude-code
+  id: 01m3fkkv3ng3twmbkaf98cacec
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 5 test files (waits on real signals; AwaitedCondition; no wall clock); cause was the 5 s wall clock under CPU starvation
+    - test: green — swift test, 1497 passed (1461+17+19), 0 failed, 0 skipped; 28 BoundedWait suites 3 extra runs clean
+    - commit: 53d7979
+    - review: clean — 0 findings
+  timestamp: 2026-09-26T19:38:30.389987+00:00
+position_column: done
+position_ordinal: ffffff9a80
 title: Investigate a timeout of HumanWaitGateTests turnEndingDuringAReAcquireStrandsNoPermit under full-suite load
 ---
 ## What happened
