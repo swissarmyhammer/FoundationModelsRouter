@@ -27,7 +27,7 @@ private let fillingFactCount = 60
 /// ``CompactionRoundTripFixture/compactionBudget``, so the caller compaction
 /// makes its one summarizer call and applies the summary.
 private let fillingPrompt =
-    (1...fillingFactCount).map { "Fact \($0): the code word of item \($0) is ALPHA-\($0)." }.joined(separator: " ")
+    (1...fillingFactCount).lazy.map { "Fact \($0): the code word of item \($0) is ALPHA-\($0)." }.joined(separator: " ")
     + " Reply with just \"OK\"."
 
 /// The prompt of the answer after the compaction.

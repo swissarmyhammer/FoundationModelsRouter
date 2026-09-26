@@ -52,6 +52,33 @@ comments:
     - evidence: 8 files changed or added — Sources/FoundationModelsRouter/Concurrency/SessionLanguageModel.swift, Sources/FoundationModelsRouter/Concurrency/SessionPromptCache.swift, Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorCompaction.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorPromptCache.swift, Tests/FoundationModelsRouterTests/Helpers/PromptCacheScopeRecordingModel.swift, Tests/FoundationModelsRouterTests/SummarizerPromptCacheTests.swift (new), IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/SummarizerPromptCacheIntegrationTests.swift (new). `swift test`: 1475 + 15 + 19 = 1509 passed (1507 before, plus 2 new), 0 failed. Full first-party recompile: 0 compiler warnings (only the known mlx-swift_Cmlx.bundle note). Gated: SummarizerPromptCacheIntegrationTests 2/2, secondAnswerReusesFirstAnswersKVCache and sessionKeyedCacheIsReusedUntilItsRelease 2/2 passed. Acceptance criteria 4/4 checked.
     - next: review
   timestamp: 2026-09-26T13:20:27.895222+00:00
+- actor: claude-code
+  id: 01m3eycfrqzcfp3jtsgx872968
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD; 1 finding (1 confirmed, 0 refuted) — IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/SummarizerPromptCacheIntegrationTests.swift:30 (code-hygiene/idioms-swift preferLazyMap).
+    - next: Use lazy.map before min() at that line, and remove the same cause from the whole file. Then run the review again.
+  timestamp: 2026-09-26T13:27:29.303375+00:00
+- actor: claude-code
+  id: 01m3eyfgz3d9gbx7jn5a999q3x
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 8 files (summarizer backends bind .uncached; unit and gated tests)
+    - test: green — swift test, 1509 passed (1475+15+19), 0 failed, 0 skipped; 5 cache and compaction suites 3 extra runs clean; gated real-model tests passed (implementer run)
+    - commit: eccc9b1
+    - review: findings — IntegrationTests/.../SummarizerPromptCacheIntegrationTests.swift:30
+  timestamp: 2026-09-26T13:29:08.835449+00:00
+- actor: claude-code
+  id: 01m3eyj5vy2csvar6h7mwev3f1
+  text: 'Fix of the review finding (2026-09-26): `fillingPrompt` in `SummarizerPromptCacheIntegrationTests.swift` now uses `(1...fillingFactCount).lazy.map { ... }.joined(separator: " ")`. That was the only `map`, `filter`, or `compactMap` call in the file. `SummarizerPromptCacheTests.swift` has no such call, so it did not change. The prompt text is the same, so the gated tests feed the same tokens.'
+  timestamp: 2026-09-26T13:30:35.774855+00:00
+- actor: claude-code
+  id: 01m3eyj86jn691v9yz0k7s54vf
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/SummarizerPromptCacheIntegrationTests.swift. `swift build --build-tests` in IntegrationTests/: pass (only the known mlx-swift_Cmlx.bundle note). Gated `swift test --filter SummarizerPromptCacheIntegrationTests` (real Qwen2.5-3B): 2/2 passed. Root `swift test`: 1475 + 15 + 19 = 1509 passed, 0 failed (2 known issues from `withKnownIssue` tests that were there before). Review finding 1/1 checked.
+    - next: review
+  timestamp: 2026-09-26T13:30:38.162526+00:00
 depends_on:
 - 01M39ZPCNPZCG3RPG9Q6WQKETZ
 - 01M3A1QPQMDJD33G9ANCC2TEZN
@@ -87,3 +114,12 @@ The key is bound in the executor `respond` of the per-session queued wrapper (^8
 - [x] A test fails if the binding is `Optional.none` in place of `.uncached`. <!-- SummarizerPromptCacheTests (both tests) and SummarizerPromptCacheIntegrationTests.aCompactionAddsNoKeyToThePromptCache. Proved by mutation on 2026-09-26: keepNoPromptCache() set to `.none` made all three fail; restored to `.uncached`. -->
 - [x] The next pass of the compacted session still reuses its own cache (gated test). <!-- SummarizerPromptCacheIntegrationTests.theNextAnswerAfterACompactionReusesItsOwnCache: cachedTokenCount of the answer after the compaction >= the token count of the instructions. Passed 2026-09-26. -->
 - [x] `secondTurnReusesFirstTurnsKVCache` (`IntegrationTests/.../LanguageModelSessionBackendTests.swift`) stays green. <!-- The test is now named secondAnswerReusesFirstAnswersKVCache (^f33q8gw rename). Passed 2026-09-26, with sessionKeyedCacheIsReusedUntilItsRelease (R2). --> #generation-queue #prompt-cache
+
+## Review Findings (2026-09-26 08:25)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 8 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/SummarizerPromptCacheIntegrationTests.swift:30` `code-hygiene/idioms-swift` — preferLazyMap: Prefer lazy.map over map before single-pass operations like min().
