@@ -42,8 +42,24 @@ comments:
     - evidence: cause = `isWorkCancelled` did not read the caller's cancel mark, and the withdraw hop came after the pump's retry decision. Files: Sources/FoundationModelsRouter/Session/RoutedSessionActorAnswerExecution.swift, Sources/FoundationModelsRouter/Session/SessionMessage.swift (doc), Tests/FoundationModelsRouterTests/AnswerCancellationEntryPointTests.swift, Tests/FoundationModelsRouterTests/AnswerCancellationFixtures.swift. Stress: HEAD 1 failure in 24x60; fix 0 in 3 x 24x60. Suite 1487 + 17 + 19 green.
     - next: /review
   timestamp: 2026-09-26T15:06:44.642470+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m3f4mza3k95are8dphq048tq
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 4fc8a36). 0 findings, 0 confirmed, 0 refuted, 7 attempted, 0 failed. 4 files reviewed. 8 .kanban files not reviewed (.reviewignore).
+    - next: none. The task moved to done.
+  timestamp: 2026-09-26T15:16:58.819851+00:00
+- actor: claude-code
+  id: 01m3f4r0n8acfjbs93cb8csg7r
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — isWorkCancelled reads the cancel mark of a delivered message; new test theCancelMarkAloneStopsTheOverflowRetry (fails before, passes after); new tasks ^5mnw172 and ^7w145zc
+    - test: green — swift test, 1523 passed (1487+17+19), 0 failed, 0 skipped; 4 cancel and pump suites 3 extra runs clean; build with warnings-as-errors clean
+    - commit: 4fc8a36
+    - review: clean — 0 findings
+  timestamp: 2026-09-26T15:18:38.504517+00:00
+position_column: done
+position_ordinal: ffffff9580
 title: Find why cancellationSurvivesIntoTheOverflowRetry (callerTask route) re-enters the model under parallel stress
 ---
 ## What
