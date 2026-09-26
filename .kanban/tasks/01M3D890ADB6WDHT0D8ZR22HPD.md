@@ -62,8 +62,24 @@ comments:
     - evidence: 3 test files changed (AnswerCancellationEntryPointTests.swift, PooledResidencyTests.swift, RecordingLanguageModelTests.swift). Stress before/after as above. `swift test` 1522 passed.
     - next: review.
   timestamp: 2026-09-26T14:40:14.465595+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m3f30bmergc2egf4y1f3gm90
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit ce3c0bf). 0 findings, 0 confirmed, 0 refuted. The engine reviewed 3 test files. It did not review 4 `.kanban/` files because `.reviewignore` excludes them. The task had no prior review findings.
+    - next: The task moved to done. No more work is necessary for this task.
+  timestamp: 2026-09-26T14:48:14.734660+00:00
+- actor: claude-code
+  id: 01m3f31z562tfrmz1fvdd9dr65
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 3 test files (wait on real signals; causes were test timing, not production races); new task ^cx1type filed
+    - test: green — swift test, 1522 passed (1486+17+19), 0 failed, 0 skipped; 3 changed suites 3 extra runs clean; stress before and after in the implement comment
+    - commit: ce3c0bf
+    - review: clean — 0 findings
+  timestamp: 2026-09-26T14:49:07.494120+00:00
+position_column: done
+position_ordinal: ffffff9480
 title: 'Find why two tests fail under parallel stress at HEAD: TurnCancellationTests streamEvents cancel, PooledResidencyTests shared model unload'
 ---
 ## What
