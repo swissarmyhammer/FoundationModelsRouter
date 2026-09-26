@@ -87,10 +87,26 @@ comments:
     - evidence: 1 file — Tests/FoundationModelsRouterTests/SettledTranscriptTests.swift (the `value(within:of:)` helper and `readTimeout` are removed; the test uses `MountFixtures.poll` and a `ReadBox`). `swift test`: 1428 + 4 + 19 = 1451 passed, 2 known issues, 0 new warnings. `SettledTranscriptTests` 3 more runs: 3/3 passed each time. The review finding is `- [x]`.
     - next: /review
   timestamp: 2026-09-26T00:52:33.486321+00:00
+- actor: claude-code
+  id: 01m3dkh2s9jrxkfde3x9m3s1ma
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (854b58c). 0 findings, 0 confirmed, 1 refuted, 7 attempted, 0 failed. 1 file reviewed (SettledTranscriptTests.swift). The prior finding (SettledTranscriptTests.swift:184, reuse/reuse) is checked, and this review shows no new finding.
+    - next: The task is in done. No work remains.
+  timestamp: 2026-09-26T00:58:31.081924+00:00
+- actor: claude-code
+  id: 01m3dkkd38bqqg42w3m3y5g76b
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 1 test file (reuse MountFixtures.poll)
+    - test: green — swift test, 1451 passed (1428+4+19), 0 failed, 0 skipped; SettledTranscriptTests 3 extra runs clean
+    - commit: 854b58c
+    - review: clean — 0 findings
+  timestamp: 2026-09-26T00:59:47.176997+00:00
 depends_on:
 - 01M3CYJ4VS4VF5EEHA01PSQDM9
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffff8a80
 title: Read and fork a session from its settled transcript, with no wait on turnLock
 ---
 ## Why
