@@ -21,7 +21,15 @@ import Testing
 /// Everything runs against stubs — tools gated on a ``RunLatch``, a backend
 /// that calls them, and an ``InMemoryRecorder`` — so the suite needs no
 /// network and no GPU.
-@Suite("respond(to:): the answer of its own submission, and the pump that delivers each settled run as mail")
+///
+/// The suite declares `.timeLimit` because ``backgroundTokens(atLeast:on:)``
+/// and ``settledTerminal(of:on:)`` wait with no wall clock (task ^v4zh807).
+/// A wall clock of some seconds failed a correct test under parallel stress
+/// while the run was still on its way. The limit is a ceiling on a fault: it
+/// ends a wait for a run that is never tracked or never settles.
+@Suite(
+    "respond(to:): the answer of its own submission, and the pump that delivers each settled run as mail",
+    .timeLimit(.minutes(1)))
 struct RespondRunPlaneDrainTests {
     // MARK: - Backends
 
@@ -278,36 +286,45 @@ struct RespondRunPlaneDrainTests {
         }
     }
 
-    /// Waits, bounded, for `session`'s run plane to report at least `count`
-    /// background runs, then reports their tokens.
+    /// Waits for `session`'s run plane to report at least `count` background
+    /// runs, then reports their tokens.
+    ///
+    /// No event tells that a run was tracked, so the wait reads the run plane
+    /// until the count holds. It has no wall clock: a loaded machine only
+    /// delays the tracking, and the `.timeLimit` of the suite ends a wait for a
+    /// run that is never tracked.
     ///
     /// - Parameters:
     ///   - count: How many background runs to wait for.
     ///   - session: The session whose mailbox is observed.
     /// - Returns: The background runs' completion tokens, in tracking order.
+    /// - Throws: ``ConditionNeverHeld`` when the `.timeLimit` of the suite
+    ///   ended the wait.
     private static func backgroundTokens(
         atLeast count: Int, on session: RoutedSession
-    ) async -> [String] {
-        #expect(
-            await BoundedWait.conditionReached("\(count) runs tracked on the session") {
-                await session.mailbox.backgroundRuns().count >= count
-            })
+    ) async throws -> [String] {
+        try await AwaitedCondition.wait(until: { await session.mailbox.backgroundRuns().count >= count })
         return await session.mailbox.backgroundRuns().map(\.completionToken)
     }
 
-    /// Waits, bounded by ``mailboxWaitTimeoutSeconds``, for the run `token`
-    /// names to settle, and reports its terminal event.
+    /// Waits for the run `token` names to settle, and reports its terminal
+    /// event.
+    ///
+    /// The wait is ``SessionMailbox/wait(completionToken:seconds:)`` with no
+    /// expiry: the mailbox resumes it when the run settles, and a
+    /// cancellation, which the `.timeLimit` of the suite sends, ends it
+    /// early.
     ///
     /// - Parameters:
     ///   - token: The run's completion token.
     ///   - session: The session whose mailbox tracks the run.
     /// - Returns: The run's terminal event.
-    /// - Throws: ``SignalNeverArrived`` when the run did not settle inside the
-    ///   bound.
+    /// - Throws: ``SignalNeverArrived`` when the wait ended and the run did
+    ///   not settle.
     private static func settledTerminal(of token: String, on session: RoutedSession) async throws -> OperationEvent {
-        let outcome = await session.mailbox.wait(completionToken: token, seconds: mailboxWaitTimeoutSeconds)
+        let outcome = await session.mailbox.wait(completionToken: token, seconds: nil)
         guard case .settled(let terminal) = outcome else {
-            Issue.record("expected the run to settle inside the bound, got \(outcome)")
+            Issue.record("expected the run to settle, got \(outcome)")
             throw SignalNeverArrived()
         }
         return terminal
@@ -355,7 +372,7 @@ struct RespondRunPlaneDrainTests {
         let backend = try #require(container.lastBackend)
 
         _ = try await session.respond(to: "run the job")
-        let token = try #require(await backgroundTokens(atLeast: 1, on: session).first)
+        let token = try #require(try await backgroundTokens(atLeast: 1, on: session).first)
         if opening {
             await gate.open()
         }
@@ -393,7 +410,7 @@ struct RespondRunPlaneDrainTests {
 
         // Both runs were backgrounded inside the first submission. Releasing
         // them one at a time makes the pump deliver each one on its own.
-        let tokens = await Self.backgroundTokens(atLeast: 2, on: session)
+        let tokens = try await Self.backgroundTokens(atLeast: 2, on: session)
         #expect(tokens.count == 2)
         await firstGate.open()
         _ = await session.mailbox.wait(
@@ -565,7 +582,7 @@ struct RespondRunPlaneDrainTests {
             return events
         }
 
-        let token = try #require(await Self.backgroundTokens(atLeast: 1, on: session).first)
+        let token = try #require(try await Self.backgroundTokens(atLeast: 1, on: session).first)
         await gate.open()
         let terminal = try await Self.settledTerminal(of: token, on: session)
         await holdFirstSubmission.open()
@@ -628,7 +645,7 @@ struct RespondRunPlaneDrainTests {
         let backend = try #require(container.lastBackend)
 
         let responding = Task { try await session.respond(to: "run the job") }
-        _ = try #require(await Self.backgroundTokens(atLeast: 1, on: session).first)
+        _ = try #require(try await Self.backgroundTokens(atLeast: 1, on: session).first)
 
         // The caller's own task is cancelled. The model work of this stub
         // ignores the cancel, so the submission still answers when its hold

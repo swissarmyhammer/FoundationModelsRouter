@@ -262,21 +262,32 @@ extension AnswerCancellationTests {
     }
 
     /// Whether one further ordinary answer on `session` runs to completion,
-    /// observed through `observer` under a bounded spin rather than by awaiting
-    /// the answer.
+    /// observed through `observer` rather than by awaiting the answer.
     ///
     /// The indirection is the point: a regression that strands the pump
-    /// blocks every later message on that session forever, so awaiting such an
-    /// answer directly would hang the whole suite instead of failing an
-    /// assertion in the test that caught it.
+    /// blocks every later message on that session forever, and a bare
+    /// `respond(to:)` that no pump takes never ends. So awaiting such an
+    /// answer directly would hang the whole suite instead of failing the test
+    /// that caught it.
+    ///
+    /// The wait for the model call has no wall clock (task ^v4zh807): a loaded
+    /// machine only delays the answer, and a clock of some seconds failed a
+    /// correct test under parallel stress. The `.timeLimit` of the suite
+    /// cancels the wait of an answer that never reaches the model, and the
+    /// answer is then cancelled and not awaited.
+    ///
+    /// - Parameters:
+    ///   - session: The session to run one more answer on.
+    ///   - observer: The observer that the model call of that answer reports to.
+    ///   - prompt: The prompt of that answer.
+    /// - Returns: Whether the answer reached the model and returned a response.
     static func followUpAnswerCompletes(
         on session: any RoutedSession,
         observer: AnswerObserver,
         prompt: String = "after"
     ) async -> Bool {
         let task = Task { try await session.respond(to: prompt) }
-        await BoundedWait.spin(until: { await observer.exited.contains(prompt) })
-        guard await observer.exited.contains(prompt) else {
+        guard await modelCallEnds(of: prompt, observer: observer) else {
             // Never admitted to the model at all — its message was stranded. The
             // suite must not await it.
             task.cancel()
@@ -285,12 +296,27 @@ extension AnswerCancellationTests {
         return (try? await task.value) != nil
     }
 
+    /// Whether the model call of the answer named `prompt` ended before the
+    /// waiting task was cancelled.
+    ///
+    /// The wait reads ``AnswerObserver/exited`` until it holds, with no wall
+    /// clock. Only the cancellation of the waiting task, which the
+    /// `.timeLimit` of the suite sends, ends it early.
+    ///
+    /// - Parameters:
+    ///   - prompt: The prompt of the answer whose model call is watched.
+    ///   - observer: The observer that the model call reports to.
+    /// - Returns: Whether the model call ended.
+    private static func modelCallEnds(of prompt: String, observer: AnswerObserver) async -> Bool {
+        (try? await AwaitedCondition.wait(until: { await observer.exited.contains(prompt) })) != nil
+    }
+
     /// The events one further answer on `session` produced, or `nil` when that
     /// answer never reached the model.
     ///
     /// ``followUpAnswerCompletes(on:observer:prompt:)`` for a test that has to *see*
     /// what the next answer did — its own ``SessionEvent/compaction(_:)``, say — and
-    /// bounded by the same spin for the same reason: a regression that stranded
+    /// with the same wait for the same reason: a regression that stranded
     /// the pump would hang the suite rather than fail the test that caught it.
     ///
     /// Unlike that method, this one *does* await the task on its give-up path, and
@@ -317,8 +343,7 @@ extension AnswerCancellationTests {
                 await delivered.append(event)
             }
         }
-        await BoundedWait.spin(until: { await observer.exited.contains(prompt) })
-        guard await observer.exited.contains(prompt) else {
+        guard await modelCallEnds(of: prompt, observer: observer) else {
             task.cancel()
             _ = try? await task.value
             return nil

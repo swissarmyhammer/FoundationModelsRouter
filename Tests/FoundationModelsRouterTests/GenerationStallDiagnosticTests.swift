@@ -27,8 +27,8 @@ struct GenerationStallDiagnosticTests {
     /// stops making progress while the model call is still in flight.
     ///
     /// `@unchecked Sendable` on the same terms as ``StubSessionBackend``: the
-    /// owning session drives one backend method at a time, and the two
-    /// semaphores are themselves `Sendable`.
+    /// owning session drives one backend method at a time, and the event and
+    /// the semaphore are themselves `Sendable`.
     private final class StallingBackend: LanguageModelSessionBackend, @unchecked Sendable {
         /// The plain stub every non-stalling behaviour delegates to, so this
         /// backend only has to model the stall.
@@ -41,7 +41,7 @@ struct GenerationStallDiagnosticTests {
         /// is about is what the *session* observed, and the session's own
         /// ``SessionEvent/textDelta(_:)`` says that; a backend-side flag says
         /// only that a chunk was written into a buffer nobody has read yet.
-        let suspended = AsyncSemaphore(value: 0)
+        let suspended = AwaitedEvent()
 
         /// Awaited by the suspended model call; signalling it lets the answer
         /// finish.
@@ -242,9 +242,9 @@ struct GenerationStallDiagnosticTests {
 
     /// The reporting interval every stalling test installs.
     ///
-    /// Two orders of magnitude under ``BoundedWait/ceilingNanoseconds``, so a
-    /// report a loaded machine delays still lands well inside the bound the
-    /// waiting test gives it.
+    /// Short, so a test that waits for a report does not wait long. The wait
+    /// itself has no wall clock (task ^v4zh807): it reads the reports the
+    /// session sends, so a loaded machine only delays a report.
     private static let testReportInterval: Duration = .milliseconds(50)
 
     /// A reporting interval no test answer can reach — installed by the
@@ -300,27 +300,46 @@ struct GenerationStallDiagnosticTests {
         return (session, dir)
     }
 
+    /// The first stall report on `feed` that `isWanted` accepts.
+    ///
+    /// Each element of the feed is an event that the session sends, so the
+    /// wait ends on the report itself and has no wall clock (task ^v4zh807).
+    /// A loaded machine only delays the report. The iteration ends when the
+    /// waiting task is cancelled, which the `.timeLimit` of the test sends,
+    /// and the result is then `nil`.
+    ///
+    /// - Parameters:
+    ///   - feed: The session-wide feed, subscribed before the answer starts.
+    ///   - isWanted: Whether a report is the one the test waits for.
+    /// - Returns: The first wanted report, or `nil` when the feed ended first.
+    private static func firstStall(
+        on feed: AsyncStream<SessionEvent>,
+        where isWanted: @Sendable (GenerationStall) -> Bool = { _ in true }
+    ) async -> GenerationStall? {
+        for await event in feed {
+            guard case .generationStalled(let stall) = event, isWanted(stall) else { continue }
+            return stall
+        }
+        return nil
+    }
+
     // MARK: - The signal a `respond` caller can see
 
-    @Test("a respond answer that stops progressing reports a stall on the session-wide feed")
+    @Test(
+        "a respond answer that stops progressing reports a stall on the session-wide feed",
+        .timeLimit(.minutes(1)))
     @MainActor
     func respondAnswerReportsAStallOnTheSessionWideFeed() async throws {
         let (session, backend, dir) = try await Self.makeStallingSession()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let (log, drain) = await SessionEventLog.watch(session)
+        let feed = await session.streamSessionEvents()
         let answerTask = Task { try await session.respond(to: Self.prompt) }
-        try await BoundedWait.awaitSignal(backend.suspended, named: "the model call suspended")
-
-        let reported = await BoundedWait.conditionReached("a stall report") {
-            await !log.stalls.isEmpty
-        }
+        let reported = await Self.firstStall(on: feed)
         backend.release.signal()
         _ = try await answerTask.value
-        drain.cancel()
 
-        #expect(reported)
-        let stall = try #require(await log.stalls.first)
+        let stall = try #require(reported)
         // The honest half: a `respond` answer's backend hands back one whole
         // string, so there is no increment to time and the report says so.
         #expect(stall.visibility == .wholeAnswer)
@@ -328,20 +347,18 @@ struct GenerationStallDiagnosticTests {
         #expect(stall.timeInFlight >= stall.timeWithoutProgress)
     }
 
-    @Test("a stalling answer is still given — the report bounds nothing")
+    @Test("a stalling answer is still given — the report bounds nothing", .timeLimit(.minutes(1)))
     @MainActor
     func aStallingAnswerIsStillGiven() async throws {
         let (session, backend, dir) = try await Self.makeStallingSession()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let (log, drain) = await SessionEventLog.watch(session)
+        let feed = await session.streamSessionEvents()
         let answerTask = Task { try await session.respond(to: Self.prompt) }
-        try await BoundedWait.awaitSignal(backend.suspended, named: "the model call suspended")
-        _ = await BoundedWait.conditionReached("a stall report") { await !log.stalls.isEmpty }
+        #expect(await Self.firstStall(on: feed) != nil)
 
         backend.release.signal()
         let answer = try await answerTask.value
-        drain.cancel()
 
         #expect(answer == "stub response")
     }
@@ -425,7 +442,7 @@ struct GenerationStallDiagnosticTests {
 
         let (log, drain) = await SessionEventLog.watch(session)
         let answerTask = Task { try await session.respond(to: Self.prompt) }
-        try await BoundedWait.awaitSignal(backend.suspended, named: "the model call suspended")
+        try await backend.suspended.wait()
         try await Task.sleep(for: silence)
         let stallsDuringSilence = await log.stalls
 
@@ -446,17 +463,14 @@ struct GenerationStallDiagnosticTests {
         let (session, backend, dir) = try await Self.makeStallingSession(reportInterval: reportInterval)
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let (log, drain) = await SessionEventLog.watch(session)
+        let feed = await session.streamSessionEvents()
         let answerTask = Task { try await session.respond(to: Self.prompt) }
-        try await BoundedWait.awaitSignal(backend.suspended, named: "the model call suspended")
-        let reported = await BoundedWait.conditionReached("a stall report") { await !log.stalls.isEmpty }
+        let reported = await Self.firstStall(on: feed)
 
         backend.release.signal()
         _ = try await answerTask.value
-        drain.cancel()
 
-        #expect(reported)
-        let stall = try #require(await log.stalls.first)
+        let stall = try #require(reported)
         #expect(stall.timeWithoutProgress >= reportInterval)
     }
 
@@ -475,21 +489,19 @@ struct GenerationStallDiagnosticTests {
 
     // MARK: - The log a consumer with no subscription still sees
 
-    @Test("a stall is logged, so a consumer that subscribed to nothing still sees it")
+    @Test("a stall is logged, so a consumer that subscribed to nothing still sees it", .timeLimit(.minutes(1)))
     @MainActor
     func aStallIsLogged() async throws {
         let start = Date()
         let (session, backend, dir) = try await Self.makeStallingSession()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let (log, drain) = await SessionEventLog.watch(session)
+        let feed = await session.streamSessionEvents()
         let answerTask = Task { try await session.respond(to: Self.prompt) }
-        try await BoundedWait.awaitSignal(backend.suspended, named: "the model call suspended")
-        _ = await BoundedWait.conditionReached("a stall report") { await !log.stalls.isEmpty }
+        #expect(await Self.firstStall(on: feed) != nil)
 
         backend.release.signal()
         _ = try await answerTask.value
-        drain.cancel()
 
         try assertLogged(containing: "generation has made no progress", since: start)
     }
@@ -569,24 +581,20 @@ struct GenerationStallDiagnosticTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let actor = try #require(session as? RoutedSessionActor)
 
-        let (log, drain) = await SessionEventLog.watch(session)
+        let feed = await session.streamSessionEvents()
         let answerTask = Task { try await session.respond(to: Self.prompt) }
-        try await BoundedWait.awaitSignal(backend.suspended, named: "the model call suspended")
+        try await backend.suspended.wait()
 
         let open = ToolInvocationRecord(
             tool: "search", op: "search", correlationID: "tool-run", sessionID: session.id, openedAt: Date())
         await actor.deliver(invocation: open)
         await actor.deliver(invocation: open.closed(at: Date()))
 
-        let reported = await BoundedWait.conditionReached("a stall report that names the tool result") {
-            await log.stalls.contains { $0.lastProgress == .toolResult }
-        }
+        let reported = await Self.firstStall(on: feed, where: { $0.lastProgress == .toolResult })
         backend.release.signal()
         _ = try await answerTask.value
-        drain.cancel()
 
-        #expect(reported)
-        let stall = try #require(await log.stalls.first { $0.lastProgress == .toolResult })
+        let stall = try #require(reported)
         #expect(stall.visibility == .wholeAnswer)
         #expect(stall.timeInFlight > stall.timeWithoutProgress)
     }

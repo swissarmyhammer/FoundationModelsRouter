@@ -20,11 +20,6 @@ struct ExecutorPassBoundaryTests {
     /// the body cannot hide inside scheduling noise.
     private static let toolHold = Duration.seconds(1)
 
-    /// How long the slow consumer waits after each snapshot. Far longer than a
-    /// scripted pass takes, so a pass that waits for the consumer runs at least
-    /// this long.
-    private static let slowConsumerPause = Duration.milliseconds(300)
-
     /// How many executor calls the submission makes: the pass that emits the tool
     /// call, and the pass that answers after the tool output.
     private static let expectedPassCount = 2
@@ -76,20 +71,54 @@ struct ExecutorPassBoundaryTests {
         try PassBoundaryExpectations.expectNextPassStartsAfterToolBody(in: log)
     }
 
-    @Test("stream: a consumer slower than generation keeps no pass open")
+    @Test("stream: a consumer slower than generation keeps no pass open", .timeLimit(.minutes(1)))
     func slowStreamConsumerKeepsNoPassOpen() async throws {
         let log = PassBoundaryLog()
 
         let snapshots = Self.makeSession(recordingInto: log).streamResponse(to: ScriptedToolFixture.prompt)
-        let snapshotCount = try await PassBoundaryExpectations.consumeSlowly(
-            snapshots, pausingAfterEach: Self.slowConsumerPause)
+        let snapshotCount = try await Self.consumeAfterEachOpenPassEnds(snapshots, log: log)
 
         #expect(snapshotCount > 0)
-        let passDurations = log.passDurations
-        #expect(passDurations.count == Self.expectedPassCount, "\(log.boundaries)")
-        #expect(
-            passDurations.allSatisfy { $0 < Self.slowConsumerPause },
-            "a pass waited for the consumer: \(passDurations)")
+        #expect(log.passDurations.count == Self.expectedPassCount, "\(log.boundaries)")
         try PassBoundaryExpectations.expectFirstPassEndsBeforeItsToolBody(in: log)
+    }
+
+    /// Reads every element of `stream`, and after each one waits until every
+    /// pass that `log` saw start has ended: a consumer slower than any pass.
+    ///
+    /// The wait is on the pass boundaries, not on a clock (task ^v4zh807). A
+    /// pass that holds its end until the consumer reads the next element
+    /// never ends, so the wait never ends, and the `.timeLimit` of the test
+    /// fails it. A pass that a loaded machine makes slow only makes the wait
+    /// longer. The earlier form of this test compared each pass with a
+    /// 300 ms pause of the consumer, and a loaded machine made a pass longer
+    /// than that with no consumer involved.
+    ///
+    /// - Parameters:
+    ///   - stream: The stream to read.
+    ///   - log: The log the executor records each pass into.
+    /// - Returns: How many elements the stream gave.
+    /// - Throws: What the stream throws, or ``ConditionNeverHeld`` when the
+    ///   `.timeLimit` of the test ended a wait.
+    private static func consumeAfterEachOpenPassEnds<Stream: AsyncSequence>(
+        _ stream: Stream, log: PassBoundaryLog
+    ) async throws -> Int {
+        var elementCount = 0
+        for try await _ in stream {
+            elementCount += 1
+            try await AwaitedCondition.wait(until: { hasNoOpenPass(in: log) })
+        }
+        return elementCount
+    }
+
+    /// Whether every pass that `log` saw start has also ended.
+    ///
+    /// - Parameter log: The log the executor records each pass into.
+    /// - Returns: Whether the log holds as many pass ends as pass starts.
+    private static func hasNoOpenPass(in log: PassBoundaryLog) -> Bool {
+        let boundaries = log.boundaries
+        let starts = boundaries.filter { $0 == .executorEntered }.count
+        let ends = boundaries.filter { $0 == .executorExited }.count
+        return starts == ends
     }
 }

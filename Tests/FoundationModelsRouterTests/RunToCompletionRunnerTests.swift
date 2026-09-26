@@ -174,7 +174,7 @@ struct RunToCompletionRunnerTests {
 
     // MARK: - Elicitation suspends the timeout
 
-    @Test("a pending elicitation suspends the timeout for as long as it is unanswered")
+    @Test("a pending elicitation suspends the timeout for as long as it is unanswered", .timeLimit(.minutes(1)))
     func pendingElicitationSuspendsTimeout() async throws {
         let harness = Fixtures.runToCompletionHarness(
             wrapping: Fixtures.ElicitOnceTool(), timeout: Fixtures.shortInterval
@@ -192,7 +192,7 @@ struct RunToCompletionRunnerTests {
             elicitationId: elicitationId, .accept(content: ["ok": .boolean(true)])
         )
 
-        let rendered = try await calling.deliveredAnswer()
+        let rendered = try await calling.answerOnceDelivered()
         #expect(rendered == "answered: accept")
 
         let events = await harness.sink.events
@@ -200,7 +200,9 @@ struct RunToCompletionRunnerTests {
         #expect(events.last?.outcome == .succeeded)
     }
 
-    @Test("an answered elicitation restores the timeout with a fresh window: a run that then stalls still times out")
+    @Test(
+        "an answered elicitation restores the timeout with a fresh window: a run that then stalls still times out",
+        .timeLimit(.minutes(1)))
     func elicitationResolutionRestoresTimeout() async throws {
         let harness = Fixtures.runToCompletionHarness(
             wrapping: Fixtures.ElicitThenStallTool(), timeout: Fixtures.shortInterval
@@ -213,7 +215,7 @@ struct RunToCompletionRunnerTests {
         await harness.mailbox.respond(elicitationId: elicitationId, .decline)
 
         await #expect(throws: ToolMountError.self) {
-            _ = try await calling.deliveredAnswer()
+            _ = try await calling.answerOnceDelivered()
         }
 
         let events = await harness.sink.events

@@ -705,7 +705,9 @@ struct MessageQueueTests {
         #expect(await Self.promptTexts(in: recorder) == ["blocking"])
     }
 
-    @Test("a respond whose message waits is withdrawn by cancel(message:): its caller gets CancellationError, and no submission carries it")
+    @Test(
+        "a respond whose message waits is withdrawn by cancel(message:): its caller gets CancellationError, and no submission carries it",
+        .timeLimit(.minutes(1)))
     @MainActor
     func cancelMessageWithdrawsAWaitingRespond() async throws {
         let recorder = InMemoryRecorder()
@@ -720,10 +722,11 @@ struct MessageQueueTests {
         // The second respond is a message that waits in the outbox. Its
         // caller never sees the id, so the test reads it off the queue.
         let waitingRespond = Task { try await session.respond(to: "waiting prompt") }
-        #expect(
-            await BoundedWait.conditionReached("the respond message waiting in the outbox") {
-                await session.outbox.waitingMessageCount == 1
-            })
+        // No event tells that the message joined the outbox, so the test reads
+        // the count until it holds. Neither wait below has a wall clock (task
+        // ^v4zh807): a loaded machine only delays the change, and only the
+        // `.timeLimit` of this test ends a wait for a change that never comes.
+        try await AwaitedCondition.wait(until: { await session.outbox.waitingMessageCount == 1 })
         let id = try #require(await session.pendingMessages().first?.id)
 
         #expect(await session.cancel(message: id) == .withdrawn)
@@ -731,7 +734,7 @@ struct MessageQueueTests {
         backend.proceed.signal()
         _ = try await blockingAnswer.value
         await #expect(throws: CancellationError.self) { try await waitingRespond.value }
-        #expect(await session.becomesIdle())
+        #expect(try await session.isIdleOnceThePumpEnds())
         #expect(await Self.promptTexts(in: recorder) == ["blocking message"])
     }
 

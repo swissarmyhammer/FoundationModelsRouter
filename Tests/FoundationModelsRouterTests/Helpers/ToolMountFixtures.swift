@@ -148,17 +148,20 @@ enum MountFixtures {
         return terminal
     }
 
-    /// Polls the mailbox (bounded) until an elicitation is pending and
-    /// returns its id.
+    /// Waits until an elicitation is pending on `mailbox`, and returns its id.
+    ///
+    /// No event tells that an elicitation became pending, so the wait reads
+    /// the mailbox until one is there. It has no wall clock (task ^v4zh807):
+    /// a loaded machine only delays the elicitation. A caller sets a
+    /// `.timeLimit`, which ends a wait for an elicitation that never comes.
+    ///
+    /// - Parameter mailbox: The mailbox the elicitation is pending on.
+    /// - Returns: The id of the first pending elicitation.
+    /// - Throws: ``ConditionNeverHeld`` when the `.timeLimit` of the test
+    ///   ended the wait.
     static func firstPendingElicitationId(in mailbox: SessionMailbox) async throws -> ULID {
-        for _ in 0..<pollAttempts {
-            if let elicitationId = await mailbox.pendingElicitationIds().first {
-                return elicitationId
-            }
-            try await Task.sleep(nanoseconds: pollIntervalNanoseconds)
-        }
-        Issue.record("no elicitation ever became pending")
-        throw FixtureError()
+        try await AwaitedCondition.wait(until: { await !mailbox.pendingElicitationIds().isEmpty })
+        return try #require(await mailbox.pendingElicitationIds().first)
     }
 
     /// Polls `fact` (bounded) until it returns a value.

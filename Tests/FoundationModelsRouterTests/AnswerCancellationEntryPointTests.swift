@@ -215,10 +215,12 @@ extension AnswerCancellationTests {
         await insideFirstAnswer.wait()
 
         let queuedTask = Task { try await session.respond(to: "queued-and-cancelled") }
-        #expect(
-            await BoundedWait.conditionReached("the second message waiting in the outbox") {
-                await session.outbox.waitingMessageCount == 1
-            })
+        // No event tells that the message joined the outbox, so the test reads
+        // the count until it holds. The wait has no wall clock: the message
+        // always arrives, and a loaded machine only delays it. Only the
+        // `.timeLimit` of the suite ends a wait for a message that never
+        // arrives.
+        try await AwaitedCondition.wait(until: { await session.outbox.waitingMessageCount == 1 })
 
         // Cancelled while its message waits. The message leaves the outbox,
         // or the pump drops it when it takes it: it never goes into a

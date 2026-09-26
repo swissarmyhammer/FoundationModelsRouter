@@ -267,14 +267,18 @@ extension AnswerCancellationTests {
         let compactTask = Task {
             try await session.compact(prompt: Self.compactionSummarizerPrompt, budget: Self.summarizingCompactionBudget)
         }
-        await BoundedWait.spin(until: { await actor.pendingCompactions.count == 1 })
-        #expect(await actor.pendingCompactions.count == 1)
+        // No event tells that the request joined the list of the pump, or that
+        // it left it, so the test reads the list until it holds. Neither wait
+        // has a wall clock (task ^v4zh807): a loaded machine only delays the
+        // change. The answer still holds the pump during both waits, so a
+        // request that stays in the list until the answer ends never lets the
+        // second wait end, and the `.timeLimit` of the suite fails the test.
+        try await AwaitedCondition.wait(until: { await actor.pendingCompactions.count == 1 })
 
         // The cancel of the caller must take the request out of the list while
         // the answer still runs. The caller does not wait for the end of the answer.
         compactTask.cancel()
-        await BoundedWait.spin(until: { await actor.pendingCompactions.isEmpty })
-        #expect(await actor.pendingCompactions.isEmpty)
+        try await AwaitedCondition.wait(until: { await actor.pendingCompactions.isEmpty })
         #expect(await actor.isPumpRunning)
 
         #expect(await session.cancel() == .requested)
