@@ -33,8 +33,24 @@ comments:
     - other findings: none. `compact` has no such gap (append, wake and handler install have no suspension point between them).
     - next: review
   timestamp: 2026-09-26T20:32:17.381317+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m3fq3ybxdwyy8fjtfn4rwhq0
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (9f50b68). 0 findings, 0 confirmed, 0 refuted. 7 validator runs attempted, 0 failed. The review examined 2 files. The .reviewignore rule excluded 2 .kanban files.
+    - next: The task moved to done.
+  timestamp: 2026-09-26T20:39:43.741109+00:00
+- actor: claude-code
+  id: 01m3fq679ng8mscwfk03gvpcyg
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — enqueue inside the cancellation handler's operation; 1 new test (it also passes on the old code; the old failure needs a priority order that no test can force without a production hook)
+    - test: green — swift test, 1498 passed (1462+17+19), 0 failed, 0 skipped; 4 cancel and pump suites 3 extra runs clean
+    - commit: 9f50b68
+    - review: clean — 0 findings
+  timestamp: 2026-09-26T20:40:58.421466+00:00
+position_column: done
+position_ordinal: ffffff9c80
 title: Install the caller cancel handler before a message reaches the outbox
 ---
 ## What
