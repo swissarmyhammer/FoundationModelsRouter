@@ -185,7 +185,6 @@ struct GenerationQueueTests {
         let second = SessionLanguageModel(wrapping: model)
 
         #expect(first.executorConfiguration != second.executorConfiguration)
-        #expect(first.state.passQueue == nil)
     }
 
     @Test("a live backend, its fork and a replaced transcript declare the queue of their container")

@@ -404,8 +404,7 @@ struct GenerationQueueWorkerTests {
 /// test binds around the SDK call. The SDK gives task-locals to the executor
 /// (the control test), so a pass that answers "none" ran on a task that the
 /// worker made, which inherits no task-local of the submitter. That holds for
-/// a whole SDK call submitted as one item, and for each pass of a
-/// ``SessionLanguageModel`` whose passes are items.
+/// a whole SDK call over a ``SessionLanguageModel``, submitted as one item.
 @Suite("Generation queue: an item runs on the worker task (tasks ^a0ze9af, ^1psqdm9)")
 struct GenerationQueueWorkerTaskTests {
     /// The task-local that the test binds around the SDK call.
@@ -493,17 +492,6 @@ struct GenerationQueueWorkerTaskTests {
         let content = try await Self.respondWithMark(over: SubmitterMarkModel())
 
         #expect(content == SubmitterMarkModel.answer(seeing: Self.submitterMark))
-    }
-
-    @Test("behind a wrapper whose each pass is an item, the pass runs on the worker task, and the SDK call returns its output")
-    func thePassRunsOnTheWorkerTaskAndTheSDKCallReturnsItsOutput() async throws {
-        let queue = GenerationQueue()
-        let model = SessionLanguageModel(wrapping: SubmitterMarkModel(), passQueue: queue)
-
-        let content = try await Self.respondWithMark(over: model)
-
-        #expect(content == SubmitterMarkModel.answer(seeing: nil))
-        #expect(await queue.isRunning == false)
     }
 
     @Test("a whole SDK call submitted as one item runs on the worker task, and returns the output of its pass")

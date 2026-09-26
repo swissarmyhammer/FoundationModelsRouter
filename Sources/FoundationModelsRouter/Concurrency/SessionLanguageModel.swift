@@ -15,12 +15,10 @@ import Synchronization
 /// prompt-cache scope: the key of the session, or no cache for a summarizer
 /// call.
 ///
-/// A wrapper of a backend holds no queue: the session submits each whole SDK
-/// call of its backend to the ``GenerationQueue`` of the model
-/// (``LanguageModelSessionBackend/generationQueue``). A wrapper made with a
-/// pass queue (``SessionLanguageModelState/passQueue``) submits each of its
-/// passes to that queue as one item instead. No production code makes such a
-/// wrapper now. Only a test does.
+/// A wrapper holds no queue and runs each pass directly. The session submits
+/// each whole SDK call of its backend to the ``GenerationQueue`` of the model
+/// (``LanguageModelSessionBackend/generationQueue``), so the queue item is the
+/// submission, and each pass of that submission runs inside it.
 ///
 /// The wrapper keeps the raw model in ``SessionLanguageModelState/wrapped``. A
 /// caller that needs the raw model (the `as? MLXLanguageModel` cast of
@@ -33,16 +31,9 @@ struct SessionLanguageModel: LanguageModel, Sendable {
 
     /// Makes a wrapper with a new per-session state over `wrapped`.
     ///
-    /// The wrapper of the session of one backend has no pass queue, and runs
-    /// each pass directly. A wrapper made with `passQueue` makes each of its
-    /// passes one item of that queue.
-    ///
-    /// - Parameters:
-    ///   - wrapped: The raw model whose executor runs each pass.
-    ///   - passQueue: The queue of the container of `wrapped`, or `nil` (the
-    ///     default) for the wrapper of a backend.
-    init(wrapping wrapped: any LanguageModel, passQueue: GenerationQueue? = nil) {
-        state = SessionLanguageModelState(wrapped: wrapped, passQueue: passQueue)
+    /// - Parameter wrapped: The raw model whose executor runs each pass.
+    init(wrapping wrapped: any LanguageModel) {
+        state = SessionLanguageModelState(wrapped: wrapped)
     }
 
     /// Passed through unchanged from the wrapped model.
@@ -110,15 +101,15 @@ struct SessionLanguageModel: LanguageModel, Sendable {
         /// The pass is the executor call of the SDK itself, not a copy: it
         /// calls the wrapped executor with the same `request` and over the
         /// same `channel` that the SDK gave this call, on the task of this
-        /// call. A wrapper with a pass queue submits the pass to that queue
-        /// as one item, whose task inherits no task-local of this call.
+        /// call.
         ///
         /// The pass binds the scope itself, around the call of the wrapped
         /// executor (``SessionLanguageModelState/withPromptCacheScope(_:)``).
         /// A task-local reaches the executor of the fork only when it is
         /// bound on the task that calls that executor: the SDK can run this
-        /// executor on another task than the SDK call, and the item of a pass
-        /// queue runs on the task of the worker.
+        /// executor on another task than the SDK call, and the submission
+        /// that holds the SDK call runs on a task that the worker of the
+        /// queue makes.
         ///
         /// The observer of the session gets the start of the pass before the
         /// wrapped executor runs, and the end of the pass on every exit.
@@ -128,26 +119,18 @@ struct SessionLanguageModel: LanguageModel, Sendable {
         ///   - model: This wrapper. Unread: the state arrives through the
         ///     configuration.
         ///   - channel: The outer channel the wrapped executor streams into.
-        /// - Throws: `CancellationError` when the task is cancelled while a
-        ///   queued pass waits for the worker, or what the wrapped executor
-        ///   throws.
+        /// - Throws: What the wrapped executor throws.
         func respond(
             to request: LanguageModelExecutorGenerationRequest,
             model: SessionLanguageModel,
             streamingInto channel: LanguageModelExecutorGenerationChannel
         ) async throws {
-            let pass: @Sendable () async throws -> Void = { [innerRespond, state] in
-                let observer = state.passObserver
-                observer?.passStarted()
-                defer { observer?.passEnded() }
-                try await state.withPromptCacheScope {
-                    try await innerRespond(request, channel)
-                }
+            let observer = state.passObserver
+            observer?.passStarted()
+            defer { observer?.passEnded() }
+            try await state.withPromptCacheScope {
+                try await innerRespond(request, channel)
             }
-            guard let passQueue = state.passQueue else {
-                return try await pass()
-            }
-            try await passQueue.submit(pass)
         }
     }
 }
@@ -161,10 +144,6 @@ struct SessionLanguageModel: LanguageModel, Sendable {
 final class SessionLanguageModelState: Sendable {
     /// The raw model whose executor runs each pass.
     let wrapped: any LanguageModel
-
-    /// The queue each pass of this wrapper is one item of, or `nil` for the
-    /// wrapper of a backend, whose session submits each whole SDK call.
-    let passQueue: GenerationQueue?
 
     /// What the owner of this wrapper installs on it: the session of its
     /// backend, or the compaction that made its backend for a summarizer
@@ -240,13 +219,10 @@ final class SessionLanguageModelState: Sendable {
         }
     }
 
-    /// Stores the raw model and the pass queue.
+    /// Stores the raw model.
     ///
-    /// - Parameters:
-    ///   - wrapped: The raw model whose executor runs each pass.
-    ///   - passQueue: The queue each pass is one item of, or `nil`.
-    init(wrapped: any LanguageModel, passQueue: GenerationQueue?) {
+    /// - Parameter wrapped: The raw model whose executor runs each pass.
+    init(wrapped: any LanguageModel) {
         self.wrapped = wrapped
-        self.passQueue = passQueue
     }
 }

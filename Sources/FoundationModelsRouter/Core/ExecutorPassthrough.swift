@@ -7,9 +7,7 @@ import FoundationModels
 /// call and passes the request through, over the same outer channel, so the
 /// wrapped executor sees the request unchanged. ``SessionLanguageModel`` calls
 /// the wrapped executor on the same task, so a task-local value it binds
-/// reaches that executor, unless it has a pass queue: then it calls it on the
-/// task that the worker of that ``GenerationQueue`` makes, so only a
-/// task-local that the item itself binds reaches that executor.
+/// reaches that executor.
 enum ExecutorPassthrough {
     /// One call of a wrapped executor.
     typealias Respond = @Sendable (
