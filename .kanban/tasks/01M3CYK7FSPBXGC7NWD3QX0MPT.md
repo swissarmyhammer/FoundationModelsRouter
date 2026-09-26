@@ -107,11 +107,27 @@ comments:
     - evidence: 9 files — Sources/FoundationModelsRouter/Session/{RoutedSessionActorCompaction, RoutedSessionActorCompactionYield, RoutedSessionActorGeneration, RoutedSessionActorPump, RoutedSessionActorRepetitionWatch, RoutedSessionActorTurnExecution, SessionMessage, SessionOutbox}.swift, Tests/FoundationModelsRouterTests/TurnCancellationTests.swift (2 new tests). `swift build --build-tests`: 0 warnings besides the known mlx bundle line. `swift test`: 1441 + 4 + 19 = 1464 passed, 0 failed (2 known issues are the designed `withKnownIssue` marks in RealModelHarnessTests and BoundedWaitTests), run 2 times. Session, pump, outbox, compaction, cancellation, prompt queue, human wait, reentry, run plane, repetition and generation queue suites: 280 tests, 4 runs, all passed. All 9 findings are checked.
     - next: review. The task stays in `doing`. Not committed.
   timestamp: 2026-09-26T03:24:27.812429+00:00
+- actor: claude-code
+  id: 01m3dwbfvmep4b2py0tvbyek9f
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (d6f1315), 0 findings (0 confirmed, 0 refuted; 14 attempted, 0 failed, 0 skipped). 9 source files reviewed; 2 `.kanban/` files excluded by `.reviewignore`. All 9 items of `## Review Findings (2026-09-25 21:41)` are checked. The two symbols of the `completeness/invariant-propagation` findings exist at HEAD: `func cancel(compaction request: CompactionRequest)` in Session/RoutedSessionActorPump.swift, and `var isWorkCancelled: Bool` in Session/RoutedSessionActorTurnExecution.swift.
+    - next: none. The task moved to `done`.
+  timestamp: 2026-09-26T03:32:45.044810+00:00
+- actor: claude-code
+  id: 01m3dwd9rhfcm87tg4wn1h2bnm
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 9 files (shared helpers; 2 new cancel tests; requestedMaxTokens now read)
+    - test: green — swift test, 1464 passed (1441+4+19), 0 failed, 0 skipped; 240 session and pump tests 3 extra runs clean; IntegrationTests build clean
+    - commit: d6f1315
+    - review: clean — 0 findings
+  timestamp: 2026-09-26T03:33:44.337681+00:00
 depends_on:
 - 01M3CYJ4VS4VF5EEHA01PSQDM9
 - 01M3CYJJGNHH04AREE9DPN2YTT
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffff8b80
 title: Replace turnLock with a per-session message queue and one pump task
 ---
 ## Why
