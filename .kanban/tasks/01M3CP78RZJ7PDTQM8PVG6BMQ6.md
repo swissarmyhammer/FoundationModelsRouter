@@ -115,8 +115,24 @@ comments:
     - evidence: 1 file — Sources/FoundationModelsRouter/Concurrency/SessionLanguageModel.swift (`PassWatchID` is now an identity class; `number` and `nextPassWatchNumber` removed). Periphery: 0 results in the file. `swift test`: 1465 + 17 + 19 = 1501 passed, 2 known issues that the suite expects, 0 warnings from project sources. `SessionLanguageModelPassWatchTests` + `TranscriptUpdatesToolLoopTests` 3 extra runs: 3 tests in 2 suites passed each time.
     - next: /review
   timestamp: 2026-09-26T23:00:58.711725+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m3fzkjy3bhg1awvk50whnyw1
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 2e9d710) gave 0 findings (0 confirmed, 0 refuted, 7 validators attempted, 0 failed). The engine reviewed 1 file. The prior finding at `Sources/FoundationModelsRouter/Concurrency/SessionLanguageModel.swift:167` (`code-hygiene/dead-code-swift`, assign-only property `number`) is checked, and the new review did not find it again.
+    - next: None. The task is in `done`.
+  timestamp: 2026-09-26T23:08:04.931751+00:00
+- actor: claude-code
+  id: 01m3fzpekt3nn5mm9tf635wkdd
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 1 file (PassWatchID by object identity; unread number and counter removed)
+    - test: green — swift test, 1501 passed (1465+17+19), 0 failed, 0 skipped; 4 related suites 3 extra runs clean
+    - commit: 2e9d710
+    - review: clean — 0 findings
+  timestamp: 2026-09-26T23:09:38.810805+00:00
+position_column: done
+position_ordinal: ffffff9d80
 title: Find the crash in the SDK tool loop under parallel load (_ContiguousArrayStorage deallocated with non-zero retain count 2)
 ---
 ## What
