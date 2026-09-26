@@ -106,10 +106,10 @@ struct MailOnlyAnswerLimitTests {
     /// Vends one ``RunStartingBackend`` for the session a test makes, with the
     /// composed tool list of that session.
     ///
-    /// `@unchecked Sendable` invariant: `lastBackend` is written one time,
-    /// under its own lock, inside `makeSession(instructions:tools:)`, and a
-    /// test reads it after the vend returns.
-    final class RunStartingContainer: LoadedLLMContainer, @unchecked Sendable {
+    /// The last vended backend is behind a ``Mutex``, and every other stored
+    /// property is an immutable `Sendable` value. Thus the type is `Sendable`
+    /// with no unchecked claim.
+    final class RunStartingContainer: LoadedLLMContainer, Sendable {
         /// The scripted counter of this container: one token per `Character`.
         let tokenCounter: any TokenCounter = CharacterTokenCounter()
 

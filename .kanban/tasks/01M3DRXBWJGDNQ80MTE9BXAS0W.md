@@ -43,6 +43,40 @@ comments:
     - IntegrationTests package: build complete.
     - Stress: MailOnlyAnswerLimitTests, 8 processes × 100 repetitions, 0 issues.
   timestamp: 2026-09-26T13:54:14.378976+00:00
+- actor: claude-code
+  id: 01m3f0nrzqcw3zgcdyhdr18w7y
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (commit 88f6bfd). 2 findings, 2 confirmed, 0 refuted. Tests/FoundationModelsRouterTests/MailOnlyAnswerLimitTests.swift:112, Tests/FoundationModelsRouterTests/SessionTreeRestorationTests.swift:963
+    - next: Correct the 2 open items in "Review Findings (2026-09-26 09:00)". Then do a review again. The task stays in review.
+  timestamp: 2026-09-26T14:07:30.807838+00:00
+- actor: claude-code
+  id: 01m3f0qdz2qj5mdftc68vv11n8
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — about 20 files (mailOnlyAnswerLimit, default 100; mailDeliveryPaused event; held mail rides the next caller message)
+    - test: green — swift test, 1522 passed (1486+17+19), 0 failed, 0 skipped; 6 pump and session suites 3 extra runs clean; build with warnings-as-errors clean
+    - commit: 88f6bfd
+    - review: findings — MailOnlyAnswerLimitTests.swift:112, SessionTreeRestorationTests.swift:963
+  timestamp: 2026-09-26T14:08:25.058848+00:00
+- actor: claude-code
+  id: 01m3f0sx8cws8sfbfryzmxwj4j
+  text: |-
+    Research (implement step, review findings 2026-09-26 09:00).
+    - Finding 1: `RunStartingContainer` holds only `Sendable` stored properties: `let tokenCounter: any TokenCounter` (the protocol is `Sendable`), `let runStartingCalls: Int?` and `let vended: Mutex<RunStartingBackend?>`. `RunStartingBackend` conforms to `LanguageModelSessionBackend`, which is `AnyObject, Sendable`, and keeps its counter in a `Mutex`. Thus a checked `Sendable` conformance compiles with no unchecked claim. `SettledTranscriptTests.HeldSubmissionContainer` is the precedent (a final class, `LoadedLLMContainer, Sendable`, state in a `Mutex`). The file has no other `@unchecked Sendable`.
+    - Finding 2: plan is a shared helper that takes the configuration, the expected value and a closure that reads the setting from a `RoutedSessionActor`. The two `@Test` functions stay, so the test count and the task references in their names stay the same. `repetitionDetection` and `mailOnlyAnswerLimit` are `nonisolated let` on the actor, so a synchronous read closure is correct. The helper passes `sourceLocation` to each assertion, as `ResolutionProgressPublicSurfaceTests` does.
+  timestamp: 2026-09-26T14:09:46.252060+00:00
+- actor: claude-code
+  id: 01m3f0xhdkhrfd43xm0pknf5wj
+  text: |-
+    ### implement — changed
+    - Finding 1 (MailOnlyAnswerLimitTests.swift, no_unchecked_sendable): `RunStartingContainer` now conforms to plain `Sendable`. Its state is a `Mutex` and immutable `Sendable` values, so the compiler checks the conformance. The file has no other `@unchecked Sendable`.
+    - Finding 2 (SessionTreeRestorationTests.swift, reuse): new helper `expectForkAndRestoreKeep(_:madeWith:readBy:sourceLocation:)` takes the expected value, the configuration and a closure (a key path) that reads the setting. It does the fork, the restore and the 3 expectations (fork, restored root, restored fork). Both `@Test` functions stay, with their names and task references. Test count: 2 before, 2 after.
+    - Check: a temporary wrong expected value in both tests made each test fail with 3 issues, and each issue pointed at the call site in the test. The change is reverted.
+    - `swift test`: 1486 + 17 + 19 = 1522 passed, 0 failed. The 2 known issues were there before.
+    - `MailOnlyAnswerLimitTests|SessionTreeRestorationTests`, 3 extra runs: 31 tests, all passed each time.
+    - next: review.
+  timestamp: 2026-09-26T14:11:45.203813+00:00
 position_column: doing
 position_ordinal: '80'
 title: Decide a guard for an endless chain of mail-only submissions
@@ -60,3 +94,17 @@ Found during ^3qx0mpt. Since the pump of a session delivers each settled backgro
 
 - [x] The decision and its reason are on this task. <!-- proof: the comment "Decision: a bound in the pump" on this task -->
 - [x] If a guard is chosen: a test with a scripted model that starts a background run in each submission shows that the pump stops after the bound and that the next caller message carries the waiting mail. <!-- proof: MailOnlyAnswerLimitTests.anEndlessChainStopsAtTheLimit, theHeldMailRidesTheNextCallerMessage, aCallerMessageStartsTheCountAgain, aChainUpToTheLimitRunsWhole, aLimitOfZeroHoldsAllMail --> #generation-queue
+
+## Review Findings (2026-09-26 09:00)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 19 file(s) reviewed, 4 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+> 2 file(s) not reviewed — no validator matched:
+> - `Sources/FoundationModelsRouter/FoundationModelsRouter.docc/RoutedSession.md` — no validator matches this file
+> - `generation-queue.md` — no validator matches this file
+
+- [x] `Tests/FoundationModelsRouterTests/MailOnlyAnswerLimitTests.swift:112` `code-hygiene/disallowed-constructs-swift` — no_unchecked_sendable: Instead of @unchecked Sendable, write a plain Sendable conformance or a @preconcurrency import. If the type really must be @unchecked Sendable, write // swiftlint:disable:next no_unchecked_sendable above it with the synchronization invariant that makes the type thread-safe.
+- [x] `Tests/FoundationModelsRouterTests/SessionTreeRestorationTests.swift:963` `reuse/reuse` — New test `restoredTreeReappliesRecordedMailOnlyAnswerLimit` is a near-identical copy of the existing test `restoredTreeReappliesRecordedRepetitionDetection` (lines 934–961), differing only in the configuration property being tested and its initialization. The setup, restoration flow, and verification structure are identical across both tests, indicating this should be refactored into a parameterized test rather than duplicated. Refactor both tests into a single parameterized test using Swift's `@Test(arguments:)` or extract a shared test helper function that accepts the configuration property setter and assertion as closures. This eliminates code duplication while maintaining test clarity and independence.

@@ -931,9 +931,24 @@ struct SessionTreeRestorationTests {
         #expect(restored.configurationReport.missingTools.isEmpty)
     }
 
-    @Test("a session made with a repetition detection keeps it in a fork and after a restore (task ^1hcwaqy)")
+    /// Makes a root session with `configuration`, forks it, and restores the
+    /// tree on a second router with the same id. Expects that the fork, the
+    /// restored root and the restored fork each keep `expected`.
+    ///
+    /// - Parameters:
+    ///   - expected: The value of the setting that each session must keep.
+    ///   - configuration: The configuration of the root session.
+    ///   - setting: Reads the setting from a session.
+    ///   - sourceLocation: The location that each failed expectation reports.
+    /// - Throws: What the resolve, the answer, the fork or the restore throws,
+    ///   or a failed `#require` when a session is not a ``RoutedSessionActor``.
     @MainActor
-    func restoredTreeReappliesRecordedRepetitionDetection() async throws {
+    private static func expectForkAndRestoreKeep<Setting: Equatable>(
+        _ expected: Setting,
+        madeWith configuration: SessionConfiguration,
+        readBy setting: (RoutedSessionActor) -> Setting,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
         let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
         let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
         defer {
@@ -941,54 +956,46 @@ struct SessionTreeRestorationTests {
             try? FileManager.default.removeItem(at: recordingsDir)
         }
 
-        let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
-        let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let router1 = makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile1 = try await router1.resolve(profile: profile, reporting: ResolutionProgress())
 
-        let detection = RepetitionDetection(isEnabled: false, windowTokens: 512, minimumLineLength: 8, recoveriesPerAnswer: 1)
-        let root = profile1.standard.makeSession(configuration: SessionConfiguration(repetitionDetection: detection))
+        let root = profile1.standard.makeSession(configuration: configuration)
         _ = try await root.respond(to: "hello")
-        let fork = try #require(try await root.fork(workingDirectory: nil) as? RoutedSessionActor)
-        #expect(fork.repetitionDetection == detection)
+        let fork = try #require(
+            try await root.fork(workingDirectory: nil) as? RoutedSessionActor, sourceLocation: sourceLocation)
+        #expect(setting(fork) == expected, sourceLocation: sourceLocation)
 
-        let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
-        let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let router2 = makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile2 = try await router2.resolve(profile: profile, reporting: ResolutionProgress())
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
 
-        let restoredRoot = try #require(restored.root as? RoutedSessionActor)
-        #expect(restoredRoot.repetitionDetection == detection)
-        let restoredFork = try #require(restored.session(fork.id) as? RoutedSessionActor)
-        #expect(restoredFork.repetitionDetection == detection)
+        let restoredRoot = try #require(restored.root as? RoutedSessionActor, sourceLocation: sourceLocation)
+        #expect(setting(restoredRoot) == expected, sourceLocation: sourceLocation)
+        let restoredFork = try #require(
+            restored.session(fork.id) as? RoutedSessionActor, sourceLocation: sourceLocation)
+        #expect(setting(restoredFork) == expected, sourceLocation: sourceLocation)
+    }
+
+    @Test("a session made with a repetition detection keeps it in a fork and after a restore (task ^1hcwaqy)")
+    @MainActor
+    func restoredTreeReappliesRecordedRepetitionDetection() async throws {
+        let detection = RepetitionDetection(isEnabled: false, windowTokens: 512, minimumLineLength: 8, recoveriesPerAnswer: 1)
+        try await Self.expectForkAndRestoreKeep(
+            detection,
+            madeWith: SessionConfiguration(repetitionDetection: detection),
+            readBy: \.repetitionDetection)
     }
 
     @Test("a session made with a mail-only answer limit keeps it in a fork and after a restore (task ^9bxas0w)")
     @MainActor
     func restoredTreeReappliesRecordedMailOnlyAnswerLimit() async throws {
-        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
-        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
-        defer {
-            try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: recordingsDir)
-        }
-
-        let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
-        let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
         // A value that is not the default, so the restore cannot pass by
         // falling back to the default.
         let limit = SessionConfiguration.defaultMailOnlyAnswerLimit + 1
-        let root = profile1.standard.makeSession(configuration: SessionConfiguration(mailOnlyAnswerLimit: limit))
-        _ = try await root.respond(to: "hello")
-        let fork = try #require(try await root.fork(workingDirectory: nil) as? RoutedSessionActor)
-        #expect(fork.mailOnlyAnswerLimit == limit)
-
-        let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
-        let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
-        let restored = try await profile2.standard.restoreSessionTree(root: root.id)
-
-        let restoredRoot = try #require(restored.root as? RoutedSessionActor)
-        #expect(restoredRoot.mailOnlyAnswerLimit == limit)
-        let restoredFork = try #require(restored.session(fork.id) as? RoutedSessionActor)
-        #expect(restoredFork.mailOnlyAnswerLimit == limit)
+        try await Self.expectForkAndRestoreKeep(
+            limit,
+            madeWith: SessionConfiguration(mailOnlyAnswerLimit: limit),
+            readBy: \.mailOnlyAnswerLimit)
     }
 
     // MARK: - Decided restore losses (task ^xky3j8w)
