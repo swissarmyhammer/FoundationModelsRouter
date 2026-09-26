@@ -40,6 +40,39 @@ comments:
     - evidence: Sources/FoundationModelsRouter/Session (MessageQueue.swift from PromptQueue.swift, RoutedSession.swift, RoutedSessionActor*.swift, SessionOutbox.swift, SessionMessage.swift, TurnIdentity.swift), Tracing/RouterTracing.swift, RoutedSession.md DocC, generation-queue.md; new Tests/FoundationModelsRouterPublicSurfaceTests/MessageQueuePublicSurfaceTests.swift; MessageQueueTests.swift from PromptQueueTests.swift; restated tests in 14 more test files. Full recompile: 0 code warnings. `swift test`: 1445 + 7 + 19 = 1471 passed. Session, pump, outbox, message-queue, cancellation, tracing and public-surface suites (150 tests) with `--parallel`: 20 of 20 runs passed. IntegrationTests `swift build --build-tests`: clean. `rg` of the removed names in Sources: nothing.
     - next: review
   timestamp: 2026-09-26T04:01:04.694506+00:00
+- actor: claude-code
+  id: 01m3dzhzx5vqfbz8rchxxk88k7
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD. 2 findings (2 confirmed, 0 refuted): Sources/FoundationModelsRouter/Session/TurnIdentity.swift:53, Sources/FoundationModelsRouter/Session/TurnIdentity.swift:60 (swift/access-control).
+    - next: Implement the 2 findings in the dated Review Findings section. Then run the review again. The task stays in review.
+  timestamp: 2026-09-26T04:28:43.813993+00:00
+- actor: claude-code
+  id: 01m3dzkjgvxr6yd38mwf1syje1
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — about 25 files (send, MessageID, cancel(), cancel(message:); removed dispatchNextPrompt, cancelCurrentTurn and others)
+    - test: green — swift test, 1471 passed (1445+7+19), 0 failed, 0 skipped; 8 session and queue suites 3 extra runs clean; Examples and IntegrationTests build clean
+    - commit: c02325d
+    - review: findings — Session/TurnIdentity.swift:53, Session/TurnIdentity.swift:60
+  timestamp: 2026-09-26T04:29:35.643280+00:00
+- actor: claude-code
+  id: 01m3dzp2s21f31k2jq50s0659r
+  text: |-
+    Pulled back to doing for the 2 review findings (TurnIdentity.swift: `messageId` and `init` of `TurnStart` are internal).
+
+    Research:
+    - `TurnIdentity.swift` has two public types. `TurnID` has `private let value`, an explicit and documented `internal init` (only the pump mints a turn id), and `public var description`. It has no access-control gap. `TurnStart` has `public let turnId`, and an implicit internal `messageId` and `init`. These two are the gap.
+    - The only caller of `TurnStart.init` is `RoutedSessionActorTurnExecution.swift` (`emit(.turnStarted(...))`). A wider access level changes no caller.
+    - The public-surface target links only the library. A consumer cannot mint a `TurnID` or a `MessageID`, so a test in that target cannot build a real `TurnStart` value at run time. The proof is at compile time: the new test binds `TurnStart.init(turnId:messageId:)` and the `\TurnStart.messageId` key path over a plain import, and it asserts that the key path is read-only for a consumer.
+  timestamp: 2026-09-26T04:30:57.826738+00:00
+- actor: claude-code
+  id: 01m3dzs6c9b1g34z1nqga0921m
+  text: |-
+    ### implement — changed
+    - evidence: `Sources/FoundationModelsRouter/Session/TurnIdentity.swift` (`TurnStart.messageId` and `TurnStart.init(turnId:messageId:)` are now `public`; the init doc tells why a consumer calls it). `TurnID` has no gap: its `internal init` is explicit and deliberate. New `Tests/FoundationModelsRouterPublicSurfaceTests/TurnStartPublicSurfaceTests.swift` (plain import: it reads `messageId`, binds and calls the init, and asserts the key path is read-only). RED: the new file did not compile ("'messageId' is inaccessible due to 'internal' protection level", "'TurnStart' initializer is inaccessible"). GREEN: `swift test --filter TurnStartPublicSurfaceTests` 1 passed. Full `swift test`: 1445 + 8 + 19 = 1472 passed, 0 failed, 0 code warnings (the 2 known issues are the existing `withKnownIssue` in BoundedWaitTests and RealModelHarnessTests). Both findings flipped to `- [x]`.
+    - next: review
+  timestamp: 2026-09-26T04:32:39.817517+00:00
 depends_on:
 - 01M3CYK7FSPBXGC7NWD3QX0MPT
 position_column: doing
@@ -69,3 +102,47 @@ After task ^3qx0mpt, a session is a message queue with one pump. The public API 
 - [x] Full `swift test` green, 0 new warnings. <!-- swift test: 1445 + 7 + 19 = 1471 passed, after a full recompile with 0 code warnings -->
 
 #generation-queue
+
+## Review Findings (2026-09-25 23:10)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 37 file(s) reviewed, 4 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+> 2 file(s) not reviewed — no validator matched:
+> - `Sources/FoundationModelsRouter/FoundationModelsRouter.docc/RoutedSession.md` — no validator matches this file
+> - `generation-queue.md` — no validator matches this file
+
+> ⚠️ tool rule 'code-hygiene/disallowed-constructs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> disallowed-constructs-swift found no file at Sources/FoundationModelsRouter/Session/PromptQueue.swift, so its constructs are unread
+
+> ⚠️ tool rule 'code-hygiene/disallowed-constructs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> disallowed-constructs-swift found no file at Tests/FoundationModelsRouterTests/PromptQueueTests.swift, so its constructs are unread
+
+> ⚠️ tool rule 'code-hygiene/function-length-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> function-length-swift found no file at Sources/FoundationModelsRouter/Session/PromptQueue.swift, so its bodies are unread
+
+> ⚠️ tool rule 'code-hygiene/function-length-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> function-length-swift found no file at Tests/FoundationModelsRouterTests/PromptQueueTests.swift, so its bodies are unread
+
+> ⚠️ tool rule 'code-hygiene/idioms-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> idioms-swift found no file at Sources/FoundationModelsRouter/Session/PromptQueue.swift, so its declarations are unread
+
+> ⚠️ tool rule 'code-hygiene/idioms-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> idioms-swift found no file at Tests/FoundationModelsRouterTests/PromptQueueTests.swift, so its declarations are unread
+
+> ⚠️ tool rule 'code-hygiene/magic-numbers-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> magic-numbers-swift found no file at Sources/FoundationModelsRouter/Session/PromptQueue.swift, so its literals are unread
+
+> ⚠️ tool rule 'code-hygiene/magic-numbers-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> magic-numbers-swift found no file at Tests/FoundationModelsRouterTests/PromptQueueTests.swift, so its literals are unread
+
+> ⚠️ tool rule 'code-hygiene/missing-docs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> missing-docs-swift found no file at Sources/FoundationModelsRouter/Session/PromptQueue.swift, so its declarations are unread
+
+> ⚠️ tool rule 'code-hygiene/missing-docs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> missing-docs-swift found no file at Tests/FoundationModelsRouterTests/PromptQueueTests.swift, so its declarations are unread
+
+- [x] `Sources/FoundationModelsRouter/Session/TurnIdentity.swift:53` `swift/access-control` — Public struct property lacks `public` access modifier. The property defaults to `internal`, making it inaccessible from outside the module, while the sibling property `turnId` is explicitly marked `public`. This is inconsistent with the struct's public API contract. Change to `public let messageId: MessageID?`.
+- [x] `Sources/FoundationModelsRouter/Session/TurnIdentity.swift:60` `swift/access-control` — Custom initializer of a public struct lacks `public` access modifier. The init defaults to `internal`, making the struct impossible to instantiate from outside the module, which defeats the purpose of a public struct. Change to `public init(turnId: TurnID, messageId: MessageID?)`.

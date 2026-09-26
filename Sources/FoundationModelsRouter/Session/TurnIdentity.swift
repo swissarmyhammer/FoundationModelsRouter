@@ -50,14 +50,18 @@ public struct TurnStart: Sendable, Equatable {
     /// ``RoutedSession/streamResponse(to:maxTokens:)``,
     /// ``RoutedSession/streamEvents(to:maxTokens:)``), or a turn that only mail
     /// started.
-    let messageId: MessageID?
+    public let messageId: MessageID?
 
     /// Creates a turn-start record.
+    ///
+    /// The pump of the session makes one for each turn. A consumer can make
+    /// one again from the ids of a record it received, for example for a fake
+    /// event stream in its own tests.
     ///
     /// - Parameters:
     ///   - turnId: The turn that just began.
     ///   - messageId: The first sent message of this turn, or `nil`.
-    init(turnId: TurnID, messageId: MessageID?) {
+    public init(turnId: TurnID, messageId: MessageID?) {
         self.turnId = turnId
         self.messageId = messageId
     }
