@@ -87,10 +87,26 @@ comments:
     - evidence: 13 files — Sources/FoundationModelsRouter/Session/SessionAnswer.swift; Tests/FoundationModelsRouterTests/{SubmissionAnswerEventTests, AutoCompactionTests, GenerationCallUsageTests, MessageQueueTests, QueuedPassStallWatchTests, SessionAnswerTests, SessionEventStreamTests, TurnCancellationTests}.swift; Tests/FoundationModelsRouterTests/Helpers/{AnswerFrameAssertions, AnswerDrivenRun}.swift; Tests/FoundationModelsRouterPublicSurfaceTests/SessionAnswerPublicSurfaceTests.swift. Full `swift test`: 1457 + 14 + 19 = 1490 passed (was 1487; +3 new), 0 failed, 2 expected known issues. Answer, event and compaction suites (12 suites, 150 tests, plus 4 public-surface tests) 3 extra runs: 3 of 3 green. Forced recompile of the touched files: 0 source warnings. IntegrationTests `swift build --build-tests`: Build complete. No commit, no `swift format`.
     - next: review
   timestamp: 2026-09-26T06:19:26.014502+00:00
+- actor: claude-code
+  id: 01m3e6f95dxn1gn2a6h5q25ycv
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 69e1cce): 0 findings, 0 confirmed, 0 refuted. The engine reviewed 12 files. 2 files in `.kanban/` were not reviewed because of `.reviewignore`. The 3 findings of the review of 2026-09-26 00:40 are resolved. (1) `SessionAnswer.swift` now reads `.answerFailed` in the event loop and throws the failure. (2) `AutoCompactionTests.overflowRetrySendsTwoSubmissionPairsAndOneAnswer` now calls `eventsInsideAnswerFrame(events)`. (3) The helper `answersEnd` now has the name `waitForAnswersToEnd(_:in:)`.
+    - next: none. The task is in `done`.
+  timestamp: 2026-09-26T06:29:35.021147+00:00
+- actor: claude-code
+  id: 01m3e6hje6j0kjr16tnnq4c8jt
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 12 files (no crash on a failed or cancelled answer; AnswerFailure conforms to Error; frame checks in tests)
+    - test: green — swift test, 1490 passed (1457+14+19), 0 failed, 0 skipped; 7 answer and event suites 3 extra runs clean
+    - commit: 69e1cce
+    - review: clean — 0 findings
+  timestamp: 2026-09-26T06:30:50.054605+00:00
 depends_on:
 - 01M3CYMC96HM7ZQF3XACBHPDJY
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffff8d80
 title: Submission and answer events, and SessionAnswer in place of TurnOutcome
 ---
 ## Why
