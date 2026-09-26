@@ -357,7 +357,9 @@ public protocol RoutedSession: Actor {
     /// Tears the session down: runs `SessionMailbox.sweep()`, which cancels
     /// every background run and rejects every pending elicitation, and journals
     /// the resulting terminal events before it returns. It also finishes every
-    /// ``streamSessionEvents()`` subscription.
+    /// ``streamSessionEvents()`` subscription, and releases the prompt cache
+    /// that the model keeps for this session. A fork has a cache of its own,
+    /// so the close of a fork does not release the cache of its parent.
     ///
     /// Call it where a session's life ends. `deinit` does not run this sweep.
     /// Idempotent.

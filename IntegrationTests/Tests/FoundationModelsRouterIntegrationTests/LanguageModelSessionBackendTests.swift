@@ -36,7 +36,7 @@ private let sessionBackendModel: ModelRef = RealModels.standard
 /// test. `internal var session` on the backend exists specifically so this
 /// `@testable import` can read `transcript.count` directly.
 ///
-/// This suite holds 11 tests, and each of them loads the model once. The suite
+/// This suite holds 12 tests, and each of them loads the model once. The suite
 /// has no time limit. A run ends when it ends, or when the caller stops it.
 ///
 /// ## What it NO LONGER proves (task ^g1s1efb)
@@ -715,6 +715,48 @@ struct LanguageModelSessionBackendIntegrationTests {
             processed (\(answer1ProcessedTokenCount)); more is an over-report
             """
         )
+
+        await loaded.container.model.evict()
+    }
+
+    // MARK: - The prompt cache keyed by the session id (task ^cc2tezn)
+
+    /// The production change that makes this test fail: a wrapper whose
+    /// scope binding does not reach the executor of the fork. The fork then
+    /// keys the passes by the id of the first transcript entry, the release
+    /// of the session id removes nothing, and answer 3 still reuses the
+    /// cache.
+    @Test(
+        "a backend keyed by a session id reuses its KV cache across answers, and after the release of that id the next answer reuses none"
+    )
+    func sessionKeyedCacheIsReusedUntilItsRelease() async throws {
+        let loaded = try await Self.makeContainer()
+        let backend = try #require(
+            loaded.container.makeSession(
+                instructions: "You are a terse, literal assistant.", samplingMode: loaded.samplingMode)
+                as? MLXFoundationModelsSessionBackend
+        )
+        // A new id on each run: the fork spills the cache to disk, so a fixed
+        // id could find the entry of an earlier run.
+        let sessionID = ULID.generate().description
+        backend.scopePromptCache(toSession: sessionID)
+
+        _ = try await backend.respond(
+            to: "My favorite color is teal. Reply with just \"OK\".", maxTokens: GatedRealModelBudget.responseTokenCeiling)
+        _ = try await backend.respond(
+            to: "What is my favorite color? Answer with just the color, lowercase.",
+            maxTokens: GatedRealModelBudget.responseTokenCeiling
+        )
+        // `usage` is the sum over the session, so each answer is a difference.
+        let cachedAfterAnswer2 = backend.session.usage.input.cachedTokenCount
+
+        await backend.releasePromptCache(ofSession: sessionID)
+        _ = try await backend.respond(
+            to: "Say my favorite color again, lowercase.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
+        let cachedByAnswer3 = backend.session.usage.input.cachedTokenCount - cachedAfterAnswer2
+
+        #expect(cachedAfterAnswer2 > 0, "answer 2 must reuse the cache that answer 1 left under the session id")
+        #expect(cachedByAnswer3 == 0, "answer 3 must reuse nothing: the release removed the entry of the session id")
 
         await loaded.container.model.evict()
     }

@@ -699,6 +699,27 @@ extension MLXFoundationModelsSessionBackend: GenerationPassReporting {
     }
 }
 
+extension MLXFoundationModelsSessionBackend: SessionPromptCacheScoping {
+    /// Keys the prompt cache of each later pass of ``liveSession`` by
+    /// `sessionID`, through the per-session state of its wrapper (task
+    /// ^cc2tezn). A fork and a replaced transcript are new backends with a
+    /// new wrapper, so the session that adopts each one installs its id
+    /// again.
+    ///
+    /// - Parameter sessionID: The id of the session that owns this backend.
+    func scopePromptCache(toSession sessionID: String) {
+        sessionModelState.scopePromptCache(toSession: sessionID)
+    }
+
+    /// Releases the prompt cache of `sessionID` on ``model``, when ``model``
+    /// keeps a prompt cache for each session.
+    ///
+    /// - Parameter sessionID: The id that the passes of the session bound.
+    func releasePromptCache(ofSession sessionID: String) async {
+        await (model as? any SessionPromptCacheReleasing)?.releasePromptCache(sessionID: sessionID)
+    }
+}
+
 /// The live embedding container. Wraps a loaded `EmbedderModelContainer` and
 /// the ``dimension`` probed at load.
 final class LiveEmbeddingContainer: LoadedEmbeddingContainer, Sendable {

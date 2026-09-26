@@ -298,6 +298,16 @@ extension RoutedSessionActor {
     /// generated and never backgrounded a run still writes no file, preserving
     /// `generate(grammar:prompt:_:)`'s "writes no file at all until it
     /// generates" invariant.
+    ///
+    /// **The prompt cache of the session** (task ^cc2tezn). Each close
+    /// releases the key of this session on its model
+    /// (``releasePromptCache()``), whether or not the sweep gave a terminal
+    /// event. The close of a fork releases the key of the fork only: the
+    /// fork has its own ULID, so the key of its open parent stays. A session
+    /// that is dropped with no close keeps its entry in the cache of the
+    /// model until the byte LRU and the disk budget of the cache remove it,
+    /// so the cache stays in its limits. A pass that ends after the close
+    /// can write the entry again, and the same limits remove it.
     func close() async {
         // Before anything that can return early: a consumer looping over
         // ``streamSessionEvents()`` must end when the session does, whether or
@@ -305,6 +315,9 @@ extension RoutedSessionActor {
         finishSessionEventSubscriptions()
 
         let terminalEvents = await mailbox.sweep()
+        // Before the early return below: most sessions close with no terminal
+        // event, and each of them must release its key too.
+        await releasePromptCache()
         guard !terminalEvents.isEmpty else { return }
         // A run can only be backgrounded from inside an answer, so by here the journal
         // is normally attached already; attaching is idempotent, and doing it

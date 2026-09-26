@@ -278,10 +278,11 @@ actor RoutedSessionActor: RoutedSession {
 
     /// The backend every generation and fork runs through. Never vended to
     /// callers. ``compact(prompt:budget:)`` replaces it after a compaction.
-    /// Each replacement reports its passes to ``generationPassObserver``. Each
+    /// Each replacement reports its passes to ``generationPassObserver``, and
+    /// keys the prompt cache by ``promptCacheSessionID`` (``adopt(_:)``). Each
     /// model call of it is one submission to its ``LanguageModelSessionBackend/generationQueue``.
     var backend: any LanguageModelSessionBackend {
-        didSet { observeGenerationPasses(of: backend) }
+        didSet { adopt(backend) }
     }
 
     /// The observer every backend of this session reports its passes to, and
@@ -630,8 +631,9 @@ actor RoutedSessionActor: RoutedSession {
         self.agentSpawn = agentSpawn
         self.tracer = tracer
         // The initializer does not run the `didSet` of `backend`, so the
-        // first backend gets this session's pass observer here.
-        observeGenerationPasses(of: backend)
+        // first backend gets this session's pass observer and prompt-cache
+        // key here.
+        adopt(backend)
 
         // The session's own directory is brought into existence here, by its
         // write-once sidecar, before the session exists to record anything into

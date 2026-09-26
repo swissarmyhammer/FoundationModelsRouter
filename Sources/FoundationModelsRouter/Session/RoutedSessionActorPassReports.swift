@@ -12,9 +12,9 @@
 /// through `submissionDidStart()`, which applies the reported phases first.
 extension RoutedSessionActor {
     /// Installs this session's pass observer on `backend`, when `backend`
-    /// reports its passes. The initializer and each replacement of
-    /// ``backend`` call it, so every backend of this session reports to the
-    /// same observer.
+    /// reports its passes. ``adopt(_:)`` calls it for the first backend and
+    /// for each replacement of ``backend``, so every backend of this session
+    /// reports to the same observer.
     ///
     /// - Parameter backend: The backend this session runs through from now on.
     nonisolated func observeGenerationPasses(of backend: any LanguageModelSessionBackend) {

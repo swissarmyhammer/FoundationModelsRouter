@@ -1,4 +1,5 @@
 import FoundationModels
+import MLXFoundationModels
 import Synchronization
 
 /// The per-session `FoundationModels.LanguageModel` over a wrapped model
@@ -28,7 +29,7 @@ import Synchronization
 /// itself, and never casts this wrapper.
 struct SessionLanguageModel: LanguageModel, Sendable {
     /// The per-session state of this wrapper: its identity, the raw model,
-    /// and the pass observer.
+    /// the pass observer, and the prompt-cache key of the session.
     let state: SessionLanguageModelState
 
     /// Makes a wrapper with a new per-session state over `wrapped`.
@@ -104,14 +105,22 @@ struct SessionLanguageModel: LanguageModel, Sendable {
             innerRespond = try ExecutorPassthrough.make(wrapping: configuration.state.wrapped)
         }
 
-        /// Runs one pass of the wrapped executor, and reports its start and
-        /// its end to the observer of its session.
+        /// Runs one pass of the wrapped executor under the prompt-cache scope
+        /// of its session, and reports its start and its end to the observer
+        /// of its session.
         ///
         /// The pass is the executor call of the SDK itself, not a copy: it
         /// calls the wrapped executor with the same `request` and over the
         /// same `channel` that the SDK gave this call, on the task of this
         /// call. A wrapper with a pass queue submits the pass to that queue
         /// as one item, whose task inherits no task-local of this call.
+        ///
+        /// The pass binds the scope itself, around the call of the wrapped
+        /// executor (``SessionLanguageModelState/withPromptCacheScope(_:)``).
+        /// A task-local reaches the executor of the fork only when it is
+        /// bound on the task that calls that executor: the SDK can run this
+        /// executor on another task than the SDK call, and the item of a pass
+        /// queue runs on the task of the worker.
         ///
         /// The observer of the session gets the start of the pass before the
         /// wrapped executor runs, and the end of the pass on every exit.
@@ -133,7 +142,9 @@ struct SessionLanguageModel: LanguageModel, Sendable {
                 let observer = state.passObserver
                 observer?.passStarted()
                 defer { observer?.passEnded() }
-                try await innerRespond(request, channel)
+                try await state.withPromptCacheScope {
+                    try await innerRespond(request, channel)
+                }
             }
             guard let passQueue = state.passQueue else {
                 return try await pass()
@@ -157,22 +168,63 @@ final class SessionLanguageModelState: Sendable {
     /// wrapper of a backend, whose session submits each whole SDK call.
     let passQueue: GenerationQueue?
 
-    /// The observer that the session of this wrapper installed, or `nil`
-    /// before it installs one. A lock guards it, because the session writes
-    /// it from its actor while an executor reads it from the task of a pass.
-    private let installedPassObserver = Mutex<GenerationPassObserver?>(nil)
+    /// What the session of this wrapper installs on it.
+    private struct Installation {
+        /// The observer each pass reports to, or `nil` before the session
+        /// installs one.
+        var passObserver: GenerationPassObserver?
+
+        /// The id that keys the prompt cache of each pass, or `nil` before
+        /// the session installs one.
+        var promptCacheSessionID: String?
+    }
+
+    /// What the session of this wrapper installed. A lock guards it, because
+    /// the session writes it from its actor while an executor reads it from
+    /// the task of a pass.
+    private let installation = Mutex(Installation())
 
     /// The observer each pass of this wrapper reports to, or `nil` when the
     /// session installed none.
     var passObserver: GenerationPassObserver? {
-        installedPassObserver.withLock { $0 }
+        installation.withLock { $0.passObserver }
     }
 
     /// Gives `observer` the passes of this wrapper from the next pass on.
     ///
     /// - Parameter observer: The observer of the session of this wrapper.
     func reportPasses(to observer: GenerationPassObserver) {
-        installedPassObserver.withLock { $0 = observer }
+        installation.withLock { $0.passObserver = observer }
+    }
+
+    /// The id that keys the prompt cache of each pass of this wrapper, or
+    /// `nil` when no session installed one. A pass with no id binds no scope,
+    /// so the fork keys it by the id of the first transcript entry.
+    var promptCacheSessionID: String? {
+        installation.withLock { $0.promptCacheSessionID }
+    }
+
+    /// Keys the prompt cache of each pass of this wrapper by `sessionID`,
+    /// from the next pass on.
+    ///
+    /// - Parameter sessionID: The id of the session of this wrapper.
+    func scopePromptCache(toSession sessionID: String) {
+        installation.withLock { $0.promptCacheSessionID = sessionID }
+    }
+
+    /// Runs `body` with the prompt-cache scope of the session of this
+    /// wrapper bound on the current task: `.session(id)` when the session
+    /// installed an id, or no binding when it installed none.
+    ///
+    /// - Parameter body: The call of the wrapped executor.
+    /// - Throws: What `body` throws.
+    func withPromptCacheScope(_ body: () async throws -> Void) async rethrows {
+        guard let sessionID = promptCacheSessionID else {
+            return try await body()
+        }
+        try await MLXLanguageModel.$promptCacheScope.withValue(.session(sessionID)) {
+            try await body()
+        }
     }
 
     /// Stores the raw model and the pass queue.
