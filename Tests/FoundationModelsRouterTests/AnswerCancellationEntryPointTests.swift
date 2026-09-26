@@ -246,6 +246,56 @@ extension AnswerCancellationTests {
         #expect(await Self.followUpAnswerCompletes(on: session, observer: fixture.observer))
     }
 
+    @Test("a respond whose caller is cancelled before the call gets CancellationError at once, and never reaches the model")
+    @MainActor
+    func aCallerCancelledBeforeTheCallNeverReachesTheModel() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let fixture = try await Self.makeFixture(cacheDir: dir)
+        let session = fixture.model.makeSession()
+
+        // The first answer holds the pump inside the model, so only the
+        // cancel of the caller can resolve the second message: the pump
+        // cannot take it and drop it until the test releases the first answer.
+        let insideFirstAnswer = AsyncSemaphore(value: 0)
+        let releaseFirstAnswer = AsyncSemaphore(value: 0)
+        fixture.hook.midAnswer = { prompt in
+            guard prompt.hasSuffix("holds-the-pump") else { return }
+            insideFirstAnswer.signal()
+            await releaseFirstAnswer.wait()
+        }
+
+        let firstTask = Task { try await session.respond(to: "holds-the-pump") }
+        await insideFirstAnswer.wait()
+
+        // The task cancels itself before it calls `respond`, so the cancel
+        // comes before the session makes the message. The order is fixed by
+        // the code of the task, not by the executor.
+        let cancelledCaller = Task { () async throws -> String in
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await session.respond(to: "cancelled-before-the-call")
+        }
+
+        // The caller gets CancellationError while the first answer still
+        // holds the pump. If the message waited for the pump instead, this
+        // wait would end only at the `.timeLimit` of the suite.
+        await #expect(throws: CancellationError.self) {
+            try await cancelledCaller.value
+        }
+        #expect(await session.outbox.waitingMessageCount == 0)
+
+        releaseFirstAnswer.signal()
+        #expect(try await firstTask.value == "ok-holds-the-pump")
+
+        // The model ran for the first message only, and the record holds
+        // only its prompt/response pair.
+        #expect(await fixture.observer.entered == ["holds-the-pump"])
+        let events = await fixture.recorder.events
+        #expect(events.map(\.kind) == [.session, .prompt, .response])
+        #expect(await Self.followUpAnswerCompletes(on: session, observer: fixture.observer))
+    }
+
     @Test("abandoning a stream while its answer runs cancels the submission behind it, which is then recorded as cancelled rather than completed")
     @MainActor
     func abandoningAStreamRecordsTheSubmissionAsCancelled() async throws {

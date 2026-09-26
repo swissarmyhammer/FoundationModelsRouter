@@ -66,20 +66,33 @@ extension RoutedSessionActor {
         let message = SessionMessage(
             id: MessageID(), prompt: .plainText(text), requestedMaxTokens: requestedMaxTokens, reader: reader,
             serviceContext: ServiceContext.current, answer: PumpAnswer())
-        await enqueue(message)
-        return try await awaitAnswer(of: message)
+        return try await enqueueAndAwaitAnswer(of: message)
     }
 
-    /// Waits for the answer of `message`. A cancel of the caller marks the
-    /// message and asks the session to withdraw it, or to stop the answer
-    /// that carries it (``cancel(message:)``).
+    /// Adds `message` to ``outbox`` and waits for its answer. A cancel of the
+    /// caller marks the message and asks the session to withdraw it, or to
+    /// stop the answer that carries it (``cancel(message:)``).
+    ///
+    /// The cancel handler is installed before ``enqueue(_:)``. The pump can
+    /// take the message while ``enqueue(_:)`` waits for ``outbox``, so a
+    /// handler that came after it could set the mark after the pump read it
+    /// (``liveMessages(_:)``). A caller that is cancelled before this call
+    /// gets the handler at once, so the message has the mark before it
+    /// reaches ``outbox``. The handler withdraws the message in a task of
+    /// its own, which can come before the message is in ``outbox``. So a
+    /// message that has the mark after ``enqueue(_:)`` is withdrawn here,
+    /// and its caller does not wait for the pump to drop it.
     ///
     /// - Parameter message: The message the caller sent.
     /// - Returns: The final reply of its answer.
     /// - Throws: What its answer throws.
-    private func awaitAnswer(of message: SessionMessage) async throws -> String {
+    private func enqueueAndAwaitAnswer(of message: SessionMessage) async throws -> String {
         try await withTaskCancellationHandler {
-            try await message.answer.value()
+            await enqueue(message)
+            if message.answer.isCancelRequested {
+                await cancel(message: message.id)
+            }
+            return try await message.answer.value()
         } onCancel: {
             message.answer.requestCancel()
             Task { await self.cancel(message: message.id) }
