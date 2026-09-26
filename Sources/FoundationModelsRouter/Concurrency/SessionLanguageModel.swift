@@ -31,22 +31,18 @@ struct SessionLanguageModel: LanguageModel, Sendable {
     /// and the pass observer.
     let state: SessionLanguageModelState
 
-    /// Makes a wrapper with a new per-session state over `wrapped`, for the
-    /// session of one backend. The wrapper runs each pass directly.
+    /// Makes a wrapper with a new per-session state over `wrapped`.
     ///
-    /// - Parameter wrapped: The raw model whose executor runs each pass.
-    init(wrapping wrapped: any LanguageModel) {
-        state = SessionLanguageModelState(wrapped: wrapped, passQueue: nil)
-    }
-
-    /// Makes a wrapper with a new per-session state over `wrapped`, whose
-    /// each pass is one item of `passQueue`: the wrapper of a recording
-    /// handle, whose SDK calls the Router does not make.
+    /// The wrapper of the session of one backend has no pass queue, and runs
+    /// each pass directly. The wrapper of a recording handle, whose SDK calls
+    /// the Router does not make, gives `passQueue`: each of its passes is
+    /// then one item of that queue.
     ///
     /// - Parameters:
     ///   - wrapped: The raw model whose executor runs each pass.
-    ///   - passQueue: The queue of the container of `wrapped`.
-    init(wrapping wrapped: any LanguageModel, passQueue: GenerationQueue) {
+    ///   - passQueue: The queue of the container of `wrapped`, or `nil` (the
+    ///     default) for the wrapper of a backend.
+    init(wrapping wrapped: any LanguageModel, passQueue: GenerationQueue? = nil) {
         state = SessionLanguageModelState(wrapped: wrapped, passQueue: passQueue)
     }
 

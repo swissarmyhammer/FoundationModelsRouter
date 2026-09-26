@@ -117,6 +117,14 @@ public final class GenerationQueue: Sendable {
     /// the answer of a session over this queue is refused too, also when that
     /// session is busy.
     ///
+    /// The mark that this check reads is set by
+    /// ``RoutedSessionActor/runCancellableModelCall(composedPrompt:submittingTo:_:)``.
+    /// For each model call, it makes an open ``ModelCallMark`` that names the
+    /// ``SubmissionTarget`` (this queue and its model), and its submission
+    /// binds that mark to ``ModelCallMark/current`` around the SDK call, on
+    /// the task of the worker. The SDK gives the mark to each in-band tool
+    /// body of the call. The mark closes when the model call returns.
+    ///
     /// A background run has a closed mark (``ModelCallMark/withBackgroundRunMark(_:)``),
     /// so it is not refused.
     ///

@@ -68,21 +68,40 @@ final class GenerationPassObserver: Sendable {
     private let state = Mutex(State())
 
     /// Records that the submission of the call waits behind another item.
+    ///
+    /// The caller is `RoutedSessionActor.run(_:on:reportingTo:)` (in
+    /// `RoutedSessionActorTurnExecution.swift`), which
+    /// ``RoutedSessionActor/runCancellableModelCall(composedPrompt:submittingTo:_:)``
+    /// uses for each model call. It gives this method to
+    /// ``GenerationQueue/submit(isolation:onQueued:_:)`` as `onQueued`, so the
+    /// worker calls it only when the item must wait.
     func submissionQueued() {
         record(.submissionQueued)
     }
 
     /// Records that the worker of the queue started the submission now.
+    ///
+    /// The caller is `RoutedSessionActor.run(_:on:reportingTo:)` (in
+    /// `RoutedSessionActorTurnExecution.swift`). It calls this method first in
+    /// the body of the item that it gives to
+    /// ``GenerationQueue/submit(isolation:onQueued:_:)``, so the call runs on
+    /// the task of the worker when the submission starts.
     func submissionStarted() {
         record(.submissionStarted(at: ContinuousClock.now))
     }
 
     /// Records that a pass of the running submission started now.
+    ///
+    /// The caller is ``SessionLanguageModel/Executor/respond(to:model:streamingInto:)``,
+    /// before the wrapped executor runs the pass.
     func passStarted() {
         record(.passStarted(at: ContinuousClock.now))
     }
 
     /// Records that the pass ended.
+    ///
+    /// The caller is ``SessionLanguageModel/Executor/respond(to:model:streamingInto:)``,
+    /// in a `defer`, so every exit of the pass calls it.
     func passEnded() {
         record(.passEnded)
     }

@@ -83,6 +83,7 @@ func runObservedTurn(
     // the next named event closes their block with one newline first.
     func closeFragmentBlock() {
         guard midFragmentBlock else { return }
+        // swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
         print()
         midFragmentBlock = false
     }
@@ -90,26 +91,33 @@ func runObservedTurn(
     for try await event in await session.streamEvents(to: prompt, maxTokens: demoReplyTokenCeiling) {
         switch event {
         case .turnStarted(let start):
+            // swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
             print("[\(label)] turnStarted turn=\(start.turnId)")
         case .submissionStarted:
+            // swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
             print("[\(label)] submissionStarted — the worker of the model started the SDK call")
         case .textDelta(let fragment):
             if !midFragmentBlock {
+                // swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
                 print("[\(label)] textDelta fragments:")
                 midFragmentBlock = true
             }
+            // swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
             print(fragment, terminator: "")
             reply += fragment
         case .textReset:
             closeFragmentBlock()
+            // swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
             print("[\(label)] textReset — the fragments so far are superseded")
             reply = ""
         case .entryRecorded(let id, let kind):
             closeFragmentBlock()
+            // swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
             print("[\(label)] entryRecorded kind=\(kind) id=\(id)")
         case .turnEnded(let usage):
             closeFragmentBlock()
             let percent = Int((usage.contextFill * 100).rounded())
+            // swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
             print(
                 "[\(label)] turnEnded tokensIn=\(usage.tokensIn) tokensOut=\(usage.tokensOut) contextFill=\(percent)%"
             )
@@ -177,10 +185,12 @@ let progress = ResolutionProgress()
 async let resolvedProfile = router.resolve(profile: demo, reporting: progress)
 for await transition in progress.phases {
     let percent = Int((transition.fraction * 100).rounded())
+    // swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
     print("[resolve] phase=\(transition.phase) fraction=\(percent)%")
 }
 let profile = try await resolvedProfile
 
+// swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
 print(
     """
     Resolved "\(profile.definitionName)":
@@ -196,6 +206,7 @@ print(
 let triage = profile.flash.makeSession(
     instructions: "Classify the support ticket into one category word."
 )
+// swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
 print("\n[flash] session on \(profile.flash.chosen.stringValue)")
 let category = try await runObservedTurn(
     on: triage,
@@ -210,6 +221,7 @@ let category = try await runObservedTurn(
 let answer = profile.standard.makeSession(
     instructions: "You are a support agent. Write a helpful, precise reply."
 )
+// swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
 print("\n[standard] session on \(profile.standard.chosen.stringValue)")
 _ = try await runObservedTurn(
     on: answer,
@@ -217,4 +229,5 @@ _ = try await runObservedTurn(
     prompt: "Explain our \(category) policy for the customer's Q3 invoice."
 )
 
+// swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
 print(String(format: "\n[done] wall clock: %.1f seconds", Date().timeIntervalSince(startedAt)))
