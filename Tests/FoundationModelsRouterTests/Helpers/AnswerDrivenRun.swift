@@ -93,6 +93,13 @@ struct AnswerDrivenRun<Value: Sendable> {
         return try await task.value
     }
 
+    /// Cancels the run, as a caller that stops its wait cancels its own task.
+    /// Read the result with ``deliveredAnswer()``: the wait for it stays
+    /// bounded.
+    func cancel() {
+        task.cancel()
+    }
+
     /// Whether the run finished inside the bound, asked repeatedly rather than
     /// awaited so an answer that never arrives ends the wait.
     ///

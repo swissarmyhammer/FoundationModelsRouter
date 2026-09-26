@@ -1155,6 +1155,7 @@ struct TurnCancellationTests {
         // cancelled. It is the last event before the stream throws, and it
         // names the one message of the stream.
         let deliveredEvents = await delivered.events
+        _ = eventsInsideAnswerFrame(deliveredEvents)
         let failure = try #require(deliveredEvents.answerFailures.first)
         #expect(deliveredEvents.answerFailures.count == 1)
         #expect(deliveredEvents.answers.isEmpty)

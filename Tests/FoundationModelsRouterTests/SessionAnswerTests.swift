@@ -126,6 +126,7 @@ struct SessionAnswerTests {
         #expect(answer.reply == Self.expectedAnswer)
         // The callback also saw the answer frame: the last event is the answer
         // that respond returned.
+        _ = eventsInsideAnswerFrame(events)
         #expect(events.last == .answered(answer))
     }
 
@@ -185,8 +186,10 @@ struct SessionAnswerTests {
         }
 
         // The projection gets the same events that the answer came from.
+        let events = observed.withLock { $0 }
+        _ = eventsInsideAnswerFrame(events)
         let projection = SessionProjection()
-        for event in observed.withLock({ $0 }) {
+        for event in events {
             projection.apply(event)
         }
 

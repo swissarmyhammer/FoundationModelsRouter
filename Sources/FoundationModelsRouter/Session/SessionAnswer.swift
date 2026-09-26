@@ -84,8 +84,10 @@ public struct SessionAnswer: Sendable, Equatable {
 ///
 /// Carried by ``SessionEvent/answerFailed(_:)``, in place of
 /// ``SessionEvent/answered(_:)``. The callers of the messages get the error of
-/// the chain.
-public struct AnswerFailure: Sendable, Equatable {
+/// the chain. ``RoutedSession/respond(to:maxTokens:observing:)`` throws the
+/// failure itself when the stream of its message ends with this event and no
+/// error.
+public struct AnswerFailure: Error, Sendable, Equatable {
     /// Why a chain gave no answer.
     public enum Reason: Sendable, Equatable {
         /// A cancel stopped the chain: ``RoutedSession/cancel()``,
@@ -240,26 +242,62 @@ extension RoutedSession {
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` for the resolved context of the model.
     ///   - observing: A callback that receives each raw ``SessionEvent`` as it arrives, or `nil`.
     /// - Returns: The final answer of the chain that carried the prompt.
-    /// - Throws: Whatever the chain throws, after `observing` has seen every event.
+    /// - Throws: Whatever the chain throws, after `observing` has seen every
+    ///   event. `CancellationError` when the awaiting task is cancelled before
+    ///   the answer. The ``AnswerFailure`` of a
+    ///   ``SessionEvent/answerFailed(_:)`` event when the stream ends with it
+    ///   and with no error.
     public func respond(
         to prompt: String,
         maxTokens: Int? = nil,
         observing: (@Sendable (SessionEvent) -> Void)? = nil
     ) async throws -> SessionAnswer {
-        var answer: SessionAnswer?
-        for try await event in streamEvents(to: prompt, maxTokens: maxTokens) {
+        try await SessionAnswer.awaitEnd(of: streamEvents(to: prompt, maxTokens: maxTokens), observing: observing)
+    }
+}
+
+extension SessionAnswer {
+    /// Reads the event stream of one message to its end, and gives the answer
+    /// that its ``SessionEvent/answered(_:)`` event carries.
+    ///
+    /// - Parameters:
+    ///   - events: The event stream of one message.
+    ///   - observing: A callback that receives each raw ``SessionEvent`` as it
+    ///     arrives, or `nil`.
+    /// - Returns: The final answer of the chain that carried the message.
+    /// - Throws: Whatever the stream throws. `CancellationError` when the
+    ///   task that reads the stream is cancelled before the answer. The
+    ///   ``AnswerFailure`` of an ``SessionEvent/answerFailed(_:)`` event when
+    ///   the stream ends with it and with no error.
+    static func awaitEnd(
+        of events: AsyncThrowingStream<SessionEvent, Error>,
+        observing: (@Sendable (SessionEvent) -> Void)?
+    ) async throws -> SessionAnswer {
+        var end: Result<SessionAnswer, AnswerFailure>?
+        // The loop does not stop at the end of the answer. The session
+        // finishes the stream with the error of a failed chain after its
+        // `answerFailed`, and the caller gets that error, not a copy of it.
+        for try await event in events {
             observing?(event)
-            if case .answered(let final) = event {
-                answer = final
+            if case .answered(let answer) = event {
+                end = .success(answer)
+            } else if case .answerFailed(let failure) = event {
+                end = .failure(failure)
             }
         }
-        guard let answer else {
-            // The pump sends `answered` on the stream of a chain's first
-            // message before it gives the reply, and a stream message goes
-            // alone in its submission. A stream that finished with no error
-            // and no answer is a defect of the session.
-            preconditionFailure("the event stream of a message finished with no answered event")
+        if case .success(let answer) = end {
+            return answer
         }
-        return answer
+        // A stream whose reader is cancelled ends with no error, and it can
+        // end before the end of the answer arrives.
+        try Task.checkCancellation()
+        guard let end else {
+            // The pump sends the end of the answer on the stream of the first
+            // message of a chain, and a stream message goes alone in its
+            // submission. A stream that ends with no error, no end of the
+            // answer, and no cancel is a defect of the session.
+            preconditionFailure("the event stream of a message finished with no end of its answer")
+        }
+        return try end.get()
     }
 }

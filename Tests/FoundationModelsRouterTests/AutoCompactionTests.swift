@@ -416,6 +416,7 @@ struct AutoCompactionTests {
 
         #expect(answered)
         let events = await log.events
+        _ = eventsInsideAnswerFrame(events)
         let starts = events.submissionStarts
         try #require(starts.map(\.cause) == [.message, .continuation])
         // Each submission ends before the next one starts. The compaction

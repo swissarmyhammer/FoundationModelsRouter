@@ -42,6 +42,25 @@ func eventsInsideAnswerFrame(_ events: [SessionEvent]) -> [SessionEvent] {
     return events.filter { !$0.isAnswerFrame }
 }
 
+extension [SessionEvent] {
+    /// Splits the events of answers that come one after the other at each end
+    /// of an answer, and checks the frame of each part with
+    /// ``eventsInsideAnswerFrame(_:)``.
+    ///
+    /// The events after the last end of an answer are a part too, so their
+    /// check fails: each event must be in the frame of an answer.
+    ///
+    /// - Returns: The events inside each frame, one array for each answer, in
+    ///   order. A failed check is recorded as an issue.
+    func eventsInsideEachAnswerFrame() -> [[SessionEvent]] {
+        let partEnds = indices.filter { self[$0].isAnswerEnd }.map { $0 + 1 }
+        let partStarts = [startIndex] + partEnds
+        return zip(partStarts, partEnds + [endIndex])
+            .filter { start, end in start < end }
+            .map { start, end in eventsInsideAnswerFrame(Array(self[start..<end])) }
+    }
+}
+
 extension SessionEvent {
     /// Whether this event ends an answer: ``SessionEvent/answered(_:)`` or
     /// ``SessionEvent/answerFailed(_:)``.

@@ -77,7 +77,7 @@ struct SubmissionAnswerEventTests {
     ///   - count: How many ends of an answer to wait for.
     ///   - log: The log of the session-wide feed.
     /// - Returns: `true` when the events arrived inside the bound.
-    private static func answersEnd(_ count: Int, in log: SessionEventLog) async -> Bool {
+    private static func waitForAnswersToEnd(_ count: Int, in log: SessionEventLog) async -> Bool {
         await BoundedWait.conditionReached("\(count) answers ending on the session feed") {
             let events = await log.events
             return events.answers.count + events.answerFailures.count >= count
@@ -98,11 +98,12 @@ struct SubmissionAnswerEventTests {
         let second = await session.send(Self.secondPrompt)
         let third = await session.send(Self.thirdPrompt)
         await latch.open()
-        let ended = await Self.answersEnd(Self.twoAnswers, in: log)
+        let ended = await Self.waitForAnswersToEnd(Self.twoAnswers, in: log)
         drain.cancel()
 
         #expect(ended)
         let events = await log.events
+        #expect(events.eventsInsideEachAnswerFrame().count == Self.twoAnswers)
         #expect(events.answers.map(\.messageIds) == [[first], [second, third]])
         #expect(events.answers.map(\.reply) == [Backend.answer(ofCall: 1), Backend.answer(ofCall: 2)])
         #expect(events.submissionStarts.map(\.messageIds) == [[first], [second, third]])
@@ -126,11 +127,12 @@ struct SubmissionAnswerEventTests {
         // The first submission ends with a rejected tool call. The retry is a
         // continuation of the same chain, and the waiting message joins it.
         await latch.open()
-        let ended = await Self.answersEnd(1, in: log)
+        let ended = await Self.waitForAnswersToEnd(1, in: log)
         drain.cancel()
 
         #expect(ended)
         let events = await log.events
+        _ = eventsInsideAnswerFrame(events)
         #expect(events.answers.map(\.messageIds) == [[first, second]])
         let starts = events.submissionStarts
         #expect(starts.map(\.messageIds) == [[first], [second]])
@@ -152,11 +154,12 @@ struct SubmissionAnswerEventTests {
         try await Self.awaitPrompts(1, on: backend)
         #expect(await session.cancel() == .requested)
         // The latch never opens, so only the cancel can end the held call.
-        let ended = await Self.answersEnd(1, in: log)
+        let ended = await Self.waitForAnswersToEnd(1, in: log)
         drain.cancel()
 
         #expect(ended)
         let events = await log.events
+        _ = eventsInsideAnswerFrame(events)
         #expect(events.answerFailures == [AnswerFailure(messageIds: [id], reason: .cancelled)])
         #expect(events.answers.isEmpty)
         #expect(events.submissionEnds.count == 1)
@@ -172,14 +175,50 @@ struct SubmissionAnswerEventTests {
         let (log, drain) = await SessionEventLog.watch(session)
 
         let id = await session.send(Self.firstPrompt)
-        let ended = await Self.answersEnd(1, in: log)
+        let ended = await Self.waitForAnswersToEnd(1, in: log)
         drain.cancel()
 
         #expect(ended)
         let events = await log.events
+        _ = eventsInsideAnswerFrame(events)
         let reason = AnswerFailure.Reason.error(String(describing: SessionMessagePumpTests.PumpProbeError.refused))
         #expect(events.answerFailures == [AnswerFailure(messageIds: [id], reason: reason)])
         #expect(events.answers.isEmpty)
         withExtendedLifetime(profile) {}
+    }
+
+    @Test("a respond whose caller cancels its task throws CancellationError, and does not stop the process")
+    func aRespondWhoseCallerCancelsThrowsCancellationError() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let latch = RunLatch()
+        let backend = Backend(script: [1: .hold(latch)])
+        let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
+
+        let run = AnswerDrivenRun(waitingFor: "the respond of the first prompt") {
+            try await session.respond(to: Self.firstPrompt, observing: nil)
+        }
+        try await Self.awaitPrompts(1, on: backend)
+        // The stream of the message ends with no error when the task that
+        // reads it is cancelled. The respond must throw, not stop the process.
+        run.cancel()
+
+        await #expect(throws: CancellationError.self) { try await run.deliveredAnswer() }
+        withExtendedLifetime(profile) {}
+    }
+
+    /// The text of the error in the failure that
+    /// ``aStreamThatEndsWithAnAnswerFailureThrowsIt()`` feeds.
+    private static let failureText = "the model refused"
+
+    @Test("a message stream that ends with answerFailed and no error throws that failure to the reader")
+    func aStreamThatEndsWithAnAnswerFailureThrowsIt() async throws {
+        let failure = AnswerFailure(messageIds: [], reason: .error(Self.failureText))
+        let events = AsyncThrowingStream<SessionEvent, Error> { continuation in
+            continuation.yield(.answerFailed(failure))
+            continuation.finish()
+        }
+
+        await #expect(throws: failure) { try await SessionAnswer.awaitEnd(of: events, observing: nil) }
     }
 }

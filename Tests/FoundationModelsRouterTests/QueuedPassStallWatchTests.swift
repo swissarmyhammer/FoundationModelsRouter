@@ -123,6 +123,7 @@ struct QueuedPassStallWatchTests {
         // sends submissionStarted with the same id. It is the first
         // submission of its session, and it carries the caller message.
         let waitingEvents = await waitingLog.events
+        _ = eventsInsideAnswerFrame(waitingEvents)
         let queuedIds = Self.queuedIds(in: waitingEvents)
         #expect(queuedIds == [SubmissionID(1)])
         let queuedId = try #require(queuedIds.first)
@@ -138,6 +139,7 @@ struct QueuedPassStallWatchTests {
         // The worker was free for the holding submission: it sends only the
         // start of its submission, and no submissionQueued.
         let holdingEvents = await holdingLog.events
+        _ = eventsInsideAnswerFrame(holdingEvents)
         #expect(Self.queuedIds(in: holdingEvents).isEmpty)
         #expect(holdingEvents.submissionStarts.count == 1)
         #expect(await fixture.queue.isRunning == false)

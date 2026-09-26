@@ -53,6 +53,13 @@ struct SessionAnswerPublicSurfaceTests {
         #expect(cancelled != failed)
     }
 
+    @Test("a consumer catches a failure that respond throws as an AnswerFailure error")
+    func aConsumerCatchesAFailureAsAnError() {
+        let failure = AnswerFailure(messageIds: [], reason: .error(Self.errorText))
+
+        #expect(throws: failure) { throw failure }
+    }
+
     @Test("a projection reads the answer events and names no running submission before one starts")
     @MainActor
     func aProjectionReadsTheAnswerEvents() {

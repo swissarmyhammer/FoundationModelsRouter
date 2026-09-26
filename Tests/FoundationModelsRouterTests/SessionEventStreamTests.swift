@@ -578,6 +578,7 @@ struct SessionEventStreamTests {
         #expect(
             events.submissionEnds
                 == [SubmissionEnd(submissionId: start.submissionId, usage: expectedUsage, finishReason: .completed)])
+        _ = eventsInsideAnswerFrame(events)
         let answer = try #require(events.answers.first)
         #expect(events.last == .answered(answer))
         #expect(answer.usage == expectedUsage)
@@ -598,6 +599,7 @@ struct SessionEventStreamTests {
         let start = try #require(events.submissionStarts.first)
         #expect(
             events.submissionEnds == [SubmissionEnd(submissionId: start.submissionId, usage: nil, finishReason: .completed)])
+        _ = eventsInsideAnswerFrame(events)
         let answer = try #require(events.answers.first)
         #expect(answer.usage == nil)
     }

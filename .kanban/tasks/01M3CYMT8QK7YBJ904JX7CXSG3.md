@@ -46,6 +46,47 @@ comments:
     - not changed (owned by later tasks): internal names with "turn" (`runTurnWork`, `runTurnAttempt`, `finishTurn`, `turnEventSink`, `currentTurnEventSink`), test file/suite names with "turn", `UPSTREAM_ASKS.md` mentions of the old events (^f33q8gw / ^d7d777f).
     - next: review
   timestamp: 2026-09-26T05:31:26.366967+00:00
+- actor: claude-code
+  id: 01m3e59yk3yd9de10s2ktfmz4p
+  text: |-
+    ### review — findings
+    - evidence: `review sha HEAD~1..HEAD` (commit c682155). 3 findings, 3 confirmed, 0 refuted. Sources/FoundationModelsRouter/Session/SessionAnswer.swift:250 (swift/error-handling), Tests/FoundationModelsRouterTests/AutoCompactionTests.swift:407 (completeness/invariant-propagation), Tests/FoundationModelsRouterTests/SubmissionAnswerEventTests.swift:80 (swift/fluent-usage).
+    - next: implement. Do the 3 items in the "Review Findings (2026-09-26 00:40)" section. The task stays in review.
+  timestamp: 2026-09-26T06:09:11.779446+00:00
+- actor: claude-code
+  id: 01m3e5agyeq61w8fhp5rk4h7tk
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — about 62 files (submission and answer events; SessionAnswer; TurnStart, TurnID, TurnOutcome removed)
+    - test: green — swift test, 1487 passed (1455+13+19), 0 failed, 0 skipped; 9 event and session suites 3 extra runs clean; all products and IntegrationTests build clean
+    - commit: c682155
+    - review: findings — Session/SessionAnswer.swift:250, AutoCompactionTests.swift:407, SubmissionAnswerEventTests.swift:80
+  timestamp: 2026-09-26T06:09:30.574001+00:00
+- actor: claude-code
+  id: 01m3e5gh5aav1skn22ahnj6f42
+  text: |-
+    Picked up the 3 review findings (moved to doing). Research:
+    - Finding 1: `respond(to:maxTokens:observing:)` is the only loop in `Sources/` that waits for `answered`. `SessionProjection.apply(eventsFrom:)` already handles `answerFailed`. The crash is reachable: when the task that awaits `respond` is cancelled, the `for try await` over an `AsyncThrowingStream` ENDS (next() gives nil, no throw). Then `answer` is nil and `preconditionFailure` stops the process. A chain that fails with an error does not crash today, because the stream throws after `answerFailed`.
+    - Decision F1: move the loop into an internal `SessionAnswer.awaitEnd(of:observing:)` so a unit test can feed a hand-made stream. After the loop: an `answered` gives the answer; else a cancelled task throws `CancellationError`; else a captured `answerFailed` throws that `AnswerFailure` (it now conforms to `Error`); only a stream with no end of the answer and no cancel stays the defect case. The loop does not break at `answerFailed`, so the real error of the chain still reaches the caller when the stream throws it.
+    - Decision F2: add the frame check to the new tests of c682155 that collect the events of one answer, and a split helper `eventsInsideAnswerFrames(_:)` for the tests that collect more than one answer.
+    - Decision F3: `answersEnd` becomes `waitForAnswersToEnd(_:in:)`. The other helpers of the file (`makeSession(over:dir:)`, `awaitPrompts(_:on:)`) are verb phrases already.
+  timestamp: 2026-09-26T06:12:47.402948+00:00
+- actor: claude-code
+  id: 01m3e5wjdydyeyepmeyxhwnqc9
+  text: |-
+    Review findings fixed (3 of 3):
+    - F1 `swift/error-handling`: the loop of `respond(to:maxTokens:observing:)` moved to internal `SessionAnswer.awaitEnd(of:observing:)`. It captures `answered` and `answerFailed` and reads the stream to its end, so the real error of a failed chain still reaches the caller. After the loop: an answer is returned; a cancelled reader task throws `CancellationError`; a captured `answerFailed` with no stream error throws that `AnswerFailure` (now `Error`); only no end of the answer and no cancel stays `preconditionFailure` (a defect of the session). RED seen first for both new tests: the process stopped at "Fatal error: the event stream of a message finished with no answered event". The real crash was a caller that cancels the task that awaits `respond`: the stream ends with no error and no end of the answer. It is the only loop in `Sources/` that waits for `answered`; `SessionProjection` already handles `answerFailed`; the Examples loop returns its text and throws the stream error, so it has no such gap.
+    - F2 `completeness/invariant-propagation`: `_ = eventsInsideAnswerFrame(events)` added to the overflow test and to each new test of c682155 that collects the events of one answer (GenerationCallUsageTests x2 (the manual `events.last?.isAnswerEnd` check replaced), MessageQueueTests x3, QueuedPassStallWatchTests x2, SessionAnswerTests x2, SessionEventStreamTests x2, TurnCancellationTests x1, SubmissionAnswerEventTests x3). New helper `[SessionEvent].eventsInsideEachAnswerFrame()` checks each frame of a log with more than one answer (SubmissionAnswerEventTests two-answer test, MessageQueueTests.consecutiveTurnsTakeDistinctIds). The reducer and projection tests build events by hand and have no live frame, so the check does not fit there.
+    - F3 `swift/fluent-usage`: `answersEnd` renamed `waitForAnswersToEnd(_:in:)`. The other helpers of the file (`makeSession(over:dir:)`, `awaitPrompts(_:on:)`) already read as verb phrases.
+    - New tests: `SubmissionAnswerEventTests.aRespondWhoseCallerCancelsThrowsCancellationError`, `SubmissionAnswerEventTests.aStreamThatEndsWithAnAnswerFailureThrowsIt`, `SessionAnswerPublicSurfaceTests.aConsumerCatchesAFailureAsAnError`. `AnswerDrivenRun` got `cancel()`.
+  timestamp: 2026-09-26T06:19:21.918982+00:00
+- actor: claude-code
+  id: 01m3e5wpdytqsvrt42245fv6qy
+  text: |-
+    ### implement — changed
+    - evidence: 13 files — Sources/FoundationModelsRouter/Session/SessionAnswer.swift; Tests/FoundationModelsRouterTests/{SubmissionAnswerEventTests, AutoCompactionTests, GenerationCallUsageTests, MessageQueueTests, QueuedPassStallWatchTests, SessionAnswerTests, SessionEventStreamTests, TurnCancellationTests}.swift; Tests/FoundationModelsRouterTests/Helpers/{AnswerFrameAssertions, AnswerDrivenRun}.swift; Tests/FoundationModelsRouterPublicSurfaceTests/SessionAnswerPublicSurfaceTests.swift. Full `swift test`: 1457 + 14 + 19 = 1490 passed (was 1487; +3 new), 0 failed, 2 expected known issues. Answer, event and compaction suites (12 suites, 150 tests, plus 4 public-surface tests) 3 extra runs: 3 of 3 green. Forced recompile of the touched files: 0 source warnings. IntegrationTests `swift build --build-tests`: Build complete. No commit, no `swift format`.
+    - next: review
+  timestamp: 2026-09-26T06:19:26.014502+00:00
 depends_on:
 - 01M3CYMC96HM7ZQF3XACBHPDJY
 position_column: doing
@@ -77,3 +118,95 @@ The events still describe a turn. `SessionEvent.turnStarted(TurnStart)` comes on
 - [x] Public-surface tests for every new public type. <!-- SubmissionStartPublicSurfaceTests, SessionAnswerPublicSurfaceTests, GenerationSubmissionEventPublicSurfaceTests -->
 - [x] `rg -n "turnStarted|turnEnded|TurnStart|TurnID|TurnOutcome" Sources` finds nothing. <!-- rg exit 1 -->
 - [x] Full `swift test` green, 0 new warnings; IntegrationTests build clean. #generation-queue <!-- swift test: 1455 + 13 + 19 = 1487 passed; IntegrationTests swift build --build-tests: Build complete -->
+
+## Review Findings (2026-09-26 00:40)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 61 file(s) reviewed, 6 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+> 4 file(s) not reviewed — no validator matched:
+> - `Examples/MultiModelGeneration/README.md` — no validator matches this file
+> - `Sources/FoundationModelsRouter/FoundationModelsRouter.docc/RoutedSession.md` — no validator matches this file
+> - `Sources/FoundationModelsRouter/FoundationModelsRouter.docc/SessionProjection.md` — no validator matches this file
+> - `generation-queue.md` — no validator matches this file
+
+> ⚠️ tool rule 'code-hygiene/disallowed-constructs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> disallowed-constructs-swift found no file at Sources/FoundationModelsRouter/Session/TurnIdentity.swift, so its constructs are unread
+
+> ⚠️ tool rule 'code-hygiene/disallowed-constructs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> disallowed-constructs-swift found no file at Sources/FoundationModelsRouter/Session/TurnOutcome.swift, so its constructs are unread
+
+> ⚠️ tool rule 'code-hygiene/disallowed-constructs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> disallowed-constructs-swift found no file at Tests/FoundationModelsRouterPublicSurfaceTests/TurnStartPublicSurfaceTests.swift, so its constructs are unread
+
+> ⚠️ tool rule 'code-hygiene/disallowed-constructs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> disallowed-constructs-swift found no file at Tests/FoundationModelsRouterTests/Helpers/TurnFrameAssertions.swift, so its constructs are unread
+
+> ⚠️ tool rule 'code-hygiene/disallowed-constructs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> disallowed-constructs-swift found no file at Tests/FoundationModelsRouterTests/TurnOutcomeTests.swift, so its constructs are unread
+
+> ⚠️ tool rule 'code-hygiene/function-length-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> function-length-swift found no file at Sources/FoundationModelsRouter/Session/TurnIdentity.swift, so its bodies are unread
+
+> ⚠️ tool rule 'code-hygiene/function-length-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> function-length-swift found no file at Sources/FoundationModelsRouter/Session/TurnOutcome.swift, so its bodies are unread
+
+> ⚠️ tool rule 'code-hygiene/function-length-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> function-length-swift found no file at Tests/FoundationModelsRouterPublicSurfaceTests/TurnStartPublicSurfaceTests.swift, so its bodies are unread
+
+> ⚠️ tool rule 'code-hygiene/function-length-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> function-length-swift found no file at Tests/FoundationModelsRouterTests/Helpers/TurnFrameAssertions.swift, so its bodies are unread
+
+> ⚠️ tool rule 'code-hygiene/function-length-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> function-length-swift found no file at Tests/FoundationModelsRouterTests/TurnOutcomeTests.swift, so its bodies are unread
+
+> ⚠️ tool rule 'code-hygiene/idioms-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> idioms-swift found no file at Sources/FoundationModelsRouter/Session/TurnIdentity.swift, so its declarations are unread
+
+> ⚠️ tool rule 'code-hygiene/idioms-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> idioms-swift found no file at Sources/FoundationModelsRouter/Session/TurnOutcome.swift, so its declarations are unread
+
+> ⚠️ tool rule 'code-hygiene/idioms-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> idioms-swift found no file at Tests/FoundationModelsRouterPublicSurfaceTests/TurnStartPublicSurfaceTests.swift, so its declarations are unread
+
+> ⚠️ tool rule 'code-hygiene/idioms-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> idioms-swift found no file at Tests/FoundationModelsRouterTests/Helpers/TurnFrameAssertions.swift, so its declarations are unread
+
+> ⚠️ tool rule 'code-hygiene/idioms-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> idioms-swift found no file at Tests/FoundationModelsRouterTests/TurnOutcomeTests.swift, so its declarations are unread
+
+> ⚠️ tool rule 'code-hygiene/magic-numbers-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> magic-numbers-swift found no file at Sources/FoundationModelsRouter/Session/TurnIdentity.swift, so its literals are unread
+
+> ⚠️ tool rule 'code-hygiene/magic-numbers-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> magic-numbers-swift found no file at Sources/FoundationModelsRouter/Session/TurnOutcome.swift, so its literals are unread
+
+> ⚠️ tool rule 'code-hygiene/magic-numbers-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> magic-numbers-swift found no file at Tests/FoundationModelsRouterPublicSurfaceTests/TurnStartPublicSurfaceTests.swift, so its literals are unread
+
+> ⚠️ tool rule 'code-hygiene/magic-numbers-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> magic-numbers-swift found no file at Tests/FoundationModelsRouterTests/Helpers/TurnFrameAssertions.swift, so its literals are unread
+
+> ⚠️ tool rule 'code-hygiene/magic-numbers-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> magic-numbers-swift found no file at Tests/FoundationModelsRouterTests/TurnOutcomeTests.swift, so its literals are unread
+
+> ⚠️ tool rule 'code-hygiene/missing-docs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> missing-docs-swift found no file at Sources/FoundationModelsRouter/Session/TurnIdentity.swift, so its declarations are unread
+
+> ⚠️ tool rule 'code-hygiene/missing-docs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> missing-docs-swift found no file at Sources/FoundationModelsRouter/Session/TurnOutcome.swift, so its declarations are unread
+
+> ⚠️ tool rule 'code-hygiene/missing-docs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> missing-docs-swift found no file at Tests/FoundationModelsRouterPublicSurfaceTests/TurnStartPublicSurfaceTests.swift, so its declarations are unread
+
+> ⚠️ tool rule 'code-hygiene/missing-docs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> missing-docs-swift found no file at Tests/FoundationModelsRouterTests/Helpers/TurnFrameAssertions.swift, so its declarations are unread
+
+> ⚠️ tool rule 'code-hygiene/missing-docs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> missing-docs-swift found no file at Tests/FoundationModelsRouterTests/TurnOutcomeTests.swift, so its declarations are unread
+
+- [x] `Sources/FoundationModelsRouter/Session/SessionAnswer.swift:250` `swift/error-handling` — The event loop captures only `answered` events but the stream is documented to send either `answered(_:)` or `answerFailed(_:)`. If `answerFailed` is received, `answer` remains `nil` and the function crashes with `preconditionFailure` instead of properly propagating the failure, violating the contract that successful answer handling must handle both terminal states. Capture `answerFailed` events in the loop and throw or return the failure. Example: add `else if case .answerFailed(let failure) = event { /* handle or rethrow failure */ }` to the conditional at line 252–254, or break the loop after capturing either terminal event and handle the absence of both as the defect case.
+- [x] `Tests/FoundationModelsRouterTests/AutoCompactionTests.swift:407` `completeness/invariant-propagation` — New test `overflowRetrySendsTwoSubmissionPairsAndOneAnswer` collects and inspects answer events but does not validate the answer frame structure with `eventsInsideAnswerFrame`, unlike other tests throughout the change that handle submission and answer events. Add `_ = eventsInsideAnswerFrame(events)` after line 418 (after collecting from the log) to validate the answer frame structure is intact, matching the pattern established in other tests in this change.
+- [x] `Tests/FoundationModelsRouterTests/SubmissionAnswerEventTests.swift:80` `swift/fluent-usage` — Function name `answersEnd` does not form a grammatical phrase at the call site. The call `let ended = await Self.answersEnd(Self.twoAnswers, in: log)` reads as 'ended = await self answers end...' which is not grammatical. Since the function performs a wait action, the name should be a verb phrase like `waitForAnswersToEnd`. Rename the function to something like `waitForAnswersToEnd(_:in:)` to form a proper verb phrase: `let ended = await Self.waitForAnswersToEnd(Self.twoAnswers, in: log)`.

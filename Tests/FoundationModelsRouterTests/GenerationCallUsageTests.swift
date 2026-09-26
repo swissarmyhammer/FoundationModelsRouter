@@ -124,7 +124,7 @@ struct GenerationCallUsageTests {
         #expect(ends.count == 1)
         let end = try #require(ends.first)
         let submissionUsage = try #require(end.usage)
-        #expect(events.last?.isAnswerEnd == true)
+        _ = eventsInsideAnswerFrame(events)
         let answer = try #require(events.answers.last)
         let usage = try #require(answer.usage)
         #expect(submissionUsage == usage)
@@ -151,6 +151,7 @@ struct GenerationCallUsageTests {
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
         let events = try await Self.collectEvents(on: fixture.session, maxTokens: nil)
+        _ = eventsInsideAnswerFrame(events)
 
         let recordIndices = events.indices.filter { index in
             if case .generationCall = events[index] { return true }

@@ -554,6 +554,7 @@ struct MessageQueueTests {
         await session.close()
 
         let events = await collect(stream)
+        _ = eventsInsideAnswerFrame(events)
         let starts = events.submissionStarts
         #expect(starts.map(\.messageIds) == [[id]])
         #expect(starts.map(\.cause) == [.message])
@@ -574,6 +575,7 @@ struct MessageQueueTests {
         // The caller of respond does not see the id of its message. The
         // submission and the answer must name the same one message.
         let events = await collect(stream)
+        _ = eventsInsideAnswerFrame(events)
         let start = try #require(events.submissionStarts.first)
         #expect(events.submissionStarts.count == 1)
         #expect(start.messageIds.count == 1)
@@ -594,6 +596,7 @@ struct MessageQueueTests {
         await session.close()
 
         let events = await collect(stream)
+        #expect(events.eventsInsideEachAnswerFrame().count == Self.consecutiveTurnCount)
         let expectedIds = [SubmissionID(1), SubmissionID(Self.secondSubmissionNumber)]
         #expect(events.submissionStarts.count == Self.consecutiveTurnCount)
         #expect(events.submissionStarts.map(\.submissionId) == expectedIds)
@@ -625,6 +628,7 @@ struct MessageQueueTests {
         // session-scoped stream still gets the usage of its one submission
         // and the usage of its answer.
         let events = await collect(stream)
+        _ = eventsInsideAnswerFrame(events)
         let usages = events.submissionEnds.compactMap(\.usage)
         #expect(events.submissionEnds.count == 1)
         #expect(usages.map(\.tokensIn) == [Self.meteredInput])
