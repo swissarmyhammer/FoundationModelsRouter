@@ -49,6 +49,44 @@ comments:
     - evidence: 21 files (2 new: Sources/.../Session/SettledTranscript.swift, Tests/.../SettledTranscriptTests.swift). `swift test`: 1428 + 4 + 19 = 1451 passed (1448 + 3 new) in 8 of 9 runs, 2 known issues, 0 new warnings; 1 load flake of the new HumanWaitGate fork test in the first run (see comment). Stress 8 x 100: fork/read/re-entry suites 32 tests 0 issues 0 crashes; cancellation/queue suites 89 tests 0 crashes, 1 known ^zr22hpd issue.
     - next: /review
   timestamp: 2026-09-26T00:26:42.566691+00:00
+- actor: claude-code
+  id: 01m3djyh9zx728spfkza2nmj9g
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (e6cdd44). 1 finding (1 confirmed, 3 refuted). Tests/FoundationModelsRouterTests/SettledTranscriptTests.swift:184 reuse/reuse.
+    - next: Implement the finding. Use or extend the `poll` function of `ToolMountFixtures.MountFixtures` in place of the `value()` timeout function in `SettledTranscriptTests.swift`. Remove each other copy of this timeout logic in that file. Then review the task again.
+  timestamp: 2026-09-26T00:48:23.359643+00:00
+- actor: claude-code
+  id: 01m3dk1d35aqk6kcep09f4t1m8
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 21 files (settled transcript for reads and forks; makeFork(tools:seededFrom:))
+    - test: green — swift test, 1451 passed (1428+4+19), 0 failed, 0 skipped; HumanWaitGateTests 11 runs clean at load 9-10; fork and cancel suites 3 extra runs clean; build with warnings-as-errors clean
+    - commit: e6cdd44
+    - review: findings — Tests/FoundationModelsRouterTests/SettledTranscriptTests.swift:184
+  timestamp: 2026-09-26T00:49:57.349713+00:00
+- actor: claude-code
+  id: 01m3dk5venypbnn602rbz76eeh
+  text: |-
+    Review finding fixed (SettledTranscriptTests.swift:184, reuse/reuse).
+
+    Decision: reuse `MountFixtures.poll` directly. Do not extend it, and do not use `BoundedWait`.
+    Reason: `poll` has the necessary contract. It polls a non-suspending fact, it has a bound of 1,000 x 5 ms = 5 s (the same as the old `readTimeout`), and it gives `nil` when the bound ends. `BoundedWait.conditionReached` gives only a Bool, and it records an issue with a different message. The test must keep its own `#require(read, "The read waited for the running submission.")` message.
+
+    Change:
+    - Removed the private `value(within:of:)` helper (AsyncStream + task group + `Task.sleep`) and the `readTimeout` constant. The file has no other copy of this timeout logic now (0 matches for `withTaskGroup`, `Task.sleep`, `readTimeout`).
+    - Added a private `ReadBox` (a `Mutex`-backed store, the same pattern as `ChildBox` in the file). The read runs in an unstructured task and stores its entries in the box. The test gets the entries with `MountFixtures.poll { readBox.entries }`. The read stays unstructured, because a read that waits for a submission cannot be cancelled.
+    - The assertions did not change.
+
+    Tests: `swift test` gives 1428 + 4 + 19 = 1451 passed, with the 2 known issues, and 0 new warnings (only the known mlx-swift "missing creator" note). `SettledTranscriptTests` passed 3 more times (3 of 3 tests each time). No shared helper changed.
+  timestamp: 2026-09-26T00:52:23.125665+00:00
+- actor: claude-code
+  id: 01m3dk65je4nysf2cfys7rkttp
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — Tests/FoundationModelsRouterTests/SettledTranscriptTests.swift (the `value(within:of:)` helper and `readTimeout` are removed; the test uses `MountFixtures.poll` and a `ReadBox`). `swift test`: 1428 + 4 + 19 = 1451 passed, 2 known issues, 0 new warnings. `SettledTranscriptTests` 3 more runs: 3/3 passed each time. The review finding is `- [x]`.
+    - next: /review
+  timestamp: 2026-09-26T00:52:33.486321+00:00
 depends_on:
 - 01M3CYJ4VS4VF5EEHA01PSQDM9
 position_column: doing
@@ -78,3 +116,12 @@ The backend transcript changes on the SDK task while a submission runs (see the 
 - [x] Full `swift test` green, 0 new warnings. <!-- 1428 + 4 + 19 = 1451 tests (1448 + 3 new), passed 8 of 9 runs; the one failure was the new HumanWaitGate fork test hitting the 5 s BoundedWait bound in the first run after a rebuild at load average 19 to 23 (same family as ^1qpmghh); 0 issues in 8 x 100 stress of that suite. Only warning: the known mlx-swift "missing creator" build note -->
 
 #generation-queue
+
+## Review Findings (2026-09-25 19:36)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 20 file(s) reviewed, 4 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/SettledTranscriptTests.swift:184` `reuse/reuse` — The `value()` timeout utility function shares substantial similarity (0.89) with `ToolMountFixtures::MountFixtures::poll`, suggesting it may be reimplementing or duplicating existing timeout-based reading logic that could be reused or extended instead. Investigate whether the existing `poll()` function in ToolMountFixtures can be reused directly, or if its interface should be extended to handle this use case, rather than defining a parallel timeout implementation in this test file.

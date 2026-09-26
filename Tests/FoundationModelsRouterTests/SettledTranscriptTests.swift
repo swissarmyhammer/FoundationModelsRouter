@@ -37,10 +37,6 @@ struct SettledTranscriptTests {
     /// `.prompt` only.
     private static let entriesOfTheHeldTurnSoFar = 1
 
-    /// The upper bound one read is allowed. A read that waits for the held
-    /// submission never returns inside it.
-    private static let readTimeout = Duration.seconds(5)
-
     // MARK: - A backend that holds one turn open
 
     /// A backend that appends a `.prompt` entry, holds the call whose prompt
@@ -167,41 +163,26 @@ struct SettledTranscriptTests {
         }
     }
 
-    // MARK: - Helpers
+    /// Keeps the entries that one transcript read returned, so the test
+    /// polls for them inside a bound.
+    ///
+    /// The read runs in a task of its own. A read that waits for a
+    /// submission cannot be cancelled, so an awaited read would hang the
+    /// suite instead of failing this test.
+    private final class ReadBox: Sendable {
+        /// The entries of the read, or `nil` while the read has not returned.
+        private let stored: Mutex<[Transcript.Entry]?> = Mutex(nil)
 
-    /// Runs `read` in a task of its own, and gives its value, or `nil` when
-    /// `timeout` ends first.
-    ///
-    /// The read runs unstructured and reports through a stream: a read that
-    /// waits for a submission cannot be cancelled, and a task group awaits
-    /// every child, so an awaited read would hang the suite instead of
-    /// failing this test.
-    ///
-    /// - Parameters:
-    ///   - timeout: How long the read is allowed.
-    ///   - read: The read.
-    /// - Returns: The value of the read, or `nil` when the timeout won.
-    private static func value<Value: Sendable>(
-        within timeout: Duration, of read: @escaping @Sendable () async -> Value
-    ) async -> Value? {
-        let (values, report) = AsyncStream<Value>.makeStream()
-        let readTask = Task {
-            report.yield(await read())
-            report.finish()
+        /// The entries of the read, or `nil` while the read has not returned.
+        var entries: [Transcript.Entry]? {
+            stored.withLock { $0 }
         }
-        defer { readTask.cancel() }
-        return await withTaskGroup(of: Value?.self) { group in
-            group.addTask {
-                for await value in values { return value }
-                return nil
-            }
-            group.addTask {
-                try? await Task.sleep(for: timeout)
-                return nil
-            }
-            let first = await group.next() ?? nil
-            group.cancelAll()
-            return first
+
+        /// Keeps the entries that the read returned.
+        ///
+        /// - Parameter entries: The entries of the read.
+        func setEntries(_ entries: [Transcript.Entry]) {
+            stored.withLock { $0 = entries }
         }
     }
 
@@ -226,14 +207,18 @@ struct SettledTranscriptTests {
         }
 
         // The read comes from a task that is not the held submission, while
-        // that submission still runs.
-        let read = await Self.value(within: Self.readTimeout) { await session.transcript }
+        // that submission still runs. The bound of `MountFixtures.poll`
+        // limits the read: a read that waits for the held submission does
+        // not return inside it.
+        let readBox = ReadBox()
+        Task { readBox.setEntries(Array(await session.transcript)) }
+        let read = try await MountFixtures.poll { readBox.entries }
 
         await container.release.open()
         #expect(try await heldTurn.value == HeldTurnBackend.answer(to: Self.heldPrompt))
 
         try #require(heldTurnStarted)
-        let entries = Array(try #require(read, "The read waited for the running submission."))
+        let entries = try #require(read, "The read waited for the running submission.")
         // The settled point is the end of the first turn: its prompt and its
         // answer, and nothing of the held turn.
         #expect(entries.count == Self.entriesOfOneWholeTurn)
