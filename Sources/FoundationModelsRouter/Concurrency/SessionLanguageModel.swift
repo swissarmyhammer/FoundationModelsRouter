@@ -162,9 +162,27 @@ final class SessionLanguageModelState: Sendable {
     typealias PassWatch = @Sendable () async -> Void
 
     /// The identity of one pass watch, which ``removePassWatch(_:)`` takes.
-    struct PassWatchID: Hashable, Sendable {
-        /// The number of the watch, unique in its state.
-        fileprivate let number: UInt64
+    ///
+    /// It is a class because its object identity is the key: each call of
+    /// ``addPassWatch(_:)`` makes a new object, so each watch has a key that
+    /// no other watch has. It holds no stored value.
+    final class PassWatchID: Hashable, Sendable {
+        /// Identity equality.
+        ///
+        /// - Parameters:
+        ///   - lhs: One identity.
+        ///   - rhs: The other identity.
+        /// - Returns: `true` when both are the same object.
+        static func == (lhs: PassWatchID, rhs: PassWatchID) -> Bool {
+            lhs === rhs
+        }
+
+        /// Hashes by the `ObjectIdentifier` of this object.
+        ///
+        /// - Parameter hasher: The hasher to feed.
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(ObjectIdentifier(self))
+        }
     }
 
     /// The raw model whose executor runs each pass.
@@ -184,9 +202,6 @@ final class SessionLanguageModelState: Sendable {
 
         /// The watches each pass runs, by identity.
         var passWatches: [PassWatchID: PassWatch] = [:]
-
-        /// The number that the next watch gets.
-        var nextPassWatchNumber: UInt64 = 0
     }
 
     /// What the owner of this wrapper installed. A lock guards it, because
@@ -259,12 +274,9 @@ final class SessionLanguageModelState: Sendable {
     /// - Parameter watch: The work to run beside each pass.
     /// - Returns: The identity of the watch, for ``removePassWatch(_:)``.
     func addPassWatch(_ watch: @escaping PassWatch) -> PassWatchID {
-        installation.withLock { installation in
-            let id = PassWatchID(number: installation.nextPassWatchNumber)
-            installation.nextPassWatchNumber += 1
-            installation.passWatches[id] = watch
-            return id
-        }
+        let id = PassWatchID()
+        installation.withLock { $0.passWatches[id] = watch }
+        return id
     }
 
     /// Takes the watch `id` out, so the next pass does not run it. A pass

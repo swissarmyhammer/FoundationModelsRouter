@@ -81,6 +81,40 @@ comments:
     - evidence: crash stack = FoundationModels task job -> `swift_release_dealloc` -> `swift_deallocClassInstance` fatalError (a retain raced the last release). Cause = `MLXFoundationModelsSessionBackend.transcriptUpdates()` read `LanguageModelSession.transcript` on its own task between the passes of a tool loop, where the SDK writes it with no guard. Files: Sources/FoundationModelsRouter/Concurrency/SessionLanguageModel.swift, Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift, Sources/FoundationModelsRouter/Session/LanguageModelSessionBackend.swift, Tests/FoundationModelsRouterTests/SessionLanguageModelPassWatchTests.swift (new), Tests/FoundationModelsRouterTests/TranscriptUpdatesToolLoopTests.swift (new). Stress 12 x 100 task filter: before 5 and 9 crashes, after 0/0/0 over 3 rounds; wider 67-test round 0 of 12. Regression test: 5 of 8 aborts before, 8 of 8 passes after. `swift test`: 1465 + 17 + 19 = 1501 passed, 0 warnings.
     - next: /review
   timestamp: 2026-09-26T22:44:24.062643+00:00
+- actor: claude-code
+  id: 01m3fyw39dnyz3hkhtjyy0b5b5
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (8aafaf3). 1 finding (1 confirmed, 0 refuted). Sources/FoundationModelsRouter/Concurrency/SessionLanguageModel.swift:167 code-hygiene/dead-code-swift — var.instance `number` is assignOnlyProperty.
+    - next: Remove the assign-only property `number` from the whole file, or make the code read it. Then run the tests and review again. The task stays in review.
+  timestamp: 2026-09-26T22:55:15.245826+00:00
+- actor: claude-code
+  id: 01m3fyx9nc5z1e7skbsc2rbbpx
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — pass watches; transcript read only inside a pass; 2 new tests (crash cause was in the Router)
+    - test: green — swift test, 1501 passed (1465+17+19), 0 failed, 0 skipped; 6 related suites 3 extra runs clean; IntegrationTests build clean
+    - commit: 8aafaf3
+    - review: findings — Concurrency/SessionLanguageModel.swift:167
+  timestamp: 2026-09-26T22:55:54.540507+00:00
+- actor: claude-code
+  id: 01m3fz6aex1ae9vd6e1gsh8z54
+  text: |-
+    Finding fixed: `SessionLanguageModel.swift` `code-hygiene/dead-code-swift` — var.instance `number` is assignOnlyProperty.
+
+    Decision: remove, not read. `PassWatchID.number` had only one reader, the `Hashable` conformance that the compiler synthesizes. Periphery cannot see that reader. The number was necessary only to make each key unique. That needed a second property, `Installation.nextPassWatchNumber`, which is a counter and has the same cause. Now `PassWatchID` is a `final class` with no stored property. Its `==` is `===` and its `hash(into:)` uses `ObjectIdentifier(self)`. This is the same pattern as `Executor.Configuration` in the same file. Each call of `addPassWatch(_:)` makes a new object, so each key is unique with no counter. `addPassWatch` makes the id outside the lock and holds the lock only for the dictionary write. Both properties are removed. The callers (`LiveModelLoader.transcriptUpdates()`, `SessionLanguageModelPassWatchTests`) do not change: they only keep the id and give it to `removePassWatch(_:)`.
+
+    I did not use `// periphery:ignore`. The rule text permits it for a property that synthesized `Hashable` reads, but the order for this step was to remove the property or make the code read it. With no stored property, no marker is necessary.
+
+    Periphery 3.8 (`swift build --build-tests --scratch-path <scratch>`, then `periphery scan --skip-build --index-store-path <scratch>/out --retain-public --relative-results --format json`): 0 results for `Sources/FoundationModelsRouter/Concurrency/SessionLanguageModel.swift`. The same filter finds results in other files of `Concurrency/` (AsyncSemaphore.swift, GenerationQueue.swift), so the filter works. The clean build had no warning from project sources (only mlx-swift Metal warnings).
+  timestamp: 2026-09-26T23:00:50.269499+00:00
+- actor: claude-code
+  id: 01m3fz6jpq5awnz4nrnpwv0ahn
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — Sources/FoundationModelsRouter/Concurrency/SessionLanguageModel.swift (`PassWatchID` is now an identity class; `number` and `nextPassWatchNumber` removed). Periphery: 0 results in the file. `swift test`: 1465 + 17 + 19 = 1501 passed, 2 known issues that the suite expects, 0 warnings from project sources. `SessionLanguageModelPassWatchTests` + `TranscriptUpdatesToolLoopTests` 3 extra runs: 3 tests in 2 suites passed each time.
+    - next: /review
+  timestamp: 2026-09-26T23:00:58.711725+00:00
 position_column: doing
 position_ordinal: '80'
 title: Find the crash in the SDK tool loop under parallel load (_ContiguousArrayStorage deallocated with non-zero retain count 2)
@@ -114,3 +148,12 @@ The result is 4 to 5 crashed processes of 12. The command is in the memory note 
 
 - [x] The stress above gives 0 crashes of 12 processes over 3 rounds.
 - [x] A regression test fails before the fix and passes after it.
+
+## Review Findings (2026-09-26 17:52)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 5 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Concurrency/SessionLanguageModel.swift:167` `code-hygiene/dead-code-swift` — var.instance `number` is assignOnlyProperty.
