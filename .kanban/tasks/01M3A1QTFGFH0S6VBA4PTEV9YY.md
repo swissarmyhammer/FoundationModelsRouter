@@ -79,11 +79,27 @@ comments:
     - evidence: 1 file — IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/SummarizerPromptCacheIntegrationTests.swift. `swift build --build-tests` in IntegrationTests/: pass (only the known mlx-swift_Cmlx.bundle note). Gated `swift test --filter SummarizerPromptCacheIntegrationTests` (real Qwen2.5-3B): 2/2 passed. Root `swift test`: 1475 + 15 + 19 = 1509 passed, 0 failed (2 known issues from `withKnownIssue` tests that were there before). Review finding 1/1 checked.
     - next: review
   timestamp: 2026-09-26T13:30:38.162526+00:00
+- actor: claude-code
+  id: 01m3eywg3jrd89hsxr9fpv149c
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (dd46109). 0 findings (7 attempted, 0 failed). 1 file reviewed. 2 .kanban files not reviewed (.reviewignore). The finding from 2026-09-26 08:25 (SummarizerPromptCacheIntegrationTests.swift:30, preferLazyMap) is checked. The new diff has no finding on it.
+    - next: The task is in done. No more work.
+  timestamp: 2026-09-26T13:36:13.938911+00:00
+- actor: claude-code
+  id: 01m3eyy5z6k8bw0rbr6mv6qsff
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 1 gated test file (lazy.map)
+    - test: green — swift test, 1509 passed (1475+15+19), 0 failed, 0 skipped; IntegrationTests build clean; gated SummarizerPromptCacheIntegrationTests 2/2 passed (implementer run)
+    - commit: dd46109
+    - review: clean — 0 findings
+  timestamp: 2026-09-26T13:37:09.094131+00:00
 depends_on:
 - 01M39ZPCNPZCG3RPG9Q6WQKETZ
 - 01M3A1QPQMDJD33G9ANCC2TEZN
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffff9280
 title: 'R3: summarizer calls keep no prompt cache'
 ---
 ## Why
