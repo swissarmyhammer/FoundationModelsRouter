@@ -1,6 +1,11 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m3f41c5c5x680rnqm63sdjar
+  text: 'Data from ^cx1type stress (24 processes x 60 repetitions, the ^zr22hpd filter, load 7 to 34), 4 rounds: exit 134 with `_ContiguousArrayStorage deallocated with non-zero retain count 2` in 3, 4, 0 and 4 processes. One round also had 2 processes with exit 139 (SIGSEGV, EXC_BAD_ACCESS in `_swift_release_dealloc`). Crash reports swiftpm-testing-helper-2026-09-26-100246.ips and -100253.ips: the faulting frames are FoundationModels frames and `SessionLanguageModel.Executor.respond(to:model:streamingInto:)`, so it looks like the same use-after-free in another form. Round 1 was at HEAD c75de40 with no change, so this is not from ^cx1type.'
+  timestamp: 2026-09-26T15:06:16.620223+00:00
 position_column: todo
 position_ordinal: 8d80
 title: Find the crash in the SDK tool loop under parallel load (_ContiguousArrayStorage deallocated with non-zero retain count 2)

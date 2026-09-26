@@ -774,17 +774,30 @@ extension RoutedSessionActor {
     }
 
     /// Whether a cancellation is outstanding against the work the pump runs,
-    /// by either route: `Task.isCancelled` of the task that reads it, or
+    /// by any route: `Task.isCancelled` of the task that reads it,
     /// ``cancelRequestedWorkId`` set for that work by
     /// ``requestCancelOfRunningWork()`` (``RoutedSession/cancel()``,
-    /// or the cancel of a caller whose message the work carries). This is the
-    /// one read site of ``cancelRequestedWorkId``, so the two routes cannot
-    /// diverge. Every cancel decision keys on this predicate, never on the
-    /// type of a `CancellationError`. Read after each `await`; do not cache.
+    /// or the cancel of a caller whose message the work carries), or the
+    /// cancel mark of a message the running answer delivered
+    /// (``PumpAnswer/requestCancel()``). This is the one read site of
+    /// ``cancelRequestedWorkId``, so the routes cannot diverge. Every cancel
+    /// decision keys on this predicate, never on the type of a
+    /// `CancellationError`. Read after each `await`; do not cache.
+    ///
+    /// The mark is necessary. A cancelled caller task sets the mark at once,
+    /// in its cancellation handler, but it asks for
+    /// ``cancel(message:)`` in a task of its own that must get this actor.
+    /// The pump can get the actor first, for example after a failed attempt,
+    /// and start the overflow retry before ``cancelRequestedWorkId`` is set.
+    /// The mark closes that window: a delivered message with the mark is the
+    /// case where ``cancel(message:)`` stops this work, so the result is the
+    /// same, only earlier. The read is an atomic load, with no lock and no
+    /// suspension point.
     var isWorkCancelled: Bool {
         if Task.isCancelled { return true }
         guard let workId = pumpWork?.id else { return false }
-        return cancelRequestedWorkId == workId
+        if cancelRequestedWorkId == workId { return true }
+        return deliveredMessages?.contains(where: \.answer.isCancelRequested) == true
     }
 
     /// Whether `error` is a recoverable context-overflow failure:

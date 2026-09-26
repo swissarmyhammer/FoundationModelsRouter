@@ -458,6 +458,40 @@ extension AnswerCancellationTests {
             fixture, suspendingOn: { $0.hasSuffix(prompt) }, insideTool: insideTool)
     }
 
+    /// Installs a mid-answer hook that holds the first model call of the
+    /// answer named `prompt` inside a tool call until `release` is signalled,
+    /// and then throws a context overflow: the one failure on which a
+    /// budgeted answer compacts and tries again. The tool does not check
+    /// cancellation, so only the session can stop the retry.
+    ///
+    /// A second model call for `prompt` is the retry. The hook then throws
+    /// ``ProbeError/modelReenteredAfterCancellation`` at once and does not
+    /// suspend again, so a retry that should not run fails the test and does
+    /// not hang the suite.
+    ///
+    /// - Parameters:
+    ///   - fixture: The fixture whose hook to install into.
+    ///   - prompt: The own prompt text of the answer, matched as a suffix.
+    ///   - insideTool: Signalled once the first model call holds the tool.
+    ///   - release: The signal that lets the tool throw the overflow.
+    static func overflowAfterRelease(
+        _ fixture: Fixture,
+        prompt: String,
+        insideTool: AsyncSemaphore,
+        release: AsyncSemaphore
+    ) {
+        let observer = fixture.observer
+        fixture.hook.midAnswer = { submittedPrompt in
+            guard submittedPrompt.hasSuffix(prompt) else { return }
+            guard await observer.entered.count == 1 else {
+                throw ProbeError.modelReenteredAfterCancellation
+            }
+            insideTool.signal()
+            await release.wait()
+            throw Self.makeStubContextOverflow()
+        }
+    }
+
     /// Waits for a cancellation the test has just requested to reach the tool
     /// suspended by ``suspendInsideCancellationAwareTool(_:prompt:insideTool:)``,
     /// then asserts the answer unwound with `CancellationError`.

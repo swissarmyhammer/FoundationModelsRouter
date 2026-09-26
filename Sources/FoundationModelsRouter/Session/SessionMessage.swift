@@ -12,7 +12,9 @@ import Tracing
 /// A caller that is cancelled marks the answer (``requestCancel()``) before
 /// it asks the session to withdraw the item. The pump reads the mark when it
 /// takes the item, so a cancel that arrives while the pump takes the item is
-/// not lost.
+/// not lost. While the answer runs, ``RoutedSessionActor/isWorkCancelled``
+/// reads the mark too, so a cancel that arrives before the withdraw is not
+/// late for the next model call of the answer.
 final class PumpAnswer<Value: Sendable>: Sendable {
     /// The one-time rendezvous of the result and its one waiter.
     private let gate = RaceGate<Result<Value, any Error>>()

@@ -302,22 +302,10 @@ extension AnswerCancellationTests {
 
         let insideTool = AsyncSemaphore(value: 0)
         let release = AsyncSemaphore(value: 0)
-        let observer = fixture.observer
-        fixture.hook.midAnswer = { prompt in
-            guard prompt.hasSuffix("overflow-then-cancel") else { return }
-            // A second call means the retry re-ran the model after the answer was
-            // already cancelled — the regression this test exists for. Failing
-            // here rather than suspending again keeps that a failed assertion instead
-            // of a hung suite.
-            guard await observer.entered.count == 1 else {
-                throw ProbeError.modelReenteredAfterCancellation
-            }
-            insideTool.signal()
-            await release.wait()
-            // The one failure a budgeted answer compacts-and-retries on, raised
-            // with a cancellation already outstanding against this answer.
-            throw Self.makeStubContextOverflow()
-        }
+        // The overflow comes with a cancellation already outstanding against
+        // this answer. A second model call is the regression this test is for.
+        Self.overflowAfterRelease(
+            fixture, prompt: "overflow-then-cancel", insideTool: insideTool, release: release)
 
         let answerTask = Task {
             try await session.respond(to: "overflow-then-cancel")
@@ -339,6 +327,44 @@ extension AnswerCancellationTests {
             try await answerTask.value
         }
         #expect(await fixture.observer.entered == ["overflow-then-cancel"])
+    }
+
+    @Test("a caller cancel whose mark is set but whose withdraw has not come stops the overflow retry")
+    @MainActor
+    func theCancelMarkAloneStopsTheOverflowRetry() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let fixture = try await Self.makeFixture(cacheDir: dir)
+        let session = fixture.model.makeSession(budget: Self.unreachableTriggerBudget)
+        let actor = try #require(session as? RoutedSessionActor)
+
+        let insideTool = AsyncSemaphore(value: 0)
+        let release = AsyncSemaphore(value: 0)
+        Self.overflowAfterRelease(
+            fixture, prompt: "mark-then-overflow", insideTool: insideTool, release: release)
+
+        let answerTask = Task {
+            try await session.respond(to: "mark-then-overflow")
+        }
+        await insideTool.wait()
+
+        // The first half of a cancel of the caller task, and only that half:
+        // the mark on the message. The second half, `cancel(message:)`, comes
+        // in a task of its own that must get the session actor, so under load
+        // it can come after the pump decides on the retry. The test never
+        // sends it, so the retry sees the mark and nothing else.
+        let running = try #require(await actor.deliveredMessages)
+        #expect(running.count == 1)
+        for message in running {
+            message.answer.requestCancel()
+        }
+        release.signal()
+
+        await #expect(throws: CancellationError.self) {
+            try await answerTask.value
+        }
+        #expect(await fixture.observer.entered == ["mark-then-overflow"])
     }
 
     // MARK: - Queue-side cancellation is unchanged
