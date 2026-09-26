@@ -409,7 +409,7 @@ struct SessionChokepointTests {
         #expect(closeEntry.segments?.isEmpty == true)
         #expect(responseEvent.text == nil)
         #expect(responseEvent.ms != nil)
-        #expect(responseEvent.isFailedTurnClose)
+        #expect(responseEvent.isFailedAnswerClose)
     }
 
     @Test("the chokepoint emits a close event even when the streamed body throws")
@@ -454,7 +454,7 @@ struct SessionChokepointTests {
         #expect(closeEntry.segments?.isEmpty == true)
         #expect(responseEvent.text == nil)
         #expect(responseEvent.ms != nil)
-        #expect(responseEvent.isFailedTurnClose)
+        #expect(responseEvent.isFailedAnswerClose)
     }
 
     // MARK: - Profile retention

@@ -6,7 +6,7 @@ import os
 private let repetitionStopLogger = makeModuleLogger(category: "RepetitionStop")
 
 /// The repetition watch of one session: the watch of the model call in
-/// flight, the stop it found, and the recoveries of the turn in flight.
+/// flight, the stop it found, and the recoveries of the answer in flight.
 struct RepetitionWatchState {
     /// The last watch id that ``RoutedSessionActor/runWatchedModelCall(composedPrompt:_:)``
     /// handed out. Monotonic.
@@ -20,8 +20,9 @@ struct RepetitionWatchState {
     var stop: RepetitionStopMarker?
 
     /// How many recoveries the running answer ran. The pump sets it to zero
-    /// for each new answer.
-    var recoveriesThisTurn = 0
+    /// for each new answer (``RoutedSessionActor/startAnswerLimits()``), and
+    /// a continuation submission of the same answer keeps it.
+    var recoveriesThisAnswer = 0
 }
 
 /// The marker a session sets when its watch stops a model call that
@@ -106,7 +107,7 @@ enum RepeatedPartRemoval {
 /// ceiling stop does (``continueAfterCeilingStop(attempt:body:)``): the
 /// stopped attempt is recorded whole, the repeated part leaves the render,
 /// and the same turn goes on with ``repetitionStopContinuationPrompt``, at
-/// most ``RepetitionDetection/recoveriesPerTurn`` times.
+/// most ``RepetitionDetection/recoveriesPerAnswer`` times in one answer.
 extension RoutedSessionActor {
     /// The prompt of the attempt that goes on after a repetition stop.
     ///
@@ -190,12 +191,12 @@ extension RoutedSessionActor {
         guard repetitionWatch.activeWatchId == watchId, let modelCall = inFlightModelCall,
             !isWorkCancelled, toolResultWatch.yield == nil
         else { return }
-        let recoveriesLeft = repetitionWatch.recoveriesThisTurn < repetitionDetection.recoveriesPerTurn
+        let recoveriesLeft = repetitionWatch.recoveriesThisAnswer < repetitionDetection.recoveriesPerAnswer
         let report = RepetitionStop(
             generatedTokens: finding.generatedTokens, countedLines: finding.countedLines,
             newLines: finding.newLines, tokensWithoutNewLine: finding.tokensWithoutNewLine,
             detection: repetitionDetection,
-            recovery: recoveriesLeft ? repetitionWatch.recoveriesThisTurn + 1 : nil)
+            recovery: recoveriesLeft ? repetitionWatch.recoveriesThisAnswer + 1 : nil)
         repetitionWatch.stop = RepetitionStopMarker(
             report: report, keptUTF8Lengths: finding.keptUTF8Lengths, liveEntries: liveEntries)
         repetitionStopLogger.notice(
@@ -250,7 +251,7 @@ extension RoutedSessionActor {
         guard let recovery = marker.report.recovery else {
             return Self.responseText(of: rebuilt, excluding: attempt.entryIdsBeforeAttempt)
         }
-        repetitionWatch.recoveriesThisTurn = recovery
+        repetitionWatch.recoveriesThisAnswer = recovery
         return try await runContinuation(after: attempt, prompt: Self.repetitionStopContinuationPrompt, body: body)
     }
 

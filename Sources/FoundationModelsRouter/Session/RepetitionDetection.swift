@@ -26,8 +26,8 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
     /// The default of ``minimumLineLength``: 20 characters.
     public static let defaultMinimumLineLength = 20
 
-    /// The default of ``recoveriesPerTurn``: 2 recoveries.
-    public static let defaultRecoveriesPerTurn = 2
+    /// The default of ``recoveriesPerAnswer``: 2 recoveries.
+    public static let defaultRecoveriesPerAnswer = 2
 
     /// Whether the session watches the calls of its turns. When `false`, no
     /// call stops for repetition.
@@ -44,9 +44,25 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
     /// `"""`, `)`, `...`) never stop a call.
     public var minimumLineLength: Int
 
-    /// How many times one turn goes on after a repetition stop. A stop after
-    /// the last recovery ends the turn.
-    public var recoveriesPerTurn: Int
+    /// How many times one answer goes on after a repetition stop. An answer
+    /// is the chain of submissions from the first delivery to the final
+    /// answer, so a continuation submission does not reset the count. A stop
+    /// after the last recovery ends the answer.
+    ///
+    /// The key of this value in a stored `session.json` is
+    /// `recoveriesPerTurn`, the name of the property before the rename, so
+    /// an old recording loads (``CodingKeys``).
+    public var recoveriesPerAnswer: Int
+
+    /// The keys of the stored form. Each key is the name of its property,
+    /// except ``recoveriesPerAnswer``: its key stays `recoveriesPerTurn`, and
+    /// the schema version does not change (`generation-queue.md`, section 5.6).
+    private enum CodingKeys: String, CodingKey {
+        case isEnabled
+        case windowTokens
+        case minimumLineLength
+        case recoveriesPerAnswer = "recoveriesPerTurn"
+    }
 
     /// Creates the settings. Each parameter defaults to its named default.
     ///
@@ -55,24 +71,24 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
     ///   - windowTokens: The window, in generated tokens, that must hold at
     ///     least one new line.
     ///   - minimumLineLength: The minimum length of a line that counts.
-    ///   - recoveriesPerTurn: How many times one turn goes on after a stop.
+    ///   - recoveriesPerAnswer: How many times one answer goes on after a stop.
     public init(
         isEnabled: Bool = defaultIsEnabled,
         windowTokens: Int = defaultWindowTokens,
         minimumLineLength: Int = defaultMinimumLineLength,
-        recoveriesPerTurn: Int = defaultRecoveriesPerTurn
+        recoveriesPerAnswer: Int = defaultRecoveriesPerAnswer
     ) {
         self.isEnabled = isEnabled
         self.windowTokens = windowTokens
         self.minimumLineLength = minimumLineLength
-        self.recoveriesPerTurn = recoveriesPerTurn
+        self.recoveriesPerAnswer = recoveriesPerAnswer
     }
 
     /// Each value in force, by name, for a log line.
     var loggedValues: String {
         """
         repetitionDetection: isEnabled = \(isEnabled), windowTokens = \(windowTokens), \
-        minimumLineLength = \(minimumLineLength), recoveriesPerTurn = \(recoveriesPerTurn)
+        minimumLineLength = \(minimumLineLength), recoveriesPerAnswer = \(recoveriesPerAnswer)
         """
     }
 }
@@ -104,7 +120,7 @@ public struct RepetitionStop: Sendable, Equatable, CustomStringConvertible {
     public let detection: RepetitionDetection
 
     /// The number of the recovery attempt that follows the stop, from 1, or
-    /// `nil` when the turn has no recovery left and ends.
+    /// `nil` when the answer has no recovery left and ends.
     public let recovery: Int?
 
     /// Creates a report.
@@ -147,8 +163,8 @@ public struct RepetitionStop: Sendable, Equatable, CustomStringConvertible {
     /// line. It names each value of ``detection``.
     public var description: String {
         let share = String(format: Self.shareFormat, newLineShare)
-        let next = recovery.map { "recovery \($0) of \(detection.recoveriesPerTurn) follows" }
-            ?? "no recovery is left, so the turn ends"
+        let next = recovery.map { "recovery \($0) of \(detection.recoveriesPerAnswer) follows" }
+            ?? "no recovery is left, so the answer ends"
         return """
             the call stopped because it repeats itself: it generated \(generatedTokens) tokens, \
             \(newLines) of \(countedLines) counted lines were new (share \(share)), and no new line \

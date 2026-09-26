@@ -153,10 +153,7 @@ extension RoutedSessionActor: SessionMailObserver {
         }
         let options = messages.first?.options ?? .mailDelivery
         pumpWork?.kind = .answer(options: options, messages: messages)
-        // The limits of an answer start fresh for each answer, and a
-        // continuation of the same answer keeps them.
-        compactionYieldsStopped = false
-        repetitionWatch.recoveriesThisTurn = 0
+        startAnswerLimits()
         let result: Result<String, any Error>
         do {
             result = .success(
@@ -258,6 +255,30 @@ extension RoutedSessionActor: SessionMailObserver {
     private func endPumpWork() {
         pumpWork = nil
         cancelRequestedWorkId = nil
+    }
+
+    /// Gives the answer that starts now fresh limits (`generation-queue.md`,
+    /// section 5.5). An answer is the chain of submissions from the first
+    /// delivery to the final answer, so its limits are for the whole chain:
+    ///
+    /// - ``compactionYieldsStopped``: a compaction inside the answer that
+    ///   applied no summary stops the next ones of that answer only;
+    /// - ``RepetitionWatchState/recoveriesThisAnswer``: the answer goes on
+    ///   after at most ``RepetitionDetection/recoveriesPerAnswer`` repetition
+    ///   stops.
+    ///
+    /// The third limit, the one overflow retry, is no stored state: the first
+    /// submission of each answer gets the permission
+    /// (``runAnswerChain(grammar:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:_:)``),
+    /// each continuation carries the permission of the submission before it
+    /// (``StoppedAttempt/allowOverflowRetry``), and the retry itself gives none.
+    ///
+    /// Only the pump calls this, one time before the first submission of an
+    /// answer. A continuation submission never calls it, so it keeps the
+    /// limits of its answer.
+    private func startAnswerLimits() {
+        compactionYieldsStopped = false
+        repetitionWatch.recoveriesThisAnswer = 0
     }
 
     // MARK: - Caller compactions

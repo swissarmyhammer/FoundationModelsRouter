@@ -89,6 +89,14 @@ extension Sequence<SessionEvent> {
             return nil
         }
     }
+
+    /// The repetition stops among these events, in order.
+    var repetitionStops: [RepetitionStop] {
+        compactMap { event in
+            if case .repetitionStopped(let stop) = event { return stop }
+            return nil
+        }
+    }
 }
 
 extension Transcript {

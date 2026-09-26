@@ -137,11 +137,11 @@ extension TranscriptEvent {
     ///
     /// Only a `.response` event with an entry carries a stamp that is a real
     /// measurement. An event with no entry (a v1 line) and the close of a
-    /// failed turn (``isFailedTurnClose``) give `nil`. The stamp is the sum of
+    /// failed turn (``isFailedAnswerClose``) give `nil`. The stamp is the sum of
     /// the generation calls of the attempt: the cost of the attempt, not the
     /// size of the render.
     var turnUsageStamp: (input: Int, output: Int)? {
-        guard kind == .response, entry != nil, !isFailedTurnClose, let tokensIn, let tokensOut else {
+        guard kind == .response, entry != nil, !isFailedAnswerClose, let tokensIn, let tokensOut else {
             return nil
         }
         return (tokensIn, tokensOut)

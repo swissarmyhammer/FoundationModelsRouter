@@ -146,7 +146,7 @@ struct RepeatingReasoningModel: LanguageModel {
         ///   - script: The lines and the hold.
         ///   - channel: The generation channel this call emits into.
         /// - Throws: `CancellationError` when the session stops the call.
-        private static func writeReasoning(
+        static func writeReasoning(
             _ script: RepeatingReasoningScript, into channel: LanguageModelExecutorGenerationChannel
         ) async throws {
             let entryID = "reasoning-\(UUID().uuidString)"

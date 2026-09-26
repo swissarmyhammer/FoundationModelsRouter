@@ -234,6 +234,10 @@ struct AutoCompactionTests {
         let responseText: String
         private(set) var entries: [Transcript.Entry]
         private var overflowsRemaining: Int
+        /// The numbers of the calls (from 1, counted across every clone in
+        /// ``callLog``) that throw the overflow, whatever ``overflowsRemaining``
+        /// holds. A test uses it to make a later answer overflow again.
+        private let overflowingCalls: Set<Int>
         let replaceSpy: ReplaceSpy
         /// Shared across every clone this backend produces (``makeFork()``,
         /// ``replacingTranscript(_:)``) — unlike a plain instance counter,
@@ -247,12 +251,14 @@ struct AutoCompactionTests {
             responseText: String,
             entries: [Transcript.Entry] = [],
             overflowsRemaining: Int,
+            overflowingCalls: Set<Int> = [],
             replaceSpy: ReplaceSpy = ReplaceSpy(),
             callLog: CallLog = CallLog()
         ) {
             self.responseText = responseText
             self.entries = entries
             self.overflowsRemaining = overflowsRemaining
+            self.overflowingCalls = overflowingCalls
             self.replaceSpy = replaceSpy
             self.callLog = callLog
         }
@@ -284,17 +290,20 @@ struct AutoCompactionTests {
             }
         }
 
-        /// Counts the call, then throws the overflow while one remains, or appends
-        /// the prompt and the response and answers.
+        /// Counts the call, then throws the overflow when the call is scheduled or
+        /// while one remains, or appends the prompt and the response and answers.
         ///
         /// - Parameter prompt: The prompt of the call.
         /// - Returns: ``responseText``.
-        /// - Throws: `LanguageModelError.contextSizeExceeded` while
-        ///   ``overflowsRemaining`` is positive.
+        /// - Throws: `LanguageModelError.contextSizeExceeded` for a call in
+        ///   ``overflowingCalls``, and while ``overflowsRemaining`` is positive.
         private func answer(_ prompt: String) throws -> String {
             callLog.increment()
-            if overflowsRemaining > 0 {
-                overflowsRemaining -= 1
+            let isScheduled = overflowingCalls.contains(callLog.count)
+            if isScheduled || overflowsRemaining > 0 {
+                if !isScheduled {
+                    overflowsRemaining -= 1
+                }
                 throw LanguageModelError.contextSizeExceeded(
                     .init(contextSize: 100, tokenCount: 150, debugDescription: "stub context overflow"))
             }
@@ -310,7 +319,8 @@ struct AutoCompactionTests {
 
         func makeFork() -> any LanguageModelSessionBackend {
             ScriptedOverflowBackend(
-                responseText: responseText, entries: entries, overflowsRemaining: overflowsRemaining, replaceSpy: replaceSpy,
+                responseText: responseText, entries: entries, overflowsRemaining: overflowsRemaining,
+                overflowingCalls: overflowingCalls, replaceSpy: replaceSpy,
                 callLog: callLog)
         }
 
@@ -322,7 +332,7 @@ struct AutoCompactionTests {
             replaceSpy.recordReplace()
             return ScriptedOverflowBackend(
                 responseText: responseText, entries: Array(transcript), overflowsRemaining: overflowsRemaining,
-                replaceSpy: replaceSpy, callLog: callLog)
+                overflowingCalls: overflowingCalls, replaceSpy: replaceSpy, callLog: callLog)
         }
     }
 
@@ -355,27 +365,34 @@ struct AutoCompactionTests {
         let responseText: String
         let seedEntries: [Transcript.Entry]
         let overflowsRemaining: Int
+        /// The call numbers that overflow. See ``ScriptedOverflowBackend``.
+        let overflowingCalls: Set<Int>
         let replaceSpy = ReplaceSpy()
         let callLog = CallLog()
         private(set) var lastBackend: ScriptedOverflowBackend?
 
-        init(responseText: String, seedEntries: [Transcript.Entry], overflowsRemaining: Int) {
+        init(
+            responseText: String, seedEntries: [Transcript.Entry], overflowsRemaining: Int,
+            overflowingCalls: Set<Int> = []
+        ) {
             self.responseText = responseText
             self.seedEntries = seedEntries
             self.overflowsRemaining = overflowsRemaining
+            self.overflowingCalls = overflowingCalls
         }
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
             let backend = ScriptedOverflowBackend(
                 responseText: responseText, entries: seedEntries, overflowsRemaining: overflowsRemaining,
-                replaceSpy: replaceSpy, callLog: callLog)
+                overflowingCalls: overflowingCalls, replaceSpy: replaceSpy, callLog: callLog)
             lastBackend = backend
             return backend
         }
 
         func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
             ScriptedOverflowBackend(
-                responseText: responseText, entries: Array(transcript), overflowsRemaining: 0, replaceSpy: replaceSpy,
+                responseText: responseText, entries: Array(transcript), overflowsRemaining: 0,
+                overflowingCalls: overflowingCalls, replaceSpy: replaceSpy,
                 callLog: callLog)
         }
     }
@@ -432,6 +449,24 @@ struct AutoCompactionTests {
         #expect(events.answers.first?.compactions.count == 1)
     }
 
+    @Test("each answer gets its own overflow retry: a second answer that overflows compacts and retries again (task ^5d0qx1b)")
+    @MainActor
+    func eachAnswerGetsItsOwnOverflowRetry() async throws {
+        // Call 1 (the first answer) and call 3 (the first submission of the
+        // second answer) overflow. The retry permission is for each answer,
+        // so each answer retries one time.
+        let (session, standardContainer, _) = try await Self.makeOverflowSession(
+            overflowsRemaining: 0, overflowingCalls: [1, 3])
+
+        let first = try await session.respond(to: "keep going")
+        let second = try await session.respond(to: "keep going again")
+
+        #expect(first == "recovered")
+        #expect(second == "recovered")
+        // Two attempts for each answer: the overflow and its one retry.
+        #expect(standardContainer.callLog.count == 4)
+    }
+
     /// Builds a session whose first model call overflows its context, over a
     /// seeded transcript that the retry's compaction really summarizes.
     ///
@@ -443,16 +478,22 @@ struct AutoCompactionTests {
     /// summarizes rather than no-op'ing on an already-under-target
     /// transcript. The flash slot writes the summary.
     ///
+    /// - Parameters:
+    ///   - overflowsRemaining: How many first calls overflow.
+    ///   - overflowingCalls: The numbers of further calls that overflow.
     /// - Returns: The session, the container of its backend, and the profile
     ///   that keeps its models resident.
     /// - Throws: Whatever profile resolution throws.
-    private static func makeOverflowSession() async throws -> (
+    private static func makeOverflowSession(
+        overflowsRemaining: Int = 1, overflowingCalls: Set<Int> = []
+    ) async throws -> (
         session: RoutedSession, standard: OverflowLLMContainer, profile: LanguageModelProfile
     ) {
         let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
         let seedEntries = ScriptedOverflowBackend.seedEntries(turnCount: 6, responseText: Self.cannedText)
         let standardContainer = OverflowLLMContainer(
-            responseText: "recovered", seedEntries: seedEntries, overflowsRemaining: 1)
+            responseText: "recovered", seedEntries: seedEntries, overflowsRemaining: overflowsRemaining,
+            overflowingCalls: overflowingCalls)
         let flashContainer = ConfiguredLLMContainer(responseText: "FLASH-SUMMARY")
         let loader = PerSlotModelLoader(standard: standardContainer, flash: flashContainer, dimension: RouterTestFixtures.stubDimension)
         let router = RouterTestFixtures.makeRouter(cacheDir: dir, recorder: InMemoryRecorder(), loader: loader)

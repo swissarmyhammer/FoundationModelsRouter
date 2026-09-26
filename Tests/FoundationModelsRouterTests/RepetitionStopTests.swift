@@ -24,7 +24,7 @@ struct RepetitionStopTests {
     private static let window = 200
 
     /// The detection of the tests that stop: ``window``, and the default
-    /// minimum line length and recoveries per turn.
+    /// minimum line length and recoveries per answer.
     private static let detection = RepetitionDetection(windowTokens: window)
 
     /// The lines a call writes one time, before it repeats.
@@ -129,7 +129,7 @@ struct RepetitionStopTests {
             "isEnabled = true",
             "windowTokens = \(Self.window)",
             "minimumLineLength = \(RepetitionDetection.defaultMinimumLineLength)",
-            "recoveriesPerTurn = \(RepetitionDetection.defaultRecoveriesPerTurn)",
+            "recoveriesPerAnswer = \(RepetitionDetection.defaultRecoveriesPerAnswer)",
         ]
         for value in namedValues {
             #expect(stop.description.contains(value), "the log line does not name \(value)")
@@ -172,13 +172,13 @@ struct RepetitionStopTests {
         #expect(recorded.count > Self.keptReasoning.count + Self.window)
     }
 
-    @Test("recoveries stop at the configured number per turn")
+    @Test("recoveries stop at the configured number per answer")
     func recoveriesStopAtTheConfiguredCount() async throws {
         let (fixture, events) = try await Self.runTurn(
             script: Self.repeatingScript(hold: Self.stoppedHold), repeatsAfterStop: true, detection: Self.detection)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        let recoveries = RepetitionDetection.defaultRecoveriesPerTurn
+        let recoveries = RepetitionDetection.defaultRecoveriesPerAnswer
         let stops = Self.stops(in: events)
         #expect(stops.count == recoveries + 1)
         #expect(stops.map(\.recovery) == Array(1...recoveries).map(Optional.some) + [nil])
@@ -216,13 +216,13 @@ struct RepetitionDetectionDefaultTests {
     func defaultsAreTheConfirmedValues() {
         #expect(RepetitionDetection.defaultWindowTokens == 2_048)
         #expect(RepetitionDetection.defaultMinimumLineLength == 20)
-        #expect(RepetitionDetection.defaultRecoveriesPerTurn == 2)
+        #expect(RepetitionDetection.defaultRecoveriesPerAnswer == 2)
         #expect(RepetitionDetection.defaultIsEnabled)
 
         let detection = RepetitionDetection()
         #expect(detection.windowTokens == RepetitionDetection.defaultWindowTokens)
         #expect(detection.minimumLineLength == RepetitionDetection.defaultMinimumLineLength)
-        #expect(detection.recoveriesPerTurn == RepetitionDetection.defaultRecoveriesPerTurn)
+        #expect(detection.recoveriesPerAnswer == RepetitionDetection.defaultRecoveriesPerAnswer)
         #expect(detection.isEnabled == RepetitionDetection.defaultIsEnabled)
     }
 
@@ -233,8 +233,8 @@ struct RepetitionDetectionDefaultTests {
 
     @Test("a value the host passes replaces its default, and the others keep theirs")
     func passedValueReplacesOnlyItsDefault() {
-        let detection = RepetitionDetection(recoveriesPerTurn: 0)
-        #expect(detection.recoveriesPerTurn == 0)
+        let detection = RepetitionDetection(recoveriesPerAnswer: 0)
+        #expect(detection.recoveriesPerAnswer == 0)
         #expect(detection.windowTokens == RepetitionDetection.defaultWindowTokens)
         #expect(detection.minimumLineLength == RepetitionDetection.defaultMinimumLineLength)
         #expect(detection.isEnabled)
@@ -242,7 +242,7 @@ struct RepetitionDetectionDefaultTests {
 
     @Test("the sidecar configuration keeps the detection the session was made with")
     func persistableKeepsTheDetection() throws {
-        let detection = RepetitionDetection(isEnabled: false, windowTokens: 512, minimumLineLength: 8, recoveriesPerTurn: 1)
+        let detection = RepetitionDetection(isEnabled: false, windowTokens: 512, minimumLineLength: 8, recoveriesPerAnswer: 1)
         let persistable = SessionConfiguration(repetitionDetection: detection).persistable
         let decoded = try JSONDecoder().decode(
             SessionConfiguration.Persistable.self, from: JSONEncoder().encode(persistable))

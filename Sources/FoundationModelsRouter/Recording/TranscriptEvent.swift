@@ -117,16 +117,20 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     /// `session` event is recorded at the first turn, not at session creation.
     public let agentSpawn: SessionSidecar.AgentSpawn?
 
-    /// `true` when this event is the close the router appends to a turn that
-    /// ended with no `.response` entry from the SDK (see
+    /// `true` when this event is the close the router appends to a submission
+    /// of an answer that ended with no `.response` entry from the SDK (see
     /// `RoutedSessionActor.recordFailedTurn`). The close is a `.response`
     /// with no body text and a duration stamp whose entry holds no segment:
-    /// the turn answered with nothing. A recording made before the close
-    /// carried an entry has `entry == nil` on the same event. The SDK never
-    /// appends a `.response` entry with no segment, so the shape names the
-    /// router's close and nothing else. A reader that rebuilds the SDK's
+    /// the submission answered with nothing. A recording made before the
+    /// close carried an entry has `entry == nil` on the same event. The SDK
+    /// never appends a `.response` entry with no segment, so the shape names
+    /// the router's close and nothing else. A reader that rebuilds the SDK's
     /// transcript, or that reads a usage stamp, skips this event.
-    public var isFailedTurnClose: Bool {
+    ///
+    /// The name changed from `isFailedTurnClose` (task ^5d0qx1b). The bytes
+    /// on disk did not change: this value is read from the shape of the
+    /// event, and no key holds it.
+    public var isFailedAnswerClose: Bool {
         kind == .response && text == nil && ms != nil && (entry?.segments?.isEmpty ?? true)
     }
 
@@ -140,7 +144,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     /// entry-kind event with no `entry` (a v1 line) still reads `true`, so that
     /// reader refuses it instead of passing over it.
     public var mirrorsTranscriptEntry: Bool {
-        kind.isEntryKind && !isFailedTurnClose
+        kind.isEntryKind && !isFailedAnswerClose
     }
 
     /// Creates a fully-stamped event. Callers normally hand a

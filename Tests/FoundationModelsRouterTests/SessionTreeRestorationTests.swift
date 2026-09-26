@@ -943,7 +943,7 @@ struct SessionTreeRestorationTests {
         let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
-        let detection = RepetitionDetection(isEnabled: false, windowTokens: 512, minimumLineLength: 8, recoveriesPerTurn: 1)
+        let detection = RepetitionDetection(isEnabled: false, windowTokens: 512, minimumLineLength: 8, recoveriesPerAnswer: 1)
         let root = profile1.standard.makeSession(configuration: SessionConfiguration(repetitionDetection: detection))
         _ = try await root.respond(to: "hello")
         let fork = try #require(try await root.fork(workingDirectory: nil) as? RoutedSessionActor)

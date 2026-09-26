@@ -113,7 +113,7 @@ struct CeilingStopCompactionModel: LanguageModel {
         }
 
         /// Sends one text response and its usage.
-        private static func send(
+        static func send(
             text: String, entryID: String, usage: MeteredGenerationCall,
             into channel: LanguageModelExecutorGenerationChannel
         ) async {

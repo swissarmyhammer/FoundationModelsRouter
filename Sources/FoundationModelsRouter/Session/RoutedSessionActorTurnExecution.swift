@@ -485,7 +485,7 @@ extension RoutedSessionActor {
     /// diff did not already include one. The close carries an entry that
     /// mirrors a `Transcript.Response` with no segment — the turn answered
     /// with nothing — so the record holds an entry for every turn it closes
-    /// (see ``TranscriptEvent/isFailedTurnClose``).
+    /// (see ``TranscriptEvent/isFailedAnswerClose``).
     ///
     /// - Parameters:
     ///   - grammar: The grammar in force for this turn.

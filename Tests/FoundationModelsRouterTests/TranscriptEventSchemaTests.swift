@@ -135,19 +135,19 @@ struct TranscriptEventSchemaTests {
     @Test("a .response close whose entry holds no segment is the failed-turn close")
     func failedTurnCloseWithAnEmptyEntryIsRecognized() {
         let close = Self.responseClose(entry: TranscriptEntryPayload(entryId: "close-1", segments: [], assetIds: []))
-        #expect(close.isFailedTurnClose)
+        #expect(close.isFailedAnswerClose)
     }
 
     @Test("a .response close with no entry, from a recording made before the close carried one, is the failed-turn close")
     func failedTurnCloseWithNoEntryIsRecognized() {
-        #expect(Self.responseClose(entry: nil).isFailedTurnClose)
+        #expect(Self.responseClose(entry: nil).isFailedAnswerClose)
     }
 
     @Test("a .response whose entry holds a segment is the SDK's own response, never the failed-turn close")
     func responseWithASegmentIsNotTheFailedTurnClose() {
         let response = Self.responseClose(
             entry: TranscriptEntryPayload(entryId: "resp-1", segments: [.text(id: "s1", content: "")], assetIds: []))
-        #expect(!response.isFailedTurnClose)
+        #expect(!response.isFailedAnswerClose)
     }
 
     @Test("a .response with no duration stamp is not the failed-turn close")
@@ -160,7 +160,7 @@ struct TranscriptEventSchemaTests {
             kind: .response,
             entry: TranscriptEntryPayload(entryId: "close-1", segments: [], assetIds: [])
         )
-        #expect(!response.isFailedTurnClose)
+        #expect(!response.isFailedAnswerClose)
     }
 
     // MARK: - Which events mirror a Transcript.Entry
