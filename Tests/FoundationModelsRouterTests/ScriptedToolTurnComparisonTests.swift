@@ -121,9 +121,10 @@ struct ScriptedToolTurnComparisonTests {
                 completedIds.append(id)
             case .toolStatus(let id, .failed, _, _):
                 failedIds.append(id)
-            case .turnStarted, .toolStatus, .toolInvocation, .toolCallReport, .reasoningDelta, .entryRecorded,
+            case .toolStatus, .toolInvocation, .toolCallReport, .reasoningDelta, .entryRecorded,
                 .compaction, .discoveryPrimingFailed, .generationStalled, .submissionQueued, .submissionStarted,
-                .repetitionStopped, .runSettled, .elicitationRequested, .generationCall, .turnEnded:
+                .submissionEnded, .answered, .answerFailed,
+                .repetitionStopped, .runSettled, .elicitationRequested, .generationCall:
                 break
             }
         }

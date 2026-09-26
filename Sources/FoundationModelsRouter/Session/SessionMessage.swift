@@ -101,9 +101,6 @@ struct SessionMessage: Sendable {
     /// Who reads the output of the submission.
     let reader: MessageReader
 
-    /// The surface the caller used, which the span of the submission reports.
-    let entryPoint: RouterTracing.TurnEntryPoint
-
     /// The tracing context of the caller, so the span of the submission is a
     /// child of the span of the caller. The pump task inherits no task-local
     /// of the caller.

@@ -184,12 +184,12 @@ struct PinnedChatTemplateDateIntegrationTests {
                 as? MLXFoundationModelsSessionBackend
         )
 
-        let turnStarted = ContinuousClock.now
+        let startInstant = ContinuousClock.now
         let reply = try await backend.respond(
             to: "What is the current date? Answer with the date alone.",
             maxTokens: GatedRealModelBudget.responseTokenCeiling
         )
-        turnDuration = ContinuousClock.now - turnStarted
+        turnDuration = ContinuousClock.now - startInstant
         let answer = reply.trimmingCharacters(in: .whitespacesAndNewlines)
         // swiftlint:disable:next no_direct_standard_out_logs  a red run shows on standard out what the model answered
         print("[\(Self.phaseLabel)] reply=\(answer)")

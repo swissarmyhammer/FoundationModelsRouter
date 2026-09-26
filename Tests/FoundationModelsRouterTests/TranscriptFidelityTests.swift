@@ -712,7 +712,7 @@ struct TranscriptFidelityTests {
         }
 
         #expect(
-            eventsAfterTurnFrame(wire) == [
+            eventsInsideAnswerFrame(wire) == [
                 .textDelta("ok"),
                 .toolCall(id: "call-1", name: "lookup", argumentsJSON: arguments.jsonString),
                 .toolStatus(id: "call-1", status: .running, summary: nil, output: nil),

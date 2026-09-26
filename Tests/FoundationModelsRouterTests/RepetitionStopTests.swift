@@ -80,12 +80,12 @@ struct RepetitionStopTests {
         return (fixture, events)
     }
 
-    /// The finish reason of each ended attempt among `events`, in order.
+    /// The finish reason of each ended submission among `events`, in order.
+    /// Each end also carries the same reason in its usage.
     private static func finishReasons(in events: [SessionEvent]) -> [FinishReason] {
-        events.compactMap { event in
-            guard case .turnEnded(let usage) = event else { return nil }
-            return usage.finishReason
-        }
+        let ends = events.submissionEnds
+        #expect(ends.map { $0.usage?.finishReason } == ends.map(\.finishReason))
+        return ends.map(\.finishReason)
     }
 
     /// The repetition stops among `events`, in order.
@@ -184,11 +184,13 @@ struct RepetitionStopTests {
         #expect(stops.map(\.recovery) == Array(1...recoveries).map(Optional.some) + [nil])
         #expect(Self.finishReasons(in: events) == Array(repeating: .repeatedLines, count: recoveries + 1))
         #expect(fixture.log.renders.count == recoveries + 1)
-        let turnStarts = events.filter { event in
-            guard case .turnStarted = event else { return false }
-            return true
-        }
-        #expect(turnStarts.count == 1)
+        // The first submission delivers the message. Each recovery is one
+        // continuation submission of the same chain, and the chain has one
+        // answer.
+        let causes = events.submissionStarts.map(\.cause)
+        #expect(causes == [.message] + Array(repeating: .continuation, count: recoveries))
+        _ = eventsInsideAnswerFrame(events)
+        #expect(events.answers.count == 1)
     }
 
     @Test("a detection that is not enabled does not stop a call that repeats")

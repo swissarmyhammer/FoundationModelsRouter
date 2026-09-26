@@ -29,8 +29,7 @@ struct PumpWork {
         case compaction(requestID: ULID)
     }
 
-    /// The id of the work. Ids are monotonic in their session, and the
-    /// ``TurnID`` of the work carries the same number.
+    /// The id of the work. Ids are monotonic in their session.
     let id: UInt64
 
     /// What the work is.
@@ -128,7 +127,7 @@ extension RoutedSessionActor: SessionMailObserver {
             return false
         }
         lastWorkId = workId
-        await runAnswer(of: batch, workId: workId, settledRunTokens: settledRunTokens)
+        await runAnswer(of: batch, settledRunTokens: settledRunTokens)
         return true
     }
 
@@ -137,10 +136,9 @@ extension RoutedSessionActor: SessionMailObserver {
     ///
     /// - Parameters:
     ///   - batch: What the first submission of the chain carries.
-    ///   - workId: The id of the work.
     ///   - settledRunTokens: The completion tokens whose terminal can start a
     ///     submission with no caller message.
-    private func runAnswer(of batch: SubmissionBatch, workId: UInt64, settledRunTokens: Set<String>) async {
+    private func runAnswer(of batch: SubmissionBatch, settledRunTokens: Set<String>) async {
         // No suspension point between the read of the cancel marks and the
         // work that holds the live messages: ``cancel(message:)`` relies on it.
         let messages = liveMessages(batch.messages)
@@ -162,7 +160,7 @@ extension RoutedSessionActor: SessionMailObserver {
         let result: Result<String, any Error>
         do {
             result = .success(
-                try await runFirstSubmission(carrying: messages, options: options, mail: mail, workId: workId))
+                try await runFirstSubmission(carrying: messages, options: options, mail: mail))
         } catch {
             result = .failure(error)
         }
@@ -180,11 +178,10 @@ extension RoutedSessionActor: SessionMailObserver {
     ///     token ceiling is the ceiling of each submission: every message
     ///     that the options admit named that same ceiling.
     ///   - mail: The mail events of the first submission.
-    ///   - workId: The id of the work.
     /// - Returns: The final reply of the chain.
     /// - Throws: What the chain throws.
     private func runFirstSubmission(
-        carrying messages: [SessionMessage], options: SubmissionOptions, mail: [OperationEvent], workId: UInt64
+        carrying messages: [SessionMessage], options: SubmissionOptions, mail: [OperationEvent]
     ) async throws -> String {
         let first = messages.first
         let ceiling = ResponseTokenCeiling(requested: options.requestedMaxTokens, contextTokens: contextTokens)
@@ -196,10 +193,9 @@ extension RoutedSessionActor: SessionMailObserver {
         await recordSessionMetaIfNeeded()
         await notifyTurnBoundaryTools()
         return try await ServiceContext.$current.withValue(first?.serviceContext) {
-            try await runTurn(
-                grammar: work.grammar, turnId: TurnID(workId), entryPoint: first?.entryPoint ?? .mail,
-                messageId: messages.first { $0.entryPoint == .send }?.id, pendingEvents: mail,
-                ownPrompt: ownPrompt, responseTokenCeiling: ceiling, onEvent: work.onEvent, work.body)
+            try await runAnswerChain(
+                grammar: work.grammar, pendingEvents: mail, ownPrompt: ownPrompt,
+                responseTokenCeiling: ceiling, onEvent: work.onEvent, work.body)
         }
     }
 
@@ -215,9 +211,10 @@ extension RoutedSessionActor: SessionMailObserver {
     /// submission (`generation-queue.md`, section 5.5). The messages join the
     /// answer, so their callers get its final reply.
     ///
-    /// - Returns: The mail events, and the texts of the joining messages.
-    func takeMessagesJoiningTheAnswer() async -> (events: [OperationEvent], texts: [String]) {
-        guard case .answer(let options, _) = pumpWork?.kind else { return ([], []) }
+    /// - Returns: The mail events, the texts of the joining messages, and the
+    ///   ids of the joining messages, in the same order as the texts.
+    func takeMessagesJoiningTheAnswer() async -> (events: [OperationEvent], texts: [String], ids: [MessageID]) {
+        guard case .answer(let options, _) = pumpWork?.kind else { return ([], [], []) }
         let batch = await outbox.takeJoiningBatch(options: options)
         // No suspension point between the read of the cancel marks and the
         // work that holds the joining messages: ``cancel(message:)`` relies
@@ -226,7 +223,7 @@ extension RoutedSessionActor: SessionMailObserver {
         if case .answer(let options, let messages) = pumpWork?.kind {
             pumpWork?.kind = .answer(options: options, messages: messages + joining)
         }
-        return (batch.events.map(\.event), joining.map(\.text))
+        return (batch.events.map(\.event), joining.map(\.text), joining.map(\.id))
     }
 
     /// The messages of `messages` whose callers are not cancelled. Each

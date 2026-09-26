@@ -58,11 +58,24 @@ The session pushes settlement to the model — the model never polls:
 - ``streamResponse(to:maxTokens:)``
 - ``streamEvents(to:)``
 - ``streamEvents(to:maxTokens:)``
+- ``respond(to:maxTokens:observing:)``
 - ``transcript``
 
 ### Session-scoped events
 
+Each submission sends ``SessionEvent/submissionQueued(_:)`` (only when it must
+wait for the worker of its model), ``SessionEvent/submissionStarted(_:)`` and
+``SessionEvent/submissionEnded(_:)``. Each chain of submissions ends with
+``SessionEvent/answered(_:)``, or with ``SessionEvent/answerFailed(_:)`` when
+it gives no answer.
+
 - ``streamSessionEvents()``
+- ``SessionEvent``
+- ``SubmissionStart``
+- ``SubmissionEnd``
+- ``SubmissionID``
+- ``SessionAnswer``
+- ``AnswerFailure``
 
 ### Messages
 

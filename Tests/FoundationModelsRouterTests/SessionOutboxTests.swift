@@ -190,7 +190,7 @@ struct SessionOutboxTests {
     ) -> SessionMessage {
         SessionMessage(
             id: MessageID(), prompt: .plainText(text), requestedMaxTokens: requestedMaxTokens, reader: reader,
-            entryPoint: .respond, serviceContext: nil, answer: PumpAnswer())
+            serviceContext: nil, answer: PumpAnswer())
     }
 
     @Test("takeSubmissionBatch commits and empties every pending event when a settled run's terminal can start a submission")

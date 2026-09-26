@@ -255,7 +255,7 @@ struct TurnFinishReasonTests {
             ending: .truncatedInsideReasoning, tempDirPrefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        let outcome: TurnOutcome = try await fixture.session.respond(to: "fix the bug", maxTokens: nil)
+        let outcome: SessionAnswer = try await fixture.session.respond(to: "fix the bug", maxTokens: nil)
 
         let usage = try #require(outcome.usage)
         #expect(usage.finishReason == .endedInsideReasoning)
@@ -267,7 +267,8 @@ struct TurnFinishReasonTests {
             ending: .truncatedInsideReasoningAtCeiling, tempDirPrefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        let outcome: TurnOutcome = try await fixture.session.respond(to: "fix the bug", maxTokens: Self.requestedCeiling)
+        let outcome: SessionAnswer = try await fixture.session.respond(
+            to: "fix the bug", maxTokens: Self.requestedCeiling)
 
         let usage = try #require(outcome.usage)
         #expect(usage.finishReason == .maxTokens)
@@ -279,7 +280,7 @@ struct TurnFinishReasonTests {
             ending: .finished, tempDirPrefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        let outcome: TurnOutcome = try await fixture.session.respond(to: "fix the bug", maxTokens: nil)
+        let outcome: SessionAnswer = try await fixture.session.respond(to: "fix the bug", maxTokens: nil)
 
         let usage = try #require(outcome.usage)
         #expect(usage.finishReason == .completed)
@@ -292,8 +293,8 @@ struct TurnFinishReasonTests {
             ending: .truncatedOnFirstCallOnly, tempDirPrefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        let first: TurnOutcome = try await fixture.session.respond(to: "first", maxTokens: nil)
-        let second: TurnOutcome = try await fixture.session.respond(to: "second", maxTokens: nil)
+        let first: SessionAnswer = try await fixture.session.respond(to: "first", maxTokens: nil)
+        let second: SessionAnswer = try await fixture.session.respond(to: "second", maxTokens: nil)
 
         #expect(try #require(first.usage).finishReason == .endedInsideReasoning)
         #expect(try #require(second.usage).finishReason == .completed)
@@ -307,7 +308,7 @@ struct TurnFinishReasonTests {
             ending: .truncatedInAnswerText, tempDirPrefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        let outcome: TurnOutcome = try await fixture.session.respond(to: "fix the bug", maxTokens: maxTokens)
+        let outcome: SessionAnswer = try await fixture.session.respond(to: "fix the bug", maxTokens: maxTokens)
 
         let usage = try #require(outcome.usage)
         #expect(usage.finishReason == .maxTokens)
@@ -329,16 +330,16 @@ struct TurnFinishReasonTests {
 
     /// Drives one turn through ``RoutedSession/streamEvents(to:maxTokens:)``
     /// under ``requestedCeiling``, and gives the usage of its last
-    /// ``SessionEvent/turnEnded(_:)``.
+    /// ``SessionEvent/submissionEnded(_:)``.
     ///
     /// - Parameter session: The session to drive the turn on.
-    /// - Returns: The usage the turn closed with, or `nil` when no
-    ///   `turnEnded` event came.
+    /// - Returns: The usage of the last submission, or `nil` when no
+    ///   `submissionEnded` event came or the last one had no usage.
     /// - Throws: Whatever the stream throws.
     private static func closingUsage(ofStreamedTurnOn session: RoutedSession) async throws -> TokenUsage? {
         var closingUsage: TokenUsage?
         for try await event in await session.streamEvents(to: "fix the bug", maxTokens: requestedCeiling) {
-            if case .turnEnded(let usage) = event { closingUsage = usage }
+            if case .submissionEnded(let end) = event { closingUsage = end.usage }
         }
         return closingUsage
     }
@@ -365,7 +366,7 @@ struct TurnFinishReasonTests {
         let fixture = try await Self.toolLoopFixture(ending: .toolCallThenTruncatedInAnswerText, tool: tool)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        let outcome: TurnOutcome = try await fixture.session.respond(to: "fix the bug", maxTokens: maxTokens)
+        let outcome: SessionAnswer = try await fixture.session.respond(to: "fix the bug", maxTokens: maxTokens)
 
         #expect(tool.calledSteps == [CeilingProbeLanguageModel.Executor.toolStep])
         #expect(outcome.reply == CeilingProbeLanguageModel.Executor.truncatedAnswerText)
@@ -378,7 +379,8 @@ struct TurnFinishReasonTests {
         let fixture = try await Self.toolLoopFixture(ending: .toolCallThenFinished, tool: tool)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        let outcome: TurnOutcome = try await fixture.session.respond(to: "fix the bug", maxTokens: Self.requestedCeiling)
+        let outcome: SessionAnswer = try await fixture.session.respond(
+            to: "fix the bug", maxTokens: Self.requestedCeiling)
 
         #expect(tool.calledSteps == [CeilingProbeLanguageModel.Executor.toolStep])
         #expect(outcome.reply == CeilingProbeLanguageModel.Executor.answerText)

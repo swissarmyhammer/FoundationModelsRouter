@@ -261,7 +261,7 @@ struct SessionEventStreamTests {
 
         let events = try await collectEvents(session, prompt: "hi")
         #expect(
-            eventsAfterTurnFrame(events) == [
+            eventsInsideAnswerFrame(events) == [
                 .textDelta("hello "), .textDelta("world"),
                 .entryRecorded(id: "resp-1", kind: .response),
             ]
@@ -302,7 +302,7 @@ struct SessionEventStreamTests {
 
         let events = try await collectEvents(session, prompt: "weather?")
         #expect(
-            eventsAfterTurnFrame(events) == [
+            eventsInsideAnswerFrame(events) == [
                 .textDelta("it's sunny"),
                 .toolCall(id: "call-1", name: "search", argumentsJSON: arguments.jsonString),
                 .toolStatus(id: "call-1", status: .running, summary: nil, output: nil),
@@ -413,7 +413,7 @@ struct SessionEventStreamTests {
 
         let events = try await collectEvents(session, prompt: "compare weather")
         #expect(
-            eventsAfterTurnFrame(events) == [
+            eventsInsideAnswerFrame(events) == [
                 .textDelta("ok"),
                 .toolCall(id: "call-a", name: "search", argumentsJSON: argumentsA.jsonString),
                 .toolStatus(id: "call-a", status: .running, summary: nil, output: nil),
@@ -476,7 +476,7 @@ struct SessionEventStreamTests {
 
         let events = try await collectEvents(session, prompt: "compare weather")
         #expect(
-            eventsAfterTurnFrame(events) == [
+            eventsInsideAnswerFrame(events) == [
                 .textDelta("ok"),
                 .toolCall(id: "call-a", name: "search", argumentsJSON: argumentsA.jsonString),
                 .toolStatus(id: "call-a", status: .running, summary: nil, output: nil),
@@ -546,31 +546,46 @@ struct SessionEventStreamTests {
         #expect(events.contains(.entryRecorded(id: "reasoning-1", kind: .reasoning)))
     }
 
-    // MARK: - turnEnded: emitted iff the backend reports usage
+    // MARK: - submissionEnded: carries the usage when the backend reports it
 
-    @Test("a backend reporting usage closes the stream with turnEnded, last")
+    /// The input tokens the scripted backend reports for each call.
+    private static let usageTokensIn = 10
+
+    /// The output tokens the scripted backend reports for each call.
+    private static let usageTokensOut = 5
+
+    @Test("a backend reporting usage ends the submission with that usage, and the answer carries it, last")
     @MainActor
-    func turnEndedEmittedWhenUsageAvailable() async throws {
+    func submissionEndCarriesUsageWhenUsageAvailable() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let (session, container, _) = try await Self.makeSession(cacheDir: dir)
-        container.backend.usageIncrement = (input: 10, output: 5)
+        container.backend.usageIncrement = (input: Self.usageTokensIn, output: Self.usageTokensOut)
         container.backend.entries = [
             .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "ok"))]))
         ]
 
         let events = try await collectEvents(session, prompt: "hi")
-        // contextFill is this turn's usage over the resolved window. The
-        // profile names no context, so the window is the stub model's own
-        // window, which `configJSON` states as `ScriptedSessionContext.tokens`.
-        let expectedFill = 15.0 / Double(ScriptedSessionContext.tokens)
-        #expect(events.last == .turnEnded(TokenUsage(tokensIn: 10, tokensOut: 5, contextFill: expectedFill)))
+        // contextFill is the usage of this submission over the resolved
+        // window. The profile names no context, so the window is the own
+        // window of the stub model, which `configJSON` states as
+        // `ScriptedSessionContext.tokens`.
+        let expectedFill = Double(Self.usageTokensIn + Self.usageTokensOut) / Double(ScriptedSessionContext.tokens)
+        let expectedUsage = TokenUsage(
+            tokensIn: Self.usageTokensIn, tokensOut: Self.usageTokensOut, contextFill: expectedFill)
+        let start = try #require(events.submissionStarts.first)
+        #expect(
+            events.submissionEnds
+                == [SubmissionEnd(submissionId: start.submissionId, usage: expectedUsage, finishReason: .completed)])
+        let answer = try #require(events.answers.first)
+        #expect(events.last == .answered(answer))
+        #expect(answer.usage == expectedUsage)
     }
 
-    @Test("a backend reporting no usage never emits turnEnded")
+    @Test("a backend reporting no usage ends the submission with no usage, and the answer has no usage")
     @MainActor
-    func noTurnEndedWhenUsageUnavailable() async throws {
+    func submissionEndHasNoUsageWhenUsageUnavailable() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -580,7 +595,11 @@ struct SessionEventStreamTests {
         ]
 
         let events = try await collectEvents(session, prompt: "hi")
-        #expect(!events.contains { if case .turnEnded = $0 { return true } else { return false } })
+        let start = try #require(events.submissionStarts.first)
+        #expect(
+            events.submissionEnds == [SubmissionEnd(submissionId: start.submissionId, usage: nil, finishReason: .completed)])
+        let answer = try #require(events.answers.first)
+        #expect(answer.usage == nil)
     }
 
     // MARK: - Throwing turn: events recorded before the throw still surface
@@ -621,7 +640,7 @@ struct SessionEventStreamTests {
 
         #expect(thrown as? ScriptedTranscriptBackend.StubError == .boom)
         #expect(
-            eventsAfterTurnFrame(collected) == [
+            eventsInsideAnswerFrame(collected) == [
                 .toolCall(id: "call-1", name: "search", argumentsJSON: "{}"),
                 .toolStatus(id: "call-1", status: .running, summary: nil, output: nil),
                 .entryRecorded(id: "calls-1", kind: .toolCalls),

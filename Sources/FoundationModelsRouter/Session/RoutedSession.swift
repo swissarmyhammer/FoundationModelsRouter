@@ -140,17 +140,18 @@ public protocol RoutedSession: Actor {
     /// pass of the running submission counts: a wait for the worker of the
     /// ``GenerationQueue`` of the model and a tool body give no report. A
     /// submission that waits for the worker reports
-    /// ``SessionEvent/submissionQueued``, and each submission reports
-    /// ``SessionEvent/submissionStarted`` when the worker starts it, on
+    /// ``SessionEvent/submissionQueued(_:)``, and each submission reports
+    /// ``SessionEvent/submissionStarted(_:)`` when its SDK call starts, on
     /// ``streamSessionEvents()``.
     ///
-    /// Each answer the pump runs opens one OpenTelemetry span named
-    /// ``RouterTracing/SpanName/turn``, of kind `client`, through the tracer
-    /// ``RouterTracing/tracer(explicit:)`` resolves from the handle this
-    /// session came off. Unbootstrapped, that resolves to a no-op tracer, so an
-    /// application that does not trace pays nothing. `withSpan` records a
-    /// thrown error on the span and raises it again, and a cancelled turn
-    /// records `CancellationError`.
+    /// Each submission opens one OpenTelemetry span named
+    /// ``RouterTracing/SpanName/submission``, of kind `client`, through the
+    /// tracer ``RouterTracing/tracer(explicit:)`` resolves from the handle
+    /// this session came off. A chain with a continuation opens one span for
+    /// each submission. Unbootstrapped, the tracer is a no-op tracer, so an
+    /// application that does not trace pays nothing. A failed submission
+    /// records its error on its span, and a cancelled submission records
+    /// `CancellationError`.
     ///
     /// The span carries these attributes, and their names are stable API:
     ///
@@ -158,16 +159,16 @@ public protocol RoutedSession: Actor {
     /// |---|---|
     /// | `router.id` | The resolving router's recording root id. |
     /// | `session.id` | This session's span id. |
-    /// | `model.ref` | The model the turn ran on, in canonical string form. |
-    /// | `turn.id` | The turn's own id, unique inside this session. |
-    /// | `turn.entry_point` | `respond` for this surface. |
-    /// | `tokens.in` | The fed tokens of the newest generation call of the turn, on a metered turn. |
-    /// | `tokens.out` | The generated tokens of the newest generation call of the turn, on a metered turn. |
+    /// | `model.ref` | The model the submission ran on, in canonical string form. |
+    /// | `submission.id` | The id of the submission, unique inside this session. |
+    /// | `submission.cause` | `message` for a submission that carries a caller message, `mail`, or `continuation`. |
+    /// | `tokens.in` | The fed tokens of the newest generation call of the submission, on a submission that measured the render. |
+    /// | `tokens.out` | The generated tokens of the newest generation call of the submission, on a submission that measured the render. |
     ///
     /// The two token attributes are the context counter of the session (see
     /// ``contextFill``), not the sum of the generation calls of a tool loop.
     ///
-    /// A turn the backend could not meter carries neither token attribute. No
+    /// A submission that did not measure the render carries neither token attribute. No
     /// prompt text and no response text ever reaches the span: a span leaves
     /// the process through whatever backend the host application bootstrapped,
     /// so the payload stays free of the caller's own content.
@@ -185,16 +186,17 @@ public protocol RoutedSession: Actor {
     /// The prompt is one message that goes alone in its submission, because
     /// its fragments belong to this stream. Abandoning the stream cancels the
     /// submission behind it, as ``cancel(message:)`` does, and records it
-    /// as a cancelled turn. The stream finishes while a backgrounded run is in
+    /// as a cancelled submission. The stream finishes while a backgrounded run is in
     /// flight; the pump delivers its terminal later, as mail. A stall
     /// reports ``SessionEvent/generationStalled(_:)`` on ``streamSessionEvents()``
     /// with ``GenerationProgressVisibility/fragments(observed:)`` visibility.
     /// A wait for the worker of the generation queue is not a stall; it
-    /// reports ``SessionEvent/submissionQueued`` there, and each submission
-    /// reports ``SessionEvent/submissionStarted``.
+    /// reports ``SessionEvent/submissionQueued(_:)`` there, and each submission
+    /// reports ``SessionEvent/submissionStarted(_:)``.
     ///
-    /// The turn opens one span, exactly as ``respond(to:maxTokens:)`` states,
-    /// with `turn.entry_point` reading `stream`.
+    /// Each submission opens one span, as ``respond(to:maxTokens:)`` states.
+    /// The first submission has `submission.cause` reading `message`, and a
+    /// continuation has `continuation`.
     ///
     /// - Parameter maxTokens: The token ceiling, or `nil` for the resolved context of the model.
     func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error>
@@ -202,57 +204,62 @@ public protocol RoutedSession: Actor {
     /// Streams a rich event sequence for a prompt as it is produced, recording
     /// the call exactly like ``streamResponse(to:maxTokens:)``.
     ///
-    /// Order within one turn: ``SessionEvent/turnStarted(_:)``; then
-    /// ``SessionEvent/textDelta(_:)`` fragments; then, after the turn's diff,
-    /// tool call and tool status events, ``SessionEvent/reasoningDelta(_:)``,
-    /// and ``SessionEvent/entryRecorded(id:kind:)`` per recorded entry; finally
-    /// ``SessionEvent/turnEnded(_:)``. ``SessionEvent/compaction(_:)`` comes
-    /// before the turn's events for a proactive compaction, and after the failed
-    /// attempt's ``SessionEvent/turnEnded(_:)`` for a reactive compaction.
+    /// Order within one answer: first the ``SessionEvent/compaction(_:)`` of
+    /// a proactive compaction. Then, for each submission of the chain:
+    /// ``SessionEvent/submissionQueued(_:)`` (only when the submission must
+    /// wait for the worker), ``SessionEvent/submissionStarted(_:)``, the
+    /// ``SessionEvent/textDelta(_:)`` fragments, then, after the diff of the
+    /// submission, the tool call and tool status events,
+    /// ``SessionEvent/reasoningDelta(_:)``, and
+    /// ``SessionEvent/entryRecorded(id:kind:)`` for each recorded entry, and
+    /// last ``SessionEvent/submissionEnded(_:)``. The
+    /// ``SessionEvent/compaction(_:)`` of a reactive compaction comes between
+    /// two submissions. The stream ends with ``SessionEvent/answered(_:)``, or
+    /// with ``SessionEvent/answerFailed(_:)`` when the chain gives no answer.
     /// ``SessionEvent/generationStalled(_:)`` is emitted on each interval
     /// without progress: no text fragment, no transcript entry, and no tool
     /// call or tool result. Only the time inside a pass of the running
     /// submission counts, so a wait for the worker of the ``GenerationQueue``
-    /// of the model and a tool body between two passes emit no stall. A
-    /// submission that must wait for the worker emits
-    /// ``SessionEvent/submissionQueued``, and each submission emits
-    /// ``SessionEvent/submissionStarted`` when the worker starts it.
+    /// of the model and a tool body between two passes emit no stall.
     ///
-    /// Abandoning this stream cancels the turn. The stream finishes while a
+    /// Abandoning this stream cancels the answer. The stream finishes while a
     /// backgrounded run is in flight. A run that settles before the stream
     /// ends is reported as
     /// ``SessionEvent/runSettled(_:)``; a later one is reported on
-    /// ``streamSessionEvents()``. A call that closes inside the turn reports
+    /// ``streamSessionEvents()``. A call that closes inside the answer reports
     /// its attachments here as ``SessionEvent/toolCallReport(_:)``, after its
     /// close ``SessionEvent/toolInvocation(_:)`` record; a call that closes
     /// later reports them on ``streamSessionEvents()``. A tool that elicits
-    /// inside the turn reports its request here as
+    /// inside the answer reports its request here as
     /// ``SessionEvent/elicitationRequested(_:)`` before the tool resumes; an
-    /// elicitation raised outside the turn is reported on
+    /// elicitation raised outside the answer is reported on
     /// ``streamSessionEvents()``.
     ///
-    /// The turn opens one span, exactly as ``respond(to:maxTokens:)`` states,
-    /// with `turn.entry_point` reading `stream`.
+    /// Each submission opens one span, as ``respond(to:maxTokens:)`` states.
+    /// The first submission has `submission.cause` reading `message`, and a
+    /// continuation has `continuation`.
     ///
     /// - Parameter maxTokens: The token ceiling, or `nil` for the resolved context of the model.
     func streamEvents(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<SessionEvent, Error>
 
-    /// Streams the ``SessionEvent``s that belong to this *session* rather than
-    /// to one of its turns, for as long as the session lives.
+    /// Streams the ``SessionEvent``s of this *session*, for as long as the
+    /// session lives.
     ///
-    /// Every turn-lifecycle event travels here, whichever entry point ran the
-    /// turn: ``SessionEvent/turnStarted(_:)``, ``SessionEvent/reasoningDelta(_:)``,
+    /// Every event travels here, whichever entry point sent the message:
+    /// ``SessionEvent/submissionQueued(_:)``,
+    /// ``SessionEvent/submissionStarted(_:)``,
+    /// ``SessionEvent/submissionEnded(_:)``, ``SessionEvent/answered(_:)``,
+    /// ``SessionEvent/answerFailed(_:)``, ``SessionEvent/textDelta(_:)``,
+    /// ``SessionEvent/textReset``, ``SessionEvent/reasoningDelta(_:)``,
     /// tool-lifecycle events, ``SessionEvent/toolCallReport(_:)``,
     /// ``SessionEvent/elicitationRequested(_:)``,
     /// ``SessionEvent/entryRecorded(id:kind:)``,
     /// ``SessionEvent/compaction(_:)``, ``SessionEvent/discoveryPrimingFailed(_:)``,
-    /// ``SessionEvent/generationStalled(_:)``, ``SessionEvent/submissionQueued``,
-    /// ``SessionEvent/submissionStarted``, and ``SessionEvent/turnEnded(_:)``.
-    /// ``SessionEvent/textDelta(_:)`` and ``SessionEvent/textReset`` travel only
-    /// on ``streamEvents(to:maxTokens:)``. Every event belongs to the turn named
-    /// by the most recent ``SessionEvent/turnStarted(_:)``. A run's
-    /// ``SessionEvent/runSettled(_:)`` and ``SessionEvent/elicitationRequested(_:)``
-    /// travel here also between turns.
+    /// and ``SessionEvent/generationStalled(_:)``. The text events travel here
+    /// too, because a submission that mail started has no caller stream. A
+    /// run's ``SessionEvent/runSettled(_:)`` and
+    /// ``SessionEvent/elicitationRequested(_:)`` travel here also between
+    /// submissions.
     ///
     /// Each call vends an independent subscription, buffered without bound.
     /// Ending iteration drops the subscription; ``close()`` finishes every
@@ -391,9 +398,10 @@ public protocol RoutedSession: Actor {
     /// ``respond(to:maxTokens:)`` is this call followed by a wait for the
     /// answer.
     ///
-    /// The answer of a sent message is visible on ``streamSessionEvents()``.
-    /// Its submission opens one span, exactly as ``respond(to:maxTokens:)``
-    /// states, with `turn.entry_point` reading `send`.
+    /// The answer of a sent message is visible on ``streamSessionEvents()``
+    /// as ``SessionEvent/answered(_:)``. Its submission opens one span, as
+    /// ``respond(to:maxTokens:)`` states, with `submission.cause` reading
+    /// `message`.
     ///
     /// - Parameter prompt: The prompt of the message.
     /// - Returns: The stable id of the message, usable with

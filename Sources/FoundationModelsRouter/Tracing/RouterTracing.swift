@@ -24,7 +24,7 @@ import Tracing
 /// and sizes are safe; content is not.
 ///
 /// The rule is proved, not merely stated: `SpanContentSafetyTests` drives a
-/// turn, a tool call, a compaction and an embed against an `InMemoryTracer`, reads
+/// submission, a tool call, a compaction and an embed against an `InMemoryTracer`, reads
 /// every attribute value of every recorded span, and fails on any value that
 /// carries the fixture's own content. Each new span the router learns to open
 /// is held to that one test.
@@ -41,11 +41,11 @@ enum RouterTracing {
         /// One ``RoutedModel/embed(texts:)`` call.
         static let embed = prefix + "embed"
 
-        /// One whole turn on a session: the prompt in, the answer out, and
-        /// every tool call between the two.
-        static let turn = prefix + "turn"
+        /// One submission of a session: one SDK call of the chain that
+        /// answers its messages, with every tool call inside it.
+        static let submission = prefix + "submission"
 
-        /// One tool call inside a turn.
+        /// One tool call inside a submission.
         static let tool = prefix + "tool"
 
         /// One compaction of a session's transcript, driven by a caller or by the
@@ -67,7 +67,7 @@ enum RouterTracing {
         ///
         /// The span covers the construction, and on the restore path the
         /// transcript-tree read the construction is built from. What the
-        /// session then goes on to do is measured by its own ``turn``,
+        /// session then goes on to do is measured by its own ``submission``,
         /// ``compact`` and ``fork`` spans. Which of the three shapes made the
         /// session is written on the span as
         /// ``RouterTracing/AttributeKey/sessionOrigin``.
@@ -136,11 +136,12 @@ enum RouterTracing {
         /// ``RouterTracing/SessionOrigin``.
         static let sessionOrigin = "session.origin"
 
-        /// The id of the turn the work belongs to, unique inside its session.
-        static let turnId = "turn.id"
+        /// The id of the submission, unique in its session.
+        static let submissionId = "submission.id"
 
-        /// The surface that started the turn. See ``RouterTracing/TurnEntryPoint``.
-        static let turnEntryPoint = "turn.entry_point"
+        /// Why the session made the submission. See
+        /// ``SubmissionStart/Cause``: `message`, `mail`, or `continuation`.
+        static let submissionCause = "submission.cause"
 
         /// The model-facing name of the called tool.
         static let toolName = "tool.name"
@@ -191,30 +192,6 @@ enum RouterTracing {
         static let embeddingDimension = "embedding.dimension"
     }
 
-    /// The value ``AttributeKey/turnEntryPoint`` carries: the surface a turn
-    /// was started through.
-    ///
-    /// Every turn runs through one chokepoint, so the span alone cannot say
-    /// which surface asked for it. This attribute says so, and it lets a query
-    /// separate the turns a caller waited for from the turns of a sent message
-    /// and the turns that only mail started.
-    enum TurnEntryPoint: String {
-        /// ``RoutedSession/respond(to:maxTokens:)``.
-        case respond
-
-        /// ``RoutedSession/streamResponse(to:maxTokens:)`` or
-        /// ``RoutedSession/streamEvents(to:maxTokens:)``.
-        case stream
-
-        /// ``RoutedSession/send(_:)-(Transcript.Prompt)``: a message whose
-        /// sender does not wait for its answer.
-        case send
-
-        /// An answer that only mail started: the terminal of a settled
-        /// background run, with no caller message.
-        case mail
-    }
-
     /// The value ``AttributeKey/toolRunKind`` carries: which mount a tool call
     /// ran under.
     ///
@@ -247,7 +224,7 @@ enum RouterTracing {
         /// ``RoutedSession/compact(prompt:budget:)``.
         case caller
 
-        /// The auto-compaction budget: the proactive compaction before a turn, and
+        /// The auto-compaction budget: the proactive compaction before an answer, and
         /// the reactive compaction after a context overflow.
         case auto
     }

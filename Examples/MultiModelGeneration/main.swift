@@ -13,9 +13,9 @@ import Tokenizers
 /// triage turn to `profile.flash` and a heavyweight turn to
 /// `profile.standard`, reading BOTH turns off
 /// ``RoutedSession/streamEvents(to:maxTokens:)``
-/// so the named ``SessionEvent`` cases print as they arrive — `turnStarted`,
-/// the `textDelta` fragments, `entryRecorded`, and `turnEnded` with measured
-/// token usage.
+/// so the named ``SessionEvent`` cases print as they arrive:
+/// `submissionStarted`, the `textDelta` fragments, `entryRecorded`,
+/// `submissionEnded` with measured token usage, and `answered`.
 ///
 /// The routing is the live counterpart of
 /// `ExamplesTests.multiModelDirectGeneration()` — the same two-model
@@ -45,27 +45,29 @@ let demoReplyTokenCeiling = 160
 ///
 /// Both turns below run through this one helper, so the flash triage and the
 /// standard reply read as one observed session flow. Five cases carry a
-/// plain text turn, in this order:
+/// plain text answer, in this order:
 ///
-/// - ``SessionEvent/turnStarted(_:)`` opens the turn's correlation frame.
-/// - ``SessionEvent/submissionStarted`` reports that the worker of the model
-///   started the SDK call of the turn.
+/// - ``SessionEvent/submissionStarted(_:)`` reports that the SDK call of the
+///   submission started. It names the submission and why the session made
+///   it.
 /// - ``SessionEvent/textDelta(_:)`` fragments print as the model produces
 ///   them and accumulate into the reply this function returns.
 ///   ``SessionEvent/textReset`` clears that accumulation — the documented
 ///   consumer rule — so the returned reply is character for character the
 ///   string ``RoutedSession/respond(to:)`` would have returned.
 /// - ``SessionEvent/entryRecorded(id:kind:)`` closes the recorded transcript
-///   entry under its durable SDK id once the turn's diff runs.
-/// - ``SessionEvent/turnEnded(_:)`` closes the turn with measured
-///   ``TokenUsage``.
+///   entry under its durable SDK id once the diff of the submission runs.
+/// - ``SessionEvent/submissionEnded(_:)`` ends the submission, with measured
+///   ``TokenUsage`` when the backend reports it.
+/// - ``SessionEvent/answered(_:)`` gives the final answer of the chain.
 ///
 /// The remaining cases stay silent by construction: these sessions carry no
 /// tools, no `budget:`, and no discovery priming, so the tool-lifecycle,
 /// compaction, and priming events never fire, a stall report would only
-/// say the machine is busy, each turn runs alone on its model so no
-/// submission waits for the worker of its model, and the demo's short
-/// replies never fill the window of a repetition stop.
+/// say the machine is busy, each answer runs alone on its model so no
+/// submission waits for the worker of its model, the demo's short replies
+/// never fill the window of a repetition stop, and a failed answer throws
+/// from the stream.
 ///
 /// - Parameters:
 ///   - session: The session to drive the turn on.
@@ -90,12 +92,9 @@ func runObservedTurn(
 
     for try await event in await session.streamEvents(to: prompt, maxTokens: demoReplyTokenCeiling) {
         switch event {
-        case .turnStarted(let start):
+        case .submissionStarted(let start):
             // swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
-            print("[\(label)] turnStarted turn=\(start.turnId)")
-        case .submissionStarted:
-            // swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
-            print("[\(label)] submissionStarted — the worker of the model started the SDK call")
+            print("[\(label)] submissionStarted submission=\(start.submissionId) cause=\(start.cause.rawValue)")
         case .textDelta(let fragment):
             if !midFragmentBlock {
                 // swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
@@ -114,21 +113,42 @@ func runObservedTurn(
             closeFragmentBlock()
             // swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
             print("[\(label)] entryRecorded kind=\(kind) id=\(id)")
-        case .turnEnded(let usage):
+        case .submissionEnded(let end):
             closeFragmentBlock()
-            let percent = Int((usage.contextFill * 100).rounded())
+            printSubmissionEnd(end, label: label)
+        case .answered(let answer):
+            closeFragmentBlock()
             // swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
             print(
-                "[\(label)] turnEnded tokensIn=\(usage.tokensIn) tokensOut=\(usage.tokensOut) contextFill=\(percent)%"
-            )
+                "[\(label)] answered replyCharacters=\(answer.reply.count) messages=\(answer.messageIds.count)")
         case .reasoningDelta, .toolCall, .toolStatus, .toolInvocation, .toolCallReport,
             .compaction, .discoveryPrimingFailed, .generationStalled, .submissionQueued, .repetitionStopped,
-            .runSettled, .elicitationRequested, .generationCall:
+            .runSettled, .elicitationRequested, .generationCall, .answerFailed:
             // Silent by construction — see this function's documentation.
             break
         }
     }
     return reply
+}
+
+/// Prints one ``SessionEvent/submissionEnded(_:)``: the submission, why it
+/// stopped, and its measured usage when the backend reports usage.
+///
+/// - Parameters:
+///   - end: The end record of the submission.
+///   - label: The slot name printed before the line.
+func printSubmissionEnd(_ end: SubmissionEnd, label: String) {
+    guard let usage = end.usage else {
+        // swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
+        print("[\(label)] submissionEnded submission=\(end.submissionId) finishReason=\(end.finishReason)")
+        return
+    }
+    let percent = Int((usage.contextFill * 100).rounded())
+    // swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
+    print(
+        "[\(label)] submissionEnded submission=\(end.submissionId) tokensIn=\(usage.tokensIn) "
+            + "tokensOut=\(usage.tokensOut) contextFill=\(percent)%"
+    )
 }
 
 // MARK: - Live router

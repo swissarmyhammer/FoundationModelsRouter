@@ -253,12 +253,10 @@ struct CompactionRenderCounterTests {
         let counter = await Self.counterTokens(of: fixture.session, contextTokens: Self.probeContextTokens)
         #expect(counter == render)
         #expect(counter == calls.last?.contextTokens)
-        let turnEnded = try #require(
-            events.compactMap { event -> TokenUsage? in
-                guard case .turnEnded(let usage) = event else { return nil }
-                return usage
-            }.last)
-        #expect(turnEnded.contextFill == Double(render) / Double(Self.probeContextTokens))
+        // The tool loop is one submission. Its end carries the fill.
+        #expect(events.submissionEnds.count == 1)
+        let submissionUsage = try #require(events.submissionEnds.last?.usage)
+        #expect(submissionUsage.contextFill == Double(render) / Double(Self.probeContextTokens))
     }
 
     @Test("the counter goes up, restarts at a compaction from the instructions and the snapshot, and goes up again")
@@ -308,11 +306,11 @@ struct CompactionRenderCounterTests {
         let events = try await collect(fixture.session.streamEvents(to: Self.firstQuestion, maxTokens: Self.ceiling))
 
         #expect(events.compactionResults.isEmpty)
-        let finishReasons = events.compactMap { event -> FinishReason? in
-            guard case .turnEnded(let usage) = event else { return nil }
-            return usage.finishReason
-        }
+        // No compaction: the ceiling stop does not start a continuation. The
+        // one submission ends at the ceiling.
+        let finishReasons = events.submissionEnds.compactMap { $0.usage?.finishReason }
         #expect(finishReasons == [.maxTokens])
+        #expect(events.submissionEnds.map(\.finishReason) == [.maxTokens])
         let counter = await Self.counterTokens(of: fixture.session, contextTokens: Self.meteredContextTokens)
         #expect(counter == last.tokensIn + last.tokensOut)
     }

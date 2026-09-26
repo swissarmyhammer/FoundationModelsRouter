@@ -6,8 +6,9 @@ import Tracing
 
 @testable import FoundationModelsRouter
 
-/// Exercises card ^fypc46z: every tool call a turn makes opens one OpenTelemetry
-/// span through `swift-distributed-tracing`, nested in that turn's own span.
+/// Exercises card ^fypc46z and task ^x7cxsg3: every tool call a submission
+/// makes opens one OpenTelemetry span through `swift-distributed-tracing`,
+/// nested in the span of that submission.
 ///
 /// There is no single shared call body to instrument, so the contract is held at
 /// the three outermost decorators ``ToolMounting`` can mount — the foreground
@@ -26,10 +27,10 @@ import Tracing
 @Suite("Tool tracing")
 struct ToolTracingTests {
     /// The span name every tool call opens.
-    private static let toolSpanName = "FoundationModelsRouter.tool"
+    private static let toolSpanName = RouterTracing.SpanName.tool
 
-    /// The span name the enclosing turn opens.
-    private static let turnSpanName = "FoundationModelsRouter.turn"
+    /// The span name the enclosing submission opens.
+    private static let submissionSpanName = RouterTracing.SpanName.submission
 
     /// The step name the second call of a two-call round names, beside
     /// ``ScriptedToolFixture/firstStepName`` for the first.
@@ -135,10 +136,10 @@ struct ToolTracingTests {
         }
     }
 
-    // MARK: - One span for each call, under the turn
+    // MARK: - One span for each call, under the submission
 
-    @Test("a turn with two tool calls opens one turn span and two tool spans, each a child of it")
-    func twoCallsOpenTwoToolSpansUnderOneTurnSpan() async throws {
+    @Test("a submission with two tool calls opens one submission span and two tool spans, each a child of it")
+    func twoCallsOpenTwoToolSpansUnderOneSubmissionSpan() async throws {
         let tracer = InMemoryTracer()
         let fixture = try await ScriptedSessionFixture.make(
             playing: ScriptedTurnScript(rounds: [
@@ -160,12 +161,12 @@ struct ToolTracingTests {
 
         _ = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
 
-        let turnSpans = Self.spans(named: Self.turnSpanName, in: tracer)
-        try #require(turnSpans.count == 1)
-        let turnSpan = try #require(turnSpans.first)
+        let submissionSpans = Self.spans(named: Self.submissionSpanName, in: tracer)
+        try #require(submissionSpans.count == 1)
+        let submissionSpan = try #require(submissionSpans.first)
         let toolSpans = Self.spans(named: Self.toolSpanName, in: tracer)
         #expect(toolSpans.count == 2)
-        #expect(toolSpans.allSatisfy { $0.parentSpanID == turnSpan.spanID })
+        #expect(toolSpans.allSatisfy { $0.parentSpanID == submissionSpan.spanID })
     }
 
     @Test("a foreground tool span is internal and carries the documented attributes")

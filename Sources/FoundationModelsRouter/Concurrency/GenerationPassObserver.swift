@@ -21,15 +21,21 @@ enum GenerationCallPhase: Sendable, Equatable {
     /// The event that tells the consumer of the session about this phase, or
     /// `nil` for a phase the consumer does not see.
     ///
-    /// A submission that found the worker idle sends only
-    /// ``SessionEvent/submissionStarted``. A pass sends no event.
-    var sessionEvent: SessionEvent? {
+    /// Only ``submissionQueued`` gives an event:
+    /// ``SessionEvent/submissionQueued(_:)`` with the id of the open
+    /// submission. The start of a submission reaches the consumer through
+    /// `RoutedSessionActor.submissionDidStart()`, not through a phase. A
+    /// pass gives no event. A summarizer call of a compaction has no open
+    /// submission, so its phases give no event.
+    ///
+    /// - Parameter submission: The id of the open submission of the session,
+    ///   or `nil` when no submission is open.
+    /// - Returns: The event, or `nil`.
+    func sessionEvent(submission: SubmissionID?) -> SessionEvent? {
         switch self {
         case .submissionQueued:
-            .submissionQueued
-        case .submissionStarted:
-            .submissionStarted
-        case .passStarted, .passEnded:
+            submission.map(SessionEvent.submissionQueued)
+        case .submissionStarted, .passStarted, .passEnded:
             nil
         }
     }
@@ -69,7 +75,7 @@ final class GenerationPassObserver: Sendable {
 
     /// Records that the submission of the call waits behind another item.
     ///
-    /// The caller is `RoutedSessionActor.run(_:on:reportingTo:)` (in
+    /// The caller is `RoutedSessionActor.run(_:on:reportingTo:onStart:)` (in
     /// `RoutedSessionActorTurnExecution.swift`), which
     /// ``RoutedSessionActor/runCancellableModelCall(composedPrompt:submittingTo:_:)``
     /// uses for each model call. It gives this method to
@@ -81,7 +87,7 @@ final class GenerationPassObserver: Sendable {
 
     /// Records that the worker of the queue started the submission now.
     ///
-    /// The caller is `RoutedSessionActor.run(_:on:reportingTo:)` (in
+    /// The caller is `RoutedSessionActor.run(_:on:reportingTo:onStart:)` (in
     /// `RoutedSessionActorTurnExecution.swift`). It calls this method first in
     /// the body of the item that it gives to
     /// ``GenerationQueue/submit(isolation:onQueued:_:)``, so the call runs on

@@ -103,7 +103,7 @@ struct AutoCompactionTests {
         // runs, with no caller-side compact() call anywhere in this test.
         #expect(await session.contextFill == 0.9)
 
-        let events = eventsAfterTurnFrame(try await collectEvents(session, prompt: "turn 6"))
+        let events = eventsInsideAnswerFrame(try await collectEvents(session, prompt: "turn 6"))
 
         guard case .compaction(let result) = events.first else {
             Issue.record("expected the first event to be .compaction, got \(String(describing: events.first))")
@@ -132,7 +132,7 @@ struct AutoCompactionTests {
         let (session, _, _) = try await Self.makeTriggeredSession(budget: Self.fixedBudget)
         #expect(await session.contextFill >= Self.fixedBudget.trigger)
 
-        let events = eventsAfterTurnFrame(try await collectEvents(session, prompt: "turn 6"))
+        let events = eventsInsideAnswerFrame(try await collectEvents(session, prompt: "turn 6"))
         let compactions = events.compactMap { event -> CompactionResult? in
             guard case .compaction(let result) = event else { return nil }
             return result
@@ -162,7 +162,7 @@ struct AutoCompactionTests {
         // is untouched, so the own-model fallback tier succeeds.
         #expect(standard.lastBackend?.shouldThrow == false)
 
-        let events = eventsAfterTurnFrame(try await collectEvents(session, prompt: "turn 6"))
+        let events = eventsInsideAnswerFrame(try await collectEvents(session, prompt: "turn 6"))
 
         guard case .compaction(let result) = events.first else {
             Issue.record("expected the first event to be .compaction, got \(String(describing: events.first))")
@@ -210,7 +210,7 @@ struct AutoCompactionTests {
         // proactively before running, with no warm-up of its own.
         #expect(await forked.contextFill == 0.9)
 
-        let events = eventsAfterTurnFrame(try await collectEvents(forked, prompt: "fork turn"))
+        let events = eventsInsideAnswerFrame(try await collectEvents(forked, prompt: "fork turn"))
 
         guard case .compaction(let result) = events.first else {
             Issue.record("expected the fork's first event to be .compaction, got \(String(describing: events.first))")
@@ -385,25 +385,7 @@ struct AutoCompactionTests {
     )
     @MainActor
     func reactiveRetryRecoversFromContextOverflowAutomatically() async throws {
-        let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
-        let recorder = InMemoryRecorder()
-        let seedEntries = ScriptedOverflowBackend.seedEntries(turnCount: 6, responseText: Self.cannedText)
-        let standardContainer = OverflowLLMContainer(
-            responseText: "recovered", seedEntries: seedEntries, overflowsRemaining: 1)
-        let flashContainer = ConfiguredLLMContainer(responseText: "FLASH-SUMMARY")
-        let loader = PerSlotModelLoader(standard: standardContainer, flash: flashContainer, dimension: RouterTestFixtures.stubDimension)
-        let router = RouterTestFixtures.makeRouter(cacheDir: dir, recorder: recorder, loader: loader)
-        let profile = try await router.resolve(profile: RouterTestFixtures.profile(context: 100_000), reporting: ResolutionProgress())
-
-        // A budget whose trigger will never fire proactively (usage is
-        // unmeasured — `usageTokenCounts()` always `nil` — so fill stays at
-        // its unmeasured/zero starting point) — isolating the *reactive*
-        // path this test targets from the proactive one. The `limit` is the
-        // seeded transcript's own counted size, so the target is under it and
-        // the retry's compaction really summarizes rather than no-op'ing on an
-        // already-under-target transcript. The flash slot writes the summary.
-        let session = profile.standard.makeSession(
-            budget: TokenBudget(limit: characterCount(of: seedEntries), target: 0.35))
+        let (session, standardContainer, _) = try await Self.makeOverflowSession()
 
         // No `do`/`catch` here at all — unlike `ExamplesTests.respondWithReactiveCompaction`,
         // which the caller must wrap manually, this session recovers on its
@@ -418,6 +400,65 @@ struct AutoCompactionTests {
         // The reactive compaction genuinely swapped the backend (a real compaction, not
         // a no-op) before the retry ran.
         #expect(standardContainer.replaceSpy.replaceCount == 1)
+    }
+
+    @Test("an overflow retry sends two submission start and end pairs, and one answered event (task ^x7cxsg3)")
+    @MainActor
+    func overflowRetrySendsTwoSubmissionPairsAndOneAnswer() async throws {
+        let (session, _, _) = try await Self.makeOverflowSession()
+        let (log, drain) = await SessionEventLog.watch(session)
+
+        _ = try await session.respond(to: "keep going")
+        let answered = await BoundedWait.conditionReached("the answered event on the session feed") {
+            await !log.events.answers.isEmpty
+        }
+        drain.cancel()
+
+        #expect(answered)
+        let events = await log.events
+        let starts = events.submissionStarts
+        try #require(starts.map(\.cause) == [.message, .continuation])
+        // Each submission ends before the next one starts. The compaction
+        // between the two is not a submission of the session.
+        let frames: [SubmissionID] = events.compactMap { event in
+            if case .submissionStarted(let start) = event { return start.submissionId }
+            if case .submissionEnded(let end) = event { return end.submissionId }
+            return nil
+        }
+        let ids = starts.map(\.submissionId)
+        #expect(frames == [ids[0], ids[0], ids[1], ids[1]])
+        #expect(events.answers.map(\.reply) == ["recovered"])
+        #expect(events.answers.first?.compactions.count == 1)
+    }
+
+    /// Builds a session whose first model call overflows its context, over a
+    /// seeded transcript that the retry's compaction really summarizes.
+    ///
+    /// The budget's trigger never fires proactively (usage is unmeasured —
+    /// `usageTokenCounts()` always `nil` — so fill stays at its
+    /// unmeasured/zero starting point), which isolates the *reactive* path
+    /// from the proactive one. The `limit` is the seeded transcript's own
+    /// counted size, so the target is under it and the retry's compaction
+    /// summarizes rather than no-op'ing on an already-under-target
+    /// transcript. The flash slot writes the summary.
+    ///
+    /// - Returns: The session, the container of its backend, and the profile
+    ///   that keeps its models resident.
+    /// - Throws: Whatever profile resolution throws.
+    private static func makeOverflowSession() async throws -> (
+        session: RoutedSession, standard: OverflowLLMContainer, profile: LanguageModelProfile
+    ) {
+        let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
+        let seedEntries = ScriptedOverflowBackend.seedEntries(turnCount: 6, responseText: Self.cannedText)
+        let standardContainer = OverflowLLMContainer(
+            responseText: "recovered", seedEntries: seedEntries, overflowsRemaining: 1)
+        let flashContainer = ConfiguredLLMContainer(responseText: "FLASH-SUMMARY")
+        let loader = PerSlotModelLoader(standard: standardContainer, flash: flashContainer, dimension: RouterTestFixtures.stubDimension)
+        let router = RouterTestFixtures.makeRouter(cacheDir: dir, recorder: InMemoryRecorder(), loader: loader)
+        let profile = try await router.resolve(profile: RouterTestFixtures.profile(context: 100_000), reporting: ResolutionProgress())
+        let session = profile.standard.makeSession(
+            budget: TokenBudget(limit: characterCount(of: seedEntries), target: 0.35))
+        return (session, standardContainer, profile)
     }
 
     @Test(
@@ -477,45 +518,86 @@ struct AutoCompactionTests {
         // the retry's own measured fill is unambiguously lower than the
         // blocked attempt's stale 0.9 — proving the meter actually moved
         // mid-turn rather than only once the whole turn finished.
-        standard.lastBackend?.usageIncrement = (input: 1_000, output: 0)
+        standard.lastBackend?.usageIncrement = (input: Self.hardCeilingRetryInputTokens, output: 0)
 
-        let events = eventsAfterTurnFrame(try await collect(session.streamEvents(to: "turn 6")))
+        let events = try await collect(session.streamEvents(to: "turn 6"))
+        let inside = eventsInsideAnswerFrame(events)
 
-        guard case .turnEnded(let blockedUsage) = events.first else {
-            Issue.record(
-                "expected the first event to be turnEnded (the pre-flight-blocked attempt), got \(String(describing: events.first))"
-            )
-            return
-        }
-        // The blocked attempt never touched the backend: a genuine zero
-        // delta, and contextFill left exactly as it was before this turn
-        // (never reset to a meaningless zero).
-        #expect(blockedUsage == TokenUsage(tokensIn: 0, tokensOut: 0, contextFill: 0.9))
+        // Two submissions end: the refused submission, then the retry.
+        let ends = events.submissionEnds
+        try #require(ends.count == 2, "expected two submission ends, got \(ends)")
+        let blocked = ends[0]
+        let retry = ends[1]
+        #expect(blocked.submissionId != retry.submissionId)
 
-        guard case .compaction(let result) = events[1] else {
-            Issue.record("expected the second event to be .compaction, got \(String(describing: events[1]))")
-            return
-        }
+        // The hard ceiling refused the first submission before its model
+        // call started. Thus it has no start. Only the retry starts, and the
+        // retry is a continuation.
+        #expect(events.submissionStarts.map(\.submissionId) == [retry.submissionId])
+        #expect(events.submissionStarts.map(\.cause) == [.continuation])
+
+        // The end of the refused submission is the first event.
+        #expect(events.first == .submissionEnded(blocked))
+        // The refused submission did not touch the backend: a true zero
+        // delta, and contextFill stays at its value before the message (it
+        // does not go back to zero).
+        let blockedUsage = try #require(blocked.usage)
+        #expect(
+            blockedUsage == TokenUsage(tokensIn: 0, tokensOut: 0, contextFill: Self.hardCeilingTriggeredFill))
+
+        // Inside the answer frame, the compaction is the first event.
+        let result = try #require(inside.compactionResults.first)
+        #expect(inside.compactionResults.count == 1)
+        #expect(inside.first == .compaction(result))
         #expect(result.stagesApplied.contains("Summarization"))
 
-        // The blocked attempt's own generate call never ran: no textDelta
-        // appears before the compaction.
-        #expect(!events[0..<2].contains { if case .textDelta = $0 { return true }; return false })
-        #expect(events.contains(.textDelta(Self.cannedText)))
+        // The model call of the refused submission did not run: no textDelta
+        // comes before the compaction.
+        let compactionIndex = try #require(events.firstIndex(of: .compaction(result)))
+        #expect(!events[..<compactionIndex].contains { if case .textDelta = $0 { return true }; return false })
+        #expect(inside.contains(.textDelta(Self.cannedText)))
 
-        guard case .turnEnded(let retryUsage) = events.last else {
-            Issue.record("expected the last event to be turnEnded (the recovered retry), got \(String(describing: events.last))")
-            return
-        }
-        // contextFill's own denominator is always the session's resolved
-        // `contextTokens` (100_000, per `makeTriggeredSession`'s own
-        // `router.resolve(profile: RouterTestFixtures.profile(context: 100_000)...)`) —
-        // never `budget.limit`, which only sizes the compaction target.
-        #expect(retryUsage == TokenUsage(tokensIn: 1_000, tokensOut: 0, contextFill: 1_000.0 / 100_000.0))
-        // The context meter genuinely moved *during* this one logical turn,
-        // not only once it fully finished (compaction_plan.md §1.7, task g2hcm36).
+        // The end of the retry comes just before the answer.
+        #expect(events.dropLast().last == .submissionEnded(retry))
+        // The denominator of contextFill is the resolved `contextTokens` of
+        // the session (see ``hardCeilingContextTokens``). It is never
+        // `budget.limit`, which only sets the size of the compaction target.
+        let retryUsage = try #require(retry.usage)
+        #expect(
+            retryUsage
+                == TokenUsage(
+                    tokensIn: Self.hardCeilingRetryInputTokens, tokensOut: 0,
+                    contextFill: Double(Self.hardCeilingRetryInputTokens) / Double(Self.hardCeilingContextTokens)))
+        // The context meter moved during the answer, not only at its end
+        // (compaction_plan.md §1.7, task g2hcm36).
         #expect(retryUsage.contextFill < blockedUsage.contextFill)
+
+        // One answer. Its usage is the sum of the two submissions, with the
+        // fill and the finish reason of the retry.
+        #expect(events.answers.count == 1)
+        let answer = try #require(events.answers.first)
+        #expect(
+            answer.usage
+                == TokenUsage(
+                    tokensIn: blockedUsage.tokensIn + retryUsage.tokensIn,
+                    tokensOut: blockedUsage.tokensOut + retryUsage.tokensOut,
+                    contextFill: retryUsage.contextFill, finishReason: retryUsage.finishReason))
+        #expect(answer.reply == Self.cannedText)
     }
+
+    /// The measured fill of the triggered session before the message that
+    /// the hard ceiling refuses.
+    private static let hardCeilingTriggeredFill = 0.9
+
+    /// The input tokens that the retry after the hard ceiling measures. The
+    /// value is small, so the fill of the retry is clearly lower than
+    /// ``hardCeilingTriggeredFill``.
+    private static let hardCeilingRetryInputTokens = 1_000
+
+    /// The resolved `contextTokens` of the triggered session: the
+    /// `RouterTestFixtures.profile(context:)` value of
+    /// ``AutoCompactionFixtures/makeTriggeredSession(budget:tools:summarization:tracer:samplingMode:tempDirPrefix:)``.
+    private static let hardCeilingContextTokens = 100_000
 
     @Test(
         "a hard ceiling still not met after the one retry (an uncompactable transcript: the compaction was a genuine no-op) surfaces ContextBudgetError.hardCeilingExceeded, never looping"
@@ -775,7 +857,7 @@ struct AutoCompactionTests {
         // not change compaction-triggering behavior at all.
         #expect(await session.contextFill == 0.9)
 
-        let events = eventsAfterTurnFrame(try await collectEvents(session, prompt: "turn 6"))
+        let events = eventsInsideAnswerFrame(try await collectEvents(session, prompt: "turn 6"))
 
         guard case .compaction(let result) = events.first else {
             Issue.record("expected the first event to be .compaction, got \(String(describing: events.first))")
@@ -796,7 +878,7 @@ struct AutoCompactionTests {
         let ownCallsBeforeTurn = standard.generationLog.calls.count
 
         // No caller-side compact(): the triggering turn compacts on its own.
-        let events = eventsAfterTurnFrame(try await collectEvents(session, prompt: "turn \(Self.turnCount)"))
+        let events = eventsInsideAnswerFrame(try await collectEvents(session, prompt: "turn \(Self.turnCount)"))
         guard case .compaction(let result) = events.first else {
             Issue.record("expected the first event to be .compaction, got \(String(describing: events.first))")
             return

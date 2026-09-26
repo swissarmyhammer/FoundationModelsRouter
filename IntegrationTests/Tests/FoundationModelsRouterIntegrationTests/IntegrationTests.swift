@@ -387,11 +387,11 @@ struct IntegrationTests {
         let session = profile.standard.makeSession(
             instructions: "You are a terse assistant."
         )
-        let plainTurnStarted = ContinuousClock.now
+        let plainStartInstant = ContinuousClock.now
         let reply = try await session.respond(
             to: "Say hello in one short sentence.",
             maxTokens: GatedRealModelBudget.responseTokenCeiling)
-        plainTurnDuration = ContinuousClock.now - plainTurnStarted
+        plainTurnDuration = ContinuousClock.now - plainStartInstant
         #expect(!reply.isEmpty)
 
         // 3. Embedding returns dimension-length vectors, and writes no
@@ -413,13 +413,13 @@ struct IntegrationTests {
         let schema = #"""
             {"type":"object","properties":{"city":{"type":"string"},"country":{"type":"string"}},"required":["city","country"],"additionalProperties":false}
             """#
-        let guidedTurnStarted = ContinuousClock.now
+        let guidedStartInstant = ContinuousClock.now
         let guided = try await profile.standard.respond(
             to: "Name a city to visit in Japan, as JSON.",
             matching: schema,
             maxTokens: GatedRealModelBudget.responseTokenCeiling
         )
-        guidedTurnDuration = ContinuousClock.now - guidedTurnStarted
+        guidedTurnDuration = ContinuousClock.now - guidedStartInstant
         guard case .object(let object) = guided else {
             Issue.record("guided output was not a JSON object: \(guided)")
             return
@@ -444,22 +444,22 @@ struct IntegrationTests {
             childRecordingDirectory.deletingLastPathComponent().standardizedFileURL
                 == session.recordingDirectory.standardizedFileURL
         )
-        let forkTurnStarted = ContinuousClock.now
+        let forkStartInstant = ContinuousClock.now
         let childReply = try await #require(child).respond(
             to: "Say hi in one word.",
             maxTokens: GatedRealModelBudget.responseTokenCeiling)
-        forkTurnDuration = ContinuousClock.now - forkTurnStarted
+        forkTurnDuration = ContinuousClock.now - forkStartInstant
         #expect(!childReply.isEmpty)
 
         // Dropping the only reference releases the fork. No other binding
         // retains it, so this is a genuine release; the parent is unaffected
         // and keeps generating.
         child = nil
-        let parentTurnStarted = ContinuousClock.now
+        let parentStartInstant = ContinuousClock.now
         let afterRelease = try await session.respond(
             to: "Still there?",
             maxTokens: GatedRealModelBudget.responseTokenCeiling)
-        parentTurnDuration = ContinuousClock.now - parentTurnStarted
+        parentTurnDuration = ContinuousClock.now - parentStartInstant
         #expect(!afterRelease.isEmpty)
 
         // 6. Recording: the fork's transcript.jsonl is physically nested under

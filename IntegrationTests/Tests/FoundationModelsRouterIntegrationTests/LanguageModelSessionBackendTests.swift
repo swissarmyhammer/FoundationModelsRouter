@@ -197,9 +197,9 @@ struct LanguageModelSessionBackendIntegrationTests {
                 as? MLXFoundationModelsSessionBackend
         )
 
-        let parentTurnStarted = ContinuousClock.now
+        let parentStartInstant = ContinuousClock.now
         _ = try await parent.respond(to: "Remember the number 42.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
-        parentTurnDuration = ContinuousClock.now - parentTurnStarted
+        parentTurnDuration = ContinuousClock.now - parentStartInstant
         let parentEntryCountAtForkTime = parent.session.transcript.count
 
         let child = try #require(parent.makeFork() as? MLXFoundationModelsSessionBackend)
@@ -216,21 +216,21 @@ struct LanguageModelSessionBackendIntegrationTests {
         // the same content-awareness proof ``secondRespondSeesPriorTurn`` above
         // uses for same-backend continuity, applied here across the fork
         // boundary.
-        let childTurnStarted = ContinuousClock.now
+        let childStartInstant = ContinuousClock.now
         let childReply = try await child.respond(
             to: "What number should I remember? Answer with just the number.",
             maxTokens: GatedRealModelBudget.responseTokenCeiling
         )
-        childTurnDuration = ContinuousClock.now - childTurnStarted
+        childTurnDuration = ContinuousClock.now - childStartInstant
         #expect(childReply.contains("42"))
         let childEntryCountAfterOwnTurn = child.session.transcript.count
 
         // The two then diverge independently: a further parent turn does not
         // retroactively change the child's already-seeded (and now
         // independently-grown) transcript.
-        let parentSecondTurnStarted = ContinuousClock.now
+        let parentSecondStartInstant = ContinuousClock.now
         _ = try await parent.respond(to: "Remember the number 7 too.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
-        parentSecondTurnDuration = ContinuousClock.now - parentSecondTurnStarted
+        parentSecondTurnDuration = ContinuousClock.now - parentSecondStartInstant
         #expect(child.session.transcript.count == childEntryCountAfterOwnTurn)
 
         let evictStarted = ContinuousClock.now

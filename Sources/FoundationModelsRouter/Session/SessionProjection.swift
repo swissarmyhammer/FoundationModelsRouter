@@ -94,21 +94,31 @@ public final class SessionProjection {
     /// The current phase.
     public private(set) var phase: Phase = .idle
 
-    /// The most recent ``SessionEvent/turnStarted(_:)``, or `nil` before the
-    /// first one. Not cleared by ``SessionEvent/turnEnded(_:)``.
-    public private(set) var currentTurn: TurnStart?
+    /// The running submission: set by ``SessionEvent/submissionStarted(_:)``,
+    /// cleared by the ``SessionEvent/submissionEnded(_:)`` with the same id.
+    /// `nil` between submissions.
+    public private(set) var currentSubmission: SubmissionStart?
+
+    /// The caller messages that a started submission delivered and that no
+    /// ``SessionEvent/answered(_:)`` or ``SessionEvent/answerFailed(_:)``
+    /// named yet, in delivery order. A view shows them as the messages in
+    /// flight.
+    public private(set) var messagesAwaitingAnswer: [MessageID] = []
 
     /// The running transcript observed so far, oldest first.
     public private(set) var transcript: [TranscriptEntry] = []
 
-    /// Cumulative input tokens across every observed ``SessionEvent/turnEnded(_:)``.
+    /// Cumulative input tokens across every observed
+    /// ``SessionEvent/submissionEnded(_:)`` that carried usage.
     public private(set) var tokensIn: Int = 0
 
-    /// Cumulative output tokens across every observed ``SessionEvent/turnEnded(_:)``.
+    /// Cumulative output tokens across every observed
+    /// ``SessionEvent/submissionEnded(_:)`` that carried usage.
     public private(set) var tokensOut: Int = 0
 
     /// The session's most recently measured ``RoutedSession/contextFill``,
-    /// updated by every ``SessionEvent/turnEnded(_:)``.
+    /// updated by every ``SessionEvent/submissionEnded(_:)`` that carried
+    /// usage.
     public private(set) var contextFill: Double = 0
 
     /// Creates an empty projection in ``Phase/idle``.
@@ -119,8 +129,14 @@ public final class SessionProjection {
     /// - Parameter event: The event to apply.
     public func apply(_ event: SessionEvent) {
         switch event {
-        case .turnStarted(let start):
-            currentTurn = start
+        case .submissionStarted(let start):
+            applySubmissionStarted(start)
+        case .submissionEnded(let end):
+            applySubmissionEnded(end)
+        case .answered(let answer):
+            removeAwaitingAnswer(answer.messageIds)
+        case .answerFailed(let failure):
+            removeAwaitingAnswer(failure.messageIds)
         case .textDelta(let fragment):
             phase = .generating
             appendTextFragment(fragment)
@@ -159,43 +175,77 @@ public final class SessionProjection {
             phase = .compacting
             transcript.append(
                 TranscriptEntry(id: result.id, kind: .compaction(result), sourceEntryId: result.summaryEntryId))
-        case .discoveryPrimingFailed, .generationStalled, .submissionQueued, .submissionStarted, .repetitionStopped,
+        case .discoveryPrimingFailed, .generationStalled, .submissionQueued, .repetitionStopped,
             .runSettled, .toolCallReport, .elicitationRequested, .generationCall:
             // Handled explicitly, and deliberately changes nothing. A settled
             // run's terminal reaches this mirror as the recorded tool output
-            // of the turn that next carries it. A turn whose
-            // discovery priming could not seed generates exactly as an unprimed
-            // turn does (see ``SessionEvent/discoveryPrimingFailed(_:)``), and a
-            // stall report bounds nothing at all — the turn is still running and
-            // will still produce whatever it was going to produce (see
-            // ``SessionEvent/generationStalled(_:)``). A wait of a submission for
-            // the worker of its model and the start of the submission change no
-            // entry and no counter: the turn produces the same output after the
-            // wait. A repetition stop
-            // report comes with the recorded entries of the stopped attempt,
-            // and its ``SessionEvent/turnEnded(_:)`` names the stop. A tool call report
-            // carries records for a host to decode, and the call's phase is
-            // already mirrored from its ``SessionEvent/toolInvocation(_:)``
-            // records. An elicitation request names a question only a host
-            // can answer, and the asking call is still running. One
-            // generation call's usage is a part of the attempt's usage, and
-            // ``SessionEvent/turnEnded(_:)`` carries the sum. So this
-            // projection's phase, transcript, and counters are already the
-            // faithful mirror of what happened. All of them are for a driver
-            // watching the event stream, not session state.
+            // of the submission that next carries it. A submission whose
+            // discovery priming could not seed generates as an unprimed
+            // submission does (see ``SessionEvent/discoveryPrimingFailed(_:)``).
+            // A stall report bounds nothing: the submission still runs and
+            // still gives its output (see ``SessionEvent/generationStalled(_:)``).
+            // A wait of a submission for the worker of its model changes no
+            // entry and no counter: the submission gives the same output after
+            // the wait. A repetition stop report comes with the recorded
+            // entries of the stopped attempt, and its
+            // ``SessionEvent/submissionEnded(_:)`` names the stop. A tool call
+            // report carries records for a host to decode, and the phase of
+            // the call is already mirrored from its
+            // ``SessionEvent/toolInvocation(_:)`` records. An elicitation
+            // request names a question that only a host can answer, and the
+            // call that asks still runs. The usage of one generation call is
+            // a part of the usage of the submission, and
+            // ``SessionEvent/submissionEnded(_:)`` carries the sum. So the
+            // phase, the transcript and the counters of this projection
+            // already mirror what occurred. These events are for a driver
+            // that watches the event stream, not session state.
             break
-        case .turnEnded(let usage):
+        }
+    }
+
+    /// Applies one ``SessionEvent/submissionStarted(_:)``: the submission
+    /// becomes ``currentSubmission``, and each caller message it delivers
+    /// joins ``messagesAwaitingAnswer`` one time.
+    ///
+    /// - Parameter start: The start record of the submission.
+    private func applySubmissionStarted(_ start: SubmissionStart) {
+        currentSubmission = start
+        for messageId in start.messageIds where !messagesAwaitingAnswer.contains(messageId) {
+            messagesAwaitingAnswer.append(messageId)
+        }
+    }
+
+    /// Applies one ``SessionEvent/submissionEnded(_:)``: it adds the usage of
+    /// the submission when the submission carries usage, and it clears
+    /// ``currentSubmission`` when that submission ended.
+    ///
+    /// A run that went to the background never closes inside its own
+    /// submission, so its open invocation is cleared here, also when the
+    /// submission carries no usage. A stale open must never pin the phase of
+    /// a later submission to ``Phase/runningTool``. Its late close then finds
+    /// nothing tracked and changes nothing (see ``applyToolInvocation(_:)``).
+    ///
+    /// - Parameter end: The end record of the submission.
+    private func applySubmissionEnded(_ end: SubmissionEnd) {
+        if let usage = end.usage {
             tokensIn += usage.tokensIn
             tokensOut += usage.tokensOut
             contextFill = usage.contextFill
-            // A run that went to the background never closes inside its own turn, so its
-            // open invocation is cleared here — a stale open must never pin a
-            // later turn's phase to ``Phase/runningTool``. Its late close
-            // then finds nothing tracked and changes nothing (see
-            // ``applyToolInvocation(_:)``).
-            openInvocationCorrelationIDs.removeAll()
-            phase = .idle
         }
+        if currentSubmission?.submissionId == end.submissionId {
+            currentSubmission = nil
+        }
+        openInvocationCorrelationIDs.removeAll()
+        phase = .idle
+    }
+
+    /// Removes each of `messageIds` from ``messagesAwaitingAnswer``: an
+    /// answer or a failure named them.
+    ///
+    /// - Parameter messageIds: The caller messages that the answer or the
+    ///   failure names.
+    private func removeAwaitingAnswer(_ messageIds: [MessageID]) {
+        messagesAwaitingAnswer.removeAll { messageIds.contains($0) }
     }
 
     /// Drains `stream` and applies every event as it arrives.
@@ -274,7 +324,8 @@ public final class SessionProjection {
     }
 
     /// The `correlationID` of every open ``SessionEvent/toolInvocation(_:)``
-    /// record this turn. Cleared at ``SessionEvent/turnEnded(_:)``.
+    /// record of the running submission. Cleared at each
+    /// ``SessionEvent/submissionEnded(_:)``.
     private var openInvocationCorrelationIDs: Set<String> = []
 
     /// Applies one ``SessionEvent/toolInvocation(_:)`` to ``phase``. An open
@@ -374,7 +425,8 @@ public final class SessionProjection {
         responseTextReducer = ResponseTextReducer()
         openInvocationCorrelationIDs.removeAll()
         provisionalEntryCount = 0
-        currentTurn = nil
+        currentSubmission = nil
+        messagesAwaitingAnswer = []
         tokensIn = 0
         tokensOut = 0
         contextFill = 0

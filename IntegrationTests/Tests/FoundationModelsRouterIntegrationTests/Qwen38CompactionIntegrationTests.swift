@@ -141,7 +141,7 @@ struct Qwen38CompactionIntegrationTests {
     @Test(
         "a long context compacts: a seeded context over the trigger compacts one time before the turn, the snapshot is smaller, and the turn answers"
     )
-    func contextOverTheTriggerCompactsAtTurnStart() async throws {
+    func contextOverTheTriggerCompactsBeforeTheAnswer() async throws {
         let loaded = try await Qwen38ResidentModel.shared.container()
         let counter = loaded.container.tokenCounter
         let transcript = try Self.builtLiveContext()

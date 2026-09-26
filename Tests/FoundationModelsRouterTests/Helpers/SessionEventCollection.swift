@@ -57,6 +57,38 @@ extension Sequence<SessionEvent> {
             return text
         }.joined()
     }
+
+    /// The start records of the submissions among these events, in order.
+    var submissionStarts: [SubmissionStart] {
+        compactMap { event in
+            if case .submissionStarted(let start) = event { return start }
+            return nil
+        }
+    }
+
+    /// The end records of the submissions among these events, in order.
+    var submissionEnds: [SubmissionEnd] {
+        compactMap { event in
+            if case .submissionEnded(let end) = event { return end }
+            return nil
+        }
+    }
+
+    /// The final answers among these events, in order.
+    var answers: [SessionAnswer] {
+        compactMap { event in
+            if case .answered(let answer) = event { return answer }
+            return nil
+        }
+    }
+
+    /// The failed answers among these events, in order.
+    var answerFailures: [AnswerFailure] {
+        compactMap { event in
+            if case .answerFailed(let failure) = event { return failure }
+            return nil
+        }
+    }
 }
 
 extension Transcript {

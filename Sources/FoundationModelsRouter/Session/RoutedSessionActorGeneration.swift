@@ -41,7 +41,7 @@ extension RoutedSessionActor {
     ///   call comes from an in-band tool body of an open submission on this
     ///   session or on the queue of its model.
     func respond(to prompt: String, maxTokens: Int?) async throws -> String {
-        try await sendAndAwaitAnswer(text: prompt, requestedMaxTokens: maxTokens, reader: .reply, entryPoint: .respond)
+        try await sendAndAwaitAnswer(text: prompt, requestedMaxTokens: maxTokens, reader: .reply)
     }
 
     /// Sends one caller message and waits for its answer: the helper that
@@ -56,17 +56,16 @@ extension RoutedSessionActor {
     ///   - text: The prompt text of the message.
     ///   - requestedMaxTokens: The token ceiling the caller named, or `nil`.
     ///   - reader: Who reads the output of the submission.
-    ///   - entryPoint: The surface the caller used.
     /// - Returns: The final reply of the answer that carried the message.
     /// - Throws: What the answer throws, `CancellationError` when the message
     ///   was cancelled, or the refusal.
     private func sendAndAwaitAnswer(
-        text: String, requestedMaxTokens: Int?, reader: MessageReader, entryPoint: RouterTracing.TurnEntryPoint
+        text: String, requestedMaxTokens: Int?, reader: MessageReader
     ) async throws -> String {
         try refuseWaitInsideOpenSubmission()
         let message = SessionMessage(
             id: MessageID(), prompt: .plainText(text), requestedMaxTokens: requestedMaxTokens, reader: reader,
-            entryPoint: entryPoint, serviceContext: ServiceContext.current, answer: PumpAnswer())
+            serviceContext: ServiceContext.current, answer: PumpAnswer())
         await enqueue(message)
         return try await awaitAnswer(of: message)
     }
@@ -190,7 +189,7 @@ extension RoutedSessionActor {
     ) -> AsyncThrowingStream<Element, Error> {
         Self.wrapAsyncStream { continuation in
             _ = try await self.sendAndAwaitAnswer(
-                text: prompt, requestedMaxTokens: maxTokens, reader: reader(continuation), entryPoint: .stream)
+                text: prompt, requestedMaxTokens: maxTokens, reader: reader(continuation))
         }
     }
 
@@ -250,6 +249,12 @@ extension RoutedSessionActor {
             noteGenerationProgress(fragment.progress)
             for element in wrapFragment(fragment) {
                 continuation.yield(element)
+            }
+            // The text events travel on the session-scoped subscriptions too
+            // (`generation-queue.md`, section 5.6), for every reader of the
+            // stream.
+            for event in Self.sessionEvents(for: fragment) {
+                emitSessionScopedEvent(event)
             }
             response = fragment.restartsResponse ? fragment.text : response + fragment.text
         }
@@ -326,8 +331,10 @@ extension RoutedSessionActor {
 
     /// The events one streamed ``ResponseFragment`` implies, in yield order.
     /// A restarting fragment yields ``SessionEvent/textReset`` first. Non-empty
-    /// text follows as ``SessionEvent/textDelta(_:)``. These events bypass
-    /// ``emitSessionScopedEvent(_:)``.
+    /// text follows as ``SessionEvent/textDelta(_:)``.
+    /// ``streamGeneratingBody(composedPrompt:responseTokenCeiling:into:wrapFragment:)``
+    /// gives these events to ``emitSessionScopedEvent(_:)`` for each fragment,
+    /// and the event stream of a caller yields them too.
     ///
     /// - Parameter fragment: The fragment just received from the backend.
     /// - Returns: The events to yield for it, in order.

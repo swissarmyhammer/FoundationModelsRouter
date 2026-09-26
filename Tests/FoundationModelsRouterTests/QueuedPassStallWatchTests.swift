@@ -9,8 +9,9 @@ import Testing
 /// (`generation-queue.md`, section 5.6). A wait for the worker of the queue
 /// and a tool body between two passes are not a stall. A session tells its
 /// consumer that its submission waits for the worker with
-/// ``SessionEvent/submissionQueued``, and that the worker started the
-/// submission with ``SessionEvent/submissionStarted``.
+/// ``SessionEvent/submissionQueued(_:)``, which carries the id of the
+/// submission. It tells its consumer that the worker started the submission
+/// with ``SessionEvent/submissionStarted(_:)``, which carries the same id.
 ///
 /// Each session is a routed session over one ``LiveBackendContainer``, so each
 /// submission goes through the production backend and its per-session
@@ -69,10 +70,22 @@ struct QueuedPassStallWatchTests {
         return (record.closedAt != nil) == closed
     }
 
+    /// The ids that the `submissionQueued` events among `events` carry, in
+    /// order.
+    ///
+    /// - Parameter events: The events to read.
+    /// - Returns: The ids of the queued submissions.
+    private static func queuedIds(in events: [SessionEvent]) -> [SubmissionID] {
+        events.compactMap { event in
+            if case .submissionQueued(let id) = event { return id }
+            return nil
+        }
+    }
+
     @Test(
-        "a streaming request that waits for the worker longer than the stall interval reports the wait and no stall",
+        "a submission that waits sends submissionQueued with its id before submissionStarted with the same id, and the wait is no stall",
         .timeLimit(.minutes(1)))
-    func aWaitForTheWorkerIsNotAStall() async throws {
+    func aWaitingSubmissionSendsItsQueuedIdBeforeItsStartAndNoStall() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: dir) }
         let fixture = PassObservingFixture()
@@ -88,7 +101,7 @@ struct QueuedPassStallWatchTests {
         }
         let (waitingLog, waitingTurn) = SessionEventLog.collect(await waiting.streamEvents(to: Self.waitingPrompt))
         let waitReported = await BoundedWait.conditionReached("the report of the wait") {
-            await waitingLog.contains(.submissionQueued)
+            await !Self.queuedIds(in: waitingLog.events).isEmpty
         }
         try await Task.sleep(for: Self.heldLongerThanTheInterval)
         let stallsDuringTheWait = await waitingLog.stalls
@@ -97,11 +110,8 @@ struct QueuedPassStallWatchTests {
         await fixture.latch.open()
         _ = try await holdingTurn.value
         try await waitingTurn.value
-        let holdingTurnEnded = await BoundedWait.conditionReached("the end of the holding turn on its feed") {
-            await holdingLog.events.contains { event in
-                guard case .turnEnded = event else { return false }
-                return true
-            }
+        let holdingAnswered = await BoundedWait.conditionReached("the answer of the holding session on its feed") {
+            await holdingLog.events.contains(where: \.isAnswerEnd)
         }
         holdingDrain.cancel()
 
@@ -109,18 +119,27 @@ struct QueuedPassStallWatchTests {
         #expect(waitReported)
         #expect(stillWaiting)
         #expect(stallsDuringTheWait.isEmpty)
+        // The waiting submission sends its id in submissionQueued, and then
+        // sends submissionStarted with the same id. It is the first
+        // submission of its session, and it carries the caller message.
         let waitingEvents = await waitingLog.events
-        #expect(waitingEvents.filter { $0 == .submissionQueued }.count == 1)
-        #expect(waitingEvents.filter { $0 == .submissionStarted }.count == 1)
-        let queuedAt = try #require(waitingEvents.firstIndex(of: .submissionQueued))
-        let startedAt = try #require(waitingEvents.firstIndex(of: .submissionStarted))
+        let queuedIds = Self.queuedIds(in: waitingEvents)
+        #expect(queuedIds == [SubmissionID(1)])
+        let queuedId = try #require(queuedIds.first)
+        let starts = waitingEvents.submissionStarts
+        #expect(starts.count == 1)
+        let start = try #require(starts.first)
+        #expect(start.submissionId == queuedId)
+        #expect(start.cause == .message)
+        let queuedAt = try #require(waitingEvents.firstIndex(of: .submissionQueued(queuedId)))
+        let startedAt = try #require(waitingEvents.firstIndex(of: .submissionStarted(start)))
         #expect(queuedAt < startedAt)
-        #expect(holdingTurnEnded)
+        #expect(holdingAnswered)
         // The worker was free for the holding submission: it sends only the
-        // start of its submission.
+        // start of its submission, and no submissionQueued.
         let holdingEvents = await holdingLog.events
-        #expect(!holdingEvents.contains(.submissionQueued))
-        #expect(holdingEvents.filter { $0 == .submissionStarted }.count == 1)
+        #expect(Self.queuedIds(in: holdingEvents).isEmpty)
+        #expect(holdingEvents.submissionStarts.count == 1)
         #expect(await fixture.queue.isRunning == false)
         withExtendedLifetime(resolved) {}
     }
@@ -196,7 +215,7 @@ struct QueuedPassStallWatchTests {
         }
         let (log, waitingTurn) = SessionEventLog.collect(await waiting.streamEvents(to: Self.waitingPrompt))
         let waitReported = await BoundedWait.conditionReached("the report of the wait") {
-            await log.contains(.submissionQueued)
+            await !Self.queuedIds(in: log.events).isEmpty
         }
         try await Task.sleep(for: Self.heldLongerThanTheInterval)
         // One step for the holding pass, and one for the first pass of the
@@ -264,13 +283,23 @@ struct QueuedPassStallWatchTests {
         #expect(watch.measuredFrom == callStart)
     }
 
-    @Test("only the wait and the start of a submission reach the consumer; a pass sends no event")
-    func onlyTheSubmissionPhasesReachTheConsumer() {
+    @Test(
+        "only the wait of an open submission reaches the consumer, as submissionQueued with its id; a start, a pass and a wait with no open submission send no event"
+    )
+    func onlyTheWaitOfAnOpenSubmissionReachesTheConsumer() {
         let now = ContinuousClock.now
+        let open = SubmissionID(1)
 
-        #expect(GenerationCallPhase.submissionQueued.sessionEvent == .submissionQueued)
-        #expect(GenerationCallPhase.submissionStarted(at: now).sessionEvent == .submissionStarted)
-        #expect(GenerationCallPhase.passStarted(at: now).sessionEvent == nil)
-        #expect(GenerationCallPhase.passEnded.sessionEvent == nil)
+        #expect(GenerationCallPhase.submissionQueued.sessionEvent(submission: open) == .submissionQueued(open))
+        // A summarizer call of a compaction has no open submission.
+        #expect(GenerationCallPhase.submissionQueued.sessionEvent(submission: nil) == nil)
+        // The start of a submission reaches the consumer through the session,
+        // not through a phase.
+        #expect(GenerationCallPhase.submissionStarted(at: now).sessionEvent(submission: open) == nil)
+        #expect(GenerationCallPhase.submissionStarted(at: now).sessionEvent(submission: nil) == nil)
+        #expect(GenerationCallPhase.passStarted(at: now).sessionEvent(submission: open) == nil)
+        #expect(GenerationCallPhase.passStarted(at: now).sessionEvent(submission: nil) == nil)
+        #expect(GenerationCallPhase.passEnded.sessionEvent(submission: open) == nil)
+        #expect(GenerationCallPhase.passEnded.sessionEvent(submission: nil) == nil)
     }
 }

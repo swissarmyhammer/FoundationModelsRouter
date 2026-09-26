@@ -2,21 +2,25 @@ import Foundation
 
 /// One element of the event stream ``RoutedSession/streamEvents(to:maxTokens:)`` produces.
 ///
-/// ``turnStarted(_:)`` opens a turn, and every event up to the next one belongs to it.
-/// ``RoutedSession/streamSessionEvents()`` carries every case except
-/// ``textDelta(_:)`` and ``textReset``. This enum has no library evolution:
-/// write a `default` arm to absorb new cases.
+/// The events report each submission and each final answer
+/// (`generation-queue.md`, section 5.6). A submission is one SDK call of the
+/// chain that answers the messages of the session: ``submissionStarted(_:)``
+/// opens it, and every event up to the ``submissionEnded(_:)`` with the same
+/// ``SubmissionID`` belongs to it. The chain ends with one ``answered(_:)``,
+/// or with one ``answerFailed(_:)`` when it gives no answer.
+/// ``RoutedSession/streamSessionEvents()`` carries every case. This enum has
+/// no library evolution: write a `default` arm to absorb new cases.
 public enum SessionEvent: Sendable, Equatable {
-    /// A turn began. Emitted once per logical turn, before any work of that turn.
-    /// A turn that retries after a recovered overflow reports one of these and two ``turnEnded(_:)``.
-    case turnStarted(TurnStart)
-
-    /// A fragment of the model's response text, in production order.
+    /// A fragment of the model's response text, in production order. A
+    /// submission that streams its output sends it; a submission that gives
+    /// its reply whole (``RoutedSession/respond(to:maxTokens:)``,
+    /// ``RoutedSession/send(_:)-(Transcript.Prompt)``, or mail) sends none, and
+    /// its reply is in ``answered(_:)``.
     case textDelta(String)
 
-    /// Every ``textDelta(_:)`` so far this turn is superseded. A consumer clears
-    /// the accumulated text and then keeps appending. Superseded text is still
-    /// recorded as its own `.response` entry.
+    /// Every ``textDelta(_:)`` so far in this submission is superseded. A
+    /// consumer clears the accumulated text and then keeps appending.
+    /// Superseded text is still recorded as its own `.response` entry.
     case textReset
 
     /// A fragment of the model's reasoning trace.
@@ -64,7 +68,7 @@ public enum SessionEvent: Sendable, Equatable {
     ///
     /// The session measures only the time inside a pass of the running
     /// submission. A wait for the worker of the ``GenerationQueue`` of the
-    /// model (see ``submissionQueued``) and a tool body between two passes
+    /// model (see ``submissionQueued(_:)``) and a tool body between two passes
     /// give no report. For a backend that reports no pass, the time counts
     /// from the start of the submission. ``GenerationStall`` states the
     /// meaning of each field.
@@ -76,24 +80,47 @@ public enum SessionEvent: Sendable, Equatable {
     /// tool bodies. A consumer can show "waiting for the model".
     ///
     /// The session sends it only when the submission must wait. A submission
-    /// that finds the worker free sends none. ``submissionStarted`` follows
-    /// when the worker starts the submission. A cancelled wait sends no
-    /// ``submissionStarted``, and the turn ends.
-    /// Only a backend that names a queue
-    /// (``LanguageModelSessionBackend/generationQueue``) submits to one; a
-    /// backend with no queue sends neither event.
-    case submissionQueued
+    /// that finds the worker free sends none. ``submissionStarted(_:)``
+    /// with the same id follows when the worker starts the submission. A
+    /// cancelled wait sends no ``submissionStarted(_:)``: its
+    /// ``submissionEnded(_:)`` comes next. Only a backend that names a queue
+    /// (``LanguageModelSessionBackend/generationQueue``) submits to one, so a
+    /// backend with no queue never sends this event.
+    case submissionQueued(SubmissionID)
 
-    /// The worker of the ``GenerationQueue`` of its model started a
-    /// submission of the session, and the submission generates now. The
-    /// session sends it for each submission to a queue, after
-    /// ``submissionQueued`` when the submission had to wait.
-    case submissionStarted
+    /// A submission of the session started, and it generates now: the worker
+    /// of the ``GenerationQueue`` of its model started it, or, for a backend
+    /// with no queue, its SDK call started. It comes after
+    /// ``submissionQueued(_:)`` when the submission had to wait, and before
+    /// any other event of the submission.
+    ///
+    /// A submission that never started sends none: the hard ceiling of the
+    /// ``TokenBudget`` refused it, or a cancel came before its call or during
+    /// its wait. Its ``submissionEnded(_:)`` still comes.
+    case submissionStarted(SubmissionStart)
+
+    /// A submission of the session ended, with its measured usage and its
+    /// finish reason. The session sends one for each submission it made, also
+    /// for one that failed or was cancelled. A chain that retries after a
+    /// recovered context overflow sends two of these, and one
+    /// ``answered(_:)``.
+    case submissionEnded(SubmissionEnd)
+
+    /// The chain of submissions that answers one or more messages gave its
+    /// final answer. The session sends one for each final answer, after the
+    /// ``submissionEnded(_:)`` of the last submission of the chain.
+    case answered(SessionAnswer)
+
+    /// The chain of submissions that answers one or more messages ended with
+    /// no answer: a cancel stopped it, or it failed with an error. The
+    /// callers of the messages get the error. It comes in place of
+    /// ``answered(_:)``.
+    case answerFailed(AnswerFailure)
 
     /// The session stopped the generate call in flight because the call no
     /// longer wrote new lines. The event comes before the
-    /// ``turnEnded(_:)`` of the stopped attempt, whose finish reason is
-    /// ``FinishReason/repeatedLines``. See ``RepetitionDetection``.
+    /// ``submissionEnded(_:)`` of the stopped submission, whose finish reason
+    /// is ``FinishReason/repeatedLines``. See ``RepetitionDetection``.
     case repetitionStopped(RepetitionStop)
 
     /// A background run of this session settled: its one terminal ``OperationEvent``.
@@ -123,18 +150,15 @@ public enum SessionEvent: Sendable, Equatable {
     /// so it never reaches this event.
     case elicitationRequested(OperationEvent)
 
-    /// One generation call of the attempt in flight ended, with its own
-    /// measured usage. An attempt that calls a tool makes more than one
-    /// generation call, and ``turnEnded(_:)`` sums them. This event reports
-    /// each call alone: one when a tool call of the session's own turn opens,
-    /// for the call that asked for the tool, and one when the attempt closes,
-    /// for the last call. A backend that reports no usage gives none. The
-    /// run journal records each one as a ``TranscriptEvent/Kind/generationCall``
-    /// event.
+    /// One generation call of the submission in flight ended, with its own
+    /// measured usage. A submission that calls a tool makes more than one
+    /// generation call, and ``submissionEnded(_:)`` sums them. This event
+    /// reports each call alone: one when a tool call of the session's own
+    /// submission opens, for the call that asked for the tool, and one when
+    /// the submission closes, for the last call. A backend that reports no
+    /// usage gives none. The run journal records each one as a
+    /// ``TranscriptEvent/Kind/generationCall`` event.
     case generationCall(GenerationCallUsage)
-
-    /// One generate attempt closed, with its measured token usage. Emitted once per inner generate call.
-    case turnEnded(TokenUsage)
 }
 
 /// The records one tool call attached, carried by ``SessionEvent/toolCallReport(_:)``.
@@ -200,7 +224,8 @@ public enum ToolCallStatus: String, Sendable, Equatable, Codable {
     case failed
 }
 
-/// One generate attempt's measured token usage, carried by ``SessionEvent/turnEnded(_:)``.
+/// One submission's measured token usage, carried by ``SubmissionEnd/usage``,
+/// and the usage of a whole chain, carried by ``SessionAnswer/usage``.
 public struct TokenUsage: Sendable, Equatable {
     /// Input (prompt) tokens this attempt consumed.
     public let tokensIn: Int

@@ -23,8 +23,9 @@ struct MessageQueueTests {
         let responseText: String
 
         /// The per-turn token counts the vended backend meters, or `nil` to
-        /// meter nothing — a session whose backend meters nothing derives no
-        /// ``SessionEvent/turnEnded(_:)``, so a test that wants one sets this.
+        /// meter nothing. A session whose backend meters nothing sends a
+        /// ``SessionEvent/submissionEnded(_:)`` with no usage, so a test that
+        /// wants a usage sets this.
         let usageIncrement: (input: Int, output: Int)?
 
         init(responseText: String = "stub response", usageIncrement: (input: Int, output: Int)? = nil) {
@@ -538,20 +539,9 @@ struct MessageQueueTests {
         #expect(await Self.promptTexts(in: recorder) == ["first", "second"])
     }
 
-    // MARK: - Message to turn to event correlation
+    // MARK: - Message to submission to event correlation
 
-    /// The turn-start records among `events`, in order.
-    ///
-    /// - Parameter events: The events to filter.
-    /// - Returns: Each ``SessionEvent/turnStarted(_:)`` payload.
-    private static func turnStarts(in events: [SessionEvent]) -> [TurnStart] {
-        events.compactMap { event in
-            guard case .turnStarted(let start) = event else { return nil }
-            return start
-        }
-    }
-
-    @Test("the turn of a sent message opens a frame that names the message")
+    @Test("the submission of a sent message opens a frame that names the message, and its answer names it too")
     @MainActor
     func sentMessageTurnFrameNamesItsMessage() async throws {
         let recorder = InMemoryRecorder()
@@ -563,12 +553,14 @@ struct MessageQueueTests {
         #expect(await session.becomesIdle())
         await session.close()
 
-        let starts = Self.turnStarts(in: await collect(stream))
-        #expect(starts.count == 1)
-        #expect(starts.first?.messageId == id)
+        let events = await collect(stream)
+        let starts = events.submissionStarts
+        #expect(starts.map(\.messageIds) == [[id]])
+        #expect(starts.map(\.cause) == [.message])
+        #expect(events.answers.map(\.messageIds) == [[id]])
     }
 
-    @Test("a turn whose caller waits for its answer opens a frame with no message id")
+    @Test("a respond opens a submission frame that names its one message, and its answer names the same message")
     @MainActor
     func respondTurnFrameNamesNoMessage() async throws {
         let recorder = InMemoryRecorder()
@@ -579,12 +571,17 @@ struct MessageQueueTests {
         _ = try await session.respond(to: "direct prompt")
         await session.close()
 
-        let starts = Self.turnStarts(in: await collect(stream))
-        #expect(starts.count == 1)
-        #expect(starts.first?.messageId == nil)
+        // The caller of respond does not see the id of its message. The
+        // submission and the answer must name the same one message.
+        let events = await collect(stream)
+        let start = try #require(events.submissionStarts.first)
+        #expect(events.submissionStarts.count == 1)
+        #expect(start.messageIds.count == 1)
+        #expect(start.cause == .message)
+        #expect(events.answers.map(\.messageIds) == [start.messageIds])
     }
 
-    @Test("two turns on one session take distinct turn ids")
+    @Test("two answers on one session take distinct submission ids, numbered from 1")
     @MainActor
     func consecutiveTurnsTakeDistinctIds() async throws {
         let recorder = InMemoryRecorder()
@@ -596,10 +593,16 @@ struct MessageQueueTests {
         _ = try await session.respond(to: "second")
         await session.close()
 
-        let starts = Self.turnStarts(in: await collect(stream))
-        #expect(starts.count == Self.consecutiveTurnCount)
-        #expect(starts.first?.turnId != starts.last?.turnId)
+        let events = await collect(stream)
+        let expectedIds = [SubmissionID(1), SubmissionID(Self.secondSubmissionNumber)]
+        #expect(events.submissionStarts.count == Self.consecutiveTurnCount)
+        #expect(events.submissionStarts.map(\.submissionId) == expectedIds)
+        #expect(events.submissionEnds.map(\.submissionId) == expectedIds)
+        #expect(events.answers.count == Self.consecutiveTurnCount)
     }
+
+    /// The number of the second submission of a session.
+    private static let secondSubmissionNumber: UInt64 = 2
 
     /// How many turns ``consecutiveTurnsTakeDistinctIds()`` drives.
     private static let consecutiveTurnCount = 2
@@ -618,16 +621,17 @@ struct MessageQueueTests {
         _ = try await session.respond(to: "direct prompt")
         await session.close()
 
-        // `respond(to:)` hands its caller a response, not a stream, so before
-        // the fan-in this turn derived no events at all. The closing usage is
-        // the proof it now does.
+        // `respond(to:)` hands its caller a response, not a stream. The
+        // session-scoped stream still gets the usage of its one submission
+        // and the usage of its answer.
         let events = await collect(stream)
-        let usages = events.compactMap { event -> TokenUsage? in
-            guard case .turnEnded(let usage) = event else { return nil }
-            return usage
-        }
+        let usages = events.submissionEnds.compactMap(\.usage)
+        #expect(events.submissionEnds.count == 1)
         #expect(usages.map(\.tokensIn) == [Self.meteredInput])
         #expect(usages.map(\.tokensOut) == [Self.meteredOutput])
+        let answerUsages = events.answers.compactMap(\.usage)
+        #expect(answerUsages.map(\.tokensIn) == [Self.meteredInput])
+        #expect(answerUsages.map(\.tokensOut) == [Self.meteredOutput])
     }
 
     /// The input tokens ``sessionStreamCarriesRespondTurnEvents()``'s backend

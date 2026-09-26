@@ -183,7 +183,7 @@ struct ToolInvocationLivenessTests {
 
     // MARK: - Live delivery during a real scripted turn
 
-    @Test("a scripted tool turn delivers the open invocation event while the tool still runs, and every live record before turnEnded")
+    @Test("a scripted tool turn delivers the open invocation event while the tool still runs, and every live record inside its submission frame")
     @MainActor
     func liveInvocationEventArrivesWhileTheToolStillRuns() async throws {
         let slowTool = GatedMarkerTool()
@@ -226,7 +226,11 @@ struct ToolInvocationLivenessTests {
 
         // Ordering: open before close, close before the diff's .toolCall,
         // .toolCall before its completed .toolStatus, and every one of them
-        // before turnEnded (when the backend reports usage at all).
+        // after the submissionStarted and before the submissionEnded of the
+        // one submission. The answer frame is correct.
+        _ = eventsInsideAnswerFrame(events)
+        let submissionStartIndex = try #require(Self.submissionStartedIndex(in: events))
+        let submissionEndIndex = try #require(Self.submissionEndedIndex(in: events))
         let openIndex = try #require(
             events.firstIndex {
                 if case .toolInvocation(let record) = $0 { return record.closedAt == nil }
@@ -250,12 +254,8 @@ struct ToolInvocationLivenessTests {
         #expect(openIndex < closeIndex)
         #expect(closeIndex < toolCallIndex)
         #expect(toolCallIndex < completedIndex)
-        if let turnEndedIndex = events.firstIndex(where: {
-            if case .turnEnded = $0 { return true }
-            return false
-        }) {
-            #expect(completedIndex < turnEndedIndex)
-        }
+        #expect(submissionStartIndex < openIndex)
+        #expect(completedIndex < submissionEndIndex)
 
         // The diff's ids stay Apple's Transcript.ToolCall.id space: the
         // scripted call id, never the record's correlationID.
@@ -329,7 +329,7 @@ struct ToolInvocationLivenessTests {
             tool: "search", op: "search", correlationID: "token-1", sessionID: .generate(),
             openedAt: Date())
 
-        projection.apply(.turnStarted(TurnStart(turnId: TurnID(1), messageId: nil)))
+        projection.apply(Self.submissionStarted(Self.firstSubmission))
         projection.apply(.textDelta("thinking"))
         #expect(projection.phase == .generating)
 
@@ -348,9 +348,9 @@ struct ToolInvocationLivenessTests {
             tool: "search", op: "search", correlationID: "token-1", sessionID: .generate(),
             openedAt: Date())
 
-        projection.apply(.turnStarted(TurnStart(turnId: TurnID(1), messageId: nil)))
+        projection.apply(Self.submissionStarted(Self.firstSubmission))
         projection.apply(.toolInvocation(open))
-        projection.apply(.turnEnded(TokenUsage(tokensIn: 1, tokensOut: 1, contextFill: 0.1)))
+        projection.apply(Self.submissionEnded(Self.firstSubmission))
         #expect(projection.phase == .idle)
 
         projection.apply(.toolInvocation(open.closed(at: Date())))
@@ -368,18 +368,56 @@ struct ToolInvocationLivenessTests {
             tool: "search", op: "search", correlationID: "token-quick", sessionID: .generate(),
             openedAt: Date())
 
-        // Turn 1 opens a run that stays in the background: no close arrives this turn.
-        projection.apply(.turnStarted(TurnStart(turnId: TurnID(1), messageId: nil)))
+        // Submission 1 opens a run that stays in the background. No close
+        // arrives in this submission.
+        projection.apply(Self.submissionStarted(Self.firstSubmission))
         projection.apply(.toolInvocation(staleOpen))
-        projection.apply(.turnEnded(TokenUsage(tokensIn: 1, tokensOut: 1, contextFill: 0.1)))
+        projection.apply(Self.submissionEnded(Self.firstSubmission))
 
-        // Turn 2 runs one quick call; its close alone returns the phase to
-        // generating, with the stale open from turn 1 no longer counted.
-        projection.apply(.turnStarted(TurnStart(turnId: TurnID(2), messageId: nil)))
+        // Submission 2 runs one quick call. Its close alone returns the phase
+        // to generating. The stale open from submission 1 does not count.
+        projection.apply(Self.submissionStarted(Self.secondSubmission))
         projection.apply(.toolInvocation(quick))
         #expect(projection.phase == .runningTool)
         projection.apply(.toolInvocation(quick.closed(at: Date())))
         #expect(projection.phase == .generating)
+    }
+
+    /// The first submission of a session, which the projection tests apply.
+    private static let firstSubmission = SubmissionID(1)
+
+    /// The number of the second submission of a session.
+    private static let secondSubmissionNumber: UInt64 = 2
+
+    /// The second submission of a session, which the projection tests apply.
+    private static let secondSubmission = SubmissionID(secondSubmissionNumber)
+
+    /// The input tokens and the output tokens each ended submission of the
+    /// projection tests carries.
+    private static let submissionTokenCount = 1
+
+    /// The context fill each ended submission of the projection tests
+    /// carries.
+    private static let submissionContextFill = 0.1
+
+    /// A ``SessionEvent/submissionStarted(_:)`` for `submission`, with no
+    /// caller message.
+    ///
+    /// - Parameter submission: The submission that starts.
+    /// - Returns: The start event.
+    private static func submissionStarted(_ submission: SubmissionID) -> SessionEvent {
+        .submissionStarted(SubmissionStart(submissionId: submission, messageIds: [], cause: .message))
+    }
+
+    /// A ``SessionEvent/submissionEnded(_:)`` for `submission`, with a small
+    /// measured usage.
+    ///
+    /// - Parameter submission: The submission that ends.
+    /// - Returns: The end event.
+    private static func submissionEnded(_ submission: SubmissionID) -> SessionEvent {
+        let usage = TokenUsage(
+            tokensIn: submissionTokenCount, tokensOut: submissionTokenCount, contextFill: submissionContextFill)
+        return .submissionEnded(SubmissionEnd(submissionId: submission, usage: usage, finishReason: .completed))
     }
 
     // MARK: - Tool call reports: delivered live on the turn's stream, or on the session feed
@@ -395,14 +433,28 @@ struct ToolInvocationLivenessTests {
             sessionID: record.sessionID, attachments: [MountFixtures.firstAttachment])
     }
 
-    /// The position of the first ``SessionEvent/turnEnded(_:)`` in `events`,
-    /// or `nil` when the backend reported no usage.
+    /// The position of the first ``SessionEvent/submissionStarted(_:)`` in
+    /// `events`.
     ///
-    /// - Parameter events: The turn's events, in stream order.
-    /// - Returns: The index of the first `turnEnded`, or `nil`.
-    private static func turnEndedIndex(in events: [SessionEvent]) -> Int? {
+    /// - Parameter events: The events of the answer, in stream order.
+    /// - Returns: The index of the first `submissionStarted`, or `nil` when
+    ///   there is none.
+    private static func submissionStartedIndex(in events: [SessionEvent]) -> Int? {
         events.firstIndex {
-            if case .turnEnded = $0 { return true }
+            if case .submissionStarted = $0 { return true }
+            return false
+        }
+    }
+
+    /// The position of the first ``SessionEvent/submissionEnded(_:)`` in
+    /// `events`. The session sends it also when the backend reports no usage.
+    ///
+    /// - Parameter events: The events of the answer, in stream order.
+    /// - Returns: The index of the first `submissionEnded`, or `nil` when
+    ///   there is none.
+    private static func submissionEndedIndex(in events: [SessionEvent]) -> Int? {
+        events.firstIndex {
+            if case .submissionEnded = $0 { return true }
             return false
         }
     }
@@ -457,9 +509,9 @@ struct ToolInvocationLivenessTests {
 
         let reportIndex = try #require(events.firstIndex(of: .toolCallReport(report)))
         #expect(closeIndex < reportIndex)
-        if let turnEndedIndex = Self.turnEndedIndex(in: events) {
-            #expect(reportIndex < turnEndedIndex)
-        }
+        _ = eventsInsideAnswerFrame(events)
+        let submissionEndIndex = try #require(Self.submissionEndedIndex(in: events))
+        #expect(reportIndex < submissionEndIndex)
     }
 
     @Test("a report posted between turns arrives on streamSessionEvents()")
@@ -479,8 +531,8 @@ struct ToolInvocationLivenessTests {
 
         // One turn first: the session installs itself as the outbox's observer
         // at the top of its first turn. A report posted before that is dropped.
-        let outcome: TurnOutcome = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
-        let close = try #require(outcome.toolInvocations.first)
+        let answer: SessionAnswer = try await fixture.session.respond(to: ScriptedToolFixture.prompt, observing: nil)
+        let close = try #require(answer.toolInvocations.first)
 
         // Subscribed before the post, so the report cannot be lost by a late
         // subscription.
@@ -597,8 +649,8 @@ struct ToolInvocationLivenessTests {
 
         // The turn returns while the run waits on its gate, so the close record
         // and the report can only arrive on the session stream.
-        let outcome: TurnOutcome = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
-        let open = try #require(outcome.toolInvocations.first)
+        let answer: SessionAnswer = try await fixture.session.respond(to: ScriptedToolFixture.prompt, observing: nil)
+        let open = try #require(answer.toolInvocations.first)
         #expect(open.closedAt == nil)
 
         // Subscribed before the gate opens, so the run cannot settle before

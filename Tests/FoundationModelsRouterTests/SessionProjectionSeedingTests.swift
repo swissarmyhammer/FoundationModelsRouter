@@ -372,12 +372,36 @@ struct SessionProjectionSeedingTests {
         #expect(projection.transcript.map(\.kind) == [.text("restored answer"), .text("new turn")])
     }
 
+    /// The usage of the stale submission that the seed must clear.
+    private static let staleUsage = TokenUsage(tokensIn: 10, tokensOut: 5, contextFill: 0.5)
+
+    /// The number of the stale submission that is still open when the seed
+    /// comes.
+    private static let openSubmissionNumber: UInt64 = 2
+
     @Test("seed resets the projection to mirror the cold transcript alone")
     @MainActor
-    func seedReplacesEarlierObservedState() {
+    func seedReplacesEarlierObservedState() throws {
         let projection = SessionProjection()
+        let message = MessageID()
+        // One stale submission ends with usage. Its message still waits for
+        // an answer, because no answer came. A second submission is still
+        // open.
+        projection.apply(
+            .submissionStarted(SubmissionStart(submissionId: SubmissionID(1), messageIds: [message], cause: .message)))
         projection.apply(.textDelta("stale live text"))
-        projection.apply(.turnEnded(TokenUsage(tokensIn: 10, tokensOut: 5, contextFill: 0.5)))
+        projection.apply(
+            .submissionEnded(
+                SubmissionEnd(submissionId: SubmissionID(1), usage: Self.staleUsage, finishReason: .completed)))
+        projection.apply(
+            .submissionStarted(
+                SubmissionStart(
+                    submissionId: SubmissionID(Self.openSubmissionNumber), messageIds: [], cause: .continuation)))
+        // The stale state is really there: the reset below is not a reset of
+        // an empty projection.
+        #expect(projection.tokensIn == Self.staleUsage.tokensIn)
+        #expect(projection.messagesAwaitingAnswer == [message])
+        #expect(try #require(projection.currentSubmission).submissionId == SubmissionID(Self.openSubmissionNumber))
 
         projection.seed(from: Transcript(entries: []))
 
@@ -385,7 +409,8 @@ struct SessionProjectionSeedingTests {
         #expect(projection.tokensIn == 0)
         #expect(projection.tokensOut == 0)
         #expect(projection.contextFill == 0)
-        #expect(projection.currentTurn == nil)
+        #expect(projection.currentSubmission == nil)
+        #expect(projection.messagesAwaitingAnswer.isEmpty)
         #expect(projection.phase == .idle)
     }
 

@@ -14,7 +14,7 @@ extension RoutedSessionActor {
     @discardableResult
     func send(_ prompt: Transcript.Prompt) async -> MessageID {
         let message = SessionMessage(
-            id: MessageID(), prompt: prompt, requestedMaxTokens: nil, reader: .reply, entryPoint: .send,
+            id: MessageID(), prompt: prompt, requestedMaxTokens: nil, reader: .reply,
             serviceContext: ServiceContext.current, answer: PumpAnswer())
         await enqueue(message)
         return message.id

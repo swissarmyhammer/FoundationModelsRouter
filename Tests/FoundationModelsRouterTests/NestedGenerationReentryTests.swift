@@ -654,11 +654,15 @@ struct NestedGenerationReentryTests {
         // next submission, and that submission names it.
         #expect(await caller.becomesIdle())
         await caller.close()
-        let starts = await collect(events).compactMap { event -> TurnStart? in
-            guard case .turnStarted(let start) = event else { return nil }
-            return start
-        }
-        #expect(starts.map { $0.messageId?.description } == [nil, sentID])
+        // The first submission delivers the message of `respond`. The second
+        // submission delivers only the sent message.
+        let starts = await collect(events).submissionStarts
+        #expect(starts.map(\.cause) == [.message, .message])
+        let first = try #require(starts.first)
+        let second = try #require(starts.last)
+        #expect(first.messageIds.count == 1)
+        #expect(!first.messageIds.map(\.description).contains(sentID))
+        #expect(second.messageIds.map(\.description) == [sentID])
         let prompts = Array(await caller.transcript).compactMap { entry -> String? in
             guard case .prompt(let prompt) = entry else { return nil }
             return TranscriptEntryMapper.flattenedText(prompt)

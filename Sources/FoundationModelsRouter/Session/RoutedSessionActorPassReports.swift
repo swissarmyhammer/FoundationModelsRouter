@@ -6,9 +6,10 @@
 /// and each submission reports its wait for the worker and its start there.
 /// The session turns each reported ``GenerationCallPhase`` into its own state:
 /// the stall watch of the model call in flight counts only the time inside a
-/// pass of the running submission, and the consumer sees the wait and the
-/// start of each submission as ``SessionEvent/submissionQueued`` and
-/// ``SessionEvent/submissionStarted``.
+/// pass of the running submission, and the consumer sees the wait of each
+/// submission as ``SessionEvent/submissionQueued(_:)``. The start of each
+/// submission reaches the consumer as ``SessionEvent/submissionStarted(_:)``
+/// through `submissionDidStart()`, which applies the reported phases first.
 extension RoutedSessionActor {
     /// Installs this session's pass observer on `backend`, when `backend`
     /// reports its passes. The initializer and each replacement of
@@ -38,7 +39,7 @@ extension RoutedSessionActor {
     /// Stops reading the phase reports of the model call `callID`, and applies
     /// the phases the reader did not apply yet. The call ended, so its
     /// submission and each of its passes have reported already, and the
-    /// events reach the turn before the turn ends.
+    /// events reach the answer before the submission ends.
     ///
     /// - Parameters:
     ///   - callID: The id of the model call that ended.
@@ -52,11 +53,12 @@ extension RoutedSessionActor {
     /// Applies each reported phase not yet applied, in the order of the
     /// reports: to the stall watch of the model call in flight, and as an
     /// event to the consumer when the phase has one
-    /// (``GenerationCallPhase/sessionEvent``).
+    /// (``GenerationCallPhase/sessionEvent(submission:)``). The event names
+    /// the running submission; a phase with no open submission gives none.
     func drainGenerationPassPhases() {
         for phase in generationPassObserver.takePhases() {
             generationStallWatch?.apply(phase)
-            if let event = phase.sessionEvent {
+            if let event = phase.sessionEvent(submission: runningSubmission?.start.submissionId) {
                 deliverLive(event)
             }
         }

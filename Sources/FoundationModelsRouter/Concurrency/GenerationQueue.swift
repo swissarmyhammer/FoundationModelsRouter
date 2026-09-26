@@ -78,7 +78,7 @@ public final class GenerationQueue: Sendable {
     ///
     /// An item that finds the worker idle never calls `onQueued`. A session
     /// uses it to report the wait of its submission
-    /// (``SessionEvent/submissionQueued``).
+    /// (``SessionEvent/submissionQueued(_:)``).
     ///
     /// - Parameters:
     ///   - isolation: The actor isolation of the caller, which defaults to

@@ -203,10 +203,10 @@ struct Qwen38ToolTurnIntegrationTests {
         // has to stay referenced for the whole turn.
         defer { withExtendedLifetime(profile) {} }
 
-        let turnStarted = ContinuousClock.now
+        let startInstant = ContinuousClock.now
         let answer = try await session.respond(
             to: Self.prompt, maxTokens: GatedRealModelBudget.responseTokenCeiling)
-        let turnDuration = ContinuousClock.now - turnStarted
+        let turnDuration = ContinuousClock.now - startInstant
 
         let run = ToolTurnRunOutcome(
             answer: answer,

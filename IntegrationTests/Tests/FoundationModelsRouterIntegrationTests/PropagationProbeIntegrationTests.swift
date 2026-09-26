@@ -598,10 +598,10 @@ struct PropagationProbeIntegrationTests {
             instructions: Self.probeInstructions
         )
 
-        let turnStarted = ContinuousClock.now
+        let startInstant = ContinuousClock.now
         let propagated = try await Self.probeVerdict(
             session: session, log: log, pathLabel: "MLX")
-        turnDuration = ContinuousClock.now - turnStarted
+        turnDuration = ContinuousClock.now - startInstant
         // The observed 2026-08-04 verdict, pinned: the task local
         // propagates on the MLX path. A future toolchain that starts
         // dispatching tools on a detached task must break this loudly.

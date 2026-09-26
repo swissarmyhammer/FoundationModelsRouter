@@ -72,23 +72,21 @@ struct CeilingStopCompactionTests {
         return try await collect(session.streamEvents(to: prompt, maxTokens: ceiling))
     }
 
-    /// The finish reason of each ended attempt among `events`, in order.
+    /// The finish reason of each ended submission among `events`, in order.
+    /// Each end also carries the same reason in its usage.
     private static func finishReasons(in events: [SessionEvent]) -> [FinishReason] {
-        events.compactMap { event in
-            guard case .turnEnded(let usage) = event else { return nil }
-            return usage.finishReason
-        }
+        let ends = events.submissionEnds
+        #expect(ends.map { $0.usage?.finishReason } == ends.map(\.finishReason))
+        return ends.map(\.finishReason)
     }
 
-    /// How many turns `events` started.
-    private static func turnStarts(in events: [SessionEvent]) -> Int {
-        events.filter { event in
-            guard case .turnStarted = event else { return false }
-            return true
-        }.count
+    /// The cause of each submission that `events` started, in order.
+    private static func submissionCauses(in events: [SessionEvent]) -> [SubmissionStart.Cause] {
+        events.submissionStarts.map(\.cause)
     }
 
-    @Test("a ceiling stop over the trigger: one compaction, one more attempt, and one turn that answers")
+    @Test(
+        "a ceiling stop over the trigger: one compaction, one continuation submission, and one answer")
     func ceilingStopOverTheTriggerCompactsAndGoesOn() async throws {
         let events = try await Self.turnEvents(cutLength: Self.largeCutLength, cutUsage: Self.overTriggerUsage)
 
@@ -98,17 +96,27 @@ struct CeilingStopCompactionTests {
         #expect(compaction.summaryEntryId != nil)
         #expect(compaction.tokensAfter < compaction.tokensBefore)
         #expect(Self.finishReasons(in: events) == [.maxTokens, .completed])
-        #expect(Self.turnStarts(in: events) == 1)
+        // The first submission delivers the message. The continuation after
+        // the compaction delivers no new message.
+        #expect(Self.submissionCauses(in: events) == [.message, .continuation])
+        #expect(events.submissionStarts.map(\.messageIds.count) == [1, 0])
+        // The chain has one answer, and it is the last event.
+        _ = eventsInsideAnswerFrame(events)
+        let answer = try #require(events.answers.first)
+        #expect(answer.compactions == compactions)
+        #expect(answer.reply.contains(CeilingStopCompactionModel.Executor.answerText))
         #expect(events.streamedText.contains(CeilingStopCompactionModel.Executor.answerText))
     }
 
-    @Test("a ceiling stop under the trigger: no compaction, and the turn ends as truncated")
+    @Test("a ceiling stop under the trigger: no compaction, and the one submission ends as truncated")
     func ceilingStopUnderTheTriggerEndsTruncated() async throws {
         let events = try await Self.turnEvents(cutLength: Self.smallCutLength, cutUsage: Self.underTriggerUsage)
 
         #expect(events.compactionResults.isEmpty)
         #expect(Self.finishReasons(in: events) == [.maxTokens])
-        #expect(Self.turnStarts(in: events) == 1)
+        #expect(Self.submissionCauses(in: events) == [.message])
+        _ = eventsInsideAnswerFrame(events)
+        #expect(events.answers.first?.usage?.finishReason == .maxTokens)
         #expect(!events.streamedText.contains(CeilingStopCompactionModel.Executor.answerText))
     }
 
@@ -122,7 +130,8 @@ struct CeilingStopCompactionTests {
 
         #expect(events.compactionResults.isEmpty)
         #expect(Self.finishReasons(in: events) == [.endedInsideReasoning])
-        #expect(Self.turnStarts(in: events) == 1)
+        #expect(Self.submissionCauses(in: events) == [.message])
+        _ = eventsInsideAnswerFrame(events)
         #expect(!events.streamedText.contains(CeilingStopCompactionModel.Executor.answerText))
     }
 }

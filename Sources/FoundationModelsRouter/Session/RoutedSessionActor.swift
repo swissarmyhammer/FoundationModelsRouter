@@ -406,6 +406,21 @@ actor RoutedSessionActor: RoutedSession {
     /// ``SessionEvent/toolInvocation(_:)`` to the running answer.
     var currentTurnEventSink: ((SessionEvent) -> Void)?
 
+    /// The number of the last submission this session opened. The next
+    /// ``SubmissionID`` takes the next number. See
+    /// ``beginSubmission(cause:messageIds:)``.
+    var lastSubmissionNumber: UInt64 = 0
+
+    /// The submission of the running answer that is open now, or `nil`
+    /// between two submissions and between answers.
+    var runningSubmission: RunningSubmission?
+
+    /// The reducer of the running answer: each event of the answer goes
+    /// through it (``turnEventSink(_:)``), and the pump makes the
+    /// ``SessionAnswer`` from it when the chain ends. The pump resets it for
+    /// each answer.
+    var answerReducer = SessionAnswerReducer()
+
     /// The ledger of the generate attempt in flight, or `nil` between
     /// attempts and when the backend reports no usage. See
     /// ``GenerationCallLedger``.

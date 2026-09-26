@@ -254,6 +254,8 @@ Code and tests that assume an in-band wait, and what each becomes:
 - Of the session: `compaction`, `runSettled`, `elicitationRequested`, `discoveryPrimingFailed` stay.
 - `textDelta` and `textReset` also travel on `streamSessionEvents()`, because no caller owns a submission that mail started.
 
+Decided in ^x7cxsg3: a summarizer call of a compaction is not a submission of the session (compaction runs between two submissions) and sends no submission event. Every submission sends `submissionStarted`, also over a backend with no queue. A submission that never started (the hard ceiling refused it, or a cancel came before or during its wait) sends `submissionEnded` with no `submissionStarted`.
+
 **The replacements:**
 
 | Now | Becomes | Task |

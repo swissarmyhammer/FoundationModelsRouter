@@ -67,125 +67,96 @@ extension RoutedSessionActor {
         }
     }
 
-    /// Composes a turn's own event sink with the session-scoped fan-out.
+    /// Composes the event sink of an answer. Each event goes first to
+    /// ``answerReducer``, which makes the ``SessionAnswer`` of the chain. Then
+    /// it goes to the own sink of the answer and to the session-scoped
+    /// fan-out.
     ///
-    /// - Parameter onEvent: This turn's own sink, or `nil`.
+    /// - Parameter onEvent: The own sink of the answer, or `nil`.
+    /// - Returns: The composed sink.
     private func turnEventSink(_ onEvent: ((SessionEvent) -> Void)?) -> (SessionEvent) -> Void {
         { [self] event in
+            answerReducer.apply(event)
             onEvent?(event)
             emitSessionScopedEvent(event)
         }
     }
 
-    /// Runs one answer inside its own span. Only the pump calls it, so no
-    /// other submission of this session runs meanwhile.
+    /// Runs the chain of submissions of one answer. Only the pump calls it,
+    /// so no other submission of this session runs meanwhile.
     ///
-    /// Every generation surface reaches this one method through the pump, so
-    /// the span it opens covers all of them:
-    /// ``RoutedSession/respond(to:maxTokens:)``,
-    /// ``RoutedSession/streamResponse(to:maxTokens:)``,
-    /// ``RoutedSession/streamEvents(to:maxTokens:)``,
-    /// ``RoutedSession/send(_:)-(Transcript.Prompt)`` and an answer that only
-    /// mail started. Those methods state the span contract; ``RouterTracing``
-    /// states the rule that keeps content off it.
+    /// Every event of the chain goes to the sink of the answer: the stream
+    /// of the first message when that message streams events, and
+    /// ``RoutedSession/streamSessionEvents()``. The chain ends with
+    /// ``SessionEvent/answered(_:)`` or ``SessionEvent/answerFailed(_:)``.
+    /// Each submission of the chain opens its own span (see
+    /// `RoutedSessionActorSubmissionEvents.swift`). ``RoutedSession`` states
+    /// the span contract, and ``RouterTracing`` states the rule that keeps
+    /// content off the spans.
     ///
     /// - Parameters:
-    ///   - grammar: The grammar in force for this turn.
-    ///   - turnId: The identity of this answer, which the pump minted.
-    ///   - entryPoint: The surface this answer was started through.
-    ///   - messageId: The first message of the answer that
-    ///     ``RoutedSession/send(_:)-(Transcript.Prompt)`` sent, or `nil`.
+    ///   - grammar: The grammar in force for the answer.
     ///   - pendingEvents: The mail the pump took from ``outbox`` for it.
     ///   - ownPrompt: The prompt text of its caller messages.
     ///   - responseTokenCeiling: The token ceiling `body` gives the backend, and the ceiling the caller named.
-    ///   - onEvent: A sink for this turn's ``SessionEvent``s, or `nil`.
+    ///   - onEvent: The own sink of the answer for its ``SessionEvent``s, or `nil`.
     ///   - body: The model work to run.
     /// - Returns: The response text `body` produced.
     /// - Throws: Whatever `body` throws, or `CancellationError` from the compaction.
-    ///   `withSpan` records the error on the span and raises it again.
-    func runTurn(
+    func runAnswerChain(
         grammar: Grammar?,
-        turnId: TurnID,
-        entryPoint: RouterTracing.TurnEntryPoint,
-        messageId: MessageID?,
         pendingEvents: [OperationEvent],
         ownPrompt: String,
         responseTokenCeiling: ResponseTokenCeiling,
         onEvent: ((SessionEvent) -> Void)? = nil,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
-        try await RouterTracing.tracer(explicit: tracer)
-            .withSpan(RouterTracing.SpanName.turn, ofKind: .client) { span in
-                span.attributes[RouterTracing.AttributeKey.routerId] = routerId.description
-                span.attributes[RouterTracing.AttributeKey.sessionId] = id.description
-                span.attributes[RouterTracing.AttributeKey.modelRef] = model.stringValue
-                span.attributes[RouterTracing.AttributeKey.turnId] = turnId.description
-                span.attributes[RouterTracing.AttributeKey.turnEntryPoint] = entryPoint.rawValue
-                let response = try await runTurnWork(
-                    grammar: grammar, turnId: turnId, messageId: messageId,
-                    pendingEvents: pendingEvents, ownPrompt: ownPrompt,
-                    responseTokenCeiling: responseTokenCeiling, onEvent: onEvent, body)
-                recordMeasuredTokens(on: span)
-                return response
-            }
+        let emit = turnEventSink(onEvent)
+        answerReducer = SessionAnswerReducer()
+        let result: Result<String, any Error>
+        do {
+            result = .success(
+                try await runTurnWork(
+                    grammar: grammar, pendingEvents: pendingEvents, ownPrompt: ownPrompt,
+                    responseTokenCeiling: responseTokenCeiling, emit: emit, body))
+        } catch {
+            result = .failure(error)
+        }
+        emit(answerEndEvent(for: result))
+        return try result.get()
     }
 
-    /// Writes this turn's measured token counts onto `span`.
-    ///
-    /// A turn whose diff carried a `.response` entry leaves ``usageState``
-    /// measured: the fed and generated tokens of the newest generation call.
-    /// Those two numbers are what the span reports. A turn the
-    /// backend could not meter leaves the state unmeasured, and the span then
-    /// carries no token attribute at all rather than a guess.
-    ///
-    /// - Parameter span: This turn's span.
-    private func recordMeasuredTokens(on span: any Span) {
-        guard case .measured(let input, let output) = usageState else { return }
-        span.attributes[RouterTracing.AttributeKey.tokensIn] = input
-        span.attributes[RouterTracing.AttributeKey.tokensOut] = output
-    }
-
-    /// Runs one answer's model work and recording. Only the pump calls it.
+    /// Runs the model work and the recording of one answer. Only
+    /// ``runAnswerChain(grammar:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:_:)``
+    /// calls it.
     ///
     /// When ``autoCompactionBudget`` is set and measured usage has reached
-    /// ``TokenBudget/triggerTokens``, the turn compacts first. A compaction that throws
-    /// is recorded as a failed turn.
+    /// ``TokenBudget/triggerTokens``, the answer compacts first. A compaction
+    /// that throws is recorded as a failed attempt.
     ///
     /// - Parameters:
-    ///   - grammar: The grammar in force for this turn.
-    ///   - turnId: The identity of this answer, which the pump minted.
-    ///   - messageId: The first message of the answer that
-    ///     ``RoutedSession/send(_:)-(Transcript.Prompt)`` sent, or `nil`.
+    ///   - grammar: The grammar in force for the answer.
     ///   - pendingEvents: The mail the pump took from ``outbox`` for it.
     ///   - ownPrompt: The prompt text of its caller messages.
     ///   - responseTokenCeiling: The token ceiling `body` gives the backend, and the ceiling the caller named.
-    ///   - onEvent: A sink for this turn's ``SessionEvent``s, or `nil`.
+    ///   - emit: The composed sink of the answer (see ``turnEventSink(_:)``).
     ///   - body: The model work to run.
     /// - Returns: The response text `body` produced.
     /// - Throws: Whatever `body` throws, or `CancellationError` from the compaction.
     private func runTurnWork(
         grammar: Grammar?,
-        turnId: TurnID,
-        messageId: MessageID?,
         pendingEvents: [OperationEvent],
         ownPrompt: String,
         responseTokenCeiling: ResponseTokenCeiling,
-        onEvent: ((SessionEvent) -> Void)? = nil,
+        emit: @escaping (SessionEvent) -> Void,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
-        // The correlation frame, opened before anything this turn does — the
-        // proactive compaction below included — so every event a consumer sees after
-        // it belongs to this turn. See ``SessionEvent/turnStarted(_:)``.
-        let emit = turnEventSink(onEvent)
-
-        // Installed for exactly this turn's duration so a live
-        // ``ToolInvocationRecord`` posted mid-turn reaches this turn's own
-        // stream — see ``deliver(invocation:)`` and
+        // Installed for exactly this answer's duration so a live
+        // ``ToolInvocationRecord`` posted during the answer reaches the answer's
+        // own stream — see ``deliver(invocation:)`` and
         // ``RoutedSessionActor/currentTurnEventSink``.
         currentTurnEventSink = emit
         defer { currentTurnEventSink = nil }
-
-        emit(.turnStarted(TurnStart(turnId: turnId, messageId: messageId)))
 
         // Compared in tokens against ``TokenBudget/triggerTokens``, never as
         // `contextFill >= budget.trigger` — see the matching note on the
@@ -260,7 +231,14 @@ extension RoutedSessionActor {
         }
     }
 
-    /// One physical attempt at a turn's model work and recording.
+    /// One submission of the answer: one physical attempt at the model work
+    /// of the answer, and its recording.
+    ///
+    /// The attempt opens its submission first
+    /// (``beginSubmission(cause:messageIds:)``). The first attempt of an
+    /// answer delivers the caller messages of the answer, or mail alone. A
+    /// continuation delivers the caller messages that joined it. The
+    /// recording of the attempt ends the submission.
     ///
     /// A failed attempt is recorded, and then
     /// ``recoverFailedAttempt(from:grammar:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetries:_:)``
@@ -311,6 +289,10 @@ extension RoutedSessionActor {
             let joining = await takeMessagesJoiningTheAnswer()
             pendingEvents += joining.events
             ownPrompt = ([ownPrompt] + joining.texts).joined(separator: Self.messageSeparator)
+            beginSubmission(cause: .continuation, messageIds: joining.ids)
+        } else {
+            let delivery = firstSubmissionDelivery()
+            beginSubmission(cause: delivery.cause, messageIds: delivery.messageIds)
         }
         let composedPrompt = Self.composedPrompt(pendingEvents: pendingEvents, prompt: ownPrompt)
 
@@ -378,6 +360,7 @@ extension RoutedSessionActor {
             if let repetitionStop = takeRepetitionStop() {
                 return try await continueAfterRepetitionStop(repetitionStop, attempt: attempt, body: body)
             }
+            recordSubmissionError(error)
             await recordFailedTurn(
                 grammar: grammar, since: started, usageBefore: usageBefore,
                 responseTokenCeiling: responseTokenCeiling.resolved, pendingEvents: pendingEvents, onEvent: onEvent)
@@ -688,10 +671,12 @@ extension RoutedSessionActor {
         let submission = Self.submission(
             of: body, composedPrompt: composedPrompt, mark: modelCallMark,
             boundary: ToolResultAppendBoundary(session: self), context: turnContext,
-            serviceContext: ServiceContext.current)
+            serviceContext: submissionServiceContext)
         let observer = generationPassObserver
         let modelCall = Task {
-            try await Self.run(submission, on: target?.queue, reportingTo: observer)
+            try await Self.run(
+                submission, on: target?.queue, reportingTo: observer,
+                onStart: { await self.submissionDidStart() })
         }
         cancellationProbe.bind(to: modelCall)
         inFlightModelCall = modelCall
@@ -715,8 +700,8 @@ extension RoutedSessionActor {
     /// The worker of a queue runs the submission on a task that inherits no
     /// task-local of the session, so the submission binds each one itself.
     /// The SDK gives them to each tool body it runs inside the call. The
-    /// tracing `ServiceContext` of the turn is one of them, so the span of
-    /// each tool call stays a child of the span of its turn.
+    /// tracing `ServiceContext` of the submission is one of them, so the span
+    /// of each tool call stays a child of the span of its submission.
     ///
     /// - Parameters:
     ///   - body: The model work: one whole SDK call.
@@ -724,7 +709,8 @@ extension RoutedSessionActor {
     ///   - mark: The mark of the model call.
     ///   - boundary: The tool-result append boundary of the model call.
     ///   - context: The ambient ``ToolContext`` of the model call.
-    ///   - serviceContext: The tracing context of the turn, or `nil`.
+    ///   - serviceContext: The tracing context of the submission
+    ///     (``submissionServiceContext``), or `nil`.
     /// - Returns: The submission.
     private static func submission(
         of body: @escaping @Sendable (String) async throws -> String,
@@ -750,22 +736,35 @@ extension RoutedSessionActor {
     /// Runs `submission` as one item of `queue`, and reports its wait and its
     /// start to `observer`, or runs it directly when there is no queue.
     ///
+    /// `onStart` runs first, before `submission`, in both cases. It hops to
+    /// the actor and calls ``submissionDidStart()``, which sends
+    /// ``SessionEvent/submissionStarted(_:)``. That call applies the reported
+    /// phases first, so a ``SessionEvent/submissionQueued(_:)`` of the
+    /// submission always comes before its start. Because `submission` starts
+    /// only after `onStart` returns, no content of the submission comes before
+    /// its start.
+    ///
     /// - Parameters:
     ///   - submission: The submission of one model call.
     ///   - queue: The queue of the model, or `nil`.
     ///   - observer: The observer of this session's model calls.
+    ///   - onStart: The closure that reports the start of the submission. It
+    ///     runs at the start of the queue item, or before the direct call.
     /// - Returns: What `submission` returns.
     /// - Throws: What the queue or `submission` throws.
     private static func run(
         _ submission: @escaping @Sendable () async throws -> String,
         on queue: GenerationQueue?,
-        reportingTo observer: GenerationPassObserver
+        reportingTo observer: GenerationPassObserver,
+        onStart: @escaping @Sendable () async -> Void
     ) async throws -> String {
         guard let queue else {
+            await onStart()
             return try await submission()
         }
         return try await queue.submit(onQueued: { observer.submissionQueued() }) {
             observer.submissionStarted()
+            await onStart()
             return try await submission()
         }
     }

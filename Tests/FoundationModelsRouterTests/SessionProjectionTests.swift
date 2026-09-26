@@ -160,25 +160,49 @@ struct SessionProjectionTests {
 
     // MARK: - Live-driver events: carried for a host, change nothing here
 
-    /// Applies `event` to a projection that is mid-turn and mid-tool-call,
-    /// and asserts that its phase, transcript, turn, and counters did not move.
+    /// The start of a submission that delivers one message, for the tests that
+    /// need a running submission.
+    ///
+    /// - Parameters:
+    ///   - number: The number of the submission.
+    ///   - messageIds: The messages the submission delivers.
+    /// - Returns: The start record.
+    private static func start(_ number: UInt64, delivering messageIds: [MessageID] = []) -> SubmissionStart {
+        SubmissionStart(submissionId: SubmissionID(number), messageIds: messageIds, cause: .message)
+    }
+
+    /// The end of a submission, with `usage`.
+    ///
+    /// - Parameters:
+    ///   - number: The number of the submission.
+    ///   - usage: The usage of the submission, or `nil`.
+    /// - Returns: The end record.
+    private static func end(_ number: UInt64, usage: TokenUsage?) -> SubmissionEnd {
+        SubmissionEnd(submissionId: SubmissionID(number), usage: usage, finishReason: .completed)
+    }
+
+    /// Applies `event` to a projection that is inside a submission and
+    /// mid-tool-call, and asserts that its phase, transcript, running
+    /// submission, and counters did not move.
     ///
     /// - Parameter event: The event under test.
     @MainActor
     private static func expectProjectionUnchanged(by event: SessionEvent) {
         let projection = SessionProjection()
-        projection.apply(.turnStarted(TurnStart(turnId: TurnID(1), messageId: nil)))
+        projection.apply(.submissionStarted(start(1, delivering: [MessageID()])))
         projection.apply(.toolCall(id: "call-1", name: "search", argumentsJSON: "{}"))
         projection.apply(.toolStatus(id: "call-1", status: .running, summary: nil, output: nil))
         let phaseBefore = projection.phase
         let transcriptBefore = projection.transcript
-        let turnBefore = projection.currentTurn
+        let submissionBefore = projection.currentSubmission
+        let awaitingBefore = projection.messagesAwaitingAnswer
 
         projection.apply(event)
 
         #expect(projection.phase == phaseBefore)
         #expect(projection.transcript == transcriptBefore)
-        #expect(projection.currentTurn == turnBefore)
+        #expect(projection.currentSubmission == submissionBefore)
+        #expect(projection.messagesAwaitingAnswer == awaitingBefore)
         #expect(projection.tokensIn == 0)
         #expect(projection.tokensOut == 0)
         #expect(projection.contextFill == 0)
@@ -217,14 +241,14 @@ struct SessionProjectionTests {
         #expect(projection.transcript.map(\.kind) == [.compaction(result)])
     }
 
-    // MARK: - turnEnded: accumulates tokens, latest contextFill, phase .idle
+    // MARK: - submissionEnded: accumulates tokens, latest contextFill, phase .idle
 
-    @Test("turnEnded accumulates tokensIn/tokensOut across calls and sets phase .idle")
+    @Test("submissionEnded accumulates tokensIn/tokensOut across calls and sets phase .idle")
     @MainActor
-    func turnEndedAccumulatesTokensAndSetsIdle() {
+    func submissionEndedAccumulatesTokensAndSetsIdle() {
         let projection = SessionProjection()
         projection.apply(.textDelta("hi"))
-        projection.apply(.turnEnded(TokenUsage(tokensIn: 10, tokensOut: 5, contextFill: 0.1)))
+        projection.apply(.submissionEnded(Self.end(1, usage: TokenUsage(tokensIn: 10, tokensOut: 5, contextFill: 0.1))))
 
         #expect(projection.phase == .idle)
         #expect(projection.tokensIn == 10)
@@ -232,17 +256,76 @@ struct SessionProjectionTests {
         #expect(projection.contextFill == 0.1)
     }
 
-    @Test("a retried turn's second turnEnded adds to the running token totals and reports the newer contextFill")
+    @Test("a retried answer's second submissionEnded adds to the running token totals and reports the newer contextFill")
     @MainActor
-    func secondTurnEndedAddsToRunningTotals() {
+    func secondSubmissionEndedAddsToRunningTotals() {
         let projection = SessionProjection()
-        projection.apply(.turnEnded(TokenUsage(tokensIn: 100, tokensOut: 50, contextFill: 0.9)))
+        projection.apply(.submissionEnded(Self.end(1, usage: TokenUsage(tokensIn: 100, tokensOut: 50, contextFill: 0.9))))
         projection.apply(.compaction(CompactionResult(summary: nil, tokensBefore: 500, tokensAfter: 200, stagesApplied: [])))
-        projection.apply(.turnEnded(TokenUsage(tokensIn: 20, tokensOut: 10, contextFill: 0.4)))
+        projection.apply(.submissionEnded(Self.end(2, usage: TokenUsage(tokensIn: 20, tokensOut: 10, contextFill: 0.4))))
 
         #expect(projection.tokensIn == 120)
         #expect(projection.tokensOut == 60)
         #expect(projection.contextFill == 0.4)
+    }
+
+    @Test("a submissionEnded with no usage keeps the counters and still sets phase .idle")
+    @MainActor
+    func submissionEndedWithNoUsageKeepsTheCounters() {
+        let projection = SessionProjection()
+        projection.apply(.submissionEnded(Self.end(1, usage: TokenUsage(tokensIn: 10, tokensOut: 5, contextFill: 0.1))))
+        projection.apply(.textDelta("hi"))
+        projection.apply(.submissionEnded(Self.end(2, usage: nil)))
+
+        #expect(projection.phase == .idle)
+        #expect(projection.tokensIn == 10)
+        #expect(projection.tokensOut == 5)
+        #expect(projection.contextFill == 0.1)
+    }
+
+    // MARK: - currentSubmission and messagesAwaitingAnswer (task ^x7cxsg3)
+
+    @Test("currentSubmission is the running submission from its start to its end, and nil after it")
+    @MainActor
+    func currentSubmissionRunsFromItsStartToItsEnd() {
+        let projection = SessionProjection()
+        let first = Self.start(1)
+        let second = Self.start(2)
+
+        projection.apply(.submissionStarted(first))
+        let whileTheFirstRuns = projection.currentSubmission
+        projection.apply(.submissionEnded(Self.end(1, usage: nil)))
+        let afterTheFirst = projection.currentSubmission
+        projection.apply(.submissionStarted(second))
+        // The end of another submission does not close the running one.
+        projection.apply(.submissionEnded(Self.end(1, usage: nil)))
+
+        #expect(whileTheFirstRuns == first)
+        #expect(afterTheFirst == nil)
+        #expect(projection.currentSubmission == second)
+    }
+
+    @Test("messagesAwaitingAnswer holds each delivered message until an answer or a failure names it")
+    @MainActor
+    func messagesAwaitingAnswerHoldsTheDeliveredMessagesUntilTheirAnswer() {
+        let projection = SessionProjection()
+        let first = MessageID()
+        let second = MessageID()
+        let third = MessageID()
+        let answer = SessionAnswer(
+            reply: "done", messageIds: [first, second], usage: nil, compactions: [], toolCalls: [], toolInvocations: [])
+
+        projection.apply(.submissionStarted(Self.start(1, delivering: [first])))
+        projection.apply(.submissionStarted(Self.start(2, delivering: [second])))
+        let bothDelivered = projection.messagesAwaitingAnswer
+        projection.apply(.answered(answer))
+        let afterTheAnswer = projection.messagesAwaitingAnswer
+        projection.apply(.submissionStarted(Self.start(3, delivering: [third])))
+        projection.apply(.answerFailed(AnswerFailure(messageIds: [third], reason: .cancelled)))
+
+        #expect(bothDelivered == [first, second])
+        #expect(afterTheAnswer.isEmpty)
+        #expect(projection.messagesAwaitingAnswer.isEmpty)
     }
 
     // MARK: - apply(eventsFrom:): drains a whole stream, resetting to .idle on completion or throw
@@ -254,7 +337,7 @@ struct SessionProjectionTests {
         let stream = AsyncThrowingStream<SessionEvent, Error> { continuation in
             continuation.yield(.textDelta("hello "))
             continuation.yield(.textDelta("world"))
-            continuation.yield(.turnEnded(TokenUsage(tokensIn: 3, tokensOut: 2, contextFill: 0.05)))
+            continuation.yield(.submissionEnded(Self.end(1, usage: TokenUsage(tokensIn: 3, tokensOut: 2, contextFill: 0.05))))
             continuation.finish()
         }
 

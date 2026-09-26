@@ -1150,6 +1150,17 @@ struct TurnCancellationTests {
         // consumer's — a cancelled stream is truncated, not retracted.
         #expect(await delivered.events.contains(.textDelta(HookedSessionBackend.firstStreamedChunk)))
         #expect(await fixture.recorder.events.map(\.kind) == [.session, .prompt, .response])
+
+        // The cancelled chain ends with one answerFailed with the reason
+        // cancelled. It is the last event before the stream throws, and it
+        // names the one message of the stream.
+        let deliveredEvents = await delivered.events
+        let failure = try #require(deliveredEvents.answerFailures.first)
+        #expect(deliveredEvents.answerFailures.count == 1)
+        #expect(deliveredEvents.answers.isEmpty)
+        #expect(failure.reason == .cancelled)
+        #expect(failure.messageIds.count == 1)
+        #expect(deliveredEvents.last == .answerFailed(failure))
     }
 
     @Test("cancelling the submission of a sent message unwinds it, and the message is then answered")
@@ -1996,7 +2007,9 @@ struct TurnCancellationTests {
         for try await event in await session.streamEvents(to: "compacts-uncancelled") {
             collected.append(event)
         }
-        let events = eventsAfterTurnFrame(collected)
+        let events = eventsInsideAnswerFrame(collected)
+        #expect(collected.answers.count == 1)
+        #expect(collected.answerFailures.isEmpty)
 
         guard case .compaction(let result) = events.first else {
             Issue.record("expected the turn's first event to be .compaction, got \(String(describing: events.first))")

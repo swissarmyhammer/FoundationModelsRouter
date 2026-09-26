@@ -292,7 +292,7 @@ struct AutoCompactionTriggerIntegrationTests {
     // MARK: - One driven turn
 
     /// What one scripted turn produced.
-    private struct TurnOutcome {
+    private struct DriveResult {
         /// The reply text, assembled from the turn's own text increments.
         let reply: String
 
@@ -327,7 +327,7 @@ struct AutoCompactionTriggerIntegrationTests {
     ///   - prompt: The turn's prompt text.
     /// - Returns: The turn's reply and every compaction it took.
     /// - Throws: Whatever the turn throws.
-    private static func drive(_ session: RoutedSession, prompt: String) async throws -> TurnOutcome {
+    private static func drive(_ session: RoutedSession, prompt: String) async throws -> DriveResult {
         var reply = ""
         var compactions: [CompactionResult] = []
         let stream = await session.streamEvents(to: prompt, maxTokens: replyTokenCeiling)
@@ -341,7 +341,7 @@ struct AutoCompactionTriggerIntegrationTests {
                 break
             }
         }
-        return TurnOutcome(reply: reply, compactions: compactions)
+        return DriveResult(reply: reply, compactions: compactions)
     }
 
     // MARK: - The test

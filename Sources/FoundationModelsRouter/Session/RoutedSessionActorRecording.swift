@@ -9,8 +9,10 @@ private let sessionRecordingLogger = makeModuleLogger(category: "Recording")
 /// the transcript diff that becomes recorded events, the re-queue of
 /// unattached events, and the session meta event.
 extension RoutedSessionActor {
-    /// Computes the turn's usage delta, records the transcript diff, and
-    /// emits ``SessionEvent/turnEnded(_:)`` when usage is known.
+    /// Computes the usage delta of the attempt, records the transcript diff,
+    /// and ends the running submission: it sends
+    /// ``SessionEvent/submissionEnded(_:)``, with the usage when the backend
+    /// reports it.
     ///
     /// - Parameters:
     ///   - grammar: The guided-generation grammar in force.
@@ -81,23 +83,24 @@ extension RoutedSessionActor {
         if diffIncludedResponse {
             usageState = renderedContext.map { .measured(input: $0.input, output: $0.output) } ?? .unknown
         }
-        // Mirrors the `tokensIn`/`tokensOut` stamping gate everywhere else in
-        // this chokepoint: emitted whenever the backend could report usage at
-        // all, regardless of `diffIncludedResponse` — a turn rejected before
-        // touching `backend` still measures a genuine (zero) delta between
-        // two real snapshots, so it still closes with a `turnEnded`. Reads
-        // `contextFill` *after* the `usageState` update above, so this
-        // attempt's own event carries the fill it just measured (or the
-        // still-unchanged prior value when this attempt never touched
-        // `backend`) — live, per inner call, not only once the whole
-        // (possibly retried) turn finishes (compaction_plan.md §1.7, task g2hcm36).
-        if let usage {
-            onEvent?(
-                .turnEnded(
-                    TokenUsage(
-                        tokensIn: usage.input, tokensOut: usage.output, contextFill: contextFill,
-                        finishReason: finishReason)))
-        }
+        // Ends the submission that the session opened for this attempt. The
+        // session sends ``SessionEvent/submissionEnded(_:)`` for every
+        // submission it opened, also when the backend reports no usage: the
+        // usage of the end is then `nil`. An attempt that the session refused
+        // before it touched `backend` still measures a true (zero) delta
+        // between two real snapshots, so its end carries that usage. The
+        // usage reads `contextFill` after the `usageState` update above, so
+        // the end of this attempt carries the fill it just measured, or the
+        // prior value when this attempt did not touch `backend`
+        // (compaction_plan.md §1.7, task g2hcm36).
+        endSubmission(
+            usage: usage.map {
+                TokenUsage(
+                    tokensIn: $0.input, tokensOut: $0.output, contextFill: contextFill, finishReason: finishReason)
+            },
+            finishReason: finishReason,
+            measuredRender: diffIncludedResponse ? renderedContext : nil,
+            onEvent: onEvent)
         return (diffIncludedResponse, usage, pendingEventsAttached, finishReason)
     }
 

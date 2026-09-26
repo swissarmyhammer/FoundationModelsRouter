@@ -4,13 +4,12 @@
 /// abandoned the response it was writing and began another — so the reply is
 /// cleared and the next fragment starts a new response. A consumer that
 /// applies it holds, character for character, the string
-/// ``RoutedSession/respond(to:maxTokens:)`` returns for the same turn (see
-/// ``SessionEvent/textReset``).
+/// ``RoutedSession/respond(to:maxTokens:)`` returns for the same submission
+/// (see ``SessionEvent/textReset``).
 ///
-/// Two consumers share it: ``SessionProjection`` asks ``append(_:)`` whether a
-/// fragment begins a new response, which is what splits the superseded text
-/// into its own transcript row; ``TurnOutcomeReducer`` reads ``reply`` as the
-/// turn's final answer. Neither re-implements the rule.
+/// ``SessionProjection`` uses it: it asks ``append(_:)`` whether a fragment
+/// starts a new response, and so it puts the superseded text into its own
+/// transcript row. The projection does not write the rule again.
 struct ResponseTextReducer: Sendable, Equatable {
     /// The current response's accumulated text — the reply the reset rule
     /// leaves standing, empty immediately after a ``reset()``.

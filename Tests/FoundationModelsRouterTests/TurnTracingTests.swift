@@ -7,17 +7,17 @@ import Tracing
 
 @testable import FoundationModelsRouter
 
-/// Exercises card ^kbnbp4a: every generation turn opens one OpenTelemetry span
-/// through `swift-distributed-tracing`.
+/// Exercises card ^kbnbp4a and task ^x7cxsg3: every submission of a session
+/// opens one OpenTelemetry span through `swift-distributed-tracing`.
 ///
-/// One chokepoint carries the span, so every surface that starts a turn is held
-/// to the same contract: ``RoutedSession/respond(to:maxTokens:)``,
+/// One chokepoint carries the span, so every surface that sends a message is
+/// held to the same contract: ``RoutedSession/respond(to:maxTokens:)``,
 /// ``RoutedSession/streamResponse(to:maxTokens:)``,
 /// ``RoutedSession/streamEvents(to:maxTokens:)`` and
-/// ``RoutedSession/send(_:)-(Transcript.Prompt)``. This suite holds that contract: the
-/// operation name, the span kind, the identity attributes, the entry point that
-/// started the turn, the measured token counts, and the error record on a turn
-/// that throws.
+/// ``RoutedSession/send(_:)-(Transcript.Prompt)``. This suite holds that
+/// contract: the operation name, the span kind, the identity attributes, the
+/// id of the submission, the cause of the submission, the measured token
+/// counts, and the error record on a submission that throws.
 ///
 /// The rule that no attribute carries the caller's own content lives in
 /// ``SpanContentSafetyTests``, which names no span and therefore already
@@ -26,10 +26,18 @@ import Tracing
 /// Everything runs over stubs — a stub ``ModelLoader``, a
 /// ``StubSessionBackend`` with canned usage counts, and an `InMemoryTracer` —
 /// so the suite needs no network, no GPU and no bootstrapped tracing backend.
-@Suite("Turn tracing")
+@Suite("Submission tracing")
 struct TurnTracingTests {
-    /// The span name every turn opens.
-    private static let spanName = "FoundationModelsRouter.turn"
+    /// The span name every submission opens.
+    private static let spanName = RouterTracing.SpanName.submission
+
+    /// The `submission.cause` value of a submission that carries a caller
+    /// message.
+    private static let messageCause = SubmissionStart.Cause.message.rawValue
+
+    /// The number of the second submission of a session. The session numbers
+    /// its submissions 1, 2, 3, and so on.
+    private static let secondSubmissionNumber: UInt64 = 2
 
     /// The token counts one successful stub turn meters.
     private static let turnUsage = (input: 11, output: 7)
@@ -130,24 +138,33 @@ struct TurnTracingTests {
             directory: directory)
     }
 
-    /// The one turn span a driven turn opened.
+    /// The finished submission spans the tracer holds, in the order they
+    /// finished.
     ///
     /// Filtered by name rather than counted over the whole tracer: the
     /// fixture's own ``Router/resolve(profile:reporting:)`` reports to the
     /// same tracer, and it opens a resolve span with one load span under it
     /// for each slot it loads.
     ///
-    /// - Parameter tracer: The tracer the turn reported to.
-    /// - Returns: The single finished turn span.
-    /// - Throws: When the tracer holds no turn span, or more than one.
+    /// - Parameter tracer: The tracer the submissions reported to.
+    /// - Returns: The finished submission spans.
+    private static func submissionSpans(reportedTo tracer: InMemoryTracer) -> [FinishedInMemorySpan] {
+        tracer.finishedSpans.filter { $0.operationName == spanName }
+    }
+
+    /// The one submission span that one answer of one submission opened.
+    ///
+    /// - Parameter tracer: The tracer the submission reported to.
+    /// - Returns: The single finished submission span.
+    /// - Throws: When the tracer holds no submission span, or more than one.
     private static func singleSpan(reportedTo tracer: InMemoryTracer) throws -> FinishedInMemorySpan {
-        let spans = tracer.finishedSpans.filter { $0.operationName == spanName }
+        let spans = submissionSpans(reportedTo: tracer)
         try #require(spans.count == 1)
         return try #require(spans.first)
     }
 
-    @Test("one respond call opens one client turn span carrying the documented attributes")
-    func respondOpensOneTurnSpanWithAttributes() async throws {
+    @Test("one respond call opens one client submission span carrying the documented attributes")
+    func respondOpensOneSubmissionSpanWithAttributes() async throws {
         let tracer = InMemoryTracer()
         let fixture = try await Self.makeFixture(tracer: tracer)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -158,18 +175,22 @@ struct TurnTracingTests {
         let span = try Self.singleSpan(reportedTo: tracer)
         #expect(span.operationName == Self.spanName)
         #expect(span.kind == .client)
-        #expect(span.attributes.get("router.id") == .string(fixture.router.id.description))
-        #expect(span.attributes.get("session.id") == .string(fixture.session.id.description))
         #expect(
-            span.attributes.get("model.ref")
+            span.attributes.get(RouterTracing.AttributeKey.routerId)
+                == .string(fixture.router.id.description))
+        #expect(
+            span.attributes.get(RouterTracing.AttributeKey.sessionId)
+                == .string(fixture.session.id.description))
+        #expect(
+            span.attributes.get(RouterTracing.AttributeKey.modelRef)
                 == .string(fixture.profile.standard.chosen.stringValue))
-        #expect(span.attributes.get("turn.id") == .string("1"))
-        #expect(span.attributes.get("turn.entry_point") == .string("respond"))
+        #expect(span.attributes.get(RouterTracing.AttributeKey.submissionId) == .string(SubmissionID(1).description))
+        #expect(span.attributes.get(RouterTracing.AttributeKey.submissionCause) == .string(Self.messageCause))
         #expect(span.errors.isEmpty)
     }
 
-    @Test("a good turn carries the token counts its usage snapshot measured")
-    func goodTurnCarriesMeasuredTokenCounts() async throws {
+    @Test("a good submission carries the token counts its usage snapshot measured")
+    func goodSubmissionCarriesMeasuredTokenCounts() async throws {
         let tracer = InMemoryTracer()
         let fixture = try await Self.makeFixture(tracer: tracer)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -177,12 +198,33 @@ struct TurnTracingTests {
         _ = try await fixture.session.respond(to: Self.prompt)
 
         let span = try Self.singleSpan(reportedTo: tracer)
-        #expect(span.attributes.get("tokens.in") == .int64(Int64(Self.turnUsage.input)))
-        #expect(span.attributes.get("tokens.out") == .int64(Int64(Self.turnUsage.output)))
+        #expect(
+            span.attributes.get(RouterTracing.AttributeKey.tokensIn) == .int64(Int64(Self.turnUsage.input)))
+        #expect(
+            span.attributes.get(RouterTracing.AttributeKey.tokensOut) == .int64(Int64(Self.turnUsage.output)))
     }
 
-    @Test("one streamed turn opens one turn span naming the stream entry point")
-    func streamedTurnOpensOneTurnSpan() async throws {
+    @Test("two answers on one session open one submission span each, numbered in their session")
+    func eachSubmissionOpensItsOwnSpan() async throws {
+        let tracer = InMemoryTracer()
+        let fixture = try await Self.makeFixture(tracer: tracer)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        _ = try await fixture.session.respond(to: Self.prompt)
+        _ = try await fixture.session.respond(to: Self.prompt)
+
+        let spans = Self.submissionSpans(reportedTo: tracer)
+        #expect(
+            spans.map { $0.attributes.get(RouterTracing.AttributeKey.submissionId) }
+                == [.string(SubmissionID(1).description), .string(SubmissionID(Self.secondSubmissionNumber).description)])
+        #expect(
+            spans.allSatisfy {
+                $0.attributes.get(RouterTracing.AttributeKey.submissionCause) == .string(Self.messageCause)
+            })
+    }
+
+    @Test("one streamed answer opens one submission span whose cause is a message")
+    func streamedAnswerOpensOneSubmissionSpan() async throws {
         let tracer = InMemoryTracer()
         let fixture = try await Self.makeFixture(tracer: tracer)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -195,12 +237,12 @@ struct TurnTracingTests {
 
         let span = try Self.singleSpan(reportedTo: tracer)
         #expect(span.operationName == Self.spanName)
-        #expect(span.attributes.get("turn.entry_point") == .string("stream"))
+        #expect(span.attributes.get(RouterTracing.AttributeKey.submissionCause) == .string(Self.messageCause))
         #expect(span.errors.isEmpty)
     }
 
-    @Test("one sent message opens one span naming the send entry point")
-    func sentMessageOpensOneTurnSpan() async throws {
+    @Test("one sent message opens one submission span whose cause is a message")
+    func sentMessageOpensOneSubmissionSpan() async throws {
         let tracer = InMemoryTracer()
         let fixture = try await Self.makeFixture(tracer: tracer)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -211,11 +253,11 @@ struct TurnTracingTests {
 
         let span = try Self.singleSpan(reportedTo: tracer)
         #expect(span.operationName == Self.spanName)
-        #expect(span.attributes.get("turn.entry_point") == .string("send"))
+        #expect(span.attributes.get(RouterTracing.AttributeKey.submissionCause) == .string(Self.messageCause))
         #expect(span.errors.isEmpty)
     }
 
-    @Test("a turn that throws keeps its span, with the error recorded")
+    @Test("a submission that throws keeps its span, with the error recorded")
     func failedTurnRecordsItsErrorOnTheSpan() async throws {
         let tracer = InMemoryTracer()
         let fixture = try await Self.makeFixture(tracer: tracer)

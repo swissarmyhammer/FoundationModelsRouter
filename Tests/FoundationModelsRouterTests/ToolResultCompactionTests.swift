@@ -84,7 +84,8 @@ struct ToolResultCompactionTests {
         try await collect(session.streamEvents(to: prompt, maxTokens: nil))
     }
 
-    @Test("the tool result crosses the trigger: one compaction, then the same turn answers")
+    @Test(
+        "the tool result crosses the trigger: one compaction, then a continuation submission, and one answer")
     func crossingResultCompactsAndTheTurnAnswers() async throws {
         let fixture = try await Self.makeFixture(resultLength: Self.largeResultLength)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -97,11 +98,15 @@ struct ToolResultCompactionTests {
         #expect(compaction.summaryEntryId != nil)
         #expect(compaction.tokensAfter < compaction.tokensBefore)
         #expect(fixture.tool.calls == 1)
-        let turnStarts = events.filter { event in
-            guard case .turnStarted = event else { return false }
-            return true
-        }
-        #expect(turnStarts.count == 1)
+        // The first submission delivers the message. The compaction yield
+        // stops it, and the continuation is a second submission of the same
+        // chain.
+        #expect(events.submissionStarts.map(\.cause) == [.message, .continuation])
+        #expect(events.submissionEnds.count == events.submissionStarts.count)
+        // The chain has one answer, and it is the last event.
+        _ = eventsInsideAnswerFrame(events)
+        let answer = try #require(events.answers.first)
+        #expect(answer.compactions == compactions)
         #expect(events.streamedText.contains(ToolResultCompactionModel.Executor.answerText))
     }
 

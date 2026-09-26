@@ -27,6 +27,16 @@ struct GenerationCallUsageTests {
         MeteredGenerationCall(tokensIn: 300, tokensOut: 70),
     ]
 
+    /// The sum of the fed tokens of ``threeCalls``: 100 + 200 + 300.
+    private static let summedTokensIn = 600
+
+    /// The sum of the generated tokens of ``threeCalls``: 30 + 50 + 70.
+    private static let summedTokensOut = 150
+
+    /// The context after the last call of ``threeCalls``: 300 fed and 70
+    /// generated.
+    private static let lastCallContextTokens = 370
+
     /// A ceiling a caller names, smaller than the context of the session.
     private static let requestedCeiling = 256
 
@@ -99,33 +109,43 @@ struct GenerationCallUsageTests {
         #expect(fixture.tool.calledSteps == [toolName.toolStep(callIndex: 0), toolName.toolStep(callIndex: 1)])
     }
 
-    @Test("the turn-level usage stamp stays the sum of the calls, and the fill is the context of the last call")
+    @Test(
+        "the usage of the submission and of the answer stays the sum of the calls, and the fill is the context of the last call"
+    )
     func turnStampStaysTheSum() async throws {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
         let events = try await Self.collectEvents(on: fixture.session, maxTokens: nil)
 
-        guard case .turnEnded(let usage) = try #require(events.last) else {
-            Issue.record("expected the last event to be turnEnded, got \(String(describing: events.last))")
-            return
-        }
-        #expect(usage.tokensIn == 600)
-        #expect(usage.tokensOut == 150)
+        // The SDK runs the three calls of the tool loop in one submission, so
+        // the answer has one submission end, and its usage is the answer usage.
+        let ends = events.submissionEnds
+        #expect(ends.count == 1)
+        let end = try #require(ends.first)
+        let submissionUsage = try #require(end.usage)
+        #expect(events.last?.isAnswerEnd == true)
+        let answer = try #require(events.answers.last)
+        let usage = try #require(answer.usage)
+        #expect(submissionUsage == usage)
+        #expect(end.finishReason == usage.finishReason)
+        #expect(usage.tokensIn == Self.summedTokensIn)
+        #expect(usage.tokensOut == Self.summedTokensOut)
         // The fill is the context of the render, which the last call read and
         // wrote to: 300 fed and 70 generated. It is not the sum of the calls
         // (task ^tpsc0nf).
-        #expect(usage.contextFill == Self.fill(afterContextOf: 370))
-        #expect(await fixture.session.contextFill == Self.fill(afterContextOf: 370))
+        #expect(usage.contextFill == Self.fill(afterContextOf: Self.lastCallContextTokens))
+        #expect(answer.contextFill == Self.fill(afterContextOf: Self.lastCallContextTokens))
+        #expect(await fixture.session.contextFill == Self.fill(afterContextOf: Self.lastCallContextTokens))
         let journal = await fixture.recorder.events
         let stamped = try #require(journal.last { $0.kind == .response })
-        #expect(stamped.tokensIn == 600)
-        #expect(stamped.tokensOut == 150)
-        #expect(stamped.turnUsageStamp?.input == 600)
-        #expect(stamped.turnUsageStamp?.output == 150)
+        #expect(stamped.tokensIn == Self.summedTokensIn)
+        #expect(stamped.tokensOut == Self.summedTokensOut)
+        #expect(stamped.turnUsageStamp?.input == Self.summedTokensIn)
+        #expect(stamped.turnUsageStamp?.output == Self.summedTokensOut)
     }
 
-    @Test("a tool-asking call is reported before its tool opens, and the last call before the turn ends")
+    @Test("a tool-asking call is reported before its tool opens, and the last call before the submission ends")
     func recordsArriveLive() async throws {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -140,18 +160,20 @@ struct GenerationCallUsageTests {
             if case .toolInvocation(let record) = events[index] { return record.closedAt == nil }
             return false
         }
-        let turnEndedIndex = try #require(
+        let submissionEndedIndex = try #require(
             events.firstIndex {
-                if case .turnEnded = $0 { return true }
+                if case .submissionEnded = $0 { return true }
                 return false
             })
+        let answeredIndex = try #require(events.lastIndex { $0.isAnswerEnd })
         #expect(recordIndices.count == 3)
         #expect(openIndices.count == 2)
         #expect(recordIndices[0] < openIndices[0])
         #expect(openIndices[0] < recordIndices[1])
         #expect(recordIndices[1] < openIndices[1])
         #expect(openIndices[1] < recordIndices[2])
-        #expect(recordIndices[2] < turnEndedIndex)
+        #expect(recordIndices[2] < submissionEndedIndex)
+        #expect(submissionEndedIndex < answeredIndex)
     }
 
     // MARK: - The run journal

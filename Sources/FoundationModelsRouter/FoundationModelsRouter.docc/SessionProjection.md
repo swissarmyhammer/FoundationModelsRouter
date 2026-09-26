@@ -93,8 +93,13 @@ session is doing:
 - ``SessionProjection/Phase/runningTool`` — a tool call is in flight.
 - ``SessionProjection/Phase/compacting`` — a compaction is running.
 
-The phase returns to ``SessionProjection/Phase/idle`` when the turn ends, and
-also when the stream finishes or throws.
+The phase returns to ``SessionProjection/Phase/idle`` when a submission ends,
+and also when the stream finishes or throws.
+
+``SessionProjection/currentSubmission`` is the submission that runs now, or
+`nil` between submissions. ``SessionProjection/messagesAwaitingAnswer`` holds
+the caller messages that a started submission delivered and that no answer
+named yet, in delivery order. Show them as the messages in flight.
 
 ``SessionProjection/tokensIn``, ``SessionProjection/tokensOut``, and
 ``SessionProjection/contextFill`` carry the metered cost. Show them in a status
@@ -124,7 +129,8 @@ stop.
 - ``SessionProjection/transcript``
 - ``SessionProjection/groupedRows``
 - ``SessionProjection/phase``
-- ``SessionProjection/currentTurn``
+- ``SessionProjection/currentSubmission``
+- ``SessionProjection/messagesAwaitingAnswer``
 - ``SessionProjection/tokensIn``
 - ``SessionProjection/tokensOut``
 - ``SessionProjection/contextFill``

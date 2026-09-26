@@ -67,7 +67,19 @@ struct SummarizerSubmissionTests {
         #expect(await flash.observer.maximumActive == 1)
         #expect(await flash.observer.enteredCount == Self.flashPassCount)
         #expect(flash.passes.recorded.first?.prompt == Self.flashPrompt)
-        #expect(await log.contains(.submissionQueued))
+        // The summarizer call is not a submission of the session, so its wait
+        // sends no submissionQueued. Only the queue of the flash container
+        // shows the wait (`summarizerWaits` above).
+        #expect(await !log.events.contains(where: Self.isSubmissionQueued))
         #expect(await flash.queue.isRunning == false)
+    }
+
+    /// Whether `event` is a `submissionQueued` event, with any id.
+    ///
+    /// - Parameter event: The event to read.
+    /// - Returns: `true` when `event` is `submissionQueued`.
+    private static func isSubmissionQueued(_ event: SessionEvent) -> Bool {
+        if case .submissionQueued = event { return true }
+        return false
     }
 }
