@@ -7,7 +7,7 @@ import Testing
 
 /// Exercises task 8213x39 (auto-compaction opt-in): ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:)``'s
 /// `budget`/`compactionPrompt` parameters, the proactive compaction
-/// ``RoutedSessionActor/runTurn(grammar:turnId:promptId:pendingEvents:ownPrompt:onEvent:_:)``
+/// ``RoutedSessionActor/runTurn(grammar:turnId:entryPoint:messageId:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:_:)``
 /// runs before a turn once measured fill reaches the budget's trigger, the
 /// reactive compact-and-retry-once recovery
 /// ``RoutedSessionActor/runTurnAttempt(grammar:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetries:_:)``

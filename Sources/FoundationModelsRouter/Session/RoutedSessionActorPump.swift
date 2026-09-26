@@ -59,17 +59,6 @@ struct CompactionRequest: Sendable {
     let answer = PumpAnswer<CompactionResult>()
 }
 
-/// One caller of ``RoutedSession/dispatchNextPrompt()`` that found no queued
-/// prompt, and waits until the pump has no work left.
-struct PumpIdleWaiter {
-    /// The rendezvous of the waiter and the end of the pump.
-    let gate = RaceGate<String?>()
-
-    /// The reply of the last answer that only mail started while the caller
-    /// waited, or `nil`.
-    var mailReply: String?
-}
-
 /// ``RoutedSessionActor``'s pump: the one task of the session that submits
 /// for it (`generation-queue.md`, section 5.4).
 ///
@@ -125,7 +114,6 @@ extension RoutedSessionActor: SessionMailObserver {
             guard await runNextAnswer() || pumpWakeRequested else { break }
         }
         pumpTask = nil
-        endPumpIdleWaits()
     }
 
     /// Takes the next batch from the outbox and runs its answer.
@@ -153,7 +141,9 @@ extension RoutedSessionActor: SessionMailObserver {
     ///   - settledRunTokens: The completion tokens whose terminal can start a
     ///     submission with no caller message.
     private func runAnswer(of batch: SubmissionBatch, workId: UInt64, settledRunTokens: Set<String>) async {
-        let messages = await liveMessages(batch.messages)
+        // No suspension point between the read of the cancel marks and the
+        // work that holds the live messages: ``cancel(message:)`` relies on it.
+        let messages = liveMessages(batch.messages)
         let mail = batch.events.map(\.event)
         let mailCanStart = SessionOutbox.canStartASubmission(batch.events, settledRunTokens: settledRunTokens)
         guard !messages.isEmpty || mailCanStart else {
@@ -178,7 +168,7 @@ extension RoutedSessionActor: SessionMailObserver {
         }
         let delivered = deliveredMessages ?? messages
         endPumpWork()
-        await resolve(delivered, with: result, startedByMailOnly: messages.isEmpty)
+        resolve(delivered, with: result)
     }
 
     /// Runs the first submission of an answer, and every continuation of it.
@@ -207,15 +197,15 @@ extension RoutedSessionActor: SessionMailObserver {
         await notifyTurnBoundaryTools()
         return try await ServiceContext.$current.withValue(first?.serviceContext) {
             try await runTurn(
-                grammar: work.grammar, turnId: TurnID(workId), entryPoint: first?.entryPoint ?? .dispatch,
-                promptId: messages.first { $0.entryPoint == .dispatch }?.id, pendingEvents: mail,
+                grammar: work.grammar, turnId: TurnID(workId), entryPoint: first?.entryPoint ?? .mail,
+                messageId: messages.first { $0.entryPoint == .send }?.id, pendingEvents: mail,
                 ownPrompt: ownPrompt, responseTokenCeiling: ceiling, onEvent: work.onEvent, work.body)
         }
     }
 
     /// The caller messages the running answer delivered so far, or `nil`
     /// when no answer runs.
-    private var deliveredMessages: [SessionMessage]? {
+    var deliveredMessages: [SessionMessage]? {
         guard case .answer(_, let messages) = pumpWork?.kind else { return nil }
         return messages
     }
@@ -229,7 +219,10 @@ extension RoutedSessionActor: SessionMailObserver {
     func takeMessagesJoiningTheAnswer() async -> (events: [OperationEvent], texts: [String]) {
         guard case .answer(let options, _) = pumpWork?.kind else { return ([], []) }
         let batch = await outbox.takeJoiningBatch(options: options)
-        let joining = await liveMessages(batch.messages)
+        // No suspension point between the read of the cancel marks and the
+        // work that holds the joining messages: ``cancel(message:)`` relies
+        // on it.
+        let joining = liveMessages(batch.messages)
         if case .answer(let options, let messages) = pumpWork?.kind {
             pumpWork?.kind = .answer(options: options, messages: messages + joining)
         }
@@ -245,33 +238,22 @@ extension RoutedSessionActor: SessionMailObserver {
     ///
     /// - Parameter messages: The messages the pump took.
     /// - Returns: The live messages, in order.
-    private func liveMessages(_ messages: [SessionMessage]) async -> [SessionMessage] {
+    private func liveMessages(_ messages: [SessionMessage]) -> [SessionMessage] {
         let cancelled = messages.filter(\.answer.isCancelRequested)
-        await resolve(cancelled, with: .failure(CancellationError()), startedByMailOnly: false)
+        resolve(cancelled, with: .failure(CancellationError()))
         return messages.filter { !$0.answer.isCancelRequested }
     }
 
-    /// Gives `result` to each message, after the dispatched state of each
-    /// released queued prompt ends.
+    /// Gives `result` to each message, and closes each one: it leaves
+    /// ``openMessages``, so ``cancel(message:)`` then reports it answered.
     ///
     /// - Parameters:
     ///   - messages: The messages to answer.
     ///   - result: The final result of their answer.
-    ///   - startedByMailOnly: Whether only mail started the answer. Its
-    ///     reply then goes to each ``RoutedSession/dispatchNextPrompt()``
-    ///     caller that waits for the pump.
-    func resolve(
-        _ messages: [SessionMessage], with result: Result<String, any Error>, startedByMailOnly: Bool
-    ) async {
-        for message in messages where message.entryPoint == .dispatch {
-            await outbox.finishDispatch(id: message.id)
-        }
+    func resolve(_ messages: [SessionMessage], with result: Result<String, any Error>) {
         for message in messages {
+            openMessages[message.id] = nil
             message.answer.resolve(result)
-        }
-        guard startedByMailOnly, case .success(let reply) = result else { return }
-        for waiterID in pumpIdleWaiters.keys {
-            pumpIdleWaiters[waiterID]?.mailReply = reply
         }
     }
 
@@ -319,31 +301,5 @@ extension RoutedSessionActor: SessionMailObserver {
         }
         guard case .compaction(let requestID) = pumpWork?.kind, requestID == request.id else { return }
         requestCancelOfRunningWork()
-    }
-
-    // MARK: - Waits for the pump
-
-    /// Waits until the pump has no work left.
-    ///
-    /// - Returns: The reply of the last answer that only mail started while
-    ///   this call waited, or `nil`. A cancelled caller gets `nil` at once.
-    func awaitPumpIdle() async -> String? {
-        let waiterID = ULID.generate()
-        let waiter = PumpIdleWaiter()
-        pumpIdleWaiters[waiterID] = waiter
-        return await withTaskCancellationHandler {
-            await withCheckedContinuation { waiter.gate.register(continuation: $0) }
-        } onCancel: {
-            waiter.gate.resume(with: nil)
-        }
-    }
-
-    /// Ends every wait of ``awaitPumpIdle()``. The pump calls it when it ends.
-    private func endPumpIdleWaits() {
-        let waiters = Array(pumpIdleWaiters.values)
-        pumpIdleWaiters.removeAll()
-        for waiter in waiters {
-            waiter.gate.resume(with: waiter.mailReply)
-        }
     }
 }

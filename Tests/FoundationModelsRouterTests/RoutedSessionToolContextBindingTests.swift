@@ -417,7 +417,7 @@ struct RoutedSessionToolContextBindingTests {
             try await Task.sleep(nanoseconds: 10_000_000)
         }
         #expect(backend.respondStarted)
-        await session.cancelCurrentTurn()
+        await session.cancel()
         _ = try? await turn.value
 
         #expect(backend.observedCancellation)
@@ -437,7 +437,7 @@ struct RoutedSessionToolContextBindingTests {
             try await Task.sleep(nanoseconds: 10_000_000)
         }
         #expect(backend.streamStarted)
-        await session.cancelCurrentTurn()
+        await session.cancel()
         _ = try? await turn.value
 
         // The polling loop runs in the stream's own production task, which

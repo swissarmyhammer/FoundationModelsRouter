@@ -64,21 +64,25 @@ The session pushes settlement to the model — the model never polls:
 
 - ``streamSessionEvents()``
 
-### Prompt queueing and dispatch
+### Messages
 
-- ``enqueue(prompt:)-(Transcript.Prompt)``
-- ``enqueue(prompt:)-(String)``
-- ``pendingPrompts()``
+A session is a queue of messages (`generation-queue.md`, section 5.4).
+``send(_:)-(Transcript.Prompt)`` puts one message in the queue and returns its
+``MessageID`` at once. The pump of the session starts a submission for it with
+no other call, or puts it into the next submission when one runs.
+``respond(to:maxTokens:)`` and the two stream methods are helpers: each sends
+one message, then waits for its answer.
+
+- ``send(_:)-(Transcript.Prompt)``
+- ``send(_:)-(String)``
+- ``pendingMessages()``
 - ``replace(id:prompt:)``
-- ``promptQueueDepth()``
-- ``dispatchNextPrompt()``
-- ``awaitQueuedWork()``
+- ``messageQueueDepth()``
 
 ### Cancellation
 
-- ``cancel(id:)``
-- ``cancelPrompt(id:)``
-- ``cancelCurrentTurn()``
+- ``cancel()``
+- ``cancel(message:)``
 
 ### Elicitation answers
 

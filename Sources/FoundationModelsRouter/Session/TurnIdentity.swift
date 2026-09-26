@@ -32,8 +32,9 @@ public struct TurnID: Hashable, Sendable, CustomStringConvertible {
     public var description: String { String(value) }
 }
 
-/// The record that a turn began: the turn's own identity and, when the turn came
-/// off the prompt queue, the id of the prompt that caused it.
+/// The record that a turn began: the turn's own identity and, when the turn
+/// carries a message that ``RoutedSession/send(_:)-(Transcript.Prompt)`` sent,
+/// the id of that message.
 ///
 /// Carried by ``SessionEvent/turnStarted(_:)``, which opens the frame every
 /// later event of that turn belongs to — see that case for the framing rule and
@@ -42,22 +43,22 @@ public struct TurnStart: Sendable, Equatable {
     /// The turn that just began.
     public let turnId: TurnID
 
-    /// The queued prompt this turn dispatched — the id
-    /// ``RoutedSession/enqueue(prompt:)-(Transcript.Prompt)`` returned — or
-    /// `nil` for a turn whose prompt came straight from its caller
-    /// (``RoutedSession/respond(to:maxTokens:)``,
+    /// The first message of this turn that
+    /// ``RoutedSession/send(_:)-(Transcript.Prompt)`` sent — the id it
+    /// returned — or `nil` for a turn that carries no such message: a turn
+    /// whose caller waits for its answer (``RoutedSession/respond(to:maxTokens:)``,
     /// ``RoutedSession/streamResponse(to:maxTokens:)``,
-    /// ``RoutedSession/streamEvents(to:maxTokens:)``).
-    let promptId: PromptID?
+    /// ``RoutedSession/streamEvents(to:maxTokens:)``), or a turn that only mail
+    /// started.
+    let messageId: MessageID?
 
     /// Creates a turn-start record.
     ///
     /// - Parameters:
     ///   - turnId: The turn that just began.
-    ///   - promptId: The queued prompt this turn dispatched, or `nil` when the
-    ///     turn's prompt came straight from its caller.
-    init(turnId: TurnID, promptId: PromptID?) {
+    ///   - messageId: The first sent message of this turn, or `nil`.
+    init(turnId: TurnID, messageId: MessageID?) {
         self.turnId = turnId
-        self.promptId = promptId
+        self.messageId = messageId
     }
 }

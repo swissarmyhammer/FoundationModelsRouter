@@ -1,30 +1,16 @@
 import Foundation
 import FoundationModels
 
-/// The outcome of ``RoutedSession/cancelCurrentTurn()``.
-public enum TurnCancellationResult: Sendable, Equatable {
+/// The outcome of ``RoutedSession/cancel()``.
+public enum CancellationResult: Sendable, Equatable {
     /// The pump of the session ran work, or a caller message waited for it.
     ///
     /// Cancellation is cooperative. This reports that the request was recorded,
     /// not that the model or a tool has stopped.
     case requested
 
-    /// Nothing was in flight to cancel.
-    case noTurnInFlight
-}
-
-/// The outcome of ``RoutedSession/cancelPrompt(id:)``.
-public enum PromptCancellationResult: Sendable, Equatable {
-    /// The prompt was still in the queue and was withdrawn. It never produced a turn.
-    case withdrawn
-
-    /// The prompt was already dispatched, so its turn was cancelled as
-    /// ``RoutedSession/cancelCurrentTurn()`` does.
-    case turnCancelled
-
-    /// Nothing was left to cancel: the turn had finished, or the id named no
-    /// queued prompt on this session.
-    case alreadyFinished
+    /// The pump ran no work, and no caller message waited.
+    case nothingToCancel
 }
 
 /// A generation session over a resident model: the recorded surface an
@@ -121,7 +107,7 @@ public protocol RoutedSession: Actor {
     /// and ``CompactionResult/shortfall`` states why.
     ///
     /// The pump runs the compaction between two submissions, so it never runs
-    /// beside a submission of this session, and ``cancelCurrentTurn()`` can
+    /// beside a submission of this session, and ``cancel()`` can
     /// cancel it. To recover from `LanguageModelError.contextSizeExceeded`,
     /// compact with a lower target and retry once.
     ///
@@ -198,7 +184,7 @@ public protocol RoutedSession: Actor {
     ///
     /// The prompt is one message that goes alone in its submission, because
     /// its fragments belong to this stream. Abandoning the stream cancels the
-    /// submission behind it, as ``cancelCurrentTurn()`` does, and records it
+    /// submission behind it, as ``cancel(message:)`` does, and records it
     /// as a cancelled turn. The stream finishes while a backgrounded run is in
     /// flight; the pump delivers its terminal later, as mail. A stall
     /// reports ``SessionEvent/generationStalled(_:)`` on ``streamSessionEvents()``
@@ -273,23 +259,24 @@ public protocol RoutedSession: Actor {
     /// outstanding one.
     func streamSessionEvents() -> AsyncStream<SessionEvent>
 
-    /// Cancels the turn currently in flight on this session. Best-effort, and
-    /// safe at any time and any number of times.
+    /// Stops the work of this session (`generation-queue.md`, section 5.6).
+    /// Best-effort, and safe at any time and any number of times.
     ///
-    /// ``cancel(id:)`` withdraws a queued prompt; this reaches a turn already
-    /// handed to the model. It cancels the `Task` that runs the model call, so
-    /// cancellation propagates into the tool calls the SDK invokes. Propagation
-    /// past the process boundary is advisory: an MCP server may keep working.
+    /// ``cancel(message:)`` takes back one message; this stops the running
+    /// submission and withdraws every waiting caller message. It cancels the
+    /// `Task` that runs the model call, so cancellation propagates into the
+    /// tool calls the SDK invokes. Propagation past the process boundary is
+    /// advisory: an MCP server may keep working.
     ///
-    /// The turn's caller receives `CancellationError` once the model work
-    /// unwinds. A stream keeps the fragments it already yielded. Model work
-    /// that never checks for cancellation runs to completion and the turn
-    /// returns its response. A cancellation that lands before any model call
-    /// starts makes the turn throw without calling the model. The transcript
-    /// records a cancelled turn as a failed turn, with one close. The outbox
-    /// follows the attach-or-requeue rule. A turn whose submission still waits
-    /// for the worker of the generation queue is a turn in flight: the
-    /// cancellation removes that submission from the queue at once, it never
+    /// The callers of the messages of the running submission receive
+    /// `CancellationError` once the model work unwinds. A stream keeps the
+    /// fragments it already yielded. Model work that never checks for
+    /// cancellation runs to completion, and the submission gives its answer.
+    /// A cancellation that lands before any model call starts ends the answer
+    /// without calling the model. The transcript records a cancelled
+    /// submission as a failed one, with one close. The outbox follows the
+    /// attach-or-requeue rule. A submission that still waits for the worker
+    /// of the generation queue is removed from the queue at once: it never
     /// runs, and the worker runs the next item. A running submission is
     /// cancelled on the task that runs it.
     ///
@@ -300,8 +287,29 @@ public protocol RoutedSession: Actor {
     /// message, so the cancel does not start a submission of its own. A
     /// compaction's summarizer call is cancelled where it stands. A background
     /// run keeps running.
+    ///
+    /// - Returns: ``CancellationResult/requested`` when the pump ran work or
+    ///   a caller message waited, and ``CancellationResult/nothingToCancel``
+    ///   otherwise.
     @discardableResult
-    func cancelCurrentTurn() async -> TurnCancellationResult
+    func cancel() async -> CancellationResult
+
+    /// Takes back one message (`generation-queue.md`, section 5.6).
+    ///
+    /// A message that waits is withdrawn: it never reaches a prompt, and a
+    /// caller that waits for its answer (``respond(to:maxTokens:)``, a
+    /// stream) gets `CancellationError`. A message that a submission carries
+    /// cancels that submission, as ``cancel()`` does; the other messages of
+    /// that submission share its answer, so they end with it. Safe at any
+    /// time and any number of times.
+    ///
+    /// - Parameter message: The id ``send(_:)-(Transcript.Prompt)`` returned.
+    /// - Returns: ``MessageCancellationResult/withdrawn``,
+    ///   ``MessageCancellationResult/cancelledInSubmission``, or
+    ///   ``MessageCancellationResult/alreadyAnswered`` when the message has no
+    ///   open answer.
+    @discardableResult
+    func cancel(message: MessageID) async -> MessageCancellationResult
 
     /// Runs `body`, a wait on a person, and returns what it returns.
     ///
@@ -366,62 +374,53 @@ public protocol RoutedSession: Actor {
     /// Idempotent.
     func close() async
 
-    /// Releases the earliest pending prompt in this session's queue as a
-    /// message, and waits for its answer: a thin helper over the pump of the
-    /// session. The mail that waits rides the same submission.
+    /// Sends one message to this session, and returns its id at once
+    /// (`generation-queue.md`, section 5.4).
     ///
-    /// A queued prompt waits until a driver releases it with this method. The
-    /// mail needs no driver: the pump delivers each settled run's terminal by
-    /// itself. When no prompt is queued, this call waits until the pump has no
-    /// work left, and returns the reply of the last answer that only mail
-    /// started while it waited.
+    /// The message waits in the queue of the session. When no submission of
+    /// the session runs, the pump starts one for it with no other call; when a
+    /// submission runs, the message goes into the next one. Every waiting
+    /// message that can share one submission goes into it, in the order the
+    /// messages arrived, after the preamble of the waiting mail. The
+    /// `Transcript.Prompt` goes to the model as the text of its `.text`
+    /// segments, joined with no separator.
     ///
-    /// Within the queue, prompts dispatch in enqueue order. A released prompt
-    /// waits behind the messages that arrived before it, and it shares a
-    /// submission with every waiting message that can share one.
+    /// The call waits for no submission and for no answer, and it throws
+    /// nothing, from any task: a tool body of this session's own submission
+    /// can send, and its message goes into a later submission.
+    /// ``respond(to:maxTokens:)`` is this call followed by a wait for the
+    /// answer.
     ///
-    /// A turn this call runs opens one span, exactly as
-    /// ``respond(to:maxTokens:)`` states, with `turn.entry_point` reading
-    /// `dispatch`. A call that runs no turn opens no span.
+    /// The answer of a sent message is visible on ``streamSessionEvents()``.
+    /// Its submission opens one span, exactly as ``respond(to:maxTokens:)``
+    /// states, with `turn.entry_point` reading `send`.
     ///
-    /// - Returns: The model's response text, or `nil` when no prompt was queued
-    ///   and no answer that only mail started ended while this call waited.
-    func dispatchNextPrompt() async throws -> String?
-
-    /// Suspends until this session holds work for a future turn: a queued
-    /// prompt, a pending tool event, or a settled background run. Returns at
-    /// once when it already does. One wake-up per call.
-    func awaitQueuedWork() async
-
-    /// Stages a queued user prompt for a future turn. Nothing here touches the
-    /// recorded transcript.
-    ///
-    /// - Returns: The stable id of this queued prompt, usable with
-    ///   ``pendingPrompts()``, ``cancel(id:)``, and ``replace(id:prompt:)``.
+    /// - Parameter prompt: The prompt of the message.
+    /// - Returns: The stable id of the message, usable with
+    ///   ``cancel(message:)``, ``replace(id:prompt:)``, ``pendingMessages()``
+    ///   and ``messageQueueDepth()``.
     @discardableResult
-    func enqueue(prompt: Transcript.Prompt) async -> PromptID
+    func send(_ prompt: Transcript.Prompt) async -> MessageID
 
-    /// A snapshot of every prompt currently queued for a future turn, in FIFO
-    /// dispatch order.
-    func pendingPrompts() async -> [(id: PromptID, prompt: Transcript.Prompt)]
+    /// A snapshot of every caller message that waits for a submission, in the
+    /// order the messages arrived. A message that a submission took is not in
+    /// it.
+    func pendingMessages() async -> [(id: MessageID, prompt: Transcript.Prompt)]
 
-    /// Cancels a still-pending queued prompt. See ``cancelCurrentTurn()`` for a
-    /// turn already in flight, and ``cancelPrompt(id:)`` for both in one call.
+    /// Replaces the prompt of a message that waits, in place. The message
+    /// keeps its place in the queue.
     ///
-    /// - Parameter id: The id ``enqueue(prompt:)-(Transcript.Prompt)`` returned.
+    /// - Parameters:
+    ///   - id: The id ``send(_:)-(Transcript.Prompt)`` returned.
+    ///   - prompt: The new prompt of the message.
+    /// - Returns: ``MessageQueueMutationResult/applied`` when the message
+    ///   waited, and ``MessageQueueMutationResult/alreadySent`` otherwise.
     @discardableResult
-    func cancel(id: PromptID) async -> PromptQueueMutationResult
+    func replace(id: MessageID, prompt: Transcript.Prompt) async -> MessageQueueMutationResult
 
-    /// Replaces a still-pending queued prompt's content in place. The prompt
-    /// keeps its FIFO dispatch position.
-    ///
-    /// - Parameter id: The id ``enqueue(prompt:)-(Transcript.Prompt)`` returned.
-    @discardableResult
-    func replace(id: PromptID, prompt: Transcript.Prompt) async -> PromptQueueMutationResult
-
-    /// How much queued user-prompt work this session carries: the prompts
-    /// still waiting and the one whose turn is running.
-    func promptQueueDepth() async -> PromptQueueDepth
+    /// How much caller-message work this session carries: the messages that
+    /// wait, and the messages of the running answer.
+    func messageQueueDepth() async -> MessageQueueDepth
 
     /// Delivers the user's answer to a pending elicitation raised by a run on
     /// this session.
@@ -473,31 +472,13 @@ extension RoutedSession {
         streamEvents(to: prompt, maxTokens: nil)
     }
 
-    /// Stages a plain-text queued user prompt for a future turn, as one `.text`
-    /// segment.
-    @discardableResult
-    public func enqueue(prompt: String) async -> PromptID {
-        await enqueue(prompt: Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))]))
-    }
-
-    /// Cancels a submitted prompt, whether it is still queued or already
-    /// dispatched.
+    /// See ``send(_:)-(Transcript.Prompt)``, with the plain text of the
+    /// message as one `.text` segment.
     ///
-    /// A dispatched prompt is cancelled through ``cancelCurrentTurn()``, which
-    /// cancels the turn in flight at that moment.
-    /// ``PromptCancellationResult/turnCancelled`` reports that the request was
-    /// recorded, not that the turn failed.
-    ///
-    /// - Parameter id: The id ``enqueue(prompt:)-(Transcript.Prompt)`` returned.
+    /// - Parameter prompt: The prompt text of the message.
+    /// - Returns: The stable id of the message.
     @discardableResult
-    public func cancelPrompt(id: PromptID) async -> PromptCancellationResult {
-        if await cancel(id: id) == .applied {
-            return .withdrawn
-        }
-        guard await promptQueueDepth().dispatched == id else {
-            return .alreadyFinished
-        }
-        return await cancelCurrentTurn() == .requested ? .turnCancelled : .alreadyFinished
+    public func send(_ prompt: String) async -> MessageID {
+        await send(.plainText(prompt))
     }
-
 }

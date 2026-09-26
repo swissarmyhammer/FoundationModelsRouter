@@ -75,17 +75,25 @@ enum MessageReader: Sendable {
 /// One caller message that waits in the ``SessionOutbox`` of a session for
 /// the pump (`generation-queue.md`, section 5.4).
 ///
-/// ``RoutedSession/respond(to:maxTokens:)``, the two stream methods, and
-/// ``RoutedSession/dispatchNextPrompt()`` each add one message and wait for
-/// its answer. The pump puts the text of the message into the `.prompt`
-/// entry of the next submission that can carry it.
+/// ``RoutedSession/send(_:)-(Transcript.Prompt)`` adds one message and returns
+/// its id. ``RoutedSession/respond(to:maxTokens:)`` and the two stream methods
+/// each add one message and wait for its answer. The pump puts the text of
+/// the message into the `.prompt` entry of the next submission that can carry
+/// it.
 struct SessionMessage: Sendable {
-    /// The id of the message. A queued prompt keeps the id that
-    /// ``RoutedSession/enqueue(prompt:)-(Transcript.Prompt)`` gave it.
-    let id: PromptID
+    /// The id of the message, which ``RoutedSession/send(_:)-(Transcript.Prompt)``
+    /// returns.
+    let id: MessageID
 
-    /// The prompt text of the message.
-    let text: String
+    /// The prompt of the message. ``RoutedSession/replace(id:prompt:)``
+    /// changes it while the message waits.
+    var prompt: Transcript.Prompt
+
+    /// The prompt text the submission carries: the `.text` segments of
+    /// ``prompt``, joined with no separator.
+    var text: String {
+        TranscriptEntryMapper.flattenedText(prompt)
+    }
 
     /// The token ceiling the caller named, or `nil`.
     let requestedMaxTokens: Int?
@@ -107,6 +115,16 @@ struct SessionMessage: Sendable {
     /// The options that the submission of this message fixes at its start.
     var options: SubmissionOptions {
         SubmissionOptions(isStream: reader.isStream, requestedMaxTokens: requestedMaxTokens)
+    }
+}
+
+extension Transcript.Prompt {
+    /// A prompt of one `.text` segment: the form a plain-text message takes.
+    ///
+    /// - Parameter text: The text of the prompt.
+    /// - Returns: The prompt.
+    static func plainText(_ text: String) -> Transcript.Prompt {
+        Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: text))])
     }
 }
 

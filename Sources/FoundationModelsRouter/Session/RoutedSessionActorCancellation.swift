@@ -9,8 +9,8 @@ extension RoutedSessionActor {
         try await body()
     }
 
-    /// See ``RoutedSession/cancelCurrentTurn()``. Stops the work the pump
-    /// runs (``requestCancelOfRunningWork()``), and withdraws every caller
+    /// See ``RoutedSession/cancel()``. Stops the work the pump runs
+    /// (``requestCancelOfRunningWork()``), and withdraws every caller
     /// message that waits in ``outbox``: each of their callers gets
     /// `CancellationError`. The mail stays in ``outbox`` for a later
     /// submission, because a run terminal must not be lost. It is held
@@ -18,18 +18,17 @@ extension RoutedSessionActor {
     /// mail that waited does not start a submission of its own at once. It
     /// rides the next submission that new mail or a new message starts.
     ///
-    /// - Returns: ``TurnCancellationResult/requested`` when work ran or a
-    ///   caller message waited, and ``TurnCancellationResult/noTurnInFlight``
-    ///   otherwise.
+    /// - Returns: ``CancellationResult/requested`` when work ran or a caller
+    ///   message waited, and ``CancellationResult/nothingToCancel`` otherwise.
     @discardableResult
-    func cancelCurrentTurn() async -> TurnCancellationResult {
+    func cancel() async -> CancellationResult {
         // The mail is held first, so the pump cannot deliver it between the
         // stop of the work and the hold.
         await outbox.holdPendingMail()
         let stoppedWork = requestCancelOfRunningWork()
         let withdrawn = await outbox.withdrawMessages()
-        await resolve(withdrawn, with: .failure(CancellationError()), startedByMailOnly: false)
-        return stoppedWork || !withdrawn.isEmpty ? .requested : .noTurnInFlight
+        resolve(withdrawn, with: .failure(CancellationError()))
+        return stoppedWork || !withdrawn.isEmpty ? .requested : .nothingToCancel
     }
 
     /// Records a cancel of the work the pump runs, and cancels its model
@@ -47,23 +46,29 @@ extension RoutedSessionActor {
         return true
     }
 
-    /// Cancels `message`, whose caller was cancelled: a message that waits
-    /// leaves ``outbox`` and gets `CancellationError`; the answer that carries
-    /// it is stopped.
+    /// See ``RoutedSession/cancel(message:)``. A message that the running
+    /// answer carries stops that answer. Any other open message is marked
+    /// (``PumpAnswer/requestCancel()``) and withdrawn from ``outbox``.
     ///
-    /// The caller marked the message before this call
-    /// (``PumpAnswer/requestCancel()``). So a message that the pump takes
-    /// while this call runs is still cancelled: the pump reads the mark when
-    /// it makes the message part of its work.
+    /// The check of the running answer and the mark happen in one actor
+    /// turn, and the pump reads the mark in the same actor turn in which it
+    /// makes a message part of its work (``liveMessages(_:)``). So a message
+    /// that the pump takes while this call waits for ``outbox`` is dropped
+    /// from the work with `CancellationError`, and never reaches a prompt.
     ///
-    /// - Parameter message: The message of the cancelled caller.
-    func cancel(message: SessionMessage) async {
-        if let withdrawn = await outbox.withdrawMessage(id: message.id) {
-            await resolve([withdrawn], with: .failure(CancellationError()), startedByMailOnly: false)
-            return
+    /// - Parameter id: The id of the message.
+    /// - Returns: What happened to the message.
+    @discardableResult
+    func cancel(message id: MessageID) async -> MessageCancellationResult {
+        guard let answer = openMessages[id] else { return .alreadyAnswered }
+        if deliveredMessages?.contains(where: { $0.id == id }) == true {
+            requestCancelOfRunningWork()
+            return .cancelledInSubmission
         }
-        guard case .answer(_, let messages) = pumpWork?.kind, messages.contains(where: { $0.id == message.id })
-        else { return }
-        requestCancelOfRunningWork()
+        answer.requestCancel()
+        if let withdrawn = await outbox.withdrawMessage(id: id) {
+            resolve([withdrawn], with: .failure(CancellationError()))
+        }
+        return .withdrawn
     }
 }

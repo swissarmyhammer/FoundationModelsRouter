@@ -44,12 +44,13 @@ extension RoutedSessionActor {
         try await sendAndAwaitAnswer(text: prompt, requestedMaxTokens: maxTokens, reader: .reply, entryPoint: .respond)
     }
 
-    /// Sends one caller message and waits for its answer.
+    /// Sends one caller message and waits for its answer: the helper that
+    /// ``respond(to:maxTokens:)`` and the two stream methods are.
     ///
     /// The refusal of a wait that could never end comes first, on the task
     /// of the caller (``refuseWaitInsideOpenSubmission()``). The message then
-    /// waits in ``outbox``, and the pump takes it for the next submission
-    /// that can carry it.
+    /// waits in ``outbox`` (``enqueue(_:)``), and the pump takes it for the
+    /// next submission that can carry it.
     ///
     /// - Parameters:
     ///   - text: The prompt text of the message.
@@ -63,12 +64,10 @@ extension RoutedSessionActor {
         text: String, requestedMaxTokens: Int?, reader: MessageReader, entryPoint: RouterTracing.TurnEntryPoint
     ) async throws -> String {
         try refuseWaitInsideOpenSubmission()
-        await attachOutboxJournalIfNeeded()
         let message = SessionMessage(
-            id: PromptID(), text: text, requestedMaxTokens: requestedMaxTokens, reader: reader,
+            id: MessageID(), prompt: .plainText(text), requestedMaxTokens: requestedMaxTokens, reader: reader,
             entryPoint: entryPoint, serviceContext: ServiceContext.current, answer: PumpAnswer())
-        await outbox.add(message: message)
-        wakePump()
+        await enqueue(message)
         return try await awaitAnswer(of: message)
     }
 
@@ -79,12 +78,12 @@ extension RoutedSessionActor {
     /// - Parameter message: The message the caller sent.
     /// - Returns: The final reply of its answer.
     /// - Throws: What its answer throws.
-    func awaitAnswer(of message: SessionMessage) async throws -> String {
+    private func awaitAnswer(of message: SessionMessage) async throws -> String {
         try await withTaskCancellationHandler {
             try await message.answer.value()
         } onCancel: {
             message.answer.requestCancel()
-            Task { await self.cancel(message: message) }
+            Task { await self.cancel(message: message.id) }
         }
     }
 
@@ -259,7 +258,7 @@ extension RoutedSessionActor {
         // submission would otherwise fall out of that loop holding a
         // half-produced `response` and be reported as a submission that simply
         // finished, indexed recording and all. It did not finish: it was cut
-        // short (see ``RoutedSession/cancelCurrentTurn()``). Raising it here
+        // short (see ``RoutedSession/cancel()``). Raising it here
         // routes a truncated stream into the same failed-submission handling
         // every other mid-generation failure takes, so the caller can tell the
         // two apart.

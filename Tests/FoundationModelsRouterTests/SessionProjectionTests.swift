@@ -167,7 +167,7 @@ struct SessionProjectionTests {
     @MainActor
     private static func expectProjectionUnchanged(by event: SessionEvent) {
         let projection = SessionProjection()
-        projection.apply(.turnStarted(TurnStart(turnId: TurnID(1), promptId: nil)))
+        projection.apply(.turnStarted(TurnStart(turnId: TurnID(1), messageId: nil)))
         projection.apply(.toolCall(id: "call-1", name: "search", argumentsJSON: "{}"))
         projection.apply(.toolStatus(id: "call-1", status: .running, summary: nil, output: nil))
         let phaseBefore = projection.phase

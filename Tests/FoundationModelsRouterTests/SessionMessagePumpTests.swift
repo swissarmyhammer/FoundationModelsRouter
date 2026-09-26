@@ -283,6 +283,68 @@ struct SessionMessagePumpTests {
 
     // MARK: - Caller messages
 
+    @Test("a send on an idle session starts a submission with no other call, and the answer of the message ends it")
+    func aSendOnAnIdleSessionStartsASubmission() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "SessionMessagePumpTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let backend = PumpProbeBackend(script: [:])
+        let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
+
+        let id = await session.send(Self.firstPrompt)
+
+        // No driver call and no wait: the pump takes the message by itself.
+        try await Self.awaitPrompts(1, on: backend)
+        #expect(await session.becomesIdle())
+        #expect(backend.prompts == [Self.firstPrompt])
+        #expect(await session.pendingMessages().isEmpty)
+        #expect(await session.cancel(message: id) == .alreadyAnswered)
+        withExtendedLifetime(profile) {}
+    }
+
+    @Test("cancel(message:) withdraws a message that waits: it never reaches a prompt")
+    func cancelOfAWaitingMessageWithdrawsIt() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "SessionMessagePumpTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let latch = RunLatch()
+        let backend = PumpProbeBackend(script: [1: .hold(latch)])
+        let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
+
+        let first = Task { try await session.respond(to: Self.firstPrompt) }
+        try await Self.awaitPrompts(1, on: backend)
+        let waiting = await session.send(Self.secondPrompt)
+        #expect(await session.pendingMessages().map(\.id) == [waiting])
+
+        #expect(await session.cancel(message: waiting) == .withdrawn)
+
+        #expect(await session.pendingMessages().isEmpty)
+        await latch.open()
+        #expect(try await first.value == PumpProbeBackend.answer(ofCall: 1))
+        #expect(await session.becomesIdle())
+        #expect(backend.prompts == [Self.firstPrompt])
+        withExtendedLifetime(profile) {}
+    }
+
+    @Test("cancel(message:) stops the submission that carries a message, and the pump then ends")
+    func cancelOfAMessageInARunningSubmissionStopsIt() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "SessionMessagePumpTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let latch = RunLatch()
+        let backend = PumpProbeBackend(script: [1: .hold(latch)])
+        let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
+
+        let id = await session.send(Self.firstPrompt)
+        try await Self.awaitPrompts(1, on: backend)
+        #expect(await session.messageQueueDepth().running == [id])
+
+        #expect(await session.cancel(message: id) == .cancelledInSubmission)
+
+        // The latch never opens, so only the cancel can end the held call.
+        #expect(await Self.pumpStops(on: session))
+        #expect(backend.prompts == [Self.firstPrompt])
+        #expect(await session.cancel(message: id) == .alreadyAnswered)
+        withExtendedLifetime(profile) {}
+    }
+
     @Test(
         "a respond that arrives while a submission runs waits in the outbox, not on a lock, and each caller gets the answer of the submission that carried its prompt"
     )
@@ -435,7 +497,7 @@ struct SessionMessagePumpTests {
         try await Self.awaitWaitingMessages(1, on: session)
         await session.outbox.post(event: settledRun)
 
-        #expect(await session.cancelCurrentTurn() == .requested)
+        #expect(await session.cancel() == .requested)
 
         await #expect(throws: CancellationError.self) { try await second.value }
         await #expect(throws: CancellationError.self) { try await first.value }

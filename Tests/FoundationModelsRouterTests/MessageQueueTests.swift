@@ -5,17 +5,18 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises task ndv3sc1: the ``RoutedSession`` prompt-queue surface over
-/// `SessionOutbox`'s turn-starting prompt queue —
-/// ``RoutedSession/enqueue(prompt:)``/``RoutedSession/pendingPrompts()``/
-/// ``RoutedSession/cancel(id:)``/``RoutedSession/replace(id:prompt:)`` plus
-/// ``RoutedSession/dispatchNextPrompt()`` driver dispatch, race-safe against
-/// the commit boundary where the pump of the session takes a released prompt
-/// for its submission (task ^3qx0mpt).
+/// Exercises the ``RoutedSession`` message queue (task ^cbhpdjy, restated from
+/// the prompt queue of task ndv3sc1): ``RoutedSession/send(_:)-(Transcript.Prompt)``,
+/// ``RoutedSession/pendingMessages()``, ``RoutedSession/replace(id:prompt:)``,
+/// ``RoutedSession/messageQueueDepth()`` and ``RoutedSession/cancel(message:)``,
+/// race-safe against the point where the pump of the session takes a message
+/// for its submission.
 ///
-/// Everything runs against stubs — no MLX, no network, no GPU.
-@Suite("Prompt queue: enqueue, inspect, edit, cancel, driver dispatch")
-struct PromptQueueTests {
+/// A sent message needs no driver: the pump starts a submission for it by
+/// itself (`generation-queue.md`, section 5.4). Everything runs against stubs
+/// — no MLX, no network, no GPU.
+@Suite("Message queue: send, inspect, edit, cancel")
+struct MessageQueueTests {
     // MARK: - Stub containers
 
     private final class BasicLLMContainer: PlainTranscriptStubContainer {
@@ -38,11 +39,11 @@ struct PromptQueueTests {
     }
 
     /// A backend whose ``respond(to:maxTokens:)`` signals ``started`` the
-    /// moment it is called — proof the pump already took the prompt for its
+    /// moment it is called — proof the pump already took the message for its
     /// submission — and then suspends on ``proceed`` until the test releases
-    /// it. The fixture the commit-boundary race tests use to land a
-    /// concurrent `cancel`/`replace`/`enqueue` squarely inside an in-flight
-    /// dispatch's "already taken, not yet recorded" window.
+    /// it. The fixture the race tests use to land a concurrent
+    /// `cancel(message:)`/`replace(id:prompt:)`/`send(_:)` squarely inside a
+    /// running submission.
     ///
     /// A plain mutable class rather than an actor, mirroring
     /// ``StubSessionBackend``: ``RoutedSessionActor`` only ever drives one
@@ -177,7 +178,7 @@ struct PromptQueueTests {
 
     private static func makeTempDir() -> URL {
         let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("PromptQueueTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("MessageQueueTests-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
@@ -218,170 +219,165 @@ struct PromptQueueTests {
         return ""
     }
 
-    // MARK: - FIFO dispatch
-
-    @Test("prompts enqueued dispatch afterward in FIFO order, one recorded turn each")
-    @MainActor
-    func enqueuedPromptsDispatchInFIFOOrder() async throws {
-        let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        _ = await session.enqueue(prompt: "first")
-        _ = await session.enqueue(prompt: "second")
-        _ = await session.enqueue(prompt: "third")
-
-        let firstResponse = try await session.dispatchNextPrompt()
-        let secondResponse = try await session.dispatchNextPrompt()
-        let thirdResponse = try await session.dispatchNextPrompt()
-        let fourthResponse = try await session.dispatchNextPrompt()
-
-        #expect(firstResponse == "stub response")
-        #expect(secondResponse == "stub response")
-        #expect(thirdResponse == "stub response")
-        #expect(fourthResponse == nil)
-
-        let events = await recorder.events
-        let promptTexts = events.filter { $0.kind == .prompt }.map(\.text)
-        #expect(promptTexts == ["first", "second", "third"])
+    /// The text of each `.prompt` event `recorder` holds, in record order.
+    ///
+    /// - Parameter recorder: The recorder of the session.
+    /// - Returns: The prompt texts.
+    private static func promptTexts(in recorder: InMemoryRecorder) async -> [String] {
+        await recorder.events.filter { $0.kind == .prompt }.compactMap(\.text)
     }
 
-    @Test("awaitQueuedWork() resumes a suspended driver once a prompt is enqueued, and returns at once while work is still queued")
+    // MARK: - FIFO order
+
+    @Test("messages sent while a submission runs reach the next submission together, in the order they were sent")
     @MainActor
-    func awaitQueuedWorkWakesForQueuedPrompt() async throws {
+    func sentMessagesReachTheModelInFIFOOrder() async throws {
         let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
+        let backend = GatedStubBackend(responseText: "gated response")
+        let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        // Suspend a driver first, then enqueue. Whichever side runs first, the
-        // waiter must complete: a wait that starts before the enqueue is
-        // resumed by it, and a wait that starts after finds the queue
-        // non-empty and returns at once.
-        let waiter = Task { await session.awaitQueuedWork() }
-        _ = await session.enqueue(prompt: "wake the driver")
-        await waiter.value
+        _ = await session.send("first")
+        await backend.started.wait()
+        _ = await session.send("second")
+        _ = await session.send("third")
 
-        // The prompt is still queued, so a fresh wait returns immediately
-        // rather than suspending until more work arrives.
-        await session.awaitQueuedWork()
+        backend.proceed.signal()
+        await backend.started.wait()
+        backend.proceed.signal()
+        #expect(await session.becomesIdle())
 
-        let dispatched = try await session.dispatchNextPrompt()
-        #expect(dispatched == "stub response")
+        #expect(
+            await Self.promptTexts(in: recorder) == ["first", "second" + RoutedSessionActor.messageSeparator + "third"])
     }
 
-    @Test("a direct respond(to:) call does not consume or drop a queued prompt")
+    @Test("send returns its id while the submission of the message still runs")
     @MainActor
-    func respondDoesNotConsumeQueuedPrompt() async throws {
+    func sendReturnsBeforeItsAnswer() async throws {
+        let recorder = InMemoryRecorder()
+        let backend = GatedStubBackend(responseText: "gated response")
+        let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // The backend holds the submission, so a send that waited for its
+        // answer could never get here.
+        let id = await session.send("wake the pump")
+        await backend.started.wait()
+        #expect(await session.messageQueueDepth().running == [id])
+
+        backend.proceed.signal()
+        #expect(await session.becomesIdle())
+        #expect(await Self.promptTexts(in: recorder) == ["wake the pump"])
+    }
+
+    @Test("a respond and a message sent before it each reach the model once, in the order they arrived")
+    @MainActor
+    func respondAndSentMessageKeepTheirOrder() async throws {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let queuedId = await session.enqueue(prompt: "queued")
-
+        _ = await session.send("queued")
         let directResponse = try await session.respond(to: "direct")
         #expect(directResponse == "stub response")
+        #expect(await session.becomesIdle())
 
-        // The queued prompt is untouched by the unrelated direct turn: it
-        // is not silently dequeued just because it happened to be waiting.
-        let pending = await session.pendingPrompts()
-        #expect(pending.map(\.id) == [queuedId])
-
-        let dispatched = try await session.dispatchNextPrompt()
-        #expect(dispatched == "stub response")
-
-        let events = await recorder.events
-        let promptTexts = events.filter { $0.kind == .prompt }.map(\.text)
-        #expect(promptTexts == ["direct", "queued"])
+        // The pump can carry both in one submission, or one in each; either
+        // way each prompt reaches the model once, and the sent one first.
+        let prompts = await Self.promptTexts(in: recorder)
+        #expect(prompts.joined(separator: RoutedSessionActor.messageSeparator) == "queued\n\ndirect")
+        #expect(await session.pendingMessages().isEmpty)
     }
 
-    // MARK: - pendingPrompts(): enqueue/edit/cancel lifecycle
+    // MARK: - pendingMessages(): send, replace, cancel
 
     @Test(
-        "pendingPrompts() reflects enqueue/replace/cancel; a cancelled prompt never produces a turn; a replaced prompt dispatches its edited content"
+        "pendingMessages() reflects send, replace and cancel; a withdrawn message never reaches a prompt; a replaced message delivers its new content"
     )
     @MainActor
-    func pendingPromptsReflectsEnqueueEditCancel() async throws {
+    func pendingMessagesReflectsSendReplaceCancel() async throws {
         let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
+        let backend = GatedStubBackend(responseText: "gated response")
+        let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let firstId = await session.enqueue(prompt: "cancel me")
-        let secondId = await session.enqueue(prompt: "original")
+        let blocking = Task { try await session.respond(to: "blocking turn") }
+        await backend.started.wait()
+        let firstId = await session.send("cancel me")
+        let secondId = await session.send("original")
 
-        var pending = await session.pendingPrompts()
+        var pending = await session.pendingMessages()
         #expect(pending.map { Self.text(of: $0.prompt) } == ["cancel me", "original"])
 
-        let cancelResult = await session.cancel(id: firstId)
-        #expect(cancelResult == .applied)
-
-        pending = await session.pendingPrompts()
+        #expect(await session.cancel(message: firstId) == .withdrawn)
+        pending = await session.pendingMessages()
         #expect(pending.map(\.id) == [secondId])
-        #expect(pending.map { Self.text(of: $0.prompt) } == ["original"])
 
-        let replaceResult = await session.replace(id: secondId, prompt: Self.prompt("edited"))
-        #expect(replaceResult == .applied)
-
-        pending = await session.pendingPrompts()
+        #expect(await session.replace(id: secondId, prompt: Self.prompt("edited")) == .applied)
+        pending = await session.pendingMessages()
         #expect(pending.map { Self.text(of: $0.prompt) } == ["edited"])
 
-        let response = try await session.dispatchNextPrompt()
-        #expect(response == "stub response")
+        backend.proceed.signal()
+        _ = try await blocking.value
+        await backend.started.wait()
+        backend.proceed.signal()
+        #expect(await session.becomesIdle())
 
-        // Only the replaced prompt's edited content ever produced a turn —
-        // the cancelled prompt's text never appears anywhere.
-        let events = await recorder.events
-        let promptTexts = events.filter { $0.kind == .prompt }.map(\.text)
-        #expect(promptTexts == ["edited"])
-
-        let finalPending = await session.pendingPrompts()
-        #expect(finalPending.isEmpty)
+        // Only the edited content reached the model; the withdrawn text never
+        // appears anywhere.
+        #expect(await Self.promptTexts(in: recorder) == ["blocking turn", "edited"])
+        #expect(await session.pendingMessages().isEmpty)
     }
 
-    @Test("the recorded transcript contains no trace of a still-pending (never dispatched) prompt")
+    @Test("the recording holds no trace of a message withdrawn before its submission")
     @MainActor
-    func stillPendingPromptLeavesNoTranscriptTrace() async throws {
+    func withdrawnMessageLeavesNoRecordingTrace() async throws {
+        let recorder = InMemoryRecorder()
+        let backend = GatedStubBackend(responseText: "gated response")
+        let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let blocking = Task { try await session.respond(to: "blocking turn") }
+        await backend.started.wait()
+        let id = await session.send("never delivered")
+        #expect(await session.cancel(message: id) == .withdrawn)
+
+        backend.proceed.signal()
+        _ = try await blocking.value
+        #expect(await session.becomesIdle())
+
+        #expect(await recorder.events.allSatisfy { !($0.text?.contains("never delivered") ?? false) })
+    }
+
+    @Test("a session that gets no message records nothing at all, not even the session meta line, after a cancel and a depth read")
+    @MainActor
+    func sessionWithNoMessageRecordsNothing() async throws {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        _ = await session.enqueue(prompt: "never dispatched")
+        #expect(await session.cancel() == .nothingToCancel)
+        #expect(await session.messageQueueDepth() == MessageQueueDepth(waiting: 0, running: []))
 
-        let events = await recorder.events
-        #expect(events.filter { $0.kind == .prompt }.isEmpty)
+        // A session that never runs a submission never writes its `session`
+        // meta line either — the same "writes no file at all until it
+        // generates" invariant a fresh session upholds.
+        #expect(await recorder.events.isEmpty)
     }
 
-    @Test("dispatchNextPrompt() on a fresh session with an empty queue records nothing at all, not even the session meta line")
+    // MARK: - A sent message carries the waiting mail
+
+    @Test("a sent message's submission carries the pending mail as the preamble of its prompt")
     @MainActor
-    func dispatchNextPromptOnEmptyQueueRecordsNothing() async throws {
+    func sentMessageComposesPendingEvents() async throws {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let response = try await session.dispatchNextPrompt()
-        #expect(response == nil)
-
-        // A session that never actually runs a turn must never write its
-        // `session` meta line either — the same "writes no file at all
-        // until it generates" invariant a fresh session that never calls
-        // respond()/streamResponse() upholds.
-        let events = await recorder.events
-        #expect(events.isEmpty)
-    }
-
-    // MARK: - dispatchNextPrompt() composes pending turn-riding events
-
-    @Test("dispatchNextPrompt() composes pending turn-riding events into the queued prompt's turn")
-    @MainActor
-    func dispatchNextPromptComposesPendingEvents() async throws {
-        let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        _ = await session.enqueue(prompt: "what happened?")
         let posted = OperationEvent(tool: "shell", op: "run command", correlationID: "1", kind: .completed, detail: "exit 0")
         await session.outbox.post(event: posted)
-
-        _ = try await session.dispatchNextPrompt()
+        _ = await session.send("what happened?")
+        #expect(await session.becomesIdle())
 
         let events = await recorder.events
         let promptEvent = try #require(events.first { $0.kind == .prompt })
@@ -389,17 +385,17 @@ struct PromptQueueTests {
         #expect(promptEvent.text == expectedLine + "\n\nwhat happened?")
     }
 
-    // MARK: - The pump delivers a settled run on an empty queue
+    // MARK: - The pump delivers a settled run with no message
 
     /// The output the delivery test's background tool returns, so the
     /// terminal line the model hears is recognizable.
     private static let deliveredToolOutput = "background result: the job finished"
 
     @Test(
-        "a settled run on an EMPTY prompt queue starts a delivery submission with no caller call: the model hears the terminal, with no wait call"
+        "a settled run with no waiting message starts a delivery submission with no caller call: the model hears the terminal, with no wait call"
     )
     @MainActor
-    func settledRunOnEmptyQueueRunsADeliveryTurn() async throws {
+    func settledRunWithNoMessageRunsADeliverySubmission() async throws {
         let recorder = InMemoryRecorder()
         let container = BackgroundingLLMContainer()
         let gate = RunLatch()
@@ -409,17 +405,15 @@ struct PromptQueueTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let backend = try #require(container.lastBackend)
 
-        // The first dispatched prompt backgrounds the job; the queue is empty
-        // after it.
-        _ = await session.enqueue(prompt: "start the job")
-        _ = try await session.dispatchNextPrompt()
+        // The first submission backgrounds the job; no message waits after it.
+        _ = try await session.respond(to: "start the job")
         let token = try #require(await session.mailbox.backgroundRuns().first?.completionToken)
-        #expect(await session.pendingPrompts().isEmpty)
+        #expect(await session.pendingMessages().isEmpty)
 
         await gate.open()
         let terminal = try await MountFixtures.settledTerminal(of: token, in: session.mailbox)
 
-        // No driver calls: the settlement is mail, and the pump of the session
+        // No caller call: the settlement is mail, and the pump of the session
         // starts the delivery submission by itself.
         #expect(
             await BoundedWait.conditionReached("the delivery submission reaching the backend") {
@@ -437,9 +431,9 @@ struct PromptQueueTests {
         #expect(await session.outbox.pending().events.isEmpty)
     }
 
-    @Test("an event-only wake carrying only progress runs no turn: the report stays staged for the next dispatched prompt")
+    @Test("mail that carries only progress starts no submission: the report stays staged for the next message")
     @MainActor
-    func progressOnlyWakeOnEmptyQueueRunsNoTurn() async throws {
+    func progressOnlyMailRunsNoSubmission() async throws {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -447,123 +441,104 @@ struct PromptQueueTests {
         let progress = OperationEvent(tool: "shell", op: "run command", correlationID: "1", kind: .progress, detail: "12 lines so far")
         await session.outbox.post(event: progress)
 
-        await session.awaitQueuedWork()
-        #expect(try await session.dispatchNextPrompt() == nil)
+        #expect(await session.becomesIdle())
         #expect(await recorder.events.isEmpty)
         #expect(await session.outbox.pending().events.map(\.event) == [progress])
     }
 
-    // MARK: - dispatchNextPrompt() flattens the queued prompt to backend text
+    // MARK: - A sent Transcript.Prompt flattens to backend text
 
     @Test(
-        "dispatchNextPrompt() submits every .text segment of a queued prompt joined with no separator, skipping non-text segments"
+        "send(_:) submits every .text segment of a prompt joined with no separator, skipping non-text segments"
     )
     @MainActor
-    func dispatchNextPromptFlattensEveryTextSegment() async throws {
+    func sentPromptFlattensEveryTextSegment() async throws {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let event = OperationEvent(tool: "shell", op: "run command", correlationID: "1", kind: .completed, detail: "exit 0")
-        _ = await session.enqueue(
-            prompt: Transcript.Prompt(segments: [
+        _ = await session.send(
+            Transcript.Prompt(segments: [
                 .text(Transcript.TextSegment(content: "alpha ")),
                 OperationEventSegment(id: "seg-1", content: event).transcriptSegment,
                 .text(Transcript.TextSegment(content: "omega")),
             ]))
-
-        _ = try await session.dispatchNextPrompt()
+        #expect(await session.becomesIdle())
 
         // What the backend was actually asked: the two text contents adjacent,
         // with nothing inserted between them and nothing contributed by the
         // `.custom` segment. A separator here would change the prompt the model
-        // sees on every multi-segment queued turn.
+        // sees on every multi-segment message.
         let events = await recorder.events
         let promptEvent = try #require(events.first { $0.kind == .prompt })
         #expect(promptEvent.text == "alpha omega")
     }
 
-    // MARK: - Commit-boundary race: cancel/replace/enqueue vs. an in-flight dispatch
+    // MARK: - Races against a running submission
 
-    @Test("cancel racing an in-flight dispatch reports alreadySent; the in-flight turn is unaffected")
+    @Test(
+        "cancel(message:) of a message the pump already took reports cancelledInSubmission; a model that ignores the cancel still records its answer"
+    )
     @MainActor
-    func cancelRacingInFlightDispatchReportsAlreadySent() async throws {
+    func cancelOfATakenMessageReportsCancelledInSubmission() async throws {
         let recorder = InMemoryRecorder()
         let backend = GatedStubBackend(responseText: "gated response")
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let id = await session.enqueue(prompt: "racing prompt")
-
-        let dispatchTask = Task { try await session.dispatchNextPrompt() }
-
-        // Wait until the backend has actually been asked to respond — proof
-        // the pump already took this prompt for its submission.
+        let id = await session.send("racing prompt")
+        // The backend has been asked to respond: the pump took the message.
         await backend.started.wait()
 
-        let cancelResult = await session.cancel(id: id)
-        #expect(cancelResult == .alreadySent)
+        #expect(await session.cancel(message: id) == .cancelledInSubmission)
 
-        // Let the in-flight turn actually finish, unaffected by the race.
         backend.proceed.signal()
-        let response = try await dispatchTask.value
-        #expect(response == "gated response")
-
-        let events = await recorder.events
-        let promptTexts = events.filter { $0.kind == .prompt }.map(\.text)
-        #expect(promptTexts == ["racing prompt"])
+        #expect(await session.becomesIdle())
+        #expect(await Self.promptTexts(in: recorder) == ["racing prompt"])
     }
 
-    @Test("replace racing an in-flight dispatch reports alreadySent; the in-flight turn dispatches the original content")
+    @Test("replace racing a running submission reports alreadySent; the submission delivers the original content")
     @MainActor
-    func replaceRacingInFlightDispatchReportsAlreadySent() async throws {
+    func replaceRacingARunningSubmissionReportsAlreadySent() async throws {
         let recorder = InMemoryRecorder()
         let backend = GatedStubBackend(responseText: "gated response")
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let id = await session.enqueue(prompt: "original")
-
-        let dispatchTask = Task { try await session.dispatchNextPrompt() }
+        let id = await session.send("original")
         await backend.started.wait()
 
-        let replaceResult = await session.replace(id: id, prompt: Self.prompt("too late"))
-        #expect(replaceResult == .alreadySent)
+        #expect(await session.replace(id: id, prompt: Self.prompt("too late")) == .alreadySent)
 
         backend.proceed.signal()
-        _ = try await dispatchTask.value
-
-        let events = await recorder.events
-        let promptTexts = events.filter { $0.kind == .prompt }.map(\.text)
-        #expect(promptTexts == ["original"])
+        #expect(await session.becomesIdle())
+        #expect(await Self.promptTexts(in: recorder) == ["original"])
     }
 
-    @Test("a prompt enqueued while another turn is in flight is not swept into it, and dispatches on the next call")
+    @Test("a message sent while a submission runs is not swept into it, and goes into the next submission")
     @MainActor
-    func enqueueDuringInFlightTurnDispatchesNext() async throws {
+    func sendDuringASubmissionGoesIntoTheNextSubmission() async throws {
         let recorder = InMemoryRecorder()
         let backend = GatedStubBackend(responseText: "gated response")
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        _ = await session.enqueue(prompt: "first")
-        let dispatchTask = Task { try await session.dispatchNextPrompt() }
+        _ = await session.send("first")
         await backend.started.wait()
 
-        // Enqueue a second prompt while the first turn is already in flight.
-        let secondId = await session.enqueue(prompt: "second")
+        // Send a second message while the first submission runs.
+        let secondId = await session.send("second")
+        #expect(await session.pendingMessages().map(\.id) == [secondId])
 
         backend.proceed.signal()
-        let firstResponse = try await dispatchTask.value
-        #expect(firstResponse == "gated response")
-
-        // The second prompt was never touched by the first dispatch — still
-        // pending, ready for the next dispatch.
-        let pending = await session.pendingPrompts()
-        #expect(pending.map(\.id) == [secondId])
+        await backend.started.wait()
+        backend.proceed.signal()
+        #expect(await session.becomesIdle())
+        #expect(await Self.promptTexts(in: recorder) == ["first", "second"])
     }
 
-    // MARK: - Prompt to turn to event correlation
+    // MARK: - Message to turn to event correlation
 
     /// The turn-start records among `events`, in order.
     ///
@@ -576,26 +551,26 @@ struct PromptQueueTests {
         }
     }
 
-    @Test("a dispatched prompt's turn opens a frame naming the prompt that caused it")
+    @Test("the turn of a sent message opens a frame that names the message")
     @MainActor
-    func dispatchedTurnFrameNamesItsPrompt() async throws {
+    func sentMessageTurnFrameNamesItsMessage() async throws {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let stream = await session.streamSessionEvents()
-        let id = await session.enqueue(prompt: "queued prompt")
-        _ = try await session.dispatchNextPrompt()
+        let id = await session.send("queued prompt")
+        #expect(await session.becomesIdle())
         await session.close()
 
         let starts = Self.turnStarts(in: await collect(stream))
         #expect(starts.count == 1)
-        #expect(starts.first?.promptId == id)
+        #expect(starts.first?.messageId == id)
     }
 
-    @Test("a turn whose prompt came straight from its caller opens a frame with no prompt id")
+    @Test("a turn whose caller waits for its answer opens a frame with no message id")
     @MainActor
-    func directTurnFrameNamesNoPrompt() async throws {
+    func respondTurnFrameNamesNoMessage() async throws {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -606,7 +581,7 @@ struct PromptQueueTests {
 
         let starts = Self.turnStarts(in: await collect(stream))
         #expect(starts.count == 1)
-        #expect(starts.first?.promptId == nil)
+        #expect(starts.first?.messageId == nil)
     }
 
     @Test("two turns on one session take distinct turn ids")
@@ -665,128 +640,123 @@ struct PromptQueueTests {
 
     // MARK: - Queue depth
 
-    @Test("queue depth counts the waiting prompts and the one whose turn is already running")
+    @Test("the queue depth counts the waiting messages and names the messages of the running submission")
     @MainActor
-    func queueDepthCountsDispatchedWork() async throws {
+    func messageQueueDepthCountsWaitingAndRunningMessages() async throws {
         let recorder = InMemoryRecorder()
         let backend = GatedStubBackend(responseText: "gated response")
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let firstId = await session.enqueue(prompt: "first")
-        _ = await session.enqueue(prompt: "second")
-
-        let queuedOnly = await session.promptQueueDepth()
-        #expect(queuedOnly.queued == Self.enqueuedPromptCount)
-        #expect(queuedOnly.dispatched == nil)
-        #expect(queuedOnly.total == Self.enqueuedPromptCount)
-
-        let dispatchTask = Task { try await session.dispatchNextPrompt() }
+        let firstId = await session.send("first")
         await backend.started.wait()
+        let secondId = await session.send("second")
 
-        // The dispatched prompt has left the queue but the session still owes
-        // it a turn, so the total is unchanged while `queued` drops by one.
-        let midFlight = await session.promptQueueDepth()
-        #expect(midFlight.queued == Self.enqueuedPromptCount - 1)
-        #expect(midFlight.dispatched == firstId)
-        #expect(midFlight.total == Self.enqueuedPromptCount)
+        // The first message runs; the second waits. The session owes both
+        // an answer.
+        let midFlight = await session.messageQueueDepth()
+        #expect(midFlight.waiting == 1)
+        #expect(midFlight.running == [firstId])
+        #expect(midFlight.total == Self.sentMessageCount)
 
         backend.proceed.signal()
-        _ = try await dispatchTask.value
+        await backend.started.wait()
+        let secondFlight = await session.messageQueueDepth()
+        #expect(secondFlight == MessageQueueDepth(waiting: 0, running: [secondId]))
 
-        let afterTurn = await session.promptQueueDepth()
-        #expect(afterTurn.queued == Self.enqueuedPromptCount - 1)
-        #expect(afterTurn.dispatched == nil)
-        #expect(afterTurn.total == Self.enqueuedPromptCount - 1)
+        backend.proceed.signal()
+        #expect(await session.becomesIdle())
+        let afterBoth = await session.messageQueueDepth()
+        #expect(afterBoth == MessageQueueDepth(waiting: 0, running: []))
+        #expect(afterBoth.total == 0)
     }
 
-    /// How many prompts ``queueDepthCountsDispatchedWork()`` enqueues before it
-    /// dispatches the first of them.
-    private static let enqueuedPromptCount = 2
+    /// How many messages ``messageQueueDepthCountsWaitingAndRunningMessages()``
+    /// sends.
+    private static let sentMessageCount = 2
 
-    // MARK: - Cancelling a prompt at every point before it generates
+    // MARK: - cancel(message:) at every point of a message
 
-    @Test("cancelPrompt withdraws a prompt still waiting in the queue")
+    @Test("cancel(message:) withdraws a message that waits behind a running submission")
     @MainActor
-    func cancelPromptWithdrawsQueuedPrompt() async throws {
-        let recorder = InMemoryRecorder()
-        let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let id = await session.enqueue(prompt: "withdraw me")
-        let result = await session.cancelPrompt(id: id)
-
-        #expect(result == .withdrawn)
-        #expect(await session.pendingPrompts().isEmpty)
-    }
-
-    @Test("a released prompt that waits behind another submission is still withdrawable, and it reaches no submission")
-    @MainActor
-    func cancelPromptWithdrawsAPromptWaitingForThePump() async throws {
+    func cancelMessageWithdrawsAWaitingMessage() async throws {
         let recorder = InMemoryRecorder()
         let backend = GatedStubBackend(responseText: "gated response")
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        // Occupy the pump with a direct respond.
+        _ = await session.send("blocking")
+        await backend.started.wait()
+        let id = await session.send("withdraw me")
+
+        #expect(await session.cancel(message: id) == .withdrawn)
+        #expect(await session.pendingMessages().isEmpty)
+
+        backend.proceed.signal()
+        #expect(await session.becomesIdle())
+        #expect(await Self.promptTexts(in: recorder) == ["blocking"])
+    }
+
+    @Test("a respond whose message waits is withdrawn by cancel(message:): its caller gets CancellationError, and no submission carries it")
+    @MainActor
+    func cancelMessageWithdrawsAWaitingRespond() async throws {
+        let recorder = InMemoryRecorder()
+        let backend = GatedStubBackend(responseText: "gated response")
+        let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // Occupy the pump with a first respond.
         let blockingTurn = Task { try await session.respond(to: "blocking turn") }
         await backend.started.wait()
 
-        // A dispatch releases this prompt as a message, which waits in the
-        // outbox for the next submission: it is still withdrawable.
-        let id = await session.enqueue(prompt: "suspended prompt")
-        let suspendedDispatch = Task { try await session.dispatchNextPrompt() }
+        // The second respond is a message that waits in the outbox. Its
+        // caller never sees the id, so the test reads it off the queue.
+        let waitingRespond = Task { try await session.respond(to: "waiting prompt") }
         #expect(
-            await BoundedWait.conditionReached("the released prompt waiting in the outbox") {
+            await BoundedWait.conditionReached("the respond message waiting in the outbox") {
                 await session.outbox.waitingMessageCount == 1
             })
+        let id = try #require(await session.pendingMessages().first?.id)
 
-        let result = await session.cancelPrompt(id: id)
-        #expect(result == .withdrawn)
+        #expect(await session.cancel(message: id) == .withdrawn)
 
         backend.proceed.signal()
         _ = try await blockingTurn.value
-        // The withdrawn prompt never reaches the backend: its dispatch ends
-        // with `CancellationError`, and no submission carried it.
-        await #expect(throws: CancellationError.self) { try await suspendedDispatch.value }
+        await #expect(throws: CancellationError.self) { try await waitingRespond.value }
         #expect(await session.becomesIdle())
-
-        let promptTexts = await recorder.events.filter { $0.kind == .prompt }.map(\.text)
-        #expect(promptTexts == ["blocking turn"])
+        #expect(await Self.promptTexts(in: recorder) == ["blocking turn"])
     }
 
-    @Test("cancelPrompt cancels the turn of a prompt the pump already took for its submission")
+    @Test("cancel(message:) of a respond message in a running submission reports cancelledInSubmission")
     @MainActor
-    func cancelPromptCancelsDispatchedPromptsTurn() async throws {
+    func cancelMessageCancelsARunningRespond() async throws {
         let recorder = InMemoryRecorder()
         let backend = GatedStubBackend(responseText: "gated response")
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let id = await session.enqueue(prompt: "racing prompt")
-        let dispatchTask = Task { try await session.dispatchNextPrompt() }
+        let turn = Task { try await session.respond(to: "racing prompt") }
         await backend.started.wait()
+        let id = try #require(await session.messageQueueDepth().running.first)
 
-        // Past the take, `cancel(id:)` alone can only report `alreadySent`.
-        #expect(await session.cancel(id: id) == .alreadySent)
-
-        let result = await session.cancelPrompt(id: id)
-        #expect(result == .turnCancelled)
+        #expect(await session.cancel(message: id) == .cancelledInSubmission)
 
         backend.proceed.signal()
-        _ = try? await dispatchTask.value
+        _ = try? await turn.value
+        #expect(await session.becomesIdle())
     }
 
-    @Test("cancelPrompt reports alreadyFinished for an id that names no queued or dispatched prompt")
+    @Test("cancel(message:) reports alreadyAnswered for an answered message, and for an id that names no message")
     @MainActor
-    func cancelPromptReportsAlreadyFinishedForFinishedPrompt() async throws {
+    func cancelMessageReportsAlreadyAnsweredForAFinishedMessage() async throws {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let id = await session.enqueue(prompt: "one and done")
-        _ = try await session.dispatchNextPrompt()
+        let id = await session.send("one and done")
+        #expect(await session.becomesIdle())
 
-        #expect(await session.cancelPrompt(id: id) == .alreadyFinished)
+        #expect(await session.cancel(message: id) == .alreadyAnswered)
+        #expect(await session.cancel(message: MessageID()) == .alreadyAnswered)
     }
 }

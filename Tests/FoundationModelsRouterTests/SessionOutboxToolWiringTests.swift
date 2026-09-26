@@ -621,7 +621,7 @@ struct SessionOutboxToolWiringTests {
         let session = profile.standard.makeSession()
         let pending = await session.outbox.pending()
         #expect(pending.events.isEmpty)
-        #expect(pending.prompts.isEmpty)
+        #expect(pending.messages.isEmpty)
     }
 
     // MARK: - Fork behavior: fresh-per-session outbox, fork-then-mount tool composition
@@ -1353,7 +1353,7 @@ struct SessionOutboxToolWiringTests {
             try await Task.sleep(nanoseconds: 10_000_000)
         }
         #expect(backend.toolCallStarted)
-        await session.cancelCurrentTurn()
+        await session.cancel()
 
         // The run was tracked in this session's mailbox, and it is still running
         // with the turn cancelled. Read the run plane here, while the work is
@@ -1462,9 +1462,8 @@ struct SessionOutboxToolWiringTests {
         let run = try #require(await session.mailbox.backgroundRuns().first)
         #expect(run.latestProgressDetail == ProgressReportingBackgroundToolRunner.progressDetail)
 
-        // The next dispatched turn carries it to the model.
-        _ = await session.enqueue(prompt: "how is it going?")
-        _ = try await session.dispatchNextPrompt()
+        // The next submission carries it to the model.
+        _ = try await session.respond(to: "how is it going?")
         let progress = OperationEvent(
             tool: run.tool, op: run.op, correlationID: run.completionToken,
             kind: .progress, detail: ProgressReportingBackgroundToolRunner.progressDetail)
@@ -1498,8 +1497,7 @@ struct SessionOutboxToolWiringTests {
 
         // Only the run suspends: the session still runs a turn while the
         // question is pending, and that turn carries the question.
-        _ = await session.enqueue(prompt: "status?")
-        _ = try await session.dispatchNextPrompt()
+        _ = try await session.respond(to: "status?")
         let composed = try #require(backend.receivedPrompts.last)
         #expect(composed.contains(OperationEventSegment.renderedLine(for: staged)))
 

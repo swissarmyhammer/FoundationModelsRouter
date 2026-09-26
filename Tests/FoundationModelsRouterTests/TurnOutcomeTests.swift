@@ -172,7 +172,7 @@ struct TurnOutcomeTests {
     /// the same way.
     private static var narratedTurnEvents: [SessionEvent] {
         [
-            .turnStarted(TurnStart(turnId: TurnID(1), promptId: nil)),
+            .turnStarted(TurnStart(turnId: TurnID(1), messageId: nil)),
             .textDelta("Looking those "),
             .textDelta("up. "),
             .textReset,
@@ -238,7 +238,7 @@ struct TurnOutcomeTests {
             tool: "search", op: "search", correlationID: "token-1", sessionID: .generate(),
             openedAt: Date(timeIntervalSince1970: 100))
 
-        reducer.apply(.turnStarted(TurnStart(turnId: TurnID(1), promptId: nil)))
+        reducer.apply(.turnStarted(TurnStart(turnId: TurnID(1), messageId: nil)))
         reducer.apply(.compaction(compacted))
         reducer.apply(.toolInvocation(open))
         reducer.apply(.toolInvocation(open.closed(at: Date(timeIntervalSince1970: 102))))
@@ -279,7 +279,7 @@ struct TurnOutcomeTests {
     /// - Parameter event: The event the outcome must not carry.
     private static func expectReducerIgnores(_ event: SessionEvent) {
         let open = openRecord
-        let turnStarted = SessionEvent.turnStarted(TurnStart(turnId: TurnID(1), promptId: nil))
+        let turnStarted = SessionEvent.turnStarted(TurnStart(turnId: TurnID(1), messageId: nil))
         let close = SessionEvent.toolInvocation(open.closed(at: Date(timeIntervalSince1970: 102)))
         let turnEnded = SessionEvent.turnEnded(TokenUsage(tokensIn: 4, tokensOut: 2, contextFill: 0.4))
         let plainTurn: [SessionEvent] = [turnStarted, .toolInvocation(open), close, turnEnded]

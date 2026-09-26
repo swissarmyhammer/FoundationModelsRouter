@@ -194,7 +194,7 @@ final class LargeResultTool: Tool, Sendable {
     func call(arguments: AmbientToolArguments) async throws -> String {
         callCount.withLock { $0 += 1 }
         if let session = sessionToStop.withLock({ $0 }) {
-            _ = await session.cancelCurrentTurn()
+            _ = await session.cancel()
         }
         return result
     }

@@ -149,29 +149,31 @@ struct SessionOutboxTests {
         #expect(ids.count == 2)
     }
 
-    // MARK: - Queued prompts: never coalesced, FIFO
+    // MARK: - Caller messages: never coalesced, FIFO
 
-    @Test("queued prompts never coalesce and preserve enqueue order")
-    func queuedPromptsPreserveEnqueueOrderAndNeverCoalesce() async {
+    @Test("caller messages never coalesce and keep the order they arrived in")
+    func callerMessagesKeepTheirOrderAndNeverCoalesce() async {
         let outbox = SessionOutbox()
-        _ = await outbox.enqueue(prompt: Self.prompt("first"))
-        _ = await outbox.enqueue(prompt: Self.prompt("second"))
-        _ = await outbox.enqueue(prompt: Self.prompt("third"))
+        await outbox.add(message: Self.message("first"))
+        await outbox.add(message: Self.message("second"))
+        await outbox.add(message: Self.message("third"))
 
         let pending = await outbox.pending()
-        #expect(pending.prompts.count == 3)
-        #expect(pending.prompts.map { Self.text(of: $0.prompt) } == ["first", "second", "third"])
+        #expect(pending.messages.count == 3)
+        #expect(pending.messages.map { Self.text(of: $0.prompt) } == ["first", "second", "third"])
     }
 
-    @Test("each enqueued prompt gets its own distinct, stable id")
-    func enqueuedPromptsGetDistinctIds() async {
+    @Test("each caller message keeps its own distinct, stable id in the outbox")
+    func callerMessagesKeepDistinctIds() async {
         let outbox = SessionOutbox()
-        let id1 = await outbox.enqueue(prompt: Self.prompt("first"))
-        let id2 = await outbox.enqueue(prompt: Self.prompt("second"))
-        #expect(id1 != id2)
+        let first = Self.message("first")
+        let second = Self.message("second")
+        #expect(first.id != second.id)
+        await outbox.add(message: first)
+        await outbox.add(message: second)
 
         let pending = await outbox.pending()
-        #expect(pending.prompts.map(\.id) == [id1, id2])
+        #expect(pending.messages.map(\.id) == [first.id, second.id])
     }
 
     // MARK: - takeSubmissionBatch(deliveringRunsOf:): commits and empties exactly what it returns
@@ -187,7 +189,7 @@ struct SessionOutboxTests {
         _ text: String, requestedMaxTokens: Int? = nil, reader: MessageReader = .reply
     ) -> SessionMessage {
         SessionMessage(
-            id: PromptID(), text: text, requestedMaxTokens: requestedMaxTokens, reader: reader,
+            id: MessageID(), prompt: .plainText(text), requestedMaxTokens: requestedMaxTokens, reader: reader,
             entryPoint: .respond, serviceContext: nil, answer: PumpAnswer())
     }
 
@@ -206,32 +208,29 @@ struct SessionOutboxTests {
         #expect(pending.events.isEmpty)
     }
 
-    @Test("releaseFrontPrompt releases exactly one queued prompt, FIFO, as a caller message that counts as dispatched")
-    func releaseFrontPromptReleasesOneQueuedPromptFIFO() async {
+    @Test("replace changes the prompt of a waiting caller message in place: it keeps its id and its place")
+    func replaceChangesAWaitingMessageInPlace() async {
         let outbox = SessionOutbox()
-        let firstID = await outbox.enqueue(prompt: Self.prompt("first"))
-        _ = await outbox.enqueue(prompt: Self.prompt("second"))
+        let first = Self.message("first")
+        let second = Self.message("second")
+        await outbox.add(message: first)
+        await outbox.add(message: second)
 
-        let released = await outbox.releaseFrontPrompt(answer: PumpAnswer(), serviceContext: nil)
-        #expect(released?.id == firstID)
-        #expect(released?.text == "first")
-        #expect(await outbox.waitingMessageCount == 1)
-        #expect(await outbox.queueDepth().dispatched == firstID)
+        #expect(await outbox.replace(id: first.id, prompt: Self.prompt("edited")) == .applied)
 
-        // Only the one released prompt left the queue; the rest remain pending.
         let pending = await outbox.pending()
-        #expect(pending.prompts.count == 1)
-        #expect(Self.text(of: pending.prompts[0].prompt) == "second")
+        #expect(pending.messages.map(\.id) == [first.id, second.id])
+        #expect(pending.messages.map(\.text) == ["edited", "second"])
     }
 
-    @Test("releaseFrontPrompt with no queued prompt releases nothing, and leaves the mail pending")
-    func releaseFrontPromptWithNoPromptsReleasesNothing() async {
+    @Test("replace of an id that names no waiting message changes nothing, and leaves the mail pending")
+    func replaceOfAnUnknownIdChangesNothing() async {
         let outbox = SessionOutbox()
         await outbox.post(event: Self.event(correlationID: "c1", kind: .completed, detail: "one"))
 
-        let released = await outbox.releaseFrontPrompt(answer: PumpAnswer(), serviceContext: nil)
-        #expect(released == nil)
+        #expect(await outbox.replace(id: MessageID(), prompt: Self.prompt("lost")) == .alreadySent)
         #expect(await outbox.pending().events.count == 1)
+        #expect(await outbox.pending().messages.isEmpty)
     }
 
     @Test("a second takeSubmissionBatch with nothing new pending takes nothing")
@@ -255,15 +254,17 @@ struct SessionOutboxTests {
         #expect(await outbox.pending().events.count == 2)
     }
 
-    @Test("a held terminal — given back by a failed submission, or held by a cancel — starts no submission until its hold ends, and rides the next caller message")
+    @Test("a held terminal — given back by a failed submission, or held by a cancel — starts no submission by itself, and rides the next caller message")
     func aHeldTerminalStartsNoSubmission() async {
         let outbox = SessionOutbox()
         let givenBack = Self.event(correlationID: "c1", kind: .completed, detail: "given back")
         await outbox.requeue(event: givenBack)
         #expect(await outbox.takeSubmissionBatch(deliveringRunsOf: ["c1", "c2"]) == nil)
 
-        await outbox.releaseHeldMail()
-        #expect(await outbox.takeSubmissionBatch(deliveringRunsOf: ["c1", "c2"])?.events.map(\.event) == [givenBack])
+        await outbox.add(message: Self.message("first"))
+        let first = await outbox.takeSubmissionBatch(deliveringRunsOf: ["c1", "c2"])
+        #expect(first?.messages.map(\.text) == ["first"])
+        #expect(first?.events.map(\.event) == [givenBack])
 
         let held = Self.event(correlationID: "c2", kind: .completed, detail: "held by a cancel")
         await outbox.post(event: held)
@@ -382,107 +383,58 @@ struct SessionOutboxTests {
         #expect(finalPending.events.isEmpty)
     }
 
-    // MARK: - nextEvent(): driver wakeup
+    // MARK: - Mail observer: a run terminal wakes the session pump
 
-    /// One `SessionOutbox.nextEvent()` wait, started so a test observes
-    /// whether it woke instead of awaiting it.
-    ///
-    /// The indirection is the point: `nextEvent()` suspends on a
-    /// `CheckedContinuation<Void, Never>` that only a later
-    /// `SessionOutbox.post(event:)` or `SessionOutbox.enqueue(prompt:)` resumes,
-    /// and nothing can break such a wait — cancelling it does not resume it. This
-    /// target sets no `.timeLimit` trait, so a regression anywhere on the wakeup
-    /// route would hang the whole `swift test` run rather than fail the test that
-    /// caught it. ``wokeUp()`` reports through a signal ``BoundedWait`` observes
-    /// under a bound, and never awaits the wait on its give-up path.
-    private struct OutboxWaiter {
-        /// What this wait expects to be woken by, named in the recorded issue
-        /// when no wakeup arrives.
-        private let label: String
+    /// Counts each ``SessionMailObserver/mailArrived()`` call, so a test can
+    /// see which outbox writes wake the session pump.
+    private actor MailArrivalCounter: SessionMailObserver {
+        /// The number of `mailArrived()` calls.
+        private(set) var arrivals = 0
 
-        /// Signalled by ``task`` once `nextEvent()` has returned — how "woken"
-        /// is observed without awaiting the wait itself.
-        private let woke: AsyncSemaphore
-
-        /// The suspended wait.
-        private let task: Task<Void, Never>
-
-        /// Starts one `SessionOutbox.nextEvent()` wait on `outbox`.
-        ///
-        /// - Parameters:
-        ///   - outbox: The outbox to wait on.
-        ///   - label: What the wait expects to be woken by — "a post", say.
-        init(on outbox: SessionOutbox, waitingFor label: String) {
-            let woke = AsyncSemaphore(value: 0)
-            self.label = label
-            self.woke = woke
-            self.task = Task {
-                await outbox.nextEvent()
-                woke.signal()
-            }
-        }
-
-        /// Whether the wait is still suspended, read without awaiting it.
-        var isStillSuspended: Bool { woke.availablePermits == 0 }
-
-        /// Whether the wait woke inside ``BoundedWait``'s bound, recording an
-        /// issue and giving up when it did not.
-        ///
-        /// - Returns: Whether `nextEvent()` returned.
-        func wokeUp() async -> Bool {
-            guard await BoundedWait.signalArrived(woke, named: "the nextEvent() wait for \(label)") else {
-                // Cancelling cannot resume a wait suspended in
-                // `withCheckedContinuation`, but the test must not await that
-                // wait either.
-                task.cancel()
-                return false
-            }
-            await task.value
-            return true
+        func mailArrived() {
+            arrivals += 1
         }
     }
 
-    /// How long a test lets a fresh ``OutboxWaiter`` reach its suspension point
-    /// before it posts, so the post lands on a genuinely suspended wait rather than
-    /// on an outbox the wait has not looked at yet.
-    private static let waiterSuspensionNanoseconds: UInt64 = 20_000_000
+    // These tests restate the old `nextEvent()` wakeup tests. The outbox has
+    // no driver wait now. A posted run terminal tells the attached observer,
+    // and the session wakes its own pump for a caller message.
 
-    @Test("nextEvent() suspends while the outbox is empty and resumes on the next post")
-    func nextEventSuspendsUntilPost() async {
+    @Test("a posted run terminal tells the attached mail observer")
+    func postedTerminalTellsTheMailObserver() async {
         let outbox = SessionOutbox()
-        let waiter = OutboxWaiter(on: outbox, waitingFor: "a post")
-
-        // Give the waiter a chance to actually start suspending before posting.
-        try? await Task.sleep(nanoseconds: Self.waiterSuspensionNanoseconds)
-        #expect(waiter.isStillSuspended)
+        let counter = MailArrivalCounter()
+        await outbox.attach(mailObserver: counter)
 
         await outbox.post(event: Self.event(correlationID: "c1", kind: .completed, detail: "woke"))
 
-        // The waiter must complete promptly once posted.
-        #expect(await waiter.wokeUp())
+        #expect(await counter.arrivals == 1)
     }
 
-    @Test("nextEvent() returns immediately when the outbox is already non-empty")
-    func nextEventReturnsImmediatelyWhenNonEmpty() async {
+    @Test("a progress or elicitation post does not tell the mail observer")
+    func nonTerminalPostDoesNotTellTheMailObserver() async {
         let outbox = SessionOutbox()
-        await outbox.post(event: Self.event(correlationID: "c1", kind: .completed, detail: "already here"))
+        let counter = MailArrivalCounter()
+        await outbox.attach(mailObserver: counter)
 
-        // Must not hang: the outbox is already non-empty.
-        let waiter = OutboxWaiter(on: outbox, waitingFor: "an outbox that is already non-empty")
-        #expect(await waiter.wokeUp())
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .progress, detail: "50%"))
+        await outbox.post(event: Self.event(correlationID: "c2", kind: .elicitation, detail: "which one?"))
+        // The positive control: a terminal after them does tell the observer.
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .completed, detail: "done"))
+
+        #expect(await counter.arrivals == 1)
     }
 
-    @Test("nextEvent() also resumes on an enqueued prompt")
-    func nextEventResumesOnEnqueuedPrompt() async {
+    @Test("a caller message does not tell the mail observer — the session wakes its own pump")
+    func callerMessageDoesNotTellTheMailObserver() async {
         let outbox = SessionOutbox()
-        let waiter = OutboxWaiter(on: outbox, waitingFor: "an enqueued prompt")
+        let counter = MailArrivalCounter()
+        await outbox.attach(mailObserver: counter)
 
-        try? await Task.sleep(nanoseconds: Self.waiterSuspensionNanoseconds)
-        #expect(waiter.isStillSuspended)
+        await outbox.add(message: Self.message("hello"))
 
-        _ = await outbox.enqueue(prompt: Self.prompt("hello"))
-
-        #expect(await waiter.wokeUp())
+        #expect(await counter.arrivals == 0)
+        #expect(await outbox.pending().messages.map(\.text) == ["hello"])
     }
 
     // MARK: - post(report:): forwarded to the observer, never staged, never journaled

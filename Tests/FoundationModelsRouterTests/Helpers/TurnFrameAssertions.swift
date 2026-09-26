@@ -11,18 +11,18 @@ import Testing
 ///
 /// - Parameters:
 ///   - events: One turn's events, in order.
-///   - promptId: The queued prompt the frame must name, or `nil` for a turn
-///     whose prompt came straight from its caller.
+///   - messageId: The sent message the frame must name, or `nil` for a turn
+///     whose caller waits for its answer.
 /// - Returns: `events` without its opening frame, or `events` unchanged when the
 ///   frame was missing (the failure is already recorded by then).
 func eventsAfterTurnFrame(
     _ events: [SessionEvent],
-    promptId: PromptID? = nil
+    messageId: MessageID? = nil
 ) -> [SessionEvent] {
     guard case .turnStarted(let start) = events.first else {
         Issue.record("expected the turn to open with .turnStarted, got \(String(describing: events.first))")
         return events
     }
-    #expect(start.promptId == promptId)
+    #expect(start.messageId == messageId)
     return Array(events.dropFirst())
 }

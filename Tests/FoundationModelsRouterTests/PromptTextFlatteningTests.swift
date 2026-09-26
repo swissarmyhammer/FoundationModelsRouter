@@ -5,9 +5,10 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Pins ``TranscriptEntryMapper``'s `Transcript.Prompt` text-flattening
-/// overload — the plain-text form ``RoutedSession/dispatchNextPrompt()`` hands
-/// a backend for a queued prompt, since the backend's generation surface takes
-/// a `String` rather than a `Transcript.Prompt`.
+/// overload. When you send a `Transcript.Prompt` with
+/// ``RoutedSession/send(_:)-(Transcript.Prompt)``, the session flattens it to
+/// the plain text of its `.text` segments before the submission. The backend
+/// generation surface takes a `String`, not a `Transcript.Prompt`.
 ///
 /// Every assertion here fixes a property that used to belong to a private copy
 /// of the segment extraction inside `RoutedSessionActor`: the segments join

@@ -4,8 +4,9 @@ import Testing
 
 import FoundationModelsRouter
 
-/// Holds the four convenience members of `extension RoutedSession` to the
-/// access level their siblings carry (task ^hdabs7j).
+/// Holds the convenience members of `extension RoutedSession` to the
+/// access level their siblings carry (task ^hdabs7j), and the message
+/// members they use (task ^cbhpdjy).
 ///
 /// This file imports the module plainly. There is no `@testable`, thus the
 /// compiler itself is the first assertion: a member that loses `public` stops
@@ -18,15 +19,9 @@ struct RoutedSessionPublicSurfaceTests {
     /// a leaked directory is attributable to this suite.
     private static let tempDirPrefix = "RoutedSessionPublicSurfaceTests"
 
-    /// The text `enqueue(prompt:)` is given, so an assertion can read the very
-    /// string back off the queue.
-    private static let queuedPromptText = "queued over the public surface"
-
-    /// The one prompt the queue holds after a single `enqueue(prompt:)`.
-    private static let singleQueuedPrompt = 1
-
-    /// The empty queue a withdrawn prompt leaves behind.
-    private static let emptyQueue = 0
+    /// The text `send(_:)` is given, so an assertion can read the very string
+    /// back off the transcript.
+    private static let sentPromptText = "sent over the public surface"
 
     /// Builds a scripted session whose turn answers without calling a tool —
     /// enough machinery for the queue members, and no tool to script.
@@ -38,9 +33,9 @@ struct RoutedSessionPublicSurfaceTests {
             playing: ScriptedTurnScript(rounds: []), mounting: [], tempDirPrefix: tempDirPrefix)
     }
 
-    /// Reads the text of a queued prompt back out of its segments.
+    /// Reads the text of a prompt back out of its segments.
     ///
-    /// - Parameter prompt: The queued prompt ``RoutedSession/pendingPrompts()`` vended.
+    /// - Parameter prompt: A prompt of the session transcript.
     /// - Returns: Every text segment's content, in order, joined by nothing.
     private static func text(of prompt: Transcript.Prompt) -> String {
         prompt.segments.compactMap { segment -> String? in
@@ -86,33 +81,58 @@ struct RoutedSessionPublicSurfaceTests {
         #expect(result.summary != nil)
     }
 
-    // MARK: - enqueue(prompt: String)
-
-    @Test("enqueue(prompt:) stages the plain text it is given as one queued prompt")
-    func enqueueTextStagesThatTextForAFutureTurn() async throws {
-        let fixture = try await Self.makeQueueFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
-
-        let id = await fixture.session.enqueue(prompt: Self.queuedPromptText)
-
-        let pending = await fixture.session.pendingPrompts()
-        #expect(pending.map(\.id) == [id])
-        #expect(pending.map { Self.text(of: $0.prompt) } == [Self.queuedPromptText])
-        #expect(await fixture.session.promptQueueDepth().queued == Self.singleQueuedPrompt)
+    /// Whether the transcript of `session` holds a prompt with `text`, and no
+    /// message of it waits or runs, inside ``BoundedWait``'s bound. Only
+    /// public members are read.
+    ///
+    /// - Parameters:
+    ///   - session: The session to read.
+    ///   - text: The prompt text to find.
+    /// - Returns: Whether the session answered the prompt inside the bound.
+    private static func answered(_ session: any RoutedSession, prompt text: String) async -> Bool {
+        await BoundedWait.conditionReached("the answer to the sent message") {
+            let prompts = Array(await session.transcript).compactMap { entry -> String? in
+                guard case .prompt(let prompt) = entry else { return nil }
+                return Self.text(of: prompt)
+            }
+            let depth = await session.messageQueueDepth()
+            return prompts.contains(text) && depth.total == 0
+        }
     }
 
-    // MARK: - cancelPrompt(id:)
+    // MARK: - send(_ prompt: String)
 
-    @Test("cancelPrompt(id:) withdraws a prompt that is still queued")
-    func cancelPromptWithdrawsAStillQueuedPrompt() async throws {
+    // Restates the old `enqueue(prompt:)` test. A sent message starts a
+    // submission at once, thus the test reads the prompt back from the
+    // transcript, not from the queue.
+    @Test("send(_:) sends the plain text it is given as one message")
+    func sendTextSendsThatTextAsOneMessage() async throws {
         let fixture = try await Self.makeQueueFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        let id = await fixture.session.enqueue(prompt: Self.queuedPromptText)
 
-        let result: PromptCancellationResult = await fixture.session.cancelPrompt(id: id)
+        let id: MessageID = await fixture.session.send(Self.sentPromptText)
 
-        #expect(result == .withdrawn)
-        #expect(await fixture.session.pendingPrompts().isEmpty)
-        #expect(await fixture.session.promptQueueDepth().queued == Self.emptyQueue)
+        #expect(await Self.answered(fixture.session, prompt: Self.sentPromptText))
+        #expect(await fixture.session.pendingMessages().allSatisfy { $0.id != id })
+    }
+
+    // MARK: - cancel(message:)
+
+    // Restates the old `cancelPrompt(id:)` test. A withdrawal needs a busy
+    // session; the internal suites prove it (see
+    // `SessionMessagePumpTests.cancelOfAWaitingMessageWithdrawsIt`). Over the
+    // public surface this test proves the result for an answered message.
+    @Test("cancel(message:) of an answered message reports alreadyAnswered and changes nothing")
+    func cancelOfAnAnsweredMessageReportsAlreadyAnswered() async throws {
+        let fixture = try await Self.makeQueueFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let id = await fixture.session.send(Self.sentPromptText)
+        #expect(await Self.answered(fixture.session, prompt: Self.sentPromptText))
+
+        let result: MessageCancellationResult = await fixture.session.cancel(message: id)
+
+        #expect(result == .alreadyAnswered)
+        #expect(await fixture.session.pendingMessages().isEmpty)
+        #expect(await fixture.session.messageQueueDepth().total == 0)
     }
 }

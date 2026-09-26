@@ -37,7 +37,7 @@ private struct BackendCompactionSummarizer: CompactionSummarizer {
 /// inside the owning session's turn-cancellation boundary
 /// (``RoutedSessionActor/runCancellableModelCall(composedPrompt:submittingTo:_:)``),
 /// as one submission to the queue of the container that runs it. This lets
-/// ``RoutedSession/cancelCurrentTurn()`` and task cancellation stop a
+/// ``RoutedSession/cancel()`` and task cancellation stop a
 /// compaction's summarizer call, and keeps the call from running at the same
 /// time as a submission of another session on that model.
 private struct CancellableCompactionSummarizer: CompactionSummarizer {
@@ -55,7 +55,7 @@ private struct CancellableCompactionSummarizer: CompactionSummarizer {
         // A compaction makes one call on each tier it tries, one tier after the
         // other. ``RoutedSessionActor/inFlightModelCall`` holds one call at a
         // time, and the tiers never run at the same time, so
-        // ``RoutedSession/cancelCurrentTurn()`` reaches each call. A cancellation
+        // ``RoutedSession/cancel()`` reaches each call. A cancellation
         // that lands between two tiers stops the next tier at its pre-flight check.
         // A compaction runs between two submissions of its session, so the
         // own-model tier never waits for a submission of its own session.

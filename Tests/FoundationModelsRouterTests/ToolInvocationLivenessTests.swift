@@ -329,7 +329,7 @@ struct ToolInvocationLivenessTests {
             tool: "search", op: "search", correlationID: "token-1", sessionID: .generate(),
             openedAt: Date())
 
-        projection.apply(.turnStarted(TurnStart(turnId: TurnID(1), promptId: nil)))
+        projection.apply(.turnStarted(TurnStart(turnId: TurnID(1), messageId: nil)))
         projection.apply(.textDelta("thinking"))
         #expect(projection.phase == .generating)
 
@@ -348,7 +348,7 @@ struct ToolInvocationLivenessTests {
             tool: "search", op: "search", correlationID: "token-1", sessionID: .generate(),
             openedAt: Date())
 
-        projection.apply(.turnStarted(TurnStart(turnId: TurnID(1), promptId: nil)))
+        projection.apply(.turnStarted(TurnStart(turnId: TurnID(1), messageId: nil)))
         projection.apply(.toolInvocation(open))
         projection.apply(.turnEnded(TokenUsage(tokensIn: 1, tokensOut: 1, contextFill: 0.1)))
         #expect(projection.phase == .idle)
@@ -369,13 +369,13 @@ struct ToolInvocationLivenessTests {
             openedAt: Date())
 
         // Turn 1 opens a run that stays in the background: no close arrives this turn.
-        projection.apply(.turnStarted(TurnStart(turnId: TurnID(1), promptId: nil)))
+        projection.apply(.turnStarted(TurnStart(turnId: TurnID(1), messageId: nil)))
         projection.apply(.toolInvocation(staleOpen))
         projection.apply(.turnEnded(TokenUsage(tokensIn: 1, tokensOut: 1, contextFill: 0.1)))
 
         // Turn 2 runs one quick call; its close alone returns the phase to
         // generating, with the stale open from turn 1 no longer counted.
-        projection.apply(.turnStarted(TurnStart(turnId: TurnID(2), promptId: nil)))
+        projection.apply(.turnStarted(TurnStart(turnId: TurnID(2), messageId: nil)))
         projection.apply(.toolInvocation(quick))
         #expect(projection.phase == .runningTool)
         projection.apply(.toolInvocation(quick.closed(at: Date())))

@@ -196,8 +196,8 @@ enum RouterTracing {
     ///
     /// Every turn runs through one chokepoint, so the span alone cannot say
     /// which surface asked for it. This attribute says so, and it lets a query
-    /// separate the turns a caller drove from the turns a queue driver
-    /// dispatched.
+    /// separate the turns a caller waited for from the turns of a sent message
+    /// and the turns that only mail started.
     enum TurnEntryPoint: String {
         /// ``RoutedSession/respond(to:maxTokens:)``.
         case respond
@@ -206,9 +206,13 @@ enum RouterTracing {
         /// ``RoutedSession/streamEvents(to:maxTokens:)``.
         case stream
 
-        /// ``RoutedSession/dispatchNextPrompt()``: a queued prompt, or an
-        /// answer that only a settled run's terminal started.
-        case dispatch
+        /// ``RoutedSession/send(_:)-(Transcript.Prompt)``: a message whose
+        /// sender does not wait for its answer.
+        case send
+
+        /// An answer that only mail started: the terminal of a settled
+        /// background run, with no caller message.
+        case mail
     }
 
     /// The value ``AttributeKey/toolRunKind`` carries: which mount a tool call

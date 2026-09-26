@@ -1,10 +1,9 @@
 import FoundationModels
-import Tracing
 
 /// A per-``RoutedSession`` staging area for the messages that wait for the
 /// pump of the session (`generation-queue.md`, section 5.4).
 ///
-/// The outbox holds three kinds of item, never mixed:
+/// The outbox holds two kinds of item, never mixed:
 ///
 /// - Mail (``PendingEvent``): ``OperationEvent``s posted through the
 ///   ``OperationEventSink`` conformance. The next submission of the pump puts
@@ -15,24 +14,16 @@ import Tracing
 ///   (``OperationEventKind/completed``) tells the attached
 ///   ``SessionMailObserver``, so the pump can deliver it.
 /// - Caller messages (``SessionMessage``): the prompts of
-///   ``RoutedSession/respond(to:maxTokens:)``, of the two stream methods, and
-///   of each queued prompt that ``RoutedSession/dispatchNextPrompt()``
-///   released. The pump takes them in FIFO order
+///   ``RoutedSession/send(_:)-(Transcript.Prompt)``,
+///   ``RoutedSession/respond(to:maxTokens:)`` and the two stream methods.
+///   The pump takes them in FIFO order
 ///   (``takeSubmissionBatch(deliveringRunsOf:)``).
-/// - Queued prompts (``PendingPrompt``): the `Transcript.Prompt`s of
-///   ``RoutedSession/enqueue(prompt:)-(Transcript.Prompt)``, never coalesced,
-///   which wait for ``RoutedSession/dispatchNextPrompt()`` to release them as
-///   caller messages, in FIFO order.
 ///
-/// A queued prompt gets a stable ``PromptID`` and a staged event a stable
-/// ``EventID``, both at enqueue. ``nextEvent()`` suspends while no mail and
-/// no queued prompt waits.
+/// A staged event gets a stable ``EventID`` at post time, and a caller
+/// message carries the ``MessageID`` its sender got.
 ///
-/// The actor itself is internal. The vocabulary its prompt queue speaks —
-/// ``PromptID``, ``PromptQueueMutationResult`` and ``PromptQueueDepth`` — is
-/// public and stands on its own, because ``RoutedSession``'s public methods
-/// carry those three types in their signatures. An app drives the queue
-/// through ``RoutedSession``'s methods; a session never exposes its outbox.
+/// The actor itself is internal. An app reaches the caller messages through
+/// ``RoutedSession``'s methods; a session never exposes its outbox.
 ///
 /// The outbox is also the session's ``ToolCallReportSink``: a tool decorator
 /// finds it through a dynamic cast when a call closes with attachments, and
@@ -98,39 +89,21 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
         let isHeld: Bool
     }
 
-    /// One pending queued prompt with its stable id.
-    struct PendingPrompt: Sendable {
-        /// This prompt's stable id.
-        let id: PromptID
-
-        /// The queued prompt.
-        let prompt: Transcript.Prompt
-    }
-
     /// A snapshot of everything currently pending, per kind.
     struct Pending: Sendable {
-        /// Every pending turn-riding event, in outbox order.
+        /// Every pending mail event, in outbox order.
         let events: [PendingEvent]
 
-        /// Every pending turn-starting prompt, in enqueue (FIFO) order.
-        let prompts: [PendingPrompt]
+        /// Every caller message that waits for the pump, in the order the
+        /// messages arrived.
+        let messages: [SessionMessage]
     }
 
     /// Pending mail events, in outbox order.
     private var events: [PendingEvent] = []
 
-    /// Pending queued prompts, in FIFO order.
-    private var prompts: [PendingPrompt] = []
-
     /// The caller messages that wait for the pump, in the order they arrived.
     private var messages: [SessionMessage] = []
-
-    /// The ids of the queued prompts that ``releaseFrontPrompt(answer:serviceContext:)``
-    /// released and the pump has not answered yet, in release order.
-    private var dispatched: [PromptID] = []
-
-    /// Continuations suspended by ``nextEvent()`` while the outbox is empty.
-    private var wakeups: [CheckedContinuation<Void, Never>] = []
 
     /// The journal every posted event is recorded into, or `nil` before
     /// ``attach(journal:)``. Weak to avoid a reference cycle.
@@ -165,7 +138,6 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
         // the journal's order is exactly this outbox's post order.
         let journalWrite = enqueueJournalWrite(event: event)
         stage(event: event)
-        wakeUp()
         await journalWrite?.value
         if event.kind == .completed {
             await mailObserver?.mailArrived()
@@ -173,7 +145,7 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
     }
 
     /// Removes every event staged under `correlationID`, and leaves the
-    /// journal and the prompt queue alone.
+    /// journal and the caller messages alone.
     ///
     /// A run whose result went to the model inside its own tool output calls
     /// this, so the model does not read the same result a second time in front
@@ -202,7 +174,6 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
     /// - Parameter event: The event to restage.
     internal func requeue(event: OperationEvent) {
         stage(event: event, held: true)
-        wakeUp()
     }
 
     /// Puts back events that the pump took and did not use, in front of every
@@ -216,23 +187,10 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
 
     /// Holds every pending event (``PendingEvent/isHeld``), so none starts a
     /// submission by itself. A cancel of the session calls it: the mail stays
-    /// for a later submission, and the cancel does not start one.
+    /// for a later submission, and the cancel does not start one. Each event
+    /// keeps its id and its place.
     func holdPendingMail() {
-        setEventHold(true)
-    }
-
-    /// Ends the hold of every pending event, so a held run terminal can start
-    /// a submission again.
-    func releaseHeldMail() {
-        setEventHold(false)
-    }
-
-    /// Sets the hold (``PendingEvent/isHeld``) of every pending event to
-    /// `held`. Each event keeps its id and its place.
-    ///
-    /// - Parameter held: Whether each pending event is held.
-    private func setEventHold(_ held: Bool) {
-        events = events.map { PendingEvent(id: $0.id, event: $0.event, isHeld: held) }
+        events = events.map { PendingEvent(id: $0.id, event: $0.event, isHeld: true) }
     }
 
     /// Stages one event as pending under the coalescing policy.
@@ -319,73 +277,24 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
         events.append(PendingEvent(id: EventID(), event: event, isHeld: held))
     }
 
-    /// Stages a queued user prompt for a future turn, in FIFO order.
-    ///
-    /// - Parameter prompt: The prompt to stage.
-    /// - Returns: The stable id assigned to this queued prompt.
-    @discardableResult
-    func enqueue(prompt: Transcript.Prompt) -> PromptID {
-        let id = PromptID()
-        prompts.append(PendingPrompt(id: id, prompt: prompt))
-        wakeUp()
-        return id
-    }
-
-    /// Cancels a still-pending queued prompt by its stable id: a prompt that
-    /// waits in the queue, or a released prompt that waits for the pump and
-    /// reached no submission yet. The caller of the release then gets
-    /// `CancellationError`.
-    ///
-    /// - Parameter id: The id ``enqueue(prompt:)`` returned.
-    /// - Returns: ``PromptQueueMutationResult/applied`` if the prompt was
-    ///   removed; ``PromptQueueMutationResult/alreadySent`` otherwise.
-    @discardableResult
-    func cancel(id: PromptID) -> PromptQueueMutationResult {
-        if let released = withdrawMessage(id: id) {
-            finishDispatch(id: id)
-            released.answer.resolve(.failure(CancellationError()))
-            return .applied
-        }
-        return mutatingPendingPrompt(id: id) { index in
-            prompts.remove(at: index)
-        }
-    }
-
-    /// Replaces a still-pending queued prompt's content in place, keeping its
-    /// FIFO position.
+    /// Replaces the prompt of the waiting caller message with `id`, in place.
+    /// The message keeps its place in the queue.
     ///
     /// - Parameters:
-    ///   - id: The id ``enqueue(prompt:)`` returned.
-    ///   - prompt: The prompt's new content.
-    /// - Returns: ``PromptQueueMutationResult/applied`` if the prompt was
-    ///   updated; ``PromptQueueMutationResult/alreadySent`` otherwise.
+    ///   - id: The id of the message.
+    ///   - prompt: The new prompt.
+    /// - Returns: ``MessageQueueMutationResult/applied`` when the message
+    ///   waited; ``MessageQueueMutationResult/alreadySent`` otherwise.
     @discardableResult
-    func replace(id: PromptID, prompt: Transcript.Prompt) -> PromptQueueMutationResult {
-        mutatingPendingPrompt(id: id) { index in
-            prompts[index] = PendingPrompt(id: id, prompt: prompt)
-        }
-    }
-
-    /// Finds the pending prompt for `id` and runs `mutate` with its index.
-    ///
-    /// - Parameters:
-    ///   - id: The id of the prompt to mutate.
-    ///   - mutate: Applied with the found index.
-    /// - Returns: ``PromptQueueMutationResult/applied`` if `id` was pending;
-    ///   ``PromptQueueMutationResult/alreadySent`` otherwise.
-    private func mutatingPendingPrompt(
-        id: PromptID, _ mutate: (Int) -> Void
-    ) -> PromptQueueMutationResult {
-        guard let index = prompts.firstIndex(where: { $0.id == id }) else {
-            return .alreadySent
-        }
-        mutate(index)
+    func replace(id: MessageID, prompt: Transcript.Prompt) -> MessageQueueMutationResult {
+        guard let index = messages.firstIndex(where: { $0.id == id }) else { return .alreadySent }
+        messages[index].prompt = prompt
         return .applied
     }
 
     /// A snapshot of everything currently pending, per kind.
     func pending() -> Pending {
-        Pending(events: events, prompts: prompts)
+        Pending(events: events, messages: messages)
     }
 
     /// Adds one caller message behind every message that waits.
@@ -489,61 +398,7 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
     ///
     /// - Parameter id: The id of the message.
     /// - Returns: The message, or `nil` when no waiting message has `id`.
-    func withdrawMessage(id: PromptID) -> SessionMessage? {
-        guard let index = messages.firstIndex(where: { $0.id == id }) else { return nil }
-        return messages.remove(at: index)
-    }
-
-    /// Releases the front queued prompt as a caller message: the message
-    /// waits behind every other waiting message, keeps the id of the prompt,
-    /// and counts in ``queueDepth()`` as dispatched until
-    /// ``finishDispatch(id:)``.
-    ///
-    /// - Parameters:
-    ///   - answer: The answer the caller of the release waits for.
-    ///   - serviceContext: The tracing context of that caller.
-    /// - Returns: The message, or `nil` when no prompt was queued.
-    func releaseFrontPrompt(answer: PumpAnswer<String>, serviceContext: ServiceContext?) -> SessionMessage? {
-        guard !prompts.isEmpty else { return nil }
-        let queued = prompts.removeFirst()
-        let message = SessionMessage(
-            id: queued.id, text: TranscriptEntryMapper.flattenedText(queued.prompt), requestedMaxTokens: nil,
-            reader: .reply, entryPoint: .dispatch, serviceContext: serviceContext, answer: answer)
-        messages.append(message)
-        dispatched.append(queued.id)
-        return message
-    }
-
-    /// Ends the dispatched state of the released prompt with `id`. The pump
-    /// calls it before it gives the answer of that prompt.
-    ///
-    /// - Parameter id: The id of the released prompt.
-    internal func finishDispatch(id: PromptID) {
-        dispatched.removeAll { $0 == id }
-    }
-
-    /// A snapshot of this outbox's prompt-queue depth. The dispatched prompt
-    /// is the earliest released prompt the pump has not answered yet.
-    func queueDepth() -> PromptQueueDepth {
-        PromptQueueDepth(queued: prompts.count, dispatched: dispatched.first)
-    }
-
-    /// Suspends while the outbox is empty. Returns at once when an item is
-    /// already pending.
-    func nextEvent() async {
-        guard events.isEmpty, prompts.isEmpty else { return }
-        await withCheckedContinuation { continuation in
-            wakeups.append(continuation)
-        }
-    }
-
-    /// Resumes every continuation suspended by ``nextEvent()``.
-    private func wakeUp() {
-        guard !wakeups.isEmpty else { return }
-        let suspended = wakeups
-        wakeups = []
-        for continuation in suspended {
-            continuation.resume()
-        }
+    func withdrawMessage(id: MessageID) -> SessionMessage? {
+        takeMessages { $0.id == id }.first
     }
 }

@@ -14,7 +14,7 @@ import Tracing
 /// to the same contract: ``RoutedSession/respond(to:maxTokens:)``,
 /// ``RoutedSession/streamResponse(to:maxTokens:)``,
 /// ``RoutedSession/streamEvents(to:maxTokens:)`` and
-/// ``RoutedSession/dispatchNextPrompt()``. This suite holds that contract: the
+/// ``RoutedSession/send(_:)-(Transcript.Prompt)``. This suite holds that contract: the
 /// operation name, the span kind, the identity attributes, the entry point that
 /// started the turn, the measured token counts, and the error record on a turn
 /// that throws.
@@ -199,19 +199,19 @@ struct TurnTracingTests {
         #expect(span.errors.isEmpty)
     }
 
-    @Test("one dispatched turn opens one turn span naming the dispatch entry point")
-    func dispatchedTurnOpensOneTurnSpan() async throws {
+    @Test("one sent message opens one span naming the send entry point")
+    func sentMessageOpensOneTurnSpan() async throws {
         let tracer = InMemoryTracer()
         let fixture = try await Self.makeFixture(tracer: tracer)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        await fixture.session.enqueue(prompt: Self.prompt)
-        let answer = try await fixture.session.dispatchNextPrompt()
-        #expect(answer == Self.cannedAnswer)
+        // `send` starts the submission, and no other call is necessary.
+        await fixture.session.send(Self.prompt)
+        #expect(await fixture.session.becomesIdle())
 
         let span = try Self.singleSpan(reportedTo: tracer)
         #expect(span.operationName == Self.spanName)
-        #expect(span.attributes.get("turn.entry_point") == .string("dispatch"))
+        #expect(span.attributes.get("turn.entry_point") == .string("send"))
         #expect(span.errors.isEmpty)
     }
 

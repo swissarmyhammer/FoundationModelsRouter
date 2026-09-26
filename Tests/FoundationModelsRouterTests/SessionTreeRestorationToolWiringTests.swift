@@ -462,7 +462,7 @@ struct SessionTreeRestorationToolWiringTests {
         #expect(container2.threadedToolsByCall.first?.isEmpty == true)
         let pending = await restored.root.outbox.pending()
         #expect(pending.events.isEmpty)
-        #expect(pending.prompts.isEmpty)
+        #expect(pending.messages.isEmpty)
     }
 
     // MARK: - Forking a restored session still works with the threaded originals

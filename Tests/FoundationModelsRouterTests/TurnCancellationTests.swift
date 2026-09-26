@@ -6,9 +6,9 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises ``RoutedSession/cancelCurrentTurn()``: cancelling the turn already
-/// **in flight**, as opposed to ``RoutedSession/cancel(id:)``'s queue-side
-/// withdrawal of a prompt that has not been dispatched yet.
+/// Exercises ``RoutedSession/cancel()``: cancelling the turn already
+/// **in flight**, as opposed to ``RoutedSession/cancel(message:)``'s withdrawal
+/// of a message that waits for a submission.
 ///
 /// The chain this closes is `ACP session/cancel` -> Router -> MCP
 /// `notifications/cancelled`: `FoundationModelsMCP` already turns Swift task
@@ -31,7 +31,7 @@ import Testing
 /// rather than a reading polled until a wall clock runs out (task ^bqj719z).
 ///
 /// A clock was the wrong measure because the crossing is not quick on every route.
-/// ``RoutedSession/cancelCurrentTurn()`` cancels the model call directly, so the
+/// ``RoutedSession/cancel()`` cancels the model call directly, so the
 /// stop lands in microseconds. A caller cancelling its own stream consumer reaches
 /// the tool only once that consumer runs *again*: the consumer's next `next()`
 /// terminates the stream, the termination handler cancels the turn behind it, and
@@ -53,7 +53,7 @@ struct TurnCancellationTests {
     /// The two routes a turn in flight can be cancelled by, so a test can assert
     /// the same behavior of both instead of duplicating itself per route.
     enum CancellationRoute: Sendable, CaseIterable, CustomTestStringConvertible {
-        /// ``RoutedSession/cancelCurrentTurn()`` — Router's own primitive.
+        /// ``RoutedSession/cancel()`` — Router's own primitive.
         case routerAPI
 
         /// The turn's caller cancelling its own enclosing `Task` — the propagation
@@ -62,7 +62,7 @@ struct TurnCancellationTests {
 
         var testDescription: String {
             switch self {
-            case .routerAPI: "cancelCurrentTurn()"
+            case .routerAPI: "cancel()"
             case .callerTask: "the caller's own Task"
             }
         }
@@ -929,7 +929,7 @@ struct TurnCancellationTests {
 
     // MARK: - The regression: a stop must reach a running tool call
 
-    @Test("cancelCurrentTurn cancels the in-flight turn's model call, and the tool running inside it sees CancellationError")
+    @Test("cancel() cancels the in-flight turn's model call, and the tool running inside it sees CancellationError")
     @MainActor
     func cancellingAnInFlightTurnReachesTheToolCall() async throws {
         let dir = Self.makeTempDir()
@@ -944,7 +944,7 @@ struct TurnCancellationTests {
         let turnTask = Task { try await session.respond(to: "cancel-me") }
         await insideTool.wait()
 
-        #expect(await session.cancelCurrentTurn() == .requested)
+        #expect(await session.cancel() == .requested)
 
         // The whole point: the tool call *inside* the model call observes the
         // cancellation, and the turn then unwinds with it.
@@ -975,7 +975,7 @@ struct TurnCancellationTests {
         try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
         #expect(await fixture.observer.toolSawCancellation)
 
-        // Recorded the same way as a turn cancelled through `cancelCurrentTurn()`,
+        // Recorded the same way as a turn cancelled through `cancel()`,
         // even though this cancellation unwinds the task the recording itself runs
         // in: nothing on the recording path observes cancellation, so a
         // caller-cancelled turn is no more half-written than any other failed one.
@@ -999,7 +999,7 @@ struct TurnCancellationTests {
 
         let turnTask = Task { try await session.respond(to: "cancel-me") }
         await insideTool.wait()
-        #expect(await session.cancelCurrentTurn() == .requested)
+        #expect(await session.cancel() == .requested)
         try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
 
         // Whatever the SDK durably appended before the cancellation landed (the
@@ -1045,7 +1045,7 @@ struct TurnCancellationTests {
         await insideWait.wait()
         #expect(await sessionA.isPumpRunning)
 
-        #expect(await sessionA.cancelCurrentTurn() == .requested)
+        #expect(await sessionA.cancel() == .requested)
         try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
 
         // The answer ended, and nothing of it waits.
@@ -1080,7 +1080,7 @@ struct TurnCancellationTests {
 
         let turnTask = Task { try await session.respond(to: "cancel-me") }
         await insideTool.wait()
-        #expect(await session.cancelCurrentTurn() == .requested)
+        #expect(await session.cancel() == .requested)
         try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
 
         // Delivered, so not re-queued: the drained event rode the cancelled
@@ -1111,7 +1111,7 @@ struct TurnCancellationTests {
 
         let turnTask = Task { try await session.respond(to: "cancel-me") }
         await insideTool.wait()
-        #expect(await session.cancelCurrentTurn() == .requested)
+        #expect(await session.cancel() == .requested)
         try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
 
         let pending = await session.outbox.pending()
@@ -1120,7 +1120,7 @@ struct TurnCancellationTests {
 
     // MARK: - The streaming and queue-dispatch entry points
 
-    @Test("cancelCurrentTurn finishes a streamEvents turn with CancellationError, leaving the consumer what it already received")
+    @Test("cancel() finishes a streamEvents turn with CancellationError, leaving the consumer what it already received")
     @MainActor
     func cancellingAStreamingTurnFinishesTheStreamWithCancellationError() async throws {
         let dir = Self.makeTempDir()
@@ -1143,7 +1143,7 @@ struct TurnCancellationTests {
         }
         await insideTool.wait()
 
-        #expect(await session.cancelCurrentTurn() == .requested)
+        #expect(await session.cancel() == .requested)
         try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
 
         // Everything the turn produced before the cancellation is still the
@@ -1152,30 +1152,32 @@ struct TurnCancellationTests {
         #expect(await fixture.recorder.events.map(\.kind) == [.session, .prompt, .response])
     }
 
-    @Test("cancelling a dispatched queued prompt's turn unwinds it and consumes the prompt, which the drain had already committed")
+    @Test("cancelling the submission of a sent message unwinds it, and the message is then answered")
     @MainActor
-    func cancellingADispatchedTurnConsumesTheQueuedPrompt() async throws {
+    func cancellingTheSubmissionOfASentMessageAnswersIt() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = fixture.model.makeSession()
 
-        let queued = await session.enqueue(prompt: "dispatch-cancel")
         let insideTool = AsyncSemaphore(value: 0)
-        let sawCancellation = Self.suspendInsideCancellationAwareTool(fixture, prompt: "dispatch-cancel", insideTool: insideTool)
+        let sawCancellation = Self.suspendInsideCancellationAwareTool(fixture, prompt: "send-cancel", insideTool: insideTool)
 
-        let turnTask = Task { try await session.dispatchNextPrompt() }
+        // Restates the old dispatchNextPrompt() test: `send` starts the
+        // submission, and no other call is necessary.
+        let sent = await session.send("send-cancel")
         await insideTool.wait()
 
-        #expect(await session.cancelCurrentTurn() == .requested)
-        try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
+        #expect(await session.cancel() == .requested)
+        try await sawCancellation.wait()
+        #expect(await session.becomesIdle())
 
-        // The release of the prompt is the commit point, and a cancellation does
-        // not roll it back: the prompt is spent, and its id reports what it
-        // reported the moment it was released.
-        #expect(await session.pendingPrompts().isEmpty)
-        #expect(await session.cancel(id: queued) == .alreadySent)
+        // The pump took the message into the submission, and the cancel does
+        // not put it back: the message is spent, and its id reports that its
+        // answer came.
+        #expect(await session.pendingMessages().isEmpty)
+        #expect(await session.cancel(message: sent) == .alreadyAnswered)
     }
 
     // MARK: - No-ops and best-effort honesty
@@ -1190,7 +1192,7 @@ struct TurnCancellationTests {
         let session = fixture.model.makeSession()
 
         // Before any turn: nothing to cancel.
-        #expect(await session.cancelCurrentTurn() == .noTurnInFlight)
+        #expect(await session.cancel() == .nothingToCancel)
 
         // This tool unwinds only when the test says so, rather than out of its own
         // cancellation handler: a tool that unwinds the moment cancellation lands
@@ -1217,8 +1219,8 @@ struct TurnCancellationTests {
 
         // Twice while the same turn is provably still in flight: the second call
         // requests what was already requested and changes nothing.
-        #expect(await session.cancelCurrentTurn() == .requested)
-        #expect(await session.cancelCurrentTurn() == .requested)
+        #expect(await session.cancel() == .requested)
+        #expect(await session.cancel() == .requested)
 
         release.signal()
         await #expect(throws: CancellationError.self) {
@@ -1230,9 +1232,9 @@ struct TurnCancellationTests {
         // cannot bleed into the next turn — which is a claim about permits too, so
         // the follow-up turn goes through `followUpTurnCompletes` rather than being
         // awaited directly.
-        #expect(await session.cancelCurrentTurn() == .noTurnInFlight)
+        #expect(await session.cancel() == .nothingToCancel)
         #expect(await Self.followUpTurnCompletes(on: session, observer: fixture.observer))
-        #expect(await session.cancelCurrentTurn() == .noTurnInFlight)
+        #expect(await session.cancel() == .nothingToCancel)
     }
 
     @Test("a turn whose model work ignores cancellation still completes — Router stopped listening, the work did not stop")
@@ -1257,7 +1259,7 @@ struct TurnCancellationTests {
 
         let turnTask = Task { try await session.respond(to: "stubborn") }
         await insideTool.wait()
-        #expect(await session.cancelCurrentTurn() == .requested)
+        #expect(await session.cancel() == .requested)
 
         // Nothing Router can do makes it stop, so the turn runs to completion and
         // is recorded as the whole turn it was.
@@ -1306,7 +1308,7 @@ struct TurnCancellationTests {
         // It throws rather than generating: the model is never called for this
         // message at all — which is the one case where a cancel of work that
         // ignores it still gives no response (see
-        // ``RoutedSession/cancelCurrentTurn()``).
+        // ``RoutedSession/cancel()``).
         await #expect(throws: CancellationError.self) {
             try await queuedTask.value
         }
@@ -1411,7 +1413,7 @@ struct TurnCancellationTests {
         // re-enter the model on behalf of a turn already cancelled.
         switch route {
         case .routerAPI:
-            #expect(await session.cancelCurrentTurn() == .requested)
+            #expect(await session.cancel() == .requested)
         case .callerTask:
             turnTask.cancel()
         }
@@ -1427,24 +1429,33 @@ struct TurnCancellationTests {
 
     // MARK: - Queue-side cancellation is unchanged
 
-    @Test("queue-side cancel of a still-pending prompt still produces no turn at all")
+    @Test("cancel(message:) of a waiting message still produces no submission for it")
     @MainActor
-    func queueSideCancellationStillProducesNoTurn() async throws {
+    func withdrawingAWaitingMessageStillProducesNoSubmission() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = fixture.model.makeSession()
 
-        let id = await session.enqueue(prompt: "queued")
-        #expect(await session.cancel(id: id) == .applied)
+        // A running submission keeps the session busy, so the next message
+        // waits in the outbox.
+        let insideTool = AsyncSemaphore(value: 0)
+        let sawCancellation = Self.suspendInsideCancellationAwareTool(fixture, prompt: "busy", insideTool: insideTool)
+        let turnTask = Task { try await session.respond(to: "busy") }
+        await insideTool.wait()
 
-        // Nothing dispatched, nothing generated, nothing recorded — the
-        // additive in-flight primitive left the queue-side one exactly as it was.
-        #expect(try await session.dispatchNextPrompt() == nil)
-        #expect(await fixture.observer.entered.isEmpty)
-        #expect(await fixture.recorder.events.isEmpty)
-        #expect(await session.pendingPrompts().isEmpty)
+        let id = await session.send("queued")
+        #expect(await session.cancel(message: id) == .withdrawn)
+
+        #expect(await session.cancel() == .requested)
+        try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
+        #expect(await session.becomesIdle())
+
+        // The withdrawn message never reached the model: the in-flight
+        // primitive left the queue-side one as it was.
+        #expect(await fixture.observer.entered == ["busy"])
+        #expect(await session.pendingMessages().isEmpty)
     }
 
     // MARK: - A stop lands during a compaction too
@@ -1469,7 +1480,7 @@ struct TurnCancellationTests {
 
         switch route {
         case .routerAPI:
-            #expect(await session.cancelCurrentTurn() == .requested)
+            #expect(await session.cancel() == .requested)
         case .callerTask:
             turnTask.cancel()
         }
@@ -1565,7 +1576,7 @@ struct TurnCancellationTests {
             }
         }
         await insideSummarizer.wait()
-        #expect(await session.cancelCurrentTurn() == .requested)
+        #expect(await session.cancel() == .requested)
         // Released by the test rather than by the cancellation, so this turn unwinds
         // through the fault's path and not through the suspended tool's own.
         release.signal()
@@ -1628,7 +1639,7 @@ struct TurnCancellationTests {
         // the other route's coverage.
         switch route {
         case .routerAPI:
-            #expect(await session.cancelCurrentTurn() == .requested)
+            #expect(await session.cancel() == .requested)
         case .callerTask:
             compactTask.cancel()
         }
@@ -1666,7 +1677,7 @@ struct TurnCancellationTests {
             try await session.compact(prompt: Self.compactionSummarizerPrompt, budget: Self.summarizingCompactionBudget)
         }
         await insideSummarizer.wait()
-        #expect(await session.cancelCurrentTurn() == .requested)
+        #expect(await session.cancel() == .requested)
         // Released by the test, so the summarizer ends with its own fault while
         // the stop is outstanding.
         release.signal()
@@ -1714,7 +1725,7 @@ struct TurnCancellationTests {
         #expect(await actor.pendingCompactions.isEmpty)
         #expect(await actor.isPumpRunning)
 
-        #expect(await session.cancelCurrentTurn() == .requested)
+        #expect(await session.cancel() == .requested)
         try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
         await #expect(throws: CancellationError.self) {
             try await compactTask.value
@@ -1753,7 +1764,7 @@ struct TurnCancellationTests {
         // depend on the task still being live.
         switch route {
         case .routerAPI:
-            #expect(await session.cancelCurrentTurn() == .requested)
+            #expect(await session.cancel() == .requested)
         case .callerTask:
             turnTask.cancel()
         }
@@ -1804,7 +1815,7 @@ struct TurnCancellationTests {
         // ``awaitCancelledUnwind(_:sawCancellation:)``.
         switch route {
         case .routerAPI:
-            #expect(await session.cancelCurrentTurn() == .requested)
+            #expect(await session.cancel() == .requested)
             // The consumer is not what was cancelled, so it is told: the stream ends
             // by throwing the turn's own `CancellationError`.
             try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
@@ -1878,7 +1889,7 @@ struct TurnCancellationTests {
         // must still happen on the way out.
         switch route {
         case .routerAPI:
-            #expect(await session.cancelCurrentTurn() == .requested)
+            #expect(await session.cancel() == .requested)
         case .callerTask:
             turnTask.cancel()
         }
@@ -1950,7 +1961,7 @@ struct TurnCancellationTests {
             try await session.respond(to: Self.overflowingCompactionPrompt)
         }
         await insideSummarizer.wait()
-        #expect(await session.cancelCurrentTurn() == .requested)
+        #expect(await session.cancel() == .requested)
         try await Self.awaitCancelledUnwind(turnTask, sawCancellation: sawCancellation)
 
         // The retry never ran: the model saw this turn exactly once, and what the

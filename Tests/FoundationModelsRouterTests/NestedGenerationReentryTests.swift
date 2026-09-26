@@ -109,6 +109,29 @@ struct NestedGenerationReentryTests {
         static let labelSeparator = "->"
     }
 
+    /// A tool whose body sends a message to a routed session and returns at
+    /// once — the shape a host has whenever a tool queues work for the
+    /// conversation it runs inside.
+    ///
+    /// It declares no mount, so the session mounts it run-to-completion: the
+    /// body runs in band, inside the submission that called it.
+    private struct SendingTool: Tool {
+        let name = "send-probe"
+        let description = "test-only tool that sends a message to a routed session"
+
+        /// The session this body sends to.
+        let target: NestedTarget
+
+        /// The output a call produces when no target session was named, so a
+        /// misbuilt fixture reads as a wrong answer rather than as a pass.
+        static let noTargetOutput = "no target session"
+
+        func call(arguments: ReentryToolArguments) async throws -> String {
+            guard let session = target.value else { return Self.noTargetOutput }
+            return await session.send(arguments.value).description
+        }
+    }
+
     /// A tool whose body forks a routed session — the shape a host has
     /// whenever a tool spawns a sub-agent from the conversation it runs
     /// inside.
@@ -606,6 +629,44 @@ struct NestedGenerationReentryTests {
         withExtendedLifetime(profile) {}
     }
 
+    @Test(
+        "an in-band tool body that sends a message to its own session gets its MessageID at once, and the message is the prompt of the next submission"
+    )
+    @MainActor
+    func aToolBodyThatSendsToItsOwnSessionGetsAMessageIDAtOnce() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let target = NestedTarget()
+        let profile = try await Self.makeProfile(container: ToolCallingLLMContainer(), dir: dir)
+
+        let caller = profile.standard.makeSession(tools: [SendingTool(target: target)])
+        // The tool sends to the very session whose submission invoked it. A
+        // send waits for nothing, so it returns at once, with no refusal.
+        target.set(caller)
+        let events = await caller.streamSessionEvents()
+
+        let outcome = await Self.outcome(
+            of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.turnTimeout)
+        let sentID = try #require(Self.finishedAnswer(outcome, describing: "The outer turn"))
+
+        // No caller asks again: the pump delivers the sent message in the
+        // next submission, and that submission names it.
+        #expect(await caller.becomesIdle())
+        await caller.close()
+        let starts = await collect(events).compactMap { event -> TurnStart? in
+            guard case .turnStarted(let start) = event else { return nil }
+            return start
+        }
+        #expect(starts.map { $0.messageId?.description } == [nil, sentID])
+        let prompts = Array(await caller.transcript).compactMap { entry -> String? in
+            guard case .prompt(let prompt) = entry else { return nil }
+            return TranscriptEntryMapper.flattenedText(prompt)
+        }
+        #expect(prompts.last == Self.nestedPrompt)
+        withExtendedLifetime(profile) {}
+    }
+
     // MARK: - Forking from inside a tool body
 
     @Test("a tool body that forks its own session gets a child at once, rather than a refusal or a wait")
@@ -897,7 +958,7 @@ struct NestedGenerationReentryTests {
     private static let nextPrompt = "summarize the ranking"
 
     @Test(
-        "cancelCurrentTurn() on a session whose submission waits removes it at once, and the worker then runs the next item"
+        "cancel() on a session whose submission waits removes it at once, and the worker then runs the next item"
     )
     func cancelOnASessionWhoseSubmissionWaitsRemovesItAtOnce() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
@@ -939,7 +1000,7 @@ struct NestedGenerationReentryTests {
 
         // So the request reaches the waiting item, and the turn ends at once,
         // while the holder still runs on the worker.
-        #expect(await waiter.cancelCurrentTurn() == .requested)
+        #expect(await waiter.cancel() == .requested)
         #expect(
             await BoundedWait.signalArrived(
                 waiterFinished, named: "the end of the cancelled turn, while the holder still runs"))

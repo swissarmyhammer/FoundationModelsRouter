@@ -655,9 +655,9 @@ struct DiscoveryPrimingTests {
         #expect(tool == "findAPIs")
     }
 
-    @Test("dispatchNextPrompt() has no turn stream either, and its priming failure surfaces the same way")
+    @Test("send(_:) has no stream either, and its priming failure surfaces the same way")
     @MainActor
-    func dispatchNextPromptSurfacesThePrimingFailureAsASessionEvent() async throws {
+    func sendSurfacesThePrimingFailureAsASessionEvent() async throws {
         let fixture = try await Self.makeFixture(
             tools: [FailingDiscoveryTool()],
             priming: DiscoveryPriming(tool: "findAPIs", queryProperty: "query")
@@ -665,10 +665,10 @@ struct DiscoveryPrimingTests {
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
 
         let sessionEvents = await fixture.session.streamSessionEvents()
-        await fixture.session.enqueue(prompt: Self.prompt)
-        let response = try await fixture.session.dispatchNextPrompt()
+        await fixture.session.send(Self.prompt)
 
-        #expect(response == StubSessionBackend().responseText)
+        // The submission ran anyway, unseeded.
+        #expect(await fixture.session.becomesIdle())
         #expect(fixture.log.reseeds.isEmpty)
 
         await fixture.session.close()

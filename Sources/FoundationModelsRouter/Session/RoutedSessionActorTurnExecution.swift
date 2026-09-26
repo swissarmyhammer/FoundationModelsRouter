@@ -8,8 +8,8 @@ import os
 private let sessionPrimingLogger = makeModuleLogger(category: "DiscoveryPriming")
 
 /// ``RoutedSessionActor``'s answer execution: the recorder-bracketed chain of
-/// submissions that the pump runs for one answer, the queued-prompt helper,
-/// discovery priming, the recovery from an overflow or a rejected tool call,
+/// submissions that the pump runs for one answer, discovery priming, the
+/// recovery from an overflow or a rejected tool call,
 /// and cancellation.
 extension RoutedSessionActor {
     /// The token ceiling a turn gives its backend.
@@ -85,15 +85,16 @@ extension RoutedSessionActor {
     /// ``RoutedSession/respond(to:maxTokens:)``,
     /// ``RoutedSession/streamResponse(to:maxTokens:)``,
     /// ``RoutedSession/streamEvents(to:maxTokens:)``,
-    /// ``RoutedSession/dispatchNextPrompt()`` and an answer that only mail
-    /// started. Those methods state the span contract; ``RouterTracing``
+    /// ``RoutedSession/send(_:)-(Transcript.Prompt)`` and an answer that only
+    /// mail started. Those methods state the span contract; ``RouterTracing``
     /// states the rule that keeps content off it.
     ///
     /// - Parameters:
     ///   - grammar: The grammar in force for this turn.
     ///   - turnId: The identity of this answer, which the pump minted.
     ///   - entryPoint: The surface this answer was started through.
-    ///   - promptId: The queued prompt this answer delivers, or `nil`.
+    ///   - messageId: The first message of the answer that
+    ///     ``RoutedSession/send(_:)-(Transcript.Prompt)`` sent, or `nil`.
     ///   - pendingEvents: The mail the pump took from ``outbox`` for it.
     ///   - ownPrompt: The prompt text of its caller messages.
     ///   - responseTokenCeiling: The token ceiling `body` gives the backend, and the ceiling the caller named.
@@ -106,7 +107,7 @@ extension RoutedSessionActor {
         grammar: Grammar?,
         turnId: TurnID,
         entryPoint: RouterTracing.TurnEntryPoint,
-        promptId: PromptID?,
+        messageId: MessageID?,
         pendingEvents: [OperationEvent],
         ownPrompt: String,
         responseTokenCeiling: ResponseTokenCeiling,
@@ -121,7 +122,7 @@ extension RoutedSessionActor {
                 span.attributes[RouterTracing.AttributeKey.turnId] = turnId.description
                 span.attributes[RouterTracing.AttributeKey.turnEntryPoint] = entryPoint.rawValue
                 let response = try await runTurnWork(
-                    grammar: grammar, turnId: turnId, promptId: promptId,
+                    grammar: grammar, turnId: turnId, messageId: messageId,
                     pendingEvents: pendingEvents, ownPrompt: ownPrompt,
                     responseTokenCeiling: responseTokenCeiling, onEvent: onEvent, body)
                 recordMeasuredTokens(on: span)
@@ -153,7 +154,8 @@ extension RoutedSessionActor {
     /// - Parameters:
     ///   - grammar: The grammar in force for this turn.
     ///   - turnId: The identity of this answer, which the pump minted.
-    ///   - promptId: The queued prompt this answer delivers, or `nil`.
+    ///   - messageId: The first message of the answer that
+    ///     ``RoutedSession/send(_:)-(Transcript.Prompt)`` sent, or `nil`.
     ///   - pendingEvents: The mail the pump took from ``outbox`` for it.
     ///   - ownPrompt: The prompt text of its caller messages.
     ///   - responseTokenCeiling: The token ceiling `body` gives the backend, and the ceiling the caller named.
@@ -164,7 +166,7 @@ extension RoutedSessionActor {
     private func runTurnWork(
         grammar: Grammar?,
         turnId: TurnID,
-        promptId: PromptID?,
+        messageId: MessageID?,
         pendingEvents: [OperationEvent],
         ownPrompt: String,
         responseTokenCeiling: ResponseTokenCeiling,
@@ -183,7 +185,7 @@ extension RoutedSessionActor {
         currentTurnEventSink = emit
         defer { currentTurnEventSink = nil }
 
-        emit(.turnStarted(TurnStart(turnId: turnId, promptId: promptId)))
+        emit(.turnStarted(TurnStart(turnId: turnId, messageId: messageId)))
 
         // Compared in tokens against ``TokenBudget/triggerTokens``, never as
         // `contextFill >= budget.trigger` — see the matching note on the
@@ -250,8 +252,9 @@ extension RoutedSessionActor {
             // started the turn through ``streamEvents(to:maxTokens:)``) *and* to
             // every session-scoped subscription — the route that reaches a
             // subscriber whichever entry point ran the turn, including
-            // ``respond(to:maxTokens:)`` and ``dispatchNextPrompt()``, which hand
-            // their caller a response rather than a stream (see
+            // ``respond(to:maxTokens:)``, which hands its caller a response
+            // rather than a stream, and ``send(_:)-(Transcript.Prompt)``,
+            // which hands its caller nothing but an id (see
             // ``turnEventSink(_:)`` and ``RoutedSession/streamSessionEvents()``).
             emit(.discoveryPrimingFailed(error))
         }
@@ -770,7 +773,7 @@ extension RoutedSessionActor {
     /// Whether a cancellation is outstanding against the work the pump runs,
     /// by either route: `Task.isCancelled` of the task that reads it, or
     /// ``cancelRequestedWorkId`` set for that work by
-    /// ``requestCancelOfRunningWork()`` (``RoutedSession/cancelCurrentTurn()``,
+    /// ``requestCancelOfRunningWork()`` (``RoutedSession/cancel()``,
     /// or the cancel of a caller whose message the work carries). This is the
     /// one read site of ``cancelRequestedWorkId``, so the two routes cannot
     /// diverge. Every cancel decision keys on this predicate, never on the
@@ -819,35 +822,6 @@ extension RoutedSessionActor {
             contextTokens: contextTokens,
             promptTokens: tokenCounter.count(Self.composedPrompt(pendingEvents: [], prompt: retryPrompt)),
             configuredTargetTokens: budget.targetTokens)
-    }
-
-    /// See ``RoutedSession/dispatchNextPrompt()``. A thin helper over the
-    /// pump: it releases the front queued prompt as a caller message, and
-    /// waits for its answer. The prompt keeps its id, which
-    /// ``SessionEvent/turnStarted(_:)`` reports.
-    ///
-    /// With no queued prompt, it wakes the pump and waits until the pump has
-    /// no work left: the pump delivers each settled run's terminal by itself.
-    /// This call also ends the hold on mail that a failed submission gave
-    /// back, or that a cancel held (``SessionOutbox/releaseHeldMail()``), so
-    /// that mail gets one more delivery.
-    ///
-    /// - Returns: The reply to the released prompt; with no queued prompt,
-    ///   the reply of the last answer that only mail started while this call
-    ///   waited, or `nil`.
-    /// - Throws: Whatever the answer of the released prompt throws, or
-    ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)``.
-    func dispatchNextPrompt() async throws -> String? {
-        try refuseWaitInsideOpenSubmission()
-        await attachOutboxJournalIfNeeded()
-        let released = await outbox.releaseFrontPrompt(answer: PumpAnswer(), serviceContext: ServiceContext.current)
-        guard let released else {
-            await outbox.releaseHeldMail()
-            wakePump()
-            return await awaitPumpIdle()
-        }
-        wakePump()
-        return try await awaitAnswer(of: released)
     }
 
     /// Composes a submission's model-visible prompt: `pendingEvents` rendered as a

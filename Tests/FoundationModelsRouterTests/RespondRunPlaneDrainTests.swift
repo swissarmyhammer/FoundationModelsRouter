@@ -598,7 +598,7 @@ struct RespondRunPlaneDrainTests {
         // and the run stays running, exactly as it was.
         #expect(
             await BoundedWait.conditionReached("the pump ending") { await !session.isPumpRunning })
-        #expect(await session.cancelCurrentTurn() == .noTurnInFlight)
+        #expect(await session.cancel() == .nothingToCancel)
         #expect(await session.mailbox.backgroundRuns().count == 1)
 
         await Self.releaseBackgroundRuns(on: session, opening: [gate])

@@ -1,42 +1,61 @@
 import FoundationModels
+import Tracing
 
-/// The prompt-queue and elicitation-answer surface of ``RoutedSessionActor``.
-/// Each method delegates to the internal ``outbox`` or ``mailbox``.
+/// The message-queue and elicitation-answer surface of ``RoutedSessionActor``
+/// (`generation-queue.md`, section 5.4). The queue methods add to, read and
+/// change the caller messages in ``outbox``; the elicitation methods delegate
+/// to ``mailbox``.
 extension RoutedSessionActor {
-    /// Stages a queued user prompt for a future turn.
-    /// - Returns: The stable id of the queued prompt.
+    /// See ``RoutedSession/send(_:)-(Transcript.Prompt)``. Adds one caller
+    /// message and wakes the pump. It waits for no submission and no answer.
+    ///
+    /// - Parameter prompt: The prompt of the message.
+    /// - Returns: The id of the message.
     @discardableResult
-    nonisolated func enqueue(prompt: Transcript.Prompt) async -> PromptID {
-        await outbox.enqueue(prompt: prompt)
+    func send(_ prompt: Transcript.Prompt) async -> MessageID {
+        let message = SessionMessage(
+            id: MessageID(), prompt: prompt, requestedMaxTokens: nil, reader: .reply, entryPoint: .send,
+            serviceContext: ServiceContext.current, answer: PumpAnswer())
+        await enqueue(message)
+        return message.id
     }
 
-    /// A snapshot of every queued prompt, in FIFO dispatch order.
-    nonisolated func pendingPrompts() async -> [(id: PromptID, prompt: Transcript.Prompt)] {
-        await outbox.pending().prompts.map { (id: $0.id, prompt: $0.prompt) }
+    /// Adds `message` behind every caller message that waits, and wakes the
+    /// pump.
+    ///
+    /// The message is open (``openMessages``) before it reaches ``outbox``,
+    /// so ``cancel(message:)`` finds it at every point until its answer.
+    ///
+    /// - Parameter message: The message to add.
+    func enqueue(_ message: SessionMessage) async {
+        openMessages[message.id] = message.answer
+        await attachOutboxJournalIfNeeded()
+        await outbox.add(message: message)
+        wakePump()
     }
 
-    /// Cancels a still-pending queued prompt.
-    /// - Returns: Whether the prompt was still pending and was removed.
-    @discardableResult
-    nonisolated func cancel(id: PromptID) async -> PromptQueueMutationResult {
-        await outbox.cancel(id: id)
+    /// A snapshot of every caller message that waits, in the order the
+    /// messages arrived.
+    nonisolated func pendingMessages() async -> [(id: MessageID, prompt: Transcript.Prompt)] {
+        await outbox.pending().messages.map { (id: $0.id, prompt: $0.prompt) }
     }
 
-    /// Replaces the content of a still-pending queued prompt.
-    /// - Returns: Whether the prompt was still pending and was updated.
+    /// Replaces the prompt of a caller message that waits.
+    ///
+    /// - Parameters:
+    ///   - id: The id of the message.
+    ///   - prompt: The new prompt.
+    /// - Returns: Whether the message waited and was changed.
     @discardableResult
-    nonisolated func replace(id: PromptID, prompt: Transcript.Prompt) async -> PromptQueueMutationResult {
+    nonisolated func replace(id: MessageID, prompt: Transcript.Prompt) async -> MessageQueueMutationResult {
         await outbox.replace(id: id, prompt: prompt)
     }
 
-    /// The waiting-plus-dispatched queued-prompt count.
-    nonisolated func promptQueueDepth() async -> PromptQueueDepth {
-        await outbox.queueDepth()
-    }
-
-    /// Suspends until the outbox holds a queued prompt or a pending event.
-    nonisolated func awaitQueuedWork() async {
-        await outbox.nextEvent()
+    /// The count of the waiting caller messages, and the ids of the messages
+    /// of the running answer.
+    func messageQueueDepth() async -> MessageQueueDepth {
+        let waiting = await outbox.waitingMessageCount
+        return MessageQueueDepth(waiting: waiting, running: (deliveredMessages ?? []).map(\.id))
     }
 
     /// Delivers the user's answer to a pending elicitation on this session.

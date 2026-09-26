@@ -347,8 +347,8 @@ actor RoutedSessionActor: RoutedSession {
     /// This session's own instanced tool list, as threaded to the backend.
     nonisolated let tools: [any Tool]
 
-    /// The queue of messages of this session: the mail, the caller messages
-    /// that wait for the pump, and the queued prompts. Fresh per session.
+    /// The queue of messages of this session: the mail, and the caller
+    /// messages that wait for the pump. Fresh per session.
     nonisolated let outbox: SessionOutbox
 
     /// The registry of tracked background runs and pending elicitations. Fresh
@@ -372,9 +372,11 @@ actor RoutedSessionActor: RoutedSession {
     /// The caller compactions that wait for the pump, first in first out.
     var pendingCompactions: [CompactionRequest] = []
 
-    /// The ``dispatchNextPrompt()`` callers that wait until the pump has no
-    /// work left, keyed by waiter id. See ``awaitPumpIdle()``.
-    var pumpIdleWaiters: [ULID: PumpIdleWaiter] = [:]
+    /// The answer of every caller message that has no answer yet, by the id
+    /// of the message: a message that waits in ``outbox``, one the pump
+    /// takes, and one the running answer carries. ``enqueue(_:)`` adds it,
+    /// and ``resolve(_:with:)`` removes it. ``cancel(message:)`` reads it.
+    var openMessages: [MessageID: PumpAnswer<String>] = [:]
 
     /// The in-flight model call of the work the pump runs, the task
     /// ``requestCancelOfRunningWork()`` cancels, or `nil` when no model call

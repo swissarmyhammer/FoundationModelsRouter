@@ -40,7 +40,7 @@
 /// A cancel of the submitter reaches its item. A waiting item leaves the list
 /// at once and never runs, and its submitter gets `CancellationError`. A
 /// running item gets the cancel on the task that runs it. So
-/// ``RoutedSession/cancelCurrentTurn()`` ends the wait of a submission at
+/// ``RoutedSession/cancel()`` ends the wait of a submission at
 /// once.
 public final class GenerationQueue: Sendable {
     /// The worker that holds the list and runs the items.
