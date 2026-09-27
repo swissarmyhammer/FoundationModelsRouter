@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsExtras
 import Synchronization
 import Tracing
 import os

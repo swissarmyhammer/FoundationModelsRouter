@@ -1,4 +1,5 @@
 import FoundationModels
+import FoundationModelsExtras
 import Tracing
 
 /// What one submission runs, as the reader of its first message asks: the

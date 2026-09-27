@@ -920,50 +920,6 @@ struct NestedGenerationReentryTests {
         withExtendedLifetime(harness) {}
     }
 
-    // MARK: - The model-call mark itself
-
-    @Test("a model-call mark names its own session, and no other, until the call closes it")
-    func aModelCallMarkNamesItsOwnSessionUntilItCloses() {
-        let sessionID = ULID.generate()
-        let mark = ModelCallMark(sessionID: sessionID)
-
-        #expect(mark.isOpenModelCall(of: sessionID))
-        #expect(!mark.isOpenModelCall(of: ULID.generate()))
-
-        // The model call returns and closes its mark. A task that outlives the
-        // call, and still carries the mark, is then in no model call.
-        mark.close()
-        #expect(!mark.isOpenModelCall(of: sessionID))
-    }
-
-    @Test("a background run keeps the session of the model call that started it, but is in no model call")
-    func aBackgroundRunKeepsTheSessionButIsInNoModelCall() async throws {
-        let sessionID = ULID.generate()
-        let mark = ModelCallMark(sessionID: sessionID)
-
-        let seen = await ModelCallMark.$current.withValue(mark) {
-            await ModelCallMark.withBackgroundRunMark {
-                ModelCallMark.current.map { ($0.sessionID, $0.isOpenModelCall(of: sessionID)) }
-            }
-        }
-
-        // The session stays, but the run is no tool call the model is
-        // suspended in. So its wait for an answer of that session is not
-        // refused: the message waits for a later submission.
-        let (runSessionID, runIsInTheCall) = try #require(seen)
-        #expect(runSessionID == sessionID)
-        #expect(!runIsInTheCall)
-        // The background run leaves the model call that started it open.
-        #expect(mark.isOpenModelCall(of: sessionID))
-    }
-
-    @Test("a background run started outside any model call carries no mark")
-    func aBackgroundRunOutsideAModelCallCarriesNoMark() async {
-        let seen = await ModelCallMark.withBackgroundRunMark { ModelCallMark.current }
-
-        #expect(seen == nil)
-    }
-
     // MARK: - An answer whose submission waits for the worker
 
     /// The prompt of the session whose submission waits behind the cancelled

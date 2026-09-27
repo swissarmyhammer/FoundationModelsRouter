@@ -1,0 +1,31 @@
+---
+assignees:
+- claude-code
+position_column: todo
+position_ordinal: a280
+title: 'Router: resolve never gives the same model to the standard and flash slots'
+---
+## What
+Decision (user, 2026-09-26): the `standard` and `flash` slots of one resolved profile must never use the same model.
+
+Reason: a tool such as the multitool `searchTools` runs a synchronous selection call on `flash` inside an open submission on `standard`. Each model has one FIFO work queue. If both slots are the same `ModelRef`, the selection call waits behind the submission that waits for it. The queue then throws `GenerationQueueError.waitInsideOpenSubmission`. Thus a profile with one model in both slots cannot run tools of this type.
+
+- `Sources/FoundationModelsRouter/Resolution/JointFit.swift`: when it selects the `flash` slot (after `standard`), skip each candidate that is equal to the `ModelRef` selected for `standard`. If no other candidate fits, resolve throws a clear error that names both slots and the model.
+- `Sources/FoundationModelsRouter/Core/ProfileDefinition.swift`: if the `standard` and `flash` candidate lists contain only the same one `ModelRef`, report it early (for example a throwing validation in `Router.resolve` before any load). Do not change the public init signature.
+- Document the rule in the doc comment of `ProfileDefinition`, in `README.md`, and in the doc comment of `LanguageModelProfile.flash`.
+- Update each test, example and `IntegrationTests/` profile that puts the same model in both slots (about 44 files make a `ProfileDefinition`; find the ones with the same ref in both slots). Give them two different stub refs.
+
+## Acceptance Criteria
+- [ ] No resolved `LanguageModelProfile` has `standard` and `flash` on the same `ModelRef`.
+- [ ] A profile whose only `flash` candidate is the `standard` model fails to resolve with a clear error, and loads no model.
+- [ ] A profile that lists the `standard` model first for `flash`, followed by a different model, resolves `flash` to the different model.
+- [ ] The rule is in the docs.
+- [ ] `swift build` passes with no warnings on a clean build.
+
+## Tests
+- [ ] Add tests in `Tests/FoundationModelsRouterTests/` (for example `JointFitTests` and a resolve test) for the three cases above, with stub loaders.
+- [ ] `swift test` passes, and the output shows the full count of tests run.
+- [ ] `IntegrationTests/` compiles (`swift build --build-tests` in `IntegrationTests/`).
+
+## Workflow
+- Use `/tdd` — write failing tests first, then implement to make them pass. #model-pool #router-api

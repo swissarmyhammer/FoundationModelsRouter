@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsExtras
 import Tracing
 
 /// A decorator that runs each call of the wrapped tool in the background. Every call posts one progress event, tracks the run in the session's `SessionMailbox`, and returns the ``PendingRunEnvelope``.

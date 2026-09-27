@@ -5,54 +5,6 @@ import Foundation
 
 @Suite("CoreTypes")
 struct CoreTypesTests {
-    @Test("a bare string literal is a ModelRef with no revision")
-    func modelRefStringLiteral() {
-        let ref: ModelRef = "mlx-community/Qwen2.5-Coder-32B-Instruct-8bit"
-
-        #expect(ref.repo == "mlx-community/Qwen2.5-Coder-32B-Instruct-8bit")
-        #expect(ref.revision == nil)
-    }
-
-    @Test("a revision-pinned literal parses repo and revision")
-    func modelRefRevisionPinned() {
-        let ref: ModelRef = "org/repo@abc123"
-
-        #expect(ref.repo == "org/repo")
-        #expect(ref.revision == "abc123")
-    }
-
-    @Test("ModelRef Codable round-trips the repo and revision")
-    func modelRefCodableRoundTrip() throws {
-        let ref: ModelRef = "org/repo@abc123"
-
-        let data = try JSONEncoder().encode(ref)
-        let decoded = try JSONDecoder().decode(ModelRef.self, from: data)
-
-        #expect(decoded == ref)
-    }
-
-    @Test("ModelRef.init(repo:revision:) sets fields and matches the string-literal form")
-    func modelRefMemberwiseInitWithRevision() {
-        let ref = ModelRef(repo: "org/repo", revision: "abc123")
-        let literal: ModelRef = "org/repo@abc123"
-
-        #expect(ref.repo == "org/repo")
-        #expect(ref.revision == "abc123")
-        #expect(ref.stringValue == "org/repo@abc123")
-        #expect(ref == literal)
-    }
-
-    @Test("ModelRef.init(repo:revision:) defaults revision to nil and matches the string-literal form")
-    func modelRefMemberwiseInitWithoutRevision() {
-        let ref = ModelRef(repo: "org/repo")
-        let literal: ModelRef = "org/repo"
-
-        #expect(ref.repo == "org/repo")
-        #expect(ref.revision == nil)
-        #expect(ref.stringValue == "org/repo")
-        #expect(ref == literal)
-    }
-
     @Test("ProfileDefinition names no context by default, so resolution uses the model's window")
     func profileDefinitionDefaultContextIsTheModelsWindow() {
         let profile = ProfileDefinition(

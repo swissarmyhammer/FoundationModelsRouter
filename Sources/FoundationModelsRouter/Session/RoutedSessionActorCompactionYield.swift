@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsExtras
 import os
 
 /// The logger for a compaction inside an answer: at a tool-result boundary or

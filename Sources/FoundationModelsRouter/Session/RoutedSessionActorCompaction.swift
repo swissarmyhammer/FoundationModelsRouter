@@ -1,6 +1,7 @@
 import Foundation
 import Tracing
 import FoundationModels
+import FoundationModelsExtras
 import os
 
 /// The logger an abandoned compaction's discarded summarizer failure is reported to
