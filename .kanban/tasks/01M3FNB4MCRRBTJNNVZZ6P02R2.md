@@ -22,8 +22,24 @@ comments:
     - evidence: 5 source files removed; added Sources/FoundationModelsRouter/Concurrency/QueuePrimitives.swift; import added in 5 source files; tests changed: CoreTypesTests.swift, NestedGenerationReentryTests.swift, GenerationQueueWorkerTests.swift renamed to GenerationQueueWorkerTaskTests.swift (queue suite removed). swift build --build-tests (clean) passes; focused filter ran 79 tests, all pass.
     - next: /test
   timestamp: 2026-09-27T12:53:29.290438+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m3hf3f6fxeggtdq10k67sqv4
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (3c0f397) — findings 0, confirmed 0, refuted 0; 15 files reviewed, 20 .kanban files ignored. The only notes are tool rules that could not read the 6 deleted files.
+    - next: none; the task moved to done.
+  timestamp: 2026-09-27T12:58:08.463174+00:00
+- actor: claude-code
+  id: 01m3hf3m01129gtd516hkdj5vf
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — removed 5 router source files; added Concurrency/QueuePrimitives.swift (public typealiases); import FoundationModelsExtras in 5 files; removed the router tests that Extras owns.
+    - test: green — swift test: 1448 tests in 173 suites passed (2 known issues are withKnownIssue assertions), 17 tests and 19 tests passed; clean swift build --build-tests with no router warnings; swift build --build-tests --package-path IntegrationTests passed.
+    - commit: 3c0f397 refactor(concurrency): use the queue primitives of FoundationModelsExtras (^z6p02r2)
+    - review: clean — review sha HEAD~1..HEAD, 0 findings; task moved to done.
+  timestamp: 2026-09-27T12:58:13.377317+00:00
+position_column: done
+position_ordinal: ffffff9e80
 title: 'Router: use the queue primitives from FoundationModelsExtras and remove the router copies'
 ---
 ## What
