@@ -49,9 +49,32 @@ comments:
     - note: another worker edits this working tree at the same time (removes `compaction_plan.md` and its references, changes `Package.swift` and IntegrationTests). The commit of this task takes only the hunks of this task.
     - next: commit
   timestamp: 2026-09-27T15:04:52.688165+00:00
+- actor: claude-code
+  id: 01m3hpcpgv92mgr26n3mq8k98j
+  text: |-
+    ### commit — changed
+    - evidence: 8e30e3c refactor(session): build SessionOutbox on the Extras Mailbox (^9h3rkxf). Only the hunks of this task: the hunks of the other worker (compaction_plan references in RoutedSessionActorAnswerExecution.swift and RoutedSessionActorCompaction.swift, and the staged delete of compaction_plan.md) are not in the commit and stay as they were.
+    - next: review
+  timestamp: 2026-09-27T15:05:30.907541+00:00
+- actor: claude-code
+  id: 01m3hpzwk0ssry21y4e61est9p
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD — 2 findings (2 confirmed, 1 refuted): Sources/FoundationModelsRouter/Session/RoutedSessionActorCompaction.swift:146, Sources/FoundationModelsRouter/Session/RoutedSessionActorGeneration.swift:92 (duplication/duplication: the `withTaskCancellationHandler` + `cancelFromCallerTask` pattern; extract `awaitMailboxAnswer`).
+    - next: implement
+  timestamp: 2026-09-27T15:15:59.712599+00:00
+- actor: claude-code
+  id: 01m3hpzyp5a37csj67x40q3x3y
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed (Mailbox-based SessionOutbox, CancelMarks, pump release)
+    - test: green (swift test 1448 + 17 + 19 passed; AnswerCancellation parallel x20 all pass; clean build 0 code warnings)
+    - commit: 8e30e3c
+    - review: findings — 2 (duplication/duplication at RoutedSessionActorCompaction.swift:146 and RoutedSessionActorGeneration.swift:92)
+  timestamp: 2026-09-27T15:16:01.861249+00:00
 depends_on:
 - 01M3FNB4MCRRBTJNNVZZ6P02R2
-position_column: doing
+position_column: review
 position_ordinal: '80'
 title: 'Router: build SessionOutbox on the Extras Mailbox, and keep the pump''s cancellation invariants'
 ---
@@ -84,3 +107,13 @@ Blocked by Extras task 01M3FN9KTQA9S37VTZXMMSRS07 (the generic `Mailbox`: `post`
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #model-pool #cross-repo
+
+## Review Findings (2026-09-27 10:05)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 20 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [ ] `Sources/FoundationModelsRouter/Session/RoutedSessionActorCompaction.swift:146` `duplication/duplication` — The pattern of wrapping a mailbox answer in `withTaskCancellationHandler` with `cancelFromCallerTask` on cancel is duplicated. This exact structure appears in both `compact()` (here) and `enqueueAndAwaitAnswer()` in RoutedSessionActorGeneration.swift, differing only in the mailbox type and how the item is posted. Two functions doing the same thing with different mailbox parameters should share one extracted helper. Extract a shared helper function `awaitMailboxAnswer<Message: Sendable, Answer: Sendable>(id: MessageID, answer: MailboxAnswer<Answer>, in mailbox: Mailbox<Message, Answer>) async throws -> Answer` that handles the `withTaskCancellationHandler` + `cancelFromCallerTask` pattern, and call it from both `compact()` and `enqueueAndAwaitAnswer()`.
+- [ ] `Sources/FoundationModelsRouter/Session/RoutedSessionActorGeneration.swift:92` `duplication/duplication` — The pattern of wrapping a mailbox answer in `withTaskCancellationHandler` with `cancelFromCallerTask` on cancel is duplicated. This exact structure appears in both `enqueueAndAwaitAnswer()` (here) and `compact()` in RoutedSessionActorCompaction.swift, differing only in the mailbox type and how the item is posted. Two functions doing the same thing with different mailbox parameters should share one extracted helper. Extract a shared helper function `awaitMailboxAnswer<Message: Sendable, Answer: Sendable>(id: MessageID, answer: MailboxAnswer<Answer>, in mailbox: Mailbox<Message, Answer>) async throws -> Answer` that handles the `withTaskCancellationHandler` + `cancelFromCallerTask` pattern, and call it from both `enqueueAndAwaitAnswer()` and `compact()`.

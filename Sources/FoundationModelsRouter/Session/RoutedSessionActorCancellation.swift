@@ -104,6 +104,33 @@ extension RoutedSessionActor {
         return result
     }
 
+    /// Waits for `answer`, the answer of the message or the caller compaction
+    /// `id` that the caller just posted to `mailbox`. A cancel of the caller
+    /// cancels the item at once (``cancelFromCallerTask(_:in:)``).
+    ///
+    /// The caller posts the item and calls this with no suspension point
+    /// between the two, and this installs the cancel handler before its first
+    /// suspension point. The pump takes a batch only on this actor, so the
+    /// pump cannot take the item before the handler is in place. A caller
+    /// that is cancelled before the post gets the handler at once when it is
+    /// installed, and the handler withdraws the item before the pump sees it.
+    ///
+    /// - Parameters:
+    ///   - id: The id that `mailbox` gave the item.
+    ///   - answer: The answer that `mailbox` gave the item.
+    ///   - mailbox: ``SessionOutbox/messages`` or ``compactionRequests``.
+    /// - Returns: The answer of the work that carried the item.
+    /// - Throws: What that work throws, or `CancellationError`.
+    func awaitMailboxAnswer<Message: Sendable, Answer: Sendable>(
+        id: MessageID, answer: MailboxAnswer<Answer>, in mailbox: FoundationModelsExtras.Mailbox<Message, Answer>
+    ) async throws -> Answer {
+        try await withTaskCancellationHandler {
+            try await answer.value
+        } onCancel: {
+            cancelFromCallerTask(id, in: mailbox)
+        }
+    }
+
     /// Cancels the message or the caller compaction `id` from the
     /// cancellation handler of a caller task, which does not run on this
     /// actor. The first half occurs at once (``requestCancel(of:in:)``). The

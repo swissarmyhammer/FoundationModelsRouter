@@ -71,29 +71,19 @@ extension RoutedSessionActor {
     }
 
     /// Posts `message` to ``SessionOutbox/messages`` and waits for its
-    /// answer. A cancel of the caller cancels the message at once
-    /// (``cancelFromCallerTask(_:in:)``): the mailbox withdraws a message
-    /// that waits, and a message that the running answer carries gets a
-    /// mark, and the session stops that answer.
-    ///
-    /// The cancel handler is installed after ``enqueue(_:)``, with no
-    /// suspension point between the post and the handler, and the pump takes
-    /// a batch only on this actor. So the pump cannot take the message before
-    /// the handler is in place. A caller that is cancelled before this call,
-    /// or while ``enqueue(_:)`` waits, gets the handler at once when it is
-    /// installed, and the handler withdraws the message before the pump sees
-    /// it.
+    /// answer (``awaitMailboxAnswer(id:answer:in:)``). A cancel of the caller
+    /// cancels the message at once: the mailbox withdraws a message that
+    /// waits, and a message that the running answer carries gets a mark, and
+    /// the session stops that answer. A caller that is cancelled before this
+    /// call, or while ``enqueue(_:)`` waits, gets its message withdrawn
+    /// before the pump sees it.
     ///
     /// - Parameter message: The message the caller sent.
     /// - Returns: The final reply of its answer.
     /// - Throws: What its answer throws, or `CancellationError`.
     private func enqueueAndAwaitAnswer(of message: SessionMessage) async throws -> String {
         let (id, answer) = await enqueue(message)
-        return try await withTaskCancellationHandler {
-            try await answer.value
-        } onCancel: {
-            cancelFromCallerTask(id, in: outbox.messages)
-        }
+        return try await awaitMailboxAnswer(id: id, answer: answer, in: outbox.messages)
     }
 
     /// Refuses a wait for an answer of this session that could never end

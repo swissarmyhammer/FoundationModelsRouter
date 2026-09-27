@@ -142,16 +142,13 @@ extension RoutedSessionActor {
         let request = CompactionRequest(prompt: prompt, budget: budget, serviceContext: ServiceContext.current)
         let (id, answer) = compactionRequests.post(request)
         wakePump()
-        return try await withTaskCancellationHandler {
-            try await answer.value
-        } onCancel: {
-            // `cancelFromCallerTask(_:in:)` is defined in
-            // RoutedSessionActorCancellation.swift. It withdraws a waiting
-            // request, or stops the running compaction. AnswerCancellationTests
-            // proves both paths: `cancellingAWaitingCallerCompactWithdrawsIt`
-            // and `cancellingACallerDrivenCompactStopsIt(route: .callerTask)`.
-            cancelFromCallerTask(id, in: compactionRequests)
-        }
+        // `awaitMailboxAnswer(id:answer:in:)` is defined in
+        // RoutedSessionActorCancellation.swift. A cancel of the caller
+        // withdraws a waiting request, or stops the running compaction.
+        // AnswerCancellationTests proves both paths:
+        // `cancellingAWaitingCallerCompactWithdrawsIt` and
+        // `cancellingACallerDrivenCompactStopsIt(route: .callerTask)`.
+        return try await awaitMailboxAnswer(id: id, answer: answer, in: compactionRequests)
     }
 
     /// Runs one caller compaction over this session's own model, inside the
