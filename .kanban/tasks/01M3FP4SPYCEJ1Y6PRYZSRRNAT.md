@@ -27,8 +27,24 @@ comments:
     - evidence: `swift package clean && swift build --build-tests` — exit 0, no source warnings (only the SwiftPM "missing creator for mutated node" note on the mlx bundle, from the build system). `swift test` — 1451 tests in 174 suites passed (2 known issues are the intended `withKnownIssue` checks in BoundedWaitTests and RealModelHarnessTests), plus 17 and 19 tests in the two other test products; 0 failed, 0 skipped. `swift build --build-tests --package-path IntegrationTests` — Build complete.
     - next: /commit
   timestamp: 2026-09-27T16:28:46.221700+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m3hvgpm3q668fsxd43vmjm2q
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (591921e) — 0 findings, 0 confirmed, 4 refuted; 16 files reviewed; README.md and .kanban/ not reviewed (no validator / ignore rule). No prior findings sections.
+    - next: task moved to done
+  timestamp: 2026-09-27T16:35:04.963893+00:00
+- actor: claude-code
+  id: 01m3hvgrznhrp1e5q44mwe5b1v
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed (JointFit flash skips the standard model; SameGenerationModelFailure before load; docs; test, tool and integration profiles use two models)
+    - test: green (clean build; swift test 1451 + 17 + 19 tests passed, 0 failed, 0 skipped; IntegrationTests build complete)
+    - commit: 591921e feat(router): resolve never gives the same model to standard and flash (^zsrrnat)
+    - review: clean (review sha HEAD~1..HEAD, 0 findings)
+  timestamp: 2026-09-27T16:35:07.381539+00:00
+position_column: done
+position_ordinal: ffffffa180
 title: 'Router: resolve never gives the same model to the standard and flash slots'
 ---
 ## What
