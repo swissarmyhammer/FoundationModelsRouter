@@ -123,7 +123,13 @@ extension RoutedSessionActor {
     /// runs it between two submissions (``compactOwnModel(prompt:budget:)``),
     /// so it never runs beside a submission of this session. A cancel of the
     /// caller withdraws a request that waits, or stops the compaction that
-    /// runs (``cancel(compaction:)``).
+    /// runs (``cancelFromCallerTask(_:in:)``).
+    ///
+    /// The request is posted before the cancel handler is installed, with no
+    /// suspension point between the two, and the pump takes a request only on
+    /// this actor. A caller that is cancelled before this call gets the
+    /// handler at once, and the handler withdraws the request before the
+    /// pump sees it.
     ///
     /// This compaction offers the own model only, so a summarizer failure
     /// reaches the caller — and the span records it.
@@ -134,19 +140,17 @@ extension RoutedSessionActor {
     ) async throws -> CompactionResult {
         try refuseWaitInsideOpenSubmission()
         let request = CompactionRequest(prompt: prompt, budget: budget, serviceContext: ServiceContext.current)
-        pendingCompactions.append(request)
+        let (id, answer) = compactionRequests.post(request)
         wakePump()
         return try await withTaskCancellationHandler {
-            try await request.answer.value()
+            try await answer.value
         } onCancel: {
-            request.answer.requestCancel()
-            // `cancel(compaction:)` is defined in RoutedSessionActorPump.swift
-            // (`func cancel(compaction request: CompactionRequest)`). It takes a
-            // waiting request out of `pendingCompactions`, or stops the running
-            // compaction. AnswerCancellationTests proves both paths:
-            // `cancellingAWaitingCallerCompactWithdrawsIt` and
-            // `cancellingACallerDrivenCompactStopsIt(route: .callerTask)`.
-            Task { await self.cancel(compaction: request) }
+            // `cancelFromCallerTask(_:in:)` is defined in
+            // RoutedSessionActorCancellation.swift. It withdraws a waiting
+            // request, or stops the running compaction. AnswerCancellationTests
+            // proves both paths: `cancellingAWaitingCallerCompactWithdrawsIt`
+            // and `cancellingACallerDrivenCompactStopsIt(route: .callerTask)`.
+            cancelFromCallerTask(id, in: compactionRequests)
         }
     }
 

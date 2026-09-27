@@ -1,52 +1,21 @@
 import FoundationModels
-import Synchronization
+import FoundationModelsExtras
 import Tracing
 
-/// The answer of one item that waits for the pump of a session: a caller
-/// message, or a caller compaction (`generation-queue.md`, section 5.4).
+/// The queue of the caller messages of one session: an Extras `Mailbox` whose
+/// answer is the final reply of the answer that carried the message
+/// (`generation-queue.md`, section 5.4). ``SessionOutbox/messages`` is the one
+/// instance of a session.
 ///
-/// The pump resolves it one time, with the result of the work that carried
-/// the item. The caller waits only for this answer. It waits for no
-/// permission. The first resolve wins, and each later resolve does nothing.
-///
-/// A caller that is cancelled marks the answer (``requestCancel()``) before
-/// it asks the session to withdraw the item. The pump reads the mark when it
-/// takes the item, so a cancel that arrives while the pump takes the item is
-/// not lost. While the answer runs, ``RoutedSessionActor/isWorkCancelled``
-/// reads the mark too, so a cancel that arrives before the withdraw is not
-/// late for the next model call of the answer.
-final class PumpAnswer<Value: Sendable>: Sendable {
-    /// The one-time rendezvous of the result and its one waiter.
-    private let gate = RaceGate<Result<Value, any Error>>()
+/// The mailbox gives each message its ``MessageID`` and its one answer. Post,
+/// cancel, replace and each take occur under one lock and do not suspend, so
+/// a cancel is never late for a take: the message waits, or the running batch
+/// carries it, and the cancel finds it.
+typealias SessionMessageMailbox = FoundationModelsExtras.Mailbox<SessionMessage, String>
 
-    /// Whether the caller of the item was cancelled.
-    private let cancelRequested = Atomic<Bool>(false)
-
-    /// Gives `result` to the waiter. Only the first call has an effect.
-    ///
-    /// - Parameter result: The result of the work that carried the item.
-    func resolve(_ result: Result<Value, any Error>) {
-        gate.resume(with: result)
-    }
-
-    /// Waits for the result of the item.
-    ///
-    /// - Returns: The value of the result.
-    /// - Throws: The error of the result.
-    func value() async throws -> Value {
-        try await withCheckedContinuation { gate.register(continuation: $0) }.get()
-    }
-
-    /// Marks that the caller of the item was cancelled.
-    func requestCancel() {
-        cancelRequested.store(true, ordering: .releasing)
-    }
-
-    /// Whether the caller of the item was cancelled.
-    var isCancelRequested: Bool {
-        cancelRequested.load(ordering: .acquiring)
-    }
-}
+/// One caller message in ``SessionOutbox/messages``, with the ``MessageID``
+/// that ``SessionMessageMailbox/post(_:)`` gave it.
+typealias SessionLetter = SessionMessageMailbox.Letter
 
 /// Who reads the output of the submission that carries a caller message.
 enum MessageReader: Sendable {
@@ -77,16 +46,13 @@ enum MessageReader: Sendable {
 /// One caller message that waits in the ``SessionOutbox`` of a session for
 /// the pump (`generation-queue.md`, section 5.4).
 ///
-/// ``RoutedSession/send(_:)-(Transcript.Prompt)`` adds one message and returns
-/// its id. ``RoutedSession/respond(to:maxTokens:)`` and the two stream methods
-/// each add one message and wait for its answer. The pump puts the text of
-/// the message into the `.prompt` entry of the next submission that can carry
-/// it.
+/// ``RoutedSession/send(_:)-(Transcript.Prompt)`` posts one message and
+/// returns its id. ``RoutedSession/respond(to:maxTokens:)`` and the two stream
+/// methods each post one message and wait for its answer. The pump puts the
+/// text of the message into the `.prompt` entry of the next submission that
+/// can carry it. The mailbox keeps the id and the answer of the message
+/// (``SessionLetter``).
 struct SessionMessage: Sendable {
-    /// The id of the message, which ``RoutedSession/send(_:)-(Transcript.Prompt)``
-    /// returns.
-    let id: MessageID
-
     /// The prompt of the message. ``RoutedSession/replace(id:prompt:)``
     /// changes it while the message waits.
     var prompt: Transcript.Prompt
@@ -108,12 +74,20 @@ struct SessionMessage: Sendable {
     /// of the caller.
     let serviceContext: ServiceContext?
 
-    /// The answer the caller waits for.
-    let answer: PumpAnswer<String>
-
     /// The options that the submission of this message fixes at its start.
     var options: SubmissionOptions {
         SubmissionOptions(isStream: reader.isStream, requestedMaxTokens: requestedMaxTokens)
+    }
+
+    /// Whether `other` can share the submission that `first` starts: the
+    /// joining rule of each batch the pump takes from the mailbox.
+    ///
+    /// - Parameters:
+    ///   - first: The message that starts the batch.
+    ///   - other: A later waiting message.
+    /// - Returns: `true` when the options of `first` admit `other`.
+    static func sharesSubmission(_ first: SessionMessage, with other: SessionMessage) -> Bool {
+        first.options.admits(other)
     }
 }
 
@@ -157,12 +131,13 @@ struct SubmissionOptions: Sendable, Equatable {
     }
 }
 
-/// What the pump takes from the ``SessionOutbox`` for one submission: every
-/// waiting mail event, and the caller messages that can share the submission.
+/// What the first submission of one answer carries: the caller messages that
+/// can share the submission, and every waiting mail event.
 struct SubmissionBatch: Sendable {
+    /// The caller messages, in the order they arrived. None when only mail
+    /// starts the submission.
+    let letters: [SessionLetter]
+
     /// The mail events, in outbox order.
     let events: [SessionOutbox.PendingEvent]
-
-    /// The caller messages, in the order they arrived.
-    let messages: [SessionMessage]
 }

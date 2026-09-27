@@ -372,14 +372,21 @@ actor RoutedSessionActor: RoutedSession {
     /// The id of the last work the pump started. Ids are monotonic.
     var lastWorkId: UInt64 = 0
 
-    /// The caller compactions that wait for the pump, first in first out.
-    var pendingCompactions: [CompactionRequest] = []
+    /// The caller compactions that wait for the pump, first in first out,
+    /// and the one the pump runs. Each request gets its id and its answer
+    /// here (``RoutedSession/compact(prompt:budget:)``).
+    nonisolated let compactionRequests = CompactionRequestMailbox()
 
-    /// The answer of every caller message that has no answer yet, by the id
-    /// of the message: a message that waits in ``outbox``, one the pump
-    /// takes, and one the running answer carries. ``enqueue(_:)`` adds it,
-    /// and ``resolve(_:with:)`` removes it. ``cancel(message:)`` reads it.
-    var openMessages: [MessageID: PumpAnswer<String>] = [:]
+    /// The cancel marks of the items the running work carries. A caller
+    /// cancel of such an item writes its mark at once, and
+    /// ``isWorkCancelled`` reads it. The pump clears the marks when a work
+    /// ends.
+    nonisolated let cancelMarks = CancelMarks()
+
+    /// Whether the pump waits in a mailbox for a letter: set from the start
+    /// of a take until the take runs its batch. See
+    /// ``releasePumpAwaitingLetter()``.
+    var pumpAwaitsLetter = false
 
     /// The in-flight model call of the work the pump runs, the task
     /// ``requestCancelOfRunningWork()`` cancels, or `nil` when no model call

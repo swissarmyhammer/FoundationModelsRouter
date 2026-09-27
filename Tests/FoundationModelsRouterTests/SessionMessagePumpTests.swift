@@ -267,7 +267,7 @@ struct SessionMessagePumpTests {
         guard
             await BoundedWait.conditionReached(
                 "\(count) caller messages waiting in the outbox",
-                when: { await session.outbox.waitingMessageCount == count })
+                when: { session.outbox.messages.depth.waiting == count })
         else { throw SignalNeverArrived() }
     }
 
@@ -380,7 +380,7 @@ struct SessionMessagePumpTests {
         #expect(firstAnswer == PumpProbeBackend.answer(ofCall: 1))
         #expect(secondAnswer == PumpProbeBackend.answer(ofCall: 2))
         #expect(thirdAnswer == PumpProbeBackend.answer(ofCall: 2))
-        #expect(await session.outbox.waitingMessageCount == 0)
+        #expect(session.outbox.messages.depth.waiting == 0)
         withExtendedLifetime(profile) {}
     }
 
@@ -501,7 +501,7 @@ struct SessionMessagePumpTests {
 
         await #expect(throws: CancellationError.self) { try await second.value }
         await #expect(throws: CancellationError.self) { try await first.value }
-        #expect(await session.outbox.waitingMessageCount == 0)
+        #expect(session.outbox.messages.depth.waiting == 0)
         #expect(await session.outbox.pending().events.map(\.event) == [settledRun])
         #expect(await Self.pumpStops(on: session))
         #expect(backend.prompts == [Self.firstPrompt])

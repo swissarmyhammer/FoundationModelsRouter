@@ -1,4 +1,5 @@
 import FoundationModels
+import FoundationModelsExtras
 
 /// A per-``RoutedSession`` staging area for the messages that wait for the
 /// pump of the session (`generation-queue.md`, section 5.4).
@@ -16,11 +17,11 @@ import FoundationModels
 /// - Caller messages (``SessionMessage``): the prompts of
 ///   ``RoutedSession/send(_:)-(Transcript.Prompt)``,
 ///   ``RoutedSession/respond(to:maxTokens:)`` and the two stream methods.
-///   The pump takes them in FIFO order
-///   (``takeSubmissionBatch(deliveringRunsOf:)``).
+///   They wait in the Extras mailbox ``messages``, which gives each one its
+///   ``MessageID`` and its answer. The pump takes them in FIFO order, one
+///   batch of the mailbox for each answer.
 ///
-/// A staged event gets a stable ``EventID`` at post time, and a caller
-/// message carries the ``MessageID`` its sender got.
+/// A staged event gets a stable ``EventID`` at post time.
 ///
 /// The actor itself is internal. An app reaches the caller messages through
 /// ``RoutedSession``'s methods; a session never exposes its outbox.
@@ -102,14 +103,17 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
 
         /// Every caller message that waits for the pump, in the order the
         /// messages arrived.
-        let messages: [SessionMessage]
+        let messages: [SessionLetter]
     }
 
     /// Pending mail events, in outbox order.
     private var events: [PendingEvent] = []
 
-    /// The caller messages that wait for the pump, in the order they arrived.
-    private var messages: [SessionMessage] = []
+    /// The caller messages that wait for the pump, and the messages of the
+    /// answer that runs. Every call on it is synchronous and holds one lock,
+    /// so a caller that is not on this actor or on the session actor, such
+    /// as the cancellation handler of a caller task, reaches it at once.
+    nonisolated let messages = SessionMessageMailbox()
 
     /// The journal every posted event is recorded into, or `nil` before
     /// ``attach(journal:)``. Weak to avoid a reference cycle.
@@ -296,7 +300,7 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
     }
 
     /// Replaces the prompt of the waiting caller message with `id`, in place.
-    /// The message keeps its place in the queue.
+    /// The message keeps its id and its place in the queue.
     ///
     /// - Parameters:
     ///   - id: The id of the message.
@@ -304,39 +308,20 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
     /// - Returns: ``MessageQueueMutationResult/applied`` when the message
     ///   waited; ``MessageQueueMutationResult/alreadySent`` otherwise.
     @discardableResult
-    func replace(id: MessageID, prompt: Transcript.Prompt) -> MessageQueueMutationResult {
-        guard let index = messages.firstIndex(where: { $0.id == id }) else { return .alreadySent }
-        messages[index].prompt = prompt
-        return .applied
+    nonisolated func replace(id: MessageID, prompt: Transcript.Prompt) -> MessageQueueMutationResult {
+        guard var message = messages.pending.first(where: { $0.id == id })?.message else { return .alreadySent }
+        message.prompt = prompt
+        return messages.replace(id, with: message)
     }
 
     /// A snapshot of everything currently pending, per kind.
     func pending() -> Pending {
-        Pending(events: events, messages: messages)
+        Pending(events: events, messages: messages.pending)
     }
 
-    /// Adds one caller message behind every message that waits.
-    ///
-    /// - Parameter message: The message to add.
-    func add(message: SessionMessage) {
-        messages.append(message)
-    }
-
-    /// How many caller messages wait for the pump.
-    var waitingMessageCount: Int {
-        messages.count
-    }
-
-    /// Takes what the next submission of the pump carries, and commits
-    /// exactly what it returns.
-    ///
-    /// When a caller message waits, the first one decides the options of the
-    /// submission (``SubmissionOptions``), and every waiting message that
-    /// the options admit comes with it, in FIFO order. A stream message goes
-    /// alone. When no caller message waits, the terminal of a settled
-    /// background run starts a submission of its own, unless it is held
-    /// (``PendingEvent/isHeld``). Every pending mail event comes with the
-    /// submission, held or not.
+    /// Takes the mail of a submission that no caller message starts: every
+    /// pending mail event, when the terminal of a settled background run that
+    /// is not held (``PendingEvent/isHeld``) is one of them.
     ///
     /// Other mail — a progress report, an elicitation, or the terminal of an
     /// in-band run that ended abnormally — starts no submission. The model
@@ -345,19 +330,13 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
     ///
     /// - Parameter settledRunTokens: The completion tokens of the background
     ///   runs that settled.
-    /// - Returns: The batch, or `nil` when nothing that can start a
-    ///   submission waits. Then nothing is taken.
-    func takeSubmissionBatch(deliveringRunsOf settledRunTokens: Set<String>) -> SubmissionBatch? {
-        if let first = messages.first {
-            let options = first.options
-            let taken =
-                options.isStream ? takeMessages(where: { $0.id == first.id }) : takeMessages(where: options.admits)
-            return SubmissionBatch(events: takeEvents(), messages: taken)
-        }
+    /// - Returns: The events, in outbox order, or `nil` when no event can
+    ///   start a submission. Then nothing is taken.
+    func takeMailStartingASubmission(deliveringRunsOf settledRunTokens: Set<String>) -> [PendingEvent]? {
         guard Self.canStartASubmission(events, settledRunTokens: settledRunTokens) else {
             return nil
         }
-        return SubmissionBatch(events: takeEvents(), messages: [])
+        return takeEvents()
     }
 
     /// Whether `mail` holds the terminal of a background run that settled,
@@ -375,48 +354,24 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
         }
     }
 
-    /// Takes what a continuation submission of a running answer carries:
-    /// every pending mail event, and every waiting caller message that
-    /// `options` admit.
-    ///
-    /// - Parameter options: The options of the running answer.
-    /// - Returns: The batch, which can be empty.
-    func takeJoiningBatch(options: SubmissionOptions) -> SubmissionBatch {
-        SubmissionBatch(events: takeEvents(), messages: takeMessages(where: options.admits))
-    }
-
-    /// Takes every waiting caller message for which `isTaken` is `true`. The
-    /// other messages keep their order.
-    ///
-    /// - Parameter isTaken: Whether a message is taken.
-    /// - Returns: The taken messages, in the order they arrived.
-    private func takeMessages(where isTaken: (SessionMessage) -> Bool) -> [SessionMessage] {
-        let taken = messages.filter(isTaken)
-        messages.removeAll(where: isTaken)
-        return taken
-    }
-
-    /// Takes every pending mail event.
+    /// Takes every pending mail event. A submission takes them all, held or
+    /// not: the first submission of an answer that caller messages start, and
+    /// each continuation submission.
     ///
     /// - Returns: The events, in outbox order.
-    private func takeEvents() -> [PendingEvent] {
+    func takeEvents() -> [PendingEvent] {
         let taken = events
         events = []
         return taken
     }
 
-    /// Withdraws every waiting caller message.
+    /// Withdraws every waiting caller message. Each caller that waits for the
+    /// answer of one of them gets `CancellationError` from ``messages``.
     ///
     /// - Returns: The withdrawn messages, in the order they arrived.
-    func withdrawMessages() -> [SessionMessage] {
-        takeMessages { _ in true }
-    }
-
-    /// Withdraws the waiting caller message with `id`.
-    ///
-    /// - Parameter id: The id of the message.
-    /// - Returns: The message, or `nil` when no waiting message has `id`.
-    func withdrawMessage(id: MessageID) -> SessionMessage? {
-        takeMessages { $0.id == id }.first
+    nonisolated func withdrawMessages() -> [SessionMessage] {
+        messages.pending.compactMap { letter in
+            messages.cancel(letter.id) == .withdrawn ? letter.message : nil
+        }
     }
 }

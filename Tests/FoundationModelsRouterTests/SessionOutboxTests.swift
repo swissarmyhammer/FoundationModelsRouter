@@ -91,8 +91,8 @@ struct SessionOutboxTests {
         await outbox.post(event: Self.event(correlationID: "c1", kind: .elicitation, detail: "first question"))
         await outbox.post(event: Self.event(correlationID: "c1", kind: .elicitation, detail: "second question"))
 
-        let taken = await outbox.takeJoiningBatch(options: .mailDelivery)
-        #expect(taken.events.map(\.event.detail) == ["first question", "second question"])
+        let taken = await outbox.takeEvents()
+        #expect(taken.map(\.event.detail) == ["first question", "second question"])
     }
 
     @Test("interleaved .progress still coalesces while .elicitation events are all kept, in post order")
@@ -154,29 +154,27 @@ struct SessionOutboxTests {
     @Test("caller messages never coalesce and keep the order they arrived in")
     func callerMessagesKeepTheirOrderAndNeverCoalesce() async {
         let outbox = SessionOutbox()
-        await outbox.add(message: Self.message("first"))
-        await outbox.add(message: Self.message("second"))
-        await outbox.add(message: Self.message("third"))
+        _ = outbox.messages.post(Self.message("first"))
+        _ = outbox.messages.post(Self.message("second"))
+        _ = outbox.messages.post(Self.message("third"))
 
         let pending = await outbox.pending()
         #expect(pending.messages.count == 3)
-        #expect(pending.messages.map { Self.text(of: $0.prompt) } == ["first", "second", "third"])
+        #expect(pending.messages.map { Self.text(of: $0.message.prompt) } == ["first", "second", "third"])
     }
 
     @Test("each caller message keeps its own distinct, stable id in the outbox")
     func callerMessagesKeepDistinctIds() async {
         let outbox = SessionOutbox()
-        let first = Self.message("first")
-        let second = Self.message("second")
-        #expect(first.id != second.id)
-        await outbox.add(message: first)
-        await outbox.add(message: second)
+        let first = outbox.messages.post(Self.message("first")).id
+        let second = outbox.messages.post(Self.message("second")).id
+        #expect(first != second)
 
         let pending = await outbox.pending()
-        #expect(pending.messages.map(\.id) == [first.id, second.id])
+        #expect(pending.messages.map(\.id) == [first, second])
     }
 
-    // MARK: - takeSubmissionBatch(deliveringRunsOf:): commits and empties exactly what it returns
+    // MARK: - The take of the pump: commits and empties exactly what it returns
 
     /// A caller message with `text`, ready for the outbox.
     ///
@@ -189,17 +187,59 @@ struct SessionOutboxTests {
         _ text: String, requestedMaxTokens: Int? = nil, reader: MessageReader = .reply
     ) -> SessionMessage {
         SessionMessage(
-            id: MessageID(), prompt: .plainText(text), requestedMaxTokens: requestedMaxTokens, reader: reader,
-            serviceContext: nil, answer: PumpAnswer())
+            prompt: .plainText(text), requestedMaxTokens: requestedMaxTokens, reader: reader, serviceContext: nil)
     }
 
-    @Test("takeSubmissionBatch commits and empties every pending event when a settled run's terminal can start a submission")
-    func takeSubmissionBatchEmptiesEvents() async {
+    /// What one take of the pump gave: the mail events and the caller
+    /// messages of one submission.
+    private struct TakenBatch {
+        /// The mail events that the take committed.
+        let events: [SessionOutbox.PendingEvent]
+
+        /// The caller messages of the batch, in FIFO order. Empty for a take
+        /// of mail only.
+        let messages: [SessionMessage]
+    }
+
+    /// Takes the next submission from `outbox` as the pump does.
+    ///
+    /// When a caller message waits, the mailbox runs the next batch: the
+    /// first waiting message, and each later message that can share its
+    /// submission. The body of the batch takes every pending mail event, as
+    /// the pump does, and gives an empty answer to the messages. When no
+    /// caller message waits, only mail can start a submission: the take
+    /// commits all pending events when the terminal of a settled run is
+    /// among them.
+    ///
+    /// - Parameters:
+    ///   - outbox: The outbox to take from.
+    ///   - settledRunTokens: The tokens of the settled background runs.
+    /// - Returns: What the take committed, or `nil` when nothing can start a
+    ///   submission. Then nothing was taken.
+    private static func takeBatch(
+        from outbox: SessionOutbox, deliveringRunsOf settledRunTokens: Set<String>
+    ) async -> TakenBatch? {
+        guard outbox.messages.pending.isEmpty else {
+            var taken: TakenBatch?
+            await outbox.messages.answerNextBatch(joining: SessionMessage.sharesSubmission(_:with:)) { letters in
+                taken = TakenBatch(events: await outbox.takeEvents(), messages: letters.map(\.message))
+                return ""
+            }
+            return taken
+        }
+        guard let events = await outbox.takeMailStartingASubmission(deliveringRunsOf: settledRunTokens) else {
+            return nil
+        }
+        return TakenBatch(events: events, messages: [])
+    }
+
+    @Test("the take of the pump commits and empties every pending event when a settled run's terminal can start a submission")
+    func takeOfThePumpEmptiesEvents() async {
         let outbox = SessionOutbox()
         await outbox.post(event: Self.event(correlationID: "c1", kind: .completed, detail: "one"))
         await outbox.post(event: Self.event(correlationID: "c2", kind: .completed, detail: "two"))
 
-        let taken = await outbox.takeSubmissionBatch(deliveringRunsOf: ["c1"])
+        let taken = await Self.takeBatch(from: outbox, deliveringRunsOf: ["c1"])
         #expect(taken?.events.map(\.event.detail) == ["one", "two"])
         #expect(taken?.messages.isEmpty == true)
 
@@ -211,16 +251,14 @@ struct SessionOutboxTests {
     @Test("replace changes the prompt of a waiting caller message in place: it keeps its id and its place")
     func replaceChangesAWaitingMessageInPlace() async {
         let outbox = SessionOutbox()
-        let first = Self.message("first")
-        let second = Self.message("second")
-        await outbox.add(message: first)
-        await outbox.add(message: second)
+        let first = outbox.messages.post(Self.message("first")).id
+        let second = outbox.messages.post(Self.message("second")).id
 
-        #expect(await outbox.replace(id: first.id, prompt: Self.prompt("edited")) == .applied)
+        #expect(outbox.replace(id: first, prompt: Self.prompt("edited")) == .applied)
 
         let pending = await outbox.pending()
-        #expect(pending.messages.map(\.id) == [first.id, second.id])
-        #expect(pending.messages.map(\.text) == ["edited", "second"])
+        #expect(pending.messages.map(\.id) == [first, second])
+        #expect(pending.messages.map(\.message.text) == ["edited", "second"])
     }
 
     @Test("replace of an id that names no waiting message changes nothing, and leaves the mail pending")
@@ -228,29 +266,29 @@ struct SessionOutboxTests {
         let outbox = SessionOutbox()
         await outbox.post(event: Self.event(correlationID: "c1", kind: .completed, detail: "one"))
 
-        #expect(await outbox.replace(id: MessageID(), prompt: Self.prompt("lost")) == .alreadySent)
+        #expect(outbox.replace(id: MessageID.unposted(), prompt: Self.prompt("lost")) == .alreadySent)
         #expect(await outbox.pending().events.count == 1)
         #expect(await outbox.pending().messages.isEmpty)
     }
 
-    @Test("a second takeSubmissionBatch with nothing new pending takes nothing")
+    @Test("a second take of the pump with nothing new pending takes nothing")
     func secondTakeWithNothingNewTakesNothing() async {
         let outbox = SessionOutbox()
         await outbox.post(event: Self.event(correlationID: "c1", kind: .completed, detail: "one"))
-        _ = await outbox.takeSubmissionBatch(deliveringRunsOf: ["c1"])
+        _ = await Self.takeBatch(from: outbox, deliveringRunsOf: ["c1"])
 
-        #expect(await outbox.takeSubmissionBatch(deliveringRunsOf: ["c1"]) == nil)
+        #expect(await Self.takeBatch(from: outbox, deliveringRunsOf: ["c1"]) == nil)
     }
 
     @Test("progress mail, the terminal of a run that is no settled background run, and held mail start no submission and stay pending")
     func mailThatCannotStartASubmissionStaysPending() async {
         let outbox = SessionOutbox()
         await outbox.post(event: Self.event(correlationID: "c1", kind: .progress, detail: "10%"))
-        #expect(await outbox.takeSubmissionBatch(deliveringRunsOf: ["c1"]) == nil)
+        #expect(await Self.takeBatch(from: outbox, deliveringRunsOf: ["c1"]) == nil)
 
         await outbox.post(event: Self.event(correlationID: "c2", kind: .completed, detail: "in-band run failed"))
-        #expect(await outbox.takeSubmissionBatch(deliveringRunsOf: ["c1"]) == nil)
-        #expect(await outbox.takeSubmissionBatch(deliveringRunsOf: []) == nil)
+        #expect(await Self.takeBatch(from: outbox, deliveringRunsOf: ["c1"]) == nil)
+        #expect(await Self.takeBatch(from: outbox, deliveringRunsOf: []) == nil)
         #expect(await outbox.pending().events.count == 2)
     }
 
@@ -259,20 +297,20 @@ struct SessionOutboxTests {
         let outbox = SessionOutbox()
         let givenBack = Self.event(correlationID: "c1", kind: .completed, detail: "given back")
         await outbox.requeue(event: givenBack)
-        #expect(await outbox.takeSubmissionBatch(deliveringRunsOf: ["c1", "c2"]) == nil)
+        #expect(await Self.takeBatch(from: outbox, deliveringRunsOf: ["c1", "c2"]) == nil)
 
-        await outbox.add(message: Self.message("first"))
-        let first = await outbox.takeSubmissionBatch(deliveringRunsOf: ["c1", "c2"])
+        _ = outbox.messages.post(Self.message("first"))
+        let first = await Self.takeBatch(from: outbox, deliveringRunsOf: ["c1", "c2"])
         #expect(first?.messages.map(\.text) == ["first"])
         #expect(first?.events.map(\.event) == [givenBack])
 
         let held = Self.event(correlationID: "c2", kind: .completed, detail: "held by a cancel")
         await outbox.post(event: held)
         await outbox.holdPendingMail()
-        #expect(await outbox.takeSubmissionBatch(deliveringRunsOf: ["c1", "c2"]) == nil)
+        #expect(await Self.takeBatch(from: outbox, deliveringRunsOf: ["c1", "c2"]) == nil)
 
-        await outbox.add(message: Self.message("next"))
-        let taken = await outbox.takeSubmissionBatch(deliveringRunsOf: [])
+        _ = outbox.messages.post(Self.message("next"))
+        let taken = await Self.takeBatch(from: outbox, deliveringRunsOf: [])
         #expect(taken?.messages.map(\.text) == ["next"])
         #expect(taken?.events.map(\.event) == [held])
     }
@@ -282,7 +320,7 @@ struct SessionOutboxTests {
         let outbox = SessionOutbox()
         await outbox.requeue(event: Self.event(correlationID: "c1", kind: .completed, detail: "held"))
         await outbox.post(event: Self.event(correlationID: "c2", kind: .progress, detail: "10%"))
-        let taken = await outbox.takeJoiningBatch(options: .mailDelivery).events
+        let taken = await outbox.takeEvents()
         await outbox.post(event: Self.event(correlationID: "c3", kind: .completed, detail: "newer"))
 
         await outbox.putBack(untouched: taken)
@@ -294,36 +332,45 @@ struct SessionOutboxTests {
     }
 
     @Test("the first caller message decides the batch: every waiting message with the same ceiling comes with it, in FIFO order, with all the mail")
-    func takeSubmissionBatchTakesEveryMessageThatCanShareTheSubmission() async {
+    func takeOfThePumpTakesEveryMessageThatCanShareTheSubmission() async {
         let outbox = SessionOutbox()
         await outbox.post(event: Self.event(correlationID: "c1", kind: .progress, detail: "10%"))
-        await outbox.add(message: Self.message("a"))
-        await outbox.add(message: Self.message("b", requestedMaxTokens: 64))
-        await outbox.add(message: Self.message("c"))
+        _ = outbox.messages.post(Self.message("a"))
+        _ = outbox.messages.post(Self.message("b", requestedMaxTokens: 64))
+        _ = outbox.messages.post(Self.message("c"))
 
-        let taken = await outbox.takeSubmissionBatch(deliveringRunsOf: [])
+        let taken = await Self.takeBatch(from: outbox, deliveringRunsOf: [])
         #expect(taken?.messages.map(\.text) == ["a", "c"])
         #expect(taken?.events.count == 1)
 
         // The message with its own ceiling waits for a submission of its own.
-        let next = await outbox.takeSubmissionBatch(deliveringRunsOf: [])
+        let next = await Self.takeBatch(from: outbox, deliveringRunsOf: [])
         #expect(next?.messages.map(\.text) == ["b"])
-        #expect(await outbox.waitingMessageCount == 0)
+        #expect(outbox.messages.depth.waiting == 0)
     }
 
     @Test("a stream message goes alone in its submission, and a reply message never joins it")
     func aStreamMessageGoesAlone() async {
         let outbox = SessionOutbox()
         let (_, continuation) = AsyncThrowingStream<String, any Error>.makeStream()
-        await outbox.add(message: Self.message("stream", reader: .textStream(continuation)))
-        await outbox.add(message: Self.message("reply"))
+        _ = outbox.messages.post(Self.message("stream", reader: .textStream(continuation)))
+        _ = outbox.messages.post(Self.message("reply"))
 
-        let taken = await outbox.takeSubmissionBatch(deliveringRunsOf: [])
-        #expect(taken?.messages.map(\.text) == ["stream"])
-        let joining = await outbox.takeJoiningBatch(
-            options: SubmissionOptions(isStream: true, requestedMaxTokens: nil))
-        #expect(joining.messages.isEmpty)
-        #expect(await outbox.waitingMessageCount == 1)
+        // The take of the stream batch and the join attempt occur while the
+        // stream batch runs, because a join is possible only in that time.
+        var taken: [SessionMessage]?
+        var joining: [SessionLetter] = []
+        var waitingWhileTheStreamRuns: Int?
+        await outbox.messages.answerNextBatch(joining: SessionMessage.sharesSubmission(_:with:)) { letters in
+            taken = letters.map(\.message)
+            joining = outbox.messages.takeJoining(
+                admitting: SubmissionOptions(isStream: true, requestedMaxTokens: nil).admits)
+            waitingWhileTheStreamRuns = outbox.messages.depth.waiting
+            return ""
+        }
+        #expect(taken?.map(\.text) == ["stream"])
+        #expect(joining.isEmpty)
+        #expect(waitingWhileTheStreamRuns == 1)
         continuation.finish()
     }
 
@@ -331,12 +378,12 @@ struct SessionOutboxTests {
     func withdrawMessagesKeepsTheMail() async {
         let outbox = SessionOutbox()
         await outbox.post(event: Self.event(correlationID: "c1", kind: .completed, detail: "done"))
-        await outbox.add(message: Self.message("a"))
-        await outbox.add(message: Self.message("b"))
+        _ = outbox.messages.post(Self.message("a"))
+        _ = outbox.messages.post(Self.message("b"))
 
-        let withdrawn = await outbox.withdrawMessages()
+        let withdrawn = outbox.withdrawMessages()
         #expect(withdrawn.map(\.text) == ["a", "b"])
-        #expect(await outbox.waitingMessageCount == 0)
+        #expect(outbox.messages.depth.waiting == 0)
         #expect(await outbox.pending().events.count == 1)
     }
 
@@ -367,7 +414,7 @@ struct SessionOutboxTests {
         var seen: Set<String> = []
         var emptied = false
         for _ in 0..<takeLimit {
-            guard let taken = await outbox.takeSubmissionBatch(deliveringRunsOf: settledRunTokens) else {
+            guard let taken = await Self.takeBatch(from: outbox, deliveringRunsOf: settledRunTokens) else {
                 emptied = true
                 break
             }
@@ -376,7 +423,7 @@ struct SessionOutboxTests {
                 seen.insert(pendingEvent.event.detail)
             }
         }
-        #expect(emptied, "takeSubmissionBatch never emptied the outbox in \(takeLimit) takes")
+        #expect(emptied, "the take of the pump never emptied the outbox in \(takeLimit) takes")
         #expect(seen.count == totalEvents)
 
         let finalPending = await outbox.pending()
@@ -431,10 +478,10 @@ struct SessionOutboxTests {
         let counter = MailArrivalCounter()
         await outbox.attach(mailObserver: counter)
 
-        await outbox.add(message: Self.message("hello"))
+        _ = outbox.messages.post(Self.message("hello"))
 
         #expect(await counter.arrivals == 0)
-        #expect(await outbox.pending().messages.map(\.text) == ["hello"])
+        #expect(await outbox.pending().messages.map(\.message.text) == ["hello"])
     }
 
     // MARK: - post(report:): forwarded to the observer, never staged, never journaled

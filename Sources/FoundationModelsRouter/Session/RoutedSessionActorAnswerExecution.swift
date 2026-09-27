@@ -779,26 +779,26 @@ extension RoutedSessionActor {
     /// ``cancelRequestedWorkId`` set for that work by
     /// ``requestCancelOfRunningWork()`` (``RoutedSession/cancel()``,
     /// or the cancel of a caller whose message the work carries), or the
-    /// cancel mark of a message the running answer delivered
-    /// (``PumpAnswer/requestCancel()``). This is the one read site of
+    /// cancel mark of an item the running work carries (``cancelMarks``,
+    /// ``runningWorkItems``). This is the one read site of
     /// ``cancelRequestedWorkId``, so the routes cannot diverge. Every cancel
     /// decision keys on this predicate, never on the type of a
     /// `CancellationError`. Read after each `await`; do not cache.
     ///
     /// The mark is necessary. A cancelled caller task sets the mark at once,
-    /// in its cancellation handler, but it asks for
-    /// ``cancel(message:)`` in a task of its own that must get this actor.
-    /// The pump can get the actor first, for example after a failed attempt,
-    /// and start the overflow retry before ``cancelRequestedWorkId`` is set.
-    /// The mark closes that window: a delivered message with the mark is the
-    /// case where ``cancel(message:)`` stops this work, so the result is the
-    /// same, only earlier. The read is an atomic load, with no lock and no
-    /// suspension point.
+    /// in its cancellation handler (``requestCancel(of:in:)``), but the stop
+    /// of the work (``settleCancel(of:_:)``) runs in a task of its own that
+    /// must get this actor. The pump can get the actor first, for example
+    /// after a failed attempt, and start the overflow retry before
+    /// ``cancelRequestedWorkId`` is set. The mark closes that window: an item
+    /// of the work with the mark is the case where ``settleCancel(of:_:)``
+    /// stops this work, so the result is the same, only earlier. The read
+    /// holds the lock of the marks for one look, with no suspension point.
     var isWorkCancelled: Bool {
         if Task.isCancelled { return true }
         guard let workId = pumpWork?.id else { return false }
         if cancelRequestedWorkId == workId { return true }
-        return deliveredMessages?.contains(where: \.answer.isCancelRequested) == true
+        return cancelMarks.marksAny(of: runningWorkItems)
     }
 
     /// Whether `error` is a recoverable context-overflow failure:

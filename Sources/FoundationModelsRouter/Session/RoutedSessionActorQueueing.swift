@@ -1,12 +1,13 @@
 import FoundationModels
+import FoundationModelsExtras
 import Tracing
 
 /// The message-queue and elicitation-answer surface of ``RoutedSessionActor``
-/// (`generation-queue.md`, section 5.4). The queue methods add to, read and
-/// change the caller messages in ``outbox``; the elicitation methods delegate
-/// to ``mailbox``.
+/// (`generation-queue.md`, section 5.4). The queue methods post to, read and
+/// change the caller messages in the mailbox ``SessionOutbox/messages``; the
+/// elicitation methods delegate to ``mailbox``.
 extension RoutedSessionActor {
-    /// See ``RoutedSession/send(_:)-(Transcript.Prompt)``. Adds one caller
+    /// See ``RoutedSession/send(_:)-(Transcript.Prompt)``. Posts one caller
     /// message and wakes the pump. It waits for no submission and no answer.
     ///
     /// - Parameter prompt: The prompt of the message.
@@ -14,30 +15,31 @@ extension RoutedSessionActor {
     @discardableResult
     func send(_ prompt: Transcript.Prompt) async -> MessageID {
         let message = SessionMessage(
-            id: MessageID(), prompt: prompt, requestedMaxTokens: nil, reader: .reply,
-            serviceContext: ServiceContext.current, answer: PumpAnswer())
-        await enqueue(message)
-        return message.id
+            prompt: prompt, requestedMaxTokens: nil, reader: .reply, serviceContext: ServiceContext.current)
+        return await enqueue(message).id
     }
 
-    /// Adds `message` behind every caller message that waits, and wakes the
+    /// Posts `message` behind every caller message that waits, and wakes the
     /// pump.
     ///
-    /// The message is open (``openMessages``) before it reaches ``outbox``,
-    /// so ``cancel(message:)`` finds it at every point until its answer.
+    /// The post and the wake have no suspension point between them, and the
+    /// pump takes a batch only on this actor. So a caller that installs its
+    /// cancellation handler with no suspension point after this call finds
+    /// its message still waiting when the handler runs.
     ///
-    /// - Parameter message: The message to add.
-    func enqueue(_ message: SessionMessage) async {
-        openMessages[message.id] = message.answer
+    /// - Parameter message: The message to post.
+    /// - Returns: The id of the message, and its answer.
+    func enqueue(_ message: SessionMessage) async -> (id: MessageID, answer: MailboxAnswer<String>) {
         await attachOutboxJournalIfNeeded()
-        await outbox.add(message: message)
+        let posted = outbox.messages.post(message)
         wakePump()
+        return posted
     }
 
     /// A snapshot of every caller message that waits, in the order the
     /// messages arrived.
     nonisolated func pendingMessages() async -> [(id: MessageID, prompt: Transcript.Prompt)] {
-        await outbox.pending().messages.map { (id: $0.id, prompt: $0.prompt) }
+        await outbox.pending().messages.map { (id: $0.id, prompt: $0.message.prompt) }
     }
 
     /// Replaces the prompt of a caller message that waits.
@@ -48,14 +50,13 @@ extension RoutedSessionActor {
     /// - Returns: Whether the message waited and was changed.
     @discardableResult
     nonisolated func replace(id: MessageID, prompt: Transcript.Prompt) async -> MessageQueueMutationResult {
-        await outbox.replace(id: id, prompt: prompt)
+        outbox.replace(id: id, prompt: prompt)
     }
 
     /// The count of the waiting caller messages, and the ids of the messages
     /// of the running answer.
     func messageQueueDepth() async -> MessageQueueDepth {
-        let waiting = await outbox.waitingMessageCount
-        return MessageQueueDepth(waiting: waiting, running: (deliveredMessages ?? []).map(\.id))
+        outbox.messages.depth
     }
 
     /// Delivers the user's answer to a pending elicitation on this session.

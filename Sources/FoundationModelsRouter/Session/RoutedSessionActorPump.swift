@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsExtras
 import Tracing
 
 /// The logger for mail that the pump holds, because the answers in a row that
@@ -12,25 +13,25 @@ private let mailDeliveryLogger = makeModuleLogger(category: "MailDelivery")
 struct PumpWork {
     /// What the work is.
     enum Kind {
-        /// The pump takes the next batch from the outbox. It has no message
-        /// yet. A cancel that arrives now still reaches the answer that the
-        /// batch starts.
+        /// The pump takes the next batch. It has no message yet. A cancel
+        /// that arrives now still reaches the answer that the batch starts.
         case taking
 
-        /// An answer: the chain of submissions that answers `messages`. The
+        /// An answer: the chain of submissions that answers `letters`. The
         /// chain starts with one submission, and each continuation of it is
         /// one more submission (section 5.5).
         ///
         /// - Parameters:
         ///   - options: The options of every submission of the chain.
-        ///   - messages: Every caller message the chain delivered so far.
-        case answer(options: SubmissionOptions, messages: [SessionMessage])
+        ///   - letters: Every caller message the chain delivered so far.
+        case answer(options: SubmissionOptions, letters: [SessionLetter])
 
         /// A compaction that a caller asked for
         /// (``RoutedSession/compact(prompt:budget:)``).
         ///
-        /// - Parameter requestID: The id of the request.
-        case compaction(requestID: ULID)
+        /// - Parameter requestID: The id that ``RoutedSessionActor/compactionRequests``
+        ///   gave the request.
+        case compaction(requestID: MessageID)
     }
 
     /// The id of the work. Ids are monotonic in their session.
@@ -44,9 +45,6 @@ struct PumpWork {
 /// (``RoutedSession/compact(prompt:budget:)``). The pump runs it between two
 /// submissions, as it runs every compaction.
 struct CompactionRequest: Sendable {
-    /// The id of the request.
-    let id = ULID.generate()
-
     /// The compaction prompt sent to the summarizer.
     let prompt: CompactionPrompt
 
@@ -57,20 +55,23 @@ struct CompactionRequest: Sendable {
     /// The tracing context of the caller, so the compaction span is a child
     /// of the span of the caller.
     let serviceContext: ServiceContext?
-
-    /// The answer the caller waits for.
-    let answer = PumpAnswer<CompactionResult>()
 }
+
+/// The queue of the caller compactions of one session: an Extras `Mailbox`
+/// whose answer is the result of the compaction
+/// (``RoutedSessionActor/compactionRequests``).
+typealias CompactionRequestMailbox = FoundationModelsExtras.Mailbox<CompactionRequest, CompactionResult>
 
 /// ``RoutedSessionActor``'s pump: the one task of the session that submits
 /// for it (`generation-queue.md`, section 5.4).
 ///
 /// The pump starts when a message arrives and no pump runs, and it ends when
-/// no deliverable message waits. Each cycle takes every waiting message that
-/// can share one submission (``SessionOutbox/takeSubmissionBatch(deliveringRunsOf:)``),
-/// and runs the chain of submissions that answers them. A message that
-/// arrives while a submission runs waits in the outbox for the next cycle,
-/// or for the next continuation of the running answer.
+/// no deliverable message waits. Each cycle takes one batch of the mailbox
+/// ``SessionOutbox/messages``: every waiting message that can share one
+/// submission. The pump runs the chain of submissions that answers the
+/// batch, and the mailbox gives the result to each message of the batch.
+/// A message that arrives while a submission runs waits in the mailbox for
+/// the next cycle, or for the next continuation of the running answer.
 extension RoutedSessionActor: SessionMailObserver {
     /// The text that separates two caller prompts in the prompt of one
     /// submission.
@@ -95,85 +96,139 @@ extension RoutedSessionActor: SessionMailObserver {
     }
 
     /// Starts the pump when no pump runs. When a pump runs, it takes one
-    /// more cycle before it ends.
+    /// more cycle before it ends. A pump that waits for a letter that a
+    /// cancel withdrew is released (``releasePumpAwaitingLetter()``), and a
+    /// new pump takes its place.
     ///
     /// The pump is a detached task: it inherits no task-local of the caller
     /// that woke it. So a ``ModelCallMark`` of a tool body that sent a
     /// message never reaches a submission of the pump.
     func wakePump() {
         pumpWakeRequested = true
+        releasePumpAwaitingLetter()
         guard pumpTask == nil else { return }
         pumpTask = Task.detached { await self.runPump() }
     }
 
+    /// Stops the pump when it waits in a mailbox for a letter
+    /// (``pumpAwaitsLetter``). The pump reads that a letter waits, and then
+    /// takes its batch with no suspension point between the two. A cancel
+    /// from the handler of a caller task does not run on this actor, so it
+    /// can withdraw the letter between the two, and the take then waits for
+    /// a letter that never comes. The cancel of the pump task ends that wait
+    /// with nothing taken, and the pump then starts a new pump
+    /// (``runPump()``).
+    func releasePumpAwaitingLetter() {
+        guard pumpAwaitsLetter else { return }
+        pumpTask?.cancel()
+    }
+
     /// The loop of the pump: one cycle for each work, until no work waits.
+    ///
+    /// A released pump (``releasePumpAwaitingLetter()``) is cancelled, so it
+    /// ends, and it starts a new pump in its place: the new task is not
+    /// cancelled, so it can run the next answer.
     private func runPump() async {
-        while true {
+        while !Task.isCancelled {
             pumpWakeRequested = false
             if !pendingCompactions.isEmpty {
-                await runCallerCompaction(pendingCompactions.removeFirst())
+                await runNextCallerCompaction()
                 continue
             }
             guard await runNextAnswer() || pumpWakeRequested else { break }
         }
         pumpTask = nil
+        if Task.isCancelled {
+            wakePump()
+        }
     }
 
-    /// Takes the next batch from the outbox and runs its answer.
+    /// Takes the next batch and runs its answer.
     ///
-    /// - Returns: `false` when no deliverable message waited.
+    /// When a caller message waits, the pump takes the next batch of
+    /// ``SessionOutbox/messages``: the first waiting message decides the
+    /// options of the batch (``SubmissionOptions``), and every waiting
+    /// message that the options admit comes with it, in FIFO order. A stream
+    /// message goes alone. Every pending mail event comes with the batch,
+    /// held or not. When no caller message waits, the terminal of a settled
+    /// background run that is not held starts a submission of its own
+    /// (``SessionOutbox/takeMailStartingASubmission(deliveringRunsOf:)``).
+    ///
+    /// - Returns: `false` when no deliverable message waited, or when the
+    ///   pump was released before it took a batch.
     private func runNextAnswer() async -> Bool {
         let workId = lastWorkId + 1
         pumpWork = PumpWork(id: workId, kind: .taking)
         let settledRunTokens = await mailbox.settledRunTokens()
-        guard let batch = await outbox.takeSubmissionBatch(deliveringRunsOf: settledRunTokens) else {
+        guard outbox.messages.pending.isEmpty else {
+            let answered = await answerNextBatch(of: outbox.messages, joining: SessionMessage.sharesSubmission) {
+                letters in
+                let mail = await outbox.takeEvents()
+                // No suspension point between the read of the cancel marks
+                // and the work that holds the live letters: ``cancel(message:)``
+                // relies on it.
+                let live = liveLetters(letters, of: outbox.messages)
+                return try await runAnswer(
+                    of: SubmissionBatch(letters: live, events: mail), settledRunTokens: settledRunTokens,
+                    workId: workId
+                ).get()
+            }
+            if !answered {
+                endPumpWork()
+            }
+            return answered
+        }
+        guard let mail = await outbox.takeMailStartingASubmission(deliveringRunsOf: settledRunTokens) else {
             endPumpWork()
             return false
         }
-        lastWorkId = workId
-        await runAnswer(of: batch, settledRunTokens: settledRunTokens)
+        _ = await runAnswer(
+            of: SubmissionBatch(letters: [], events: mail), settledRunTokens: settledRunTokens, workId: workId)
         return true
     }
 
     /// Runs the chain of submissions that answers `batch`, and gives its
-    /// result to every caller message the chain delivered.
+    /// result back. The mailbox gives the result to every caller message of
+    /// the batch, and to every message that joined a continuation.
     ///
     /// - Parameters:
     ///   - batch: What the first submission of the chain carries.
     ///   - settledRunTokens: The completion tokens whose terminal can start a
     ///     submission with no caller message.
-    private func runAnswer(of batch: SubmissionBatch, settledRunTokens: Set<String>) async {
-        // No suspension point between the read of the cancel marks and the
-        // work that holds the live messages: ``cancel(message:)`` relies on it.
-        let messages = liveMessages(batch.messages)
-        let mail = batch.events.map(\.event)
+    ///   - workId: The id of the work.
+    /// - Returns: The final reply of the chain, or its error.
+    ///   `CancellationError` when the batch started no answer.
+    private func runAnswer(
+        of batch: SubmissionBatch, settledRunTokens: Set<String>, workId: UInt64
+    ) async -> Result<String, any Error> {
         let mailCanStart = SessionOutbox.canStartASubmission(batch.events, settledRunTokens: settledRunTokens)
-        guard !messages.isEmpty || mailCanStart else {
+        guard !batch.letters.isEmpty || mailCanStart else {
             // Every caller of the batch was cancelled, and the mail alone
             // cannot start a submission. The mail goes back as it was.
             await outbox.putBack(untouched: batch.events)
             endPumpWork()
-            return
+            return .failure(CancellationError())
         }
-        guard !messages.isEmpty || mailOnlyAnswersInARow < mailOnlyAnswerLimit else {
+        guard !batch.letters.isEmpty || mailOnlyAnswersInARow < mailOnlyAnswerLimit else {
             await pauseMailDelivery(holding: batch.events)
             endPumpWork()
-            return
+            return .failure(CancellationError())
         }
-        let options = messages.first?.options ?? .mailDelivery
-        pumpWork?.kind = .answer(options: options, messages: messages)
+        lastWorkId = workId
+        let options = batch.letters.first?.message.options ?? .mailDelivery
+        pumpWork?.kind = .answer(options: options, letters: batch.letters)
         startAnswerLimits()
         let result: Result<String, any Error>
         do {
             result = .success(
-                try await runFirstSubmission(carrying: messages, options: options, mail: mail))
+                try await runFirstSubmission(
+                    carrying: batch.letters, options: options, mail: batch.events.map(\.event)))
         } catch {
             result = .failure(error)
         }
-        let delivered = deliveredMessages ?? messages
-        countAnswer(delivering: delivered)
+        countAnswer(delivering: deliveredMessages ?? batch.letters)
         endPumpWork()
-        resolve(delivered, with: result)
+        return result
     }
 
     /// Counts the answer that just ended for the bound on answers that mail
@@ -182,7 +237,7 @@ extension RoutedSessionActor: SessionMailObserver {
     /// starts the count again. An answer that only mail started adds one.
     ///
     /// - Parameter delivered: The caller messages the answer delivered.
-    private func countAnswer(delivering delivered: [SessionMessage]) {
+    private func countAnswer(delivering delivered: [SessionLetter]) {
         mailOnlyAnswersInARow = delivered.isEmpty ? mailOnlyAnswersInARow + 1 : 0
     }
 
@@ -207,7 +262,7 @@ extension RoutedSessionActor: SessionMailObserver {
     /// Runs the first submission of an answer, and every continuation of it.
     ///
     /// - Parameters:
-    ///   - messages: The caller messages of the first submission, or none
+    ///   - letters: The caller messages of the first submission, or none
     ///     when only mail started it.
     ///   - options: The options of every submission of the chain. Their
     ///     token ceiling is the ceiling of each submission: every message
@@ -216,14 +271,14 @@ extension RoutedSessionActor: SessionMailObserver {
     /// - Returns: The final reply of the chain.
     /// - Throws: What the chain throws.
     private func runFirstSubmission(
-        carrying messages: [SessionMessage], options: SubmissionOptions, mail: [OperationEvent]
+        carrying letters: [SessionLetter], options: SubmissionOptions, mail: [OperationEvent]
     ) async throws -> String {
-        let first = messages.first
+        let first = letters.first?.message
         let ceiling = ResponseTokenCeiling(requested: options.requestedMaxTokens, contextTokens: contextTokens)
         let work = submissionWork(for: first?.reader ?? .reply, responseTokenCeiling: ceiling)
         let ownPrompt =
-            messages.isEmpty
-            ? Self.settledRunDeliveryPrompt : messages.map(\.text).joined(separator: Self.messageSeparator)
+            letters.isEmpty
+            ? Self.settledRunDeliveryPrompt : letters.map(\.message.text).joined(separator: Self.messageSeparator)
         await attachOutboxJournalIfNeeded()
         await recordSessionMetaIfNeeded()
         await notifySubmissionBoundaryTools()
@@ -236,63 +291,62 @@ extension RoutedSessionActor: SessionMailObserver {
 
     /// The caller messages the running answer delivered so far, or `nil`
     /// when no answer runs.
-    var deliveredMessages: [SessionMessage]? {
-        guard case .answer(_, let messages) = pumpWork?.kind else { return nil }
-        return messages
+    var deliveredMessages: [SessionLetter]? {
+        guard case .answer(_, let letters) = pumpWork?.kind else { return nil }
+        return letters
     }
 
     /// Takes what a continuation submission of the running answer carries:
     /// the mail that waits, and the caller messages that can share the
     /// submission (`generation-queue.md`, section 5.5). The messages join the
-    /// answer, so their callers get its final reply.
+    /// batch of the answer in the mailbox, so their callers get its final
+    /// reply. An answer that only mail started has no batch in the mailbox,
+    /// so no caller message joins it: the message waits for the next answer.
     ///
     /// - Returns: The mail events, the texts of the joining messages, and the
     ///   ids of the joining messages, in the same order as the texts.
     func takeMessagesJoiningTheAnswer() async -> (events: [OperationEvent], texts: [String], ids: [MessageID]) {
         guard case .answer(let options, _) = pumpWork?.kind else { return ([], [], []) }
-        let batch = await outbox.takeJoiningBatch(options: options)
-        // No suspension point between the read of the cancel marks and the
-        // work that holds the joining messages: ``cancel(message:)`` relies
-        // on it.
-        let joining = liveMessages(batch.messages)
-        if case .answer(let options, let messages) = pumpWork?.kind {
-            pumpWork?.kind = .answer(options: options, messages: messages + joining)
+        let events = await outbox.takeEvents()
+        // No suspension point between the take, the read of the cancel marks
+        // and the work that holds the joining letters: ``cancel(message:)``
+        // relies on it.
+        let joining = liveLetters(outbox.messages.takeJoining(admitting: options.admits), of: outbox.messages)
+        if case .answer(let options, let letters) = pumpWork?.kind {
+            pumpWork?.kind = .answer(options: options, letters: letters + joining)
         }
-        return (batch.events.map(\.event), joining.map(\.text), joining.map(\.id))
+        return (events.map(\.event), joining.map(\.message.text), joining.map(\.id))
     }
 
-    /// The messages of `messages` whose callers are not cancelled. Each
-    /// cancelled message gets `CancellationError` at once.
-    ///
-    /// The pump reads the cancel mark of each message here, with no suspension
-    /// point before it makes them part of the work, so a cancel that
-    /// arrives while the pump takes them is not lost.
-    ///
-    /// - Parameter messages: The messages the pump took.
-    /// - Returns: The live messages, in order.
-    private func liveMessages(_ messages: [SessionMessage]) -> [SessionMessage] {
-        let cancelled = messages.filter(\.answer.isCancelRequested)
-        resolve(cancelled, with: .failure(CancellationError()))
-        return messages.filter { !$0.answer.isCancelRequested }
-    }
-
-    /// Gives `result` to each message, and closes each one: it leaves
-    /// ``openMessages``, so ``cancel(message:)`` then reports it answered.
-    ///
-    /// - Parameters:
-    ///   - messages: The messages to answer.
-    ///   - result: The final result of their answer.
-    func resolve(_ messages: [SessionMessage], with result: Result<String, any Error>) {
-        for message in messages {
-            openMessages[message.id] = nil
-            message.answer.resolve(result)
+    /// The ids of the items the work of the pump carries: the messages the
+    /// running answer delivered, or the running caller compaction. None when
+    /// no answer and no caller compaction runs.
+    var runningWorkItems: [MessageID] {
+        switch pumpWork?.kind {
+        case .answer(_, let letters):
+            return letters.map(\.id)
+        case .compaction(let requestID):
+            return [requestID]
+        case .taking, nil:
+            return []
         }
     }
 
-    /// Ends the running work: its id, and a cancel requested for it.
+    /// Whether the work the pump runs carries the message or the caller
+    /// compaction `id` (``runningWorkItems``).
+    ///
+    /// - Parameter id: The id of the message or of the compaction request.
+    /// - Returns: `true` when the running work carries it.
+    func runningWorkCarries(_ id: MessageID) -> Bool {
+        runningWorkItems.contains(id)
+    }
+
+    /// Ends the running work: its id, a cancel requested for it, and the
+    /// cancel marks of its items (``cancelMarks``).
     private func endPumpWork() {
         pumpWork = nil
         cancelRequestedWorkId = nil
+        cancelMarks.clear()
     }
 
     /// Gives the answer that starts now fresh limits (`generation-queue.md`,
@@ -319,43 +373,98 @@ extension RoutedSessionActor: SessionMailObserver {
         repetitionWatch.recoveriesThisAnswer = 0
     }
 
-    // MARK: - Caller compactions
+    // MARK: - Batches of a mailbox
 
-    /// Runs one caller compaction as one work of the pump.
+    /// Takes the next batch of `mailbox`, runs `body` over it, and gives the
+    /// result of `body` to each letter of the batch.
     ///
-    /// - Parameter request: The request.
-    private func runCallerCompaction(_ request: CompactionRequest) async {
-        guard !request.answer.isCancelRequested else {
-            request.answer.resolve(.failure(CancellationError()))
-            return
+    /// ``pumpAwaitsLetter`` is set from the call until `body` starts, so
+    /// ``releasePumpAwaitingLetter()`` can end a take that waits for a letter
+    /// that a cancel withdrew. The flag is set only while the take can wait:
+    /// `body` clears it before it runs any work.
+    ///
+    /// - Parameters:
+    ///   - mailbox: The mailbox to take from.
+    ///   - joins: Whether a waiting letter shares the batch that the first
+    ///     letter starts.
+    ///   - body: Makes the answer of the batch.
+    /// - Returns: `false` when the pump was released before a batch came.
+    ///   Then nothing was taken.
+    @discardableResult
+    private func answerNextBatch<Message: Sendable, Answer: Sendable>(
+        of mailbox: FoundationModelsExtras.Mailbox<Message, Answer>,
+        joining joins: (Message, Message) -> Bool,
+        _ body: ([FoundationModelsExtras.Mailbox<Message, Answer>.Letter]) async throws -> Answer
+    ) async -> Bool {
+        pumpAwaitsLetter = true
+        defer { pumpAwaitsLetter = false }
+        return await mailbox.answerNextBatch(joining: joins) { letters in
+            pumpAwaitsLetter = false
+            return try await body(letters)
         }
-        lastWorkId += 1
-        pumpWork = PumpWork(id: lastWorkId, kind: .compaction(requestID: request.id))
-        await attachOutboxJournalIfNeeded()
-        let result: Result<CompactionResult, any Error>
-        do {
-            result = .success(
-                try await ServiceContext.$current.withValue(request.serviceContext) {
-                    try await compactOwnModel(prompt: request.prompt, budget: request.budget)
-                })
-        } catch {
-            result = .failure(error)
-        }
-        endPumpWork()
-        request.answer.resolve(result)
     }
 
-    /// Stops the caller compaction `request`: it leaves the list when it
-    /// waits, and its work is cancelled when it runs.
+    /// The letters of `letters` whose callers are not cancelled. Each letter
+    /// with a cancel mark (``cancelMarks``) leaves the batch of `mailbox`
+    /// and gets `CancellationError` at once. A letter that a cancel took out
+    /// of the batch before this read has its `CancellationError` already.
     ///
-    /// - Parameter request: The request whose caller was cancelled.
-    func cancel(compaction request: CompactionRequest) {
-        if let index = pendingCompactions.firstIndex(where: { $0.id == request.id }) {
-            pendingCompactions.remove(at: index)
-            request.answer.resolve(.failure(CancellationError()))
-            return
+    /// The pump reads the marks here, with no suspension point before it
+    /// makes the letters part of its work, so a cancel that arrives while
+    /// the pump takes them is not lost: it drops the letter here, or finds
+    /// it in the work.
+    ///
+    /// - Parameters:
+    ///   - letters: The letters the pump took.
+    ///   - mailbox: The mailbox the pump took them from.
+    /// - Returns: The live letters, in order.
+    private func liveLetters<Message: Sendable, Answer: Sendable>(
+        _ letters: [FoundationModelsExtras.Mailbox<Message, Answer>.Letter],
+        of mailbox: FoundationModelsExtras.Mailbox<Message, Answer>
+    ) -> [FoundationModelsExtras.Mailbox<Message, Answer>.Letter] {
+        let running = Set(mailbox.depth.running)
+        return letters.filter { letter in
+            guard running.contains(letter.id) else { return false }
+            guard cancelMarks.isMarked(letter.id) else { return true }
+            mailbox.cancel(letter.id)
+            return false
         }
-        guard case .compaction(let requestID) = pumpWork?.kind, requestID == request.id else { return }
-        requestCancelOfRunningWork()
+    }
+
+    // MARK: - Caller compactions
+
+    /// The caller compactions that wait for the pump, first in first out.
+    var pendingCompactions: [CompactionRequest] {
+        compactionRequests.pending.map(\.message)
+    }
+
+    /// Takes the next caller compaction and runs it as one work of the pump.
+    /// No other request joins it: each caller compaction is one work.
+    private func runNextCallerCompaction() async {
+        await answerNextBatch(of: compactionRequests, joining: { _, _ in false }) { letters in
+            try await runCallerCompaction(of: letters)
+        }
+    }
+
+    /// Runs one caller compaction.
+    ///
+    /// - Parameter letters: The batch of the compaction mailbox: one request.
+    /// - Returns: The result of the compaction.
+    /// - Throws: What the compaction throws, or `CancellationError` when the
+    ///   caller was cancelled before the compaction started.
+    private func runCallerCompaction(of letters: [CompactionRequestMailbox.Letter]) async throws -> CompactionResult {
+        // No suspension point between the read of the cancel mark and the
+        // work that holds the request (``liveLetters(_:of:)``).
+        guard let letter = liveLetters(letters, of: compactionRequests).first else {
+            throw CancellationError()
+        }
+        lastWorkId += 1
+        pumpWork = PumpWork(id: lastWorkId, kind: .compaction(requestID: letter.id))
+        defer { endPumpWork() }
+        await attachOutboxJournalIfNeeded()
+        let request = letter.message
+        return try await ServiceContext.$current.withValue(request.serviceContext) {
+            try await compactOwnModel(prompt: request.prompt, budget: request.budget)
+        }
     }
 }

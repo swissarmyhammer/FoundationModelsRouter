@@ -189,7 +189,7 @@ struct SessionProjectionTests {
     @MainActor
     private static func expectProjectionUnchanged(by event: SessionEvent) {
         let projection = SessionProjection()
-        projection.apply(.submissionStarted(start(1, delivering: [MessageID()])))
+        projection.apply(.submissionStarted(start(1, delivering: [MessageID.unposted()])))
         projection.apply(.toolCall(id: "call-1", name: "search", argumentsJSON: "{}"))
         projection.apply(.toolStatus(id: "call-1", status: .running, summary: nil, output: nil))
         let phaseBefore = projection.phase
@@ -322,9 +322,9 @@ struct SessionProjectionTests {
     @MainActor
     func messagesAwaitingAnswerHoldsTheDeliveredMessagesUntilTheirAnswer() {
         let projection = SessionProjection()
-        let first = MessageID()
-        let second = MessageID()
-        let third = MessageID()
+        let first = MessageID.unposted()
+        let second = MessageID.unposted()
+        let third = MessageID.unposted()
         let answer = SessionAnswer(
             reply: "done", messageIds: [first, second], usage: nil, compactions: [], toolCalls: [], toolInvocations: [])
 

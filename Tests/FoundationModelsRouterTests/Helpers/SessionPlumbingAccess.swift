@@ -36,7 +36,7 @@ extension RoutedSession {
     func becomesIdle() async -> Bool {
         await BoundedWait.conditionReached("the session becoming idle") {
             let pumpRunning = await self.isPumpRunning
-            let waitingMessages = await self.outbox.waitingMessageCount
+            let waitingMessages = self.outbox.messages.depth.waiting
             return !pumpRunning && waitingMessages == 0
         }
     }
@@ -67,7 +67,7 @@ extension RoutedSession {
             }
             try await pumpEnded.wait()
         }
-        return await outbox.waitingMessageCount == 0
+        return outbox.messages.depth.waiting == 0
     }
 
     /// The stall report interval the session holds now — see

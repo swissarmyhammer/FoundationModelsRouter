@@ -561,7 +561,7 @@ struct HumanWaitGateTests {
         // whole wait. The outbox sends no event when a message joins it, so
         // the test reads the count until it holds.
         let second = ObservedRun { try await session.respond(to: "second") }
-        try await AwaitedCondition.wait(until: { await session.outbox.waitingMessageCount == 1 })
+        try await AwaitedCondition.wait(until: { session.outbox.messages.depth.waiting == 1 })
 
         #expect(await fixture.observer.entered == ["first"])
         #expect(await fixture.observer.maxActive == 1)
@@ -736,14 +736,14 @@ struct HumanWaitGateTests {
         // The first wait is open, and the answer still runs: a wait releases
         // nothing, and no message waits.
         #expect(await session.isPumpRunning)
-        #expect(await session.outbox.waitingMessageCount == 0)
+        #expect(session.outbox.messages.depth.waiting == 0)
 
         releaseFirst.signal()
         try await secondEntered.wait()
 
         // The second wait is open, and the answer still runs.
         #expect(await session.isPumpRunning)
-        #expect(await session.outbox.waitingMessageCount == 0)
+        #expect(session.outbox.messages.depth.waiting == 0)
 
         releaseSecond.signal()
         #expect(try await answer.value() == Self.reply(to: "nested"))

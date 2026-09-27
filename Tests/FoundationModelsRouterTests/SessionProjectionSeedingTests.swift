@@ -384,7 +384,7 @@ struct SessionProjectionSeedingTests {
     @MainActor
     func seedReplacesEarlierObservedState() throws {
         let projection = SessionProjection()
-        let message = MessageID()
+        let message = MessageID.unposted()
         // One stale submission ends with usage. Its message still waits for
         // an answer, because no answer came. A second submission is still
         // open.

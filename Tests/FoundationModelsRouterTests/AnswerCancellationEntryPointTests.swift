@@ -220,7 +220,7 @@ extension AnswerCancellationTests {
         // always arrives, and a loaded machine only delays it. Only the
         // `.timeLimit` of the suite ends a wait for a message that never
         // arrives.
-        try await AwaitedCondition.wait(until: { await session.outbox.waitingMessageCount == 1 })
+        try await AwaitedCondition.wait(until: { session.outbox.messages.depth.waiting == 1 })
 
         // Cancelled while its message waits. The message leaves the outbox,
         // or the pump drops it when it takes it: it never goes into a
@@ -283,7 +283,7 @@ extension AnswerCancellationTests {
         await #expect(throws: CancellationError.self) {
             try await cancelledCaller.value
         }
-        #expect(await session.outbox.waitingMessageCount == 0)
+        #expect(session.outbox.messages.depth.waiting == 0)
 
         releaseFirstAnswer.signal()
         #expect(try await firstTask.value == "ok-holds-the-pump")
@@ -411,14 +411,16 @@ extension AnswerCancellationTests {
         await insideTool.wait()
 
         // The first half of a cancel of the caller task, and only that half:
-        // the mark on the message. The second half, `cancel(message:)`, comes
-        // in a task of its own that must get the session actor, so under load
-        // it can come after the pump decides on the retry. The test never
-        // sends it, so the retry sees the mark and nothing else.
+        // `requestCancel(of:in:)`, which marks the running message. This half
+        // occurs at once in the handler of the caller task. The second half,
+        // `settleCancel(of:_:)`, stops the work. It comes in a task of its own
+        // that must get the session actor, so under load it can come after
+        // the pump decides on the retry. The test never sends it, so the
+        // retry sees the mark and nothing else.
         let running = try #require(await actor.deliveredMessages)
         #expect(running.count == 1)
-        for message in running {
-            message.answer.requestCancel()
+        for letter in running {
+            _ = actor.requestCancel(of: letter.id, in: actor.outbox.messages)
         }
         release.signal()
 

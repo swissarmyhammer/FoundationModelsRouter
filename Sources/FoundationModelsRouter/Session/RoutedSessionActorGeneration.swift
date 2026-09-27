@@ -65,38 +65,34 @@ extension RoutedSessionActor {
     ) async throws -> String {
         try refuseWaitInsideOpenSubmission()
         let message = SessionMessage(
-            id: MessageID(), prompt: .plainText(text), requestedMaxTokens: requestedMaxTokens, reader: reader,
-            serviceContext: ServiceContext.current, answer: PumpAnswer())
+            prompt: .plainText(text), requestedMaxTokens: requestedMaxTokens, reader: reader,
+            serviceContext: ServiceContext.current)
         return try await enqueueAndAwaitAnswer(of: message)
     }
 
-    /// Adds `message` to ``outbox`` and waits for its answer. A cancel of the
-    /// caller marks the message and asks the session to withdraw it, or to
-    /// stop the answer that carries it (``cancel(message:)``).
+    /// Posts `message` to ``SessionOutbox/messages`` and waits for its
+    /// answer. A cancel of the caller cancels the message at once
+    /// (``cancelFromCallerTask(_:in:)``): the mailbox withdraws a message
+    /// that waits, and a message that the running answer carries gets a
+    /// mark, and the session stops that answer.
     ///
-    /// The cancel handler is installed before ``enqueue(_:)``. The pump can
-    /// take the message while ``enqueue(_:)`` waits for ``outbox``, so a
-    /// handler that came after it could set the mark after the pump read it
-    /// (``liveMessages(_:)``). A caller that is cancelled before this call
-    /// gets the handler at once, so the message has the mark before it
-    /// reaches ``outbox``. The handler withdraws the message in a task of
-    /// its own, which can come before the message is in ``outbox``. So a
-    /// message that has the mark after ``enqueue(_:)`` is withdrawn here,
-    /// and its caller does not wait for the pump to drop it.
+    /// The cancel handler is installed after ``enqueue(_:)``, with no
+    /// suspension point between the post and the handler, and the pump takes
+    /// a batch only on this actor. So the pump cannot take the message before
+    /// the handler is in place. A caller that is cancelled before this call,
+    /// or while ``enqueue(_:)`` waits, gets the handler at once when it is
+    /// installed, and the handler withdraws the message before the pump sees
+    /// it.
     ///
     /// - Parameter message: The message the caller sent.
     /// - Returns: The final reply of its answer.
-    /// - Throws: What its answer throws.
+    /// - Throws: What its answer throws, or `CancellationError`.
     private func enqueueAndAwaitAnswer(of message: SessionMessage) async throws -> String {
-        try await withTaskCancellationHandler {
-            await enqueue(message)
-            if message.answer.isCancelRequested {
-                await cancel(message: message.id)
-            }
-            return try await message.answer.value()
+        let (id, answer) = await enqueue(message)
+        return try await withTaskCancellationHandler {
+            try await answer.value
         } onCancel: {
-            message.answer.requestCancel()
-            Task { await self.cancel(message: message.id) }
+            cancelFromCallerTask(id, in: outbox.messages)
         }
     }
 

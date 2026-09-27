@@ -726,7 +726,7 @@ struct MessageQueueTests {
         // the count until it holds. Neither wait below has a wall clock (task
         // ^v4zh807): a loaded machine only delays the change, and only the
         // `.timeLimit` of this test ends a wait for a change that never comes.
-        try await AwaitedCondition.wait(until: { await session.outbox.waitingMessageCount == 1 })
+        try await AwaitedCondition.wait(until: { session.outbox.messages.depth.waiting == 1 })
         let id = try #require(await session.pendingMessages().first?.id)
 
         #expect(await session.cancel(message: id) == .withdrawn)
@@ -768,6 +768,6 @@ struct MessageQueueTests {
         #expect(await session.becomesIdle())
 
         #expect(await session.cancel(message: id) == .alreadyAnswered)
-        #expect(await session.cancel(message: MessageID()) == .alreadyAnswered)
+        #expect(await session.cancel(message: MessageID.unposted()) == .alreadyAnswered)
     }
 }
