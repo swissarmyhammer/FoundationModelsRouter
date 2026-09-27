@@ -239,7 +239,7 @@ struct CrossRouterPoolIntegrationTests {
         // Residency follows ARC: dropping both profiles gives every model back.
         firstProfile = nil
         secondProfile = nil
-        #expect(try await residentModelCountOnceEvicted(fixture.pool) == 0)
+        #expect(try await fixture.pool.residentModelCountOnceEvicted() == 0)
     }
 
     @Test("a release from the first router keeps the second router's session alive")
@@ -265,25 +265,4 @@ struct CrossRouterPoolIntegrationTests {
 
         withExtendedLifetime(secondProfile) {}
     }
-}
-
-/// The resident model count of `pool` after the pool evicts its last model.
-///
-/// The drop of the last hold of a model does not evict the model at once. The
-/// pool submits the eviction job from a detached task, so the eviction is not
-/// done when the drop returns. This function reads ``ModelPool/footprints``
-/// until a footprint has no resident model. Then it runs an empty admission
-/// job as a barrier: the barrier starts only after each eviction job that
-/// the pool queued before it ends.
-///
-/// - Parameter pool: The pool to read.
-/// - Returns: The resident model count.
-/// - Throws: `CancellationError` when the test is cancelled.
-private func residentModelCountOnceEvicted(_ pool: ModelPool) async throws -> Int {
-    for await footprint in pool.footprints where footprint.resident.isEmpty {
-        break
-    }
-    try Task.checkCancellation()
-    try await pool.admit { _ in }
-    return pool.residentModelCount
 }

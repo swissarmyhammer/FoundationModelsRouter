@@ -287,7 +287,7 @@ public actor Router {
         let admitted = try await pool.admit { admission in
             try await ServiceContext.withValue(serviceContext) {
                 try await self.runAdmission(
-                    admission, profile: def, metadataByRef: metadataByRef, progress: progress, span: span)
+                    admission: admission, profile: def, metadataByRef: metadataByRef, progress: progress, span: span)
             }
         }
 
@@ -316,7 +316,7 @@ public actor Router {
     ///   candidate's window could be read, `CancellationError` when the
     ///   calling task is cancelled, or any download or load error.
     private func runAdmission(
-        _ admission: ModelPoolAdmission,
+        admission: ModelPoolAdmission,
         profile def: ProfileDefinition,
         metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>],
         progress: ResolutionProgress,
@@ -339,7 +339,7 @@ public actor Router {
 
         do {
             return try await acquireSlots(
-                admission, resolution: resolution, metadataByRef: metadataByRef,
+                admission: admission, resolution: resolution, metadataByRef: metadataByRef,
                 workingSetBytes: totalBudget, progress: progress)
         } catch {
             // A download/load/preload failure must move the bound progress to
@@ -372,7 +372,7 @@ public actor Router {
     ///   download, load or preload error, or an error when the container of
     ///   a hold does not fit its slot.
     private func acquireSlots(
-        _ admission: ModelPoolAdmission,
+        admission: ModelPoolAdmission,
         resolution: JointResolution,
         metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>],
         workingSetBytes: Int64,
@@ -383,7 +383,7 @@ public actor Router {
         for slot in Self.acquisitionOrder {
             try Task.checkCancellation()
             acquired[slot] = try await acquire(
-                slot, resolution: resolution, metadataByRef: metadataByRef,
+                slot: slot, resolution: resolution, metadataByRef: metadataByRef,
                 admission: admission, workingSetBytes: workingSetBytes, progress: progress)
         }
 
@@ -450,7 +450,7 @@ public actor Router {
     /// - Returns: The hold, and whether this call loaded the model.
     /// - Throws: Any error the loader raises.
     private func acquire(
-        _ slot: ModelSlot,
+        slot: ModelSlot,
         resolution: JointResolution,
         metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>],
         admission: ModelPoolAdmission,
@@ -468,7 +468,7 @@ public actor Router {
         let isResident = admission.footprint.resident[ModelPoolKey(ref: chosen, role: slot.poolRole)] != nil
 
         await PromptCacheBudget.resize(
-            loader, workingSetBytes: workingSetBytes, footprint: admission.footprint,
+            loader: loader, workingSetBytes: workingSetBytes, footprint: admission.footprint,
             addedBytes: isResident ? sessionBytes : footprintBytes)
         do {
             if isResident {
@@ -488,7 +488,7 @@ public actor Router {
             return AcquiredSlot(hold: hold, isNewLoad: true)
         } catch {
             await PromptCacheBudget.resize(
-                loader, workingSetBytes: workingSetBytes, footprint: admission.footprint, addedBytes: 0)
+                loader: loader, workingSetBytes: workingSetBytes, footprint: admission.footprint, addedBytes: 0)
             throw error
         }
     }
@@ -736,7 +736,7 @@ public actor Router {
     /// Opens one load span and runs `body` — the fetch and load of one slot's
     /// model — inside it.
     ///
-    /// The caller is ``acquire(_:resolution:metadataByRef:admission:workingSetBytes:progress:)``,
+    /// The caller is ``acquire(slot:resolution:metadataByRef:admission:workingSetBytes:progress:)``,
     /// for a model the pool does not hold, so only a model this resolve really
     /// fetches opens a span here. The span is a child of the resolve span,
     /// because the admission job carries the service context of the resolve

@@ -129,7 +129,7 @@ struct PromptCacheBudgetIntegrationTests {
         #expect(pool.footprint.totalBytes + Int64(usage.residentBytes) <= workingSet)
 
         profile = nil
-        #expect(try await residentModelCountOnceEvicted(pool) == 0)
+        #expect(try await pool.residentModelCountOnceEvicted() == 0)
     }
 
     /// Resolves ``twoModelProfile`` one time on the host working set, reads
@@ -146,7 +146,7 @@ struct PromptCacheBudgetIntegrationTests {
         #expect(profile != nil)
         let footprint = pool.footprint.totalBytes
         profile = nil
-        #expect(try await residentModelCountOnceEvicted(pool) == 0)
+        #expect(try await pool.residentModelCountOnceEvicted() == 0)
         return footprint
     }
 
@@ -173,15 +173,5 @@ struct PromptCacheBudgetIntegrationTests {
     /// - Throws: `CancellationError` when the test is cancelled.
     private func promptCacheUsageOnceWritten(by loader: LiveModelLoader) async throws -> PromptCacheUsage {
         try await SettledValuePoll.value(of: { await loader.promptCacheUsage }) { $0.spillingBytes == 0 }
-    }
-
-    /// The resident model count of `pool` once the evictions that dropped
-    /// profiles started have run, or the count at the end of a bounded wait.
-    ///
-    /// - Parameter pool: The pool to read.
-    /// - Returns: The resident model count.
-    /// - Throws: `CancellationError` when the test is cancelled.
-    private func residentModelCountOnceEvicted(_ pool: ModelPool) async throws -> Int {
-        try await SettledValuePoll.value(of: { pool.residentModelCount }) { $0 == 0 }
     }
 }

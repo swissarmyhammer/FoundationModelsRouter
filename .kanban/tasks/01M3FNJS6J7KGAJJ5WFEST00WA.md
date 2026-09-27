@@ -32,9 +32,39 @@ comments:
     - evidence: `swift package clean && swift build --build-tests` — Build complete, no source warning; `swift test --skip-build` — 1461 tests in 177 suites passed (2 known issues that two tests expect on purpose), plus 17 tests in 8 suites and 19 tests in 3 suites; no skipped test; `swift build --build-tests --package-path IntegrationTests` — Build complete, no error, no warning; the pool, residency, cross-router, prompt-cache and cancellation suites 10 times with `--parallel --num-workers 8` — 67 tests in 10 suites passed each time.
     - next: /commit
   timestamp: 2026-09-27T17:18:37.403683+00:00
+- actor: claude-code
+  id: 01m3hyrb5qzzqbjr21g6154vfx
+  text: |-
+    ### review — findings
+    - evidence: `review sha HEAD~1..HEAD` on 17f41ca — 4 findings, 4 confirmed, 0 refuted: IntegrationTests/.../CrossRouterPoolIntegrationTests.swift:282 (reuse/reuse), Sources/FoundationModelsRouter/Router.swift:375 and :453 (swift/fluent-usage), Sources/FoundationModelsRouter/Sizing/PromptCacheBudget.swift:127 (swift/fluent-usage). README.md and model-pool.md: no validator matched.
+    - next: /implement the findings
+  timestamp: 2026-09-27T17:31:41.111495+00:00
+- actor: claude-code
+  id: 01m3hyremswhs08vp4gr0g7c6h
+  text: |-
+    ### finish iteration 1 — review findings
+    - implement: changed — Router.swift, LanguageModelProfile.swift, PoolPrimitives.swift, PooledEmbeddingContainer.swift (new), SlotPoolLoader.swift, PromptCacheBudget.swift, AsyncSemaphore.swift; removed ModelPool.swift and ResidencyHold.swift; tests, IntegrationTests, README.md, model-pool.md.
+    - test: green — clean `swift build --build-tests` with no source warning; `swift test --skip-build` 1461 tests in 177 suites passed (2 known issues), plus 17 and 19; pool suites 10 times in parallel, 67 tests each time; IntegrationTests build clean.
+    - commit: 17f41ca feat(router): resolve in one admission job of the Extras ModelPool (^est00wa)
+    - review: findings — 4 (CrossRouterPoolIntegrationTests.swift:282, Router.swift:375, Router.swift:453, PromptCacheBudget.swift:127).
+  timestamp: 2026-09-27T17:31:44.665234+00:00
+- actor: claude-code
+  id: 01m3hyynj7y10sdyp222d5g51j
+  text: |-
+    ### implement — changed
+    - evidence: 5 files — IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/Support/ModelPoolEviction.swift (new: one shared `ModelPool.residentModelCountOnceEvicted()`, the `footprints` stream plus an admission barrier), CrossRouterPoolIntegrationTests.swift and PromptCacheBudgetIntegrationTests.swift (their two private helpers removed; they call the shared one), Router.swift (first labels: `runAdmission(admission:...)`, `acquireSlots(admission:...)`, `acquire(slot:...)`; the same cause removed from `runAdmission` too), PromptCacheBudget.swift (`resize(loader:...)`). The four findings are checked.
+    - next: /test
+  timestamp: 2026-09-27T17:35:08.359427+00:00
+- actor: claude-code
+  id: 01m3hyyqj7j4c6qst1chxqacfz
+  text: |-
+    ### test — green
+    - evidence: `swift build --build-tests` — Build complete, no source warning; `swift test --skip-build` — 1461 tests in 177 suites passed (2 known issues that two tests expect), plus 17 tests in 8 suites and 19 tests in 3 suites; `swift build --build-tests --package-path IntegrationTests` — Build complete, no error, no warning.
+    - next: /commit
+  timestamp: 2026-09-27T17:35:10.407179+00:00
 depends_on:
 - 01M3FNBKR2347W659AXFJVZKGM
-position_column: doing
+position_column: review
 position_ordinal: '80'
 title: 'Router: swap Router.resolve to the Extras ModelPool and remove the router pool and ResidencyHold'
 ---
@@ -53,18 +83,27 @@ Blocked by Extras task 01M3FN95AM98RJSTCVQ8G1Z7KE (the pool actor, its hold type
 - Update `README.md` and `model-pool.md` in the router repo: the pool and the hold now come from Extras, and the router is one user of the pool.
 
 ## Acceptance Criteria
-- [ ] The router has no pool actor and no residency hold type of its own.
-- [ ] Two routers on `ModelPool.shared` that resolve the same `ModelRef` cause one load.
-- [ ] A model is evicted when the last router profile that holds it is released, as before.
-- [ ] `README.md` and `model-pool.md` describe the Extras pool.
-- [ ] `swift build` passes with no warnings on a clean build.
+- [x] The router has no pool actor and no residency hold type of its own.
+- [x] Two routers on `ModelPool.shared` that resolve the same `ModelRef` cause one load.
+- [x] A model is evicted when the last router profile that holds it is released, as before.
+- [x] `README.md` and `model-pool.md` describe the Extras pool.
+- [x] `swift build` passes with no warnings on a clean build.
 
 ## Tests
-- [ ] Update the router pool tests (the residency and eviction tests, the cross-router tests, and the `JointFit` tests with residents) to use the Extras pool.
-- [ ] Add a test: a router and a direct Extras `acquire` for the same key (a caller that is not the router, as the registry and the multitool are) with a stub loader cause one load, and the model stays resident until both release it.
-- [ ] Add a test file that imports both modules and uses `ModelPool`, and it compiles.
-- [ ] Add a test: a direct `pool.acquire` of a new key (a caller that is not the router), started while a router resolve runs, starts its load only after the router's admission job ends. The router's fit then uses a correct footprint.
-- [ ] `swift test` passes, and the output shows the full count of tests run.
+- [x] Update the router pool tests (the residency and eviction tests, the cross-router tests, and the `JointFit` tests with residents) to use the Extras pool.
+- [x] Add a test: a router and a direct Extras `acquire` for the same key (a caller that is not the router, as the registry and the multitool are) with a stub loader cause one load, and the model stays resident until both release it.
+- [x] Add a test file that imports both modules and uses `ModelPool`, and it compiles.
+- [x] Add a test: a direct `pool.acquire` of a new key (a caller that is not the router), started while a router resolve runs, starts its load only after the router's admission job ends. The router's fit then uses a correct footprint.
+- [x] `swift test` passes, and the output shows the full count of tests run.
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #model-pool #cross-repo
+
+## Review Findings (2026-09-27 12:18)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 26 file(s) reviewed, 6 not reviewed.
+
+- [x] `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/CrossRouterPoolIntegrationTests.swift:282` `reuse/reuse` — Function reinvents residentModelCountOnceEvicted that already exists in PromptCacheBudgetIntegrationTests.swift within the same changed set. Both test files implement the same helper function for waiting on model eviction with different implementation patterns; they should share one unified implementation. Extract residentModelCountOnceEvicted to a shared test fixture or utility module in FoundationModelsRouterIntegrationTests, using the more robust pattern from CrossRouterPoolIntegrationTests that properly handles asynchronous eviction via the admission barrier, as documented in its comment block (lines 270–281).
+- [x] `Sources/FoundationModelsRouter/Router.swift:375` `swift/fluent-usage` — The first parameter of the private `acquireSlots` method omits a label, but this is not a value-preserving conversion. The call reads `acquireSlots(admission, resolution: ...)`, which lacks grammatical clarity without labeling what is being acquired. Add a label to the first parameter: `private func acquireSlots(admission: ModelPoolAdmission, resolution: JointResolution, ...)`. The call then reads `acquireSlots(admission: admission, resolution: ...)`, which is clear.
+- [x] `Sources/FoundationModelsRouter/Router.swift:453` `swift/fluent-usage` — The first parameter of the private `acquire` method omits a label, but this is not a value-preserving conversion. The call reads `acquire(slot, resolution: ...)`, which lacks grammatical clarity without labeling what is being acquired. Add a label to the first parameter: `private func acquire(slot: ModelSlot, resolution: JointResolution, ...)`. The call then reads `acquire(slot: slot, resolution: ...)`, which is clear and grammatical.
+- [x] `Sources/FoundationModelsRouter/Sizing/PromptCacheBudget.swift:127` `swift/fluent-usage` — The first parameter of `resize` omits a label, but this is not a value-preserving conversion and should read as a grammatical phrase at the call site. Omitting labels is only for type conversions like `Int64(someUInt32)`, not for utility functions that reconfigure objects. Add a label to the first parameter: `static func resize(loader: any ModelLoader, workingSetBytes: Int64, footprint: ModelPoolFootprint, addedBytes: Int64) async {`. The call then reads `PromptCacheBudget.resize(loader: loader, workingSetBytes: ...)`, which is clear and grammatical.

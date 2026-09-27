@@ -124,7 +124,7 @@ enum PromptCacheBudget {
     ///   - addedBytes: The bytes that an acquire is about to add: the whole
     ///     footprint of a new model, the session of a new hold, or zero.
     static func resize(
-        _ loader: any ModelLoader, workingSetBytes: Int64, footprint: ModelPoolFootprint, addedBytes: Int64
+        loader: any ModelLoader, workingSetBytes: Int64, footprint: ModelPoolFootprint, addedBytes: Int64
     ) async {
         let usage = await loader.promptCacheUsage
         let budget = memoryBudgetBytes(
