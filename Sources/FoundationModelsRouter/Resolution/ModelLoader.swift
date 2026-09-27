@@ -160,15 +160,15 @@ extension LoadedLLMContainer {
 
 /// A loaded embedding model container. ``RoutedEmbedder`` runs its embedding
 /// computation through it.
-public protocol LoadedEmbeddingContainer: LoadedModelContainer {
-    /// The length of every embedding vector this model produces.
-    var dimension: Int { get }
-
-    /// Embeds each input string into a ``dimension``-length vector.
-    ///
-    /// - Returns: One vector per input, in order.
-    func embed(texts: [String]) async throws -> [[Float]]
-}
+///
+/// The requirements come from the Extras embed protocol, ``PooledEmbedding``:
+/// `dimension`, the length of every vector, and `embed(texts:)`, one vector
+/// for each text, in order. The first loader of a key gives the container of
+/// all holds of that key, so a container in the Extras pool can be a
+/// ``PooledEmbedding`` from a loader that is not the router's. Thus router
+/// code uses a pooled embedding container through ``PooledEmbedding`` and
+/// never casts it to this protocol.
+public protocol LoadedEmbeddingContainer: LoadedModelContainer, PooledEmbedding {}
 
 /// The download-and-load step behind ``Router/resolve(profile:reporting:)``.
 /// The live implementation is ``LiveModelLoader``.
