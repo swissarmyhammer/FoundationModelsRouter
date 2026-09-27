@@ -72,10 +72,26 @@ comments:
     - commit: 8e30e3c
     - review: findings — 2 (duplication/duplication at RoutedSessionActorCompaction.swift:146 and RoutedSessionActorGeneration.swift:92)
   timestamp: 2026-09-27T15:16:01.861249+00:00
+- actor: claude-code
+  id: 01m3hqnxggdc1hcm48fztrjnnn
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (d71a2af) — 0 findings, 0 refuted. Both prior findings (duplication/duplication at RoutedSessionActorCompaction.swift:146 and RoutedSessionActorGeneration.swift:92) are fixed by `awaitMailboxAnswer(id:answer:in:)` and checked.
+    - next: done
+  timestamp: 2026-09-27T15:28:01.552656+00:00
+- actor: claude-code
+  id: 01m3hqnzxmn2g5n8pez680mfb1
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed (extract `awaitMailboxAnswer(id:answer:in:)`, used by `enqueueAndAwaitAnswer` and `compact`)
+    - test: green (swift test 1448 + 17 + 19 passed; AnswerCancellation parallel x20: 27/27 each)
+    - commit: d71a2af
+    - review: clean — 0 findings
+  timestamp: 2026-09-27T15:28:04.020821+00:00
 depends_on:
 - 01M3FNB4MCRRBTJNNVZZ6P02R2
-position_column: review
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffff9f80
 title: 'Router: build SessionOutbox on the Extras Mailbox, and keep the pump''s cancellation invariants'
 ---
 ## What
@@ -94,16 +110,16 @@ Blocked by Extras task 01M3FN9KTQA9S37VTZXMMSRS07 (the generic `Mailbox`: `post`
 - The pump has constructs that look redundant but prevent a model-wide deadlock and prevent silent loss of outbox messages. Do not remove or simplify them, except the constructs for the old cancel hop in the step above, with the record that step requires. Read the comments in `RoutedSessionActorPump.swift` and `RoutedSessionActorCancellation.swift` before the change.
 
 ## Acceptance Criteria
-- [ ] `PumpAnswer` and the router's own caller-message FIFO are removed; the Extras `Mailbox` does this work.
-- [ ] A cancelled pump does not block the work queue of the model: after a submission is cancelled, the next submission from a different session on the same model runs.
-- [ ] The router tests of the queue semantics stay in the router. Extras has copies of them; the router removes none.
-- [ ] The public API of `RoutedSession` (`send`, `enqueue`, `pendingMessages`, `replace`, `messageQueueDepth`) does not change.
-- [ ] `swift build` passes with no warnings on a clean build.
+- [x] `PumpAnswer` and the router's own caller-message FIFO are removed; the Extras `Mailbox` does this work.
+- [x] A cancelled pump does not block the work queue of the model: after a submission is cancelled, the next submission from a different session on the same model runs.
+- [x] The router tests of the queue semantics stay in the router. Extras has copies of them; the router removes none.
+- [x] The public API of `RoutedSession` (`send`, `enqueue`, `pendingMessages`, `replace`, `messageQueueDepth`) does not change.
+- [x] `swift build` passes with no warnings on a clean build.
 
 ## Tests
-- [ ] `SessionOutboxTests`, `SessionMessagePumpTests`, `MessageQueueTests`, `MailOnlyAnswerLimitTests`, `PendingEventInjectionTests`, `RespondRunPlaneDrainTests` and the `AnswerCancellation*` tests pass with no change to what they assert.
-- [ ] Run the cancellation tests with parallel repetitions to find a race (for example `swift test --filter AnswerCancellation --parallel --num-workers 8`, repeated 20 times), and all runs pass.
-- [ ] `swift test` passes, and the output shows the full count of tests run.
+- [x] `SessionOutboxTests`, `SessionMessagePumpTests`, `MessageQueueTests`, `MailOnlyAnswerLimitTests`, `PendingEventInjectionTests`, `RespondRunPlaneDrainTests` and the `AnswerCancellation*` tests pass with no change to what they assert.
+- [x] Run the cancellation tests with parallel repetitions to find a race (for example `swift test --filter AnswerCancellation --parallel --num-workers 8`, repeated 20 times), and all runs pass.
+- [x] `swift test` passes, and the output shows the full count of tests run.
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #model-pool #cross-repo
@@ -115,5 +131,5 @@ Blocked by Extras task 01M3FN9KTQA9S37VTZXMMSRS07 (the generic `Mailbox`: `post`
 > 2 file(s) not reviewed — excluded by an ignore rule:
 > - `.kanban/ (from .reviewignore)` — 2 file(s)
 
-- [ ] `Sources/FoundationModelsRouter/Session/RoutedSessionActorCompaction.swift:146` `duplication/duplication` — The pattern of wrapping a mailbox answer in `withTaskCancellationHandler` with `cancelFromCallerTask` on cancel is duplicated. This exact structure appears in both `compact()` (here) and `enqueueAndAwaitAnswer()` in RoutedSessionActorGeneration.swift, differing only in the mailbox type and how the item is posted. Two functions doing the same thing with different mailbox parameters should share one extracted helper. Extract a shared helper function `awaitMailboxAnswer<Message: Sendable, Answer: Sendable>(id: MessageID, answer: MailboxAnswer<Answer>, in mailbox: Mailbox<Message, Answer>) async throws -> Answer` that handles the `withTaskCancellationHandler` + `cancelFromCallerTask` pattern, and call it from both `compact()` and `enqueueAndAwaitAnswer()`.
-- [ ] `Sources/FoundationModelsRouter/Session/RoutedSessionActorGeneration.swift:92` `duplication/duplication` — The pattern of wrapping a mailbox answer in `withTaskCancellationHandler` with `cancelFromCallerTask` on cancel is duplicated. This exact structure appears in both `enqueueAndAwaitAnswer()` (here) and `compact()` in RoutedSessionActorCompaction.swift, differing only in the mailbox type and how the item is posted. Two functions doing the same thing with different mailbox parameters should share one extracted helper. Extract a shared helper function `awaitMailboxAnswer<Message: Sendable, Answer: Sendable>(id: MessageID, answer: MailboxAnswer<Answer>, in mailbox: Mailbox<Message, Answer>) async throws -> Answer` that handles the `withTaskCancellationHandler` + `cancelFromCallerTask` pattern, and call it from both `enqueueAndAwaitAnswer()` and `compact()`.
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorCompaction.swift:146` `duplication/duplication` — The pattern of wrapping a mailbox answer in `withTaskCancellationHandler` with `cancelFromCallerTask` on cancel is duplicated. This exact structure appears in both `compact()` (here) and `enqueueAndAwaitAnswer()` in RoutedSessionActorGeneration.swift, differing only in the mailbox type and how the item is posted. Two functions doing the same thing with different mailbox parameters should share one extracted helper. Extract a shared helper function `awaitMailboxAnswer<Message: Sendable, Answer: Sendable>(id: MessageID, answer: MailboxAnswer<Answer>, in mailbox: Mailbox<Message, Answer>) async throws -> Answer` that handles the `withTaskCancellationHandler` + `cancelFromCallerTask` pattern, and call it from both `compact()` and `enqueueAndAwaitAnswer()`.
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorGeneration.swift:92` `duplication/duplication` — The pattern of wrapping a mailbox answer in `withTaskCancellationHandler` with `cancelFromCallerTask` on cancel is duplicated. This exact structure appears in both `enqueueAndAwaitAnswer()` (here) and `compact()` in RoutedSessionActorCompaction.swift, differing only in the mailbox type and how the item is posted. Two functions doing the same thing with different mailbox parameters should share one extracted helper. Extract a shared helper function `awaitMailboxAnswer<Message: Sendable, Answer: Sendable>(id: MessageID, answer: MailboxAnswer<Answer>, in mailbox: Mailbox<Message, Answer>) async throws -> Answer` that handles the `withTaskCancellationHandler` + `cancelFromCallerTask` pattern, and call it from both `enqueueAndAwaitAnswer()` and `compact()`.
