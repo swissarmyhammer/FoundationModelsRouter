@@ -62,10 +62,26 @@ comments:
     - evidence: `swift build --build-tests` — Build complete, no source warning; `swift test --skip-build` — 1461 tests in 177 suites passed (2 known issues that two tests expect), plus 17 tests in 8 suites and 19 tests in 3 suites; `swift build --build-tests --package-path IntegrationTests` — Build complete, no error, no warning.
     - next: /commit
   timestamp: 2026-09-27T17:35:10.407179+00:00
+- actor: claude-code
+  id: 01m3hz3fjtxbx6gndm5fk50sd1
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` on 4c883da — 0 findings, 0 confirmed, 0 refuted; 5 files reviewed (2 `.kanban/` files are excluded by `.reviewignore`). All 4 items of the 2026-09-27 12:18 findings section are checked.
+    - next: the task moves to done.
+  timestamp: 2026-09-27T17:37:46.074201+00:00
+- actor: claude-code
+  id: 01m3hz3jgc01fvqswcpzd2vced
+  text: |-
+    ### finish iteration 2 — review clean
+    - implement: changed — Support/ModelPoolEviction.swift (new, shared eviction wait), CrossRouterPoolIntegrationTests.swift, PromptCacheBudgetIntegrationTests.swift, Router.swift (first labels), PromptCacheBudget.swift (`resize(loader:...)`).
+    - test: green — `swift build --build-tests` with no source warning; `swift test --skip-build` 1461 tests in 177 suites passed (2 known issues), plus 17 and 19; IntegrationTests build clean.
+    - commit: 4c883da fix(router): label the first parameters and share the eviction wait of the integration tests (^est00wa)
+    - review: clean — `review sha HEAD~1..HEAD`, 0 findings. The task is in done.
+  timestamp: 2026-09-27T17:37:49.068944+00:00
 depends_on:
 - 01M3FNBKR2347W659AXFJVZKGM
-position_column: review
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffa380
 title: 'Router: swap Router.resolve to the Extras ModelPool and remove the router pool and ResidencyHold'
 ---
 ## What
