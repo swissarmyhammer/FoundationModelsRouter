@@ -102,7 +102,11 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
         let events: [PendingEvent]
 
         /// Every caller message that waits for the pump, in the order the
-        /// messages arrived.
+        /// messages arrived. This actor is not the session actor, so the
+        /// snapshot can also show the delivery letter of the pump
+        /// (``PumpWork/mailDeliveryLetter``) between its post and its take.
+        /// ``RoutedSessionActor/pendingMessages()`` reads on the session
+        /// actor, and never shows it.
         let messages: [SessionLetter]
     }
 
@@ -113,6 +117,12 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
     /// answer that runs. Every call on it is synchronous and holds one lock,
     /// so a caller that is not on this actor or on the session actor, such
     /// as the cancellation handler of a caller task, reaches it at once.
+    ///
+    /// The pump also posts a letter of its own to start the batch of an
+    /// answer that only mail starts (``PumpWork/mailDeliveryLetter``). It
+    /// posts and takes that letter on the session actor with no suspension
+    /// point between the two, so a read on the session actor never sees it
+    /// wait.
     nonisolated let messages = SessionMessageMailbox()
 
     /// The journal every posted event is recorded into, or `nil` before

@@ -38,8 +38,13 @@ extension RoutedSessionActor {
 
     /// A snapshot of every caller message that waits, in the order the
     /// messages arrived.
-    nonisolated func pendingMessages() async -> [(id: MessageID, prompt: Transcript.Prompt)] {
-        await outbox.pending().messages.map { (id: $0.id, prompt: $0.message.prompt) }
+    ///
+    /// The read runs on this actor. The delivery letter of an answer that
+    /// only mail starts (``PumpWork/mailDeliveryLetter``) waits only between
+    /// its post and its take, with no suspension point between the two on
+    /// this actor, so the snapshot never shows it.
+    func pendingMessages() async -> [(id: MessageID, prompt: Transcript.Prompt)] {
+        outbox.messages.pending.map { (id: $0.id, prompt: $0.message.prompt) }
     }
 
     /// Replaces the prompt of a caller message that waits.
@@ -54,9 +59,14 @@ extension RoutedSessionActor {
     }
 
     /// The count of the waiting caller messages, and the ids of the messages
-    /// of the running answer.
+    /// of the running answer. The delivery letter of an answer that only mail
+    /// starts (``PumpWork/mailDeliveryLetter``) is no caller message, so the
+    /// depth leaves it out. It never waits when this actor reads the depth
+    /// (``pendingMessages()``).
     func messageQueueDepth() async -> MessageQueueDepth {
-        outbox.messages.depth
+        let depth = outbox.messages.depth
+        let deliveryLetter = pumpWork?.mailDeliveryLetter
+        return MessageQueueDepth(waiting: depth.waiting, running: depth.running.filter { $0 != deliveryLetter })
     }
 
     /// Delivers the user's answer to a pending elicitation on this session.

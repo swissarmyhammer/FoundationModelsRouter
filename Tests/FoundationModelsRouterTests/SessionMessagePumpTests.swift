@@ -207,6 +207,22 @@ struct SessionMessagePumpTests {
     /// The detail of the terminal of the background run of a test.
     private static let settledRunDetail = "the background job finished"
 
+    /// The ordinal of the first submission of the answer that only mail
+    /// starts, in the tests of a mail-only answer: one caller answer runs
+    /// before it.
+    private static let mailOnlySubmission = 2
+
+    /// The ordinal of the continuation submission of the mail-only answer.
+    private static let mailOnlyContinuation = 3
+
+    /// The ordinal of the first submission of the answer after the mail-only
+    /// answer.
+    private static let nextAnswerSubmission = 4
+
+    /// The token ceiling that a caller names, so that the options of a
+    /// mail-only answer do not admit its message.
+    private static let namedTokenCeiling = 256
+
     // MARK: - Fixtures
 
     /// Makes a session over `backend`.
@@ -241,6 +257,26 @@ struct SessionMessagePumpTests {
         await latch.open()
         let token = await trackFakeRun(on: session.mailbox, latch: latch, detailOnSettle: settledRunDetail)
         return try await MountFixtures.settledTerminal(of: token, in: session.mailbox)
+    }
+
+    /// Starts an answer that only mail starts, and waits until its first
+    /// submission (``mailOnlySubmission``) reaches `backend`.
+    ///
+    /// One caller answer runs first, so the outbox of the session is
+    /// attached. Then the terminal of a settled background run arrives, and
+    /// it starts the mail-only answer with no caller call.
+    ///
+    /// - Parameters:
+    ///   - session: The session to start the answer on.
+    ///   - backend: The backend of the session.
+    /// - Throws: When the run does not settle, or when the submission does
+    ///   not reach the backend inside the bound.
+    private static func startMailOnlyAnswer(on session: any RoutedSession, backend: PumpProbeBackend) async throws {
+        let settledRun = try await settledRunTerminal(on: session)
+        _ = try await session.respond(to: firstPrompt)
+        await session.outbox.post(event: settledRun)
+        try await awaitPrompts(mailOnlySubmission, on: backend)
+        #expect(backend.prompts.last?.hasSuffix(RoutedSessionActor.settledRunDeliveryPrompt) == true)
     }
 
     /// Waits, bounded, until `backend` received `count` prompts.
@@ -475,6 +511,97 @@ struct SessionMessagePumpTests {
         let nextPrompt = try #require(backend.prompts.last)
         #expect(nextPrompt.contains(OperationEventSegment.renderedLine(for: settledRun)))
         #expect(nextPrompt.hasSuffix(Self.secondPrompt))
+        withExtendedLifetime(profile) {}
+    }
+
+    // MARK: - A caller message during a mail-only answer
+
+    @Test(
+        "a caller message that arrives while a mail-only answer runs, and that the options of the answer admit, joins its continuation and gets its final reply"
+    )
+    func aCallerMessageJoinsARunningMailOnlyAnswer() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "SessionMessagePumpTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let latch = RunLatch()
+        let backend = PumpProbeBackend(script: [Self.mailOnlySubmission: .holdThenReject(latch)])
+        let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
+        try await Self.startMailOnlyAnswer(on: session, backend: backend)
+
+        let joining = Task { try await session.respond(to: Self.secondPrompt) }
+        try await Self.awaitWaitingMessages(1, on: session)
+
+        // The mail-only submission ends with a rejected tool call. The retry
+        // is a continuation of the same answer, and the waiting prompt rides it.
+        await latch.open()
+        let joiningAnswer = try await joining.value
+
+        #expect(joiningAnswer == PumpProbeBackend.answer(ofCall: Self.mailOnlyContinuation))
+        #expect(await session.becomesIdle())
+        #expect(backend.prompts.count == Self.mailOnlyContinuation)
+        let retryPrompt = try #require(backend.prompts.last)
+        #expect(retryPrompt.contains(RoutedSessionActor.settledRunDeliveryPrompt))
+        #expect(retryPrompt.hasSuffix(RoutedSessionActor.messageSeparator + Self.secondPrompt))
+        #expect(await session.messageQueueDepth() == MessageQueueDepth(waiting: 0, running: []))
+        withExtendedLifetime(profile) {}
+    }
+
+    @Test(
+        "caller messages that the options of a running mail-only answer do not admit wait for the next answer, in the order they arrived"
+    )
+    func messagesThatAMailOnlyAnswerDoesNotAdmitWaitForTheNextAnswer() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "SessionMessagePumpTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let latch = RunLatch()
+        let backend = PumpProbeBackend(script: [Self.mailOnlySubmission: .holdThenReject(latch)])
+        let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
+        try await Self.startMailOnlyAnswer(on: session, backend: backend)
+
+        // A named token ceiling is not the ceiling of a mail-only answer.
+        // The later prompts arrive one after the other, so their order in
+        // the outbox is known.
+        let second = Task { try await session.respond(to: Self.secondPrompt, maxTokens: Self.namedTokenCeiling) }
+        try await Self.awaitWaitingMessages(1, on: session)
+        let third = Task { try await session.respond(to: Self.thirdPrompt, maxTokens: Self.namedTokenCeiling) }
+        try await Self.awaitWaitingMessages(Self.waitingCallerCount, on: session)
+
+        await latch.open()
+        let secondAnswer = try await second.value
+        let thirdAnswer = try await third.value
+
+        #expect(backend.prompts.count == Self.nextAnswerSubmission)
+        let retryPrompt = backend.prompts[Self.mailOnlyContinuation - 1]
+        #expect(!retryPrompt.contains(Self.secondPrompt))
+        #expect(!retryPrompt.contains(Self.thirdPrompt))
+        #expect(backend.prompts.last == Self.secondPrompt + RoutedSessionActor.messageSeparator + Self.thirdPrompt)
+        #expect(secondAnswer == PumpProbeBackend.answer(ofCall: Self.nextAnswerSubmission))
+        #expect(thirdAnswer == PumpProbeBackend.answer(ofCall: Self.nextAnswerSubmission))
+        withExtendedLifetime(profile) {}
+    }
+
+    @Test(
+        "a caller message cancelled while a mail-only answer runs is not taken into the answer, and its caller gets CancellationError"
+    )
+    func aCallerMessageCancelledBeforeTheJoinIsNotTaken() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "SessionMessagePumpTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let latch = RunLatch()
+        let backend = PumpProbeBackend(script: [Self.mailOnlySubmission: .holdThenReject(latch)])
+        let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
+        try await Self.startMailOnlyAnswer(on: session, backend: backend)
+
+        let cancelled = Task { try await session.respond(to: Self.secondPrompt) }
+        try await Self.awaitWaitingMessages(1, on: session)
+        cancelled.cancel()
+
+        // The cancel handler of the caller withdraws the message, which
+        // gives its caller `CancellationError` before the value is read.
+        try await Self.awaitWaitingMessages(0, on: session)
+        await #expect(throws: CancellationError.self) { try await cancelled.value }
+        await latch.open()
+
+        #expect(await session.becomesIdle())
+        #expect(backend.prompts.count == Self.mailOnlyContinuation)
+        #expect(backend.prompts.allSatisfy { !$0.contains(Self.secondPrompt) })
         withExtendedLifetime(profile) {}
     }
 

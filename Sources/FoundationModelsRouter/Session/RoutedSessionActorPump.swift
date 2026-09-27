@@ -39,6 +39,13 @@ struct PumpWork {
 
     /// What the work is.
     var kind: Kind
+
+    /// The letter that the pump posted to ``SessionOutbox/messages`` to start
+    /// the batch of an answer that only mail starts, or `nil` when a caller
+    /// message started the batch. The letter is no caller message: the answer
+    /// carries no letter for it, and ``RoutedSessionActor/messageQueueDepth()``
+    /// leaves it out.
+    var mailDeliveryLetter: MessageID?
 }
 
 /// A compaction that a caller asked for, which waits for the pump
@@ -83,6 +90,13 @@ extension RoutedSessionActor: SessionMailObserver {
         Background work you started has settled, and its result is above. \
         Act on it, or say what you did with it.
         """
+
+    /// The message of the letter that the pump posts to start the batch of an
+    /// answer that only mail starts (``PumpWork/mailDeliveryLetter``). Its
+    /// options are ``SubmissionOptions/mailDelivery``. No caller waits for
+    /// its answer.
+    static let mailDeliveryMessage = SessionMessage(
+        prompt: .plainText(settledRunDeliveryPrompt), requestedMaxTokens: nil, reader: .reply, serviceContext: nil)
 
     /// See ``SessionMailObserver/mailArrived()``. Wakes the pump, which
     /// delivers the new mail when it can start a submission.
@@ -151,8 +165,11 @@ extension RoutedSessionActor: SessionMailObserver {
     /// message that the options admit comes with it, in FIFO order. A stream
     /// message goes alone. Every pending mail event comes with the batch,
     /// held or not. When no caller message waits, the terminal of a settled
-    /// background run that is not held starts a submission of its own
-    /// (``SessionOutbox/takeMailStartingASubmission(deliveringRunsOf:)``).
+    /// background run that is not held starts an answer of its own
+    /// (``SessionOutbox/takeMailStartingASubmission(deliveringRunsOf:)``,
+    /// ``answerMail(_:settledRunTokens:workId:)``). A caller message that
+    /// arrives while the pump takes that mail starts the answer in its place,
+    /// and the mail rides it.
     ///
     /// - Returns: `false` when no deliverable message waited, or when the
     ///   pump was released before it took a batch.
@@ -161,29 +178,91 @@ extension RoutedSessionActor: SessionMailObserver {
         pumpWork = PumpWork(id: workId, kind: .taking)
         let settledRunTokens = await mailbox.settledRunTokens()
         guard outbox.messages.pending.isEmpty else {
-            let answered = await answerNextBatch(of: outbox.messages, joining: SessionMessage.sharesSubmission) {
-                letters in
-                let mail = await outbox.takeEvents()
-                // No suspension point between the read of the cancel marks
-                // and the work that holds the live letters: ``cancel(message:)``
-                // relies on it.
-                let live = liveLetters(letters, of: outbox.messages)
-                return try await runAnswer(
-                    of: SubmissionBatch(letters: live, events: mail), settledRunTokens: settledRunTokens,
-                    workId: workId
-                ).get()
-            }
-            if !answered {
-                endPumpWork()
-            }
-            return answered
+            return await answerCallerBatch(settledRunTokens: settledRunTokens, workId: workId)
         }
         guard let mail = await outbox.takeMailStartingASubmission(deliveringRunsOf: settledRunTokens) else {
             endPumpWork()
             return false
         }
-        _ = await runAnswer(
-            of: SubmissionBatch(letters: [], events: mail), settledRunTokens: settledRunTokens, workId: workId)
+        // No suspension point between this read and the post of the delivery
+        // letter: ``answerMail(_:settledRunTokens:workId:)`` relies on it.
+        guard !outbox.messages.pending.isEmpty else {
+            return await answerMail(mail, settledRunTokens: settledRunTokens, workId: workId)
+        }
+        // A caller message arrived while the pump took the mail. The mail
+        // goes back as it was, and the next cycle reads the waiting messages
+        // again with no suspension point before its take. The work keeps its
+        // id, so a cancel that arrived meanwhile reaches the next answer.
+        await outbox.putBack(untouched: mail)
+        return true
+    }
+
+    /// Takes the next batch of caller messages, and runs its answer. Every
+    /// pending mail event comes with the batch.
+    ///
+    /// - Parameters:
+    ///   - settledRunTokens: The completion tokens of the settled background
+    ///     runs.
+    ///   - workId: The id of the work.
+    /// - Returns: `false` when the pump was released before it took a batch.
+    private func answerCallerBatch(settledRunTokens: Set<String>, workId: UInt64) async -> Bool {
+        let answered = await answerNextBatch(of: outbox.messages, joining: SessionMessage.sharesSubmission) {
+            letters in
+            let mail = await outbox.takeEvents()
+            // No suspension point between the read of the cancel marks
+            // and the work that holds the live letters: ``cancel(message:)``
+            // relies on it.
+            let live = liveLetters(letters, of: outbox.messages)
+            return try await runAnswer(
+                of: SubmissionBatch(letters: live, events: mail), settledRunTokens: settledRunTokens,
+                workId: workId
+            ).get()
+        }
+        if !answered {
+            endPumpWork()
+        }
+        return answered
+    }
+
+    /// Runs the answer that only `mail` starts, as the body of a batch of
+    /// ``SessionOutbox/messages``. The pump posts a letter of its own
+    /// (``mailDeliveryMessage``) to start the batch, because the mailbox
+    /// starts no batch with no letter. A caller message that arrives while
+    /// the answer runs can then join a continuation of it
+    /// (``takeMessagesJoiningTheAnswer()``), and its caller gets the final
+    /// reply of the answer, or its error. The answer carries no letter for
+    /// the delivery letter, which no caller waits for.
+    ///
+    /// The caller reads that no caller message waits, and calls this with no
+    /// suspension point between the two. A caller posts only on this actor,
+    /// so the delivery letter is the first letter, the batch takes it alone,
+    /// and no reader on this actor sees it wait.
+    ///
+    /// - Parameters:
+    ///   - mail: The mail the pump took, which can start a submission.
+    ///   - settledRunTokens: The completion tokens of the settled background
+    ///     runs.
+    ///   - workId: The id of the work.
+    /// - Returns: `false` when the pump was released before it took the
+    ///   batch. Then the mail went back as it was.
+    private func answerMail(
+        _ mail: [SessionOutbox.PendingEvent], settledRunTokens: Set<String>, workId: UInt64
+    ) async -> Bool {
+        let deliveryLetter = outbox.messages.post(Self.mailDeliveryMessage).id
+        pumpWork?.mailDeliveryLetter = deliveryLetter
+        let answered = await answerNextBatch(of: outbox.messages, joining: { _, _ in false }) { _ in
+            try await runAnswer(
+                of: SubmissionBatch(letters: [], events: mail), settledRunTokens: settledRunTokens, workId: workId
+            ).get()
+        }
+        guard answered else {
+            // Nothing ran. The delivery letter leaves the mailbox, and the
+            // mail must not be lost.
+            outbox.messages.cancel(deliveryLetter)
+            await outbox.putBack(untouched: mail)
+            endPumpWork()
+            return false
+        }
         return true
     }
 
@@ -300,8 +379,10 @@ extension RoutedSessionActor: SessionMailObserver {
     /// the mail that waits, and the caller messages that can share the
     /// submission (`generation-queue.md`, section 5.5). The messages join the
     /// batch of the answer in the mailbox, so their callers get its final
-    /// reply. An answer that only mail started has no batch in the mailbox,
-    /// so no caller message joins it: the message waits for the next answer.
+    /// reply. An answer that only mail started runs in the batch of its
+    /// delivery letter (``answerMail(_:settledRunTokens:workId:)``), so a
+    /// caller message joins it as well. A message that the options do not
+    /// admit waits for the next answer.
     ///
     /// - Returns: The mail events, the texts of the joining messages, and the
     ///   ids of the joining messages, in the same order as the texts.
