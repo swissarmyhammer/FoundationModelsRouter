@@ -297,27 +297,36 @@ starts only after the eviction job ends.
 
 The prompt cache of the MLX fork is one store for the process. The router
 sends a budget for it through its own loader
-(`PromptCacheBudget.resize`, `Sources/FoundationModelsRouter/Sizing/PromptCacheBudget.swift`).
+(`PromptCacheSizing`, `Sources/FoundationModelsRouter/Sizing/PromptCacheSizing.swift`).
 The budget is the working set less the resident footprint of the pool, the
 bytes of a load that runs now, and the bytes that the next acquire adds.
 
-This design keeps these resize points, all inside the admission job of a
-resolve:
+Each router starts one task that reads the `footprints` stream of its pool.
+The task ends when the router is released. The resize points are:
 
-- Before each acquire, the router resizes for the bytes that the acquire
-  adds: the whole footprint of a new model, or the session bytes of a new
-  hold on a resident model.
-- After a failed acquire, the router resizes back to the resident footprint.
+- For each value of the stream: a load by any user of the pool (for example
+  the registry or the multitool), a release of a hold, and an eviction. Each
+  resize reads the footprint of the pool at the time it runs, and the resizes
+  of one router run one at a time.
+- Inside the admission job of a resolve, before each acquire: the router
+  resizes for the bytes that the acquire adds (the whole footprint of a new
+  model, or the session bytes of a new hold on a resident model), and only
+  then calls `acquire`. Thus the budget is small before the loader's `load`
+  runs.
+- After each acquire, and after a failed acquire: the router resizes back to
+  the footprint of the pool.
 
-These changes do not resize the prompt cache yet:
+Limits:
 
-- A load by a user that is not the router (for example the registry or the
-  multitool).
-- A release of a hold.
-- An eviction.
-
-Kanban task `01M3FNK00PYXP7E102NWNHMD56` (^wnhmd56) adds an observer of the
-`footprints` stream that resizes for these changes.
+- The stream does not wait for the router. For a load by a different user,
+  the resize comes when the router's task reads the value with
+  `loadingBytes`, a short time after the load starts.
+- While an acquire of the router runs, its task does not resize, because the
+  bytes of the acquire and the `loadingBytes` of the same load would count two
+  times. A release in that time resizes when the acquire ends.
+- The last release of a key submits the eviction job from a detached task
+  (Extras task ^adn17rg), so the resize for the freed weights can come a short
+  time after the release.
 
 ## 3. Testing
 
@@ -335,6 +344,13 @@ Kanban task `01M3FNK00PYXP7E102NWNHMD56` (^wnhmd56) adds an observer of the
   resolve loads only after the admission job of the router ends.
   `ModelPoolNameTests` pins that the router name `ModelPool` and the Extras
   class are one type.
+- **Prompt-cache tests**: `PromptCacheBudgetTests` pins that a resolve sends
+  the budget of each new model before the load of that model, that a failed
+  load gives the budget back, that a load by a direct caller resizes the
+  prompt cache of the router while it loads (and the release and the eviction
+  resize it back), that two routers on one pool each resize their own loader,
+  and that the footprints task of a router ends when the router is released.
+  Each wait is on a real signal: a budget that the loader gets.
 - **Context key test**: `sameRepoDifferentContextSharesOneContainer`, and a
   budget pin proves that the second profile charges one KV cache at its own
   context and no weights.

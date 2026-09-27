@@ -78,13 +78,11 @@ public struct PromptCacheUsage: Sendable, Equatable {
 ///
 /// ## When the router sends the budget
 ///
-/// A resolve sends the budget inside its admission job of the Extras
-/// ``ModelPool``: before each acquire, with the bytes that the acquire adds
-/// (the whole footprint of a new model, or the session of a new hold on a
-/// resident model), so the budget is small before the weights load; and after
-/// a failed acquire, back to the resident footprint. A load that a caller
-/// that is not the router starts, and a release or an eviction, does not
-/// send a budget yet.
+/// Each router sends the budget through its ``PromptCacheSizing``: for each
+/// value of the footprints stream of the Extras ``ModelPool`` (a load by any
+/// caller, a release, an eviction), and inside its admission job before and
+/// after each acquire of the router. ``PromptCacheSizing`` records the order
+/// of these resizes and its limit.
 ///
 /// ## More than one pool
 ///

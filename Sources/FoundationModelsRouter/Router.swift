@@ -69,7 +69,16 @@ public actor Router {
     /// pool shares its residents and its admission queue.
     package nonisolated let pool: ModelPool
 
+    /// The prompt-cache sizing of this router: it sends the budget to the
+    /// prompt cache of ``loader`` for each change of the footprint of
+    /// ``pool``, and around each acquire of a resolve.
+    nonisolated let promptCacheSizing: PromptCacheSizing
+
     /// Creates a router.
+    ///
+    /// The router starts one task that reads the footprints of `pool` and
+    /// sends the prompt-cache budget to `loader`. The task ends when the
+    /// router is released.
     ///
     /// - Parameters:
     ///   - id: The recording root id. Pass one in to continue a prior root.
@@ -126,6 +135,7 @@ public actor Router {
         self.loader = loader
         self.samplingMode = samplingMode
         self.pool = pool
+        self.promptCacheSizing = PromptCacheSizing(pool: pool, loader: loader, probe: probe)
     }
 
     /// Resolves an authored profile into a resident ``LanguageModelProfile``
@@ -339,8 +349,7 @@ public actor Router {
 
         do {
             return try await acquireSlots(
-                admission: admission, resolution: resolution, metadataByRef: metadataByRef,
-                workingSetBytes: totalBudget, progress: progress)
+                admission: admission, resolution: resolution, metadataByRef: metadataByRef, progress: progress)
         } catch {
             // A download/load/preload failure must move the bound progress to
             // `.failed` so a UI does not hang mid-pipeline, then rethrow. A
@@ -365,7 +374,6 @@ public actor Router {
     ///   - admission: The pool inside the admission job of this resolve.
     ///   - resolution: The joint fit this resolve applies.
     ///   - metadataByRef: The sizing metadata fetched for every candidate.
-    ///   - workingSetBytes: The recommended working set this resolve measured.
     ///   - progress: The progress to drive through acquisition.
     /// - Returns: The joint fit, the holds and the containers of the profile.
     /// - Throws: `CancellationError` when the calling task is cancelled, any
@@ -375,7 +383,6 @@ public actor Router {
         admission: ModelPoolAdmission,
         resolution: JointResolution,
         metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>],
-        workingSetBytes: Int64,
         progress: ResolutionProgress
     ) async throws -> AdmittedResolve {
         await setPhase(.downloading, progress: progress)
@@ -384,7 +391,7 @@ public actor Router {
             try Task.checkCancellation()
             acquired[slot] = try await acquire(
                 slot: slot, resolution: resolution, metadataByRef: metadataByRef,
-                admission: admission, workingSetBytes: workingSetBytes, progress: progress)
+                admission: admission, progress: progress)
         }
 
         await setPhase(.loading, progress: progress)
@@ -437,15 +444,15 @@ public actor Router {
     /// Before the acquire, the prompt cache of this router's loader gets a
     /// budget less the bytes the acquire adds: the whole footprint of a new
     /// model, so the prompt cache is small before the weights load, or the
-    /// session of a new hold on a resident model. After a failed acquire, the
-    /// budget goes back to the resident footprint.
+    /// session of a new hold on a resident model. After the acquire, and
+    /// after a failed acquire, the budget goes back to the footprint of the
+    /// pool (``PromptCacheSizing/withBudget(adding:isolation:_:)``).
     ///
     /// - Parameters:
     ///   - slot: The slot being acquired.
     ///   - resolution: The joint fit this resolve applies.
     ///   - metadataByRef: The sizing metadata fetched for every candidate.
     ///   - admission: The pool inside the admission job of this resolve.
-    ///   - workingSetBytes: The recommended working set this resolve measured.
     ///   - progress: The progress to drive through acquisition.
     /// - Returns: The hold, and whether this call loaded the model.
     /// - Throws: Any error the loader raises.
@@ -454,7 +461,6 @@ public actor Router {
         resolution: JointResolution,
         metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>],
         admission: ModelPoolAdmission,
-        workingSetBytes: Int64,
         progress: ResolutionProgress
     ) async throws -> AcquiredSlot {
         let slotRes = Self.slotResolution(for: resolution, slot: slot)
@@ -467,10 +473,7 @@ public actor Router {
             reporting: Self.reporter(slot: slot, progress: progress))
         let isResident = admission.footprint.resident[ModelPoolKey(ref: chosen, role: slot.poolRole)] != nil
 
-        await PromptCacheBudget.resize(
-            loader: loader, workingSetBytes: workingSetBytes, footprint: admission.footprint,
-            addedBytes: isResident ? sessionBytes : footprintBytes)
-        do {
+        return try await promptCacheSizing.withBudget(adding: isResident ? sessionBytes : footprintBytes) {
             if isResident {
                 let hold = try await slotLoader.acquireHold(
                     of: chosen, in: admission, footprintBytes: footprintBytes, sessionBytes: sessionBytes)
@@ -486,10 +489,6 @@ public actor Router {
                     of: chosen, in: admission, footprintBytes: footprintBytes, sessionBytes: sessionBytes)
             }
             return AcquiredSlot(hold: hold, isNewLoad: true)
-        } catch {
-            await PromptCacheBudget.resize(
-                loader: loader, workingSetBytes: workingSetBytes, footprint: admission.footprint, addedBytes: 0)
-            throw error
         }
     }
 
@@ -736,7 +735,7 @@ public actor Router {
     /// Opens one load span and runs `body` — the fetch and load of one slot's
     /// model — inside it.
     ///
-    /// The caller is ``acquire(slot:resolution:metadataByRef:admission:workingSetBytes:progress:)``,
+    /// The caller is ``acquire(slot:resolution:metadataByRef:admission:progress:)``,
     /// for a model the pool does not hold, so only a model this resolve really
     /// fetches opens a span here. The span is a child of the resolve span,
     /// because the admission job carries the service context of the resolve
