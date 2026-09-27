@@ -27,8 +27,31 @@ comments:
     - evidence: clean build (package intermediates removed) `swift build --build-tests`: 0 code warnings (only the build-system note "missing creator for mutated node ... mlx-swift_Cmlx.bundle"). `swift test`: 1451 tests in 173 suites passed (2 known issues, the same as before), 17 tests in 8 suites passed, 19 tests in 3 suites passed. `swift test --filter AnswerCancellation --parallel --num-workers 8` x20: 27 tests each, 20/20 passed, 0 issues. Pump, queue, mail-limit and outbox suites parallel x20: 70 tests each, 20/20 passed.
     - next: commit
   timestamp: 2026-09-27T16:06:27.666394+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m3hswtkwk96awm4ts0cyhmas
+  text: |-
+    ### commit — changed
+    - evidence: b9e6202 fix(session): let a caller message join a mail-only answer again (^68kn2d1)
+    - next: review
+  timestamp: 2026-09-27T16:06:45.116504+00:00
+- actor: claude-code
+  id: 01m3ht20ptb9nq23z278j4q1gw
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (b9e6202) — 0 findings, 0 confirmed, 0 refuted; 7 validator runs, 0 failed. No prior findings.
+    - next: done
+  timestamp: 2026-09-27T16:09:35.194751+00:00
+- actor: claude-code
+  id: 01m3ht22pj9cx0yh57cqavdkyn
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed (pump-owned delivery letter starts the mailbox batch of a mail-only answer; 3 new pump tests; the join test failed before the fix)
+    - test: green (swift test 1451 + 17 + 19 passed; AnswerCancellation parallel x20: 27/27 each; clean build 0 code warnings)
+    - commit: b9e6202
+    - review: clean — 0 findings
+  timestamp: 2026-09-27T16:09:37.234542+00:00
+position_column: done
+position_ordinal: ffffffa080
 title: 'Router: a caller message can join a running mail-only answer again'
 ---
 ## What
