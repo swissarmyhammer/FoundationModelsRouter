@@ -3,22 +3,43 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// A ``ModelLoader`` that records each prompt-cache memory budget it gets, and
-/// reports a fixed prompt-cache usage.
+/// A ``ModelLoader`` that records each prompt-cache memory budget it gets and
+/// each load, in one list in call order, and reports a fixed prompt-cache
+/// usage.
 ///
 /// It gives each load to the shared ``StubModelLoader``, which loads one
 /// ``CannedLLMContainer`` for each generation slot and a
 /// ``StubEmbeddingContainer`` for each embedder. It does no download and uses
 /// no GPU.
 private actor PromptCacheRecordingLoader: ModelLoader {
+    /// One call that the loader received.
+    enum Call: Equatable {
+        /// A memory budget of the prompt cache.
+        case budget(Int)
+
+        /// A load of a model.
+        case load(ModelRef)
+    }
+
     /// The reference of the canned generation container that each load gives.
     private static let cannedRef: ModelRef = "org/prompt-cache"
 
-    /// Each memory budget the pool sent, in the order it was sent.
-    private(set) var memoryBudgets: [Int] = []
+    /// Each call, in the order it arrived.
+    private(set) var calls: [Call] = []
+
+    /// Each memory budget the router sent, in the order it was sent.
+    var memoryBudgets: [Int] {
+        calls.compactMap { call in
+            guard case .budget(let budget) = call else { return nil }
+            return budget
+        }
+    }
 
     /// The usage this loader reports for each read.
     private let usage: PromptCacheUsage
+
+    /// Whether each load throws ``DeliberateLoadFailure``.
+    private let failsEachLoad: Bool
 
     /// The shared stub that does each load.
     private let stub = StubModelLoader(
@@ -26,9 +47,12 @@ private actor PromptCacheRecordingLoader: ModelLoader {
 
     /// Makes a loader that reports `usage`.
     ///
-    /// - Parameter usage: The prompt-cache usage to report.
-    init(usage: PromptCacheUsage = .zero) {
+    /// - Parameters:
+    ///   - usage: The prompt-cache usage to report.
+    ///   - failsEachLoad: Whether each load throws ``DeliberateLoadFailure``.
+    init(usage: PromptCacheUsage = .zero, failsEachLoad: Bool = false) {
         self.usage = usage
+        self.failsEachLoad = failsEachLoad
     }
 
     func loadLLM(
@@ -37,7 +61,8 @@ private actor PromptCacheRecordingLoader: ModelLoader {
         context: Int,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> any LoadedLLMContainer {
-        try await stub.loadLLM(ref: ref, slot: slot, context: context, reporting: reporting)
+        try recordLoad(of: ref)
+        return try await stub.loadLLM(ref: ref, slot: slot, context: context, reporting: reporting)
     }
 
     func loadEmbedder(
@@ -45,7 +70,8 @@ private actor PromptCacheRecordingLoader: ModelLoader {
         slot: ModelSlot,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> any LoadedEmbeddingContainer {
-        try await stub.loadEmbedder(ref: ref, slot: slot, reporting: reporting)
+        try recordLoad(of: ref)
+        return try await stub.loadEmbedder(ref: ref, slot: slot, reporting: reporting)
     }
 
     func preload(container: any LoadedModelContainer) async throws {
@@ -53,10 +79,21 @@ private actor PromptCacheRecordingLoader: ModelLoader {
     }
 
     func configurePromptCache(memoryBudgetBytes: Int) async {
-        memoryBudgets.append(memoryBudgetBytes)
+        calls.append(.budget(memoryBudgetBytes))
     }
 
     var promptCacheUsage: PromptCacheUsage { usage }
+
+    /// Records the load of `ref`, and fails it when ``failsEachLoad`` is set.
+    ///
+    /// - Parameter ref: The model of the load.
+    /// - Throws: ``DeliberateLoadFailure`` when ``failsEachLoad`` is set.
+    private func recordLoad(of ref: ModelRef) throws {
+        calls.append(.load(ref))
+        if failsEachLoad {
+            throw DeliberateLoadFailure()
+        }
+    }
 }
 
 /// The failure a load of ``PromptCacheBudgetTests`` throws on purpose.
@@ -64,16 +101,12 @@ private struct DeliberateLoadFailure: Error {}
 
 /// Unit coverage of the prompt-cache memory budget (`generation-queue.md`
 /// section 3): the working set less the footprint of each resident model and
-/// less the bytes that are being written to disk, sent to the loader each time
-/// the resident footprint changes.
+/// less the bytes that are being written to disk. Inside its admission job, a
+/// resolve sends the budget to its loader before each acquire, and again after
+/// a failed load.
 struct PromptCacheBudgetTests {
     /// The recommended working set of each test: 48 GiB.
     static let workingSet: Int64 = 48 << 30
-
-    /// The recommended working set that a later resolve measures: 32 GiB. It
-    /// is different from ``workingSet``, so a test can see which working set a
-    /// budget used.
-    static let laterWorkingSet: Int64 = 32 << 30
 
     /// The footprint of the first resident model: 6 GiB.
     static let firstFootprint: Int64 = 6 << 30
@@ -91,11 +124,8 @@ struct PromptCacheBudgetTests {
     /// The prompt-cache bytes on disk that a usage double reports: 5 GiB.
     static let diskBytes = 5 << 30
 
-    /// The pool key of the first model.
-    static let firstKey = ResidencyKey(ref: "org/first", role: .llm)
-
-    /// The pool key of the second model.
-    static let secondKey = ResidencyKey(ref: "org/second", role: .llm)
+    /// The recommended working set of the probe of each test router.
+    static let hostWorkingSet = RouterTestFixtures.stubProbe.recommendedMaxWorkingSetSize
 
     // MARK: - The budget computation
 
@@ -149,153 +179,107 @@ struct PromptCacheBudgetTests {
         #expect(budget == 0)
     }
 
-    // MARK: - The pool sends the budget
+    // MARK: - A resolve sends the budget
 
-    @Test("the pool sends the budget again after each load and after each unload")
-    func poolSendsTheBudgetAfterEachLoadAndUnload() async throws {
+    @Test("a resolve shrinks the budget before the load of each new model")
+    func resolveShrinksTheBudgetBeforeEachLoad() async throws {
         let loader = PromptCacheRecordingLoader()
-        let pool = ModelPool()
-        let sizing = PromptCacheSizing(loader: loader, workingSetBytes: Self.workingSet)
+        let (profile, _) = try await Self.resolve(with: loader, on: ModelPool())
+        let generation = ResidencyFixtures.generationModelFootprint
+        let embedding = ResidencyFixtures.embeddingModelFootprint
 
-        try await acquire(Self.firstKey, footprint: Self.firstFootprint, sizing: sizing, on: pool)
-        #expect(await loader.memoryBudgets.last == Int(Self.workingSet - Self.firstFootprint))
-
-        try await acquire(Self.secondKey, footprint: Self.secondFootprint, sizing: sizing, on: pool)
-        let bothResident = Int(Self.workingSet - Self.firstFootprint - Self.secondFootprint)
-        #expect(await loader.memoryBudgets.last == bothResident)
-
-        let sentBeforeUnload = await loader.memoryBudgets.count
-        await release(Self.secondKey, on: pool)
-        #expect(await loader.memoryBudgets.count > sentBeforeUnload)
-        #expect(await loader.memoryBudgets.last == Int(Self.workingSet - Self.firstFootprint))
-
-        await release(Self.firstKey, on: pool)
-        #expect(await loader.memoryBudgets.last == Int(Self.workingSet))
-        #expect(await pool.residentModelCount == 0)
-    }
-
-    @Test("a release sizes the budget against the working set of the latest acquisition")
-    func releaseUsesTheWorkingSetOfTheLatestAcquisition() async throws {
-        let loader = PromptCacheRecordingLoader()
-        let pool = ModelPool()
-        let firstSizing = PromptCacheSizing(loader: loader, workingSetBytes: Self.workingSet)
-        let laterSizing = PromptCacheSizing(loader: loader, workingSetBytes: Self.laterWorkingSet)
-
-        try await acquire(Self.firstKey, footprint: Self.firstFootprint, sizing: firstSizing, on: pool)
-        try await acquire(Self.firstKey, footprint: Self.firstFootprint, sizing: laterSizing, on: pool)
-        await release(Self.firstKey, on: pool)
-
-        #expect(await pool.residentModelCount == 1)
-        #expect(await loader.memoryBudgets.last == Int(Self.laterWorkingSet - Self.firstFootprint))
-    }
-
-    @Test("the pool shrinks the budget before it loads the weights of a new model")
-    func poolShrinksTheBudgetBeforeTheLoad() async throws {
-        let loader = PromptCacheRecordingLoader()
-        let pool = ModelPool()
-        let sizing = PromptCacheSizing(loader: loader, workingSetBytes: Self.workingSet)
-        let expected = Int(Self.workingSet - Self.firstFootprint)
-
-        try await acquire(Self.firstKey, footprint: Self.firstFootprint, sizing: sizing, on: pool) {
-            #expect(await loader.memoryBudgets.last == expected)
-            return .llm(CannedLLMContainer(ref: Self.firstKey.ref))
-        }
+        #expect(
+            await loader.calls == [
+                .budget(Int(Self.hostWorkingSet - generation)),
+                .load(profile.standard.chosen),
+                .budget(Int(Self.hostWorkingSet - 2 * generation)),
+                .load(profile.flash.chosen),
+                .budget(Int(Self.hostWorkingSet - 2 * generation - embedding)),
+                .load(profile.embedding.chosen),
+            ])
     }
 
     @Test("a load that fails gives the budget back")
     func failedLoadGivesTheBudgetBack() async throws {
-        let loader = PromptCacheRecordingLoader()
+        let loader = PromptCacheRecordingLoader(failsEachLoad: true)
         let pool = ModelPool()
-        let sizing = PromptCacheSizing(loader: loader, workingSetBytes: Self.workingSet)
 
         await #expect(throws: DeliberateLoadFailure.self) {
-            try await acquire(Self.firstKey, footprint: Self.firstFootprint, sizing: sizing, on: pool) {
-                throw DeliberateLoadFailure()
-            }
+            _ = try await Self.resolve(with: loader, on: pool)
         }
-        #expect(await loader.memoryBudgets.last == Int(Self.workingSet))
-        #expect(await pool.residentModelCount == 0)
+        #expect(
+            await loader.memoryBudgets == [
+                Int(Self.hostWorkingSet - ResidencyFixtures.generationModelFootprint), Int(Self.hostWorkingSet),
+            ])
+        #expect(pool.residentModelCount == 0)
     }
 
-    @Test("the pool holds the spilling bytes out of the budget it sends")
-    func poolHoldsOutTheSpillingBytes() async throws {
+    @Test("a resolve that reuses resident models sends the budget with the session of each new hold")
+    func reuseSendsTheBudgetWithEachNewHold() async throws {
+        let loader = PromptCacheRecordingLoader()
+        let pool = ModelPool()
+        let (first, _) = try await Self.resolve(with: loader, on: pool)
+        let residentBeforeReuse = pool.footprint.totalBytes
+        let loadsBeforeReuse = await loader.calls.count
+
+        let (second, _) = try await Self.resolve(with: loader, on: pool)
+
+        // No load, and one budget for each slot. The two generation holds
+        // each add one session KV cache; the embedding hold adds nothing.
+        let sessions = ResidencyFixtures.sessionKVBytes
+        let reuseCalls = await Array(loader.calls.dropFirst(loadsBeforeReuse))
+        #expect(
+            reuseCalls == [
+                .budget(Int(Self.hostWorkingSet - residentBeforeReuse - sessions)),
+                .budget(Int(Self.hostWorkingSet - residentBeforeReuse - 2 * sessions)),
+                .budget(Int(Self.hostWorkingSet - residentBeforeReuse - 2 * sessions)),
+            ])
+        withExtendedLifetime((first, second)) {}
+    }
+
+    @Test("a resolve holds the spilling bytes out of the budget it sends")
+    func resolveHoldsOutTheSpillingBytes() async throws {
         let usage = PromptCacheUsage(
             memoryBytes: Self.memoryBytes, spillingBytes: Self.spillingBytes, diskBytes: Self.diskBytes)
         let loader = PromptCacheRecordingLoader(usage: usage)
         let pool = ModelPool()
-        let sizing = PromptCacheSizing(loader: loader, workingSetBytes: Self.workingSet)
 
-        try await acquire(Self.firstKey, footprint: Self.firstFootprint, sizing: sizing, on: pool)
-        let expected = Int(Self.workingSet - Self.firstFootprint) - Self.spillingBytes
+        let (profile, _) = try await Self.resolve(with: loader, on: pool)
+
+        let expected = Int(Self.hostWorkingSet - pool.footprint.totalBytes) - Self.spillingBytes
         #expect(await loader.memoryBudgets.last == expected)
+        withExtendedLifetime(profile) {}
     }
 
-    // MARK: - The router gives its loader and its working set to the pool
-
-    @Test("a resolve sends the working set less the resident footprint, and a drop sends it again")
-    func resolveAndDropSendTheBudget() async throws {
+    @Test("the last budget of a resolve is the working set less the resident footprint")
+    func lastBudgetIsTheWorkingSetLessTheResidentFootprint() async throws {
         let loader = PromptCacheRecordingLoader()
         let pool = ModelPool()
-        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "PromptCacheBudgetTests")
-        defer { try? FileManager.default.removeItem(at: cacheDir) }
-        let router = RouterTestFixtures.makeRouter(cacheDir: cacheDir, loader: loader, pool: pool)
-        let hostWorkingSet = RouterTestFixtures.stubProbe.recommendedMaxWorkingSetSize
 
-        var profile: LanguageModelProfile? = try await router.resolve(
-            profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        #expect(profile != nil)
-        let residentFootprint = await pool.residentFootprintBytes
-        #expect(residentFootprint > 0)
-        #expect(await loader.memoryBudgets.last == Int(hostWorkingSet - residentFootprint))
+        let (profile, _) = try await Self.resolve(with: loader, on: pool)
 
-        profile.dropReference()
-        await pool.settleDroppedResidencies()
-        #expect(await loader.memoryBudgets.last == Int(hostWorkingSet))
+        #expect(pool.footprint.totalBytes > 0)
+        #expect(await loader.memoryBudgets.last == Int(Self.hostWorkingSet - pool.footprint.totalBytes))
+        withExtendedLifetime(profile) {}
     }
 
     // MARK: - Helpers
 
-    /// Acquires `key` on `pool` under the resolve lock, with a charge of no KV
-    /// cache.
+    /// Resolves the standard test profile through a router over `loader` and
+    /// `pool`.
     ///
     /// - Parameters:
-    ///   - key: The pool key to acquire.
-    ///   - footprint: The whole footprint of the model.
-    ///   - sizing: The prompt-cache target and working set of the acquisition.
-    ///   - pool: The pool to acquire on.
-    ///   - load: The load of a fresh entry, or `nil` (the default) for a load
-    ///     that gives a canned generation container for `key`.
-    /// - Throws: Whatever the acquisition throws.
-    private func acquire(
-        _ key: ResidencyKey,
-        footprint: Int64,
-        sizing: PromptCacheSizing,
-        on pool: ModelPool,
-        load: (@Sendable () async throws -> PooledContainer)? = nil
-    ) async throws {
-        let cannedLoad: @Sendable () async throws -> PooledContainer = {
-            .llm(CannedLLMContainer(ref: key.ref))
-        }
-        try await pool.withResolveLock {
-            _ = try await pool.acquire(
-                key: key,
-                footprintBytes: footprint,
-                sessionBytes: 0,
-                promptCache: sizing,
-                load: load ?? cannedLoad,
-                evict: { _ in }
-            )
-        }
-    }
-
-    /// Releases the one charge of `key` on `pool` under the resolve lock.
-    ///
-    /// - Parameters:
-    ///   - key: The pool key to release.
-    ///   - pool: The pool to release on.
-    private func release(_ key: ResidencyKey, on pool: ModelPool) async {
-        await pool.withResolveLock {
-            await pool.release(charges: [SlotCharge(key: key, sessionBytes: 0)])
-        }
+    ///   - loader: The loader of the router.
+    ///   - pool: The pool of the router.
+    /// - Returns: The profile, beside the router that resolved it.
+    /// - Throws: What the resolve throws.
+    private static func resolve(
+        with loader: PromptCacheRecordingLoader, on pool: ModelPool
+    ) async throws -> (LanguageModelProfile, Router) {
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "PromptCacheBudgetTests")
+        defer { try? FileManager.default.removeItem(at: cacheDir) }
+        let router = RouterTestFixtures.makeRouter(cacheDir: cacheDir, loader: loader, pool: pool)
+        let profile = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        return (profile, router)
     }
 }

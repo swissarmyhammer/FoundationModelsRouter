@@ -229,7 +229,7 @@ struct CrossRouterPoolIntegrationTests {
                 == distinctModelRefs(of: try #require(firstProfile)))
         #expect(fixture.second.loadSpans.isEmpty)
         #expect(fixture.first.loadSpans.count == firstLoadSpans.count)
-        #expect(await fixture.pool.residentModelCount == gatedRealProfileResidentContainerCount)
+        #expect(fixture.pool.residentModelCount == gatedRealProfileResidentContainerCount)
 
         let firstAnswer = try await answer(on: makeSession(from: try #require(firstProfile)))
         #expect(!firstAnswer.isEmpty)
@@ -239,7 +239,7 @@ struct CrossRouterPoolIntegrationTests {
         // Residency follows ARC: dropping both profiles gives every model back.
         firstProfile = nil
         secondProfile = nil
-        #expect(try await residentModelCountOnceDrained(fixture.pool) == 0)
+        #expect(try await residentModelCountOnceEvicted(fixture.pool) == 0)
     }
 
     @Test("a release from the first router keeps the second router's session alive")
@@ -253,10 +253,10 @@ struct CrossRouterPoolIntegrationTests {
         let firstLoadSpanCount = fixture.first.loadSpans.count
         #expect(firstProfile != nil)
 
-        // Residency follows ARC: dropping the first profile gives back its share.
+        // Residency follows ARC: the drop of the first profile releases its holds.
         firstProfile = nil
-        // The second profile still holds every key, so the pool evicted nothing.
-        #expect(await fixture.pool.residentModelCount == gatedRealProfileResidentContainerCount)
+        // The second profile still holds every key, so the pool evicts nothing.
+        #expect(fixture.pool.residentModelCount == gatedRealProfileResidentContainerCount)
 
         let reply = try await answer(on: secondSession)
         #expect(!reply.isEmpty)
@@ -267,21 +267,23 @@ struct CrossRouterPoolIntegrationTests {
     }
 }
 
-/// The resident model count of `pool` once the drains that dropped profiles
-/// started have run, or the count at the end of a bounded wait.
+/// The resident model count of `pool` after the pool evicts its last model.
 ///
-/// A dropped profile queues its residency and starts a drain in a task, so
-/// the eviction is not done when the drop returns. The wait polls the count
-/// and stops at zero.
+/// The drop of the last hold of a model does not evict the model at once. The
+/// pool submits the eviction job from a detached task, so the eviction is not
+/// done when the drop returns. This function reads ``ModelPool/footprints``
+/// until a footprint has no resident model. Then it runs an empty admission
+/// job as a barrier: the barrier starts only after each eviction job that
+/// the pool queued before it ends.
 ///
 /// - Parameter pool: The pool to read.
 /// - Returns: The resident model count.
 /// - Throws: `CancellationError` when the test is cancelled.
-private func residentModelCountOnceDrained(_ pool: ModelPool) async throws -> Int {
-    for _ in 0..<600 {
-        let count = await pool.residentModelCount
-        if count == 0 { return count }
-        try await Task.sleep(for: .milliseconds(50))
+private func residentModelCountOnceEvicted(_ pool: ModelPool) async throws -> Int {
+    for await footprint in pool.footprints where footprint.resident.isEmpty {
+        break
     }
-    return await pool.residentModelCount
+    try Task.checkCancellation()
+    try await pool.admit { _ in }
+    return pool.residentModelCount
 }

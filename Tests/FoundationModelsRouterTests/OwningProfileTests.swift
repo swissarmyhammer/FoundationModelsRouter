@@ -11,15 +11,15 @@ import Testing
 ///
 /// It is filled after the handle's initializer, because
 /// ``Router/resolve(profile:reporting:)`` builds the three handles first and
-/// passes them into ``LanguageModelProfile/init(definitionName:standard:flash:embedding:residencyToken:)``
+/// passes them into ``LanguageModelProfile/init(definitionName:standard:flash:embedding:)``
 /// afterwards. A handle therefore reports `nil` until a profile registers
 /// itself.
 ///
 /// It is weak, because the profile holds the three handles strongly. A strong
 /// back-reference would make a cycle: neither the profile nor its handles could
-/// ever be deallocated, so the ``ResidencyHold`` those handles share would keep
-/// its last reference forever, and `ResidencyHold.deinit`, which gives the
-/// residency back to the router, would never run. The profile itself has no
+/// ever be deallocated, so the ``ModelHold``s those handles keep would keep
+/// their last references forever, and `ModelHold.deinit`, which gives each
+/// hold back to the pool, would never run. The profile itself has no
 /// `deinit` at all. A handle therefore reports `nil` again once ARC deallocates
 /// the profile.
 ///
@@ -28,8 +28,9 @@ import Testing
 /// release test is deterministic for the same reason: the weak slot clears as
 /// ARC deallocates the profile, and no residency work follows that. A
 /// hand-built profile resolves nothing and therefore carries no
-/// ``ResidencyHold``, and a real hold refers to the router and the token only,
-/// never to the profile, so no assertion here depends on when a release runs.
+/// ``ModelHold``, and a real hold refers to the pool, its key and its
+/// container only, never to the profile, so no assertion here depends on when
+/// a release runs.
 @Suite("Owning profile back-reference")
 struct OwningProfileTests {
     // MARK: - Constants

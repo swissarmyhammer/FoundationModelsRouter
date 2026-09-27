@@ -4,6 +4,7 @@ import FoundationModelsRouterTestSupport
 import Synchronization
 import Testing
 
+@testable import FoundationModelsExtras
 @testable import FoundationModelsRouter
 
 /// Exercises cancellation of ``Router/resolve(profile:reporting:)`` (task
@@ -21,8 +22,8 @@ import Testing
 /// bound progress reaches ``ResolutionProgress/Phase/cancelled`` — the phase a
 /// host shows the user, and not ``ResolutionProgress/Phase/failed(_:)``, because
 /// the user made the cancel — and a second resolve on the same router succeeds,
-/// which is how a test outside the module observes that the pool lock was
-/// released.
+/// which is how a test observes that the admission job of the cancelled
+/// resolve ended.
 @Suite("Resolve cancellation")
 struct ResolveCancellationTests {
     // MARK: - Stage gating
@@ -140,8 +141,8 @@ struct ResolveCancellationTests {
             metadataSource: GatedMetadataSource(raw: RouterTestFixtures.rawMetadata, gate: gate),
             loader: GatedLoader(gate: gate, dimension: RouterTestFixtures.stubDimension),
             // The suite's own pool, never `ModelPool.shared`: its gated loads
-            // hold the resolve lock, and a shared lock would queue every other
-            // suite's resolve behind them.
+            // hold the admission queue, and a shared queue would put every
+            // other suite's resolve behind them.
             pool: ModelPool()
         )
     }
@@ -174,7 +175,7 @@ struct ResolveCancellationTests {
         // `.failed`, which would show the user a diagnostic for their own stop.
         #expect(progress.phase == .cancelled)
 
-        // The pool lock is free: a second resolve on the same router completes.
+        // The admission job ended: a second resolve on the same router completes.
         let second = try await router.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         #expect(second.standard.chosen == "org/std-a")
@@ -182,7 +183,7 @@ struct ResolveCancellationTests {
 
     // MARK: - One test for each stage
 
-    @Test("a resolve cancelled while sizing stops and leaves the pool lock free")
+    @Test("a resolve cancelled while sizing stops and leaves the admission queue free")
     @MainActor
     func cancelDuringSizing() async throws {
         try await Self.expectCancelStops(at: .sizing)
@@ -206,24 +207,19 @@ struct ResolveCancellationTests {
         try await Self.expectCancelStops(at: .preload)
     }
 
-    // MARK: - Queued on the pool lock
+    // MARK: - Queued in the admission queue
 
-    /// Cooperative yields given to a queued resolve so it reaches the pool lock
-    /// before the test cancels it. The pool lock is private, so its waiter count
-    /// cannot be spun on the way ``AsyncSemaphore/waiterCount`` is elsewhere.
-    private static let yieldsBeforeCancel = 20
-
-    @Test("a resolve cancelled while queued on the pool lock throws before the holder releases it")
+    @Test("a resolve cancelled while queued in the admission queue throws before the running job ends")
     @MainActor
-    func cancelWhileQueuedOnThePoolLock() async throws {
+    func cancelWhileQueuedInTheAdmissionQueue() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "ResolveCancellationTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let gate = StageGate(at: .generation)
         let router = Self.makeRouter(gate: gate, cacheDir: dir)
 
-        // The first resolve takes the pool lock and suspends inside its own
-        // generation load, so the lock stays held for the whole test.
+        // The first resolve runs its admission job and suspends inside its
+        // own generation load, so the job runs for the whole test.
         let holder = Task {
             try await router.resolve(
                 profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
@@ -235,11 +231,13 @@ struct ResolveCancellationTests {
             try await router.resolve(
                 profile: RouterTestFixtures.profile(), reporting: queuedProgress)
         }
-        // Give the second resolve every chance to reach the pool lock.
-        for _ in 0..<Self.yieldsBeforeCancel { await Task.yield() }
+        // The admission job of the second resolve waits behind the first.
+        #expect(await BoundedWait.conditionReached("the second admission job waits") {
+            await router.pool.admissions.waitingCount == 1
+        })
 
         // It throws while the holder is still suspended — no `release.signal()`
-        // has been sent, so the throw cannot have come from a freed permit.
+        // has been sent, so the throw cannot have come from an ended job.
         queued.cancel()
         await #expect(throws: CancellationError.self) { try await queued.value }
         #expect(queuedProgress.phase == .cancelled)

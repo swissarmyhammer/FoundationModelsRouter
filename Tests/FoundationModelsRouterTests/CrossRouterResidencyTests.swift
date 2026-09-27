@@ -175,7 +175,7 @@ struct CrossRouterResidencyTests {
         let fromSecond = try await pair.second.resolve(profile: Self.sharedTrio, reporting: ResolutionProgress())
 
         fromFirst.dropReference()
-        await pair.first.pool.settleDroppedResidencies()
+        try await pair.first.pool.settle { $0.resident.count == ResidencyFixtures.modelsPerTrio }
 
         // Still referenced by the second router: nothing evicted anywhere.
         #expect(await pair.firstSpy.evictions == 0)
@@ -203,11 +203,11 @@ struct CrossRouterResidencyTests {
         // The loading router releases first, so the last release comes from
         // the router that never loaded anything.
         fromFirst.dropReference()
-        await pair.first.pool.settleDroppedResidencies()
+        try await pair.first.pool.settle { $0.resident.count == ResidencyFixtures.modelsPerTrio }
         #expect(await pair.firstSpy.evictions == 0)
 
         fromSecond.dropReference()
-        await pair.second.pool.settleDroppedResidencies()
+        try await pair.second.pool.settle { $0.resident.isEmpty }
 
         // Every model evicted one time, and each eviction ran through the
         // first router's loader, never the second's.

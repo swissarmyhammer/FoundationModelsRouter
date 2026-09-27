@@ -3,8 +3,9 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Tests for ``AsyncSemaphore``, the fair (FIFO) await-based concurrency
-/// primitive the resolve lock of the model pool is built on. A session and
-/// the generation queue of a model take no semaphore (task ^3qx0mpt).
+/// primitive that ``CancellableWait`` is built on. A session, the generation
+/// queue of a model and the admission queue of the model pool take no
+/// semaphore (task ^3qx0mpt).
 ///
 /// The suite avoids sleep-based timing. Concurrency is observed through an
 /// actor counter, and ordering is made deterministic by spinning on the

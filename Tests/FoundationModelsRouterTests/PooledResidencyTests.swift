@@ -147,7 +147,7 @@ struct PooledResidencyTests {
         )
         #expect(router.pool === pool)
         #expect(router.pool !== ModelPool.shared)
-        #expect(await pool.residentModelCount == 0)
+        #expect(pool.residentModelCount == 0)
 
         let profile = ProfileDefinition(
             name: "counted", description: "three models the pool counts",
@@ -156,11 +156,11 @@ struct PooledResidencyTests {
         var resolved: LanguageModelProfile? = try await router.resolve(
             profile: profile, reporting: ResolutionProgress())
         // One trio: the standard model, the flash model, and the embedder.
-        #expect(await pool.residentModelCount == 3)
+        #expect(pool.residentModelCount == 3)
 
         resolved.dropReference()
-        await pool.settleDroppedResidencies()
-        #expect(await pool.residentModelCount == 0)
+        try await pool.settle { $0.resident.isEmpty }
+        #expect(pool.residentModelCount == 0)
     }
 
     // MARK: - Two profiles sharing a ModelRef → one load, two live sessions, both generate.
@@ -316,10 +316,10 @@ struct PooledResidencyTests {
         // is what gives the first profile's share back.
         first.dropReference()
 
-        // A resolve is the drain point: it gives back every dropped residency
-        // before it measures the budget. This one fits only because the first
-        // profile's share came back, and it evicts nothing, because `second`
-        // still references all three models.
+        // The drop gives back the session bytes of the first profile's holds
+        // at once. This resolve fits only because that share came back, and
+        // it evicts nothing, because `second` still references all three
+        // models.
         var third: LanguageModelProfile? = try await router.resolve(
             profile: shared, reporting: ResolutionProgress())
         #expect(await spy.evictions == 0)
@@ -331,10 +331,10 @@ struct PooledResidencyTests {
         // references, so this resolve evicts nothing.
         second.dropReference()
         third.dropReference()
-        var drainer: LanguageModelProfile? = try await router.resolve(
+        var reuser: LanguageModelProfile? = try await router.resolve(
             profile: shared, reporting: ResolutionProgress())
         #expect(await spy.evictions == 0)
-        drainer.dropReference()
+        reuser.dropReference()
 
         // `respond` returns when the answer arrives, but the pump of the
         // session can run after that and holds the session until it ends. So
@@ -345,9 +345,8 @@ struct PooledResidencyTests {
         #expect(await BoundedWait.conditionReached("the release of the session") { sessionIsReleased() })
 
         // Now unreferenced by anyone: all three models evicted.
-        let reresolved = try await router.resolve(profile: shared, reporting: ResolutionProgress())
+        try await router.pool.settle { $0.resident.isEmpty }
         #expect(await spy.evictions == 3)
-        withExtendedLifetime(reresolved) {}
     }
 
     // MARK: - Concurrent generation on a shared model serializes on the model's generation queue.
@@ -599,7 +598,7 @@ struct PooledResidencyTests {
         #expect(await spy.llmLoads.filter { $0 == "org/ctx-release-std" }.count == 1)
 
         resolvedNarrow.dropReference()
-        await router.pool.settleDroppedResidencies()
+        try await router.pool.settle { $0.resident.count == ResidencyFixtures.modelsPerTrio }
         // The wide profile still holds the shared generation model, so only
         // the narrow profile's own flash model and embedder are evicted.
         #expect(await spy.evictions == ResidencyFixtures.modelsPerTrio - 1)
@@ -666,11 +665,12 @@ struct PooledResidencyTests {
         var first: LanguageModelProfile? = try await router.resolve(
             profile: profile, reporting: ResolutionProgress())
         first.dropReference()
+        // Nothing lingers in the pool once the last reference is gone: the
+        // three evictions end.
+        try await router.pool.settle { $0.resident.isEmpty }
 
-        // A fresh resolve of the same profile after the drop reloads from
-        // scratch — nothing lingers in the pool once the last reference is
-        // gone. That resolve is also the drain point, so the eviction of the
-        // three models it then reloads is visible once it returns.
+        // A fresh resolve of the same profile after the evictions reloads
+        // from scratch.
         let second = try await router.resolve(profile: profile, reporting: ResolutionProgress())
         #expect(await spy.evictions == 3)
         #expect(await spy.llmLoads.filter { $0 == "org/solo-std" }.count == 2)
@@ -694,12 +694,13 @@ struct PooledResidencyTests {
     /// free forever after, eroding the "single authority over the budget"
     /// guarantee toward an eventual OOM.
     ///
-    /// ``ModelPool/withResolveLock(isolation:_:)`` must therefore guard the
-    /// release path too, not just `resolve()` — this test proves a residency
-    /// dropped while a `resolve()` is suspended mid-acquisition cannot be given
-    /// back (and thus cannot evict anything) until that `resolve()` finishes.
-    /// The drop queues the token and starts a drain, and that drain takes the
-    /// very lock the in-flight resolve holds.
+    /// Each eviction of the Extras ``ModelPool`` is therefore a job in the one
+    /// admission queue, as the whole `resolve()` is. This test proves that a
+    /// residency dropped while a `resolve()` is suspended mid-acquisition
+    /// evicts nothing that the resolve priced as resident: the drop gives
+    /// back its holds at once, but the eviction job waits behind the admission
+    /// job of the resolve, and it then finds the new hold of the resolve and
+    /// keeps the model.
     @Test("a dropped residency cannot interleave with an in-flight resolve and corrupt pool accounting")
     @MainActor
     func droppedResidencyCannotRaceAnInFlightResolveAndCorruptAccounting() async throws {
@@ -745,11 +746,12 @@ struct PooledResidencyTests {
         // B is now suspended inside its own standard slot's download, with
         // the shared embedding ref already priced as free but not yet
         // reacquired. Drop A — the only current reference on the shared
-        // embedding model. The hold's `deinit` queues the token and starts a
-        // drain, which must block on the pool lock B's resolve holds.
+        // embedding model. The `deinit` of each hold gives the hold back and
+        // submits an eviction job, which must wait behind the admission job
+        // of B's resolve.
         resolvedA.dropReference()
 
-        // Give that drain every chance to run if it isn't actually blocked.
+        // Give that eviction every chance to run if it does not wait.
         for _ in 0..<20 { await Task.yield() }
 
         releaseGate.signal()
@@ -767,22 +769,16 @@ struct PooledResidencyTests {
         // A's residency, once it is finally given back, evicts its own two
         // solo models (standard/flash) outright and gives back one reference
         // on the shared embedding model — which B alone now holds, so it
-        // survives. This resolve is the drain point that observes it.
-        var drainer: LanguageModelProfile? = try await router.resolve(
-            profile: profileB, reporting: ResolutionProgress())
+        // survives: B's trio stays resident.
+        try await router.pool.settle { $0.resident.count == ResidencyFixtures.modelsPerTrio }
         #expect(await spy.evictions == 2)
 
         // B's own reference is genuine: dropping it evicts its own two solo
         // models plus the now-fully-unreferenced shared embedding model — 5
         // distinct keys evicted in total across both profiles' residencies.
         resolvedB.dropReference()
-        drainer.dropReference()
-        // The drain point is a resolve of A, not of B: B's standard slot is the
-        // gated ref, and its gate has already been consumed, so a reload of it
-        // would never return.
-        let reresolved = try await router.resolve(profile: profileA, reporting: ResolutionProgress())
+        try await router.pool.settle { $0.resident.isEmpty }
         #expect(await spy.evictions == 5)
-        withExtendedLifetime(reresolved) {}
     }
 
     // MARK: - A shared generation pair holds both KV caches against the budget.
@@ -864,9 +860,8 @@ struct PooledResidencyTests {
         reuser.dropReference()
 
         // Pin the dropped share through the budget a failing resolve sees.
-        // That resolve is the drain point, so it gives the reuser's two KV
-        // shares back before it measures, and the pool still holds the first
-        // profile's whole pair reservation.
+        // The drop gave the reuser's two KV shares back at once, and the pool
+        // still holds the first profile's whole pair reservation.
         let disjoint = ProfileDefinition(
             name: "disjoint", description: "cannot fit beside the pair trio",
             standard: ["org/share-pin-std"], flash: ["org/share-pin-flash"],
@@ -954,10 +949,10 @@ struct PooledResidencyTests {
     /// The test reaches the model through ``RoutedEmbedder/embed(texts:)``,
     /// which needs no owning profile, and never through `makeSession`.
     ///
-    /// A second resolve of the same definition follows the drop. It gives the
-    /// whole eviction path — the pool lock, the loader, the spy — time to run
-    /// before the counts are read, and its own reuse of the three resident
-    /// containers is a second witness that nothing was evicted.
+    /// The handle keeps the holds of all three models, so the drop takes no
+    /// hold count to zero and the pool submits no eviction. A second resolve
+    /// of the same definition follows the drop, and its own reuse of the three
+    /// resident containers is a second witness that nothing was evicted.
     @Test("a handle a tool holds keeps its pooled model resident after the profile object is dropped")
     @MainActor
     func handleAloneKeepsModelResident() async throws {
@@ -999,11 +994,15 @@ struct PooledResidencyTests {
     // MARK: - Dropping the last reference frees the budget for the very next resolve.
 
     /// Dropping the profile object AND every handle built from it is the one
-    /// eviction trigger here: there is no explicit release to call. The
-    /// next ``Router/resolve(profile:reporting:)`` must see the freed bytes in
-    /// its FIRST budget measurement, so a second, disjoint trio that fits only
-    /// in the freed space resolves without any wait, retry or yield.
-    @Test("a resolve after the last reference to a profile is dropped sees the freed bytes at once")
+    /// eviction trigger here: there is no explicit release to call. Once the
+    /// evictions end, the next ``Router/resolve(profile:reporting:)`` must see
+    /// the freed bytes in its FIRST budget measurement, so a second, disjoint
+    /// trio that fits only in the freed space resolves without any retry.
+    ///
+    /// The Extras pool submits each eviction from a detached task, so a
+    /// resolve that starts at once after the drop can run before the
+    /// evictions. The test therefore waits for the evictions first.
+    @Test("a resolve after the evictions of a dropped profile sees the freed bytes at once")
     @MainActor
     func droppingLastHandleFreesBudgetForNextResolve() async throws {
         let dir = Self.makeTempDir()
@@ -1031,6 +1030,7 @@ struct PooledResidencyTests {
         #expect(try #require(resolvedA).standard.chosen == "org/drop-a-std")
         // Drops the profile object and, with it, its three handles.
         resolvedA = nil
+        try await router.pool.settle { $0.resident.isEmpty }
 
         let resolvedB = try await router.resolve(profile: profileB, reporting: ResolutionProgress())
         #expect(resolvedB.standard.chosen == "org/drop-b-std")

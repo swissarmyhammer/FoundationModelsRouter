@@ -216,8 +216,7 @@ public enum RealModelHarness {
             definitionName: definitionName,
             standard: makeRoutedLLM(.standard),
             flash: makeRoutedLLM(.flash),
-            embedding: embedding,
-            residencyToken: .generate()
+            embedding: embedding
         )
     }
 }

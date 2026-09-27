@@ -1,5 +1,17 @@
 import FoundationModelsExtras
 
+/// The model pool of the process: it loads each model one time, and shares it
+/// through holds. The router, the registry, the multitool and each other user
+/// take a hold of a model from one pool, so the process keeps one copy of each
+/// model in memory. ``ModelPool/shared`` is the pool of the process, and a
+/// ``Router`` resolves into it when it is given no pool.
+///
+/// `FoundationModelsExtras` owns the class. This alias keeps the router name,
+/// so a router user needs no `import FoundationModelsExtras`, and a file that
+/// imports both modules names one type: the alias and the class are the same
+/// declaration, so `ModelPool` is not ambiguous there.
+public typealias ModelPool = FoundationModelsExtras.ModelPool
+
 /// What a pooled model does: generation (`llm`) or embedding. The Extras
 /// model pool keys each model by its ``ModelRef`` and this role.
 /// `FoundationModelsExtras` owns the type. This alias keeps a router name, so

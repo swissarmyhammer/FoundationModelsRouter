@@ -119,14 +119,14 @@ struct PromptCacheBudgetIntegrationTests {
 
         var profile: LanguageModelProfile? = try await router.resolve(
             profile: twoModelProfile, reporting: ResolutionProgress())
-        #expect(await pool.residentFootprintBytes == footprint)
+        #expect(pool.footprint.totalBytes == footprint)
         try await answerOnce(on: try #require(profile).standard)
         try await answerOnce(on: try #require(profile).flash)
 
         let usage = try await promptCacheUsageOnceWritten(by: loader)
         #expect(usage.diskBytes > 0)
         #expect(Int64(usage.memoryBytes) <= promptCacheRoomBytes)
-        #expect(await pool.residentFootprintBytes + Int64(usage.residentBytes) <= workingSet)
+        #expect(pool.footprint.totalBytes + Int64(usage.residentBytes) <= workingSet)
 
         profile = nil
         #expect(try await residentModelCountOnceEvicted(pool) == 0)
@@ -144,7 +144,7 @@ struct PromptCacheBudgetIntegrationTests {
         var profile: LanguageModelProfile? = try await router.resolve(
             profile: twoModelProfile, reporting: ResolutionProgress())
         #expect(profile != nil)
-        let footprint = await pool.residentFootprintBytes
+        let footprint = pool.footprint.totalBytes
         profile = nil
         #expect(try await residentModelCountOnceEvicted(pool) == 0)
         return footprint
@@ -175,13 +175,13 @@ struct PromptCacheBudgetIntegrationTests {
         try await SettledValuePoll.value(of: { await loader.promptCacheUsage }) { $0.spillingBytes == 0 }
     }
 
-    /// The resident model count of `pool` once the drains that dropped
+    /// The resident model count of `pool` once the evictions that dropped
     /// profiles started have run, or the count at the end of a bounded wait.
     ///
     /// - Parameter pool: The pool to read.
     /// - Returns: The resident model count.
     /// - Throws: `CancellationError` when the test is cancelled.
     private func residentModelCountOnceEvicted(_ pool: ModelPool) async throws -> Int {
-        try await SettledValuePoll.value(of: { await pool.residentModelCount }) { $0 == 0 }
+        try await SettledValuePoll.value(of: { pool.residentModelCount }) { $0 == 0 }
     }
 }

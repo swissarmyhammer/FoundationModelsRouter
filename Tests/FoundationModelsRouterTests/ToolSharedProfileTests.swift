@@ -279,18 +279,15 @@ struct ToolSharedProfileTests {
             profile: Self.profile, reporting: ResolutionProgress())
 
         // Dropping the first leaves the second's models resident; only once
-        // every reference is dropped does the slot free again. Each resolve is
-        // the drain point that gives the dropped residencies back.
+        // every reference is dropped does the pool evict them.
         profile.dropReference()
-        var drainer: LanguageModelProfile? = try await router.resolve(
+        var third: LanguageModelProfile? = try await router.resolve(
             profile: Self.profile, reporting: ResolutionProgress())
         #expect(await spy.evictions == 0)
 
         second.dropReference()
-        drainer.dropReference()
-        let reresolved = try await router.resolve(
-            profile: Self.profile, reporting: ResolutionProgress())
+        third.dropReference()
+        try await router.pool.settle { $0.resident.isEmpty }
         #expect(await spy.evictions == 3)
-        withExtendedLifetime(reresolved) {}
     }
 }

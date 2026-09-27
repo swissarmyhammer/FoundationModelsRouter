@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsExtras
 import Tracing
 
 /// Whether a session's activity is recorded: `off` or `full`.
@@ -21,13 +22,15 @@ public enum RecordingLevel: String, Sendable, Codable, Equatable, CaseIterable {
 ///
 /// A router admits several resident profiles at one time. It prices the
 /// union of every model resident in its ``ModelPool`` against one shared
-/// budget. The pool is shared across routers: every router resolves into
-/// ``ModelPool/shared`` unless it is given its own pool, so a model that two
-/// routers name is loaded one time. Residency is reference-counted per
-/// ``ResidencyKey`` across every profile, from every router on the pool,
-/// that references it. ``resolve(profile:reporting:)`` and every release of a
-/// residency are serialized by the pool's resolve lock. See ``ModelPool`` for
-/// the sharing, lifetime, and lock rules.
+/// budget. The pool is the Extras pool of the process: every router, the
+/// registry and the multitool take their models from ``ModelPool/shared``
+/// unless a router is given its own pool, so a model that two users name is
+/// loaded one time. The router is one user of the pool. The pool counts the
+/// holds of each ``ModelPoolKey``, and each resolve keeps one ``ModelHold``
+/// for each slot. The measurement, the joint fit and the acquires of one
+/// ``resolve(profile:reporting:)`` run as one admission job of the pool, so
+/// no other load and no eviction occurs between the measurement and the
+/// acquires.
 public actor Router {
     /// The recording root id; sortable by construction time.
     public nonisolated let id: ULID
@@ -62,8 +65,8 @@ public actor Router {
     /// container each decode with their own mode (`model-pool.md` §2.5).
     let samplingMode: GenerationOptions.SamplingMode?
 
-    /// The resident-model pool this router resolves into. Every router on
-    /// one pool shares its residents and its resolve lock.
+    /// The Extras model pool this router resolves into. Every user of one
+    /// pool shares its residents and its admission queue.
     package nonisolated let pool: ModelPool
 
     /// Creates a router.
@@ -131,15 +134,18 @@ public actor Router {
     ///
     /// The effective budget is the machine budget less every pooled model's
     /// footprint. A pooled candidate is charged only its marginal cost. The
-    /// whole pipeline runs under the pool's resolve lock, so it is
-    /// single-flight across every router on the pool.
+    /// measurement, the joint fit, each acquire and each preload run as one
+    /// admission job of the Extras ``ModelPool``. Each load of a new model,
+    /// by a router or by any other user of the pool, and each eviction is a
+    /// job in the same FIFO admission queue. Thus no other load and no
+    /// eviction occurs between the measurement and the acquires.
     ///
-    /// Cancelling the calling task stops the resolve. A caller queued behind
-    /// another resolve leaves the queue at once; a caller that is already
-    /// running stops at the next stage boundary. Either way the bound progress
-    /// ends at ``ResolutionProgress/Phase/cancelled`` and not at
-    /// ``ResolutionProgress/Phase/failed(_:)``, the pool lock is released, every
-    /// slot the attempt had acquired is given back, and no half-resolved profile
+    /// Cancelling the calling task stops the resolve. A resolve whose
+    /// admission job waits in the queue leaves it at once; a job that is
+    /// already running stops at the next stage boundary. Either way the bound
+    /// progress ends at ``ResolutionProgress/Phase/cancelled`` and not at
+    /// ``ResolutionProgress/Phase/failed(_:)``, the admission job ends, every
+    /// hold the attempt had taken is given back, and no half-resolved profile
     /// is left resident. The models already downloaded
     /// stay in the Hugging Face cache, so a later resolve continues the
     /// transfer rather than starting it again.
@@ -172,18 +178,42 @@ public actor Router {
             }
     }
 
-    /// One slot's acquisition this resolve holds: the charge to give back, and
-    /// the pool entry the slot's handle is built over.
-    private struct AcquiredSlot {
-        /// The charge this resolve gives back on failure or at release.
-        let charge: SlotCharge
+    /// The slots a resolve acquires, in acquisition order: `standard` before
+    /// `flash`, then the embedding.
+    private static let acquisitionOrder: [ModelSlot] = [.standard, .flash, .embedding]
 
-        /// The pool entry after this acquisition.
-        let entry: PoolEntry
+    /// One slot's hold this resolve took, and whether this resolve loaded
+    /// the model.
+    private struct AcquiredSlot {
+        /// The hold of the slot. Dropping it gives it back to the pool.
+        let hold: ModelHold
+
+        /// Whether this resolve loaded the model through its own loader, so
+        /// its container needs a preload.
+        let isNewLoad: Bool
+    }
+
+    /// What the admission job of one resolve gives back: the joint fit it
+    /// applied, the hold of each slot, and the container of each handle.
+    private struct AdmittedResolve: Sendable {
+        /// The joint fit the job applied.
+        let resolution: JointResolution
+
+        /// The hold of each slot, in ``acquisitionOrder``.
+        let holds: [ModelHold]
+
+        /// The generation container of the `standard` slot.
+        let standard: any LoadedLLMContainer
+
+        /// The generation container of the `flash` slot.
+        let flash: any LoadedLLMContainer
+
+        /// The embedding container of the `embedding` slot.
+        let embedding: any LoadedEmbeddingContainer
     }
 
     /// The body of ``resolve(profile:reporting:)``, running inside its span. It
-    /// takes the pool's resolve lock and records a cancellation.
+    /// records a cancellation.
     ///
     /// - Parameters:
     ///   - def: The authored profile to resolve.
@@ -203,28 +233,22 @@ public actor Router {
         reporting progress: ResolutionProgress,
         span: any Span
     ) async throws -> LanguageModelProfile {
-        // The cancellable acquire: a
-        // resolve queued behind another resolve holds nothing yet, so a caller
-        // the user cancels leaves the queue at once instead of waiting for a
-        // permit it no longer wants. See ``AsyncSemaphore/waitUnlessCancelled()``.
-        //
-        // Every `CancellationError` the pipeline raises — from the queue or
-        // from a stage boundary within — ends as ``ResolutionProgress/Phase/cancelled``
-        // and never as `.failed`, so a host tells the user's own stop apart
-        // from a fault. A resolve cancelled in the queue never held the lock
-        // and never touched a slot, so the phase is the whole of what it leaves.
+        // Every `CancellationError` the pipeline raises — from the admission
+        // queue or from a stage boundary within — ends as
+        // ``ResolutionProgress/Phase/cancelled`` and never as `.failed`, so a
+        // host tells the user's own stop apart from a fault. A resolve
+        // cancelled in the admission queue never started its job and never
+        // took a hold, so the phase is the whole of what it leaves.
         do {
-            return try await pool.withResolveLockUnlessCancelled {
-                try await runResolvePipeline(profile: def, reporting: progress, span: span)
-            }
+            return try await runResolvePipeline(profile: def, reporting: progress, span: span)
         } catch let cancellation as CancellationError {
             await recordCancellation(progress: progress)
             throw cancellation
         }
     }
 
-    /// The stages of ``runResolve(profile:reporting:span:)``, run while it holds
-    /// the pool's resolve lock.
+    /// The stages of ``runResolve(profile:reporting:span:)``: the sizing, then
+    /// one admission job of the pool, then the profile.
     ///
     /// - Parameters:
     ///   - def: The authored profile to resolve.
@@ -246,125 +270,78 @@ public actor Router {
     ) async throws -> LanguageModelProfile {
         // Each stage below opens with a cancellation check, so a resolve the
         // user cancelled stops at the next stage boundary rather than paying
-        // for the whole pipeline. The pool gives the lock back when this
-        // returns or throws, and the `catch` gives back every slot this attempt
-        // already acquired, so a cancelled resolve leaves the pool exactly as
-        // it found it.
+        // for the whole pipeline. A throw drops every hold this attempt took,
+        // so a cancelled resolve gives back all that it acquired.
         try Task.checkCancellation()
         await beginSizing(progress: progress)
         try await rejectSharedGenerationModel(profile: def, progress: progress)
-        // Give back every residency whose last reference was dropped BEFORE the
-        // budget is measured, so this resolve prices against the bytes those
-        // evictions freed instead of racing them.
-        await pool.drainPendingReleases()
-        let totalBudget = hostBudget()
-        let residentFootprint = await pool.residentFootprintBytes
-        let effectiveBudget = totalBudget - residentFootprint
-        span.attributes[RouterTracing.AttributeKey.budgetBytes] = effectiveBudget
+        // The metadata does not depend on the pool, so its fetch runs before
+        // the admission job and does not keep the admission queue waiting.
         let metadataByRef = await sizeCandidates(profile: def)
         try Task.checkCancellation()
-        let residentKeys = await pool.residentKeys
+
+        // An admission job runs on a task of its own, which inherits no task
+        // local. The service context of the resolve span goes into the job,
+        // so each load span stays a child of the resolve span.
+        let serviceContext = ServiceContext.current
+        let admitted = try await pool.admit { admission in
+            try await ServiceContext.withValue(serviceContext) {
+                try await self.runAdmission(
+                    admission, profile: def, metadataByRef: metadataByRef, progress: progress, span: span)
+            }
+        }
+
+        try Task.checkCancellation()
+        await complete(progress: progress)
+        let profile = buildProfile(definition: def, admitted: admitted)
+        Self.recordChosenModels(resolution: admitted.resolution, on: span)
+        return profile
+    }
+
+    /// The admission job of one resolve: measures the budget, runs the joint
+    /// fit, and acquires the three slots. The job is the one job that runs in
+    /// the admission queue of the pool, so no other load and no eviction
+    /// occurs between the measurement and the acquires.
+    ///
+    /// - Parameters:
+    ///   - admission: The pool inside this admission job.
+    ///   - def: The authored profile to resolve.
+    ///   - metadataByRef: The sizing metadata fetched for every candidate.
+    ///   - progress: The UI-bindable progress to drive, mutated on the main actor.
+    ///   - span: The resolve span, which takes the budget this attempt priced
+    ///     against.
+    /// - Returns: The joint fit, the holds and the containers of the profile.
+    /// - Throws: ``ResolutionFailure`` when no trio fits the effective budget,
+    ///   ``NoWindowFailure`` when the profile names no context and no standard
+    ///   candidate's window could be read, `CancellationError` when the
+    ///   calling task is cancelled, or any download or load error.
+    private func runAdmission(
+        _ admission: ModelPoolAdmission,
+        profile def: ProfileDefinition,
+        metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>],
+        progress: ResolutionProgress,
+        span: any Span
+    ) async throws -> AdmittedResolve {
+        try Task.checkCancellation()
+        let totalBudget = hostBudget()
+        let footprint = admission.footprint
+        let effectiveBudget = totalBudget - footprint.totalBytes
+        span.attributes[RouterTracing.AttributeKey.budgetBytes] = effectiveBudget
 
         let resolution = try await runJointFit(
             profile: def,
             budget: effectiveBudget,
             metadataByRef: metadataByRef,
-            residentKeys: residentKeys,
+            residentKeys: Set(footprint.resident.keys),
             progress: progress
         )
         await markChosen(resolution: resolution, progress: progress)
 
-        // Populated incrementally as each slot is acquired — the hold beside
-        // the entry it holds — so a mid-pipeline failure's `catch` below can
-        // see exactly what this attempt already holds and give each share
-        // back, whether that slot was freshly loaded or reused (bumped) an
-        // already-resident entry.
-        var acquiredSlots: [ModelSlot: AcquiredSlot] = [:]
-        var newKeys: Set<ResidencyKey> = []
         do {
-            await setPhase(.downloading, progress: progress)
-            // Both generation slots acquire identically — only the chosen ref,
-            // slot, and context differ — so they run through one loop over the
-            // (ref, slot) pairs in standard-before-flash order. The embedding
-            // slot uses a different loader call (no `context`) and stays
-            // separate.
-            for (chosen, slot) in [
-                (resolution.standard, ModelSlot.standard), (resolution.flash, ModelSlot.flash),
-            ] {
-                try Task.checkCancellation()
-                let slotRes = Self.slotResolution(for: resolution, slot: slot)
-                acquiredSlots[slot] = try await acquireLLM(
-                    key: ResidencyKey(ref: chosen, role: .llm),
-                    chosen: chosen,
-                    slot: slot,
-                    context: slotRes.contextTokens,
-                    footprintBytes: Self.chosenFootprint(for: slotRes),
-                    sessionBytes: Self.chosenSessionBytes(
-                        for: chosen, context: slotRes.contextTokens, metadataByRef: metadataByRef
-                    ),
-                    workingSetBytes: totalBudget,
-                    newKeys: &newKeys,
-                    progress: progress
-                )
-            }
-
-            try Task.checkCancellation()
-            let embeddingRes = Self.slotResolution(for: resolution, slot: .embedding)
-            acquiredSlots[.embedding] = try await acquireEmbedder(
-                key: ResidencyKey(ref: resolution.embedding, role: .embedding),
-                chosen: resolution.embedding,
-                footprintBytes: Self.chosenFootprint(for: embeddingRes),
-                workingSetBytes: totalBudget,
-                newKeys: &newKeys,
-                progress: progress
-            )
-
-            await setPhase(.loading, progress: progress)
-            // Only the freshly-acquired keys need preloading — a reused key
-            // was already preloaded the resolve that first loaded it. No two
-            // slots of one resolve share a key: `standard` and `flash` never
-            // name the same model, and the embedding key has its own role.
-            for slot in [ModelSlot.standard, .flash, .embedding] {
-                try Task.checkCancellation()
-                guard let acquired = acquiredSlots[slot], newKeys.contains(acquired.charge.key) else {
-                    continue
-                }
-                try await finalize(
-                    slot: slot, container: acquired.entry.container.erased, progress: progress
-                )
-            }
-
-            try Task.checkCancellation()
-            await complete(progress: progress)
-            guard let standard = acquiredSlots[.standard], let flash = acquiredSlots[.flash],
-                  let embedding = acquiredSlots[.embedding]
-            else {
-                preconditionFailure("the acquisition loop above populates all three slots")
-            }
-            let residencyToken = ULID.generate()
-            // One hold for this residency, shared by all three handles. The
-            // profile holds the handles, so the residency lives exactly as long
-            // as the last of the four objects, and a tool that keeps only a
-            // handle keeps its model resident.
-            let hold = ResidencyHold(pool: pool, token: residencyToken)
-            let profile = buildProfile(
-                definition: def,
-                resolution: resolution,
-                standard: standard.entry,
-                flash: flash.entry,
-                embedding: embedding.entry,
-                residencyToken: residencyToken,
-                hold: hold
-            )
-            await pool.grant(token: residencyToken, charges: acquiredSlots.values.map(\.charge))
-            Self.recordChosenModels(resolution: resolution, on: span)
-            return profile
+            return try await acquireSlots(
+                admission, resolution: resolution, metadataByRef: metadataByRef,
+                workingSetBytes: totalBudget, progress: progress)
         } catch {
-            // Give back everything this attempt already acquired — a fresh
-            // load is fully evicted, a reused entry's refcount bump and its
-            // charge are undone — so a partial failure never leaks a
-            // phantom-resident pool entry with no owning profile.
-            await pool.release(charges: acquiredSlots.values.map(\.charge))
             // A download/load/preload failure must move the bound progress to
             // `.failed` so a UI does not hang mid-pipeline, then rethrow. A
             // cancel is not a failure: its phase is set by the caller of this
@@ -376,6 +353,66 @@ public actor Router {
         }
     }
 
+    /// Acquires the three slots of `resolution`, preloads each model this
+    /// resolve loaded, and gets the container of each handle.
+    ///
+    /// Each hold is a local value, so a throw drops every hold this attempt
+    /// took, and the pool gives it back: the last hold of a fresh load is
+    /// evicted, and a hold on a model that was resident before is released.
+    /// A partial failure thus never leaks a resident model with no owner.
+    ///
+    /// - Parameters:
+    ///   - admission: The pool inside the admission job of this resolve.
+    ///   - resolution: The joint fit this resolve applies.
+    ///   - metadataByRef: The sizing metadata fetched for every candidate.
+    ///   - workingSetBytes: The recommended working set this resolve measured.
+    ///   - progress: The progress to drive through acquisition.
+    /// - Returns: The joint fit, the holds and the containers of the profile.
+    /// - Throws: `CancellationError` when the calling task is cancelled, any
+    ///   download, load or preload error, or an error when the container of
+    ///   a hold does not fit its slot.
+    private func acquireSlots(
+        _ admission: ModelPoolAdmission,
+        resolution: JointResolution,
+        metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>],
+        workingSetBytes: Int64,
+        progress: ResolutionProgress
+    ) async throws -> AdmittedResolve {
+        await setPhase(.downloading, progress: progress)
+        var acquired: [ModelSlot: AcquiredSlot] = [:]
+        for slot in Self.acquisitionOrder {
+            try Task.checkCancellation()
+            acquired[slot] = try await acquire(
+                slot, resolution: resolution, metadataByRef: metadataByRef,
+                admission: admission, workingSetBytes: workingSetBytes, progress: progress)
+        }
+
+        await setPhase(.loading, progress: progress)
+        // Only the fresh loads of this resolve need preloading — a reused
+        // model was preloaded by the user that loaded it. No two slots of one
+        // resolve share a key: `standard` and `flash` never name the same
+        // model, and the embedding key has its own role.
+        for slot in Self.acquisitionOrder {
+            try Task.checkCancellation()
+            guard let slotHold = acquired[slot], slotHold.isNewLoad else { continue }
+            try await finalize(slot: slot, hold: slotHold.hold, progress: progress)
+        }
+
+        try Task.checkCancellation()
+        guard let standard = acquired[.standard], let flash = acquired[.flash],
+              let embedding = acquired[.embedding]
+        else {
+            preconditionFailure("the acquisition loop above populates all three slots")
+        }
+        return AdmittedResolve(
+            resolution: resolution,
+            holds: [standard.hold, flash.hold, embedding.hold],
+            standard: try standard.hold.generationContainer(),
+            flash: try flash.hold.generationContainer(),
+            embedding: try PooledEmbeddingContainer(hold: embedding.hold)
+        )
+    }
+
     /// Names the model each slot chose on the resolve span.
     ///
     /// Written only once the whole resolve succeeded, so the span of a resolve
@@ -385,125 +422,75 @@ public actor Router {
     ///   - resolution: The joint fit this resolve applied.
     ///   - span: The resolve span to write the three keys on.
     private static func recordChosenModels(resolution: JointResolution, on span: any Span) {
-        let chosenBySlot: [ModelSlot: ModelRef] = [
-            .standard: resolution.standard,
-            .flash: resolution.flash,
-            .embedding: resolution.embedding,
-        ]
-        for (slot, chosen) in chosenBySlot {
+        for slot in acquisitionOrder {
             span.attributes[RouterTracing.AttributeKey.chosenModelRef(slot: slot)] =
-                chosen.stringValue
+                chosenRef(of: slot, in: resolution).stringValue
         }
     }
 
     // MARK: - Residency
 
-    /// Acquires the pooled model identified by `key` through the pool: bumps
-    /// a resident entry's refcount, or downloads through `load` and inserts
-    /// a fresh entry that this router's loader evicts at zero references.
+    /// Takes the hold of one slot inside the admission job of this resolve: a
+    /// new hold on a resident model, or a load of a new model through this
+    /// router's loader.
+    ///
+    /// Before the acquire, the prompt cache of this router's loader gets a
+    /// budget less the bytes the acquire adds: the whole footprint of a new
+    /// model, so the prompt cache is small before the weights load, or the
+    /// session of a new hold on a resident model. After a failed acquire, the
+    /// budget goes back to the resident footprint.
     ///
     /// - Parameters:
-    ///   - key: This candidate's exact residency identity.
-    ///   - chosen: The chosen model reference.
     ///   - slot: The slot being acquired.
-    ///   - footprintBytes: This slot's whole raw footprint estimate: the weights
-    ///     plus this hold's own KV cache.
-    ///   - sessionBytes: The raw KV cache estimate this hold adds on the model at
-    ///     its own context, and what its release gives back. Zero for an
-    ///     embedder.
+    ///   - resolution: The joint fit this resolve applies.
+    ///   - metadataByRef: The sizing metadata fetched for every candidate.
+    ///   - admission: The pool inside the admission job of this resolve.
     ///   - workingSetBytes: The recommended working set this resolve measured.
-    ///     The pool sizes the prompt cache of this router's loader against it.
-    ///   - newKeys: Accumulates `key` when this call inserted a fresh entry.
     ///   - progress: The progress to drive through acquisition.
-    ///   - load: The loader call that produces a fresh resident container.
-    ///   - wrap: Wraps a fresh container into a ``PooledContainer``.
-    /// - Returns: The charge this acquisition took, beside the pool entry after it.
+    /// - Returns: The hold, and whether this call loaded the model.
     /// - Throws: Any error the loader raises.
-    private func acquireModel<Loaded: Sendable>(
-        key: ResidencyKey,
-        chosen: ModelRef,
-        slot: ModelSlot,
-        footprintBytes: Int64,
-        sessionBytes: Int64,
+    private func acquire(
+        _ slot: ModelSlot,
+        resolution: JointResolution,
+        metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>],
+        admission: ModelPoolAdmission,
         workingSetBytes: Int64,
-        newKeys: inout Set<ResidencyKey>,
-        progress: ResolutionProgress,
-        load: @Sendable (ModelRef, ModelSlot, @escaping @Sendable (DownloadProgress) -> Void)
-            async throws -> Loaded,
-        wrap: @Sendable (Loaded) -> PooledContainer
+        progress: ResolutionProgress
     ) async throws -> AcquiredSlot {
-        let loader = self.loader
-        let entry = try await pool.acquire(
-            key: key,
-            footprintBytes: footprintBytes,
-            sessionBytes: sessionBytes,
-            promptCache: PromptCacheSizing(loader: loader, workingSetBytes: workingSetBytes),
-            load: {
-                // Runs only for a key the pool did not hold, so a slot the
-                // pool already held opens no load span at all: a trace
-                // therefore shows a fresh resolve's loads and a later
-                // resolve's reuse as two different shapes.
-                let container = try await withLoadSpan(
-                    chosen: chosen, slot: slot, footprintBytes: footprintBytes
-                ) {
-                    try await download(ref: chosen, slot: slot, progress: progress, load: load)
-                }
-                return wrap(container)
-            },
-            evict: { container in await loader.evict(container: container) }
-        )
-        if entry.isFirstHold {
-            newKeys.insert(key)
-        } else {
-            await setSlotState(slot, to: .ready, progress: progress)
+        let slotRes = Self.slotResolution(for: resolution, slot: slot)
+        let chosen = Self.chosenRef(of: slot, in: resolution)
+        let footprintBytes = Self.chosenFootprint(for: slotRes)
+        let sessionBytes = Self.chosenSessionBytes(
+            of: slot, chosen: chosen, context: slotRes.contextTokens, metadataByRef: metadataByRef)
+        let slotLoader = SlotPoolLoader(
+            loader: loader, slot: slot, context: slotRes.contextTokens,
+            reporting: Self.reporter(slot: slot, progress: progress))
+        let isResident = admission.footprint.resident[ModelPoolKey(ref: chosen, role: slot.poolRole)] != nil
+
+        await PromptCacheBudget.resize(
+            loader, workingSetBytes: workingSetBytes, footprint: admission.footprint,
+            addedBytes: isResident ? sessionBytes : footprintBytes)
+        do {
+            if isResident {
+                let hold = try await slotLoader.acquireHold(
+                    of: chosen, in: admission, footprintBytes: footprintBytes, sessionBytes: sessionBytes)
+                await setSlotState(slot, to: .ready, progress: progress)
+                return AcquiredSlot(hold: hold, isNewLoad: false)
+            }
+            // Only a model the pool did not hold opens a load span, so a
+            // trace shows a fresh resolve's loads and a later resolve's
+            // reuse as two different shapes.
+            let hold = try await withLoadSpan(chosen: chosen, slot: slot, footprintBytes: footprintBytes) {
+                await setSlotState(slot, to: .downloading, progress: progress)
+                return try await slotLoader.acquireHold(
+                    of: chosen, in: admission, footprintBytes: footprintBytes, sessionBytes: sessionBytes)
+            }
+            return AcquiredSlot(hold: hold, isNewLoad: true)
+        } catch {
+            await PromptCacheBudget.resize(
+                loader, workingSetBytes: workingSetBytes, footprint: admission.footprint, addedBytes: 0)
+            throw error
         }
-        return AcquiredSlot(charge: SlotCharge(key: key, sessionBytes: sessionBytes), entry: entry)
-    }
-
-    /// Acquires a generation slot for `key` through
-    /// ``acquireModel(key:chosen:slot:footprintBytes:sessionBytes:workingSetBytes:newKeys:progress:load:wrap:)``.
-    ///
-    /// - Parameter context: The working context this resolve decodes at,
-    ///   passed to the loader as advice. It is not part of `key`.
-    private func acquireLLM(
-        key: ResidencyKey,
-        chosen: ModelRef,
-        slot: ModelSlot,
-        context: Int,
-        footprintBytes: Int64,
-        sessionBytes: Int64,
-        workingSetBytes: Int64,
-        newKeys: inout Set<ResidencyKey>,
-        progress: ResolutionProgress
-    ) async throws -> AcquiredSlot {
-        try await acquireModel(
-            key: key, chosen: chosen, slot: slot, footprintBytes: footprintBytes,
-            sessionBytes: sessionBytes, workingSetBytes: workingSetBytes,
-            newKeys: &newKeys, progress: progress,
-            load: { try await loader.loadLLM(ref: $0, slot: $1, context: context, reporting: $2) },
-            wrap: { .llm($0) }
-        )
-    }
-
-    /// Acquires the embedding slot for `key` through
-    /// ``acquireModel(key:chosen:slot:footprintBytes:sessionBytes:workingSetBytes:newKeys:progress:load:wrap:)``.
-    /// An embedder carries no KV cache, so its hold adds zero session bytes
-    /// and its footprint is its weights alone.
-    private func acquireEmbedder(
-        key: ResidencyKey,
-        chosen: ModelRef,
-        footprintBytes: Int64,
-        workingSetBytes: Int64,
-        newKeys: inout Set<ResidencyKey>,
-        progress: ResolutionProgress
-    ) async throws -> AcquiredSlot {
-        try await acquireModel(
-            key: key, chosen: chosen, slot: .embedding, footprintBytes: footprintBytes,
-            sessionBytes: 0, workingSetBytes: workingSetBytes,
-            newKeys: &newKeys, progress: progress,
-            load: { try await loader.loadEmbedder(ref: $0, slot: $1, reporting: $2) },
-            wrap: { .embedding($0) }
-        )
     }
 
     // MARK: - Budget
@@ -585,7 +572,7 @@ public actor Router {
     /// The raw footprint bytes for one candidate at a context, sized under
     /// every slot it is a candidate for, with the largest figure kept.
     ///
-    /// A candidate whose ``ResidencyKey`` is in `residentKeys` is charged its
+    /// A candidate whose ``ModelPoolKey`` is in `residentKeys` is charged its
     /// marginal cost: one session KV cache at `context` for a generation
     /// model, whatever context it was first loaded at, and zero for an
     /// embedder.
@@ -594,7 +581,7 @@ public actor Router {
         context: Int,
         metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>],
         membership: [ModelRef: Set<ModelSlot>],
-        residentKeys: Set<ResidencyKey>
+        residentKeys: Set<ModelPoolKey>
     ) -> Result<Int64, RepoMetadataError> {
         guard let metadataResult = metadataByRef[ref] else {
             return .failure(.metadataUnavailable(Self.unsizedCandidateMessage(for: ref)))
@@ -606,12 +593,12 @@ public actor Router {
             let slots = membership[ref] ?? []
             var candidates: [Int64] = []
             if slots.contains(.embedding) {
-                let key = ResidencyKey(ref: ref, role: .embedding)
+                let key = ModelPoolKey(ref: ref, role: .embedding)
                 let raw = Footprint.embedder(weightBytes: metadata.weightBytes).footprint(context: context)
                 candidates.append(residentKeys.contains(key) ? 0 : raw)
             }
             if slots.contains(.standard) || slots.contains(.flash) {
-                let key = ResidencyKey(ref: ref, role: .llm)
+                let key = ModelPoolKey(ref: ref, role: .llm)
                 let raw = metadata.footprint.footprint(context: context)
                 let sessionKV = metadata.footprint.kvBytes(context: context)
                 candidates.append(residentKeys.contains(key) ? sessionKV : raw)
@@ -646,23 +633,27 @@ public actor Router {
         return metadataResult.map { $0.footprint.kvBytes(context: context) }
     }
 
-    /// The raw KV cache estimate of one session of a chosen generation
-    /// candidate at `context`: the share its hold adds on the pooled
-    /// container, and what the hold's release gives back.
+    /// The raw KV cache estimate of one session of the candidate a slot
+    /// chose at `context`: the share its hold adds on the pooled container,
+    /// and what the hold's release gives back. An embedder carries no KV
+    /// cache, so the embedding slot adds zero.
     ///
-    /// Traps when the candidate has no metadata, because ``JointFit`` chooses
-    /// a candidate only after it sized it.
+    /// Traps when a generation candidate has no metadata, because
+    /// ``JointFit`` chooses a candidate only after it sized it.
     ///
     /// - Parameters:
+    ///   - slot: The slot that chose the candidate.
     ///   - ref: The chosen candidate.
     ///   - context: The working context its sessions decode at.
     ///   - metadataByRef: The sizing metadata fetched for every candidate.
     /// - Returns: The raw KV cache bytes.
     private static func chosenSessionBytes(
-        for ref: ModelRef,
+        of slot: ModelSlot,
+        chosen ref: ModelRef,
         context: Int,
         metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>]
     ) -> Int64 {
+        guard slot.poolRole == .llm else { return 0 }
         switch sessionBytes(for: ref, context: context, metadataByRef: metadataByRef) {
         case .success(let cacheBytes):
             return cacheBytes
@@ -701,7 +692,7 @@ public actor Router {
         profile def: ProfileDefinition,
         budget: Int64,
         metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>],
-        residentKeys: Set<ResidencyKey>,
+        residentKeys: Set<ModelPoolKey>,
         progress: ResolutionProgress
     ) async throws -> JointResolution {
         let membership = Self.slotMembership(profile: def)
@@ -745,11 +736,11 @@ public actor Router {
     /// Opens one load span and runs `body` — the fetch and load of one slot's
     /// model — inside it.
     ///
-    /// The caller is ``acquireModel(key:chosen:slot:footprintBytes:sessionBytes:newKeys:progress:load:wrap:)``,
-    /// past the point where an already-resident model returns, so only a model
-    /// this resolve really fetches opens a span here. The span is a child of
-    /// the resolve span, because the resolve span is the current one for the
-    /// whole call. `withSpan` records a thrown error on the span and raises it
+    /// The caller is ``acquire(_:resolution:metadataByRef:admission:workingSetBytes:progress:)``,
+    /// for a model the pool does not hold, so only a model this resolve really
+    /// fetches opens a span here. The span is a child of the resolve span,
+    /// because the admission job carries the service context of the resolve
+    /// span. `withSpan` records a thrown error on the span and raises it
     /// again.
     ///
     /// - Parameters:
@@ -774,25 +765,21 @@ public actor Router {
             }
     }
 
-    /// Marks a slot downloading, then loads its chosen model through `load`,
-    /// which receives the ref, slot, and a download-progress reporter.
-    private func download<C>(
-        ref chosen: ModelRef,
-        slot: ModelSlot,
-        progress: ResolutionProgress,
-        load: (ModelRef, ModelSlot, @escaping @Sendable (DownloadProgress) -> Void) async throws -> C
-    ) async throws -> C {
-        await setSlotState(slot, to: .downloading, progress: progress)
-        let reporting = Self.reporter(slot: slot, progress: progress)
-        return try await load(chosen, slot, reporting)
-    }
-
-    /// Preloads a downloaded container and marks its slot ready.
-    private func finalize(
-        slot: ModelSlot,
-        container: any LoadedModelContainer,
-        progress: ResolutionProgress
-    ) async throws {
+    /// Preloads the container of a hold this resolve loaded, and marks its
+    /// slot ready.
+    ///
+    /// This router's loader loaded the container, so it is a
+    /// ``LoadedModelContainer`` of that loader.
+    ///
+    /// - Parameters:
+    ///   - slot: The slot of the hold.
+    ///   - hold: A hold whose model this resolve loaded.
+    ///   - progress: The progress to drive.
+    /// - Throws: What the preload throws.
+    private func finalize(slot: ModelSlot, hold: ModelHold, progress: ResolutionProgress) async throws {
+        guard let container = hold.container as? any LoadedModelContainer else {
+            preconditionFailure("the router's loader loaded the container of \(hold.key.ref.stringValue)")
+        }
         await setSlotState(slot, to: .loading, progress: progress)
         try await loader.preload(container: container)
         await setSlotState(slot, to: .ready, progress: progress)
@@ -825,29 +812,20 @@ public actor Router {
 
     // MARK: - Profile assembly
 
-    /// Assembles the resolved profile from each slot's pool entry and the
-    /// per-slot resolutions, stamping each handle with the router's id and recorder.
+    /// Assembles the resolved profile from the containers and the holds the
+    /// admission job gave back, and the per-slot resolutions, stamping each
+    /// handle with the router's id and recorder.
+    ///
+    /// Each handle keeps all three holds. The profile holds the handles, so
+    /// the residency lives exactly as long as the last of the four objects,
+    /// and a tool that keeps only a handle keeps its models resident.
     ///
     /// - Parameters:
     ///   - def: The authored profile this resolve applied.
-    ///   - resolution: The joint fit this resolve applied.
-    ///   - standard: The pool entry the `standard` slot acquired.
-    ///   - flash: The pool entry the `flash` slot acquired.
-    ///   - embedding: The pool entry the `embedding` slot acquired.
-    ///   - residencyToken: The token the pool holds this profile's charges under.
-    ///   - hold: The one reference-counted hold on this residency, stored by
-    ///     all three handles the profile vends.
+    ///   - admitted: What the admission job of this resolve gave back.
     /// - Returns: The resolved profile.
-    private func buildProfile(
-        definition def: ProfileDefinition,
-        resolution: JointResolution,
-        standard: PoolEntry,
-        flash: PoolEntry,
-        embedding: PoolEntry,
-        residencyToken: ULID,
-        hold: ResidencyHold
-    ) -> LanguageModelProfile {
-        let embeddingRes = Self.slotResolution(for: resolution, slot: .embedding)
+    private func buildProfile(definition def: ProfileDefinition, admitted: AdmittedResolve) -> LanguageModelProfile {
+        let resolution = admitted.resolution
         let resolvedProfile = SessionSidecar.ResolvedProfile(
             definitionName: def.name,
             standard: resolution.standard,
@@ -857,60 +835,33 @@ public actor Router {
         )
         return LanguageModelProfile(
             definitionName: def.name,
-            standard: makeRoutedLLM(
-                slot: .standard,
-                chosen: resolution.standard,
-                resolution: Self.slotResolution(for: resolution, slot: .standard),
-                entry: standard,
-                resolvedProfile: resolvedProfile,
-                hold: hold
-            ),
-            flash: makeRoutedLLM(
-                slot: .flash,
-                chosen: resolution.flash,
-                resolution: Self.slotResolution(for: resolution, slot: .flash),
-                entry: flash,
-                resolvedProfile: resolvedProfile,
-                hold: hold
-            ),
-            embedding: makeRoutedEmbedder(
-                chosen: resolution.embedding,
-                resolution: embeddingRes,
-                entry: embedding,
-                resolvedProfile: resolvedProfile,
-                hold: hold
-            ),
-            residencyToken: residencyToken
+            standard: makeRoutedModel(
+                slot: .standard, container: admitted.standard, admitted: admitted, resolvedProfile: resolvedProfile),
+            flash: makeRoutedModel(
+                slot: .flash, container: admitted.flash, admitted: admitted, resolvedProfile: resolvedProfile),
+            embedding: makeRoutedModel(
+                slot: .embedding, container: admitted.embedding, admitted: admitted, resolvedProfile: resolvedProfile)
         )
     }
 
-    /// Builds a routed model handle for `slot` from its pool entry, with
-    /// this router's id, recorder, tracer, sampling mode, and transcripts
-    /// root.
+    /// Builds a routed model handle for `slot` over `container`, with this
+    /// router's id, recorder, tracer, sampling mode, and transcripts root.
     ///
     /// - Parameters:
     ///   - slot: The slot this handle fills.
-    ///   - chosen: The chosen model reference for the slot.
-    ///   - resolution: Why this model won its slot.
-    ///   - entry: The pool entry this slot acquired.
+    ///   - container: The container of the slot.
+    ///   - admitted: What the admission job of this resolve gave back: the
+    ///     joint fit, and the holds this handle keeps its models resident with.
     ///   - resolvedProfile: The run's resolved-profile facts for root session sidecars.
-    ///   - hold: The residency hold this handle keeps its models resident with.
-    ///   - unwrap: Extracts the concrete container from a ``PooledContainer``, or `nil`.
     /// - Returns: The routed model handle.
     private func makeRoutedModel<Container: Sendable>(
         slot: ModelSlot,
-        chosen: ModelRef,
-        resolution: SlotResolution,
-        entry: PoolEntry,
-        resolvedProfile: SessionSidecar.ResolvedProfile,
-        hold: ResidencyHold,
-        unwrap: (PooledContainer) -> Container?
+        container: Container,
+        admitted: AdmittedResolve,
+        resolvedProfile: SessionSidecar.ResolvedProfile
     ) -> RoutedModel<Container> {
-        guard let container = unwrap(entry.container) else {
-            preconditionFailure(
-                "the entry acquired for \(slot) holds a container of the slot's own role"
-            )
-        }
+        let chosen = Self.chosenRef(of: slot, in: admitted.resolution)
+        let resolution = Self.slotResolution(for: admitted.resolution, slot: slot)
         return RoutedModel(
             slot: slot,
             chosen: chosen,
@@ -927,43 +878,8 @@ public actor Router {
             ),
             tracer: tracer,
             samplingMode: samplingMode,
-            residencyHold: hold
+            residencyHolds: admitted.holds
         )
-    }
-
-    /// Builds a generation handle for a slot from its pool entry.
-    private func makeRoutedLLM(
-        slot: ModelSlot,
-        chosen: ModelRef,
-        resolution: SlotResolution,
-        entry: PoolEntry,
-        resolvedProfile: SessionSidecar.ResolvedProfile,
-        hold: ResidencyHold
-    ) -> RoutedLLM {
-        makeRoutedModel(
-            slot: slot, chosen: chosen, resolution: resolution, entry: entry,
-            resolvedProfile: resolvedProfile, hold: hold
-        ) { container in
-            guard case .llm(let llm) = container else { return nil }
-            return llm
-        }
-    }
-
-    /// Builds the embedding handle from its pool entry.
-    private func makeRoutedEmbedder(
-        chosen: ModelRef,
-        resolution: SlotResolution,
-        entry: PoolEntry,
-        resolvedProfile: SessionSidecar.ResolvedProfile,
-        hold: ResidencyHold
-    ) -> RoutedEmbedder {
-        makeRoutedModel(
-            slot: .embedding, chosen: chosen, resolution: resolution, entry: entry,
-            resolvedProfile: resolvedProfile, hold: hold
-        ) { container in
-            guard case .embedding(let embedder) = container else { return nil }
-            return embedder
-        }
     }
 
     /// Pairs this run's durable transcripts root with the sidecar writer for
@@ -999,6 +915,20 @@ public actor Router {
             preconditionFailure("JointResolution records a resolution for every slot; missing \(slot)")
         }
         return slotRes
+    }
+
+    /// The model a slot chose in a joint resolution.
+    ///
+    /// - Parameters:
+    ///   - slot: The slot.
+    ///   - resolution: The joint resolution.
+    /// - Returns: The chosen model reference of `slot`.
+    private static func chosenRef(of slot: ModelSlot, in resolution: JointResolution) -> ModelRef {
+        switch slot {
+        case .standard: resolution.standard
+        case .flash: resolution.flash
+        case .embedding: resolution.embedding
+        }
     }
 
     /// The report ``JointFit`` recorded for the candidate a slot chose, or

@@ -7,7 +7,7 @@ import Testing
 
 /// Exercises milestone 5a: a resolved profile's residency lifecycle — the
 /// residency ends when the last reference to the profile is dropped, and the
-/// next ``Router/resolve(profile:reporting:)`` gives it back — and the
+/// Extras ``ModelPool`` then evicts its models — and the
 /// embedding access surface (``RoutedModel/embed(texts:)`` + `dimension`),
 /// which writes nothing to the transcript.
 ///
@@ -175,12 +175,13 @@ struct ProfileLifecycleTests {
         // three handles, and with them the shared residency hold.
         profile.dropReference()
 
-        // The next resolve is the drain point — it gives back every dropped
-        // residency before it measures the budget — so it both evicts the
-        // three models and proves residency is clear by succeeding.
+        // The last release of each hold evicts its model.
+        try await router.pool.settle { $0.resident.isEmpty }
+        #expect(await spy.count == 3)
+
+        // A new resolve proves residency is clear by succeeding.
         let reresolved = try await router.resolve(
             profile: Self.profile, reporting: ResolutionProgress())
-        #expect(await spy.count == 3)
         withExtendedLifetime(reresolved) {}
     }
 
@@ -204,62 +205,16 @@ struct ProfileLifecycleTests {
             profile: Self.profile, reporting: ResolutionProgress())
 
         // Dropping the first leaves the second's models loaded (still
-        // referenced); only dropping every reference evicts everything. Each
-        // resolve is the drain point: it gives back the dropped residencies
-        // before it measures the budget, so it is where the count is read.
+        // referenced); only dropping every reference evicts everything.
         first.dropReference()
-        var drainer: LanguageModelProfile? = try await router.resolve(
+        var third: LanguageModelProfile? = try await router.resolve(
             profile: Self.profile, reporting: ResolutionProgress())
         #expect(await spy.count == 0)
 
         second.dropReference()
-        drainer.dropReference()
-        let reresolved = try await router.resolve(
-            profile: Self.profile, reporting: ResolutionProgress())
+        third.dropReference()
+        try await router.pool.settle { $0.resident.isEmpty }
         #expect(await spy.count == 3)
-        withExtendedLifetime(reresolved) {}
-    }
-
-    @Test("a release carrying a stale token does not clobber a newer resident profile")
-    @MainActor
-    func staleReleaseDoesNotClobberResident() async throws {
-        let dir = Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let spy = EvictionSpy()
-        let router = Self.makeRouter(spy: spy, recorder: InMemoryRecorder(), cacheDir: dir)
-
-        var first: LanguageModelProfile? = try await router.resolve(
-            profile: Self.profile, reporting: ResolutionProgress())
-        let staleToken = try #require(first).residencyToken
-        first.dropReference()
-
-        // A second, unrelated profile is now resident under a fresh,
-        // never-reused token. This resolve is the drain point: it evicts
-        // `first`'s three models before it measures the budget, so it reloads
-        // from scratch.
-        var second: LanguageModelProfile? = try await router.resolve(
-            profile: Self.profile, reporting: ResolutionProgress())
-        #expect(await spy.count == 3)
-
-        // A release carrying the first profile's defunct token must be a
-        // no-op: `first`'s pool entry is already gone, so this must neither
-        // evict anything further nor touch `second`'s residency. The pending
-        // queue is the one way a residency is given back, so the stale token
-        // goes on it, and the next resolve is the drain point that reads it.
-        router.pool.enqueuePendingRelease(staleToken)
-        var drainer: LanguageModelProfile? = try await router.resolve(
-            profile: Self.profile, reporting: ResolutionProgress())
-        #expect(await spy.count == 3)
-
-        // `second` still gives its residency back cleanly, evicting its own
-        // three models at the next drain point.
-        second.dropReference()
-        drainer.dropReference()
-        let reresolved = try await router.resolve(
-            profile: Self.profile, reporting: ResolutionProgress())
-        #expect(await spy.count == 6)
-        withExtendedLifetime(reresolved) {}
     }
 
     // MARK: - Embedding access

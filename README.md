@@ -8,8 +8,9 @@ A Swift router for local MLX language models on Apple silicon. Author a
 the biggest candidate that fits each slot, and hands back a resident,
 sessionable, transcript-recording profile. Residency is pooled: several
 profiles can be resident together, they share one machine budget, and profiles
-that name the same model share its loaded copy. The router counts the
-references to each model and frees only the models that no profile uses.
+that name the same model share its loaded copy. The model pool of
+`FoundationModelsExtras` keeps the holds of each model. It evicts a model only
+when no hold of that model remains.
 
 ```swift
 import Foundation
@@ -78,20 +79,41 @@ Give the `flash` slot at least one candidate that is not the `standard` model.
 
 ## Residency is process-wide
 
-One pool serves the whole process by default: `ModelPool.shared`. Every
-router resolves into that pool. When two routers name one model, the pool
-loads that model one time and prices it one time against the budget.
+The model pool and the model hold come from the core `FoundationModelsExtras`
+package: `ModelPool` and `ModelHold`. `FoundationModelsRouter` exports the
+name `ModelPool`, so `import FoundationModelsRouter` is sufficient to write
+`ModelPool.shared` or `Router(pool: ModelPool())`.
 
-A model stays resident while a profile, or a handle that profile vended,
-still holds it anywhere in the process. There is no release call: the pool
-evicts the model when the last reference to it is dropped. A dropped `Router`
-frees nothing. Read `ModelPool.residentModelCount` to see how many models the
-process holds.
+One pool serves the whole process by default: `ModelPool.shared`. The router
+is one user of that pool. The tool registry and the multitool of
+`FoundationModelsExtras` are other users. All users share the same loaded
+models: when two users name one model, the pool loads that model one time and
+counts its weights one time. The first loader of a model wins. A later user
+gets the container of that loader.
 
-Pass a fresh pool to `Router(pool:)` to give a router an isolated pool. Pass
-`Router(samplingMode:)` to set the decoding strategy of a router; two routers
-over one shared model each decode with their own mode. Forks are not counted:
-any number of forks over one model can exist at once.
+Each load of a new model and each eviction is one job in the FIFO admission
+queue of the pool. `Router.resolve` measures the footprint of the pool, fits
+the profile, and loads each slot in one admission job. Thus no other load and
+no eviction occurs between the measurement and the loads.
+
+Each handle of a resolved profile keeps the three model holds of its resolve.
+A model stays resident while a profile, a handle of that profile, or a hold
+of another user still exists anywhere in the process. There is no release
+call. When the last hold of a model goes, the pool submits an eviction job. A
+dropped `Router` frees nothing. Read `ModelPool.residentModelCount` to see how
+many models the process holds.
+
+The eviction is not immediate. The pool submits the eviction job from a
+detached task. A resolve that starts immediately after the drop of the last
+reference can run before that job. Then the model is still resident, and the
+resolve holds it again with no new load. If you must have the freed memory,
+wait until the eviction occurs. For example, read `ModelPool.footprints` until
+the model is not resident.
+
+Pass a fresh pool to `Router(pool:)` to give a router an isolated pool and an
+isolated budget. Pass `Router(samplingMode:)` to set the decoding strategy of
+a router; two routers over one shared model each decode with their own mode.
+Forks are not counted: any number of forks over one model can exist at once.
 
 ## Install
 

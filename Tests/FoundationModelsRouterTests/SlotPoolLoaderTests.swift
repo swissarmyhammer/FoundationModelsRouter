@@ -276,3 +276,23 @@ struct SlotPoolLoaderTests {
         #expect(sink.received == [DownloadProgress(bytesDownloaded: 1, bytesTotal: 2)])
     }
 }
+
+extension SlotPoolLoader {
+    /// Gives a hold of `ref` in the role of ``slot`` in its own admission job
+    /// of `pool`, as a caller that is not inside a job does.
+    ///
+    /// - Parameters:
+    ///   - ref: The model.
+    ///   - pool: The Extras model pool.
+    ///   - footprintBytes: The weights and one session.
+    ///   - sessionBytes: The session of this hold.
+    /// - Returns: The hold.
+    /// - Throws: What the load throws.
+    fileprivate func acquireHold(
+        of ref: ModelRef, in pool: ModelPool, footprintBytes: Int64, sessionBytes: Int64
+    ) async throws -> ModelHold {
+        try await pool.admit { admission in
+            try await acquireHold(of: ref, in: admission, footprintBytes: footprintBytes, sessionBytes: sessionBytes)
+        }
+    }
+}

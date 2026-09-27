@@ -67,21 +67,23 @@ struct SlotPoolLoader: PooledModelLoader {
         await loader.evict(container: loaded)
     }
 
-    /// Gives a hold of `ref` in the role of ``slot``. A resident key adds a
-    /// hold at once; a new key loads through this loader.
+    /// Gives a hold of `ref` in the role of ``slot``, inside a running
+    /// admission job. A resident key adds a hold at once; a new key loads
+    /// through this loader at once, with no second wait in the admission
+    /// queue, so the job cannot wait for itself.
     ///
     /// - Parameters:
     ///   - ref: The model.
-    ///   - pool: The Extras model pool.
+    ///   - admission: The Extras model pool inside the running admission job.
     ///   - footprintBytes: The weights and one session.
     ///   - sessionBytes: The session of this hold.
     /// - Returns: The hold. Its container can come from a loader that is not
     ///   the router's.
     /// - Throws: What the load throws.
     func acquireHold(
-        of ref: ModelRef, in pool: FoundationModelsExtras.ModelPool, footprintBytes: Int64, sessionBytes: Int64
+        of ref: ModelRef, in admission: ModelPoolAdmission, footprintBytes: Int64, sessionBytes: Int64
     ) async throws -> ModelHold {
-        try await pool.acquire(
+        try await admission.acquire(
             ModelPoolKey(ref: ref, role: slot.poolRole), footprintBytes: footprintBytes,
             sessionBytes: sessionBytes, loader: self)
     }

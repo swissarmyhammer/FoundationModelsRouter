@@ -1,3 +1,5 @@
+import FoundationModelsExtras
+
 /// The bytes that a prompt cache holds at one time.
 ///
 /// The fork keeps one KV prompt cache for each session. An entry is in one of
@@ -33,19 +35,6 @@ public struct PromptCacheUsage: Sendable, Equatable {
     /// The prompt-cache bytes in memory now: the entries in memory plus the
     /// entries that are being written to disk.
     public var residentBytes: Int { memoryBytes + spillingBytes }
-}
-
-/// The prompt cache a pool entry sizes, and the working set it sizes against.
-///
-/// The pool keeps one on each entry. An unload has no router on the stack (a
-/// dropped ``ResidencyHold`` starts it), so the entry must carry the target
-/// and the working set of the latest resolve that acquired it.
-package struct PromptCacheSizing: Sendable {
-    /// The loader whose prompt cache gets the budget.
-    let loader: any ModelLoader
-
-    /// The recommended working set, in bytes, that the resolve measured.
-    let workingSetBytes: Int64
 }
 
 /// The memory budget of the prompt cache (`generation-queue.md`, section 3).
@@ -87,16 +76,27 @@ package struct PromptCacheSizing: Sendable {
 /// budget smaller can spill many entries, and the serial writer then stalls the
 /// other models for the sum of their writes.
 ///
+/// ## When the router sends the budget
+///
+/// A resolve sends the budget inside its admission job of the Extras
+/// ``ModelPool``: before each acquire, with the bytes that the acquire adds
+/// (the whole footprint of a new model, or the session of a new hold on a
+/// resident model), so the budget is small before the weights load; and after
+/// a failed acquire, back to the resident footprint. A load that a caller
+/// that is not the router starts, and a release or an eviction, does not
+/// send a budget yet.
+///
 /// ## More than one pool
 ///
 /// The prompt cache of the fork is one store for the whole process, but each
-/// ``ModelPool`` sends a budget that counts only its own resident entries. The
-/// budgets do not add: the last pool that sends a budget sets it. A second pool
-/// is an isolated budget on purpose (`model-pool.md`, section 5), and it already
-/// prices its models against the whole working set. A process that has resident
-/// models in two pools can thus hold more than the working set, in weights and
-/// in prompt cache. One pool for each process, ``ModelPool/shared``, is the
-/// configuration this budget is correct for.
+/// router sends a budget that counts only the resident models of its own
+/// ``ModelPool``. The budgets do not add: the last router that sends a budget
+/// sets it. A second pool is an isolated budget on purpose (`model-pool.md`,
+/// section 5), and it already prices its models against the whole working
+/// set. A process that has resident models in two pools can thus hold more
+/// than the working set, in weights and in prompt cache. One pool for each
+/// process, ``ModelPool/shared``, is the configuration this budget is correct
+/// for.
 enum PromptCacheBudget {
     /// The most bytes the prompt-cache entries in memory may hold.
     ///
@@ -111,5 +111,27 @@ enum PromptCacheBudget {
         let residentCacheCeiling = workingSetBytes - residentFootprints.reduce(0, +)
         let budget = residentCacheCeiling - Int64(usage.spillingBytes)
         return Int(clamping: max(0, budget))
+    }
+
+    /// Sends the memory budget to the prompt cache of `loader`: the working
+    /// set less each resident footprint of `footprint`, less `addedBytes`, and
+    /// less the prompt-cache bytes that are being written to disk.
+    ///
+    /// - Parameters:
+    ///   - loader: The loader whose prompt cache gets the budget.
+    ///   - workingSetBytes: The recommended working set of the host.
+    ///   - footprint: The footprint of the pool now.
+    ///   - addedBytes: The bytes that an acquire is about to add: the whole
+    ///     footprint of a new model, the session of a new hold, or zero.
+    static func resize(
+        _ loader: any ModelLoader, workingSetBytes: Int64, footprint: ModelPoolFootprint, addedBytes: Int64
+    ) async {
+        let usage = await loader.promptCacheUsage
+        let budget = memoryBudgetBytes(
+            workingSetBytes: workingSetBytes,
+            residentFootprints: Array(footprint.resident.values) + [footprint.loadingBytes, addedBytes],
+            usage: usage
+        )
+        await loader.configurePromptCache(memoryBudgetBytes: budget)
     }
 }

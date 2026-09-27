@@ -67,8 +67,7 @@ enum HandBuiltProfileFixtures {
                 container: StubEmbeddingContainer(dimension: RouterTestFixtures.stubDimension),
                 routerId: router.id,
                 recorder: recorder
-            ),
-            residencyToken: .generate()
+            )
         )
     }
 

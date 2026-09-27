@@ -15,10 +15,10 @@ import Synchronization
 /// no lock (`generation-queue.md`, section 5.4).
 ///
 /// ``waitUnlessCancelled()`` throws `CancellationError` instead, and a caller
-/// the user cancels leaves the queue at once. ``Router/resolve(profile:reporting:)``
-/// takes this acquire for the pool's resolve lock: a queued resolve holds
-/// nothing yet and can be abandoned safely. The ``GenerationQueue`` is a work
-/// queue, not a semaphore, and takes no acquire of this type.
+/// the user cancels leaves the queue at once: a waiter that holds nothing yet
+/// can be abandoned safely. The ``GenerationQueue`` and the admission queue of
+/// the ``ModelPool`` are work queues, not semaphores, and take no acquire of
+/// this type.
 ///
 /// One arrival order serves both kinds of waiter, so the queue stays fair
 /// whichever acquire each caller took, and each continuation is resumed
@@ -251,49 +251,6 @@ public final class AsyncSemaphore: Sendable {
         _ body: () async throws -> T
     ) async rethrows -> T {
         await wait()
-        defer { signal() }
-        return try await body()
-    }
-
-    /// Acquires a permit through ``waitUnlessCancelled()``, runs `body`, and
-    /// releases the permit on the way out.
-    ///
-    /// A caller cancelled while it waits leaves the queue, runs nothing, and
-    /// owes no ``signal()``. After the acquire, the permit is returned in a
-    /// `defer`, as in ``withPermit(isolation:_:)``.
-    ///
-    /// - Parameters:
-    ///   - isolation: The caller's actor isolation, which defaults to the
-    ///     caller's own. `body` runs there.
-    ///   - body: The work to run while holding a permit.
-    /// - Returns: Whatever `body` returns.
-    /// - Throws: `CancellationError` when the calling task is cancelled before
-    ///   the permit is acquired, or any error thrown by `body`.
-    package func withPermitUnlessCancelled<T>(
-        isolation: isolated (any Actor)? = #isolation,
-        _ body: () async throws -> T
-    ) async throws -> T {
-        try await withPermitUnlessCancelled(isolation: isolation, onQueued: {}, body)
-    }
-
-    /// ``withPermitUnlessCancelled(isolation:_:)``, which also calls
-    /// `onQueued` when the caller must wait for the permit. See
-    /// ``waitUnlessCancelled(onQueued:)``.
-    ///
-    /// - Parameters:
-    ///   - isolation: The caller's actor isolation, which defaults to the
-    ///     caller's own. `body` runs there.
-    ///   - onQueued: Called when the caller joins the queue.
-    ///   - body: The work to run while holding a permit.
-    /// - Returns: Whatever `body` returns.
-    /// - Throws: `CancellationError` when the calling task is cancelled before
-    ///   the permit is acquired, or any error thrown by `body`.
-    package func withPermitUnlessCancelled<T>(
-        isolation: isolated (any Actor)? = #isolation,
-        onQueued: @Sendable () -> Void,
-        _ body: () async throws -> T
-    ) async throws -> T {
-        try await waitUnlessCancelled(onQueued: onQueued)
         defer { signal() }
         return try await body()
     }

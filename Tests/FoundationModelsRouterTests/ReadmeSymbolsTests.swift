@@ -63,8 +63,8 @@ struct ReadmeSymbolsTests {
     }
 
     @Test("`ModelPool.residentModelCount` is zero on a fresh pool")
-    func freshPoolHoldsNoModel() async {
-        #expect(await ModelPool().residentModelCount == 0)
+    func freshPoolHoldsNoModel() {
+        #expect(ModelPool().residentModelCount == 0)
     }
 
     @Test("`Router(samplingMode:)` keeps the decoding strategy on the router")

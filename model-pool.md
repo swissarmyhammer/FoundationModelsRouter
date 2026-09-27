@@ -1,352 +1,423 @@
-# Plan: Model pool — one resident copy of each model for the whole process
+# Model pool — one resident copy of each model for the whole process
 
-Make the resident-model pool a process-wide object. When two `Router`
-instances in one process name the same model, that model is loaded one time.
-When two slots in one router name the same model, that model is loaded one
-time. The memory budget prices the union of every resident model in the
-process, not the residents of one router.
+The process has one model pool. When two users in one process name the same
+model, the pool loads that model one time. A user is a `Router`, the tool
+registry, the multitool, or other code that takes a hold. When two slots of
+one router name the same model, the pool loads that model one time. The
+memory budget counts the union of all resident models in the process, not the
+resident models of one router.
 
-## 1. What the code does today
+The pool is `ModelPool` in the core `FoundationModelsExtras` target (Extras
+revision `f4bd503`, source
+`Sources/FoundationModelsExtras/ModelPool/ModelPool.swift`). The router is one
+user of that pool. It does not have its own pool.
 
-This section shows the state of the code before the change; §2 is what the code does now.
+Section 1 shows the state of the code before the first pool plan. Section 2
+is the current design. Section 6 is the history of the designs that the
+current design replaced.
 
-Measured on `main` at commit `37c7942` (2026-09-05).
+## 1. What the code did before the pool plan
 
-### 1.1 One router: pooling is done
+This section is history. It shows the state of the code on `main` at commit
+`37c7942` (2026-09-05), before the first pool plan.
 
-`Router` (`Sources/FoundationModelsRouter/Router.swift`) holds a private
-`pool: [ResidencyKey: PoolEntry]`. The key is `(ModelRef, Role)`, where
-`Role` is `.llm(context: Int)` or `.embedding`. Each entry counts the slot
-acquisitions that hold it. `resolve(profile:reporting:)` bumps an entry that
-is already resident and loads only a key that is new. `release(token:)`
-decrements the count and evicts at zero. `poolLock` serializes both calls.
+### 1.1 One router: pooling was done
 
-Proven by `Tests/FoundationModelsRouterTests/PooledResidencyTests.swift`:
+`Router` held a private `pool: [ResidencyKey: PoolEntry]`, keyed by
+`(ModelRef, Role)`. Each entry counted the slot acquisitions that held it. A
+resolve added a count to a resident entry and loaded only a new key. A release
+removed a count and evicted at zero. One lock of the router serialized both.
 
-- Two profiles that name one model load it one time
-  (`sharedRefsLoadOnceAndBothGenerate`).
-- One profile that names one model in `standard` and `flash` loads it one
-  time and holds two KV caches against the budget
-  (`sharedGenerationPairHoldsBothKVCachesAgainstTheBudget`).
-- A model stays resident while any profile holds it
-  (`releasingOneProfileKeepsSharedModelLoadedForTheOther`).
-
-So the second half of the request ("the same model in multiple slots of one
-router") is already so, with one exception in §1.3.
+`Tests/FoundationModelsRouterTests/PooledResidencyTests.swift` proved that two
+profiles that name one model load it one time, and that a model stays
+resident while a profile holds it.
 
 ### 1.2 Two routers: no pooling at the router layer
 
-Each `Router` has its own `pool`, its own `poolLock`, and its own
-`residentProfiles`. Two routers do not see each other. The consequences:
+Each `Router` had its own pool and its own lock. Two routers did not see each
+other. The consequences:
 
-1. **The budget is wrong in both directions.** Each router prices its own
-   residents against the full machine budget (`hostBudget()` less the sum of
-   its own `pool`). Two routers with disjoint models each think the whole
-   machine is free, so together they can over-commit memory. Two routers
-   with the same model both charge its weights, so together they can refuse a
-   profile that fits.
-2. **A release in one router evicts the model under the other.** The live
-   loader's `evict(container:)` calls `MLXLanguageModel.evict()`, which
-   removes the container from the MLX layer's process-global cache (§1.4).
-   The other router's handle still exists, and its next call reloads the
-   weights from disk. Memory churn, and a multi-second stall.
-3. **Embedders are loaded one time per router.** `LiveModelLoader.loadEmbedder`
-   calls `EmbedderModelFactory.shared.loadContainer`, which has no cache
-   (`GenericModelFactory.loadContainer` in `MLXLMCommon/ModelFactory.swift`
-   loads on every call). Two routers with the same embedder hold two copies.
-4. **Two generation gates for one container.** `ResidentModelGates` is minted
-   per pool entry, so two routers over one MLX container serialize
-   generation only inside each router. The MLX `ModelContainer` is a serial
-   access container, so this is safe, but it is not the invariant the gate
-   documents.
+1. **The budget was incorrect in both directions.** Each router priced only
+   its own resident models against the full machine budget. Two routers with
+   disjoint models could together use too much memory. Two routers with the
+   same model both charged its weights, and could refuse a profile that fits.
+2. **A release in one router evicted the model under the other.** The live
+   loader's eviction removes the container from the MLX layer's
+   process-global cache (§1.4). The next call of the other router loaded the
+   weights from disk again.
+3. **Each router loaded its own copy of an embedder.** The embedder factory
+   has no cache.
+4. **Two generation gates for one container.** Each router made its own gate
+   for a model, so two routers over one MLX container serialized generation
+   only inside each router.
 
-### 1.3 The context in the residency key does not match the loader
+### 1.3 The context in the residency key did not match the loader
 
-`ResidencyKey.Role.llm(context:)` keys a generation model by its working
-context. The comment says "the KV cache is sized at load time". That is not
-what the live loader does: `LiveModelLoader.loadLLM(ref:slot:context:reporting:)`
-never reads `context`. The KV cache is allocated per generate call inside
-MLX, and it is priced per session already: `Router.footprintBytes` charges a
-model that an earlier resolve made resident one session KV cache
-(`residentKeys.contains(key) ? sessionKV : raw`), and `JointFit.sessionBytes`
-charges a slot that reuses an earlier slot of the same resolve.
-
-Result: a profile at 8k tokens and a profile at 32k tokens that name one
-model produce two pool entries, two `MLXLanguageModel` values, and two full
-weight charges against the budget. The MLX cache (§1.4) collapses them to one
-container underneath, so the budget over-reserves the weights one time, and
-the release of either entry evicts the container under the other.
-`sameRepoDifferentContextDoesNotShare` pins this behaviour on purpose. The
-plan reverses it (§2.3).
+The old key of a generation model included its working context. The live
+loader never reads the context: MLX allocates the KV cache at each generate
+call, and the router prices the KV cache for each session. Thus a profile at
+8k tokens and a profile at 32k tokens that name one model made two pool
+entries and two weight charges. §2.3 removed the context from the key.
 
 ### 1.4 The MLX layer has a process-global cache, keyed by repo id only
 
 `MLXLanguageModel` (fork `swissarmyhammer/mlx-swift-lm`, branch `stable`,
 `Libraries/MLXFoundationModels/MLXLanguageModel.swift`) holds a
 `private static let cache = ModelCache()`. `loadContainer()` returns the
-cached `ModelContainer` for `modelID`, and coalesces concurrent loads of one
-id onto one task. `evict()` removes one id from that cache.
+cached `ModelContainer` for `modelID`, and joins concurrent loads of one id
+into one task. `evict()` removes one id from that cache.
 
 `modelID` is `configuration.name`, which for a Hub model is the repo id
 alone. The revision is dropped. Two `ModelRef`s that differ only in revision
 (`org/repo@rev1`, `org/repo@rev2`) get one container from that cache: the
-second caller gets the first revision's weights. The router keys its pool by
-revision, so it believes it holds two models. This is a latent defect in the
-fork, independent of this plan, and §2.6 tracks it.
+second caller gets the weights of the first revision. The pool keys a model
+by revision, so it thinks that it holds two models. This is a latent defect
+in the fork, and §2.6 tracks it.
 
 ## 2. Design
 
-### 2.1 `ModelPool`: the residency pool as a process-wide actor
+### 2.1 `ModelPool`: the pool of the process, in `FoundationModelsExtras`
 
-Move the pool out of `Router` into a new actor,
-`Sources/FoundationModelsRouter/Resolution/ModelPool.swift`:
+`ModelPool` is a `final class` in `FoundationModelsExtras`, not an actor. All
+of its state is in one `Mutex`. The router exports the name with
+`public typealias ModelPool = FoundationModelsExtras.ModelPool`
+(`Sources/FoundationModelsRouter/Resolution/PoolPrimitives.swift`), so a
+router user writes `Router(pool: ModelPool())` and `ModelPool.shared` with only
+`import FoundationModelsRouter`. A file that imports both modules sees one
+type, because the alias and the class are one declaration.
+
+The public surface:
 
 ```swift
-/// The resident-model pool. One instance serves every router in a process,
-/// so a model that two routers name is loaded one time and priced one time.
-public actor ModelPool {
-    /// The pool every router uses when none is given.
-    public static let shared = ModelPool()
-
-    /// Makes an empty pool. Tests make one per router for isolation.
+public final class ModelPool: Sendable {
+    /// The pool of the process.
+    public static let shared: ModelPool
     public init()
 
-    /// How many models are resident in this pool. For a host that wants to
-    /// know what a process holds at shutdown.
-    public var residentModelCount: Int { get }
+    /// Gives a hold of the model of `key`. A resident key adds a hold at once.
+    /// A new key loads in one admission job.
+    public func acquire(
+        _ key: ModelPoolKey, footprintBytes: Int64, sessionBytes: Int64,
+        loader: any PooledModelLoader
+    ) async throws -> ModelHold
 
-    // package: what Router needs
-    /// Runs `body` under the resolve-wide lock. The lock is a nonisolated
-    /// `AsyncSemaphore`, so no caller can forget it and no `defer` needs an
-    /// `await`.
-    func withResolveLock<T>(_ body: () async throws -> T) async rethrows -> T
-    var residentFootprintBytes: Int64       // sum of every entry's footprint
-    var residentKeys: Set<ResidencyKey>
-    /// Bumps a resident entry or loads a new one. Returns the entry, so the
-    /// resolve holds the container and the gates it needs and never reads
-    /// the pool a second time.
-    func acquire(key:load:wrap:evict:...) async throws -> PoolEntry
-    func grant(token: ULID, holds: [ResidencyHold])
-    func release(token: ULID) async
+    /// Runs `job` as one job in the FIFO admission queue.
+    public func admit<T: Sendable>(
+        _ job: @escaping @Sendable (ModelPoolAdmission) async throws -> T
+    ) async throws -> T
+
+    /// Synchronous reads.
+    public var footprint: ModelPoolFootprint { get }  // resident, loadingBytes, totalBytes
+    public var residentModelCount: Int { get }
+    public func isResident(_ key: ModelPoolKey) -> Bool
+
+    /// The current footprint first, then each change.
+    public var footprints: AsyncStream<ModelPoolFootprint> { get }
+}
+
+public struct ModelPoolAdmission: Sendable {
+    public var footprint: ModelPoolFootprint { get }
+    /// Acquires at once, inside the running admission job.
+    public func acquire(
+        _ key: ModelPoolKey, footprintBytes: Int64, sessionBytes: Int64,
+        loader: any PooledModelLoader
+    ) async throws -> ModelHold
+}
+
+public final class ModelHold: Sendable {
+    public let key: ModelPoolKey
+    public let container: any Sendable
+    public let queue: GenerationQueue  // the one work queue of the model
+    // deinit releases the hold.
 }
 ```
 
-`ResidencyKey`, `PoolEntry`, `PooledContainer`, and `ResidencyHold` move
-with it and become `package`. `PoolEntry` gains an `evict` closure captured
-from the loader that loaded it, so an eviction runs through the loader that
-made the container, whichever router releases last.
+The key is `ModelPoolKey` (a `ModelRef` and a `ModelRole`, `.llm` or
+`.embedding`). The loader is `PooledModelLoader`: it loads a model by its key
+and evicts a container that it loaded. `LiveModelLoader` conforms to it, so
+an application can give a live loader to the pool without a `Router`. The
+router exports `ModelPoolKey`, `ModelRole`, `PooledModelLoader` and
+`PooledEmbedding` under the same names.
 
-Two shape rules, because the pool is an actor:
+The pool keeps, for each resident key, the container, the loader that loaded
+it, one `GenerationQueue`, the bytes (the weights and the session of each
+hold), and the hold count. Each eviction runs through the loader that loaded
+the container, whichever user releases last.
 
-- The lock is a closure-taking method over a nonisolated semaphore. An
-  actor does not make check-then-insert atomic across an `await`, and
-  `acquire` awaits a download. The lock is what stops two routers from
-  loading one key two times. Today's `defer { poolLock.signal() }` sites in
-  `Router.swift` cannot await an isolated `unlock()`, so the closure form
-  replaces them.
-- `acquire` returns the `PoolEntry`. Today `buildProfile`, `makeRoutedModel`,
-  `makeRoutedLLM`, and `makeRoutedEmbedder` read `pool[key]` synchronously
-  and trap when the key is missing. With the entry in hand, those helpers
-  stay synchronous and the two trap paths go away.
-
-`Router.init` gains `pool: ModelPool = .shared`. Every existing call site
-compiles unchanged and shares one pool. `Router` keeps its own identity,
-recorder, tracer, metadata reader, and loader. `resolve` and `release` become
-clients of the pool: the pool lock replaces `poolLock`, the resident
-footprint and keys come from the pool, and `acquireModel` and `releaseKey`
-forward to it. `LanguageModelProfile.release()` keeps calling
-`router.release(token:)`, which forwards to the pool.
-
-The lock stays resolve-wide, so two routers' resolves serialize
-process-wide, as two resolves on one router do today.
+`Router.init` takes `pool: ModelPool = .shared`. `Router` keeps its own
+identity, recorder, tracer, metadata reader, loader, sampling mode, and
+budget probe.
 
 ### 2.2 The first loader wins a key
 
-The router that first loads a key makes its container with its own loader.
-A second router that names the same key gets that container, whatever its
-own loader would have made. This is the same rule the MLX cache applies
-("first caller wins; later callers reuse the cached container regardless of
-which loader they brought along").
+The first user that loads a key makes its container with its own loader. A
+later user that names the same key gets that container, whatever its own
+loader would make. The MLX cache applies the same rule. Thus a user must use
+a container through a protocol, never through a cast to the container type
+of one loader. The router uses an embedding container through
+`PooledEmbedding` only, and a generation container through
+`ModelHold.generationContainer()`.
 
-One consequence needs a decision: `LiveModelLoader(samplingMode:)` stores the
-decoding strategy on the container (`MLXFoundationModelsContainer.samplingMode`).
-Two routers with different sampling modes over one key would share the first
-router's mode. The sampling mode is a decode option, not a property of the
-weights, so §2.5 moves it off the container.
+The sampling mode is a decode option, not a property of the weights. §2.5
+moves it off the container, so two routers with two sampling modes can share
+one container.
 
-### 2.3 Drop the context from the generation key
+### 2.3 No context in the generation key
 
-`ResidencyKey.Role` becomes `.llm` and `.embedding`, with no context. The
-per-session KV cache is already charged per acquisition (`sessionBytes` on
-`ResidencyHold`, from `sessionBytes` in the joint fit at that resolve's own
-context), so the accounting is unchanged: the first hold charges weights plus
-its KV cache, and every later hold charges its own KV cache at its own
-context. `ModelLoader.loadLLM(context:)` keeps its parameter for source
-compatibility, and its doc comment says the value is advisory.
+A generation key is the chosen reference and the role `.llm`, with no
+context. The per-session KV cache is charged for each hold (`sessionBytes`,
+from the joint fit at the context of that resolve). The first hold charges
+the weights plus its KV cache. Each later hold charges its own KV cache at
+its own context. `ModelLoader.loadLLM(context:)` keeps its parameter for
+source compatibility, and its doc comment says that the value is advisory.
 
 ### 2.4 Tests must not share the default pool
 
-The unit target builds a `Router` at 64 sites in 41 files. Most suites have
-their own private `makeRouter`. Swift Testing runs suites in parallel, and
-stub loaders vend stub containers for refs such as `org/std-shared`. If a
-test router used `ModelPool.shared`, one suite's resident stub would satisfy
-another suite's key, and the budget arithmetic in `PooledResidencyTests` and
-`ResolveTests` would depend on scheduling. So every router-building site in
-`Tests/FoundationModelsRouterTests` names a pool: each private `makeRouter`
-gains `pool: ModelPool = ModelPool()`, and a direct `Router(...)` call passes
-`pool: ModelPool()`. A test that wants two routers over one pool passes the
-same pool to both. The extraction task's acceptance criterion is that no
-file under the unit target builds a `Router` without a `pool:` argument.
+Swift Testing runs suites in parallel, and stub loaders vend stub containers
+for references such as `org/std-shared`. If a test router used
+`ModelPool.shared`, the resident stub of one suite could satisfy a key of
+another suite, and the budget arithmetic would depend on the schedule. Thus
+each router in `Tests/FoundationModelsRouterTests` names a pool: each private
+`makeRouter` takes `pool: ModelPool = ModelPool()`, and a direct `Router(...)`
+call passes `pool: ModelPool()`. A test that wants two routers over one pool
+gives the same pool to both.
 
 ### 2.5 Sampling mode belongs to the router, not the container
 
-This lands in two steps.
+This landed in two steps.
 
-**Step A, the seam.** `Router.init` gains
+**Step A, the seam.** `Router.init` takes
 `samplingMode: GenerationOptions.SamplingMode? = nil`. `RoutedModel` carries
-it. All four `LoadedLLMContainer.makeSession` signatures gain a
+it. All four `LoadedLLMContainer.makeSession` signatures take a
 `samplingMode:` parameter, with default extensions that forward to the old
-signatures so stub containers compile unchanged. The one call site that
-needs the parameter and has no other way to get the mode is the compaction
-summarizer: `RoutedSessionActorCompaction.swift` line 145 calls
-`profile.flash.container.makeSession(instructions: nil)`, the no-tools
-signature. A fork (`makeFork(tools:)`) and a transcript replace
-(`replacingTranscript(_:)`) inherit the mode from the backend they copy, so
-they need no change, and a test on them cannot fail. The test for step A
-pins the summarizer backend.
+signatures, so stub containers compile unchanged. The compaction summarizer
+(`RoutedSessionActorCompaction.swift`) calls
+`profile.flash.container.makeSession(instructions: nil)` and needs the
+parameter. A fork (`makeFork(tools:)`) and a transcript replace
+(`replacingTranscript(_:)`) copy the mode from their backend. The test for
+step A pins the summarizer backend.
 
-**Step B, the removal.** `MLXFoundationModelsContainer` drops its stored
-`samplingMode`, and `LiveModelLoader(samplingMode:)` goes. The mode reaches
-`LiveModelLoader` today through `RealModelContainer.load(ref:context:samplingMode:chatTemplateDate:)`
-(`Tests/FoundationModelsRouterRealModelSupport/RealModelContainer.swift`)
-and `CompactionEvalRealModelContainer.load(...)`
-(`IntegrationTests/.../Support/`). Neither builds a `Router`; both return a
-bare container that about fifteen gated suites call `makeSession` on
-directly, and the argmax pin is what makes those suites repeatable. Each of
-those sites passes the mode into `makeSession(...samplingMode:)` instead.
-`Examples/CompactionDemo/main.swift` passes it to `Router`;
-`Examples/MultiModelGeneration` names no sampling mode. The DocC link
-``MLXFoundationModelsContainer/samplingMode`` in `RealToolAnswerComparisonTests`
-and the rationale comment in `GatedEvalSerialGate.swift` ("one container
-cannot carry two strategies") are updated with it.
+**Step B, the removal.** `MLXFoundationModelsContainer` has no stored
+`samplingMode`, and `LiveModelLoader(samplingMode:)` is gone. The real-model
+helpers `RealModelContainer.load(...)`
+(`Tests/FoundationModelsRouterRealModelSupport/RealModelContainer.swift`) and
+`CompactionEvalRealModelContainer.load(...)` (`IntegrationTests/.../Support/`)
+return a bare container. Each gated suite that calls `makeSession` on it
+passes the mode into `makeSession(...samplingMode:)`. The argmax pin is what
+makes those suites repeatable. `Examples/CompactionDemo/main.swift` passes the
+mode to `Router`.
 
 ### 2.6 Fork: key the MLX cache by revision
 
 In `swissarmyhammer/mlx-swift-lm`, give `MLXLanguageModel.modelID` the
 revision: `"\(id)@\(revision)"` for `.id(id, revision:)` when the revision is
 not `"main"`, and `configuration.name` unchanged for `.directory(url)`. Keep
-`configuration.name` as it is so download paths and progress reporting do
-not change (progress already passes `configuration.name`). The two
-`weightsLocation(modelID)` call sites are in
-`MLXLanguageModel+Availability.swift` (lines 143 and 182 at revision
-`41e9f41c`); both change to `configuration.name`. Add a unit test that two
-configurations for one id at two revisions get two `modelID` values and two
-loads; it must sit under the `@Suite(.serialized)` parent that
-`ModelCacheEvictionTests` documents, because the cache is one process-global
-`static let`.
+`configuration.name` as it is, so download paths and progress reporting do
+not change. The two `weightsLocation(modelID)` call sites are in
+`MLXLanguageModel+Availability.swift`; both change to `configuration.name`.
+Add a unit test that two configurations for one id at two revisions get two
+`modelID` values and two loads. The test must be under the
+`@Suite(.serialized)` parent that `ModelCacheEvictionTests` documents,
+because the cache is one process-global `static let`.
 
 The work needs its own clone of the fork and a push to `stable`. The checkout
 under `IntegrationTests/.build/checkouts/mlx-swift-lm` is a SwiftPM artifact,
-detached at the pinned revision, and `swift package resolve` discards edits
-there. The pin is local: `.gitignore` ignores both `Package.resolved` files,
-and both manifests take the fork by `branch: "stable"`, so a fresh clone
-resolves the tip of `stable`, whatever revision this checkout holds. A
-tracked guarantee needs either a `revision:` pin in both manifests or an
-un-ignored `Package.resolved`.
+and `swift package resolve` discards edits there. `.gitignore` ignores both
+`Package.resolved` files, and both manifests take the fork by
+`branch: "stable"`. A tracked guarantee needs a `revision:` pin in both
+manifests or a tracked `Package.resolved`.
 
-### 2.7 Two rules the shared entry sets for every router
+### 2.7 Rules the shared pool sets for each user
 
-- **Gates: the first router wins.** `ResidentModelGates` is minted at first
-  load and holds the generation gate. A second router over the same key gets
-  that gate. Forks are not counted: any number of forks over one container
-  can exist at once. The rule is stated on `ResidentModelGates`.
-- **Lifetime: a container is freed only by `release`.** Today a dropped
-  `Router` frees its pool through ARC. With `ModelPool.shared`, a global
-  holds the containers, so a leaked profile whose `deinit` task never runs
-  keeps its models resident and charged. `ModelPool.residentModelCount` lets
-  a host see this. No `evictAll()`: an eviction while a profile still holds
-  a reference would corrupt the accounting the plan sets out to fix.
-- **Budget: the pool holds the residents, each router keeps its budget.**
-  `hostBudget()` stays per router (its own probe). Two routers with
-  different probes see two different effective budgets over one pool.
-  A test that pins a budget across two routers gives both the same probe.
+- **One work queue for each model.** The pool makes one `GenerationQueue`
+  when it loads a key. Each hold of that key, of each user, gives the same
+  queue (`ModelHold.queue`). Forks are not counted: any number of forks over
+  one container can exist at one time.
+- **Lifetime: a model stays resident while a hold exists.** There is no
+  release call and no `evictAll()`. Each `RoutedModel` handle keeps the three
+  `ModelHold`s of its resolve (`residencyHolds`), so one handle alone (for
+  example in a tool) keeps the whole trio resident. A leaked handle keeps its
+  models resident and charged. `ModelPool.residentModelCount` lets a host see
+  this. §2.9 gives the eviction rules.
+- **Budget: the pool holds the resident models, each router keeps its
+  budget.** `hostBudget()` is a probe of each router. A resolve subtracts
+  `footprint.totalBytes` of the pool from that budget. Two routers with two
+  probes see two effective budgets over one pool. A test that pins a budget
+  across two routers gives both the same probe.
+- **Standard is not flash.** A profile never uses one model for both
+  generation slots. A synchronous tool call can run a `flash` call inside an
+  open submission on `standard`, and each model has one FIFO work queue, so
+  one model in both slots would wait on itself. `Router.resolve` skips the
+  model that `standard` chose in the `flash` list, and throws before it loads
+  when no other `flash` candidate exists.
+
+### 2.8 The admission job of a resolve
+
+The pool has one FIFO admission queue. Each load of a new key, by any user,
+is one admission job. Each eviction is one admission job. `admit` runs a job
+of the caller in the same queue.
+
+`Router.resolve` does its work in this order:
+
+1. Outside of the queue, the router fetches the metadata of each candidate
+   (the sizing).
+2. The router runs one `pool.admit` job. In that job it reads
+   `admission.footprint`, runs `JointFit` against the budget less
+   `footprint.totalBytes`, and calls `admission.acquire` for each slot. It
+   also preloads each model that it loaded.
+
+Because the measurement and the acquires are in one job, no load by another
+user and no eviction can occur between them. Thus the router needs no lock of
+its own and no step that processes queued releases before it measures.
+
+Inside a job, a caller must acquire through the `ModelPoolAdmission`.
+`ModelPool.acquire` of a new key waits for the end of the running job.
+
+### 2.9 Holds and eviction
+
+A `ModelHold` releases in its `deinit`, synchronously: the hold count and the
+session bytes of the hold go at once, and the `footprints` stream gets the
+change. After the last hold of a key, the pool submits an eviction job from a
+detached task. The eviction job examines the hold count again. When the count
+is still zero, the job removes the entry, and then calls `evict` on the loader
+that loaded the container. When a new hold came first, the job does nothing.
+
+The eviction thus comes after the drop of the last reference, not at the
+drop. This is a difference from the router pool that this design replaced
+(§6). That pool gave a guarantee that the next resolve saw the freed weights.
+Now a resolve that starts immediately after the drop of the last reference can
+run before the eviction job. Then it sees the model as still resident (the
+weights only, with no session bytes), and a new hold of the same key revives
+it with no new load. A caller that needs the freed bytes must wait for the
+eviction. For example, it reads `footprints` until the key is not resident,
+and then runs `try await pool.admit { _ in }` as a barrier: the barrier job
+starts only after the eviction job ends.
+
+### 2.10 Prompt-cache resize points
+
+The prompt cache of the MLX fork is one store for the process. The router
+sends a budget for it through its own loader
+(`PromptCacheBudget.resize`, `Sources/FoundationModelsRouter/Sizing/PromptCacheBudget.swift`).
+The budget is the working set less the resident footprint of the pool, the
+bytes of a load that runs now, and the bytes that the next acquire adds.
+
+This design keeps these resize points, all inside the admission job of a
+resolve:
+
+- Before each acquire, the router resizes for the bytes that the acquire
+  adds: the whole footprint of a new model, or the session bytes of a new
+  hold on a resident model.
+- After a failed acquire, the router resizes back to the resident footprint.
+
+These changes do not resize the prompt cache yet:
+
+- A load by a user that is not the router (for example the registry or the
+  multitool).
+- A release of a hold.
+- An eviction.
+
+Kanban task `01M3FNK00PYXP7E102NWNHMD56` (^wnhmd56) adds an observer of the
+`footprints` stream that resizes for these changes.
 
 ## 3. Testing
 
 - **Cross-router unit tests**, in
   `Tests/FoundationModelsRouterTests/CrossRouterResidencyTests.swift`, all
-  over stubs: two routers on one pool load a shared ref one time; a release
-  from one router keeps the model for the other; a release from the last
-  router evicts through the loader that loaded it; a second router's resolve
-  prices the first router's residents, so a disjoint union that exceeds the
-  budget fails with `ResolutionFailure`; two routers on two pools do not
-  share.
-- **Context key test**: `sameRepoDifferentContextDoesNotShare` becomes
-  `sameRepoDifferentContextSharesOneContainer`, and a budget pin proves the
-  second profile charges one KV cache at its own context and no weights.
-- **Sampling-mode tests**: a stub container records the sampling mode each
-  `makeSession` receives; two routers with different modes over one pool
-  each see their own mode; the compaction summarizer backend receives the
-  router's mode.
-- **Uncounted-forks test**: eight forks over one model all exist at once.
+  over stubs: two routers on one pool load a shared reference one time; a
+  release from one router keeps the model for the other; a release from the
+  last router evicts through the loader that loaded it; the resolve of a
+  second router prices the resident models of the first router, so a disjoint
+  union that is larger than the budget fails with `ResolutionFailure`; two
+  routers on two pools do not share.
+- **Extras pool tests**: `ExtrasPoolResolveTests` pins that two routers on
+  one pool load each model one time, that a router and a direct acquire of
+  one key share one load, and that a direct acquire of a new key during a
+  resolve loads only after the admission job of the router ends.
+  `ModelPoolNameTests` pins that the router name `ModelPool` and the Extras
+  class are one type.
+- **Context key test**: `sameRepoDifferentContextSharesOneContainer`, and a
+  budget pin proves that the second profile charges one KV cache at its own
+  context and no weights.
+- **Sampling-mode tests**: a stub container records the sampling mode that
+  each `makeSession` receives; two routers with two modes over one pool each
+  see their own mode; the compaction summarizer backend receives the mode of
+  the router.
+- **Uncounted-forks test**: eight forks over one model all exist at one time.
   See `ForkConcurrencyTests`.
-- **Gated real-model test**, in `IntegrationTests/`: two `Router`s over
-  `LiveModelLoader` resolve one profile. With `InMemoryTracing` bound, the
-  second resolve opens zero `load` spans, and a session from each router
-  answers a prompt.
+- **Gated real-model test**, in
+  `IntegrationTests/.../CrossRouterPoolIntegrationTests.swift`: two `Router`s
+  over `LiveModelLoader` resolve one profile. With `InMemoryTracing` bound,
+  the second resolve opens zero `load` spans, and a session from each router
+  answers a prompt. After the drop of both profiles, the test waits on
+  `footprints` and an admission barrier (§2.9), and then the pool has no
+  resident model.
 - **Fork test** per §2.6.
 
 ## 4. Build order
 
-1. `ModelPool` extraction with `Router(pool:)`; every unit-test router
-   names a pool.
+This section is history: the order of the first pool plan.
+
+1. Pool extraction with `Router(pool:)`; each unit-test router names a pool.
 2. Cross-router unit tests.
-3. Drop the context from the key (after 2: both edit
-   `PooledResidencyTests.swift`).
-4. Sampling mode, step A: the seam (after 2: its test lands in the
-   cross-router suite).
+3. Remove the context from the key.
+4. Sampling mode, step A: the seam.
 5. Sampling mode, step B: the removal.
-6. Gated two-router test (after 5: the gated harness changes with it).
-7. Fork revision key and `Package.resolved` bump (independent).
+6. Gated two-router test.
+7. Fork revision key and `Package.resolved` update.
 8. README and doc comments: residency is process-wide.
+
+After these steps, the router pool moved to `FoundationModelsExtras` (§6).
 
 ## 5. Decisions
 
-- **One pool per process, injectable.** `ModelPool.shared` is the default so
+- **One pool per process, injectable.** `ModelPool.shared` is the default, so
   an application gets process-wide pooling with no configuration. The
-  parameter exists for tests and for an application that wants two isolated
-  budgets on purpose.
+  `Router(pool:)` parameter exists for tests and for an application that
+  wants two isolated budgets on purpose.
+- **One pool for all users.** The pool is in the core `FoundationModelsExtras`
+  target, so the router, the registry and the multitool share one copy of
+  each model and one footprint.
 - **The pool does not depend on the MLX cache.** The MLX cache stays as a
-  second line of defence, but the router's own pool is the authority on
-  residency and on the budget. The router evicts only at zero references
-  across the process, so the MLX eviction becomes correct as a side effect.
-- **First loader wins.** The alternative, a loader identity in the key, would
-  load one model two times to serve two routers, which is the waste this plan
-  removes.
+  second line of defence, but the pool is the authority on residency and on
+  the footprint. The pool evicts only when no hold remains in the process, so
+  the MLX eviction is correct as a side effect.
+- **First loader wins.** A loader identity in the key would load one model
+  two times to serve two users, which is the waste that the pool removes.
 - **No context in the key.** The loader never read it; the KV cache is
-  priced per session already.
-- **Sampling mode moves to the router.** It is a decode option. Storing it on
-  a shared container gives the wrong mode to the second router.
-- **Gates: first router wins** (§2.7). Forks are not counted.
-- **A container is freed only by `release`** (§2.7). The pool is process
-  lifetime; a host can read `residentModelCount`.
-- **Each router keeps its own budget over the shared residents** (§2.7).
+  priced for each session.
+- **Sampling mode belongs to the router.** It is a decode option. A mode on a
+  shared container gives the incorrect mode to the second router.
+- **One work queue for each model** (§2.7). Forks are not counted.
+- **A model stays resident while a hold exists** (§2.7, §2.9). A host can
+  read `residentModelCount`.
+- **Each router keeps its own budget over the shared resident models**
+  (§2.7).
+- **One admission queue, no lock** (§2.8). A resolve measures and acquires in
+  one admission job.
 
-## 6. After the merge with ARC residency
+## 6. History
 
-`main` moved residency ownership to ARC and deleted
-`LanguageModelProfile.release()` while this plan was built. The merge keeps
-both designs:
+These designs came before the current design. The current design replaced
+them. The code does not contain them now.
 
-- There is no `release(token:)` and no `LanguageModelProfile.release()`. A
-  resolve mints one `ResidencyHold` and gives it to the three handles. When
-  the last hold is deallocated, its `deinit` queues the token on the pool
-  (`ModelPool.enqueuePendingRelease(_:)`).
-- The pending queue belongs to `ModelPool`, not to `Router`. Every resolve on
-  every router over the pool drains it before it measures the budget.
-- The per-slot bookkeeping that §2.1 calls `ResidencyHold` is named
-  `SlotCharge`.
-- A resolve waits for the pool's resolve lock with
-  `withResolveLockUnlessCancelled`, so a cancelled caller leaves the queue.
-- §2.7 "a container is freed only by `release`" becomes: a container is freed
-  when the last reference to its residency is dropped.
+- **The router pool actor.** The first pool plan moved the pool out of
+  `Router` into a router actor `ModelPool`
+  (`Sources/FoundationModelsRouter/Resolution/ModelPool.swift`) with
+  `pool: [ResidencyKey: PoolEntry]`, `PooledContainer`, a resolve-wide lock
+  (`withResolveLock`, over a nonisolated `AsyncSemaphore`),
+  `residentFootprintBytes`, `residentKeys`, and
+  `acquire(key:load:wrap:evict:...)`. Each loaded entry had
+  `ResidentModelGates`.
+- **ARC residency with tokens.** A later merge removed `release(token:)` and
+  `LanguageModelProfile.release()`. A resolve made one `ResidencyHold` (a
+  token) and gave it to the three handles (`LanguageModelProfile.residencyToken`,
+  `grant(token:holds:)`). The per-slot bookkeeping was `SlotCharge`. When the
+  last `ResidencyHold` was deallocated, its `deinit` queued the token on the
+  pool (`enqueuePendingRelease(_:)`). Each resolve processed that queue
+  (`drainPendingReleases()`) before it measured the budget, under
+  `withResolveLockUnlessCancelled`, so a cancelled caller left the lock queue.
+  That design gave the guarantee that the next resolve saw the freed weights.
+- **The move to `FoundationModelsExtras`.** The current design deleted the
+  router pool actor, `ResidencyHold` and `SlotCharge`. `ModelPool` is now the
+  Extras class (§2.1), each handle keeps `ModelHold`s (§2.7), a resolve is one
+  admission job (§2.8), and eviction comes after the last hold (§2.9).
