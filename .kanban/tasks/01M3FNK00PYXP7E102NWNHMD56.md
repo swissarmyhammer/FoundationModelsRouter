@@ -31,10 +31,26 @@ comments:
     - evidence: `swift package clean && swift build --build-tests` — Build complete, no source warning; `swift test --skip-build` — 1464 tests in 177 suites passed (2 known issues that two tests expect), plus 17 tests in 8 suites and 19 tests in 3 suites; no skipped test; `swift build --build-tests --package-path IntegrationTests` — Build complete, no error, no warning; 10 pool, residency and prompt-cache suites 10 times with `--parallel --num-workers 8` — 67 tests passed each time.
     - next: /commit
   timestamp: 2026-09-27T18:21:10.248848+00:00
+- actor: claude-code
+  id: 01m3j1vppkvdc9sfvbre5ns28a
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` on 16417d0 — 0 findings, 0 confirmed, 0 refuted; 4 files reviewed (6 `.kanban/` files are excluded by `.reviewignore`; `model-pool.md`: no validator matched). The task has no earlier findings section.
+    - next: the task moves to done.
+  timestamp: 2026-09-27T18:25:56.947390+00:00
+- actor: claude-code
+  id: 01m3j1vz2tk26vvzk8427rj72j
+  text: |-
+    ### finish iteration 1 — review clean
+    - implement: changed — PromptCacheSizing.swift (new), PromptCacheBudget.swift, Router.swift, PromptCacheBudgetTests.swift, model-pool.md.
+    - test: green — clean `swift build --build-tests` with no source warning; `swift test --skip-build` 1464 tests in 177 suites passed (2 known issues), plus 17 and 19; pool, residency and prompt-cache suites 10 times in parallel, 67 tests each time; IntegrationTests build clean.
+    - commit: 16417d0 feat(router): resize the prompt cache from the footprints stream of the Extras ModelPool (^wnhmd56)
+    - review: clean — `review sha HEAD~1..HEAD`, 0 findings. The task is in done.
+  timestamp: 2026-09-27T18:26:05.530827+00:00
 depends_on:
 - 01M3FNBKR2347W659AXFJVZKGM
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffa480
 title: 'Router: resize the prompt cache from the footprints stream of the Extras ModelPool'
 ---
 ## What
