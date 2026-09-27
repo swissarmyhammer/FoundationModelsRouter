@@ -361,8 +361,8 @@ extension RoutedSessionActor {
 
         // What `backend` will hold, reported as `contextFill`'s numerator
         // immediately — the same way a restored session whose newest event is
-        // a compaction checkpoint reports its segment's own `tokensAfter`
-        // (compaction_plan.md §1.5). `result.tokensAfter` is the tokenizer's
+        // a compaction checkpoint reports its segment's own `tokensAfter`.
+        // `result.tokensAfter` is the tokenizer's
         // count, made before any call ran on the snapshot; the engine's
         // `usage.input` of the next live submission replaces it. Rescaled onto the
         // measured scale first — see `compactedUsage(tokensBefore:tokensAfter:)`.
@@ -413,8 +413,8 @@ extension RoutedSessionActor {
 
         // Swap the inner session in place: same actor, same nonisolated
         // `id`, same `recorder`, same `recordingDirectory` — only the
-        // backend driving generation changes (compaction_plan.md
-        // requirement 4). Seeded with the summary entry included, so what
+        // backend driving generation changes. Seeded with the summary entry
+        // included, so what
         // the model sees live is exactly what a restore rebuilds from the
         // checkpoint's live window.
         backend = backend.replacingTranscript(applied)

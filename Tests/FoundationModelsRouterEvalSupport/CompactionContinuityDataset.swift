@@ -350,8 +350,7 @@ struct CompactionContinuitySeed: Sendable {
     /// ``CompactionContinuityMetric/recordingComplete`` against whatever the
     /// real subject's own recording actually persisted, proving the compaction(s)
     /// along the way never dropped anything from the durable history (only
-    /// ever from the *live*, resumable window — compaction_plan.md's whole
-    /// point).
+    /// ever from the *live*, resumable window).
     let expectedMinimumRecordedEntries: Int
 
     /// Builds a seed from a hand-written fixture spec: one setup step per

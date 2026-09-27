@@ -44,8 +44,7 @@ enum CompactionContinuityMetric {
     /// ``CompactionContinuityOutcome/expectedMinimumRecordedEntries`` — proof
     /// that whatever the live session compacted away from its own resumable
     /// window, the durable recording underneath it still holds the whole
-    /// task's history, exactly as compaction_plan.md's checkpointed-window
-    /// vs. full-history split promises.
+    /// task's history.
     static let recordingComplete = Metric("RecordingComplete")
 }
 

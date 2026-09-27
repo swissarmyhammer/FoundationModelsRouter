@@ -221,7 +221,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // fork (see ``RouterTracing/SessionOrigin``).
             origin: .new,
             // This slot's resolved working context — ``contextFill``'s
-            // denominator (compaction_plan.md §1.5). A brand-new root has
+            // denominator. A brand-new root has
             // sent nothing yet, so its fill state starts at ``.none``.
             contextTokens: resolution.contextTokens,
             usageState: .none,

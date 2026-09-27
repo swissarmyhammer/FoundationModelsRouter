@@ -5,8 +5,7 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Spike for kanban task dws80ms (compaction epic — compaction_plan.md §6.1,
-/// build-order step 1): de-risks the core compaction mechanism *before* any
+/// Spike for kanban task dws80ms (compaction epic): de-risks the core compaction mechanism *before* any
 /// of `CompactionSegment`, the compactor pipeline, or `RoutedSession.compact()`
 /// is built. Two things had to be proven first: that a *synthesized*
 /// `Transcript.Entry` — a summary entry Router fabricates itself, and an
@@ -33,8 +32,8 @@ import Testing
 /// read-only `Int`) and the `LanguageModelError.contextSizeExceeded` /
 /// deprecated `GenerationError.exceededContextWindowSize` failure cases —
 /// nothing that compacts, summarizes, elides, or trims a transcript. There is
-/// nothing native to defer to or build on top of: compaction_plan.md's
-/// from-scratch design (§1) is the only option.
+/// nothing native to defer to or build on top of: a from-scratch design is
+/// the only option.
 ///
 /// ## Verdict 2 — entry ids: controllable at synthesis; preserved end to end
 /// through the recording mirror.
@@ -47,7 +46,7 @@ import Testing
 /// controllable: a fresh id for a new summary entry, or — deliberately — the
 /// *same* id an old `.toolOutput` carried, to mark an elision placeholder as
 /// replacing it in place rather than being a new, unrelated entry. This is
-/// exactly what `CompactionSegment` (compaction_plan.md §1.2) depends on: it
+/// exactly what `CompactionSegment` depends on: it
 /// references live-window and compacted entries *by id*.
 ///
 /// What this hermetic suite proves is the disk half of that dependency: once
@@ -81,8 +80,7 @@ struct CompactionSpikeTests {
 
     /// The real `.toolCalls` entry that requested the tool output compaction
     /// will later elide — untouched by compaction (only `toolOutput`
-    /// payloads shrink; `toolCalls`/`toolOutput` pairing survives, per
-    /// compaction_plan.md §1.3).
+    /// payloads shrink; `toolCalls`/`toolOutput` pairing survives).
     private static func makeOldToolCallsEntry() throws -> Transcript.Entry {
         .toolCalls(
             Transcript.ToolCalls(
@@ -103,7 +101,7 @@ struct CompactionSpikeTests {
     }
 
     /// The synthesized elision-placeholder entry a `ToolOutputElision` stage
-    /// (compaction_plan.md §1.3) would produce: a *new* `.toolOutput` value
+    /// would produce: a *new* `.toolOutput` value
     /// that reuses ``oldToolOutputId`` — the id of the real tool output it
     /// replaces — so it marks itself as an in-place compaction rather than an
     /// unrelated new entry, with the payload itself shrunk to a one-line
@@ -127,9 +125,8 @@ struct CompactionSpikeTests {
 
     /// The synthesized summary entry a `Summarization` stage would append: a
     /// `.response` entry no real model answer produced, carrying a fresh id and
-    /// a single text segment — compaction_plan.md §1.2's "text segment the
-    /// model reads as prior context" (minus its `CompactionSegment`, a later
-    /// build-order step this spike does not need).
+    /// a single text segment the model reads as prior context (minus its
+    /// `CompactionSegment`, which this spike does not need).
     private static func makeSummaryEntry() -> Transcript.Entry {
         .response(
             Transcript.Response(

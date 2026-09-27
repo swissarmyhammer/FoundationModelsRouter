@@ -16,7 +16,7 @@ private let compactionSpikeTinyModel: ModelRef = RealModels.standard
 /// comment for the hermetic half and both written verdicts). This suite
 /// answers the one question the hermetic suite cannot: whether a live
 /// `LanguageModelSession(transcript:)` — the exact API
-/// ``RoutedSession/compact(prompt:budget:)`` (compaction_plan.md §1.4) will
+/// ``RoutedSession/compact(prompt:budget:)`` will
 /// rebuild the inner session over after a compaction — tolerates and completes
 /// one submission (one SDK call) over a transcript containing entries no real
 /// submission ever produced in

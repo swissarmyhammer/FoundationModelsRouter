@@ -28,8 +28,7 @@ private let compactionRoundTripModel: ModelRef = "mlx-community/Qwen2.5-3B-Instr
 
 // MARK: - Suite
 
-/// The gated end-to-end round trip for task rjvrgt9 (compaction_plan.md §4,
-/// §5): the same five-step loop `Examples/CompactionDemo` prints for a human
+/// The gated end-to-end round trip for task rjvrgt9: the same five-step loop `Examples/CompactionDemo` prints for a human
 /// to read, asserted mechanically here against a real model instead:
 ///
 /// 1. `contextFill` climbs across scripted answers that grow the transcript.

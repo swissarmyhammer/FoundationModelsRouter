@@ -317,7 +317,7 @@ extension RoutedSessionActor {
         let response: String
         let finishReason: FinishReason
         do {
-            // The hard-ceiling pre-check (compaction_plan.md §1.7, task g2hcm36):
+            // The hard-ceiling pre-check (task g2hcm36):
             // when the budget opts into ``TokenBudget/hardCeiling``, measured
             // usage is checked *before* `body` ever submits this attempt's
             // generate call — deterministic, so a transcript already too

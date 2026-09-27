@@ -7,7 +7,7 @@ import Testing
 
 /// Exercises task 1peq9n7: ``TokenBudget``'s defaults and ``RoutedSession/contextFill``'s
 /// measured (never estimated, never the backend's raw cumulative total) token
-/// accounting (compaction_plan.md §1.4-1.5).
+/// accounting.
 ///
 /// Everything runs against stubs — a stub `ModelLoader` and a container that
 /// vends a ``StubSessionBackend`` with a test-configured `usageIncrement` —

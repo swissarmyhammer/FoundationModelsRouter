@@ -43,8 +43,7 @@ struct CompactionContinuityOutcome: Codable, Sendable {
     /// Ground truth: the ``CompactionPrompt/name`` this run compacted with —
     /// stamped from ``CompactionContinuityEvaluation/prompt`` on every
     /// sample, so a run's produced outcome is always attributable to the
-    /// exact prompt that produced it (compaction_plan.md §5's hill-climbing
-    /// loop, applied here to continuity).
+    /// exact prompt that produced it.
     var promptName: String
 
     /// Produced: the resumed session's answer to the task's final

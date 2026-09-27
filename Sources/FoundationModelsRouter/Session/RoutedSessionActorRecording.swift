@@ -93,7 +93,7 @@ extension RoutedSessionActor {
         // usage reads `contextFill` after the `usageState` update above, so
         // the end of this attempt carries the fill it just measured, or the
         // prior value when this attempt did not touch `backend`
-        // (compaction_plan.md §1.7, task g2hcm36).
+        // (task g2hcm36).
         endSubmission(
             usage: usage.map {
                 TokenUsage(

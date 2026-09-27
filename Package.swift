@@ -243,8 +243,8 @@ let package = Package(
             path: "Examples/MultiModelGeneration",
             exclude: ["README.md"]
         ),
-        // Runnable demo of the compaction loop end to end (compaction_plan.md
-        // §4), with real tool traffic (task 4ce0a1k): open a `RoutedSession`
+        // Runnable demo of the compaction loop end to end, with real tool
+        // traffic (task 4ce0a1k): open a `RoutedSession`
         // vended with sample tools (`SampleTools.swift`) and a tiny
         // auto-compaction `TokenBudget` (task 8213x39), send scripted messages
         // — fixture reads and explicit tool calls — while `contextFill`
@@ -280,7 +280,7 @@ let package = Package(
             path: "Tools/RecordCompactionFixture",
             exclude: ["README.md"]
         ),
-        // The compaction eval's machinery (compaction_plan.md §5):
+        // The compaction eval's machinery:
         // `CompactionContinuityEvaluation` drives each hand-written task through
         // a session that compacts itself with the `CompactionPrompt` under
         // test, then asks the task's final instruction and scores the answer.

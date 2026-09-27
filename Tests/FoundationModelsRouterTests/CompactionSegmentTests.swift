@@ -5,8 +5,7 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises task vchknhc (compaction epic — compaction_plan.md §1.2,
-/// build-order step 2): ``CompactionSegment``, the ``PersistableStructuredSegment``
+/// Exercises task vchknhc (compaction epic): ``CompactionSegment``, the ``PersistableStructuredSegment``
 /// carrying one compaction's metadata.
 ///
 /// Everything runs hermetically — stub `LoadedLLMContainer`s and backends, a

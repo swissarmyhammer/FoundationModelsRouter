@@ -614,7 +614,7 @@ struct AutoCompactionTests {
                     tokensIn: Self.hardCeilingRetryInputTokens, tokensOut: 0,
                     contextFill: Double(Self.hardCeilingRetryInputTokens) / Double(Self.hardCeilingContextTokens)))
         // The context meter moved during the answer, not only at its end
-        // (compaction_plan.md §1.7, task g2hcm36).
+        // (task g2hcm36).
         #expect(retryUsage.contextFill < blockedUsage.contextFill)
 
         // One answer. Its usage is the sum of the two submissions, with the
