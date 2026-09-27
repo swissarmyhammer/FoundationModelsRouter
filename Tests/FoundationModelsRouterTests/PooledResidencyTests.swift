@@ -787,37 +787,37 @@ struct PooledResidencyTests {
 
     // MARK: - A shared generation pair holds both KV caches against the budget.
 
-    /// Regression test for the accounting gap between ``JointFit`` and the
-    /// pool (task pq5w87d): a trio whose standard and flash slots name one
-    /// reference shares one pool entry, and that entry must hold the WHOLE
-    /// reservation joint fit made for the pair — weights plus TWO KV caches —
-    /// not just the first slot's footprint. The budget a later resolve sees
-    /// pins the two figures together.
-    @Test("a profile naming one ref in both generation slots holds two KV caches against the budget")
+    /// Regression test for the accounting between ``JointFit`` and the pool
+    /// (task pq5w87d): each pool entry must hold the WHOLE reservation joint
+    /// fit made for its slot. The standard and flash slots name two different
+    /// models, so the trio holds two whole generation footprints. The budget
+    /// a later resolve sees pins the two figures together.
+    @Test("a profile's two generation models each hold their whole footprint against the budget")
     @MainActor
-    func sharedGenerationPairHoldsBothKVCachesAgainstTheBudget() async throws {
+    func generationPairHoldsBothWholeFootprintsAgainstTheBudget() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let spy = LoadSpy()
-        // Exactly the shared-pair trio's own reservation plus the rounding buffer.
+        // Exactly the trio's own reservation plus the rounding buffer.
         let router = ResidencyFixtures.makeRouter(
             spy: spy,
-            recommendedMaxWorkingSetSize: ResidencyFixtures.sharedPairTrioFootprint
+            recommendedMaxWorkingSetSize: ResidencyFixtures.oneTrioFootprint
                 + ResidencyFixtures.headroomBufferBytes,
             cacheDir: dir
         )
 
         let pair = ProfileDefinition(
-            name: "pair", description: "standard and flash share one reference",
-            standard: ["org/pair-repo"], flash: ["org/pair-repo"], embedding: ["org/pair-emb"]
+            name: "pair", description: "standard and flash name two different models",
+            standard: ["org/pair-repo"], flash: ["org/pair-flash"], embedding: ["org/pair-emb"]
         )
         let resolvedPair = try await router.resolve(profile: pair, reporting: ResolutionProgress())
-        // One container serves both generation slots.
+        // Each generation slot loads its own container.
         #expect(await spy.llmLoads.filter { $0 == "org/pair-repo" }.count == 1)
+        #expect(await spy.llmLoads.filter { $0 == "org/pair-flash" }.count == 1)
 
         // A disjoint second profile cannot fit beside the pair trio, and the
         // budget its failure reports is the host budget minus everything the
-        // pair trio reserved — including the second slot's KV cache.
+        // pair trio reserved — both whole generation footprints.
         let disjoint = ProfileDefinition(
             name: "disjoint", description: "cannot fit beside the pair trio",
             standard: ["org/pin-std"], flash: ["org/pin-flash"], embedding: ["org/pin-emb"]
@@ -834,26 +834,26 @@ struct PooledResidencyTests {
     // MARK: - Dropping one holder of a shared key gives back only its own share.
 
     /// The release half of the same accounting (task pq5w87d): a second
-    /// profile reusing a resident shared pair charges one session KV cache
-    /// for each of its two generation slots, and dropping it gives back
+    /// profile reusing a resident generation pair charges one session KV
+    /// cache for each of its two generation slots, and dropping it gives back
     /// exactly that share — never the first profile's still-live reservation.
-    @Test("dropping one of two profiles on a shared generation pair gives back only its own share")
+    @Test("dropping one of two profiles on a resident generation pair gives back only its own share")
     @MainActor
-    func droppingOneHolderOfSharedPairGivesBackOnlyItsShare() async throws {
+    func droppingOneHolderOfGenerationPairGivesBackOnlyItsShare() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let spy = LoadSpy()
         // Fits the pair trio, plus the reusing profile's two extra KV caches.
         let router = ResidencyFixtures.makeRouter(
             spy: spy,
-            recommendedMaxWorkingSetSize: ResidencyFixtures.sharedPairTrioFootprint
+            recommendedMaxWorkingSetSize: ResidencyFixtures.oneTrioFootprint
                 + ResidencyFixtures.reusedTrioCharge + ResidencyFixtures.headroomBufferBytes,
             cacheDir: dir
         )
 
         let pair = ProfileDefinition(
-            name: "pair", description: "standard and flash share one reference",
-            standard: ["org/share-repo"], flash: ["org/share-repo"], embedding: ["org/share-emb"]
+            name: "pair", description: "standard and flash name two different models",
+            standard: ["org/share-repo"], flash: ["org/share-flash"], embedding: ["org/share-emb"]
         )
         let holder = try await router.resolve(profile: pair, reporting: ResolutionProgress())
         // The same trio again: the containers are shared, and each of its

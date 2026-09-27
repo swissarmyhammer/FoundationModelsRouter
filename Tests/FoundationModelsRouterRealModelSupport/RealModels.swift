@@ -4,7 +4,7 @@ import FoundationModelsRouter
 /// resolves against actual hardware, replacing the former `SmolLM-135M`
 /// placeholder that every file in that target used to share.
 ///
-/// Both generation slots name Muse Glimmer, the general substitute for the
+/// The `standard` slot names Muse Glimmer, the general substitute for the
 /// Qwen3.6 pair this suite used before. Qwen3.5/3.6 give their linear/GDN
 /// layers a `MambaCache`, which is not trimmable, and one non-trimmable
 /// entry stops prefix reuse for the whole cache list — so those models lost
@@ -30,17 +30,19 @@ public enum RealModels {
     /// the same weight format.
     public static let standard: ModelRef = "mlx-community/Muse-Glimmer-30B-mxfp4"
 
-    /// `.flash` slot: Muse Glimmer again. The published Muse Glimmer
-    /// repositories differ only in quantization, so the two generation slots
-    /// name the same model.
+    /// `.flash` slot: Qwen3 4B, a small model the gated suites already load
+    /// (see `PromptCacheBudgetIntegrationTests` and
+    /// `RealToolAnswerComparisonTests`).
     ///
-    /// The router pools resident models by `(ModelRef, role)`, and both
-    /// slots ask for the same reference at the same `context`, so they share
-    /// one resident container instead of loading the weights twice. The
-    /// suite's slot-differentiation and co-residency assertions therefore
-    /// compare this model with itself; they still prove the routing path,
-    /// but they can no longer tell two distinct models apart.
-    public static let flash: ModelRef = "mlx-community/Muse-Glimmer-30B-mxfp4"
+    /// The `standard` and `flash` slots of one resolved profile never use
+    /// the same model: a synchronous tool call runs a selection call on
+    /// `flash` inside an open submission on `standard`, and each model has
+    /// one FIFO work queue, so one model in both slots would wait on itself.
+    /// The published Muse Glimmer repositories differ only in quantization,
+    /// so the flash slot names a different, smaller model. Qwen3 4B has no
+    /// recurrent layers, so its whole cache list is trimmable, as
+    /// ``standard``'s is.
+    public static let flash: ModelRef = "mlx-community/Qwen3-4B-4bit"
 
     /// `.embedding` slot: unchanged. Muse Glimmer is not an embedder, and
     /// this repository is small enough that co-residency alongside the

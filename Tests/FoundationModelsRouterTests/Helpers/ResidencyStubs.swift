@@ -177,18 +177,10 @@ enum ResidencyFixtures {
     static let headroomBufferBytes: Int64 = 1_000
 
     /// The raw KV cache of ONE generation session at the stub window for
-    /// the canned 2-layer config: the extra steady-state cost
-    /// each generation slot beyond the first adds on a shared resident model,
-    /// and exactly what ``JointFit`` charges a second generation slot naming
-    /// an already-charged reference.
+    /// the canned 2-layer config: the extra steady-state cost a later
+    /// profile adds on a generation model that is already resident, and
+    /// exactly what the router charges that profile for it.
     static let sessionKVBytes: Int64 = 2_097_152
-
-    /// The whole reservation ``JointFit`` makes for a trio whose standard and
-    /// flash slots name ONE reference: that reference's weights plus one KV
-    /// cache, the second slot's own KV cache (``sessionKVBytes``), and the
-    /// embedding model.
-    static let sharedPairTrioFootprint: Int64 =
-        generationModelFootprint + sessionKVBytes + embeddingModelFootprint
 
     /// The whole reservation a later profile is charged when it resolves an
     /// already-resident trio again: one session KV cache for each of its

@@ -5,6 +5,16 @@
 /// residency constraints. `context` is the working context size in tokens — it
 /// scales the KV-cache footprint and determines whether a candidate fits.
 ///
+/// The `standard` and `flash` slots of one resolved profile never use the same
+/// model. A synchronous tool call, for example the multitool `searchTools`,
+/// runs a selection call on `flash` inside an open submission on `standard`.
+/// Each model has one FIFO work queue, so one model in both slots would wait on
+/// itself. Resolution therefore skips, in the `flash` list, the model that
+/// `standard` chose, and takes the next `flash` candidate. A profile whose
+/// `standard` and `flash` lists name only the same one model fails to resolve
+/// before any model loads. Name at least one `flash` candidate that is not the
+/// `standard` model.
+///
 /// The type is pure value semantics — no dependency on MLX — and is `Sendable`
 /// and `Codable`. `context`'s `Codable` shape is back-compatible by
 /// construction (an ordinary `Optional`'s synthesized coding): JSON that omits
@@ -21,6 +31,9 @@ public struct ProfileDefinition: Sendable, Codable {
     public var standard: [ModelRef]
 
     /// Candidate models for the `flash` slot, in preference order.
+    ///
+    /// Resolution skips the model the `standard` slot chose, because the two
+    /// generation slots never use the same model.
     public var flash: [ModelRef]
 
     /// Candidate models for the `embedding` slot, in preference order.
@@ -68,5 +81,18 @@ public struct ProfileDefinition: Sendable, Codable {
     /// case — and each list preserves the author's preference order.
     var candidatesBySlot: [ModelSlot: [ModelRef]] {
         [.standard: standard, .flash: flash, .embedding: embedding]
+    }
+
+    /// The one model that both the `standard` list and the `flash` list name
+    /// alone, or `nil`.
+    ///
+    /// Such a profile cannot resolve, because the `standard` and `flash` slots
+    /// never use the same model: when `standard` takes that model, `flash` has
+    /// no other candidate. The router checks this before it sizes or loads a
+    /// model, and throws ``SameGenerationModelFailure``.
+    var sharedGenerationModel: ModelRef? {
+        let generationModels = Set(standard + flash)
+        guard generationModels.count == 1, !standard.isEmpty, !flash.isEmpty else { return nil }
+        return generationModels.first
     }
 }

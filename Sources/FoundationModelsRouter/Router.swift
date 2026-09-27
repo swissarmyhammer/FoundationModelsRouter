@@ -147,8 +147,11 @@ public actor Router {
     /// - Parameters:
     ///   - def: The authored profile to resolve.
     ///   - progress: The UI-bindable progress to drive, mutated on the main actor.
-    /// - Returns: The resolved, resident profile.
-    /// - Throws: ``ResolutionFailure`` when no trio fits the effective budget,
+    /// - Returns: The resolved, resident profile. Its `standard` and `flash`
+    ///   slots never use the same model.
+    /// - Throws: ``SameGenerationModelFailure`` before any load when the
+    ///   profile names only one model for both the `standard` and the `flash`
+    ///   slot, ``ResolutionFailure`` when no trio fits the effective budget,
     ///   ``NoWindowFailure`` when the profile names no context and no standard
     ///   candidate's window could be read,
     ///   `CancellationError` when the calling task is cancelled, or any download
@@ -188,7 +191,9 @@ public actor Router {
     ///   - span: The resolve span, which takes the budget this attempt priced
     ///     against and, on success, the model each slot chose.
     /// - Returns: The resolved, resident profile.
-    /// - Throws: ``ResolutionFailure`` when no trio fits the effective budget,
+    /// - Throws: ``SameGenerationModelFailure`` when the profile names only one
+    ///   model for both generation slots,
+    ///   ``ResolutionFailure`` when no trio fits the effective budget,
     ///   ``NoWindowFailure`` when the profile names no context and no standard
     ///   candidate's window could be read,
     ///   `CancellationError` when the calling task is cancelled, or any download
@@ -227,7 +232,9 @@ public actor Router {
     ///   - span: The resolve span, which takes the budget this attempt priced
     ///     against and, on success, the model each slot chose.
     /// - Returns: The resolved, resident profile.
-    /// - Throws: ``ResolutionFailure`` when no trio fits the effective budget,
+    /// - Throws: ``SameGenerationModelFailure`` when the profile names only one
+    ///   model for both generation slots,
+    ///   ``ResolutionFailure`` when no trio fits the effective budget,
     ///   ``NoWindowFailure`` when the profile names no context and no standard
     ///   candidate's window could be read,
     ///   `CancellationError` when the calling task is cancelled, or any download
@@ -245,6 +252,7 @@ public actor Router {
         // it found it.
         try Task.checkCancellation()
         await beginSizing(progress: progress)
+        try await rejectSharedGenerationModel(profile: def, progress: progress)
         // Give back every residency whose last reference was dropped BEFORE the
         // budget is measured, so this resolve prices against the bytes those
         // evictions freed instead of racing them.
@@ -313,24 +321,17 @@ public actor Router {
 
             await setPhase(.loading, progress: progress)
             // Only the freshly-acquired keys need preloading — a reused key
-            // was already preloaded the resolve that first loaded it — and
-            // each distinct key is preloaded at most once even if two slots
-            // in this same resolve share it (e.g. `standard` and `flash`
-            // both winning the identical ref+context).
-            var preloadedKeys: Set<ResidencyKey> = []
+            // was already preloaded the resolve that first loaded it. No two
+            // slots of one resolve share a key: `standard` and `flash` never
+            // name the same model, and the embedding key has its own role.
             for slot in [ModelSlot.standard, .flash, .embedding] {
                 try Task.checkCancellation()
                 guard let acquired = acquiredSlots[slot], newKeys.contains(acquired.charge.key) else {
                     continue
                 }
-                if preloadedKeys.contains(acquired.charge.key) {
-                    await setSlotState(slot, to: .ready, progress: progress)
-                    continue
-                }
                 try await finalize(
                     slot: slot, container: acquired.entry.container.erased, progress: progress
                 )
-                preloadedKeys.insert(acquired.charge.key)
             }
 
             try Task.checkCancellation()
@@ -672,6 +673,28 @@ public actor Router {
 
     // MARK: - Joint fit
 
+    /// Throws before any sizing or load when `def` names only one model for
+    /// both the `standard` slot and the `flash` slot, and records the failure
+    /// into the progress. The standard and flash slots never use the same
+    /// model; see ``SameGenerationModelFailure``.
+    ///
+    /// - Throws: ``SameGenerationModelFailure`` when
+    ///   ``ProfileDefinition/sharedGenerationModel`` is not `nil`.
+    private func rejectSharedGenerationModel(
+        profile def: ProfileDefinition,
+        progress: ResolutionProgress
+    ) async throws {
+        guard let model = def.sharedGenerationModel else { return }
+        let failure = SameGenerationModelFailure(profileName: def.name, model: model)
+        await recordFailure(
+            outcomes: [(.flash, nil)],
+            failedReason: "the standard slot already uses the only flash candidate",
+            description: failure.description,
+            progress: progress
+        )
+        throw failure
+    }
+
     /// Runs the pure joint fit and, on failure, records the diagnostics into the
     /// progress before rethrowing.
     private func runJointFit(
@@ -691,9 +714,6 @@ public actor Router {
                         for: ref, context: context, metadataByRef: metadataByRef,
                         membership: membership, residentKeys: residentKeys
                     )
-                },
-                sessionBytes: { ref, context in
-                    Self.sessionBytes(for: ref, context: context, metadataByRef: metadataByRef)
                 },
                 nativeMaxContext: { ref in
                     (metadataByRef[ref]

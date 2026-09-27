@@ -2,14 +2,14 @@ import FoundationModelsRouterRealModelSupport
 
 @testable import FoundationModelsRouter
 
-/// The profile the gated suites resolve: a real generation model in both
-/// generation slots and a real embedder, all resident at one time, over the
-/// ``RealModels`` repositories.
+/// The profile the gated suites resolve: two different real generation models
+/// and a real embedder, all resident at one time, over the ``RealModels``
+/// repositories.
 ///
-/// Both generation slots name one repository, because only one Muse Glimmer
-/// repository is published. See ``RealModels/flash``. The two slots share one
-/// resident container, which is what ``gatedRealProfileResidentContainerCount``
-/// counts.
+/// The `standard` and `flash` slots name two different models, because the
+/// two generation slots of one resolved profile never use the same model.
+/// See ``RealModels/flash``. Each slot loads its own resident container, which
+/// is what ``gatedRealProfileResidentContainerCount`` counts.
 ///
 /// One definition for the whole target. ``IntegrationTests`` resolves it end to
 /// end, and ``CrossRouterPoolIntegrationTests`` resolves it from two routers

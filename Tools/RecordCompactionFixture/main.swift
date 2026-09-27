@@ -139,9 +139,9 @@ let router = Router(
 
 let definition = ProfileDefinition(
     name: "compaction-fixture-recording",
-    description: "One real 30B model, recorded through six scripted messages to refresh the checked-in compaction fixture.",
+    description: "A real 30B model beside a small flash model, recorded through six scripted messages to refresh the checked-in compaction fixture.",
     standard: [RecordingScript.recordingModel],
-    flash: [RecordingScript.recordingModel],
+    flash: [RecordingScript.flashModel],
     embedding: [RecordingScript.embeddingModel],
     context: RecordingScript.workingContextTokens
 )

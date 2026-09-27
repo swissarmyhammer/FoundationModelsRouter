@@ -18,6 +18,10 @@ enum Verdict: Sendable, Equatable {
     /// A higher-preference candidate was already chosen, so this one was not sized.
     case skippedHigherPreferenceChosen
 
+    /// This flash-slot candidate is the model the standard slot chose, so it
+    /// was not sized. The standard and flash slots never use the same model.
+    case sameModelAsStandard
+
     /// This candidate could not be sized. The associated value is the reason.
     case metadataUnavailable(String)
 }
@@ -59,8 +63,7 @@ package struct CandidateReport: Sendable, Equatable {
     let estimatedFootprintBytes: Int64?
 
     /// The raw bytes this candidate charged the shared budget, or `nil` when
-    /// not sized. Smaller than
-    /// ``estimatedFootprintBytes`` when an earlier slot reserved the same container.
+    /// not sized.
     package let chargedBytes: Int64?
 
     /// Why this candidate was or was not chosen.
@@ -159,21 +162,7 @@ struct ResolutionFailure: Error, Equatable, CustomStringConvertible {
     /// ``NoWindowFailure`` renders its candidates with this line too.
     static func line(for candidate: CandidateReport) -> String {
         let footprint = footprintText(candidate.estimatedFootprintBytes)
-        return "\(candidate.ref.stringValue) — \(footprint)\(sharedWeightsNote(for: candidate)): "
-            + verdictText(candidate.verdict)
-    }
-
-    /// Names the smaller figure the shared budget was charged, or the empty
-    /// string when the candidate paid its whole footprint.
-    private static func sharedWeightsNote(for candidate: CandidateReport) -> String {
-        guard
-            let footprint = candidate.estimatedFootprintBytes,
-            let charged = candidate.chargedBytes,
-            charged < footprint
-        else {
-            return ""
-        }
-        return " (\(charged) bytes charged; an earlier slot already reserved the weights)"
+        return "\(candidate.ref.stringValue) — \(footprint): " + verdictText(candidate.verdict)
     }
 
     /// Renders one window search as `native window <n> tokens, <result> —
@@ -205,6 +194,9 @@ struct ResolutionFailure: Error, Equatable, CustomStringConvertible {
             return "trio blocked by \(slot.rawValue)"
         case .skippedHigherPreferenceChosen:
             return "skipped (higher-preference candidate chosen)"
+        case .sameModelAsStandard:
+            return "skipped (the standard slot already uses this model; "
+                + "the standard and flash slots must use different models)"
         case .metadataUnavailable(let reason):
             return "metadata unavailable (\(reason))"
         }
@@ -243,5 +235,31 @@ struct NoWindowFailure: Error, Equatable, CustomStringConvertible {
             + "could be read. There is no context, so no slot was sized."
         let lines = standardConsidered.map { "    - \(ResolutionFailure.line(for: $0))" }
         return ([header] + lines).joined(separator: "\n")
+    }
+}
+
+/// The error thrown when a profile names only one model for both the
+/// `standard` slot and the `flash` slot. See
+/// ``ProfileDefinition/sharedGenerationModel``.
+///
+/// The standard and flash slots of one resolved profile never use the same
+/// model. A synchronous tool call, for example the multitool `searchTools`,
+/// runs a selection call on `flash` inside an open submission on `standard`.
+/// Each model has one FIFO work queue, so with one model in both slots the
+/// selection call would wait on its own submission. The router throws this
+/// error before it sizes or loads a model.
+struct SameGenerationModelFailure: Error, Equatable, CustomStringConvertible {
+    /// The name of the profile that could not be resolved.
+    let profileName: String
+
+    /// The one model the profile names for both generation slots.
+    let model: ModelRef
+
+    /// A one-line rendering of the failure that names both slots and the model.
+    var description: String {
+        "SameGenerationModelFailure: profile \"\(profileName)\" names only \(model.stringValue) "
+            + "for both the standard slot and the flash slot. The standard and flash slots "
+            + "must use different models: a tool call on flash inside a submission on standard "
+            + "would wait on the queue of its own model."
     }
 }

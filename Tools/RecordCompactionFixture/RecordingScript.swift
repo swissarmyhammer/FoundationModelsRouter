@@ -19,6 +19,13 @@ enum RecordingScript {
     /// A change there needs the same change here.
     static let recordingModel: ModelRef = "mlx-community/Muse-Glimmer-30B-4bit"
 
+    /// The `.flash` slot model `Router.resolve` co-resides beside
+    /// ``recordingModel``. The `standard` and `flash` slots of one resolved
+    /// profile never use the same model, so the flash slot names this
+    /// smaller model. It mirrors `RealModels.flash`, for the reason
+    /// ``recordingModel`` states.
+    static let flashModel: ModelRef = "mlx-community/Qwen3-4B-4bit"
+
     /// The `.embedding` slot placeholder `Router.resolve` co-resides beside
     /// the generation model. The recording never calls it; the same small
     /// embedder the gated suites use keeps residency cheap.

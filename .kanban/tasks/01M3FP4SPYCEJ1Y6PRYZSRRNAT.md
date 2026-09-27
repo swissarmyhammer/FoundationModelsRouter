@@ -1,8 +1,34 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: a280
+comments:
+- actor: claude-code
+  id: 01m3htzd98y2snt5ynzj8jratv
+  text: |-
+    Research and decisions:
+    - JointFit had a within-trio "share one resident container" path (ReservationKey, sessionBytes closure). When flash skips the standard model, this path can not run (the embedding role is different). I removed it: JointFit.resolve has no `sessionBytes` parameter now, and ResolutionFailure no longer renders the "earlier slot already reserved the weights" note. The Router preload dedup for two slots on one key is removed for the same reason. The pool (ModelPool) is not changed.
+    - New verdict `Verdict.sameModelAsStandard`. The flash slot records the standard model with this verdict and never sizes it.
+    - New error `SameGenerationModelFailure` (profileName, model). `Router.resolve` throws it after beginSizing and before any metadata fetch or load, when `ProfileDefinition.sharedGenerationModel` is not nil (both lists name only the same one model). The progress phase becomes `.failed(description)`.
+    - With a derived context, a standard candidate whose trio is blocked by flash moves to the next standard candidate. With an explicit context, resolution fails with ResolutionFailure (flash: sameModelAsStandard).
+    - Integration profile: `RealModels.flash` was Muse Glimmer (same as standard, on purpose, because only one Muse Glimmer repo exists). I changed it to `mlx-community/Qwen3-4B-4bit`, a small real model that PromptCacheBudgetIntegrationTests and RealToolAnswerComparisonTests already load. Tools/RecordCompactionFixture gets `RecordingScript.flashModel` with the same model.
+    - Test profiles with one ref in both slots were changed: ResolveTests (heals, dual-fail: flash gets a second candidate), PooledResidencyTests (pair tests: two refs, oneTrioFootprint budget; `sharedPairTrioFootprint` removed), SharedGenerationQueueContentionTests (the resolved pair now asserts two queues; the hand-built pair keeps the one-queue drill), JointFitTests (shared-reference tests removed; multitool profile gets a separate flash model, window 56_880).
+  timestamp: 2026-09-27T16:25:38.344312+00:00
+- actor: claude-code
+  id: 01m3htzm0d5cw5k1h6vhztjpf2
+  text: |-
+    ### implement — changed
+    - evidence: Sources: Resolution/JointFit.swift, Resolution/SlotResolution.swift, Core/ProfileDefinition.swift, LanguageModelProfile.swift, Router.swift; README.md; Tests: DistinctGenerationSlotsTests.swift (new), JointFitTests.swift, ResolveTests.swift, PooledResidencyTests.swift, SharedGenerationQueueContentionTests.swift, Helpers/ResidencyStubs.swift, RealModelSupport/RealModels.swift; IntegrationTests: Support/GatedRealProfile.swift, PinnedChatTemplateDateIntegrationTests.swift; Tools/RecordCompactionFixture (main.swift, RecordingScript.swift). Targeted run: 76 tests in 6 suites passed. `swift build --build-tests --package-path IntegrationTests` passed.
+    - next: /test
+  timestamp: 2026-09-27T16:25:45.229917+00:00
+- actor: claude-code
+  id: 01m3hv54rdp48csc4622a0g7f9
+  text: |-
+    ### test — green
+    - evidence: `swift package clean && swift build --build-tests` — exit 0, no source warnings (only the SwiftPM "missing creator for mutated node" note on the mlx bundle, from the build system). `swift test` — 1451 tests in 174 suites passed (2 known issues are the intended `withKnownIssue` checks in BoundedWaitTests and RealModelHarnessTests), plus 17 and 19 tests in the two other test products; 0 failed, 0 skipped. `swift build --build-tests --package-path IntegrationTests` — Build complete.
+    - next: /commit
+  timestamp: 2026-09-27T16:28:46.221700+00:00
+position_column: doing
+position_ordinal: '80'
 title: 'Router: resolve never gives the same model to the standard and flash slots'
 ---
 ## What

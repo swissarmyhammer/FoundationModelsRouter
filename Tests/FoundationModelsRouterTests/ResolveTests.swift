@@ -598,17 +598,19 @@ struct ResolveTests {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        // The same ref is the sole candidate for both `standard` and `flash`.
-        // Its fetch fails the first time it is sized (whichever slot that
-        // is) and succeeds the second — the merge must keep the success so
-        // both slots still resolve to it, rather than the failure poisoning
-        // the merged entry.
+        // The same ref is the `standard` candidate and the first `flash`
+        // candidate. Its fetch fails the first time it is sized (whichever
+        // slot that is) and succeeds the second — the merge must keep the
+        // success so `standard` still resolves to it, rather than the failure
+        // poisoning the merged entry. `flash` never uses the `standard` model,
+        // so it takes its second candidate.
         let heals: ModelRef = "org/heals-after-one-failure"
+        let healsFlash: ModelRef = "org/heals-flash"
         let profile = ProfileDefinition(
             name: "heals",
             description: "one ref fails its first fetch, then sizes successfully",
             standard: [heals],
-            flash: [heals],
+            flash: [heals, healsFlash],
             embedding: ["org/emb-only"],
             context: ScriptedSessionContext.tokens
         )
@@ -632,7 +634,7 @@ struct ResolveTests {
         let resolved = try await router.resolve(profile: profile, reporting: progress)
 
         #expect(resolved.standard.chosen == heals)
-        #expect(resolved.flash.chosen == heals)
+        #expect(resolved.flash.chosen == healsFlash)
     }
 
     @Test(
@@ -646,17 +648,19 @@ struct ResolveTests {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        // The same ref is the sole candidate for both `standard` and `flash`,
-        // and every fetch for it fails. `preferLarger`'s `.failure/.failure`
-        // branch keeps `lhs` — the chronologically-first computed result,
-        // which (since calls are sequential) is always whichever slot's
-        // fetch happens first, regardless of slot iteration order.
+        // The same ref is the `standard` candidate and the first `flash`
+        // candidate, and every fetch for it fails. `preferLarger`'s
+        // `.failure/.failure` branch keeps `lhs` — the chronologically-first
+        // computed result, which (since calls are sequential) is always
+        // whichever slot's fetch happens first, regardless of slot iteration
+        // order. The second `flash` candidate keeps the profile from naming
+        // only one model for both generation slots.
         let dualFail: ModelRef = "org/dual-fail"
         let profile = ProfileDefinition(
             name: "dual-fail",
             description: "one ref fails on every slot's fetch",
             standard: [dualFail],
-            flash: [dualFail],
+            flash: [dualFail, "org/dual-fail-flash"],
             embedding: ["org/emb-only"],
             context: ScriptedSessionContext.tokens
         )

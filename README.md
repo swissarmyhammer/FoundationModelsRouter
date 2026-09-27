@@ -64,6 +64,18 @@ call, so cheap work (triage, classification) can route to it while `standard`
 handles the heavy answers — see `Examples/MultiModelGeneration` for a runnable,
 two-model demo.
 
+## `standard` and `flash` are always two different models
+
+The `standard` and `flash` slots of one resolved profile never use the same
+model. A synchronous tool call, for example the multitool `searchTools`, runs a
+selection call on `flash` inside an open submission on `standard`. Each model
+has one FIFO work queue, so one model in both slots would wait on itself.
+
+`Router.resolve` skips, in the `flash` list, the model that `standard` chose,
+and takes the next `flash` candidate. When the `standard` and `flash` lists
+name only the same one model, `Router.resolve` throws before it loads a model.
+Give the `flash` slot at least one candidate that is not the `standard` model.
+
 ## Residency is process-wide
 
 One pool serves the whole process by default: `ModelPool.shared`. Every

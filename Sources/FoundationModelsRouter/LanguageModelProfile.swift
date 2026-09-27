@@ -193,6 +193,11 @@ public final class LanguageModelProfile: Sendable {
     public let standard: RoutedLLM
 
     /// The resident `.flash` generation model.
+    ///
+    /// It is never the same model as ``standard``. A synchronous tool call,
+    /// for example the multitool `searchTools`, runs a selection call on
+    /// `flash` inside an open submission on `standard`. Each model has one
+    /// FIFO work queue, so one model in both slots would wait on itself.
     public let flash: RoutedLLM
 
     /// The resident `.embedding` model.
