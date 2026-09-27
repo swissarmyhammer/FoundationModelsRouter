@@ -25,10 +25,26 @@ comments:
     - Decision: the router gives the slot, the context and the progress callback through `SlotPoolLoader`, which it makes for each slot. `Router.resolve` does not change; task 01M3FNJS6J7KGAJJ5WFEST00WA uses `SlotPoolLoader.acquireHold`, `PooledEmbedder(hold:)` and `ModelHold.generationContainer()`.
     - next: /test
   timestamp: 2026-09-27T16:42:09.045790+00:00
+- actor: claude-code
+  id: 01m3hweet0jn2gwswnz8z657g7
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` on 4c1c6a6 — 0 findings, 0 confirmed, 0 refuted; 6 files reviewed (3 `.kanban/` files are excluded by `.reviewignore`). No earlier findings section on the task.
+    - next: the task moves to done.
+  timestamp: 2026-09-27T16:51:20.000855+00:00
+- actor: claude-code
+  id: 01m3hwep4z8gnmk6j2s4zq64we
+  text: |-
+    ### finish iteration 1 — review clean
+    - implement: changed — 6 files (PoolPrimitives.swift, SlotPoolLoader.swift, ModelSlot.swift, ModelLoader.swift, LiveModelLoader.swift, SlotPoolLoaderTests.swift).
+    - test: green — `swift package clean && swift build --build-tests` with no source warning; `swift test --skip-build`: 1458 tests in 175 suites passed (2 known issues that two tests expect on purpose), plus 17 and 19 tests passed; `swift build --build-tests --package-path IntegrationTests` passed.
+    - commit: 4c1c6a6 feat(router): make the router loader conform to the Extras pool loader protocol (^fjvzkgm)
+    - review: clean — `review sha HEAD~1..HEAD`, 0 findings. The task is in done.
+  timestamp: 2026-09-27T16:51:27.519226+00:00
 depends_on:
 - 01M3FNB4MCRRBTJNNVZZ6P02R2
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffa280
 title: 'Router: make the router loader conform to the Extras pool loader protocol, and map ModelSlot to a role'
 ---
 ## What
