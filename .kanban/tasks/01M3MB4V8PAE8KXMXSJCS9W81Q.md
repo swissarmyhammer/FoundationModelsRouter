@@ -42,8 +42,31 @@ comments:
     - evidence: `swift test` (one full run) — FoundationModelsRouterTests 1360 tests in 171 suites passed (2 known issues are the intended `withKnownIssue` tests in BoundedWaitTests and RealModelHarnessTests); FoundationModelsRouterEvals 19 tests in 3 suites passed; FoundationModelsRouterPublicSurfaceTests 20 tests in 9 suites passed. 0 failures, 0 warnings in repo sources.
     - next: commit
   timestamp: 2026-09-28T16:03:29.504534+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m3mc3xmn0r3fan1x87z556dd
+  text: |-
+    ### commit — changed
+    - evidence: 997bffc fix(router): re-export the Extras declarations of the names that Operations also declares (^cs9w81q)
+    - next: review
+  timestamp: 2026-09-28T16:03:40.821666+00:00
+- actor: claude-code
+  id: 01m3mca1eqzremee6hcc6c1mek
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` — 0 findings, 0 confirmed, 0 refuted, 7 attempted, 0 failed; 4 files reviewed (2 .kanban files excluded by .reviewignore). No prior findings.
+    - next: none (task moved to done)
+  timestamp: 2026-09-28T16:07:01.335056+00:00
+- actor: claude-code
+  id: 01m3mca6fc4ghzzqjrq69d1w2q
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 4 files; the guard `ToolMountPublicSurfaceTests` was red before the change (`ToolMount.Mode` in a public declaration: 'FoundationModelsExtras' was not imported by this file) and green after it.
+    - test: green — `swift test`: 1360 + 19 + 20 tests passed, 0 failures, 0 warnings.
+    - commit: changed — 997bffc.
+    - review: clean — `review sha HEAD~1..HEAD`, 0 findings; the review step moved the task to done.
+  timestamp: 2026-09-28T16:07:06.476973+00:00
+position_column: done
+position_ordinal: ffffffaa80
 title: 'Router: ToolMount is not ambiguous in a file that imports both FoundationModelsRouter and Operations'
 ---
 ## What
