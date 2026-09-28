@@ -68,8 +68,31 @@ comments:
     - evidence: `swift test` one time — 1387 tests in 175 suites passed (2 known issues, the existing `withKnownIssue` tests), 20 tests in 9 suites passed, 19 tests in 3 suites passed; no compiler warning or error lines. `swift build --build-tests --package-path IntegrationTests` builds (Build complete).
     - next: /commit
   timestamp: 2026-09-28T18:37:05.640412+00:00
-position_column: review
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m3mmx1g1948x37js2ww6nfxe
+  text: |-
+    ### commit — changed
+    - evidence: 4e23040 test(embedding): mark the gated record lines of IntegrationTests for no_direct_standard_out_logs (^nmmnn7k)
+    - next: /review 01M3MK0K6J66NZ39QSCNMMNN7K HEAD~1..HEAD
+  timestamp: 2026-09-28T18:37:12.577920+00:00
+- actor: claude-code
+  id: 01m3mn34wxwxbgmw6v4aakv0bh
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (4e23040) — 0 findings (0 confirmed, 0 refuted, 7 attempted). The prior finding (IntegrationTests.swift:526 no_direct_standard_out_logs) is fixed in 4e23040 and checked. Task moved to done.
+    - next: none
+  timestamp: 2026-09-28T18:40:32.669173+00:00
+- actor: claude-code
+  id: 01m3mn36ydq6dtw1ra20t4pdvw
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — IntegrationTests.swift: swiftlint:disable:next no_direct_standard_out_logs with the reason on both print lines of the file
+    - test: green — swift test 1387 + 20 + 19 tests passed; IntegrationTests package builds
+    - commit: changed — 4e23040
+    - review: clean — 0 findings; prior finding checked; task moved to done
+  timestamp: 2026-09-28T18:40:34.765600+00:00
+position_column: done
+position_ordinal: ffffffae80
 title: 'LiveEmbeddingContainer.embed: pool with the padding mask, so a batch vector is the vector of its own text'
 ---
 ## What
@@ -104,4 +127,4 @@ Second defect in the same function: the mask is `padded .!= eosTokenId` (line 83
 > 4 file(s) not reviewed — excluded by an ignore rule:
 > - `.kanban/ (from .reviewignore)` — 4 file(s)
 
-- [ ] `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/IntegrationTests.swift:526` `code-hygiene/disallowed-constructs-swift` — no_direct_standard_out_logs: Do not commit print(…), debugPrint(…), dump(…) or _printChanges(), which write to standard out in release. Log to a dedicated logging system, or silence one debug-only line with // swiftlint:disable:next no_direct_standard_out_logs and the reason after it.
+- [x] `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/IntegrationTests.swift:526` `code-hygiene/disallowed-constructs-swift` — no_direct_standard_out_logs: Do not commit print(…), debugPrint(…), dump(…) or _printChanges(), which write to standard out in release. Log to a dedicated logging system, or silence one debug-only line with // swiftlint:disable:next no_direct_standard_out_logs and the reason after it.
