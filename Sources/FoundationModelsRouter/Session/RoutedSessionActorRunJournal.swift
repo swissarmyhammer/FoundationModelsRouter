@@ -92,10 +92,14 @@ extension RoutedSessionActor: BackgroundRunSettlementObserver {
     /// staged (``wakePump()``).
     ///
     /// `journalWithoutStaging`, not `post(event:)`: `post` would stage a
-    /// second pending `.completed` for a top-level run whose funnel already
-    /// staged one. The write joins the outbox's FIFO journal chain, and the
-    /// journal refuses it when the funnel's copy already claimed the
-    /// correlation. See ``claimJournalWrite(for:)``.
+    /// second pending `.completed` for a run whose funnel already staged one.
+    /// Each background run has such a funnel: a top-level run, and also a run
+    /// that a synchronous call starts through `ToolContext.mount(_:op:as:)`,
+    /// because the Extras mount layer posts each background run to the sink
+    /// of the session, which is ``outbox`` (task ^3rr9rn4). The write joins
+    /// the outbox's FIFO journal chain, and the journal refuses it when the
+    /// funnel's copy already claimed the correlation. See
+    /// ``claimJournalWrite(for:)``.
     ///
     /// The funnel can stage the terminal before or after this call, and each
     /// of the two wakes the pump. The pump delivers the terminal only when it

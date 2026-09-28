@@ -151,13 +151,17 @@ let package = Package(
         // hermetic proofs of that target's machinery — `RealModelHarnessTests`,
         // `ScriptedAnswerSizingTests`, `RecordedFixtureRedactionTests` — load no
         // model and therefore live HERE, where every root `swift test` run
-        // measures them (task ^cvsh3m9).
+        // measures them (task ^cvsh3m9). The Extras `Operations` product gives
+        // the session tests a real `OperationTool`, whose operations each
+        // choose their own mount (task ^3rr9rn4). Only this test target
+        // links it; the router target does not.
         .testTarget(
             name: "\(packageName)Tests",
             dependencies: [
                 .target(name: packageName), .target(name: "\(packageName)TestSupport"),
                 .target(name: "\(packageName)RealModelSupport"),
                 inMemoryTracingProduct,
+                .product(name: "Operations", package: "FoundationModelsExtras"),
             ] + mlxProducts,
             path: "Tests/\(packageName)Tests",
             // `Fixtures` holds recordings. A test reads them from disk, at a
