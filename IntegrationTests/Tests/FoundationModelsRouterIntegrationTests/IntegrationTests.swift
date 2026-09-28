@@ -286,6 +286,7 @@ struct IntegrationTests {
         var forkAnswerDuration: Duration = .zero
         var parentAnswerDuration: Duration = .zero
         defer {
+            // swiftlint:disable:next no_direct_standard_out_logs - the gated run's record; this target does not ship
             print(
                 "[\(Self.phaseLabel)] resolve=\(resolveDuration) plainAnswer=\(plainAnswerDuration) "
                     + "embed=\(embedDuration) guidedAnswer=\(guidedAnswerDuration) "
@@ -523,6 +524,7 @@ struct IntegrationTests {
         try #require(batchVectors.count == Self.differentLengthTexts.count)
         try #require(aloneVectors.count == Self.differentLengthTexts.count)
         let cosines = zip(batchVectors, aloneVectors).map { Self.cosine($0, $1) }
+        // swiftlint:disable:next no_direct_standard_out_logs - a grep of the run's output reads the measured cosines from standard out; this target does not ship
         print("[\(Self.batchCosineLabel)] \(cosines)")
         for (text, cosine) in zip(Self.differentLengthTexts, cosines) {
             #expect(

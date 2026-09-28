@@ -31,7 +31,44 @@ comments:
     - evidence: `swift test` one time — 1387 tests in 175 suites passed (2 known issues, the existing `withKnownIssue` tests), 20 tests in 9 suites passed, 19 tests in 3 suites passed; the "PaddedTokenBatch padding mask" suite passed. Clean `swift build --build-tests --scratch-path <scratchpad>/cleanbuild`: no compiler warning (only the SwiftPM manifest cache "disk I/O error" lines and "missing creator for mutated node" from the build tool). `swift test --package-path IntegrationTests --filter IntegrationTests.batchVectorEqualsVectorOfTextAlone` built the IntegrationTests package and ran 1 test, passed.
     - next: /commit
   timestamp: 2026-09-28T18:29:43.294374+00:00
-position_column: doing
+- actor: claude-code
+  id: 01m3mmfq472k0gfqrj048kge5k
+  text: |-
+    ### commit — changed
+    - evidence: feb721b fix(embedding): pool a batch embed with the padding mask (^nmmnn7k)
+    - next: /review 01M3MK0K6J66NZ39QSCNMMNN7K HEAD~1..HEAD
+  timestamp: 2026-09-28T18:29:55.975134+00:00
+- actor: claude-code
+  id: 01m3mmqbjk9pp3amx9d06av2ed
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD — 1 finding (1 confirmed, 0 refuted): IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/IntegrationTests.swift:526 `code-hygiene/disallowed-constructs-swift` — no_direct_standard_out_logs.
+    - next: /implement (fix the finding)
+  timestamp: 2026-09-28T18:34:06.291164+00:00
+- actor: claude-code
+  id: 01m3mmqdzzwx56a57hr1hb1xfv
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — PaddedTokenBatch.swift (new), LiveModelLoader.swift (embed body), PaddedTokenBatchTests.swift (new), IntegrationTests.swift (gated test)
+    - test: green — swift test 1387 + 20 + 19 tests passed; clean build has no compiler warning; gated cosine before [0.438, 0.275, 1.000], after [0.9995, 1.0, 1.0]
+    - commit: changed — feb721b
+    - review: findings — 1: IntegrationTests.swift:526 code-hygiene/disallowed-constructs-swift no_direct_standard_out_logs
+  timestamp: 2026-09-28T18:34:08.767645+00:00
+- actor: claude-code
+  id: 01m3mmr0cvwvcffxt14nwgy1km
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/IntegrationTests.swift. Finding `no_direct_standard_out_logs` at :526: the line is the gated run's record that a grep reads, so it gets `// swiftlint:disable:next no_direct_standard_out_logs` with the reason, as the other gated suites do (Qwen38CompactionIntegrationTests, PinnedChatTemplateDateIntegrationTests). The same cause was also at the `print` in the `defer` of `endToEnd()` in this file; that line gets the same directive, so no unannotated `print` stays in the file.
+    - next: /test
+  timestamp: 2026-09-28T18:34:27.611774+00:00
+- actor: claude-code
+  id: 01m3mmwtq8ydfq65qt695my9w7
+  text: |-
+    ### test — green
+    - evidence: `swift test` one time — 1387 tests in 175 suites passed (2 known issues, the existing `withKnownIssue` tests), 20 tests in 9 suites passed, 19 tests in 3 suites passed; no compiler warning or error lines. `swift build --build-tests --package-path IntegrationTests` builds (Build complete).
+    - next: /commit
+  timestamp: 2026-09-28T18:37:05.640412+00:00
+position_column: review
 position_ordinal: '80'
 title: 'LiveEmbeddingContainer.embed: pool with the padding mask, so a batch vector is the vector of its own text'
 ---
@@ -48,14 +85,23 @@ Second defect in the same function: the mask is `padded .!= eosTokenId` (line 83
 - Keep the embed call on the pool entry's work queue (task ^5339rgt).
 
 ## Acceptance Criteria
-- [ ] `embed(texts:in:)` builds the mask from the token count of each row, and gives it to the model and to `context.pooling(..., mask:)`.
-- [ ] For each text, the vector from a batch equals the vector from a batch of one, to float tolerance (cosine >= 0.999), for texts of different lengths.
-- [ ] `swift build` passes with no warnings on a clean build.
+- [x] `embed(texts:in:)` builds the mask from the token count of each row, and gives it to the model and to `context.pooling(..., mask:)`.
+- [x] For each text, the vector from a batch equals the vector from a batch of one, to float tolerance (cosine >= 0.999), for texts of different lengths.
+- [x] `swift build` passes with no warnings on a clean build.
 
 ## Tests
-- [ ] A unit test over the mask builder: rows of token counts [3, 5] padded to 5 give the mask [[1,1,1,0,0],[1,1,1,1,1]], and a row that ends with the EOS id keeps that position at 1.
-- [ ] A gated real-model test (in the gated real-model suite that already loads the embedding model): embed 3 texts of clearly different lengths as one batch and one at a time; expect cosine >= 0.999 for each pair. Today it gives about 0.6 for the shorter rows. Run it one time if the model is on this machine, and record the numbers; if it is not, record that.
-- [ ] `swift test` passes one time, and the output shows the full count of tests run.
+- [x] A unit test over the mask builder: rows of token counts [3, 5] padded to 5 give the mask [[1,1,1,0,0],[1,1,1,1,1]], and a row that ends with the EOS id keeps that position at 1.
+- [x] A gated real-model test (in the gated real-model suite that already loads the embedding model): embed 3 texts of clearly different lengths as one batch and one at a time; expect cosine >= 0.999 for each pair. Today it gives about 0.6 for the shorter rows. Run it one time if the model is on this machine, and record the numbers; if it is not, record that.
+- [x] `swift test` passes one time, and the output shows the full count of tests run.
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #defect #embedding #cross-repo
+
+## Review Findings (2026-09-28 13:30)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 4 file(s) reviewed, 4 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+- [ ] `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/IntegrationTests.swift:526` `code-hygiene/disallowed-constructs-swift` — no_direct_standard_out_logs: Do not commit print(…), debugPrint(…), dump(…) or _printChanges(), which write to standard out in release. Log to a dedicated logging system, or silence one debug-only line with // swiftlint:disable:next no_direct_standard_out_logs and the reason after it.
