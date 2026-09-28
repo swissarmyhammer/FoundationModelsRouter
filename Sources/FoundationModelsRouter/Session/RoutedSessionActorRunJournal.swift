@@ -125,9 +125,9 @@ extension RoutedSessionActor: ToolInvocationObserver {
     /// ``SessionEvent/toolInvocation(_:)``. See ``deliverLive(_:)``.
     ///
     /// An open record ends the generation call that asked for the tool, so
-    /// that call's usage is reported first (see
-    /// ``reportGenerationCallAtToolOpen()``). A close record starts the clock
-    /// of the next generation call (``restartGenerationCallClock()``).
+    /// that call's usage is reported first, and a close record starts the
+    /// clock of the next generation call (see
+    /// ``noteGenerationCallBoundary(at:)``).
     ///
     /// Each record is progress for the stall watch of the model call in
     /// flight: an open record is a tool call, and a close record is a tool
@@ -136,11 +136,7 @@ extension RoutedSessionActor: ToolInvocationObserver {
     /// - Parameter record: The record the outbox forwarded.
     func deliver(invocation record: ToolInvocationRecord) async {
         noteGenerationProgress(record.closedAt == nil ? .toolCall : .toolResult)
-        if record.closedAt == nil {
-            await reportGenerationCallAtToolOpen()
-        } else {
-            restartGenerationCallClock()
-        }
+        await noteGenerationCallBoundary(at: record)
         deliverLive(.toolInvocation(record))
     }
 

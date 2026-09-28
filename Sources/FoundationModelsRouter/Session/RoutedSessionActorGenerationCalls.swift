@@ -156,10 +156,23 @@ extension RoutedSessionActor {
         await report(generationCall: usage)
     }
 
-    /// Notes that a tool call of the attempt closed. The model reads the tool
-    /// output in the next generation call, which starts now, so the time of
-    /// the tool body is not part of the duration of a generation call.
-    func restartGenerationCallClock() {
+    /// Moves the ledger of the attempt across one tool invocation record of
+    /// the session's own submission. ``deliver(invocation:)`` calls it for
+    /// each record.
+    ///
+    /// An open record ends the generation call that asked for the tool, so
+    /// the usage of that call is reported (``reportGenerationCallAtToolOpen()``).
+    /// A close record starts the next generation call now: the model reads
+    /// the tool output in that call, so the time of the tool body is not part
+    /// of the duration of a generation call
+    /// (``GenerationCallLedger/callStartedAt``).
+    ///
+    /// - Parameter record: The tool invocation record the outbox forwarded.
+    func noteGenerationCallBoundary(at record: ToolInvocationRecord) async {
+        guard record.closedAt != nil else {
+            await reportGenerationCallAtToolOpen()
+            return
+        }
         generationCallLedger?.callStartedAt = ContinuousClock.now
     }
 }

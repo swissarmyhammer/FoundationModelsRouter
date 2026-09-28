@@ -29,6 +29,27 @@ comments:
     - evidence: 16 files — Package.swift, Tracing/RouterTelemetry.swift, Tracing/RouterMetrics.swift (new), Session/RoutedSessionActor.swift, Session/RoutedSessionActorMetrics.swift (new), Session/RoutedSessionActorForking.swift, Session/RoutedSessionActorQueueing.swift, Session/RoutedSessionActorPump.swift, Session/RoutedSessionActorCompaction.swift, Session/RoutedSessionActorGenerationCalls.swift, Session/RoutedSessionActorRunJournal.swift, Session/GenerationStall.swift, Session/RoutedSessionActorAnswerExecution.swift, Router.swift, Sizing/PromptCacheSizing.swift, Tests RouterMetricsTests.swift + Helpers/MetricAssertions.swift (new)
     - next: /test
   timestamp: 2026-09-28T22:25:40.657290+00:00
+- actor: claude-code
+  id: 01m3n3a855ba92er58ndf4fw83
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (421e6b0) — 1 finding (2 refuted): Sources/FoundationModelsRouter/Session/RoutedSessionActorGenerationCalls.swift:162 (completeness/invariant-propagation)
+    - next: implement the finding
+
+    ### finish iteration 1 — findings
+    - implement: changed — swift-metrics in Package.swift, `RouterTelemetry.MetricName` / `MetricDimension`, `RouterMetrics`, explicit session metrics factory, 7 record sites, `RouterMetricsTests` (9 tests).
+    - test: green — swift test: 1409 + 22 + 19 tests passed (2 known issues), exit 0. The clean build with a separate scratch path has no warning from this package (only the vendored mlx-swift Metal header warnings). IntegrationTests builds.
+    - commit: changed — 421e6b0 feat(telemetry): record router metrics through swift-metrics (^a3qhq6a)
+    - review: findings — 1 (RoutedSessionActorGenerationCalls.swift:162 completeness/invariant-propagation)
+  timestamp: 2026-09-28T22:49:05.445122+00:00
+- actor: claude-code
+  id: 01m3n3es03j3hyj6g8ajx9c0vy
+  text: |-
+    ### implement — changed
+    - evidence: the finding RoutedSessionActorGenerationCalls.swift:162 (completeness/invariant-propagation). `restartGenerationCallClock()` had one caller (`deliver(invocation:)` in RoutedSessionActorRunJournal.swift), but the reset lived away from the handling of the open record. Now one method, `noteGenerationCallBoundary(at:)` in RoutedSessionActorGenerationCalls.swift, moves the ledger across each tool invocation record: an open record reports the ended call, and a close record resets `callStartedAt`. `deliver(invocation:)` calls it. `restartGenerationCallClock()` is gone. 2 files: Session/RoutedSessionActorGenerationCalls.swift, Session/RoutedSessionActorRunJournal.swift.
+    - test: swift test — 1409 + 22 + 19 tests passed (2 known issues), exit 0; the build has no warning.
+    - next: /commit, then /review HEAD~1..HEAD
+  timestamp: 2026-09-28T22:51:33.763444+00:00
 depends_on:
 - 01M3MND1G818WNMRPDFRAG2E91
 position_column: doing
@@ -67,3 +88,12 @@ Facts from the Extras OTel work (swissarmyhammer session, 2026-09-28; do not sta
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #otel #cross-repo
+
+## Review Findings (2026-09-28 17:35)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 17 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorGenerationCalls.swift:162` `completeness/invariant-propagation` — Function `restartGenerationCallClock()` is defined to reset the call timer after a tool result, but is never called anywhere in the marked changes. The comment states 'The model reads the tool output in the next generation call, which starts now', but the integration point is missing, leaving the call start time unreset and causing incorrect duration measurements for calls following tool invocations. Identify the location where tool results are processed (likely in `noteToolResult` or a similar handler, not shown in marked lines) and add a call to `restartGenerationCallClock()` there to reset the clock before the next generation call.
