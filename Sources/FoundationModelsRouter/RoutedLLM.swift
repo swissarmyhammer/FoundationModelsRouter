@@ -81,11 +81,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 workingDirectory: workingDirectory,
                 recordingRoot: recordingRoot,
                 tools: tools,
-                budget: budget,
-                compactionPrompt: compactionPrompt,
+                compaction: CompactionSettings(
+                    budget: budget, prompt: compactionPrompt, toolOutputProtection: toolOutputProtection),
                 agentSpawn: agentSpawn,
                 discoveryPriming: discoveryPriming,
-                toolOutputProtection: toolOutputProtection,
                 repetitionDetection: repetitionDetection))
     }
 
@@ -106,11 +105,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             workingDirectory: configuration.workingDirectory,
             recordingRoot: configuration.recordingRoot,
             tools: configuration.tools,
-            budget: configuration.budget,
-            compactionPrompt: configuration.compactionPrompt,
+            budget: configuration.compaction.budget,
+            compactionPrompt: configuration.compaction.prompt,
             agentSpawn: configuration.agentSpawn,
             discoveryPriming: configuration.discoveryPriming,
-            toolOutputProtection: configuration.toolOutputProtection,
+            toolOutputProtection: configuration.compaction.toolOutputProtection,
             repetitionDetection: configuration.repetitionDetection,
             mailOnlyAnswerLimit: configuration.mailOnlyAnswerLimit)
     }

@@ -90,8 +90,7 @@ struct SessionConfigurationTests {
             instructions: "system",
             workingDirectory: workingDirectory,
             tools: [tool],
-            budget: budget,
-            compactionPrompt: prompt,
+            compaction: CompactionSettings(budget: budget, prompt: prompt),
             agentSpawn: spawn,
             discoveryPriming: priming
         )
@@ -162,8 +161,9 @@ struct SessionConfigurationTests {
         #expect(configuration.workingDirectory == nil)
         #expect(configuration.recordingRoot == nil)
         #expect(configuration.tools.isEmpty)
-        #expect(configuration.budget == nil)
-        #expect(configuration.compactionPrompt == .default)
+        #expect(configuration.compaction.budget == nil)
+        #expect(configuration.compaction.prompt == .default)
+        #expect(configuration.compaction.toolOutputProtection == nil)
         #expect(configuration.agentSpawn == nil)
         #expect(configuration.discoveryPriming == nil)
         #expect(configuration.grammar == nil)
@@ -171,28 +171,36 @@ struct SessionConfigurationTests {
 
     // MARK: - The Codable slice
 
-    @Test("the Codable slice round-trips, with tools represented by name")
-    func persistableSliceRoundTrips() throws {
-        let configuration = SessionConfiguration(
+    /// Makes a configuration that sets every field the Codable slice records.
+    ///
+    /// - Returns: A configuration with no field at its default.
+    private static func makeFullConfiguration() -> SessionConfiguration {
+        SessionConfiguration(
             instructions: "system",
             workingDirectory: URL(fileURLWithPath: "/tmp/work", isDirectory: true),
             recordingRoot: URL(fileURLWithPath: "/tmp/recordings", isDirectory: true),
             tools: [AmbientEventPostingTool(), AmbientNonStringOutputTool()],
-            budget: TokenBudget(limit: 4096, hardCeiling: 0.95, toolOutputLimit: 256),
-            compactionPrompt: CompactionPrompt(name: "custom", text: "condense"),
+            compaction: CompactionSettings(
+                budget: TokenBudget(limit: 4096, hardCeiling: 0.95, toolOutputLimit: 256),
+                prompt: CompactionPrompt(name: "custom", text: "condense")),
             agentSpawn: SessionSidecar.AgentSpawn(
                 parentSessionId: ULID.generate(), parentToolCallId: "call-1"),
             discoveryPriming: DiscoveryPriming(tool: "ambient-emitter", queryProperty: "value"),
             grammar: .ebnf("root ::= \"yes\" | \"no\"")
         )
+    }
+
+    @Test("the Codable slice round-trips, with tools represented by name")
+    func persistableSliceRoundTrips() throws {
+        let configuration = Self.makeFullConfiguration()
 
         let persistable = configuration.persistable
         #expect(persistable.toolNames == configuration.tools.map { $0.name })
         #expect(persistable.instructions == configuration.instructions)
         #expect(persistable.workingDirectory == configuration.workingDirectory)
         #expect(persistable.recordingRoot == configuration.recordingRoot)
-        #expect(persistable.budget == configuration.budget)
-        #expect(persistable.compactionPrompt == configuration.compactionPrompt)
+        #expect(persistable.budget == configuration.compaction.budget)
+        #expect(persistable.compactionPrompt == configuration.compaction.prompt)
         #expect(persistable.agentSpawn == configuration.agentSpawn)
         #expect(persistable.discoveryPriming == configuration.discoveryPriming)
         #expect(persistable.grammar == configuration.grammar)
@@ -243,5 +251,59 @@ struct SessionConfigurationTests {
 
         let decoded = try JSONDecoder().decode(SessionConfiguration.Persistable.self, from: oldSidecarSlice)
         #expect(decoded == persistable)
+    }
+
+    // MARK: - The grouped compaction settings keep the flat sidecar keys
+
+    /// The top-level keys of the Codable slice of a configuration that sets
+    /// every field, as a sidecar wrote them before task ^83r6105. The
+    /// compaction settings are in the flat `budget` and `compactionPrompt`
+    /// keys, and no `compaction` key exists.
+    private static let flatSidecarKeys: Set<String> = [
+        "instructions", "workingDirectory", "recordingRoot", "toolNames",
+        "budget", "compactionPrompt", "agentSpawn", "discoveryPriming",
+        "grammar", "repetitionDetection", "mailOnlyAnswerLimit",
+    ]
+
+    /// A Codable slice in the format of a sidecar written before task
+    /// ^83r6105, with the compaction settings in flat keys.
+    private static let flatSidecarSlice = """
+        {
+          "instructions": "system",
+          "toolNames": ["ambient-emitter"],
+          "budget": {"limit": 4096, "trigger": 0.9, "target": 0.6, "toolOutputLimit": 256},
+          "compactionPrompt": {"name": "custom", "text": "condense"}
+        }
+        """
+
+    @Test("the compaction settings reach the flat budget and compactionPrompt of the Codable slice")
+    func compactionSettingsReachTheFlatSliceKeys() {
+        let budget = TokenBudget(limit: 4096, trigger: 0.9, target: 0.6)
+        let prompt = CompactionPrompt(name: "custom", text: "condense")
+
+        let persistable = SessionConfiguration(
+            compaction: CompactionSettings(budget: budget, prompt: prompt)
+        ).persistable
+
+        #expect(persistable.budget == budget)
+        #expect(persistable.compactionPrompt == prompt)
+    }
+
+    @Test("a new Codable slice has the same keys as a sidecar written before the grouped settings")
+    func newPersistableSliceKeepsTheFlatKeys() throws {
+        let object = try Self.jsonObject(of: Self.makeFullConfiguration().persistable)
+        #expect(Set(object.keys) == Self.flatSidecarKeys)
+    }
+
+    @Test("a Codable slice from a sidecar written before the grouped settings decodes")
+    func flatSidecarSliceDecodes() throws {
+        let data = try #require(Self.flatSidecarSlice.data(using: .utf8))
+
+        let decoded = try JSONDecoder().decode(SessionConfiguration.Persistable.self, from: data)
+
+        #expect(decoded.instructions == "system")
+        #expect(decoded.toolNames == ["ambient-emitter"])
+        #expect(decoded.budget == TokenBudget(limit: 4096, trigger: 0.9, target: 0.6, toolOutputLimit: 256))
+        #expect(decoded.compactionPrompt == CompactionPrompt(name: "custom", text: "condense"))
     }
 }

@@ -18,7 +18,7 @@ import FoundationModels
 /// whose id is the id of the `.toolOutput` entry. An output that pairs with no
 /// call is never protected.
 ///
-/// A host sets the rule on ``SessionConfiguration/toolOutputProtection``. The
+/// A host sets the rule on ``CompactionSettings/toolOutputProtection``. The
 /// rule is a closure, so the session does not record it: a host gives it again
 /// when it restores a session, as it gives the tools. A fork inherits it.
 ///

@@ -128,7 +128,7 @@ struct ToolOutputProtectionSessionTests {
         defer { directories.remove() }
         let profile = try await Self.resolveProfile(in: directories, routerId: .generate())
         let session = profile.standard.makeSession(
-            configuration: SessionConfiguration(toolOutputProtection: Fixtures.rule))
+            configuration: SessionConfiguration(compaction: CompactionSettings(toolOutputProtection: Fixtures.rule)))
         // ``driveAnswers(_:on:)`` is in Helpers/CompactionFixtures.swift.
         try await driveAnswers(Fixtures.recentAnswerCount, on: session)
 
@@ -162,7 +162,7 @@ struct ToolOutputProtectionSessionTests {
         defer { directories.remove() }
         let profile = try await Self.resolveProfile(in: directories, routerId: .generate())
         let session = profile.standard.makeSession(
-            configuration: SessionConfiguration(toolOutputProtection: Fixtures.rule))
+            configuration: SessionConfiguration(compaction: CompactionSettings(toolOutputProtection: Fixtures.rule)))
         // ``driveAnswers(_:on:)`` is in Helpers/CompactionFixtures.swift.
         try await driveAnswers(Fixtures.recentAnswerCount, on: session)
 
@@ -181,7 +181,7 @@ struct ToolOutputProtectionSessionTests {
         let routerId = ULID.generate()
         let original = try await Self.resolveProfile(in: directories, routerId: routerId)
         let session = original.standard.makeSession(
-            configuration: SessionConfiguration(toolOutputProtection: Fixtures.rule))
+            configuration: SessionConfiguration(compaction: CompactionSettings(toolOutputProtection: Fixtures.rule)))
         // ``driveAnswers(_:on:)`` is in Helpers/CompactionFixtures.swift.
         try await driveAnswers(Fixtures.recentAnswerCount, on: session)
 
@@ -201,7 +201,7 @@ struct ToolOutputProtectionSessionTests {
         let routerId = ULID.generate()
         let original = try await Self.resolveProfile(in: directories, routerId: routerId)
         let session = original.standard.makeSession(
-            configuration: SessionConfiguration(toolOutputProtection: Fixtures.rule))
+            configuration: SessionConfiguration(compaction: CompactionSettings(toolOutputProtection: Fixtures.rule)))
         // ``driveAnswers(_:on:)`` is in Helpers/CompactionFixtures.swift.
         try await driveAnswers(Fixtures.recentAnswerCount, on: session)
         try await Self.compact(session: session)

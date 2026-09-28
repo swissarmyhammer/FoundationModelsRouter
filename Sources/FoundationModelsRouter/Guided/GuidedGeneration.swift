@@ -165,8 +165,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 instructions: instructions,
                 workingDirectory: workingDirectory,
                 tools: tools,
-                budget: budget,
-                compactionPrompt: compactionPrompt,
+                compaction: CompactionSettings(budget: budget, prompt: compactionPrompt),
                 agentSpawn: agentSpawn,
                 discoveryPriming: discoveryPriming,
                 grammar: grammar))

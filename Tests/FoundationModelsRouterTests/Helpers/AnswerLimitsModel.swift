@@ -298,7 +298,8 @@ struct AnswerLimitsSessionFixture {
                 dimension: RouterTestFixtures.stubDimension))
         let profile = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let session = profile.standard.makeSession(
-            configuration: SessionConfiguration(budget: budget, repetitionDetection: detection))
+            configuration: SessionConfiguration(
+                compaction: CompactionSettings(budget: budget), repetitionDetection: detection))
         return AnswerLimitsSessionFixture(session: session, script: script, directory: directory)
     }
 

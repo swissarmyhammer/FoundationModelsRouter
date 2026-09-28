@@ -20,11 +20,15 @@ public struct SessionConfiguration: Sendable {
     /// Instances are held by reference; ``persistable`` represents them by name.
     public var tools: [any Tool]
 
-    /// The auto-compaction opt-in, or `nil` (the default) for manual-only compaction.
-    public var budget: TokenBudget?
-
-    /// The compaction prompt automatic compactions send to the summarizer, when ``budget`` is set.
-    public var compactionPrompt: CompactionPrompt
+    /// The compaction settings: the auto-compaction budget, the compaction
+    /// prompt and the tool output protection. The default is manual-only
+    /// compaction with the default prompt, and no protected output.
+    ///
+    /// ``persistable`` records the budget and the prompt in flat keys. It
+    /// does not hold the tool output protection, because that is a closure.
+    /// A host gives it again when it restores the session, as it gives the
+    /// tools. A fork inherits it. See ``CompactionSettings``.
+    public var compaction: CompactionSettings
 
     /// The parent session/tool-call the session was spawned from, or `nil`.
     public var agentSpawn: SessionSidecar.AgentSpawn?
@@ -35,14 +39,6 @@ public struct SessionConfiguration: Sendable {
     /// The grammar that constrains every `respond` on the vended session,
     /// or `nil` for an unconstrained session.
     public var grammar: Grammar?
-
-    /// The host rule whose protected tool outputs every compaction on the vended
-    /// session keeps word for word, or `nil` (the default) to protect nothing.
-    ///
-    /// A closure, so ``persistable`` does not hold it and the sidecar does not
-    /// record it. A host gives it again when it restores the session, as it
-    /// gives the tools. A fork inherits it. See ``ToolOutputProtection``.
-    public var toolOutputProtection: ToolOutputProtection?
 
     /// The settings of the detector that stops a generate call that repeats
     /// itself. The default is on, with the named defaults of
@@ -83,12 +79,10 @@ public struct SessionConfiguration: Sendable {
         workingDirectory: URL? = nil,
         recordingRoot: URL? = nil,
         tools: [any Tool] = [],
-        budget: TokenBudget? = nil,
-        compactionPrompt: CompactionPrompt = .default,
+        compaction: CompactionSettings = CompactionSettings(),
         agentSpawn: SessionSidecar.AgentSpawn? = nil,
         discoveryPriming: DiscoveryPriming? = nil,
         grammar: Grammar? = nil,
-        toolOutputProtection: ToolOutputProtection? = nil,
         repetitionDetection: RepetitionDetection = RepetitionDetection(),
         mailOnlyAnswerLimit: Int = defaultMailOnlyAnswerLimit
     ) {
@@ -96,27 +90,27 @@ public struct SessionConfiguration: Sendable {
         self.workingDirectory = workingDirectory
         self.recordingRoot = recordingRoot
         self.tools = tools
-        self.budget = budget
-        self.compactionPrompt = compactionPrompt
+        self.compaction = compaction
         self.agentSpawn = agentSpawn
         self.discoveryPriming = discoveryPriming
         self.grammar = grammar
-        self.toolOutputProtection = toolOutputProtection
         self.repetitionDetection = repetitionDetection
         self.mailOnlyAnswerLimit = mailOnlyAnswerLimit
     }
 
     /// The `Codable` slice of this configuration, persisted in the session sidecar.
     /// ``tools`` is represented by each tool's ``FoundationModels/Tool/name``, in order.
-    /// ``toolOutputProtection`` is a closure and has no place in it.
+    /// ``compaction`` gives the flat `budget` and `compactionPrompt` keys. Its
+    /// ``CompactionSettings/toolOutputProtection`` is a closure and has no
+    /// place in the slice.
     var persistable: Persistable {
         Persistable(
             instructions: instructions,
             workingDirectory: workingDirectory,
             recordingRoot: recordingRoot,
             toolNames: tools.map { $0.name },
-            budget: budget,
-            compactionPrompt: compactionPrompt,
+            budget: compaction.budget,
+            compactionPrompt: compaction.prompt,
             agentSpawn: agentSpawn,
             discoveryPriming: discoveryPriming,
             grammar: grammar,
@@ -127,8 +121,10 @@ public struct SessionConfiguration: Sendable {
 
     /// The `Codable`, `Equatable` snapshot of a ``SessionConfiguration``.
     /// It mirrors the parent value field for field, except ``toolNames``, and
-    /// except the parent's ``SessionConfiguration/toolOutputProtection``, which
-    /// it does not hold.
+    /// except the parent's ``SessionConfiguration/compaction``. The slice
+    /// keeps the flat ``budget`` and ``compactionPrompt`` keys of the sidecars
+    /// written before task ^83r6105, so old and new sidecars decode the same.
+    /// It does not hold the ``CompactionSettings/toolOutputProtection``.
     ///
     /// A sidecar written before task ^mvm7zjy also holds a `summarization`
     /// key. The stage has no settings, so the slice does not write the key.
