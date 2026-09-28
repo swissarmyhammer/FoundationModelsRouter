@@ -34,9 +34,29 @@ comments:
     - evidence: `swift test --manifest-cache local` (one full run, exit 0): 1414 tests in 179 suites passed (2 known issues), 22 tests in 10 suites passed, 19 tests in 3 suites passed. Clean build `swift build --build-tests` with a separate `--scratch-path`: no compiler warning from this package (only vendored checkout warnings, the SwiftPM mlx-swift bundle note and a swift-nio cache note). `swift build --build-tests --package-path IntegrationTests`: build complete.
     - next: /commit
   timestamp: 2026-09-28T23:37:46.385160+00:00
+- actor: claude-code
+  id: 01m3n6j5jthdcvsh6wh3s365n1
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (c99037f) — 1 finding (1 confirmed, 0 refuted): Sources/FoundationModelsRouter/Router.swift:206 (completeness/public-output-contract)
+    - next: implement the finding
+
+    ### finish iteration 1 — findings
+    - implement: changed — RouterTelemetry.EnterRecord, Router.withEnteredSpan(_:attributes:body:) over TracedCall.run for resolve and load, the submission record next to startSpan, Router explicit logger, EnterRecordTests (5 tests), HeldSessionBackend and SharedBackendContainer helpers.
+    - test: green — swift test: 1414 + 22 + 19 tests passed (2 known issues), exit 0; the clean build with a separate scratch path has no compiler warning from this package; IntegrationTests builds.
+    - commit: changed — c99037f feat(telemetry): write one "enter" log record when a submission, load or resolve span starts (^ffkvyj8)
+    - review: findings — 1 (Router.swift:206 completeness/public-output-contract)
+  timestamp: 2026-09-28T23:45:50.682171+00:00
+- actor: claude-code
+  id: 01m3n6nqyf8zm15haqh82k7ckx
+  text: |-
+    ### implement — changed
+    - evidence: the finding Router.swift:206 (completeness/public-output-contract). `Router.useLogger(_:)` is now `public`, as the finding says, with documentation for a host: with no explicit logger the router makes a module logger at each call; give an explicit logger when the records must reach a logger that a task-local context selects, because the loads run in an admission job on a task of its own. `explicitLogger` stays `private(set)`. `Logger` is from swift-log, which the library target already depends on. 1 file: Sources/FoundationModelsRouter/Router.swift. `swift build --build-tests`: build complete, no error.
+    - next: /test
+  timestamp: 2026-09-28T23:47:47.791963+00:00
 depends_on:
 - 01M3MND1G818WNMRPDFRAG2E91
-position_column: doing
+position_column: review
 position_ordinal: '80'
 title: 'OTel router D: write one "enter" log record when a submission, load or resolve span starts'
 ---
@@ -71,3 +91,12 @@ Facts from the Extras OTel work (swissarmyhammer session, 2026-09-28; do not sta
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #otel #cross-repo
+
+## Review Findings (2026-09-28 18:38)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 7 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [ ] `Sources/FoundationModelsRouter/Router.swift:206` `completeness/public-output-contract` — useLogger is documented as the public API for configuring explicitLogger, but is not marked public, making it inaccessible to callers outside the module. The documentation at lines 55–61 states 'Set it with ``useLogger(_:)``', but the method lacks the public keyword, breaking the documented contract for public API users. Mark useLogger as `public func useLogger(_ logger: Logger)` to match the public-facing documentation contract.

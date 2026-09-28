@@ -200,10 +200,17 @@ public actor Router {
     }
 
     /// Gives this router an explicit logger for the log records of each
-    /// resolve (``explicitLogger``).
+    /// later resolve and of each load in it.
+    ///
+    /// With no explicit logger, the router makes a logger of the module at
+    /// each call, which writes through the logging backend that the host
+    /// bootstrapped. Give an explicit logger when the records must go to a
+    /// logger that a task-local context selects: the loads of a resolve run
+    /// in an admission job of the pool, on a task of its own, where no
+    /// task-local context of the caller reaches.
     ///
     /// - Parameter logger: The logger of the records.
-    func useLogger(_ logger: Logger) {
+    public func useLogger(_ logger: Logger) {
         explicitLogger = logger
     }
 
