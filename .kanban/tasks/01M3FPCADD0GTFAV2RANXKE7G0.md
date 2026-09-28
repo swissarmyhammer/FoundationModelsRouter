@@ -115,12 +115,37 @@ comments:
     - evidence: 1 file — Tests/FoundationModelsRouterTests/ToolResultCompactionTests.swift:3 now uses `@testable import FoundationModelsExtras`. The file has no other plain import of FoundationModelsExtras. swift test: 1352 tests in 169 suites passed (2 known issues), 17 tests in 8 suites passed, 19 tests in 3 suites passed, exit 0.
     - next: commit
   timestamp: 2026-09-28T15:12:42.226869+00:00
+- actor: claude-code
+  id: 01m3m973hd5pjvd79dc3revsf4
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed (done before this finish run; see the earlier comments)
+    - test: green before this run (1352 + 17 + 19 tests)
+    - commit: c93452f refactor(router): remove Hosting/ and use the tool hosting in FoundationModelsExtras (^nxke7g0)
+    - review: findings — 1 finding: Tests/FoundationModelsRouterTests/ToolResultCompactionTests.swift:3 completeness/invariant-propagation
+  timestamp: 2026-09-28T15:12:59.437340+00:00
+- actor: claude-code
+  id: 01m3m9dbckrjk9znf96ygqg0hj
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (f8b6211): 0 findings, 0 confirmed, 0 refuted. The prior finding at ToolResultCompactionTests.swift:3 is checked.
+    - next: none
+  timestamp: 2026-09-28T15:16:24.083692+00:00
+- actor: claude-code
+  id: 01m3m9djd0d0c8x28vr7rwzcnb
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — Tests/FoundationModelsRouterTests/ToolResultCompactionTests.swift:3 uses `@testable import FoundationModelsExtras`
+    - test: green — swift test: 1352 tests in 169 suites passed (2 known issues), 17 tests in 8 suites passed, 19 tests in 3 suites passed, exit 0
+    - commit: f8b6211 test(router): use @testable import FoundationModelsExtras in ToolResultCompactionTests (^nxke7g0)
+    - review: clean — 0 findings; the review step moved the task to done
+  timestamp: 2026-09-28T15:16:31.264408+00:00
 depends_on:
 - 01M3FNBZF74DHSGE70C5339RGT
 - 01M3FNC92WA10NG6TX59H3RKXF
 - 01M3FNK00PYXP7E102NWNHMD56
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffa880
 title: 'Router: remove Hosting/ and use the tool hosting in FoundationModelsExtras'
 ---
 ## What
