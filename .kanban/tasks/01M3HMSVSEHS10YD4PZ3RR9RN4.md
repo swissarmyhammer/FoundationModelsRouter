@@ -51,10 +51,26 @@ comments:
     - evidence: `swift test` (one full run), exit 0: "Test run with 1356 tests in 170 suites passed ... with 2 known issues" (1352 before + 4 new; the 2 known issues are the planned `withKnownIssue` checks in RealModelHarness and BoundedWait, the same as before), "17 tests in 8 suites passed", "19 tests in 3 suites passed", XCTest "Executed 0 tests" three times. No failure, no skipped test. The only warning is the known mlx bundle "missing creator" warning. SessionOutboxToolWiringTests, RespondRunPlaneDrainTests, BackgroundRunTranscriptTests and PendingEventInjectionTests are not changed and pass.
     - next: commit
   timestamp: 2026-09-28T15:39:38.172783+00:00
+- actor: claude-code
+  id: 01m3mb2zhsfckc71vxty8rwjmw
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (f8168f7): 0 findings, 0 confirmed, 3 refuted; 5 files reviewed, 2 .kanban files skipped by .reviewignore. No prior findings on the task. The review step moved the task to done.
+    - next: none
+  timestamp: 2026-09-28T15:45:41.433344+00:00
+- actor: claude-code
+  id: 01m3mb325xyn2jd204sk1533w5
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 4 new session tests (PerCallMountSessionTests), 2 new test helpers, the Operations product on the unit test target, and one doc comment in RoutedSessionActorRunJournal.swift. No router code change was necessary: each background terminal (nested also) is already staged one time.
+    - test: green — swift test: 1356 tests in 170 suites passed (2 known issues), 17 tests in 8 suites passed, 19 tests in 3 suites passed, exit 0
+    - commit: f8168f7 test(router): prove that each call chooses its mount and each background terminal is staged one time (^3rr9rn4)
+    - review: clean — 0 findings (3 refuted); the review step moved the task to done
+  timestamp: 2026-09-28T15:45:44.125043+00:00
 depends_on:
 - 01M3FPCADD0GTFAV2RANXKE7G0
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffa980
 title: 'Router: a background run that a synchronous call starts delivers its terminal as mail, and each call chooses its mount'
 ---
 ## What
