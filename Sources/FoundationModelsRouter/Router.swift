@@ -1,6 +1,7 @@
 import Foundation
 import FoundationModels
 import FoundationModelsExtras
+import Logging
 import Metrics
 import Tracing
 
@@ -50,6 +51,15 @@ public actor Router {
     /// to read `InstrumentationSystem.tracer` at call time. See
     /// ``RoutedModel/tracer``.
     let tracer: (any Tracer)?
+
+    /// The logger of the log records of a resolve, or `nil` (the default) to
+    /// make a logger of the module at each call.
+    ///
+    /// The loads of a resolve run in an admission job of the pool, on a task
+    /// of its own, where a task-local logging context of the caller does not
+    /// reach. An explicit logger reaches it, as the explicit logger of a
+    /// session reaches its detached pump. Set it with ``useLogger(_:)``.
+    private(set) var explicitLogger: Logger?
 
     /// The machine probe behind the budget.
     private let probe: any MachineProbe
@@ -179,14 +189,52 @@ public actor Router {
     ) async throws -> LanguageModelProfile {
         // Resolution is the slowest thing the library does, so the whole call
         // — the lock wait included — is one span, and each model this resolve
-        // has to fetch opens a child span under it. `withSpan` records a
-        // thrown error on the span and raises it again.
-        try await RouterTelemetry.tracer(explicit: tracer)
-            .withSpan(RouterTelemetry.SpanName.resolve, ofKind: .client) { span in
-                span.attributes[RouterTelemetry.AttributeKey.routerId] = id.description
-                span.attributes[RouterTelemetry.AttributeKey.profileDefinitionName] = def.name
-                return try await runResolve(profile: def, reporting: progress, span: span)
-            }
+        // has to fetch opens a child span under it. The span records a
+        // thrown error and raises it again.
+        try await withEnteredSpan(RouterTelemetry.SpanName.resolve) { attributes in
+            attributes[RouterTelemetry.AttributeKey.routerId] = id.description
+            attributes[RouterTelemetry.AttributeKey.profileDefinitionName] = def.name
+        } body: { span in
+            try await self.runResolve(profile: def, reporting: progress, span: span)
+        }
+    }
+
+    /// Gives this router an explicit logger for the log records of each
+    /// resolve (``explicitLogger``).
+    ///
+    /// - Parameter logger: The logger of the records.
+    func useLogger(_ logger: Logger) {
+        explicitLogger = logger
+    }
+
+    /// Opens one client span that can suspend for a long time, writes its
+    /// "enter" log record (``RouterTelemetry/EnterRecord``), and runs `body`
+    /// in the span.
+    ///
+    /// A resolve and a load use it. The span records an error that `body`
+    /// throws and raises it again. It writes no log record when it ends.
+    ///
+    /// - Parameters:
+    ///   - spanName: The name of the span.
+    ///   - attributes: Sets the attributes of the span before the record is
+    ///     written.
+    ///   - body: The work that the span measures.
+    /// - Returns: The value of `body`.
+    /// - Throws: The error of `body`.
+    private func withEnteredSpan<Output>(
+        _ spanName: String,
+        attributes: (inout SpanAttributes) -> Void,
+        body: nonisolated(nonsending) (any Span) async throws -> Output
+    ) async throws -> Output {
+        try await TracedCall.run(
+            spanName,
+            ofKind: .client,
+            tracer: RouterTelemetry.tracer(explicit: tracer),
+            logger: RouterTelemetry.logger(.enter, explicit: explicitLogger),
+            attributes: attributes,
+            metadata: RouterTelemetry.EnterRecord.metadata(forSpanNamed: spanName),
+            body
+        )
     }
 
     /// The slots a resolve acquires, in acquisition order: `standard` before
@@ -746,8 +794,10 @@ public actor Router {
     /// for a model the pool does not hold, so only a model this resolve really
     /// fetches opens a span here. The span is a child of the resolve span,
     /// because the admission job carries the service context of the resolve
-    /// span. `withSpan` records a thrown error on the span and raises it
-    /// again.
+    /// span. The span records a thrown error and raises it again. The load
+    /// writes one "enter" log record when it starts
+    /// (``withEnteredSpan(_:attributes:body:)``), through ``explicitLogger``:
+    /// the admission job runs on a task of its own.
     ///
     /// A load that ends also records its duration
     /// (``RouterMetrics/recordLoad(duration:model:slot:)``), through the
@@ -767,16 +817,16 @@ public actor Router {
         footprintBytes: Int64,
         _ body: () async throws -> Loaded
     ) async throws -> Loaded {
-        try await RouterTelemetry.tracer(explicit: tracer)
-            .withSpan(RouterTelemetry.SpanName.load, ofKind: .client) { span in
-                span.attributes[RouterTelemetry.AttributeKey.modelRef] = chosen.stringValue
-                span.attributes[RouterTelemetry.AttributeKey.slot] = slot.rawValue
-                span.attributes[RouterTelemetry.AttributeKey.footprintBytes] = footprintBytes
-                let startedAt = ContinuousClock.now
-                let loaded = try await body()
-                RouterMetrics().recordLoad(duration: startedAt.duration(to: .now), model: chosen, slot: slot)
-                return loaded
-            }
+        try await withEnteredSpan(RouterTelemetry.SpanName.load) { attributes in
+            attributes[RouterTelemetry.AttributeKey.modelRef] = chosen.stringValue
+            attributes[RouterTelemetry.AttributeKey.slot] = slot.rawValue
+            attributes[RouterTelemetry.AttributeKey.footprintBytes] = footprintBytes
+        } body: { _ in
+            let startedAt = ContinuousClock.now
+            let loaded = try await body()
+            RouterMetrics().recordLoad(duration: startedAt.duration(to: .now), model: chosen, slot: slot)
+            return loaded
+        }
     }
 
     /// Preloads the container of a hold this resolve loaded, and marks its

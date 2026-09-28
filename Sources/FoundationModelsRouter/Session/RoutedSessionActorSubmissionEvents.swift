@@ -30,6 +30,15 @@ extension RoutedSessionActor {
     /// ``SubmissionID`` and opens the span of the submission, a child of the
     /// tracing context of the caller.
     ///
+    /// A submission can wait a long time in its model call, so it also writes
+    /// one "enter" log record through ``sessionLogger(_:)`` when its span
+    /// opens (``RouterTelemetry/EnterRecord``). This method opens the span and
+    /// ``endSubmission(usage:finishReason:measuredRender:onEvent:)`` ends it,
+    /// so `TracedCall.run` of FoundationModelsExtras, which ends its span when
+    /// its body returns, does not fit: this method writes the same record.
+    /// The log call is synchronous, so it adds no suspension point to the
+    /// pump.
+    ///
     /// - Parameters:
     ///   - cause: Why the session makes the submission.
     ///   - messageIds: The caller messages the submission delivers.
@@ -37,11 +46,14 @@ extension RoutedSessionActor {
         lastSubmissionNumber += 1
         let start = SubmissionStart(
             submissionId: SubmissionID(lastSubmissionNumber), messageIds: messageIds, cause: cause)
-        let span = RouterTelemetry.tracer(explicit: tracer).startSpan(
+        let spanTracer = RouterTelemetry.tracer(explicit: tracer)
+        let span = spanTracer.startSpan(
             RouterTelemetry.SpanName.submission, context: ServiceContext.current ?? .topLevel, ofKind: .client)
         describeSession(on: span)
         span.attributes[RouterTelemetry.AttributeKey.submissionId] = start.submissionId.description
         span.attributes[RouterTelemetry.AttributeKey.submissionCause] = cause.rawValue
+        RouterTelemetry.EnterRecord.write(
+            for: span, named: RouterTelemetry.SpanName.submission, tracer: spanTracer, to: sessionLogger(.enter))
         runningSubmission = RunningSubmission(start: start, span: span)
     }
 

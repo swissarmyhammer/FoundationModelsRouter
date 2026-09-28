@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModelsExtras
 import Logging
 import Tracing
 
@@ -303,6 +304,10 @@ enum RouterTelemetry {
 
         /// The cache of the metadata of a model repository.
         case repoMetadataCache = "RepoMetadataCache"
+
+        /// The "enter" record of a span that can suspend for a long time
+        /// (``EnterRecord``).
+        case enter = "Enter"
     }
 
     /// The key of every metadata value of a router log record.
@@ -421,6 +426,9 @@ enum RouterTelemetry {
         /// A model reference, in canonical string form.
         static let modelRef = prefix + AttributeKey.modelRef
 
+        /// The name of the span of an "enter" record (``EnterRecord``).
+        static let spanName = prefix + "span.name"
+
         /// Every key above.
         static let allKeys = [
             category, sessionId, entryId, segmentId, responseFormatName, entryCase, encodeContext,
@@ -429,7 +437,71 @@ enum RouterTelemetry {
             configuredTargetTokens, overflowRule, overflowOutcome, measuredTokens, triggerTokens,
             rejectionReason, toolName, retryOrdinal, summarizerTier, divergence, shortfall,
             allowedSummaryTokens, inputTokens, windowTokens, snapshotTokens, containerType, modelRef,
+            spanName,
         ]
+    }
+
+    /// The "enter" log record of a span that can suspend for a long time: a
+    /// submission, a load and a resolve.
+    ///
+    /// Rule 8 of the OpenTelemetry design of 2026-09-28, hang detection: a
+    /// tracing backend exports a span only when the span ends, so a call that
+    /// hangs gives no span. The logging backend exports the "enter" record at
+    /// once, so a hung call shows as a record with no span that ends. The span
+    /// writes nothing when it ends.
+    ///
+    /// The record is the record of `TracedCall` of FoundationModelsExtras:
+    /// the message `enter <span name>` at `TracedCall.enterLevel`, with the
+    /// W3C trace id and span id of the span under ``traceIDKey`` and
+    /// ``spanIDKey`` when the tracer injects a W3C `traceparent` value. The
+    /// router adds the span name under ``LogMetadataKey/spanName``
+    /// (``metadata(forSpanNamed:)``). A load and a resolve open their span
+    /// with `TracedCall.run`, which writes the record. A submission span is
+    /// opened by one method and ended by another, so no closure holds it and
+    /// `TracedCall.run` does not fit it: ``write(for:named:tracer:to:)``
+    /// writes the same record for that span.
+    ///
+    /// The record carries no content: a span name and ids only.
+    enum EnterRecord {
+        /// The metadata key of the W3C trace id of the span. It is the key
+        /// that `TracedCall` writes, so it has no module prefix.
+        private static let traceIDKey = "trace.id"
+
+        /// The metadata key of the W3C span id of the span. It is the key
+        /// that `TracedCall` writes, so it has no module prefix.
+        private static let spanIDKey = "span.id"
+
+        /// The text before the span name in the message of the record, as
+        /// `TracedCall` writes it.
+        private static let messagePrefix = "enter "
+
+        /// The metadata that the router gives to the record of one span.
+        ///
+        /// - Parameter spanName: The name of the span.
+        /// - Returns: The span name under ``LogMetadataKey/spanName``.
+        static func metadata(forSpanNamed spanName: String) -> Logger.Metadata {
+            [LogMetadataKey.spanName: .string(spanName)]
+        }
+
+        /// Writes the record of a span that the caller opened with
+        /// `startSpan`, in the format of the record of `TracedCall`.
+        ///
+        /// The call is synchronous, so it adds no suspension point.
+        ///
+        /// - Parameters:
+        ///   - span: The span that starts.
+        ///   - spanName: The name of the span.
+        ///   - tracer: The tracer that made the span. It gives the ids when it
+        ///     injects a W3C `traceparent` value.
+        ///   - logger: The logger of the record.
+        static func write(for span: any Span, named spanName: String, tracer: any Tracer, to logger: Logger) {
+            var recordMetadata = metadata(forSpanNamed: spanName)
+            if let identity = SpanIdentity(context: span.context, tracer: tracer) {
+                recordMetadata[traceIDKey] = .string(identity.traceID)
+                recordMetadata[spanIDKey] = .string(identity.spanID)
+            }
+            logger.log(level: TracedCall.enterLevel, "\(messagePrefix + spanName)", metadata: recordMetadata)
+        }
     }
 
     /// The name of every metric the router records. ``RouterMetrics`` records

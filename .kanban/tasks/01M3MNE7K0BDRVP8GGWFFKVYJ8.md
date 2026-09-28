@@ -1,10 +1,43 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m3n50kwp3a8rffc1bttzxv6g
+  text: |-
+    Research (implement, iteration 1):
+    - Extras is at 6c399a4. `TracedCall.run(_:ofKind:tracer:logger:attributes:metadata:_:)` is `nonisolated(nonsending)`. It opens the span with `withSpan`, sets the attributes, logs `enter <spanName>` at `TracedCall.enterLevel` (`.info`) with the caller metadata plus `trace.id` and `span.id` (from `SpanIdentity(context:tracer:)`, public), and writes nothing on exit. `ExtrasTelemetry` (the `trace.id`/`span.id` keys and the `enter ` prefix) is internal to Extras, so the router vocabulary must spell the same keys and message.
+    - Submission: a manual span (`startSpan` in `beginSubmission`, ended in `endSubmission`). `TracedCall.run` ends its span when its body returns, so it does not fit a span that one method opens and another method ends. Decision: `beginSubmission` writes the same record (same message, same level, same `trace.id`/`span.id` keys through `SpanIdentity`) through the session logger. The call is synchronous: no new suspension point on the pump.
+    - Load: `withLoadSpan` runs inside the admission job of `ModelPool.admit`. That job runs on the worker task of a `GenerationQueue` (`Task.detached`), so a task-local log routing (the `TelemetryCapture` handler, and the swift-log `Logger.current`) does not reach it. The router already carries the `ServiceContext` and the metrics factory by hand. `Logger.current` is not usable: its unbound default is a `Logger(label: "")` with the handler of its first read. Decision: the router gets an explicit logger (internal `useLogger(_:)`, `nil` by default), the same shape as the session explicit logger of ^rag2e91. The resolve and the load read it through `RouterTelemetry.logger(_:explicit:)`; with no explicit logger, a module logger is made at the call. A test gives `TelemetryCapture.Context.logger` to the router, as the load span tests give an explicit tracer to the router.
+    - The resolve record is written on the caller task, so a module logger reaches a capture with no explicit logger too.
+    - `W3CInMemoryTracer` makes W3C ids, and its finished spans have the same `traceID`/`spanID`, so a test can match each record to its span.
+  timestamp: 2026-09-28T23:18:46.934333+00:00
+- actor: claude-code
+  id: 01m3n5j4qs5p06j0bdds4zh2wc
+  text: |-
+    Implementation (iteration 1):
+    - Why `TracedCall.run` does not fit the submission span: `beginSubmission` opens the span with `startSpan`, and `endSubmission` ends it later, in a different method. `TracedCall.run` opens the span with `withSpan` and ends it when its body returns, so it can hold only a span whose whole life is one closure. Thus `beginSubmission` writes the same record next to the `startSpan` call: `RouterTelemetry.EnterRecord.write(for:named:tracer:to:)` logs `enter <span name>` at `TracedCall.enterLevel`, with `trace.id` and `span.id` from `SpanIdentity(context:tracer:)` (public in Extras), through the session logger. The call is synchronous: no new suspension point on the pump.
+    - Resolve and load use `TracedCall.run` through one private helper, `Router.withEnteredSpan(_:attributes:body:)`. The span names, the kind `.client`, the attributes and the parent links do not change: `TracedCall.run` uses `withSpan` with `ServiceContext.current`, and the admission job still binds the `ServiceContext` of the resolve span.
+    - Each record also has `FoundationModelsRouter.span.name` (`LogMetadataKey.spanName`). New log category `Enter`.
+    - Router explicit logger: `Router.explicitLogger` (`private(set)`, `nil` by default) and internal `useLogger(_:)`. The resolve and the load read it through `RouterTelemetry.logger(.enter, explicit:)`.
+    - Tests: `EnterRecordTests` (5 tests) with `TelemetryCapture`, a scripted session over a stub loader, and a `HeldSessionBackend` whose call sends a signal when it starts and waits for a release signal (no clock). New shared helper `SharedBackendContainer` (moved out of `SubmissionTracingTests`, with the backend type widened to `any LanguageModelSessionBackend`).
+    - Fail-first proof: with `withEnteredSpan` changed back to a plain `withSpan` and the `EnterRecord.write` call removed, `swift test --filter EnterRecordTests` ran 5 tests and all 5 failed with 8 issues. With the implementation back, the filter `EnterRecordTests|SubmissionTracingTests|ResolveTracingTests|RouterTelemetryLoggingTests|TelemetryContentSafetyTests` ran 25 tests in 5 suites and all passed. The existing tracing tests have no change to what they assert.
+
+    ### implement — changed
+    - evidence: 7 files — Sources/FoundationModelsRouter/Tracing/RouterTelemetry.swift, Sources/FoundationModelsRouter/Router.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorSubmissionEvents.swift, Tests/FoundationModelsRouterTests/EnterRecordTests.swift (new), Tests/FoundationModelsRouterTests/Helpers/HeldSessionBackend.swift (new), Tests/FoundationModelsRouterTests/Helpers/SharedBackendContainer.swift (new), Tests/FoundationModelsRouterTests/SubmissionTracingTests.swift
+    - next: /test
+  timestamp: 2026-09-28T23:28:21.241957+00:00
+- actor: claude-code
+  id: 01m3n63cmhtm3f97mq6zrhz4wg
+  text: |-
+    ### test — green
+    - evidence: `swift test --manifest-cache local` (one full run, exit 0): 1414 tests in 179 suites passed (2 known issues), 22 tests in 10 suites passed, 19 tests in 3 suites passed. Clean build `swift build --build-tests` with a separate `--scratch-path`: no compiler warning from this package (only vendored checkout warnings, the SwiftPM mlx-swift bundle note and a swift-nio cache note). `swift build --build-tests --package-path IntegrationTests`: build complete.
+    - next: /commit
+  timestamp: 2026-09-28T23:37:46.385160+00:00
 depends_on:
 - 01M3MND1G818WNMRPDFRAG2E91
-position_column: todo
-position_ordinal: ad80
+position_column: doing
+position_ordinal: '80'
 title: 'OTel router D: write one "enter" log record when a submission, load or resolve span starts'
 ---
 ## What
