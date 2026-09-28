@@ -1,15 +1,17 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouter
 import Operations
 
 /// The shape of the `agents` tool of FoundationModelsAgents (task ^ggpyaem):
 /// one `OperationTool` with one background operation, `start agent`, and three
 /// synchronous operations, `list agents`, `check agent` and `cancel agent`.
 ///
-/// This file imports `Operations` and not the router module. Both modules
-/// declare a `ToolMount` alias of the same Extras type, and the `@Operation`
-/// macro writes `ToolMount` into the code it makes, so the fixtures live
-/// where only one of the two aliases is in scope.
+/// This file imports the router module and `Operations`, as the
+/// FoundationModelsAgents tool files do. The `@Operation` macro writes
+/// `ToolMount` into the code it makes, and `start agent` writes it in its
+/// mount. The file compiles only when `ToolMount` is not ambiguous between the
+/// two modules (task ^cs9w81q).
 enum AgentOperationFixtures {
     /// The name of the fused tool.
     static let toolName = "agents"

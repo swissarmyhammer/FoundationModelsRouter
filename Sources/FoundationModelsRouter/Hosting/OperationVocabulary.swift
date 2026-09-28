@@ -4,32 +4,50 @@
 // router's module, so router code and router consumers keep the same names.
 import FoundationModelsExtras
 
-/// The category of a posted `OperationEvent`. Canonical definition:
-/// `FoundationModelsExtras.OperationEventKind`.
-public typealias OperationEventKind = FoundationModelsExtras.OperationEventKind
+// MARK: - Names that the Extras `Operations` module also declares
 
-/// A progress, completion, or elicitation event a long-running operation
-/// posts through a connected `OperationEventSink`. Canonical definition:
-/// `FoundationModelsExtras.OperationEvent`.
-public typealias OperationEvent = FoundationModelsExtras.OperationEvent
+// The Extras `Operations` module declares its own typealias for each name
+// below, and FoundationModelsAgents imports the router and `Operations` in one
+// file (task ^cs9w81q). The router re-exports the ORIGINAL declaration of each
+// of these names, not a second typealias. A file that imports only the router
+// then sees the Extras declaration itself, so it can also name a nested type,
+// for example `ToolMount.Mode`, in a public declaration. With a typealias,
+// Swift rejects that nested name, because the file does not import
+// FoundationModelsExtras. `OperationsNameClashTests` and
+// `ToolMountPublicSurfaceTests` guard this.
 
-/// How a completed operation run ended. Canonical definition:
-/// `FoundationModelsExtras.OperationOutcome`.
-public typealias OperationOutcome = FoundationModelsExtras.OperationOutcome
+// The category of a posted `OperationEvent`. Canonical definition:
+// `FoundationModelsExtras.OperationEventKind`.
+@_exported import enum FoundationModelsExtras.OperationEventKind
 
-/// A destination `OperationEvent`s are posted to. The router implements this
-/// one time, in `SessionOutbox`, and `ToolContext.mount(_:op:as:postingTo:)`
-/// takes one from a caller. Canonical definition:
-/// `FoundationModelsExtras.OperationEventSink`.
-public typealias OperationEventSink = FoundationModelsExtras.OperationEventSink
+// A progress, completion, or elicitation event a long-running operation
+// posts through a connected `OperationEventSink`. Canonical definition:
+// `FoundationModelsExtras.OperationEvent`.
+@_exported import struct FoundationModelsExtras.OperationEvent
+
+// How a completed operation run ended. Canonical definition:
+// `FoundationModelsExtras.OperationOutcome`.
+@_exported import enum FoundationModelsExtras.OperationOutcome
+
+// A destination `OperationEvent`s are posted to. The router implements this
+// one time, in `SessionOutbox`, and `ToolContext.mount(_:op:as:postingTo:)`
+// takes one from a caller. Canonical definition:
+// `FoundationModelsExtras.OperationEventSink`.
+@_exported import protocol FoundationModelsExtras.OperationEventSink
+
+// A `Tool` that can produce a per-session instance of itself at fork time.
+// Canonical definition: `FoundationModelsExtras.ForkableTool`.
+@_exported import protocol FoundationModelsExtras.ForkableTool
+
+// The mode and the timeout that a tool is mounted with. Canonical
+// definition: `FoundationModelsExtras.ToolMount`.
+@_exported import struct FoundationModelsExtras.ToolMount
+
+// MARK: - Operation event names that only the router re-exports
 
 /// One tool call's live lifecycle record. Canonical definition:
 /// `FoundationModelsExtras.ToolInvocationRecord`.
 public typealias ToolInvocationRecord = FoundationModelsExtras.ToolInvocationRecord
-
-/// A `Tool` that can produce a per-session instance of itself at fork time.
-/// Canonical definition: `FoundationModelsExtras.ForkableTool`.
-public typealias ForkableTool = FoundationModelsExtras.ForkableTool
 
 /// Which interaction an `ElicitationRequest` asks the host to run.
 /// Canonical definition: `FoundationModelsExtras.ElicitationMode`.
@@ -97,12 +115,10 @@ public typealias ToolContext = FoundationModelsExtras.ToolContext
 /// its canceler. Canonical definition: `FoundationModelsExtras.BackgroundTool`.
 public typealias BackgroundTool = FoundationModelsExtras.BackgroundTool
 
-/// The mode and the timeout that a tool is mounted with. Canonical
-/// definition: `FoundationModelsExtras.ToolMount`.
-public typealias ToolMount = FoundationModelsExtras.ToolMount
-
 /// The failure that a mount makes, for example a timeout with no progress.
-/// Canonical definition: `FoundationModelsExtras.ToolMountError`.
+/// Canonical definition: `FoundationModelsExtras.ToolMountError`. The
+/// `Operations` module does not declare this name, and it has no nested type,
+/// so the typealias form stays.
 public typealias ToolMountError = FoundationModelsExtras.ToolMountError
 
 /// A `Tool` that the session calls one time before each submission.
