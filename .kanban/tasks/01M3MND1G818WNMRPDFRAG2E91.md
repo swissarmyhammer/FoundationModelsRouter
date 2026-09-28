@@ -40,8 +40,24 @@ comments:
     - commit: changed — ebdaf8e refactor(telemetry)!: log through swift-log and rename RouterTracing to RouterTelemetry (^rag2e91)
     - review: findings — 2 (RoutedSessionActorForking.swift:44 duplication; LogAssertions.swift:55 fluent-usage)
   timestamp: 2026-09-28T21:49:42.111359+00:00
-position_column: review
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m3n0b7vzxcr1y9hfb04rc459
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (7f747b8) — 0 findings, 1 refuted; both prior findings are corrected and checked.
+    - next: none; the task is done.
+  timestamp: 2026-09-28T21:57:12.191610+00:00
+- actor: claude-code
+  id: 01m3n0bayk9fvnbwqde3hx3e25
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — describeSession(on:) writes the three session span attributes for the submission span and the fork span; the test helper is useCaptureLogger(for:).
+    - test: green — swift test: 1400 + 22 + 19 tests passed (2 known issues), exit 0.
+    - commit: changed — 7f747b8 refactor(session): write the session span attributes in one method, and label the capture logger argument (^rag2e91)
+    - review: clean — 0 findings; the review moved the task to done.
+  timestamp: 2026-09-28T21:57:15.347778+00:00
+position_column: done
+position_ordinal: ffffffb180
 title: 'OTel router A: replace os.Logger with swift-log, and rename RouterTracing to one telemetry vocabulary with log metadata keys'
 ---
 ## What
@@ -62,17 +78,17 @@ Facts from the Extras OTel work (swissarmyhammer session, 2026-09-28). Extras OT
 - A logger or a metric that is made before the first capture does not go to the capture. Thus a `static let` logger (for example one made by `makeModuleLogger(category:)` and stored in a static) that a test touches before the capture starts is lost. Make the loggers per call or per instance, or make sure that the capture starts first; record the choice in a task comment.
 
 ## Acceptance Criteria
-- [ ] Each executable of the repo bootstraps logging to stderr at startup; its stdout carries no log lines.
-- [ ] No `import os`, `os.Logger`, `OSLog`, `OSLogStore` or `OSSignposter` in `Sources/`, `Tests/`, `IntegrationTests/`, `Examples/` or `Tools/`.
-- [ ] Every log call uses `Logging.Logger`, and every interpolated value is log metadata with a `RouterTelemetry.LogMetadataKey`.
-- [ ] No log message or metadata value carries model content.
-- [ ] No swift-otel dependency in any `Package.swift` of the repo.
-- [ ] `swift build` passes with no warnings on a clean build.
+- [x] Each executable of the repo bootstraps logging to stderr at startup; its stdout carries no log lines.
+- [x] No `import os`, `os.Logger`, `OSLog`, `OSLogStore` or `OSSignposter` in `Sources/`, `Tests/`, `IntegrationTests/`, `Examples/` or `Tools/`.
+- [x] Every log call uses `Logging.Logger`, and every interpolated value is log metadata with a `RouterTelemetry.LogMetadataKey`.
+- [x] No log message or metadata value carries model content.
+- [x] No swift-otel dependency in any `Package.swift` of the repo.
+- [x] `swift build` passes with no warnings on a clean build.
 
 ## Tests
-- [ ] The tests that used `assertLogged` pass through the new capture with no change to what they assert.
-- [ ] A package-layout test checks that no `Package.swift` in the repo names swift-otel.
-- [ ] `swift test` passes one time, and the output shows the full count of tests run.
+- [x] The tests that used `assertLogged` pass through the new capture with no change to what they assert.
+- [x] A package-layout test checks that no `Package.swift` in the repo names swift-otel.
+- [x] `swift test` passes one time, and the output shows the full count of tests run.
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #otel #cross-repo
@@ -81,5 +97,5 @@ Facts from the Extras OTel work (swissarmyhammer session, 2026-09-28). Extras OT
 
 > Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 46 file(s) reviewed, 6 not reviewed.
 
-- [ ] `Sources/FoundationModelsRouter/Session/RoutedSessionActorForking.swift:44` `duplication/duplication` — Three lines setting span attributes (routerId, sessionId, modelRef) are verbatim duplicated across two files in this change. This code block appears identically in RoutedSessionActorSubmissionEvents.swift:42-44 and should be extracted to a shared helper method to avoid drift and reduce surface area. Extract a private helper method on RoutedSessionActor (e.g., `private func setSessionSpanAttributes(_ span: Span)`) that sets these three attributes, then call it from both RoutedSessionActorForking.swift:44-46 and RoutedSessionActorSubmissionEvents.swift:42-44, replacing the duplicated lines with a single call to the helper.
-- [ ] `Tests/FoundationModelsRouterTests/Helpers/LogAssertions.swift:55` `swift/fluent-usage` — First argument label omitted on a non-value-preserving method. The method `useCaptureLogger(_:)` performs side effects (setting an explicit logger), so it should include an external label on its first parameter to form a grammatical phrase at the call site. Change the signature to `func useCaptureLogger(for logger: Logger) async` so the call reads as 'session.useCaptureLogger(for: context.logger)' rather than 'session.useCaptureLogger(context.logger)'.
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorForking.swift:44` `duplication/duplication` — Three lines setting span attributes (routerId, sessionId, modelRef) are verbatim duplicated across two files in this change. This code block appears identically in RoutedSessionActorSubmissionEvents.swift:42-44 and should be extracted to a shared helper method to avoid drift and reduce surface area. Extract a private helper method on RoutedSessionActor (e.g., `private func setSessionSpanAttributes(_ span: Span)`) that sets these three attributes, then call it from both RoutedSessionActorForking.swift:44-46 and RoutedSessionActorSubmissionEvents.swift:42-44, replacing the duplicated lines with a single call to the helper.
+- [x] `Tests/FoundationModelsRouterTests/Helpers/LogAssertions.swift:55` `swift/fluent-usage` — First argument label omitted on a non-value-preserving method. The method `useCaptureLogger(_:)` performs side effects (setting an explicit logger), so it should include an external label on its first parameter to form a grammatical phrase at the call site. Change the signature to `func useCaptureLogger(for logger: Logger) async` so the call reads as 'session.useCaptureLogger(for: context.logger)' rather than 'session.useCaptureLogger(context.logger)'.
