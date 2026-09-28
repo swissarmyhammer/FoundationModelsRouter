@@ -23,7 +23,7 @@ import Tracing
 /// fails, the error reaches the caller and the span records it.
 ///
 /// The rule that no attribute carries the caller's own content lives in
-/// ``SpanContentSafetyTests``, which names no span and therefore already
+/// ``TelemetryContentSafetyTests``, which names no span and therefore already
 /// measures this one.
 ///
 /// Everything runs over stubs — a ``PerSlotModelLoader`` over two

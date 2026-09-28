@@ -143,10 +143,10 @@ extension RoutedSessionActor: SessionMailObserver {
         while !Task.isCancelled {
             pumpWakeRequested = false
             if !pendingCompactions.isEmpty {
-                await runNextCallerCompaction()
+                await withSessionMetricsFactory { await runNextCallerCompaction() }
                 continue
             }
-            guard await runNextAnswer() || pumpWakeRequested else { break }
+            guard await withSessionMetricsFactory({ await runNextAnswer() }) || pumpWakeRequested else { break }
         }
         pumpTask = nil
         if Task.isCancelled {

@@ -42,10 +42,12 @@ import Tracing
 /// - An error is logged by its type and a safe code (``errorMetadata(_:)``),
 ///   never by its description, because a description can carry model content.
 ///
-/// The rule is proved, not merely stated: `SpanContentSafetyTests` drives a
-/// submission, a tool call, a compaction and an embed against an `InMemoryTracer`, reads
-/// every attribute value of every recorded span, and fails on any value that
-/// carries the fixture's own content. Each new span the router learns to open
+/// The rule is proved, not merely stated: `TelemetryContentSafetyTests` drives
+/// a submission, a tool call, a compaction, an embed and a rejected tool call
+/// retry inside the `TelemetryCapture` of FoundationModelsExtras. It reads each
+/// span name and attribute, each log message and metadata value, and each
+/// metric name and dimension, and it fails on any of them that carries the
+/// content of the fixture. Each new span, log record or metric of the router
 /// is held to that one test.
 enum RouterTelemetry {
     /// What every span name, logger label, log metadata key and metric name

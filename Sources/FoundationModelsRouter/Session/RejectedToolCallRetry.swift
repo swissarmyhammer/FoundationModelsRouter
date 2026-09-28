@@ -68,6 +68,9 @@ struct RejectedToolCallRetry {
         failedPrompt + Self.noteSeparator + note
     }
 
+    /// The constant message of the log record of ``logRetry(sessionID:ordinal:to:)``.
+    static let retryLogMessage = "a rejected tool call goes back to the model"
+
     /// Records in the log that a rejected tool call goes back to the model.
     ///
     /// - Parameters:
@@ -84,6 +87,6 @@ struct RejectedToolCallRetry {
         if let toolName {
             metadata[RouterTelemetry.LogMetadataKey.toolName] = "\(toolName)"
         }
-        logger.warning("a rejected tool call goes back to the model", metadata: metadata)
+        logger.warning("\(Self.retryLogMessage)", metadata: metadata)
     }
 }

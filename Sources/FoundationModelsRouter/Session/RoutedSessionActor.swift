@@ -500,6 +500,9 @@ actor RoutedSessionActor: RoutedSession {
     /// The same reason as for ``explicitLogger``: the pump is a
     /// `Task.detached`, so the task-local factory of a caller never reaches
     /// its metrics. A fork starts with the explicit factory of its parent.
+    /// The pump also binds it as the task-local factory around each job
+    /// (``withSessionMetricsFactory(_:)``), so the metrics of a dependency,
+    /// for example the tool-call metrics of FoundationModelsExtras, go to it.
     var explicitMetricsFactory: (any MetricsFactory)?
 
     /// The `correlationID` of every background run whose ending this session has

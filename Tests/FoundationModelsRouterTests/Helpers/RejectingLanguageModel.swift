@@ -107,10 +107,17 @@ struct RejectingLanguageModel: FoundationModels.LanguageModel {
         /// The name of the tool the rejected call names.
         static let rejectedToolName = "runCode"
 
+        /// The argument value inside ``rejectedRawText``. It stands for an
+        /// argument value that can be sensitive, so a test can prove that no
+        /// copy of it reaches the telemetry.
+        static let rejectedArgumentValue = "SECRET-ARGUMENT-VALUE"
+
         /// The raw text of the rejected call. It stands for argument values
         /// that can be sensitive, so a test can prove that no copy of it
         /// reaches the transcript.
-        static let rejectedRawText = #"<tool_call>{"name": "runCode", "arguments": "{ \"code\": \"SECRET-ARGUMENT-VALUE\\q\" }"}</tool_call>"#
+        static let rejectedRawText =
+            #"<tool_call>{"name": "runCode", "arguments": "{ \"code\": \""# + rejectedArgumentValue
+            + #"\\q\" }"}</tool_call>"#
 
         /// The safe summary the rejection carries, in the words the MLX parser
         /// uses for a ``RejectedToolCall/Reason/invalidArguments`` rejection.

@@ -21,7 +21,7 @@ import Tracing
 /// beside it.
 ///
 /// The rule that no attribute carries the caller's own content lives in
-/// ``SpanContentSafetyTests``, which names no span and therefore already
+/// ``TelemetryContentSafetyTests``, which names no span and therefore already
 /// measures this one.
 ///
 /// Everything runs over the stub loader and stub backends, so the suite needs

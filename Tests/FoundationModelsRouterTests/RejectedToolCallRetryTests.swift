@@ -34,39 +34,14 @@ struct RejectedToolCallRetryTests {
     /// answer once stopped at.
     private static let rejectionsBeforeTheAnswer = 5
 
-    /// A routed session over a ``RejectingLanguageModel``, with the log its
-    /// model writes into and the directory the router cached into.
-    private struct Fixture {
-        /// The vended session a test drives its answer on.
-        let session: RoutedSession
-
-        /// The log of the transcript of each generation call.
-        let log: RejectingModelLog
-
-        /// The temp directory the router cached into, which the caller must remove.
-        let directory: URL
-    }
-
     /// Builds a router and a session over a model that rejects its first
     /// `rejectionCount` generation calls.
     ///
     /// - Parameter rejectionCount: How many calls end with a rejected tool call.
     /// - Returns: The session, its log, and the temp directory.
     /// - Throws: Whatever profile resolution throws.
-    private static func makeFixture(rejectionCount: Int) async throws -> Fixture {
-        let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
-        let log = RejectingModelLog()
-        let container = LiveBackendContainer(
-            model: RejectingLanguageModel(rejectionCount: rejectionCount, log: log)
-        )
-        let router = RouterTestFixtures.makeRouter(
-            cacheDir: directory,
-            loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension)
-        )
-        let profile = try await router.resolve(
-            profile: RouterTestFixtures.profile(), reporting: ResolutionProgress()
-        )
-        return Fixture(session: profile.standard.makeSession(), log: log, directory: directory)
+    private static func makeFixture(rejectionCount: Int) async throws -> RejectingSessionFixture {
+        try await RejectingSessionFixture.make(rejectionCount: rejectionCount, tempDirPrefix: tempDirPrefix)
     }
 
     @Test("the retry attempt sees why the call was rejected, and the answer ends with the reply")

@@ -18,7 +18,7 @@ import Tracing
 /// opens no span of its own, so a capped tool is still measured once.
 ///
 /// The rule that no attribute carries the caller's own content lives in
-/// ``SpanContentSafetyTests``, which names no span and therefore already
+/// ``TelemetryContentSafetyTests``, which names no span and therefore already
 /// measures this one.
 ///
 /// Everything runs over stubs — a stub ``ModelLoader``, a
@@ -28,12 +28,7 @@ import Tracing
 struct ToolTracingTests {
     /// The span name every tool call opens. The tool hosting of
     /// FoundationModelsExtras opens the span of each tool call with this name.
-    ///
-    /// The source of this name is `ExtrasTelemetry.SpanName.tool` in the
-    /// Extras file `Sources/FoundationModelsExtras/Telemetry/ExtrasTelemetry.swift`.
-    /// That constant is internal to FoundationModelsExtras, so this test cannot
-    /// read it and keeps the same string. Change both together.
-    private static let toolSpanName = "FoundationModelsExtras.tool"
+    private static let toolSpanName = ExtrasTelemetryNames.toolSpan
 
     /// The span name the enclosing submission opens.
     private static let submissionSpanName = RouterTelemetry.SpanName.submission
