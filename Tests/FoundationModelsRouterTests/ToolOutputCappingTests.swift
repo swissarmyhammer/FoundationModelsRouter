@@ -3,6 +3,7 @@ import FoundationModels
 import FoundationModelsRouterTestSupport
 import Testing
 
+@testable import FoundationModelsExtras
 @testable import FoundationModelsRouter
 
 /// Exercises task 1334fk3: ``TokenBudget/toolOutputLimit`` and the capping it

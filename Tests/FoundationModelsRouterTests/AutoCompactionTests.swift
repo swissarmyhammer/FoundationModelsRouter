@@ -3,6 +3,7 @@ import FoundationModels
 import FoundationModelsRouterTestSupport
 import Testing
 
+@testable import FoundationModelsExtras
 @testable import FoundationModelsRouter
 
 /// Exercises task 8213x39 (auto-compaction opt-in): ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:)``'s

@@ -1,12 +1,112 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m3m3nyy15gqdcqy7r9k13nb7
+  text: |-
+    ### Research and first decisions (implement, iteration 1)
+
+    - The Extras checkout is at 4a733cd (origin/main). It contains the pin 11404f3. `Package.resolved` is ignored by git, and `Package.swift` follows `branch: "main"`, so this repository has no pin line to change. The resolved revision is the pin.
+    - Difference from the task text: the Extras `RunPlane.start` and `updateProgress` are `@_spi(Testing) public`, as the task says. `RunPlane.cancel(completionToken:)`, `awaitAnswer`, `pendingElicitationIds` and `waiterCount` are INTERNAL in Extras (the router had them internal too). A router test reaches them only with `@testable import FoundationModelsExtras`.
+    - Difference from the task text: `ToolCallReport.init?(closing:attachments:)` is public in Extras, but the `OperationEventSink.postToolCallReport(closing:attachments:)` extension is internal in Extras. No router code calls it after the removal, so the router removes its copy.
+    - Difference from the task text: `MountSite`, `ToolMounting.makeWrapped(tool:site:configuration:)`, `ToolFailureDelivery` and `ToolDecorator` are public in Extras. `BackgroundToolRunner`, `RunToCompletionRunner`, `ContextBindingTool`, `ToolRun`, `RunEventFunnel`, `ToolCallSpan` and the failure-delivery tools are internal in Extras.
+    - Difference from the task text: 4a733cd adds `BackgroundTool.mount(for:)` and `ToolMounting.call(_:arguments:site:mount:)`, which decides the mount for each call.
+    - Decision: the public router names are public typealiases in `Hosting/OperationVocabulary.swift` (the same pattern as `ModelPool` and `OperationEvent`): `ToolContext`, `BackgroundTool`, `ToolMount`, `ToolMountError`, `SubmissionBoundaryTool`, `LostRunError`, `RunKind`, `BackgroundRun`, `WaitOutcome`, `CancelOutcome`, `PendingRunEnvelope`, `ToolCallAttachment`, `ToolCallReport`, `ElicitationAnswerDelivery`, `ElicitationCompletionDelivery`. No `@_exported import`.
+    - Decision: the session property keeps the name `mailbox`; only its type changes from `SessionMailbox` to the Extras `RunPlane`. Thus the router tests that read `session.mailbox` keep their access path.
+    - Extras has copies of these router test files in `Tests/FoundationModelsExtrasTests/Hosting/`: BackgroundToolRunnerTests, DeclaredRunKindTests, PendingRunEnvelopeTests, RunPlaneTests, RunPlaneActorTests (the copy of SessionMailboxTests), RunToCompletionRunnerTests, ToolContextMountTests, ToolContextTests, ToolContextTokenPublicSurfaceTests, ToolFailureDeliveryTests, ToolMountingTests, LostRunErrorTests, ToolCallSpanTests, ToolResultAppendTests.
+  timestamp: 2026-09-28T13:36:14.785964+00:00
+- actor: claude-code
+  id: 01m3m851aq56prpp72r5vq7h0r
+  text: |-
+    ### Implementation record (iteration 1)
+
+    **Sources**
+    - Removed `Hosting/` (all files except `OperationVocabulary.swift`), `Tracing/ToolCallSpan.swift`, `Session/ToolResultAppendBoundary.swift`, `Concurrency/RaceGate.swift` and `Concurrency/SerialAsyncChain.swift`. `SessionOutbox` now uses the Extras `SerialAsyncChain`.
+    - `SessionMailbox` is now the Extras `RunPlane`. The session property keeps the name `mailbox`.
+    - `ToolMounting.makeSessionMounted(...)` is now a router extension over the public Extras `ToolMounting.makeWrapped(tool:site:configuration:)` with `MountSite`. It keeps its name and parameters; the parameter `mailbox` has the type `RunPlane`.
+    - The ambient `ToolContext` uses `runPlane:`. The boundary is `ToolResultAppendBoundary { await self.noteToolResult($0) }`.
+    - Dead code removed, as the Extras hosting now opens the tool span: `RouterTracing.SpanName.tool`, `AttributeKey.toolName/toolRunKind/toolOutcome`, `RouterTracing.ToolRunKind`, and `ULID.stringLength`. Periphery with `--retain-public` over Sources now reports only the known `import MLXLLM` false positive.
+    - The DocC member links to Extras types (for example ``ToolContext/elicit(_:)``) are now plain code spans, because a link through a typealias to another module does not resolve.
+
+    **Docs**
+    - `README.md` has the new section "Tool hosting comes from FoundationModelsExtras".
+    - `RoutedSession.md` states that the hosting is in Extras and that the router names are aliases.
+
+    **Tests (sub-agent)**
+    Removed files. Each has an Extras copy in `Tests/FoundationModelsExtrasTests/Hosting/` with the same test function names, except the renames listed below:
+    - BackgroundToolRunnerTests
+    - DeclaredRunKindTests
+    - PendingRunEnvelopeTests
+    - RunPlaneTests
+    - RunToCompletionRunnerTests
+    - ToolContextMountTests
+    - ToolContextTests
+    - ToolContextTokenPublicSurfaceTests
+    - ToolFailureDeliveryTests
+    - ToolMountingTests
+    - LostRunErrorTests
+    - SessionMailboxTests (its Extras copy is RunPlaneActorTests)
+
+    Extras copies with a new name:
+    - `track{ListingAndWaitLifecycle,RefusesDuplicateToken,ForwardsTheSettledTerminalOnce,ForwardsNothingForASweptRun}` -> `start...`
+    - `publishedMintMatchesTheMailboxTokenShape` -> `theContextTokenHasTheRunPlaneTokenForm`
+    - `eachCallMintsADistinctToken` -> `eachCallMakesADistinctToken`
+    - `theConsumerExpressionFallsBackToAFreshMint` -> `theConsumerExpressionFallsBackToANewToken`
+    - `factoryInheritsMailboxAndSessionIdentity` -> `factoryInheritsRunPlaneAndSessionIdentity`
+
+    The "no Extras copy" list is empty.
+
+    Router-behavior tests kept:
+    - `SessionRunPlaneTests.swift`: the close-sweep tests (3), the restore test and `forkGetsFreshMailbox`.
+    - `SessionMountCompositionTests.swift`: 4 mount tests from ToolMountingTests, 2 `makeSessionMounted` tests from ToolFailureDeliveryTests, and 3 token-capping and withdraw tests from BackgroundToolRunnerTests.
+
+    Mechanical change classes:
+    1. `SessionMailbox` -> `RunPlane`.
+    2. `track(settling:)` -> `start(..., body:)`.
+    3. `ToolContext(mailbox:)` -> `ToolContext(runPlane:)`.
+    4. The runner and `makeWrapped` calls take `site: MountSite(...)`.
+    5. Imports added: plain, `@testable` or `@_spi(Testing)` `FoundationModelsExtras`.
+    6. ToolTracingTests: a named constant `"FoundationModelsRouter.tool"` replaces the removed `SpanName.tool`.
+
+    Other test changes:
+    - RegisteredJournalOpTests: `makeWrapped(tool:inheriting:...)` is now the public `host.mount(_:op:as:postingTo:)`.
+    - The shared helpers `eventually` and `formRequest` moved to `Helpers/PendingElicitationFixtures.swift`.
+    - ToolMountFixtures: the members that no test uses any more are removed.
+    - `ExtrasNameClashTests.swift` was added. Two compile fixes: the key is `ModelPoolKey(ref:role:)`, and `MessageID` has no public init.
+
+    Extras behavior changes that a test had to follow: none. The tests of the two changed behaviors were in removed files, and their Extras copies cover them.
+
+    **Differences from the task text**
+    - The pin: `Package.resolved` is ignored by git, and `Package.swift` follows `main`, which resolves to 4a733cd. That revision contains 11404f3.
+    - `ToolCallReportSink`, `postToolCallReport` and `BackgroundRunSettlementObserver` are Extras protocols now. The router has no copy of them.
+    - `RouterTracing` tool-span names are removed, because the Extras hosting opens that span with the same names.
+
+    **Verification**
+    - Clean build: `swift package clean && swift build --build-tests` gives "Build complete!". It shows zero warnings from this package. The only warnings are the vendored mlx-swift C++17 warnings, the SwiftPM manifest-cache "disk I/O error" warnings, and the known mlx bundle "missing creator" warning.
+    - `swift test`, 3 runs in a row. Each run passed, with exit 0:
+      - "1352 tests in 169 suites passed ... with 2 known issues"
+      - "17 tests in 8 suites passed"
+      - "19 tests in 3 suites passed"
+      - XCTest: "Executed 0 tests" three times
+    - `swift test --filter AnswerCancellation --parallel --num-workers 8`, 20 runs: each run had exit 0 and "27 tests in 1 suite passed".
+    - `swift build --build-tests --package-path IntegrationTests` builds (sub-agent run).
+    - The executable targets build as part of `swift build`.
+    - NOT DONE: the 10 repeated parallel runs of each of the background-run, outbox and hosting suites. The user stopped that step and does not want the repeated runs. Each of those suites passed in the 3 full runs.
+  timestamp: 2026-09-28T14:54:23.063603+00:00
+- actor: claude-code
+  id: 01m3m854sss96bxpsaaq2qn3jv
+  text: |-
+    ### implement — changed
+    - evidence: Sources (Hosting/ removed except OperationVocabulary.swift; ToolCallSpan, ToolResultAppendBoundary, RaceGate, SerialAsyncChain removed; RoutedLLM, RoutedSessionActor*, ToolOutputCapping, CompactionYield, DiscoveryPriming, SessionOutbox, SessionEvent, OperationEventJournal, RouterTracing, ULID changed), README.md, RoutedSession.md, 12 test files removed, 3 test files added (ExtrasNameClashTests, SessionRunPlaneTests, SessionMountCompositionTests, plus the helper PendingElicitationFixtures), 25 test files changed, IntegrationTests PropagationProbeIntegrationTests. swift test 3x: 1352+17+19 tests pass each time; AnswerCancellation 20x: 27 tests pass each time.
+    - next: test
+  timestamp: 2026-09-28T14:54:26.617959+00:00
 depends_on:
 - 01M3FNBZF74DHSGE70C5339RGT
 - 01M3FNC92WA10NG6TX59H3RKXF
 - 01M3FNK00PYXP7E102NWNHMD56
-position_column: todo
-position_ordinal: a380
+position_column: doing
+position_ordinal: '80'
 title: 'Router: remove Hosting/ and use the tool hosting in FoundationModelsExtras'
 ---
 ## What

@@ -3,6 +3,7 @@ import FoundationModels
 import FoundationModelsRouterTestSupport
 import Testing
 
+@_spi(Testing) import FoundationModelsExtras
 @testable import FoundationModelsRouter
 
 /// Exercises task ffsjqha (compaction epic): ``RoutedSession/compact(prompt:budget:)``, the

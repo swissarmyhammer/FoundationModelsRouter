@@ -1,4 +1,5 @@
 import FoundationModels
+import FoundationModelsExtras
 
 /// ``RoutedSessionActor``'s run journal: a long-running operation's reports
 /// (progress, elicitation, completion) become transcript entries at the
@@ -69,7 +70,8 @@ extension RoutedSessionActor: OperationEventJournal {
 
     /// Installs this session as ``outbox``'s ``OperationEventJournal``,
     /// ``ToolInvocationObserver`` and ``SessionMailObserver``, and as
-    /// ``mailbox``'s ``BackgroundRunSettlementObserver``, once. Called by each
+    /// ``mailbox``'s settlement observer (the Extras
+    /// `BackgroundRunSettlementObserver`), once. Called by each
     /// helper that sends a message and by the pump. Idempotent.
     func attachOutboxJournalIfNeeded() async {
         guard !didAttachOutboxJournal else { return }

@@ -8,26 +8,42 @@ A session has three audiences, and each one gets typed capabilities:
 
 - **Apps and drivers** hold a `RoutedSession` and use the members below.
   They never touch the raw staging and backgrounding machinery — the session's
-  `SessionOutbox` and `SessionMailbox` instances are internal wiring.
+  `SessionOutbox` and its run plane (the `RunPlane` of FoundationModelsExtras)
+  are internal wiring.
 - **Tools** do not use this protocol at all. A running tool reads the
   ambient ``ToolContext`` and uses its capabilities:
-  ``ToolContext/post(_:)``, ``ToolContext/progress(_:)``, and
-  ``ToolContext/elicit(_:)``. Its `isCancelled` property is internal, so only a
-  tool in this package reads it.
+  `ToolContext.post(_:)`, `ToolContext.progress(_:)`, and
+  `ToolContext.elicit(_:)`. Its `isCancelled` property is internal to
+  FoundationModelsExtras.
 - **Tool hosts** — a tool that shows the run plane to a model — read that
   plane through the same ambient context, never through a mailbox:
-  ``ToolContext/backgroundRuns()``,
-  ``ToolContext/wait(completionToken:seconds:)``, and
-  ``ToolContext/cancel(completionToken:)`` (task ^k0mecjp).
+  `ToolContext.backgroundRuns()`,
+  `ToolContext.wait(completionToken:seconds:)`, and
+  `ToolContext.cancel(completionToken:)` (task ^k0mecjp).
+
+## Tool hosting comes from FoundationModelsExtras
+
+The core `FoundationModelsExtras` package hosts the tools of each session: it
+mounts each tool, runs a background tool, keeps the run plane of the session,
+and binds the ambient ``ToolContext`` of each call. The session makes the run
+plane and the outbox of its tools, caps the tool output, and records each
+event of a run in its transcript.
+
+The router names ``ToolContext``, ``BackgroundTool``, ``ToolMount``,
+``ToolMountError``, ``SubmissionBoundaryTool``, ``LostRunError``, ``RunKind``,
+``BackgroundRun``, ``WaitOutcome``, ``CancelOutcome``, ``PendingRunEnvelope``,
+``ToolCallAttachment``, ``ToolCallReport``, ``ElicitationAnswerDelivery`` and
+``ElicitationCompletionDelivery`` are aliases of the Extras types. A file that
+imports both modules finds one type for each name.
 
 ## Long-running tools
 
 A tool declares ahead of time that it runs long, through
-``BackgroundTool/mount``. Such a tool is mounted in
-``ToolMount/Mode/background`` mode: each call returns a ``PendingRunEnvelope``
-handle at once, and the work goes on behind it. Every other tool is mounted in
-``ToolMount/Mode/runToCompletion`` mode and returns its result in band;
-``ToolMount/timeout`` bounds the work.
+`BackgroundTool.mount`, or for one call through `BackgroundTool.mount(for:)`.
+Such a call runs in the background mode of ``ToolMount``: it returns a
+``PendingRunEnvelope`` handle at once, and the work goes on behind it. Every
+other call runs to completion and returns its result in band;
+`ToolMount.timeout` bounds the work.
 
 The session pushes settlement to the model — the model never polls:
 

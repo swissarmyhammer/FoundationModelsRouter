@@ -2,6 +2,7 @@ import Foundation
 import FoundationModels
 import Testing
 
+@testable import FoundationModelsExtras
 @testable import FoundationModelsRouter
 
 /// Tests that a background run mounted inside another run's ``ToolContext``
@@ -186,9 +187,7 @@ struct NestedRunTerminalForwardingTests {
     ) -> BackgroundToolRunner<MountArguments> {
         BackgroundToolRunner(
             wrapping: tool,
-            sessionID: session.id,
-            mailbox: session.mailbox,
-            sink: session.outbox,
+            site: MountSite(sessionID: session.id, runPlane: session.mailbox, sink: session.outbox),
             timeout: nil
         )
     }

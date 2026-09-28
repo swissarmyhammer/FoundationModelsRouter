@@ -53,7 +53,7 @@ extension RoutedSessionActor {
         }
     }
 
-    /// Calls ``SubmissionBoundaryTool/submissionWillBegin()`` once on every
+    /// Calls `SubmissionBoundaryTool.submissionWillBegin()` once on every
     /// mounted tool that conforms, in mount order — the clock tick a tool uses
     /// to apply a change it prepared at the side (task w77k41m).
     ///
@@ -626,9 +626,9 @@ extension RoutedSessionActor {
         // model call sees the same ambient capabilities the mounting
         // engine binds per call. Whether the runtime actually propagates
         // task locals into `Tool.call` is the propagation probe's question;
-        // this binding is correct either way, and ``RunToCompletionRunner`` and
-        // ``BackgroundToolRunner`` also bind per call regardless. The
-        // `completionToken` is minted fresh
+        // this binding is correct either way, and the run-to-completion and
+        // background runners of the Extras tool hosting also bind per call
+        // regardless. The `completionToken` is minted fresh
         // per model call — run scope, never session scope — and the
         // cancellation probe mirrors this very model-call task's
         // cancellation (bound just after creation, because the context must
@@ -636,11 +636,11 @@ extension RoutedSessionActor {
         let cancellationProbe = ModelCallCancellationProbe()
         let ambientToolContext = ToolContext(
             sessionID: id,
-            mailbox: mailbox,
+            runPlane: mailbox,
             sink: outbox,
             tool: Self.submissionBindingToolStamp,
             op: Self.submissionBindingOpStamp,
-            completionToken: SessionMailbox.makeCompletionToken(),
+            completionToken: RunPlane.makeCompletionToken(),
             isCancelled: { cancellationProbe.isCancelled }
         )
         // The mark of this model call, published for exactly this call. A tool
@@ -675,7 +675,8 @@ extension RoutedSessionActor {
         // the model reads next goes through it (see ``noteToolResult(_:)``).
         let submission = Self.submission(
             of: body, composedPrompt: composedPrompt, mark: modelCallMark,
-            boundary: ToolResultAppendBoundary(session: self), context: ambientToolContext,
+            boundary: ToolResultAppendBoundary { await self.noteToolResult($0) },
+            context: ambientToolContext,
             serviceContext: submissionServiceContext)
         let observer = generationPassObserver
         let modelCall = Task {

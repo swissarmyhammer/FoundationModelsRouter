@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsExtras
 
 /// A failure producing text from a resident generation model.
 public enum GenerationError: Error, Equatable {
@@ -163,7 +164,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         // `container.makeSession` below, the model-facing tool list the
         // backend actually receives is these composed wrappers — each
         // String-output tool's mount layer, and each non-String-output
-        // tool's binding-only `ContextBindingTool`, binding the ambient
+        // tool's binding-only decorator of the Extras tool hosting, binding the ambient
         // `ToolContext` that posts the tool's events to this session's own
         // `outbox` — not the bare originals.
         let (outbox, mailbox, instancedTools) = makeSessionToolWiring(
@@ -252,7 +253,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// Each tool is composed by
     /// ``ToolMounting/makeSessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:tokenCounter:tracer:)``,
     /// carrying this handle's own tracer, so each mounted call opens its
-    /// ``RouterTracing/SpanName/tool`` span against the backend the router was
+    /// `FoundationModelsRouter.tool` span against the backend the router was
     /// constructed with.
     /// The outbox and mailbox are fresh per session and never shared.
     ///
@@ -267,9 +268,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         sessionID: ULID,
         cappedToTokenLimit tokenLimit: Int?,
         tokenCounter: any TokenCounter
-    ) -> (outbox: SessionOutbox, mailbox: SessionMailbox, tools: [any Tool]) {
+    ) -> (outbox: SessionOutbox, mailbox: RunPlane, tools: [any Tool]) {
         let outbox = SessionOutbox()
-        let mailbox = SessionMailbox()
+        let mailbox = RunPlane()
         let instancedTools = tools.map { tool in
             ToolMounting.makeSessionMounted(
                 tool: tool,

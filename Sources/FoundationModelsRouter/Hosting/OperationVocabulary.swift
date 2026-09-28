@@ -18,7 +18,7 @@ public typealias OperationEvent = FoundationModelsExtras.OperationEvent
 public typealias OperationOutcome = FoundationModelsExtras.OperationOutcome
 
 /// A destination `OperationEvent`s are posted to. The router implements this
-/// one time, in `SessionOutbox`, and ``ToolContext/mount(_:op:as:postingTo:)``
+/// one time, in `SessionOutbox`, and `ToolContext.mount(_:op:as:postingTo:)`
 /// takes one from a caller. Canonical definition:
 /// `FoundationModelsExtras.OperationEventSink`.
 public typealias OperationEventSink = FoundationModelsExtras.OperationEventSink
@@ -79,3 +79,74 @@ public typealias ElicitationValue = FoundationModelsExtras.ElicitationValue
 /// The user's answer to an `ElicitationRequest`. Canonical definition:
 /// `FoundationModelsExtras.ElicitationResponse`.
 public typealias ElicitationResponse = FoundationModelsExtras.ElicitationResponse
+
+// MARK: - Tool hosting
+
+// The tool hosting moved to FoundationModelsExtras (decision 2026-09-26): the
+// canonical definitions live in the `Hosting/` folder of that package's core
+// module. The aliases below keep the router names, so a router user needs no
+// source change, and a file that imports both modules finds one type for each
+// name.
+
+/// What a running tool can use: the run plane, the event sink and the
+/// session of its call, and the stamps of its run. Canonical definition:
+/// `FoundationModelsExtras.ToolContext`.
+public typealias ToolContext = FoundationModelsExtras.ToolContext
+
+/// Marks a `Tool` as a background tool, and gives its mount, its timeout and
+/// its canceler. Canonical definition: `FoundationModelsExtras.BackgroundTool`.
+public typealias BackgroundTool = FoundationModelsExtras.BackgroundTool
+
+/// The mode and the timeout that a tool is mounted with. Canonical
+/// definition: `FoundationModelsExtras.ToolMount`.
+public typealias ToolMount = FoundationModelsExtras.ToolMount
+
+/// The failure that a mount makes, for example a timeout with no progress.
+/// Canonical definition: `FoundationModelsExtras.ToolMountError`.
+public typealias ToolMountError = FoundationModelsExtras.ToolMountError
+
+/// A `Tool` that the session calls one time before each submission.
+/// Canonical definition: `FoundationModelsExtras.SubmissionBoundaryTool`.
+public typealias SubmissionBoundaryTool = FoundationModelsExtras.SubmissionBoundaryTool
+
+/// An error that tells that the work is gone with no observer. A run that
+/// throws it settles as `lost`. Canonical definition:
+/// `FoundationModelsExtras.LostRunError`.
+public typealias LostRunError = FoundationModelsExtras.LostRunError
+
+/// The kind of work of a background run. Canonical definition:
+/// `FoundationModelsExtras.RunKind`.
+public typealias RunKind = FoundationModelsExtras.RunKind
+
+/// One open background run, with its identity and its latest progress.
+/// Canonical definition: `FoundationModelsExtras.BackgroundRun`.
+public typealias BackgroundRun = FoundationModelsExtras.BackgroundRun
+
+/// The result of a wait for a background run. Canonical definition:
+/// `FoundationModelsExtras.WaitOutcome`.
+public typealias WaitOutcome = FoundationModelsExtras.WaitOutcome
+
+/// The result of a cancel of a background run. Canonical definition:
+/// `FoundationModelsExtras.CancelOutcome`.
+public typealias CancelOutcome = FoundationModelsExtras.CancelOutcome
+
+/// The control-plane answer of a background call: a pending run, or a run
+/// that settled in its grace period. Canonical definition:
+/// `FoundationModelsExtras.PendingRunEnvelope`.
+public typealias PendingRunEnvelope = FoundationModelsExtras.PendingRunEnvelope
+
+/// One record that a tool call attaches for its host. Canonical definition:
+/// `FoundationModelsExtras.ToolCallAttachment`.
+public typealias ToolCallAttachment = FoundationModelsExtras.ToolCallAttachment
+
+/// The records that one tool call attached. Canonical definition:
+/// `FoundationModelsExtras.ToolCallReport`.
+public typealias ToolCallReport = FoundationModelsExtras.ToolCallReport
+
+/// What an answer to a pending elicitation did. Canonical definition:
+/// `FoundationModelsExtras.ElicitationAnswerDelivery`.
+public typealias ElicitationAnswerDelivery = FoundationModelsExtras.ElicitationAnswerDelivery
+
+/// What the completion of an accepted URL elicitation did. Canonical
+/// definition: `FoundationModelsExtras.ElicitationCompletionDelivery`.
+public typealias ElicitationCompletionDelivery = FoundationModelsExtras.ElicitationCompletionDelivery

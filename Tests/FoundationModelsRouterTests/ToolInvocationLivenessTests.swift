@@ -2,6 +2,7 @@ import Foundation
 import FoundationModels
 import Testing
 
+@testable import FoundationModelsExtras
 @testable import FoundationModelsRouter
 
 /// Exercises task ^zfd8e69: the per-call binding layers post a typed
@@ -124,7 +125,7 @@ struct ToolInvocationLivenessTests {
         let sessionID = ULID.generate()
         let wrapped = NonStringMarkerTool()
         let tool = ContextBindingTool(
-            wrapping: wrapped, sessionID: sessionID, mailbox: SessionMailbox(), sink: sink)
+            wrapping: wrapped, site: MountSite(sessionID: sessionID, runPlane: RunPlane(), sink: sink))
 
         _ = try await tool.call(arguments: AmbientToolArguments(value: "ONE"))
 
@@ -146,8 +147,7 @@ struct ToolInvocationLivenessTests {
     func contextBindingToolPostsCloseWhenTheWrappedToolThrows() async throws {
         let sink = RecordingInvocationSink()
         let tool = ContextBindingTool(
-            wrapping: ThrowingMarkerTool(), sessionID: .generate(), mailbox: SessionMailbox(),
-            sink: sink)
+            wrapping: ThrowingMarkerTool(), site: MountSite(sessionID: .generate(), runPlane: RunPlane(), sink: sink))
 
         await #expect(throws: ThrowingMarkerTool.CallFailure(step: "ONE")) {
             _ = try await tool.call(arguments: AmbientToolArguments(value: "ONE"))
@@ -165,7 +165,7 @@ struct ToolInvocationLivenessTests {
         let sink = RecordingInvocationSink()
         let wrapped = MarkerEmittingTool()
         let tool = RunToCompletionRunner(
-            wrapping: wrapped, sessionID: .generate(), mailbox: SessionMailbox(), sink: sink,
+            wrapping: wrapped, site: MountSite(sessionID: .generate(), runPlane: RunPlane(), sink: sink),
             timeout: nil)
 
         let output = try await tool.call(arguments: AmbientToolArguments(value: "ONE"))
@@ -743,7 +743,7 @@ struct ToolInvocationLivenessTests {
     /// - Returns: The close record.
     private static func makeClosedRecord() -> ToolInvocationRecord {
         ToolInvocationRecord(
-            tool: "search", op: "search", correlationID: SessionMailbox.makeCompletionToken(),
+            tool: "search", op: "search", correlationID: RunPlane.makeCompletionToken(),
             sessionID: .generate(), openedAt: Date()
         ).closed(at: Date())
     }

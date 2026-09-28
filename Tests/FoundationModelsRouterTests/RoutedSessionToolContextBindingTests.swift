@@ -3,6 +3,7 @@ import FoundationModels
 import Synchronization
 import Testing
 
+@testable import FoundationModelsExtras
 @testable import FoundationModelsRouter
 
 /// Exercises task ^k4nygqa's host-side ambient binding: `RoutedSessionActor`

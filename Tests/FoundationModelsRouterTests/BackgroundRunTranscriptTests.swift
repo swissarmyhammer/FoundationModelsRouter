@@ -2,6 +2,7 @@ import Foundation
 import FoundationModels
 import Testing
 
+@_spi(Testing) import FoundationModelsExtras
 @testable import FoundationModelsRouter
 
 /// Exercises task `^zn8n9md`: a background run's own events reach the
@@ -269,7 +270,7 @@ struct BackgroundRunTranscriptTests {
 
         _ = try await session.respond(to: "start the long job")
 
-        let token = SessionMailbox.makeCompletionToken()
+        let token = RunPlane.makeCompletionToken()
         let natural = OperationEvent(
             tool: "shell", op: "run command", correlationID: token, kind: .completed,
             detail: "exit 0, 2481 lines", outcome: .succeeded)
@@ -284,12 +285,11 @@ struct BackgroundRunTranscriptTests {
             await outbox.post(event: natural)
             return natural
         }
-        await mailbox.track(
+        await mailbox.start(
             tool: "shell",
             op: "run command",
             kind: .swiftTask,
             completionToken: token,
-            settling: settling,
             canceler: {
                 cancelRequested.signal()
                 // Returning only once the mailbox has retained the natural
@@ -298,7 +298,8 @@ struct BackgroundRunTranscriptTests {
                 _ = await mailbox.wait(
                     completionToken: token, seconds: Self.settlementWaitSeconds)
                 return .cancelled
-            })
+            },
+            body: { await settling.value })
 
         await session.close()
 
@@ -319,7 +320,7 @@ struct BackgroundRunTranscriptTests {
 
         _ = try await session.respond(to: "start the long job")
 
-        let token = SessionMailbox.makeCompletionToken()
+        let token = RunPlane.makeCompletionToken()
         // Cancelling a `.swiftTask` run is cooperative: the canceler only
         // requests it, so the body is still running when the sweep synthesizes
         // its terminal.
@@ -330,13 +331,13 @@ struct BackgroundRunTranscriptTests {
                 tool: "shell", op: "run command", correlationID: token, kind: .completed,
                 detail: "exit 0", outcome: .succeeded)
         }
-        await session.mailbox.track(
+        await session.mailbox.start(
             tool: "shell",
             op: "run command",
             kind: .swiftTask,
             completionToken: token,
-            settling: settling,
-            canceler: { .cancelled })
+            canceler: { .cancelled },
+            body: { await settling.value })
 
         await session.close()
 

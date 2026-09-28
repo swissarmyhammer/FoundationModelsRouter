@@ -354,7 +354,7 @@ public protocol RoutedSession: Actor {
     ///   turns reporting off for later calls.
     func setGenerationStallReportInterval(_ interval: Duration)
 
-    /// Tears the session down: runs `SessionMailbox.sweep()`, which cancels
+    /// Tears the session down: runs `RunPlane.sweep()`, which cancels
     /// every background run and rejects every pending elicitation, and journals
     /// the resulting terminal events before it returns. It also finishes every
     /// ``streamSessionEvents()`` subscription, and releases the prompt cache

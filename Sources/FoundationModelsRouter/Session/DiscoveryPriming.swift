@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsExtras
 
 /// The opt-in that makes the first tool call of a data-facing answer
 /// deterministic by construction: a mounted discovery tool runs host-side, and

@@ -18,9 +18,6 @@
 @_exported import ULID
 
 extension ULID {
-    /// The canonical ULID text length: 26 Crockford base32 characters.
-    static let stringLength = 26
-
     /// Generates a new ULID for the current instant with random low bits.
     public static func generate() -> ULID {
         ULID()

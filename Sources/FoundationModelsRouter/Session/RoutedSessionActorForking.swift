@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsExtras
 
 /// ``RoutedSessionActor``'s session-lifetime boundaries: forking a child session
 /// over the same resident model, and closing a session down.
@@ -85,8 +86,9 @@ extension RoutedSessionActor {
         // forked first via its own `forked()` (falling back to sharing the
         // original unchanged when it doesn't conform to `ForkableTool`),
         // *then* the forked result is wrapped in the child's own binding
-        // layer — `RunToCompletionRunner` or `BackgroundToolRunner` for a String-output tool,
-        // `ContextBindingTool` for a non-String-output one — whose ambient
+        // layer — the run-to-completion or background runner of the Extras
+        // tool hosting for a String-output tool, its binding-only decorator
+        // for a non-String-output one — whose ambient
         // `ToolContext` posts to `childOutbox`. This
         // session's own already-instanced
         // `tools` are entirely untouched by this and keep posting to this
@@ -114,10 +116,10 @@ extension RoutedSessionActor {
         // The child's mailbox is fresh for the same reason its outbox is:
         // background runs and pending elicitations never migrate between
         // sessions (see ``RoutedSessionActor/mailbox``).
-        let childMailbox = SessionMailbox()
+        let childMailbox = RunPlane()
         // Minted before the tool composition below, deliberately: the
-        // child's binding layers (`RunToCompletionRunner`, `BackgroundToolRunner`,
-        // and `ContextBindingTool`)
+        // child's binding layers (the runners and the binding-only decorator
+        // of the Extras tool hosting)
         // stamp this id — the fork's own session identity — into every
         // composed run's ``ToolContext``.
         let childId = ULID.generate()
@@ -248,7 +250,7 @@ extension RoutedSessionActor {
 
     /// See ``RoutedSession/close()``.
     ///
-    /// Runs ``mailbox``'s `SessionMailbox.sweep()`, then journals each
+    /// Runs ``mailbox``'s `RunPlane.sweep()`, then journals each
     /// terminal event it produced through
     /// `SessionOutbox.journalWithoutStaging(event:)` — reaching the same
     /// ``record(event:)``, and so the same ``makeRunEventPartial(for:)``, a
@@ -277,7 +279,7 @@ extension RoutedSessionActor {
     /// writer per run: `sweep()` suspends across each run's canceler, so a run
     /// can settle naturally in that window and reach the journal through the
     /// two earlier writers before the sweep hands the same retained event
-    /// back; and cancelling a ``RunKind/swiftTask`` run is cooperative, so a
+    /// back; and cancelling a `RunKind.swiftTask` run is cooperative, so a
     /// run swept here can still finish afterwards and post its own terminal
     /// with a *different* outcome. Every later write is refused by
     /// ``claimJournalWrite(for:)``, which lets the first write of a run's

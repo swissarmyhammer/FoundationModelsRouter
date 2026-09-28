@@ -2,13 +2,14 @@ import Foundation
 import FoundationModels
 import Testing
 
+@testable import FoundationModelsExtras
 @testable import FoundationModelsRouter
 
 /// Tests what ``ToolContext/mount(_:op:as:postingTo:)``'s caller-supplied sink
 /// does NOT carry. It also tests which correlation the journal keeps instead.
 ///
 /// ``RoutedSession/close()`` sweeps a background run that is still tracked.
-/// The sweep is a MAILBOX operation. `SessionMailbox.sweep()` builds that run's
+/// The sweep is a MAILBOX operation. `RunPlane.sweep()` builds that run's
 /// terminal event itself. `close()` then sends it to the journal. The run does
 /// not post that event, so the caller's sink never receives it. This suite
 /// tests that exception, so the doc comment is not its only record.
@@ -55,7 +56,7 @@ struct MountedRunSweptTerminalTests {
     /// Waits on a gate. Supplies a canceler that opens that gate and then waits
     /// for this run to settle.
     ///
-    /// `SessionMailbox.sweep()` runs this canceler, and that call suspends the
+    /// `RunPlane.sweep()` runs this canceler, and that call suspends the
     /// mailbox. The canceler opens the gate, so the run's body finishes inside
     /// that window. The canceler returns only after the mailbox retained the
     /// run's own natural terminal. The sweep therefore returns that natural
@@ -67,8 +68,8 @@ struct MountedRunSweptTerminalTests {
         /// The gate the body waits on and the canceler opens.
         let gate: RunLatch
 
-        /// The mailbox the canceler waits on for this run's settlement.
-        let mailbox: SessionMailbox
+        /// The run plane the canceler waits on for this run's settlement.
+        let mailbox: RunPlane
 
         func call(arguments: MountArguments) async throws -> String {
             await gate.waitUntilOpen()
@@ -133,11 +134,11 @@ struct MountedRunSweptTerminalTests {
     private static func mountingContext(on session: RoutedSession) -> ToolContext {
         ToolContext(
             sessionID: session.id,
-            mailbox: session.mailbox,
+            runPlane: session.mailbox,
             sink: session.outbox,
             tool: mountingToolStamp,
             op: mountingOpStamp,
-            completionToken: SessionMailbox.makeCompletionToken(),
+            completionToken: RunPlane.makeCompletionToken(),
             isCancelled: { false }
         )
     }

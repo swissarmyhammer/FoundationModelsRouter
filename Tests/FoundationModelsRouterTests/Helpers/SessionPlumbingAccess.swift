@@ -1,3 +1,4 @@
+import FoundationModelsExtras
 import Tracing
 
 @testable import FoundationModelsRouter
@@ -15,8 +16,8 @@ extension RoutedSession {
     /// The session's internal `SessionOutbox`.
     nonisolated var outbox: SessionOutbox { (self as! RoutedSessionActor).outbox }
 
-    /// The session's internal `SessionMailbox`.
-    nonisolated var mailbox: SessionMailbox { (self as! RoutedSessionActor).mailbox }
+    /// The session's internal `RunPlane`.
+    nonisolated var mailbox: RunPlane { (self as! RoutedSessionActor).mailbox }
 
     /// The tracer the session opens its spans through, or `nil` when it holds
     /// none — see ``RoutedSessionActor/tracer``.

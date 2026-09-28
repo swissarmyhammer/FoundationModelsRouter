@@ -3,6 +3,7 @@ import FoundationModels
 import FoundationModelsRouterTestSupport
 import Testing
 
+@testable import FoundationModelsExtras
 @testable import FoundationModelsRouter
 
 /// Exercises task jkdae4b: threading `[any FoundationModels.Tool]` through

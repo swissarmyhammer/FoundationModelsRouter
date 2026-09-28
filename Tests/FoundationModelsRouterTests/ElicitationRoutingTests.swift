@@ -3,12 +3,13 @@ import FoundationModels
 import Synchronization
 import Testing
 
+@testable import FoundationModelsExtras
 @testable import FoundationModelsRouter
 
 /// Exercises task e6wb8ak: the ``RoutedSession``-level elicitation reply
 /// surface — ``RoutedSession/respond(elicitationId:response:)`` and
 /// ``RoutedSession/complete(elicitationId:)`` — routing an app host's answer
-/// through the session's own `SessionMailbox` to the suspended
+/// through the session's own `RunPlane` to the suspended
 /// ``ToolContext/elicit(_:)`` continuation.
 ///
 /// The route uses no task locals: session → that session's mailbox → the
@@ -181,26 +182,8 @@ struct ElicitationRoutingTests {
 
     // MARK: - Elicitation scaffolding
 
-    /// Polls until `condition` holds, yielding between checks, so a test can
-    /// wait for an `elicit(_:)` task to register its continuation without
-    /// racing it.
-    private static func eventually(_ condition: @Sendable () async -> Bool) async -> Bool {
-        for _ in 0..<1_000 {
-            if await condition() { return true }
-            try? await Task.sleep(nanoseconds: 1_000_000)
-        }
-        return await condition()
-    }
-
-    private static func formRequest(elicitationId: ULID) -> ElicitationRequest {
-        ElicitationRequest(
-            message: "name?",
-            elicitationId: elicitationId,
-            requestedSchema: ElicitationRequestedSchema(properties: [
-                "name": .string(ElicitationStringSchema())
-            ])
-        )
-    }
+    /// The helpers this suite shares with `SessionRunPlaneTests`.
+    private typealias Pending = PendingElicitationFixtures
 
     private static func urlRequest(elicitationId: ULID) throws -> ElicitationRequest {
         ElicitationRequest(
@@ -224,11 +207,11 @@ struct ElicitationRoutingTests {
     ) -> ToolContext {
         ToolContext(
             sessionID: session.id,
-            mailbox: session.mailbox,
+            runPlane: session.mailbox,
             sink: sink,
             tool: "fake",
             op: "ask user",
-            completionToken: SessionMailbox.makeCompletionToken(),
+            completionToken: RunPlane.makeCompletionToken(),
             isCancelled: { false }
         )
     }
@@ -256,7 +239,7 @@ struct ElicitationRoutingTests {
             try await context.elicit(request)
         }
         #expect(
-            await eventually {
+            await Pending.eventually {
                 await session.mailbox.pendingElicitationIds().contains(request.elicitationId)
             }
         )
@@ -272,7 +255,7 @@ struct ElicitationRoutingTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let elicitationId = ULID.generate()
-        let answering = await Self.suspendOnElicitation(Self.formRequest(elicitationId: elicitationId), on: session)
+        let answering = await Self.suspendOnElicitation(Pending.formRequest(elicitationId: elicitationId), on: session)
 
         let answer = ElicitationResponse.accept(content: ["name": .string("Ada")])
         #expect(await session.respond(elicitationId: elicitationId.description, response: answer) == .delivered)
@@ -290,7 +273,7 @@ struct ElicitationRoutingTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let elicitationId = ULID.generate()
-        let answering = await Self.suspendOnElicitation(Self.formRequest(elicitationId: elicitationId), on: session)
+        let answering = await Self.suspendOnElicitation(Pending.formRequest(elicitationId: elicitationId), on: session)
 
         #expect(await session.respond(elicitationId: elicitationId.description, response: .decline) == .delivered)
         #expect(try await answering.deliveredAnswer() == .decline)
@@ -333,13 +316,13 @@ struct ElicitationRoutingTests {
         let secondId = ULID.generate()
         let context = Self.makeContext(for: session)
         let firstAnswering = AnswerDrivenRun(waitingFor: "the elicitation \(firstId)") {
-            try await context.elicit(Self.formRequest(elicitationId: firstId))
+            try await context.elicit(Pending.formRequest(elicitationId: firstId))
         }
         let secondAnswering = AnswerDrivenRun(waitingFor: "the elicitation \(secondId)") {
-            try await context.elicit(Self.formRequest(elicitationId: secondId))
+            try await context.elicit(Pending.formRequest(elicitationId: secondId))
         }
         #expect(
-            await Self.eventually {
+            await Pending.eventually {
                 await session.mailbox.pendingElicitationIds().count == 2
             }
         )
@@ -412,7 +395,7 @@ struct ElicitationRoutingTests {
         defer { try? FileManager.default.removeItem(at: dirB) }
 
         let elicitationId = ULID.generate()
-        let answering = await Self.suspendOnElicitation(Self.formRequest(elicitationId: elicitationId), on: sessionB)
+        let answering = await Self.suspendOnElicitation(Pending.formRequest(elicitationId: elicitationId), on: sessionB)
 
         // Session A knows nothing about B's elicitation: the answer is a
         // no-op there, and B's run stays running.
@@ -534,7 +517,7 @@ struct ElicitationRoutingTests {
 
         let elicitationId = ULID.generate()
         let answering = await Self.suspendOnElicitation(
-            Self.formRequest(elicitationId: elicitationId), on: session, postingTo: session.outbox)
+            Pending.formRequest(elicitationId: elicitationId), on: session, postingTo: session.outbox)
 
         let request = try await watch.waitForFirst()
         #expect(request.elicitation?.elicitationId == elicitationId)

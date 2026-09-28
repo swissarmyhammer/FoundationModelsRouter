@@ -409,7 +409,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // stream died with the crashed process — its memory-only mailbox
             // is gone, so no teardown sweep ever journaled a terminal event
             // for it (the orderly-shutdown case is
-            // ``RoutedSessionActor/close()``'s `SessionMailbox.sweep()`).
+            // ``RoutedSessionActor/close()``'s `RunPlane.sweep()`).
             // Manufacture exactly one terminal `.completed` with outcome
             // ``OperationOutcome/lost`` per orphaned run and post it to this
             // node's fresh outbox: the drain of the next submission journals it durably,

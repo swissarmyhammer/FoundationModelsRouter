@@ -26,26 +26,18 @@ import FoundationModelsExtras
 /// The actor itself is internal. An app reaches the caller messages through
 /// ``RoutedSession``'s methods; a session never exposes its outbox.
 ///
-/// The outbox is also the session's ``ToolCallReportSink``: a tool decorator
-/// finds it through a dynamic cast when a call closes with attachments, and
-/// ``post(report:)`` forwards the report to the attached observer.
-/// A sink that can take back an event it staged for a later prompt.
+/// The outbox is also the session's `ToolCallReportSink` (an Extras
+/// protocol): a tool decorator of FoundationModelsExtras finds it through a
+/// dynamic cast when a call closes with attachments, and ``post(report:)``
+/// forwards the report to the attached observer.
 ///
-/// ``BackgroundToolRunner`` uses it for one case: a background run that
-/// settled inside its tool's ``BackgroundTool/inlineSettleGrace`` answers with
-/// the result in its own envelope, so the staged copy of that run's events
-/// must not also ride in front of the next prompt. The journal keeps its own
-/// copy, and the host still gets its ``SessionEvent/runSettled(_:)``, because
-/// neither reads the staged events.
-///
-/// A sink that stages nothing, such as the sink of a mounted inner run, does
-/// not conform, and the runner then withdraws nothing.
-protocol StagedEventWithdrawing: Sendable {
-    /// Removes every event staged under `correlationID`.
-    ///
-    /// - Parameter correlationID: The run's completion token.
-    func withdrawStagedEvents(correlationID: String) async
-}
+/// The outbox is also a `StagedEventWithdrawing` sink (an Extras protocol): a
+/// background run that settled inside its tool's
+/// `BackgroundTool.inlineSettleGrace` answers with the result in its own
+/// envelope, so the Extras runner withdraws the staged copy of that run's
+/// events, and it does not also ride in front of the next prompt. The journal
+/// keeps its own copy, and the host still gets its
+/// ``SessionEvent/runSettled(_:)``, because neither reads the staged events.
 
 /// The observer that a ``SessionOutbox`` tells when mail that the pump can
 /// deliver arrives: a run terminal (``OperationEventKind/completed``).

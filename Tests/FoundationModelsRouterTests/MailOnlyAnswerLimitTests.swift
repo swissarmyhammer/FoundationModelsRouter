@@ -4,6 +4,7 @@ import FoundationModelsRouterTestSupport
 import Synchronization
 import Testing
 
+@testable import FoundationModelsExtras
 @testable import FoundationModelsRouter
 
 /// Exercises task ^9bxas0w: the safety bound on a chain of answers that mail

@@ -1,4 +1,5 @@
 import FoundationModels
+import FoundationModelsExtras
 import Tracing
 
 /// Caps a tool's own output to ``TokenBudget/toolOutputLimit`` tokens before
@@ -70,9 +71,9 @@ enum ToolOutputCapping {
 /// discovered dynamically instead of requiring tool cooperation.
 ///
 /// Applied over whatever the tool-instancing pipeline already
-/// produced (a ``RunToCompletionRunner`` or ``BackgroundToolRunner`` wrapper),
-/// beneath only the ``ToolFailureDelivery`` decorator, which adds no text to
-/// a successful output,
+/// produced (the run-to-completion or background runner of the Extras tool
+/// hosting), beneath only the failure-delivery decorator of
+/// `ToolFailureDelivery`, which adds no text to a successful output,
 /// so the model-facing tool the SDK actually calls is the capped one: both
 /// continued generation and the transcript's own recorded `.toolOutput` entry
 /// — and therefore ``SessionEvent/toolStatus(id:status:summary:output:)``'s
@@ -98,7 +99,7 @@ struct TokenCappingTool<
     /// A rendered ``PendingRunEnvelope`` is treated as what it is:
     /// control-plane data. A truncated envelope would lose the
     /// `completionToken` the model needs, so the frame is never cut.
-    /// Recognition is ``PendingRunEnvelope/decoded(fromRendered:)``, which
+    /// Recognition is `PendingRunEnvelope.makeDecoded(fromRendered:)`, which
     /// accepts no ordinary tool output.
     ///
     /// An envelope that carries a settled run's result is still capped, but
@@ -110,7 +111,7 @@ struct TokenCappingTool<
     ///   the output, never the error.
     func call(arguments: Arguments) async throws -> String {
         let output = try await wrapped.call(arguments: arguments)
-        guard let envelope = PendingRunEnvelope.decoded(fromRendered: output) else {
+        guard let envelope = PendingRunEnvelope.makeDecoded(fromRendered: output) else {
             return ToolOutputCapping.capped(text: output, toTokenLimit: limit, counter: counter)
         }
         guard let detail = envelope.detail else {
@@ -125,24 +126,27 @@ extension ToolMounting {
     /// The per-tool session-mount composition every session tool-instancing
     /// site shares.
     ///
-    /// The mount is the default for every tool: run to completion with no
-    /// timeout. A tool has a timeout only when the tool's own declaration
-    /// states one, through ``BackgroundTool/mount`` or
-    /// ``BackgroundTool/timeout(from:)``. No timer and no race decide whether a call
-    /// goes to the background. A tool known ahead of time to run long declares
-    /// ``ToolMount/Mode/background`` for itself through ``BackgroundTool/mount``,
-    /// and that declaration wins over the ``ToolMount/synchronous`` passed
-    /// here. So this one site mounts both kinds, and the choice stays with the
-    /// tool that knows.
+    /// The tool hosting of FoundationModelsExtras mounts the tool. The mount
+    /// is the default for every tool: run to completion with no timeout. A
+    /// tool has a timeout only when the tool's own declaration states one,
+    /// through `BackgroundTool.mount` or `BackgroundTool.timeout(from:)`.
+    /// No timer and no race decide whether a call goes to the background. A
+    /// tool known ahead of time to run long declares
+    /// `ToolMount.Mode.background` for itself through
+    /// `BackgroundTool.mount` or `BackgroundTool.mount(for:)`, and that
+    /// declaration wins over the `ToolMount.synchronous` passed here. So
+    /// this one site mounts both kinds, and the choice stays with the tool
+    /// that knows.
     ///
-    /// A non-`String`-output tool is mounted in the binding-only
-    /// ``ContextBindingTool``.
+    /// The Extras tool hosting mounts a non-`String`-output tool in a
+    /// binding-only decorator: the decorator binds the ambient
+    /// ``ToolContext`` and does not cap or background the call.
     ///
-    /// The outermost layer is the ``ToolFailureDelivery`` decorator, over the
-    /// capping layer. This list is what the model calls, so a failed call is a
-    /// tool result that the model reads, and only a cancellation throws. A
-    /// caller that is not the model reaches the layer beneath through
-    /// ``ToolFailureDelivery/throwingTool(of:)``.
+    /// The outermost layer is the failure-delivery decorator of
+    /// `ToolFailureDelivery`, over the capping layer. This list is what the
+    /// model calls, so a failed call is a tool result that the model reads,
+    /// and only a cancellation throws. A caller that is not the model
+    /// reaches the layer beneath through `ToolFailureDelivery.throwingTool(of:)`.
     ///
     /// Every argument must be the owning session's own: `sessionID` is stamped
     /// into each background run's ``ToolContext``, `mailbox` tracks the
@@ -155,14 +159,24 @@ extension ToolMounting {
     /// ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:)``
     /// is the root and restore site.
     ///
-    /// - Parameter tracer: The owning session's tracer, which the mounted
-    ///   decorator opens each call's span through, or `nil` to read
-    ///   `InstrumentationSystem.tracer` at call time. The capping layer opens no
-    ///   span of its own — see ``ToolCallSpan``.
+    /// - Parameters:
+    ///   - tool: The tool to mount.
+    ///   - sessionID: The identity of the owning session.
+    ///   - mailbox: The run plane of the owning session.
+    ///   - sink: The event sink of the owning session, its outbox.
+    ///   - tokenLimit: The tokens each call's result may hold, or `nil` for
+    ///     no cap.
+    ///   - tokenCounter: The counter of the owning session.
+    ///   - tracer: The owning session's tracer, which the mounted
+    ///     decorator opens each call's span through, or `nil` to read
+    ///     `InstrumentationSystem.tracer` at call time. The capping layer
+    ///     opens no span of its own: the Extras mount layer opens the one
+    ///     span of each call.
+    /// - Returns: The model-facing tool.
     static func makeSessionMounted(
         tool: any Tool,
         sessionID: ULID,
-        mailbox: SessionMailbox,
+        mailbox: RunPlane,
         sink: any OperationEventSink,
         cappedToTokenLimit tokenLimit: Int?,
         tokenCounter: any TokenCounter,
@@ -170,11 +184,8 @@ extension ToolMounting {
     ) -> any Tool {
         let mounted = makeWrapped(
             tool: tool,
-            sessionID: sessionID,
-            mailbox: mailbox,
-            sink: sink,
-            configuration: .synchronous,
-            tracer: tracer
+            site: MountSite(sessionID: sessionID, runPlane: mailbox, sink: sink, tracer: tracer),
+            configuration: .synchronous
         )
         let capped = ToolOutputCapping.optionallyCapped(tool: mounted, toTokenLimit: tokenLimit, counter: tokenCounter)
         return ToolFailureDelivery.makeWrapped(tool: capped)

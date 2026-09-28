@@ -3,6 +3,7 @@ import FoundationModels
 import FoundationModelsRouterTestSupport
 import Synchronization
 
+@testable import FoundationModelsExtras
 @testable import FoundationModelsRouter
 
 /// The argument schema every latched background fixture tool takes: one

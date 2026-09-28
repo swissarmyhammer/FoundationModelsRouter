@@ -1,4 +1,5 @@
 import FoundationModels
+import FoundationModelsExtras
 
 /// What one generate attempt saw at its tool-result boundaries: the context
 /// of its newest ended generation call, the tool results of the round since

@@ -1,5 +1,6 @@
 import Foundation
 
+@_spi(Testing) import FoundationModelsExtras
 @testable import FoundationModelsRouter
 
 /// A latch a fixture body suspends on until a test (or cooperative
@@ -8,10 +9,10 @@ import Foundation
 /// `call(arguments:)`.
 ///
 /// This is the one gate the test target declares. Every suite that has to
-/// hold a run open — `SessionMailboxTests`, `ToolContextTests`,
-/// `BackgroundToolRunnerTests`, `SessionOutboxToolWiringTests`,
-/// `RoutedSessionCompactTests` — uses it, so the scaffolding lives in exactly
-/// one place and cannot drift copy from copy.
+/// hold a run open — `SessionRunPlaneTests`, `SessionMountCompositionTests`,
+/// `SessionOutboxToolWiringTests`, `RoutedSessionCompactTests` — uses it, so
+/// the scaffolding lives in exactly one place and cannot drift copy from
+/// copy.
 actor RunLatch {
     /// Whether the latch has been opened.
     private var isOpen = false
@@ -73,8 +74,12 @@ enum FakeRun {
 ///   stands for the run's wait on the killed process group, and it ends when a
 ///   test opens `latch`.
 ///
+/// The run plane starts the body of the run in a task of its own. That body
+/// only waits for the settling task of this fixture, so the canceler can
+/// cancel the settling task, as before.
+///
 /// - Parameters:
-///   - mailbox: The mailbox the run is tracked on.
+///   - mailbox: The run plane the run is tracked on.
 ///   - latch: The latch the run's body suspends on until a test opens it.
 ///   - kind: What kind of work the fake run is.
 ///   - detailOnSettle: The detail the terminal event carries.
@@ -83,14 +88,14 @@ enum FakeRun {
 ///     one.
 /// - Returns: The run's completion token.
 func trackFakeRun(
-    on mailbox: SessionMailbox,
+    on mailbox: RunPlane,
     latch: RunLatch,
     kind: RunKind = .swiftTask,
     detailOnSettle: String = "done",
     cancelerOutcome: OperationOutcome = .cancelled,
     counter: CancelCounter? = nil
 ) async -> String {
-    let token = SessionMailbox.makeCompletionToken()
+    let token = RunPlane.makeCompletionToken()
     let settling = Task<OperationEvent, Never> {
         await withTaskCancellationHandler {
             await latch.waitUntilOpen()
@@ -106,12 +111,11 @@ func trackFakeRun(
             outcome: Task.isCancelled ? .cancelled : .succeeded
         )
     }
-    await mailbox.track(
+    await mailbox.start(
         tool: FakeRun.tool,
         op: FakeRun.op,
         kind: kind,
         completionToken: token,
-        settling: settling,
         canceler: {
             await counter?.increment()
             switch kind {
@@ -124,7 +128,8 @@ func trackFakeRun(
                 break
             }
             return cancelerOutcome
-        }
+        },
+        body: { await settling.value }
     )
     return token
 }

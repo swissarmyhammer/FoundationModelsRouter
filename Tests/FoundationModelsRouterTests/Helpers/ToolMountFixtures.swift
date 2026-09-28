@@ -2,6 +2,7 @@ import Foundation
 import FoundationModels
 import Testing
 
+@testable import FoundationModelsExtras
 @testable import FoundationModelsRouter
 
 /// The arguments every mount-layer fixture tool takes.
@@ -10,9 +11,10 @@ struct MountArguments {
     let value: String
 }
 
-/// The fixtures the mount-layer suites share — `RunToCompletionRunnerTests`,
-/// `BackgroundToolRunnerTests`, `ToolMountingTests`, and
-/// `PendingRunEnvelopeTests` — so each tool and helper lives in one place.
+/// The fixtures the mount-layer suites share — `SessionMountCompositionTests`,
+/// `ToolInvocationLivenessTests`, `MountedRunSweptTerminalTests` and the other
+/// suites that mount a tool on a session — so each tool and helper lives in
+/// one place.
 enum MountFixtures {
     // MARK: - Intervals
 
@@ -23,11 +25,8 @@ enum MountFixtures {
     /// A deadline a test treats as "never elapses within this test".
     static let generousInterval: TimeInterval = 30
 
-    /// The ceiling on any await a test performs against the mailbox.
+    /// The ceiling on any await a test performs against the run plane.
     static let settlementDeadline: TimeInterval = 30
-
-    /// One hour in nanoseconds: the sleep a tool that must never return takes.
-    static let hourInNanoseconds: UInt64 = 3_600_000_000_000
 
     /// The pause between two polls of a run-plane fact, in nanoseconds.
     static let pollIntervalNanoseconds: UInt64 = 5_000_000
@@ -56,41 +55,35 @@ enum MountFixtures {
 
     // MARK: - Harness
 
-    /// One test's wiring: the mailbox, the sink, and the mounted tool.
+    /// One test's wiring: the run plane, the sink, and the mounted tool.
     struct Harness<Mounted: Tool> {
-        let mailbox: SessionMailbox
+        let mailbox: RunPlane
         let sink: RecordingSink
         let mounted: Mounted
     }
 
-    /// Mounts `tool` in a ``BackgroundToolRunner`` over a fresh mailbox and sink.
+    /// Mounts `tool` in a `BackgroundToolRunner` over a fresh run plane and
+    /// sink.
+    ///
+    /// - Parameters:
+    ///   - tool: The tool to mount.
+    ///   - timeout: The timeout with no progress, or `nil` for none.
+    /// - Returns: The wiring of the test.
     static func backgroundHarness<Arguments: ConvertibleFromGeneratedContent & Sendable>(
         wrapping tool: any Tool<Arguments, String>,
         timeout: TimeInterval? = nil
     ) -> Harness<BackgroundToolRunner<Arguments>> {
-        let mailbox = SessionMailbox()
+        let mailbox = RunPlane()
         let sink = RecordingSink()
         let mounted = BackgroundToolRunner(
-            wrapping: tool, sessionID: ULID.generate(), mailbox: mailbox, sink: sink, timeout: timeout
-        )
-        return Harness(mailbox: mailbox, sink: sink, mounted: mounted)
-    }
-
-    /// Mounts `tool` in a ``RunToCompletionRunner`` over a fresh mailbox and sink.
-    static func runToCompletionHarness<Arguments: ConvertibleFromGeneratedContent & Sendable>(
-        wrapping tool: any Tool<Arguments, String>,
-        timeout: TimeInterval? = nil
-    ) -> Harness<RunToCompletionRunner<Arguments>> {
-        let mailbox = SessionMailbox()
-        let sink = RecordingSink()
-        let mounted = RunToCompletionRunner(
-            wrapping: tool, sessionID: ULID.generate(), mailbox: mailbox, sink: sink, timeout: timeout
+            wrapping: tool, site: MountSite(sessionID: ULID.generate(), runPlane: mailbox, sink: sink),
+            timeout: timeout
         )
         return Harness(mailbox: mailbox, sink: sink, mounted: mounted)
     }
 
     /// One call's internal run, the body both runners share, over a fresh
-    /// mailbox and `sink`.
+    /// run plane and `sink`.
     ///
     /// - Parameters:
     ///   - tool: The tool the run calls.
@@ -106,10 +99,7 @@ enum MountFixtures {
         ToolRun(
             wrapped: tool,
             arguments: arguments,
-            sessionID: ULID.generate(),
-            mailbox: SessionMailbox(),
-            sink: sink,
-            op: nil,
+            site: MountSite(sessionID: ULID.generate(), runPlane: RunPlane(), sink: sink),
             mountTimeout: nil
         )
     }
@@ -135,10 +125,10 @@ enum MountFixtures {
         try JSONDecoder().decode(DecodedEnvelope.self, from: Data(rendered.utf8))
     }
 
-    /// Awaits the run's settlement through the mailbox and returns its
+    /// Awaits the run's settlement through the run plane and returns its
     /// terminal event.
     static func settledTerminal(
-        of completionToken: String, in mailbox: SessionMailbox
+        of completionToken: String, in mailbox: RunPlane
     ) async throws -> OperationEvent {
         let result = await mailbox.wait(completionToken: completionToken, seconds: settlementDeadline)
         guard case .settled(let terminal) = result else {
@@ -146,22 +136,6 @@ enum MountFixtures {
             throw FixtureError()
         }
         return terminal
-    }
-
-    /// Waits until an elicitation is pending on `mailbox`, and returns its id.
-    ///
-    /// No event tells that an elicitation became pending, so the wait reads
-    /// the mailbox until one is there. It has no wall clock (task ^v4zh807):
-    /// a loaded machine only delays the elicitation. A caller sets a
-    /// `.timeLimit`, which ends a wait for an elicitation that never comes.
-    ///
-    /// - Parameter mailbox: The mailbox the elicitation is pending on.
-    /// - Returns: The id of the first pending elicitation.
-    /// - Throws: ``ConditionNeverHeld`` when the `.timeLimit` of the test
-    ///   ended the wait.
-    static func firstPendingElicitationId(in mailbox: SessionMailbox) async throws -> ULID {
-        try await AwaitedCondition.wait(until: { await !mailbox.pendingElicitationIds().isEmpty })
-        return try #require(await mailbox.pendingElicitationIds().first)
     }
 
     /// Polls `fact` (bounded) until it returns a value.
@@ -187,22 +161,6 @@ enum MountFixtures {
         }
     }
 
-    /// Returns at once and reports whether its own run was already tracked in
-    /// the mailbox when its body started.
-    struct TrackedAtStartTool: Tool {
-        /// The output when the run was tracked before the body ran.
-        static let trackedOutput = "tracked at start"
-
-        let name = "tracked_at_start_tool"
-        let description = "reports whether its run was tracked when it started"
-
-        func call(arguments: MountArguments) async throws -> String {
-            guard let context = ToolContext.current else { return "no context" }
-            let tracked = await context.mailbox.backgroundRuns().map(\.completionToken)
-            return tracked.contains(context.completionToken) ? Self.trackedOutput : "untracked at start"
-        }
-    }
-
     /// Blocks on a ``RunLatch`` until the test opens it.
     struct GatedTool: Tool {
         let name = "gated_tool"
@@ -212,103 +170,6 @@ enum MountFixtures {
         func call(arguments: MountArguments) async throws -> String {
             await gate.waitUntilOpen()
             return "gated: \(arguments.value)"
-        }
-    }
-
-    /// Throws ``FixtureError`` immediately.
-    struct ThrowingTool: Tool {
-        let name = "throwing_tool"
-        let description = "throws immediately"
-
-        func call(arguments: MountArguments) async throws -> String {
-            throw FixtureError()
-        }
-    }
-
-    /// Sleeps cooperatively until cancelled: `Task.sleep` throws
-    /// `CancellationError` the moment the run's cancellation lands.
-    struct SleepingTool: Tool {
-        let name = "sleeping_tool"
-        let description = "sleeps until cancelled"
-
-        func call(arguments: MountArguments) async throws -> String {
-            try await Task.sleep(nanoseconds: hourInNanoseconds)
-            return "never returned"
-        }
-    }
-
-    /// Posts one progress event of its own, then returns.
-    struct ProgressOnceTool: Tool {
-        let name = "progress_once_tool"
-        let description = "posts one progress event then returns"
-
-        func call(arguments: MountArguments) async throws -> String {
-            await ToolContext.current?.progress("halfway")
-            return "progressed: \(arguments.value)"
-        }
-    }
-
-    /// Posts its own terminal `.completed` event, then returns.
-    struct OwnTerminalTool: Tool {
-        let name = "own_terminal_tool"
-        let description = "posts its own terminal event then returns"
-
-        func call(arguments: MountArguments) async throws -> String {
-            await ToolContext.current?.post(
-                OperationEvent(
-                    tool: "", op: "", correlationID: "", kind: .completed,
-                    detail: "my own terminal", outcome: .succeeded
-                )
-            )
-            return "own-terminal: \(arguments.value)"
-        }
-    }
-
-    /// Posts progress every `interval` seconds for `beats` beats, then returns.
-    struct HeartbeatTool: Tool {
-        let name = "heartbeat_tool"
-        let description = "posts periodic progress then returns"
-        let beats: Int
-        let interval: TimeInterval
-
-        func call(arguments: MountArguments) async throws -> String {
-            for beat in 0..<beats {
-                try await Task.sleep(for: .seconds(interval))
-                await ToolContext.current?.progress("beat \(beat)")
-            }
-            return "heartbeat done"
-        }
-    }
-
-    /// Sleeps forever and supplies a per-call `timeout` through
-    /// ``BackgroundTool``.
-    struct PerCallTimeoutTool: Tool, BackgroundTool {
-        let name = "per_call_timeout_tool"
-        let description = "supplies a short per-call timeout"
-        let timeoutSeconds: TimeInterval
-
-        func call(arguments: MountArguments) async throws -> String {
-            try await Task.sleep(nanoseconds: hourInNanoseconds)
-            return "never returned"
-        }
-
-        func timeout(from _: GeneratedContent) -> TimeInterval? {
-            timeoutSeconds
-        }
-    }
-
-    /// Sleeps forever and supplies a `nil` per-call timeout.
-    struct NilTimeoutTool: Tool, BackgroundTool {
-        let name = "nil_timeout_tool"
-        let description = "supplies no per-call timeout at all"
-
-        func call(arguments: MountArguments) async throws -> String {
-            try await Task.sleep(nanoseconds: hourInNanoseconds)
-            return "never returned"
-        }
-
-        func timeout(from _: GeneratedContent) -> TimeInterval? {
-            nil
         }
     }
 
@@ -406,25 +267,6 @@ enum MountFixtures {
         }
     }
 
-    /// Returns at once, declares a grace, and names no sentence of its own,
-    /// so a settled run carries the default one.
-    struct DefaultSentenceGraceTool: Tool, BackgroundTool {
-        let name = "default_sentence_grace_tool"
-        let description = "declares a grace and takes the default sentences"
-        let grace: TimeInterval
-
-        /// The output this tool returns for `value`.
-        static func output(for value: String) -> String {
-            "default: \(value)"
-        }
-
-        var inlineSettleGrace: TimeInterval? { grace }
-
-        func call(arguments: MountArguments) async throws -> String {
-            Self.output(for: arguments.value)
-        }
-    }
-
     /// The one question the elicitation fixtures ask.
     static func proceedRequest() -> ElicitationRequest {
         ElicitationRequest(
@@ -446,72 +288,6 @@ enum MountFixtures {
             guard let context = ToolContext.current else { return "no context" }
             let response = try await context.elicit(proceedRequest())
             return "answered: \(response.action.rawValue)"
-        }
-    }
-
-    /// Elicits, then stalls forever.
-    struct ElicitThenStallTool: Tool {
-        let name = "elicit_then_stall_tool"
-        let description = "asks one question then stalls forever"
-
-        func call(arguments: MountArguments) async throws -> String {
-            guard let context = ToolContext.current else { return "no context" }
-            _ = try await context.elicit(proceedRequest())
-            try await Task.sleep(nanoseconds: hourInNanoseconds)
-            return "never returned"
-        }
-    }
-
-    /// Records that a tool observed the run's cooperative cancellation flag.
-    actor CancellationWitness {
-        private(set) var observed = false
-
-        func mark() {
-            observed = true
-        }
-    }
-
-    /// Polls `ToolContext.isCancelled` — never structured task cancellation —
-    /// and returns normally the moment the flag flips, marking the witness.
-    struct CancellationFlagPollingTool: Tool {
-        let name = "flag_polling_tool"
-        let description = "returns when the ambient cancellation flag flips"
-        let witness: CancellationWitness
-
-        func call(arguments: MountArguments) async throws -> String {
-            guard let context = ToolContext.current else { return "no context" }
-            for _ in 0..<pollAttempts {
-                if context.isCancelled {
-                    await witness.mark()
-                    return "observed cancellation"
-                }
-                // Deliberately swallow the cancellation error: this tool
-                // cooperates through the flag alone.
-                try? await Task.sleep(nanoseconds: pollIntervalNanoseconds)
-            }
-            return "never cancelled"
-        }
-    }
-
-    /// A silent non-`String`-output tool.
-    struct NonStringOutputTool: Tool {
-        let name = "non_string_output_tool"
-        let description = "returns a non-String PromptRepresentable"
-
-        func call(arguments: MountArguments) async throws -> NonStringToolOutput {
-            NonStringToolOutput(text: "ignored")
-        }
-    }
-
-    /// Blocks on a ``RunLatch`` and then returns the ambient run's session identity.
-    struct GatedSessionIdentityTool: Tool {
-        let name = "gated_session_identity_tool"
-        let description = "returns the ambient context's session identity once its gate opens"
-        let gate: RunLatch
-
-        func call(arguments: MountArguments) async throws -> String {
-            await gate.waitUntilOpen()
-            return ToolContext.current?.sessionID.ulidString ?? "unbound"
         }
     }
 
@@ -537,17 +313,6 @@ enum MountFixtures {
     static func attachInCallOrder() {
         ToolContext.current?.attach(firstAttachment)
         ToolContext.current?.attach(secondAttachment)
-    }
-
-    /// Whether `text` carries any part of an attaching fixture's records: the
-    /// schema name or the JSON document.
-    ///
-    /// - Parameter text: The rendered output or event detail to read.
-    /// - Returns: `true` when the text names a record.
-    static func isAttachmentMentioned(in text: String) -> Bool {
-        attachmentsInCallOrder.contains { attachment in
-            text.contains(attachment.schemaName) || text.contains(attachment.contentJSON)
-        }
     }
 
     /// Attaches both records through the ambient context, then returns.

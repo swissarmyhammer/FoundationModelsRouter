@@ -2,10 +2,11 @@ import Foundation
 import FoundationModels
 import Testing
 
-// Deliberately NOT `@testable`. Task ^8y20bwd is about a registration site
-// OUTSIDE this module, so this suite is held to the module's public surface:
-// a route that needed `ToolContext.mailbox`, `SessionMailbox.track` or
-// `TrackResult` would not compile here at all.
+// Task ^8y20bwd is about a registration site OUTSIDE this module, so this
+// suite mounts each tool through the public route of such a site:
+// `ToolContext.mount(_:op:as:postingTo:)`. The imports are `@testable` only
+// so that a test can cast the mounted tool to the internal runner types.
+@testable import FoundationModelsExtras
 @testable import FoundationModelsRouter
 
 /// Exercises task ^8y20bwd: a registration site gives a mounted tool a journal
@@ -155,19 +156,19 @@ struct RegisteredJournalOpTests {
   /// run plane through — the public route, stamped as the enclosing run.
   ///
   /// - Parameters:
-  ///   - mailbox: The session mailbox every run of the test is tracked on.
+  ///   - mailbox: The run plane of the session that tracks every run of the test.
   ///   - sink: The session's own sink.
   /// - Returns: The enclosing run's context.
   private static func makeEnclosingContext(
-    mailbox: SessionMailbox, sink: RecordingSink
+    mailbox: RunPlane, sink: RecordingSink
   ) -> ToolContext {
     ToolContext(
       sessionID: ULID.generate(),
-      mailbox: mailbox,
+      runPlane: mailbox,
       sink: sink,
       tool: enclosingToolName,
       op: enclosingOp,
-      completionToken: SessionMailbox.makeCompletionToken(),
+      completionToken: RunPlane.makeCompletionToken(),
       isCancelled: { false }
     )
   }
@@ -214,14 +215,13 @@ struct RegisteredJournalOpTests {
   func aRegisteredOpReachesTheRunPlane() async throws {
     let gate = RunLatch()
     let sink = RecordingSink()
-    let host = Self.makeEnclosingContext(mailbox: SessionMailbox(), sink: sink)
+    let host = Self.makeEnclosingContext(mailbox: RunPlane(), sink: sink)
 
-    let mounted = ToolMounting.makeWrapped(
-      tool: GatedVerbTool(gate: gate),
-      inheriting: host,
-      sink: sink,
+    let mounted = host.mount(
+      GatedVerbTool(gate: gate),
       op: Self.registeredOp,
-      configuration: Self.backgroundMount
+      as: Self.backgroundMount,
+      postingTo: sink
     )
     let run = try await Self.backgroundOneRun(mounted, on: host)
 
@@ -237,14 +237,13 @@ struct RegisteredJournalOpTests {
   func aRegisteredOpReachesTheInvocationRecord() async throws {
     let gate = RunLatch()
     let sink = RecordingSink()
-    let host = Self.makeEnclosingContext(mailbox: SessionMailbox(), sink: sink)
+    let host = Self.makeEnclosingContext(mailbox: RunPlane(), sink: sink)
 
-    let mounted = ToolMounting.makeWrapped(
-      tool: GatedVerbTool(gate: gate),
-      inheriting: host,
-      sink: sink,
+    let mounted = host.mount(
+      GatedVerbTool(gate: gate),
       op: Self.registeredOp,
-      configuration: Self.backgroundMount
+      as: Self.backgroundMount,
+      postingTo: sink
     )
     let run = try await Self.backgroundOneRun(mounted, on: host)
 
@@ -264,14 +263,13 @@ struct RegisteredJournalOpTests {
   func aRegisteredOpReachesTheBindingOnlyDecorator() async throws {
     let tool = AmbientNonStringOutputTool()
     let sink = RecordingSink()
-    let host = Self.makeEnclosingContext(mailbox: SessionMailbox(), sink: sink)
+    let host = Self.makeEnclosingContext(mailbox: RunPlane(), sink: sink)
 
-    let mounted = ToolMounting.makeWrapped(
-      tool: tool,
-      inheriting: host,
-      sink: sink,
+    let mounted = host.mount(
+      tool,
       op: Self.registeredOp,
-      configuration: Self.backgroundMount
+      as: Self.backgroundMount,
+      postingTo: sink
     )
     let binding = try #require(
       mounted as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>)
@@ -298,15 +296,14 @@ struct RegisteredJournalOpTests {
   func aMountThatNamesNoOpKeepsTheOneStringStamp() async throws {
     let gate = RunLatch()
     let sink = RecordingSink()
-    let host = Self.makeEnclosingContext(mailbox: SessionMailbox(), sink: sink)
+    let host = Self.makeEnclosingContext(mailbox: RunPlane(), sink: sink)
 
     // The call this suite exists to leave alone: no `op` argument at all, which
     // is every mount that stands today.
-    let mounted = ToolMounting.makeWrapped(
-      tool: GatedVerbTool(gate: gate),
-      inheriting: host,
-      sink: sink,
-      configuration: Self.backgroundMount
+    let mounted = host.mount(
+      GatedVerbTool(gate: gate),
+      as: Self.backgroundMount,
+      postingTo: sink
     )
     let run = try await Self.backgroundOneRun(mounted, on: host)
 
@@ -325,14 +322,13 @@ struct RegisteredJournalOpTests {
   func anInnerCallReportsTheEnclosingOpInItsEventJournal() async throws {
     let gate = RunLatch()
     let sink = RecordingSink()
-    let host = Self.makeEnclosingContext(mailbox: SessionMailbox(), sink: sink)
+    let host = Self.makeEnclosingContext(mailbox: RunPlane(), sink: sink)
 
-    let mounted = ToolMounting.makeWrapped(
-      tool: GatedVerbTool(gate: gate),
-      inheriting: host,
-      sink: EnclosingRunSink(enclosing: host, upstream: sink),
+    let mounted = host.mount(
+      GatedVerbTool(gate: gate),
       op: Self.registeredOp,
-      configuration: Self.backgroundMount
+      as: Self.backgroundMount,
+      postingTo: EnclosingRunSink(enclosing: host, upstream: sink)
     )
     let run = try await Self.backgroundOneRun(mounted, on: host)
 

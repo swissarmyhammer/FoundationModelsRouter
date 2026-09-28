@@ -4,6 +4,7 @@ import FoundationModelsRouterTestSupport
 import Synchronization
 import Testing
 
+@testable import FoundationModelsExtras
 @testable import FoundationModelsRouter
 
 /// Exercises task s61g2vb's per-session tool composition:

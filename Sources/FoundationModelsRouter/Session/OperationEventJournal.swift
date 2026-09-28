@@ -45,6 +45,12 @@ protocol OperationEventJournal: AnyObject, Sendable {
 /// same reference-cycle reason ``OperationEventJournal`` documents: the only
 /// implementation is the ``RoutedSessionActor`` that owns the outbox for its
 /// whole life.
+///
+/// The tool decorators of FoundationModelsExtras post each report to the
+/// outbox through the Extras protocol `ToolCallReportSink`, and each settled
+/// background run to the session through the Extras protocol
+/// `BackgroundRunSettlementObserver`. The router conforms to both and
+/// declares neither.
 protocol ToolInvocationObserver: AnyObject, Sendable {
     /// Delivers one posted invocation record live to this session's event
     /// consumers.
@@ -57,96 +63,4 @@ protocol ToolInvocationObserver: AnyObject, Sendable {
     ///
     /// - Parameter report: The report the outbox has just received.
     func deliver(report: ToolCallReport) async
-}
-
-/// A destination a tool decorator posts a ``ToolCallReport`` to when a call
-/// closes with at least one attachment.
-///
-/// This protocol is Router-internal, and it is apart from `OperationEventSink`
-/// on purpose. `OperationEventSink` belongs to the FoundationModelsExtras
-/// package, and this package cannot add a requirement to it. A Router-side
-/// extension on that protocol would be statically dispatched: a call through
-/// `any OperationEventSink` would always run the extension body, and never a
-/// conforming type's own method. `SessionOutbox` would then never receive a
-/// report. The decorators therefore ask each sink at run time whether it is
-/// also a `ToolCallReportSink`, with a dynamic cast. A sink that is not one
-/// drops the report. That drop is a consequence of the cast, not of a default
-/// implementation: this protocol supplies none.
-protocol ToolCallReportSink: Sendable {
-    /// Receives one call's report, posted after the call's close
-    /// ``ToolInvocationRecord``.
-    ///
-    /// - Parameter report: The report for the call that closed.
-    func post(report: ToolCallReport) async
-}
-
-extension OperationEventSink {
-    /// Posts the ``ToolCallReport`` for one closing call to this sink, when
-    /// the call attached at least one record.
-    ///
-    /// This is an extension method, not a requirement, so a call through
-    /// `any OperationEventSink` always runs this body. The body then asks this
-    /// sink at run time whether it is also a ``ToolCallReportSink``, with a
-    /// dynamic cast. Both tool decorators post their report through here, so
-    /// the cast and the drop rule live in one place.
-    ///
-    /// - Parameters:
-    ///   - record: The call's close ``ToolInvocationRecord``, already posted.
-    ///   - attachments: The records the call attached, in call order.
-    func postToolCallReport(closing record: ToolInvocationRecord, attachments: [ToolCallAttachment]) async {
-        guard let report = ToolCallReport(closing: record, attachments: attachments) else { return }
-        // The cast decides delivery. `OperationEventSink` is external, so
-        // no requirement carries a report; a sink that is not a
-        // `ToolCallReportSink` drops it. That drop is a consequence of
-        // the cast, not of a default implementation.
-        await (self as? any ToolCallReportSink)?.post(report: report)
-    }
-}
-
-extension ToolCallReport {
-    /// Creates the report for one closing call, or returns `nil` when the
-    /// call attached nothing.
-    ///
-    /// The report carries the identity of `record`, so a host can join it to
-    /// the call's close record.
-    ///
-    /// - Parameters:
-    ///   - record: The call's close ``ToolInvocationRecord``.
-    ///   - attachments: The records the call attached, in call order.
-    init?(closing record: ToolInvocationRecord, attachments: [ToolCallAttachment]) {
-        guard !attachments.isEmpty else { return nil }
-        self.init(
-            tool: record.tool,
-            op: record.op,
-            correlationID: record.correlationID,
-            sessionID: record.sessionID,
-            attachments: attachments
-        )
-    }
-}
-
-/// A destination a session's `SessionMailbox` hands each naturally settled
-/// background run's terminal ``OperationEvent`` to, at the moment the run
-/// settles.
-///
-/// The third attach point beside ``OperationEventJournal`` and
-/// ``ToolInvocationObserver``, installed at the same place
-/// (``RoutedSessionActor/attachOutboxJournalIfNeeded()``). A run's own terminal
-/// normally reaches the journal through the run's funnel and the outbox. A run
-/// mounted inside another run through ``ToolContext/mount(_:op:as:)`` is the
-/// exception: that overload re-stamps the terminal with the mounting run's
-/// token, and the mounting run's funnel drops it. The mailbox is the one place
-/// that always receives the run's own terminal, so this observer carries that
-/// terminal to the journal under the run's own token.
-///
-/// Class-bound because `SessionMailbox` holds its observer *weakly*, for the
-/// same reference-cycle reason ``OperationEventJournal`` documents: the only
-/// implementation is the ``RoutedSessionActor`` that owns the mailbox for its
-/// whole life.
-protocol BackgroundRunSettlementObserver: AnyObject, Sendable {
-    /// Receives one naturally settled run's terminal, bounded the way the
-    /// mailbox retains it.
-    ///
-    /// - Parameter terminal: The settled run's terminal event.
-    func deliver(settledTerminal terminal: OperationEvent) async
 }

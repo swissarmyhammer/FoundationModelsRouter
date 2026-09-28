@@ -1,5 +1,6 @@
 import FoundationModels
 
+@testable import FoundationModelsExtras
 @testable import FoundationModelsRouter
 
 /// Test-only, `Arguments`-erased access to a mount layer's wrapped tool, so
@@ -45,20 +46,4 @@ func mountWrapped(_ tool: (any Tool)?) -> (any Tool)? {
 /// the capping layer, a runner, or the binding-only layer.
 func failureDeliveryPeeled(_ tool: (any Tool)?) -> (any Tool)? {
     tool.map(ToolFailureDelivery.throwingTool(of:))
-}
-
-extension ToolCallResult {
-    /// The wrapped tool's own output, or `nil` when the call ended as a
-    /// failure.
-    var wrappedOutput: Output? {
-        guard case .output(let output) = self else { return nil }
-        return output
-    }
-
-    /// The failure text the model reads, or `nil` when the call returned an
-    /// output.
-    var failureText: String? {
-        guard case .failure(let text) = self else { return nil }
-        return text
-    }
 }

@@ -40,10 +40,10 @@ public enum SessionEvent: Sendable, Equatable {
     /// Its ``ToolInvocationRecord/correlationID`` is the run's `completionToken`, never a `Transcript.ToolCall.id`.
     case toolInvocation(ToolInvocationRecord)
 
-    /// The records one tool call attached through ``ToolContext/attach(_:)``.
+    /// The records one tool call attached through `ToolContext.attach(_:)`.
     /// Delivery-only, never recorded. Emitted one time per call, after the
     /// call's close ``toolInvocation(_:)`` record, and only when the call
-    /// attached at least one record. Its ``ToolCallReport/correlationID`` is the
+    /// attached at least one record. Its `ToolCallReport.correlationID` is the
     /// run's `completionToken`, the same value as the call's
     /// ``ToolInvocationRecord/correlationID``, never a `Transcript.ToolCall.id`.
     /// Always on ``RoutedSession/streamSessionEvents()``; on the stream of the
@@ -128,7 +128,7 @@ public enum SessionEvent: Sendable, Equatable {
     case runSettled(OperationEvent)
 
     /// A run of this session asked the user a question through
-    /// ``ToolContext/elicit(_:)`` and is suspended until a host answers it.
+    /// `ToolContext.elicit(_:)` and is suspended until a host answers it.
     /// Carries the `.elicitation` ``OperationEvent`` the run posted, at the
     /// moment the session journals it. The mailbox registers the pending
     /// entry before the run posts, so a host can answer as soon as it sees
@@ -138,14 +138,14 @@ public enum SessionEvent: Sendable, Equatable {
     /// `elicitationId` is the id ``RoutedSession/respond(elicitationId:response:)``
     /// and ``RoutedSession/complete(elicitationId:)`` take. The event's
     /// `correlationID` is the posting run's `completionToken`; for a run
-    /// mounted through ``ToolContext/mount(_:op:as:)`` it is the mounting
+    /// mounted through `ToolContext.mount(_:op:as:)` it is the mounting
     /// run's token.
     ///
     /// Always on ``RoutedSession/streamSessionEvents()``; on the stream of the
     /// answer when the elicitation is raised inside an answer.
     ///
     /// Known limit: an elicitation posted through
-    /// ``ToolContext/mount(_:op:as:postingTo:)`` with a sink that does not
+    /// `ToolContext.mount(_:op:as:postingTo:)` with a sink that does not
     /// forward to the session's outbox never reaches the session's journal,
     /// so it never reaches this event.
     case elicitationRequested(OperationEvent)
@@ -169,45 +169,6 @@ public enum SessionEvent: Sendable, Equatable {
     /// answer runs when the session holds the mail. The session sends one for
     /// each hold.
     case mailDeliveryPaused(MailDeliveryPause)
-}
-
-/// The records one tool call attached, carried by ``SessionEvent/toolCallReport(_:)``.
-///
-/// The Router does not read an attachment. A host decodes each one by its
-/// ``ToolCallAttachment/schemaName``. The report identifies its call the way
-/// the call's ``ToolInvocationRecord`` does, so a host can join the two.
-public struct ToolCallReport: Sendable, Equatable {
-    /// The session-visible tool name, the same stamp the call's record carries.
-    public let tool: String
-
-    /// The operation the call ran, the same `op` the call's record carries.
-    public let op: String
-
-    /// The run's `completionToken`: the same value as the call's
-    /// ``ToolInvocationRecord/correlationID``, never a `Transcript.ToolCall.id`.
-    public let correlationID: String
-
-    /// The session the call ran in.
-    public let sessionID: ULID
-
-    /// The records the call attached, in call order. At least one.
-    public let attachments: [ToolCallAttachment]
-
-    /// Creates a report for one call.
-    ///
-    /// - Parameters:
-    ///   - tool: The session-visible tool name.
-    ///   - op: The operation the call ran.
-    ///   - correlationID: The run's `completionToken`.
-    ///   - sessionID: The session the call ran in.
-    ///   - attachments: The records the call attached, in call order.
-    public init(tool: String, op: String, correlationID: String, sessionID: ULID, attachments: [ToolCallAttachment]) {
-        self.tool = tool
-        self.op = op
-        self.correlationID = correlationID
-        self.sessionID = sessionID
-        self.attachments = attachments
-    }
 }
 
 /// The kind of SDK transcript entry a ``SessionEvent/entryRecorded(id:kind:)`` names.

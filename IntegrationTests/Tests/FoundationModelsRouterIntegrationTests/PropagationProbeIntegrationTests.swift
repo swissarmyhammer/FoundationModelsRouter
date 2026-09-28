@@ -1,4 +1,5 @@
 import FoundationModels
+import FoundationModelsExtras
 import FoundationModelsRouterTestSupport
 import Testing
 
@@ -289,7 +290,7 @@ struct PropagationProbeIntegrationTests {
     private static func makeBoundContext(completionToken: String) -> ToolContext {
         ToolContext(
             sessionID: ULID.generate(),
-            mailbox: SessionMailbox(),
+            runPlane: RunPlane(),
             sink: DiscardingSink(),
             tool: propagationProbeToolName,
             op: propagationProbeToolName,
@@ -461,7 +462,7 @@ struct PropagationProbeIntegrationTests {
         session: LanguageModelSession,
         log: ProbeObservationLog
     ) async throws -> ProbeAnswer {
-        let boundCompletionToken = SessionMailbox.makeCompletionToken()
+        let boundCompletionToken = RunPlane.makeCompletionToken()
         let context = makeBoundContext(completionToken: boundCompletionToken)
 
         let response = try await ToolContext.$current.withValue(context) {

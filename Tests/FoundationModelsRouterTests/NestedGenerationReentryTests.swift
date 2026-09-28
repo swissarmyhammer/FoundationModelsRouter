@@ -4,6 +4,7 @@ import FoundationModelsRouterTestSupport
 import Synchronization
 import Testing
 
+@testable import FoundationModelsExtras
 @testable import FoundationModelsRouter
 
 /// Exercises task ^1zt7vyg: a tool body that generates on the same resident

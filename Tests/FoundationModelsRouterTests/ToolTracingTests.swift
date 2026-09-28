@@ -26,8 +26,9 @@ import Tracing
 /// network, no GPU and no bootstrapped tracing backend.
 @Suite("Tool tracing")
 struct ToolTracingTests {
-    /// The span name every tool call opens.
-    private static let toolSpanName = RouterTracing.SpanName.tool
+    /// The span name every tool call opens. The tool hosting of
+    /// FoundationModelsExtras opens the span of each tool call with this name.
+    private static let toolSpanName = "FoundationModelsRouter.tool"
 
     /// The span name the enclosing submission opens.
     private static let submissionSpanName = RouterTracing.SpanName.submission

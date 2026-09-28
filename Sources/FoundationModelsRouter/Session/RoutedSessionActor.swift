@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsExtras
 import Tracing
 
 /// Writes one session's identity onto its ``RouterTracing/SpanName/session``
@@ -184,7 +185,7 @@ func makeRoutedSessionActor(
     tools: [any Tool],
     originalTools: [any Tool] = [],
     outbox: SessionOutbox = SessionOutbox(),
-    mailbox: SessionMailbox = SessionMailbox(),
+    mailbox: RunPlane = RunPlane(),
     persistedEntryCount: Int,
     historyOrdinal: Int,
     sidecarOrigin: SessionSidecarOrigin,
@@ -354,9 +355,10 @@ actor RoutedSessionActor: RoutedSession {
     /// messages that wait for the pump. Fresh per session.
     nonisolated let outbox: SessionOutbox
 
-    /// The registry of tracked background runs and pending elicitations. Fresh
-    /// per session.
-    nonisolated let mailbox: SessionMailbox
+    /// The run plane of this session: the registry of tracked background runs
+    /// and pending elicitations, from FoundationModelsExtras. Fresh per
+    /// session.
+    nonisolated let mailbox: RunPlane
 
     /// The pump of this session while it runs, or `nil` when no pump runs.
     /// See ``wakePump()``.
@@ -596,7 +598,7 @@ actor RoutedSessionActor: RoutedSession {
         tools: [any Tool] = [],
         originalTools: [any Tool] = [],
         outbox: SessionOutbox = SessionOutbox(),
-        mailbox: SessionMailbox = SessionMailbox(),
+        mailbox: RunPlane = RunPlane(),
         persistedEntryCount: Int,
         historyOrdinal: Int,
         sidecarOrigin: SessionSidecarOrigin,

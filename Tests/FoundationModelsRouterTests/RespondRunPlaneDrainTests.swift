@@ -4,6 +4,7 @@ import FoundationModelsRouterTestSupport
 import Synchronization
 import Testing
 
+@testable import FoundationModelsExtras
 @testable import FoundationModelsRouter
 
 /// Exercises the run plane of a session with no drain (task ^3qx0mpt,
@@ -91,7 +92,7 @@ struct RespondRunPlaneDrainTests {
                 return prompts.count
             }
             _ = try await inner.respond(to: prompt, maxTokens: maxTokens)
-            if submission <= backgroundingSubmissions, let mailbox = ToolContext.current?.mailbox {
+            if submission <= backgroundingSubmissions, let mailbox = ToolContext.current?.runPlane {
                 let token = await releaser.track(on: mailbox)
                 // The run settles on its own, beside the submission that
                 // started it, as a quick background job does.
@@ -135,7 +136,7 @@ struct RespondRunPlaneDrainTests {
 
         /// The mailbox each run is tracked on, keyed by the run's completion
         /// token.
-        private var mailboxes: [String: SessionMailbox] = [:]
+        private var mailboxes: [String: RunPlane] = [:]
 
         /// The outbox each settled terminal goes to, or `nil` before
         /// ``deliverTerminals(to:)``.
@@ -152,7 +153,7 @@ struct RespondRunPlaneDrainTests {
         ///
         /// - Parameter mailbox: The mailbox the run is tracked on.
         /// - Returns: The run's completion token.
-        func track(on mailbox: SessionMailbox) async -> String {
+        func track(on mailbox: RunPlane) async -> String {
             let gate = RunLatch()
             let token = await trackFakeRun(on: mailbox, latch: gate)
             gates[token] = gate
@@ -310,7 +311,7 @@ struct RespondRunPlaneDrainTests {
     /// Waits for the run `token` names to settle, and reports its terminal
     /// event.
     ///
-    /// The wait is ``SessionMailbox/wait(completionToken:seconds:)`` with no
+    /// The wait is ``RunPlane/wait(completionToken:seconds:)`` with no
     /// expiry: the mailbox resumes it when the run settles, and a
     /// cancellation, which the `.timeLimit` of the suite sends, ends it
     /// early.
