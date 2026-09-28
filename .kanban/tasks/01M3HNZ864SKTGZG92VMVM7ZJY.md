@@ -17,8 +17,24 @@ comments:
     - evidence: 22 files. Sources: SessionConfiguration.swift, RoutedLLM.swift, GuidedGeneration.swift, GuidedGeneration.md, SessionTreeRestoration.swift, RoutedSessionActor.swift, RoutedSession.swift, RoutedSessionActorForking.swift, DiscoveryPriming.swift. Tests: SessionConfigurationTests, SessionTreeRestorationTests, AutoCompactionFixtures, and DocC links in 7 test files and 2 IntegrationTests files. `swift build --build-tests` clean build (separate scratch path) has no warnings in repo code; `swift build --package-path IntegrationTests --build-tests` passes; 14 filtered tests pass.
     - next: /test
   timestamp: 2026-09-28T17:00:29.530792+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m3mfry4zgy3wjfhvqnbw1n0q
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (74f8dd2) — 0 findings, 0 confirmed, 0 refuted; 14 attempted, 0 failed.
+    - next: task moved to done.
+  timestamp: 2026-09-28T17:07:35.199567+00:00
+- actor: claude-code
+  id: 01m3mfs0s9hanvffqg5gpfajdt
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 22 files; failing tests written first in SessionConfigurationTests (no summarization key in a new slice; an old slice with the key decodes).
+    - test: green — `swift test`: 1362 tests in 171 suites, 20 tests in 9 suites, 19 tests in 3 suites passed (2 known issues from `withKnownIssue` blocks that were there before); clean build with a separate scratch path has no warnings in repo code; `swift build --package-path IntegrationTests --build-tests` passes.
+    - commit: 74f8dd2 refactor(router)!: remove the Summarization parameter from the public session API (^mvm7zjy)
+    - review: clean — review sha HEAD~1..HEAD, 0 findings.
+  timestamp: 2026-09-28T17:07:37.897462+00:00
+position_column: done
+position_ordinal: ffffffab80
 title: Remove the settings-free Summarization parameter from the public session API, and keep old sidecars decoding
 ---
 ## What
