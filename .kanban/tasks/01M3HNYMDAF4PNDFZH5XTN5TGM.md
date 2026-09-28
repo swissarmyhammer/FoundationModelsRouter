@@ -1,8 +1,43 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: a680
+comments:
+- actor: claude-code
+  id: 01m3mjkn8fad2kyjb0g8p475py
+  text: |-
+    Research done.
+    - `CompactionRoundTripIntegrationTests` and `Qwen38CompactionIntegrationTests` use `CompactionPrompt.default` through the session. They have no prompt parameter. To measure v8 on these two suites, the measurement run sets `default` to v8 in the local tree for that run only.
+    - The continuity eval now names its prompt in `compactionContinuityEvalPrompt` (file scope in `CompactionContinuityRealModelTests.swift`). The `promptName` info also comes from it.
+    - v7 and v8 share the first three lines and the last line. `CompactionPrompt.routerDefaultText(points:)` builds both texts, so the shared lines are not copied. The v7 text is unchanged (the v7 shape tests pass).
+    - Machine: 128 GB memory; `mlx-community/Qwen3.8-27B-4bit`, `Qwen2.5-3B-Instruct-4bit` and `Qwen3-4B-4bit` are in the Hugging Face cache.
+  timestamp: 2026-09-28T17:57:07.983998+00:00
+- actor: claude-code
+  id: 01m3mkk23zhd5c700pscts6jm0
+  text: |-
+    ### Gated measurement, v7 against v8 (2026-09-28, one machine: Apple silicon, 128 GB)
+    Command (the same for both runs, from the repo root):
+    `swift test --package-path IntegrationTests --filter 'CompactionContinuityEvaluationIntegrationTests|CompactionRoundTripIntegrationTests|Qwen38CompactionIntegrationTests'`
+    Models: continuity eval and `Qwen38CompactionIntegrationTests` use `mlx-community/Qwen3.8-27B-mxfp4`; `CompactionRoundTripIntegrationTests` uses `mlx-community/Qwen2.5-3B-Instruct-4bit`.
+    For the v8 run, `CompactionPrompt.default` was set to `routerDefaultV8` in the local tree for that run only. The continuity eval used `.default` in both runs, so each run measured one prompt in all three suites.
+
+    | prompt | factsSurvived | answersCorrect | compactionOccurred | CompactionRoundTripIntegrationTests | Qwen38CompactionIntegrationTests |
+    |---|---|---|---|---|---|
+    | router-default-v7 | 1.0 | 1.0 | 1.0 | pass (11.8 s) | pass (130.4 s) |
+    | router-default-v8 | 1.0 | 1.0 | 1.0 | pass (16.2 s) | pass (99.1 s) |
+
+    Continuity suite wall clock: v7 282.0 s, v8 346.9 s. Each output names all three suites (4 tests in 2 suites, and 1 test in 1 suite).
+
+    Decision (rule of this card): v8 is equal to v7 on both metrics, and neither metric is higher. v7 already has the maximum score (1.0) on the four fast tasks, so this eval cannot show an improvement for any prompt. `default` stays `router-default-v7`, and v8 is removed. The continuity eval keeps its named prompt (`compactionContinuityEvalPrompt`), so a later candidate can use the same procedure.
+  timestamp: 2026-09-28T18:14:16.959447+00:00
+- actor: claude-code
+  id: 01m3mkket98vvjhg9pjex56btr
+  text: |-
+    ### implement — changed
+    - evidence: 2 files — IntegrationTests/Tests/FoundationModelsRouterEvalIntegrationTests/CompactionContinuityRealModelTests.swift (the eval names its prompt in `compactionContinuityEvalPrompt`), Sources/FoundationModelsRouter/Compaction/CompactionPrompt.swift (doc comment records the v8 trial). v8 text and its shape test were written first (TDD: red, then 5 of 5 `CompactionPromptTests` green), used for the measurement, then removed by the decision rule (tie at 1.0 / 1.0).
+    - next: /test
+  timestamp: 2026-09-28T18:14:29.961500+00:00
+position_column: doing
+position_ordinal: '80'
 title: Try compaction prompt router-default-v8 with the fact rules of Apple's SummarizeHistory, and keep it only when the gated evals show an improvement
 ---
 ## What

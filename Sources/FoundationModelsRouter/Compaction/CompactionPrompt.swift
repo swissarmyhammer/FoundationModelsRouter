@@ -30,6 +30,13 @@ public struct CompactionPrompt: Sendable, Equatable, Codable {
     /// for their own sake", Qwen2.5-3B wrote a summary without the vault code
     /// the user asked it to keep, so the recall after the compaction failed.
     /// A value line at the end was also lost when the summary ran long.
+    ///
+    /// The candidate `"router-default-v8"` kept this value line and replaced
+    /// the three points with the fact rules of Apple's `SummarizeHistory`
+    /// (short third-person statements, the most recent thread of the user,
+    /// and what is still open). On 2026-09-28 (task ^xtn5tgm) the gated
+    /// continuity eval gave v7 and v8 the same scores, `factsSurvived` 1.0 and
+    /// `answersCorrect` 1.0, so v7 stays the default.
     public static let `default` = CompactionPrompt(
         name: "router-default-v7",
         text: """

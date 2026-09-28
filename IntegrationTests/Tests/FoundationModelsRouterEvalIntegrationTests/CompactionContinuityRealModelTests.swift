@@ -18,11 +18,16 @@ private let compactionContinuityEvalRealSubjectRunner = CompactionContinuityEval
     instructions: compactionContinuityFastInstructions
 )
 
+/// The compaction prompt this eval measures. Set it to a candidate prompt to
+/// measure that candidate against the default on the same machine.
+private let compactionContinuityEvalPrompt = CompactionPrompt.default
+
 /// The real-model evaluation itself: points at the FAST seed of every task
-/// ``compactionContinuityFastTierIDs`` names, with the router's default
-/// compaction prompt and the fast tier's synthetic budget, driving each
-/// through a real, auto-compacting session.
+/// ``compactionContinuityFastTierIDs`` names, with
+/// ``compactionContinuityEvalPrompt`` and the fast tier's synthetic budget,
+/// driving each through a real, auto-compacting session.
 private let compactionContinuityEvalRealEvaluation = CompactionContinuityEvaluation(
+    prompt: compactionContinuityEvalPrompt,
     budget: compactionContinuityFastBudget,
     tasks: compactionContinuityFastTierSeeds
 ) { steps, finalInstruction, prompt, budget in
@@ -106,7 +111,7 @@ struct CompactionContinuityEvaluationIntegrationTests {
         "Compaction preserves session continuity across a multi-step task",
         .evaluates(
             compactionContinuityEvalRealEvaluation,
-            info: ["promptName": CompactionPrompt.default.name]
+            info: ["promptName": compactionContinuityEvalPrompt.name]
         )
     )
     func evaluateContinuity() async throws {
