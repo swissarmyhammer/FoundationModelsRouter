@@ -48,7 +48,7 @@ private struct BackendCompactionSummarizer: CompactionSummarizer {
 /// Wraps another ``CompactionSummarizer`` so every model call it makes runs
 /// inside the cancellation boundary of the work of the owning session
 /// (``RoutedSessionActor/runCancellableModelCall(composedPrompt:submittingTo:_:)``),
-/// as one submission to the queue of the container that runs it. This lets
+/// as one submission to the queue of the model that runs it. This lets
 /// ``RoutedSession/cancel()`` and task cancellation stop a
 /// compaction's summarizer call, and keeps the call from running at the same
 /// time as a submission of another session on that model.

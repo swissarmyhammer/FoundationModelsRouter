@@ -29,16 +29,29 @@ public protocol LoadedModelContainer: Sendable {}
 /// A loaded generation (`standard`/`flash`) model container. Every generation
 /// call a ``RoutedSession`` performs runs through a backend this container makes.
 ///
-/// The live container owns a ``GenerationQueue``, and each backend it makes
-/// names that queue (``LanguageModelSessionBackend/generationQueue``), so the
+/// The entry of the model in the Extras model pool owns the one
+/// ``GenerationQueue`` of the model (``FoundationModelsExtras/ModelHold/queue``).
+/// The router gives that queue to the container through
+/// ``submitting(to:)``, and each backend of the copy that it gets back names
+/// the queue (``LanguageModelSessionBackend/generationQueue``). Thus the
 /// session of the backend submits each whole SDK call to it
-/// (`generation-queue.md`, section 5.3). A container whose backends name no
-/// queue (a test stub or a third-party container) gets no generation gating
-/// from the Router: two sessions over it can generate at the same time. Such
-/// a container can own a ``GenerationQueue`` of its own, and its backends can
-/// name it, or submit each scripted call through
-/// ``GenerationQueue/submit(isolation:_:)`` themselves.
+/// (`generation-queue.md`, section 5.3), and all users of one model share one
+/// queue. A container that keeps the default ``submitting(to:)`` and whose
+/// backends name no queue (a test stub or a third-party container) gets no
+/// generation gating from the Router: two sessions over it can generate at
+/// the same time.
 public protocol LoadedLLMContainer: LoadedModelContainer {
+    /// Gives a copy of this container whose backends name `queue`, the work
+    /// queue of the pool entry of the model. The router calls it once for
+    /// each hold, before it makes a session backend.
+    ///
+    /// The default gives this container: its backends keep the queue that
+    /// they name, or no queue.
+    ///
+    /// - Parameter queue: The work queue of the pool entry of the model.
+    /// - Returns: The container whose backends name `queue`.
+    func submitting(to queue: GenerationQueue) -> any LoadedLLMContainer
+
     /// Makes a new session backend over this resident model.
     ///
     /// - Parameter instructions: The session's system instructions, or `nil`.
@@ -117,6 +130,12 @@ public protocol LoadedLLMContainer: LoadedModelContainer {
 }
 
 extension LoadedLLMContainer {
+    /// Gives this container unchanged: its backends keep the queue that they
+    /// name, or no queue.
+    public func submitting(to queue: GenerationQueue) -> any LoadedLLMContainer {
+        self
+    }
+
     /// Ignores `tools` and forwards to ``makeSession(instructions:)``.
     public func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
         makeSession(instructions: instructions)

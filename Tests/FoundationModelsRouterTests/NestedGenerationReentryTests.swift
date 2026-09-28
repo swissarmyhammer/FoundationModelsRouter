@@ -934,8 +934,8 @@ struct NestedGenerationReentryTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fixture = PassObservingFixture()
-        let queue = fixture.queue
         let profile = try await Self.makeProfile(container: fixture.container, dir: dir)
+        let queue = try #require(profile.standard.backendQueue)
 
         let holder = profile.standard.makeSession()
         let waiter = profile.standard.makeSession()

@@ -5,8 +5,9 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Tasks ^1psqdm9 and ^6wqketz: each summarizer call of a compaction is one
-/// item on the queue of the container that runs it (`generation-queue.md`,
-/// section 5.3), and a cancel of the session reaches that item while it waits.
+/// item on the queue of the pool entry of the model that runs it
+/// (`generation-queue.md`, section 5.3), and a cancel of the session reaches
+/// that item while it waits.
 ///
 /// The flash slot resolves to a ``LiveBackendContainer`` over a
 /// ``PassObservingModel``, so the flash summarizer call and each call of a
@@ -18,7 +19,7 @@ import Testing
 /// No wait here is a bare `await` on an answer that can stay suspended: a test
 /// opens the latch, or sees the end of the answer inside a bound, before it
 /// awaits that answer. So a regression fails the test and does not hang the run.
-@Suite("A summarizer call is one submission on the queue of its container (task ^1psqdm9)")
+@Suite("A summarizer call is one submission on the queue of its model (task ^1psqdm9)")
 struct SummarizerSubmissionTests {
     /// The suite's temp-directory prefix, handed to
     /// ``RouterTestFixtures/makeTempDir(prefix:)``.
@@ -40,6 +41,9 @@ struct SummarizerSubmissionTests {
     private struct WaitingSummarizer {
         /// The flash slot: its container, its latch, and its observer.
         let flash: PassObservingFixture
+
+        /// The queue of the pool entry of the flash model.
+        let flashQueue: GenerationQueue
 
         /// The session over the trigger, on the standard slot.
         let session: RoutedSession
@@ -79,6 +83,7 @@ struct SummarizerSubmissionTests {
         let flash = PassObservingFixture()
         let (session, standard) = try await AutoCompactionFixtures.makeTriggeredSession(
             budget: AutoCompactionFixtures.fixedBudget, flash: flash.container, tempDirPrefix: tempDirPrefix)
+        let flashQueue = try #require(session.profile.flash.backendQueue)
         let flashSession = session.profile.flash.makeSession()
 
         // The flash session's submission runs on the flash worker, and its
@@ -92,11 +97,12 @@ struct SummarizerSubmissionTests {
         // its flash summarizer call waits behind the flash submission.
         let (log, compactingAnswer) = SessionEventLog.collect(await session.streamEvents(to: triggeringPrompt))
         let summarizerWaits = await BoundedWait.conditionReached("the flash summarizer call waiting for the worker") {
-            await flash.queue.waitingCount == 1
+            await flashQueue.waitingCount == 1
         }
         return WaitingSummarizer(
-            flash: flash, session: session, standard: standard, flashAnswer: flashAnswer, log: log,
-            compactingAnswer: compactingAnswer, flashInside: flashInside, summarizerWaits: summarizerWaits)
+            flash: flash, flashQueue: flashQueue, session: session, standard: standard,
+            flashAnswer: flashAnswer, log: log, compactingAnswer: compactingAnswer, flashInside: flashInside,
+            summarizerWaits: summarizerWaits)
     }
 
     @Test("a flash summarizer call and a flash submission of another session never overlap")
@@ -116,10 +122,10 @@ struct SummarizerSubmissionTests {
         #expect(await flash.observer.enteredCount == Self.flashPassCount)
         #expect(flash.passes.recorded.first?.prompt == Self.flashPrompt)
         // The summarizer call is not a submission of the session, so its wait
-        // sends no submissionQueued. Only the queue of the flash container
+        // sends no submissionQueued. Only the queue of the flash model
         // shows the wait (`summarizerWaits` above).
         #expect(await !waiting.log.events.contains(where: Self.isSubmissionQueued))
-        #expect(await flash.queue.isRunning == false)
+        #expect(await waiting.flashQueue.isRunning == false)
     }
 
     /// Task ^6wqketz. The production change that makes this test fail: a
@@ -139,7 +145,7 @@ struct SummarizerSubmissionTests {
         let answerEnded = await BoundedWait.conditionReached("the end of the cancelled answer") {
             await !waiting.log.events.answerFailures.isEmpty
         }
-        let waitingAfterTheCancel = await flash.queue.waitingCount
+        let waitingAfterTheCancel = await waiting.flashQueue.waitingCount
         let passesAfterTheCancel = await flash.observer.enteredCount
 
         await flash.latch.open()
@@ -162,7 +168,7 @@ struct SummarizerSubmissionTests {
             try await waiting.compactingAnswer.value
         }
         #expect(await flash.observer.enteredCount == 1)
-        #expect(await flash.queue.isRunning == false)
+        #expect(await waiting.flashQueue.isRunning == false)
     }
 
     /// Whether `event` is a `submissionQueued` event, with any id.

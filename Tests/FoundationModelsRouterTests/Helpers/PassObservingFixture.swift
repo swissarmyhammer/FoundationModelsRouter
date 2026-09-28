@@ -6,8 +6,9 @@ import FoundationModelsRouterTestSupport
 /// container whose backends run over them.
 ///
 /// This is the one fixture of the queue suites. A suite that needs more than
-/// one container over the same parts calls ``makeContainer()``: each
-/// container owns a ``GenerationQueue`` of its own.
+/// one container over the same parts calls ``makeContainer()``: each such
+/// container names no queue until a resolve gives it the queue of its pool
+/// entry.
 struct PassObservingFixture: Sendable {
     /// The observer each pass reports its entry and its exit to.
     let observer = ConcurrencyPeakObserver()
@@ -21,7 +22,11 @@ struct PassObservingFixture: Sendable {
     /// The model every container of this fixture runs over.
     let model: PassObservingModel
 
-    /// The container whose backends share one queue.
+    /// The queue of ``container``. It stands in for the queue of a pool entry
+    /// in a test that uses ``container`` outside a pool.
+    let queue = GenerationQueue()
+
+    /// The container whose backends share ``queue``.
     let container: LiveBackendContainer<PassObservingModel>
 
     /// Makes a fixture with a closed latch.
@@ -34,14 +39,11 @@ struct PassObservingFixture: Sendable {
     init(toolRounds: Int = 0, step: AsyncSemaphore? = nil) {
         model = PassObservingModel(
             observer: observer, latch: latch, passes: passes, step: step, toolRounds: toolRounds)
-        container = LiveBackendContainer(model: model)
+        container = LiveBackendContainer(model: model, generationQueue: queue)
     }
 
-    /// The queue of ``container``.
-    var queue: GenerationQueue { container.generationQueue }
-
-    /// A new container over the parts of this fixture, with a queue of its
-    /// own.
+    /// A new container over the parts of this fixture. It names no queue
+    /// until a resolve gives it the queue of its pool entry.
     ///
     /// - Returns: The container.
     func makeContainer() -> LiveBackendContainer<PassObservingModel> {

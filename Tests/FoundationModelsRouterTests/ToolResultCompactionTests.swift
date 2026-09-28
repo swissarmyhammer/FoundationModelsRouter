@@ -53,9 +53,9 @@ struct ToolResultCompactionTests {
         /// The temp directory the router cached into.
         let directory: URL
 
-        /// The queue of the one container. Each slot of the profile
-        /// resolves to that container, so every call of the session and every
-        /// summarizer call is one item of this queue.
+        /// The queue of the pool entry of the model of the session. Every
+        /// call of the session and every own-model summarizer call is one
+        /// item of this queue.
         let queue: GenerationQueue
     }
 
@@ -87,7 +87,7 @@ struct ToolResultCompactionTests {
         let session = profile[keyPath: slot].makeSession(tools: [tool], budget: budget)
         return Fixture(
             session: session, tool: tool, recorder: recorder, directory: directory,
-            queue: container.generationQueue)
+            queue: try #require(profile[keyPath: slot].backendQueue))
     }
 
     /// Runs one streamed answer and collects its events.

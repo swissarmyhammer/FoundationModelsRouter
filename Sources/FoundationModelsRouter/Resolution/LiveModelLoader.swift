@@ -44,20 +44,22 @@ import Synchronization
 /// pooled container each decode with their own mode. A call that names no
 /// mode gets the provider default.
 ///
-/// The container owns the ``GenerationQueue`` of its model. One resident
-/// container is one pool entry, so this is the queue of the pool entry. Each
-/// backend the container makes runs over a new per-session
-/// ``SessionLanguageModel`` and names that queue, so its session submits each
-/// whole SDK call to it (`generation-queue.md`, section 5.3).
+/// The container makes no ``GenerationQueue``. The entry of the model in the
+/// Extras model pool owns the one queue of the model, and the router gives it
+/// through ``submitting(to:)``. Each backend of that copy runs over a new
+/// per-session ``SessionLanguageModel`` and names the queue, so its session
+/// submits each whole SDK call to it (`generation-queue.md`, section 5.3).
 package struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     /// The raw `LanguageModel` conformance of this slot's resident MLX model.
     /// The eviction of the loader and the thinking control of a backend read
     /// it; generation runs over a ``SessionLanguageModel`` that wraps it.
     let model: MLXLanguageModel
 
-    /// The queue every backend of this container names. It is a reference
-    /// type, so each copy of this container holds the same queue.
-    let generationQueue = GenerationQueue()
+    /// The work queue of the pool entry that every backend of this container
+    /// names, or `nil` before the router gives one through
+    /// ``submitting(to:)``. It is a reference type, so each copy of this
+    /// container holds the same queue.
+    private(set) var generationQueue: GenerationQueue?
 
     /// The window of ``model``, in tokens: the native max context its
     /// `config.json` declares. Each backend this container makes sends it
@@ -67,6 +69,30 @@ package struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     /// The counter over the loaded model's own tokenizer. See
     /// ``LoadedLLMContainer/tokenCounter``.
     package let tokenCounter: any TokenCounter
+
+    /// Makes a container that names no queue. The router gives it the queue
+    /// of the pool entry through ``submitting(to:)``.
+    ///
+    /// - Parameters:
+    ///   - model: The raw `LanguageModel` conformance of the resident model.
+    ///   - contextWindow: The window of `model`, in tokens.
+    ///   - tokenCounter: The counter over the tokenizer of `model`.
+    init(model: MLXLanguageModel, contextWindow: Int, tokenCounter: any TokenCounter) {
+        self.model = model
+        self.contextWindow = contextWindow
+        self.tokenCounter = tokenCounter
+    }
+
+    /// Gives a copy of this container whose backends name `queue`, the work
+    /// queue of the pool entry of ``model``.
+    ///
+    /// - Parameter queue: The work queue of the pool entry.
+    /// - Returns: The copy.
+    package func submitting(to queue: GenerationQueue) -> any LoadedLLMContainer {
+        var copy = self
+        copy.generationQueue = queue
+        return copy
+    }
 
     /// Makes a live session backend over ``model`` that decodes with the
     /// provider default.
@@ -148,13 +174,11 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// builds a new wrapper over it.
     private let model: any FoundationModels.LanguageModel
 
-    /// The queue of the container of ``model``. This backend, its forks and
-    /// its replaced transcripts name it.
-    private let containerQueue: GenerationQueue
-
-    /// The queue of the container of ``model``, which the session of this
-    /// backend submits each generating call to.
-    var generationQueue: GenerationQueue? { containerQueue }
+    /// The work queue of the pool entry of ``model``, which the session of
+    /// this backend submits each generating call to, or `nil` when the
+    /// container got no queue. This backend, its forks and its replaced
+    /// transcripts name it.
+    let generationQueue: GenerationQueue?
 
     /// The live session every call on this backend runs through.
     private let liveSession: LanguageModelSession
@@ -233,7 +257,8 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// - Parameters:
     ///   - model: The raw `LanguageModel` conformance that the session's
     ///     wrapper wraps.
-    ///   - generationQueue: The queue of the container of `model`.
+    ///   - generationQueue: The work queue of the pool entry of `model`, or
+    ///     `nil` for no queue.
     ///   - contextWindow: The window of `model`, in tokens. A call that names
     ///     no ceiling sends it as `maximumResponseTokens`.
     ///   - instructions: The system instructions of the session, or `nil`.
@@ -243,7 +268,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     ///     the new per-session wrapper it receives.
     private init(
         model: any FoundationModels.LanguageModel,
-        generationQueue: GenerationQueue,
+        generationQueue: GenerationQueue?,
         contextWindow: Int,
         instructions: String?,
         tools: [any FoundationModels.Tool],
@@ -254,7 +279,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
         self.liveSession = makeSession(sessionModel)
         self.sessionModelState = sessionModel.state
         self.model = model
-        self.containerQueue = generationQueue
+        self.generationQueue = generationQueue
         self.contextWindow = contextWindow
         self.instructions = instructions
         self.tools = tools
@@ -266,7 +291,8 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     ///
     /// - Parameters:
     ///   - model: The raw `LanguageModel` conformance.
-    ///   - generationQueue: The queue of the container of `model`.
+    ///   - generationQueue: The work queue of the pool entry of `model`, or
+    ///     `nil` for no queue.
     ///   - contextWindow: The window of `model`, in tokens. A call that names
     ///     no ceiling sends it as `maximumResponseTokens`.
     ///   - instructions: The system instructions of the session, or `nil`.
@@ -274,7 +300,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     ///   - samplingMode: The decoding strategy, or `nil` for the provider default.
     convenience init(
         model: any FoundationModels.LanguageModel,
-        generationQueue: GenerationQueue,
+        generationQueue: GenerationQueue?,
         contextWindow: Int,
         instructions: String?,
         tools: [any FoundationModels.Tool],
@@ -293,7 +319,8 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     ///
     /// - Parameters:
     ///   - model: The raw `LanguageModel` conformance.
-    ///   - generationQueue: The queue of the container of `model`.
+    ///   - generationQueue: The work queue of the pool entry of `model`, or
+    ///     `nil` for no queue.
     ///   - contextWindow: The window of `model`, in tokens.
     ///   - transcript: The transcript to seed the session from.
     ///   - tools: The tools of the session.
@@ -304,7 +331,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     ///     used as given.
     convenience init(
         model: any FoundationModels.LanguageModel,
-        generationQueue: GenerationQueue,
+        generationQueue: GenerationQueue?,
         contextWindow: Int,
         transcript: FoundationModels.Transcript,
         tools: [any FoundationModels.Tool],
@@ -663,7 +690,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     ) -> any LanguageModelSessionBackend {
         MLXFoundationModelsSessionBackend(
             model: model,
-            generationQueue: containerQueue,
+            generationQueue: generationQueue,
             contextWindow: contextWindow,
             transcript: transcript,
             tools: tools,
@@ -677,7 +704,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// and it names the same queue.
     func replacingTranscript(_ transcript: FoundationModels.Transcript) -> any LanguageModelSessionBackend {
         MLXFoundationModelsSessionBackend(
-            model: model, generationQueue: containerQueue, contextWindow: contextWindow,
+            model: model, generationQueue: generationQueue, contextWindow: contextWindow,
             transcript: transcript, tools: tools, samplingMode: samplingMode)
     }
 

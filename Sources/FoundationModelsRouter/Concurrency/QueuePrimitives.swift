@@ -10,11 +10,15 @@ public typealias ModelRef = FoundationModelsExtras.ModelRef
 /// section 5.3). `FoundationModelsExtras` owns the type. This alias keeps the
 /// router name, so a router user needs no `import FoundationModelsExtras`.
 ///
-/// There is one queue for each pool entry. The live container
-/// (``MLXFoundationModelsContainer``) makes the queue and owns it. Each
-/// backend the container makes names this queue
-/// (``LanguageModelSessionBackend/generationQueue``), and the session of that
-/// backend submits each of its SDK calls to it as one item.
+/// There is one queue for each pool entry. The entry of the model in the
+/// Extras model pool makes the queue and owns it
+/// (``FoundationModelsExtras/ModelHold/queue``). No router type makes one. The
+/// router gives the queue to the container
+/// (``LoadedLLMContainer/submitting(to:)``), each backend of that container
+/// names it (``LanguageModelSessionBackend/generationQueue``), and the session
+/// of that backend submits each of its SDK calls to it as one item. An embed
+/// call of a ``RoutedEmbedder`` is one item of the queue of the embedding
+/// model.
 public typealias GenerationQueue = FoundationModelsExtras.GenerationQueue
 
 /// A refusal of a submission to a ``GenerationQueue`` that could never run

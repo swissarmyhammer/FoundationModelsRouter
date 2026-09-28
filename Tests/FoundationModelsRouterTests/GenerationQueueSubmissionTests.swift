@@ -12,7 +12,7 @@ import Testing
 ///
 /// Each session is a routed session over one ``LiveBackendContainer``, so each
 /// answer goes through the production backend and submits its SDK call to the
-/// one queue of that container. A tool body runs inside the submission, so it
+/// one queue of the pool entry of the model. A tool body runs inside the submission, so it
 /// holds the worker of the model for every other session on that model. An
 /// in-band tool body that asks a session on the same model for an answer is
 /// refused at once. The background shape of that wait is the spike
@@ -188,6 +188,7 @@ struct GenerationQueueSubmissionTests {
         let fixture = PassObservingFixture(toolRounds: 1)
         await fixture.latch.open()
         let resolved = try await RouterTestFixtures.resolveStandardProfile(over: fixture.container, cacheDir: dir)
+        let queue = try #require(resolved.profile.standard.backendQueue)
         let entered = AsyncSemaphore(value: 0)
         let toolLatch = RunLatch()
         let waiting = resolved.profile.standard.makeSession(tools: [WaitingTool(entered: entered, latch: toolLatch)])
@@ -208,7 +209,7 @@ struct GenerationQueueSubmissionTests {
         let otherWaitsDuringTheToolBody = await BoundedWait.conditionReached(
             "the submission of the other session waiting while the tool body runs"
         ) {
-            await fixture.queue.waitingCount == 1
+            await queue.waitingCount == 1
         }
         let passesDuringTheToolBody = fixture.passes.recorded.map(\.prompt)
 
@@ -224,7 +225,7 @@ struct GenerationQueueSubmissionTests {
         #expect(fixture.passes.recorded.map(\.prompt) == [Self.firstPrompt, Self.firstPrompt, Self.secondPrompt])
         #expect(await BoundedWait.signalArrived(waitingFinished, named: "the end of the waiting answer"))
         #expect(await BoundedWait.signalArrived(otherFinished, named: "the end of the other answer"))
-        #expect(await fixture.queue.isRunning == false)
+        #expect(await queue.isRunning == false)
         withExtendedLifetime(resolved) {}
     }
 
@@ -236,8 +237,8 @@ struct GenerationQueueSubmissionTests {
         let fixture = PassObservingFixture(toolRounds: Self.loopingToolRounds, step: step)
         await fixture.latch.open()
         let passes = fixture.passes
-        let queue = fixture.queue
         let resolved = try await RouterTestFixtures.resolveStandardProfile(over: fixture.container, cacheDir: dir)
+        let queue = try #require(resolved.profile.standard.backendQueue)
         let first = resolved.profile.standard.makeSession(tools: [MountFixtures.FastTool()])
         let second = resolved.profile.standard.makeSession(tools: [MountFixtures.FastTool()])
         let passesPerSubmission = Self.loopingToolRounds + 1
@@ -292,6 +293,7 @@ struct GenerationQueueSubmissionTests {
         let fixture = PassObservingFixture(toolRounds: 1)
         await fixture.latch.open()
         let resolved = try await RouterTestFixtures.resolveStandardProfile(over: fixture.container, cacheDir: dir)
+        let queue = try #require(resolved.profile.standard.backendQueue)
         let refusal = ErrorBox()
         let child = resolved.profile.standard.makeSession()
         let parent = resolved.profile.standard.makeSession(tools: [ChildAnswerTool(child: child, refusal: refusal)])
@@ -313,7 +315,7 @@ struct GenerationQueueSubmissionTests {
         #expect(fixture.passes.recorded.map(\.prompt) == [Self.firstPrompt, Self.firstPrompt])
         #expect(await Self.responseTexts(of: child).isEmpty)
         #expect(parentAnswer == PassObservingModel.answer(to: Self.firstPrompt))
-        #expect(await fixture.queue.isRunning == false)
+        #expect(await queue.isRunning == false)
         withExtendedLifetime(resolved) {}
     }
 
@@ -333,6 +335,7 @@ struct GenerationQueueSubmissionTests {
         let fixture = PassObservingFixture(toolRounds: 1, step: step)
         await fixture.latch.open()
         let resolved = try await RouterTestFixtures.resolveStandardProfile(over: fixture.container, cacheDir: dir)
+        let queue = try #require(resolved.profile.standard.backendQueue)
         let refusal = ErrorBox()
         let child = resolved.profile.standard.makeSession()
         let parent = resolved.profile.standard.makeSession(tools: [ChildAnswerTool(child: child, refusal: refusal)])
@@ -352,7 +355,7 @@ struct GenerationQueueSubmissionTests {
             try await child.respond(to: Self.childOwnPrompt)
         }
         let childWaits = await BoundedWait.conditionReached("the child's submission behind the parent's") {
-            await fixture.queue.waitingCount == 1
+            await queue.waitingCount == 1
         }
 
         // The tool body of the parent now asks the busy child for an answer.
@@ -373,7 +376,7 @@ struct GenerationQueueSubmissionTests {
             fixture.passes.recorded.map(\.prompt) == [Self.firstPrompt, Self.firstPrompt, Self.childOwnPrompt])
         #expect(parentAnswer == PassObservingModel.answer(to: Self.firstPrompt))
         #expect(childAnswer == PassObservingModel.answer(to: Self.childOwnPrompt))
-        #expect(await fixture.queue.isRunning == false)
+        #expect(await queue.isRunning == false)
         withExtendedLifetime(resolved) {}
     }
 
@@ -384,6 +387,7 @@ struct GenerationQueueSubmissionTests {
         let fixture = PassObservingFixture(toolRounds: 1)
         await fixture.latch.open()
         let resolved = try await RouterTestFixtures.resolveStandardProfile(over: fixture.container, cacheDir: dir)
+        let queue = try #require(resolved.profile.standard.backendQueue)
         let runStart = RunLatch()
         let child = resolved.profile.standard.makeSession()
         let parent = resolved.profile.standard.makeSession(
@@ -424,7 +428,7 @@ struct GenerationQueueSubmissionTests {
         #expect(await parent.becomesIdle())
         #expect(
             await BoundedWait.conditionReached("the queue of the model ending its work") {
-                await !fixture.queue.isRunning
+                await !queue.isRunning
             })
         // The two passes of the ended answer, then the pass of the run on the
         // child, then the passes of the delivery submission, which carries

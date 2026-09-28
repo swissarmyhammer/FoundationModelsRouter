@@ -90,6 +90,7 @@ struct QueuedPassStallWatchTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let fixture = PassObservingFixture()
         let resolved = try await Self.resolve(fixture, in: dir)
+        let queue = try #require(resolved.profile.standard.backendQueue)
         let holding = resolved.profile.standard.makeSession()
         let waiting = resolved.profile.standard.makeSession()
         await waiting.setGenerationStallReportInterval(Self.reportInterval)
@@ -105,7 +106,7 @@ struct QueuedPassStallWatchTests {
         }
         try await Task.sleep(for: Self.heldLongerThanTheInterval)
         let stallsDuringTheWait = await waitingLog.stalls
-        let stillWaiting = await fixture.queue.waitingCount == 1
+        let stillWaiting = await queue.waitingCount == 1
 
         await fixture.latch.open()
         _ = try await holdingAnswer.value
@@ -142,7 +143,7 @@ struct QueuedPassStallWatchTests {
         _ = eventsInsideAnswerFrame(holdingEvents)
         #expect(Self.queuedIds(in: holdingEvents).isEmpty)
         #expect(holdingEvents.submissionStarts.count == 1)
-        #expect(await fixture.queue.isRunning == false)
+        #expect(await queue.isRunning == false)
         withExtendedLifetime(resolved) {}
     }
 

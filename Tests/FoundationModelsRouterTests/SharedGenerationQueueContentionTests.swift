@@ -7,14 +7,14 @@ import Testing
 /// Exercises task ^trwcs63 under the queue of task ^93kjn94: two sessions over
 /// one container contend for that container's one generation queue.
 ///
-/// The container owns the ``GenerationQueue``, so two handles that wrap one
-/// container share one queue. A hand-built pair over one container is that
+/// Two handles whose backends name one ``GenerationQueue`` share that queue. A
+/// hand-built pair over one container that the test gave one queue is that
 /// graph, and ``twoHandBuiltHandlesOverOneContainerContend()`` holds it to the
 /// contract through one drill.
 ///
 /// ``Router/resolve(profile:reporting:)`` never builds that graph for one
 /// profile: the `standard` and `flash` slots never use the same model, so the
-/// two handles of one resolved profile wrap two containers with two queues.
+/// two handles of one resolved profile hold two pool entries with two queues.
 /// ``resolvedStandardAndFlashHandlesHaveTwoQueues()`` holds a resolve to that.
 /// A synchronous tool call runs a selection call on `flash` inside an open
 /// submission on `standard`, and with one queue it would wait on itself.
@@ -44,13 +44,14 @@ struct SharedGenerationQueueContentionTests {
 
     // MARK: - Fixtures
 
-    /// The generation queue of the container `handle` wraps.
+    /// The generation queue that each session backend of `handle` names.
     ///
     /// - Parameter handle: A generation handle over a ``LiveBackendContainer``.
-    /// - Returns: The queue that container owns.
-    /// - Throws: When the handle wraps another container.
+    /// - Returns: The queue of the pool entry of a resolved handle, or the
+    ///   queue that the test gave to a hand-built container.
+    /// - Throws: When the backends of the handle name no queue.
     private static func queue(of handle: RoutedLLM) throws -> GenerationQueue {
-        try #require(handle.container as? LiveBackendContainer<PassObservingModel>).generationQueue
+        try #require(handle.backendQueue)
     }
 
     /// Runs one answer on `profile.standard` and one on `profile.flash`, and
@@ -129,8 +130,8 @@ struct SharedGenerationQueueContentionTests {
 
         #expect(profile.standard.chosen == Self.sharedRef)
         #expect(profile.flash.chosen == Self.flashRef)
-        // Identity, not equality: the loader makes a new queue for each load,
-        // so two queues show two pool entries.
+        // Identity, not equality: each pool entry owns its own queue, so two
+        // queues show two pool entries.
         #expect(try Self.queue(of: profile.standard) !== Self.queue(of: profile.flash))
 
         await fixture.latch.open()

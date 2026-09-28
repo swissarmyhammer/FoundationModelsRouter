@@ -180,7 +180,11 @@ public struct RealModelContainer: Sendable {
             context: context,
             reporting: { _ in }
         )
-        let container = try #require(loaded as? MLXFoundationModelsContainer)
+        // A suite uses the container outside the model pool, so this queue
+        // stands in for the queue of the pool entry. Each backend of the
+        // container submits to it.
+        let queued = loaded.submitting(to: GenerationQueue())
+        let container = try #require(queued as? MLXFoundationModelsContainer)
         return RealModelContainer(container: container, samplingMode: samplingMode)
     }
 

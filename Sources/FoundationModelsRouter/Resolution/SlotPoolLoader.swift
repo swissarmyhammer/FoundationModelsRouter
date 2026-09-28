@@ -90,9 +90,12 @@ struct SlotPoolLoader: PooledModelLoader {
 }
 
 extension ModelHold {
-    /// The container of this hold as a generation container.
+    /// The container of this hold as a generation container whose backends
+    /// name ``queue``, the one work queue of the pool entry. Thus each session
+    /// of each holder of the key submits to that queue.
     ///
-    /// - Returns: The container, cast to ``LoadedLLMContainer``.
+    /// - Returns: The container, cast to ``LoadedLLMContainer`` and given
+    ///   ``queue`` through ``LoadedLLMContainer/submitting(to:)``.
     /// - Throws: ``PooledGenerationError/notAGenerationContainer(key:containerType:)``
     ///   when the first loader of the key gave a container that is not a
     ///   ``LoadedLLMContainer``.
@@ -101,7 +104,7 @@ extension ModelHold {
             throw PooledGenerationError.notAGenerationContainer(
                 key: key, containerType: String(describing: type(of: container)))
         }
-        return generation
+        return generation.submitting(to: queue)
     }
 }
 

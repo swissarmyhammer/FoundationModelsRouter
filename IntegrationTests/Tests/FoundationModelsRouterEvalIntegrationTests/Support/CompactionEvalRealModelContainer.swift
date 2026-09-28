@@ -116,7 +116,11 @@ struct CompactionEvalRealModelContainer: Sendable {
             context: context,
             reporting: { _ in }
         )
-        guard let container = loaded as? MLXFoundationModelsContainer else {
+        // The tier uses the container outside the model pool, so this queue
+        // stands in for the queue of the pool entry. Each backend of the
+        // container submits to it.
+        let queued = loaded.submitting(to: GenerationQueue())
+        guard let container = queued as? MLXFoundationModelsContainer else {
             throw unexpectedContainerType
         }
         CompactionEvalProgressLog.emit(

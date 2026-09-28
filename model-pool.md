@@ -233,6 +233,12 @@ manifests or a tracked `Package.resolved`.
   when it loads a key. Each hold of that key, of each user, gives the same
   queue (`ModelHold.queue`). Forks are not counted: any number of forks over
   one container can exist at one time.
+  No router type makes a queue. The router gives the queue of each
+  generation hold to the container (`LoadedLLMContainer.submitting(to:)`), so
+  each session backend of the model names it. Each embed call of a
+  `RoutedEmbedder` goes through `PooledEmbedder`, as one job in the queue of
+  the embedding model. A direct `PooledEmbedder` of the same key waits in the
+  same queue.
 - **Lifetime: a model stays resident while a hold exists.** There is no
   release call and no `evictAll()`. Each `RoutedModel` handle keeps the three
   `ModelHold`s of its resolve (`residencyHolds`), so one handle alone (for

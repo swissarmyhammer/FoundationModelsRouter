@@ -12,8 +12,9 @@ import Testing
 /// 5.1 and 5.3).
 ///
 /// Each backend a container makes runs its `LanguageModelSession` over its own
-/// ``SessionLanguageModel``, and declares the one ``GenerationQueue`` of the
-/// container (``LanguageModelSessionBackend/generationQueue``). The session
+/// ``SessionLanguageModel``, and declares the one ``GenerationQueue`` that the
+/// container got: the queue of the pool entry of the model, or here a queue
+/// of the test (``LanguageModelSessionBackend/generationQueue``). The session
 /// submits each whole SDK call of the backend to that queue.
 /// ``PassObservingModel`` makes each executor call an observable pass that
 /// stays open until a ``RunLatch`` opens, so a test sees an overlap, a waiting
@@ -187,14 +188,19 @@ struct GenerationQueueTests {
         #expect(first.executorConfiguration != second.executorConfiguration)
     }
 
-    @Test("a live backend, its fork and a replaced transcript declare the queue of their container")
-    func liveBackendDeclaresTheQueueOfItsContainer() {
-        let container = Self.makeLiveContainer()
+    @Test("the live container makes no queue, and its backends, forks and replaced transcripts declare the queue it gets")
+    func liveBackendDeclaresTheQueueThatItsContainerGets() {
+        let unqueued = Self.makeLiveContainer()
+        // The queue of the pool entry, which the router gives to the container.
+        let entryQueue = GenerationQueue()
+        let container = unqueued.submitting(to: entryQueue)
         let backend = container.makeSession(instructions: nil)
 
-        #expect(backend.generationQueue === container.generationQueue)
-        #expect(backend.makeFork().generationQueue === container.generationQueue)
-        #expect(backend.replacingTranscript(Transcript(entries: [])).generationQueue === container.generationQueue)
+        #expect(unqueued.generationQueue == nil)
+        #expect(unqueued.makeSession(instructions: nil).generationQueue == nil)
+        #expect(backend.generationQueue === entryQueue)
+        #expect(backend.makeFork().generationQueue === entryQueue)
+        #expect(backend.replacingTranscript(Transcript(entries: [])).generationQueue === entryQueue)
     }
 
     @Test("respondWithoutReasoning still finds the raw MLX model behind the wrapper, in a fork too")
