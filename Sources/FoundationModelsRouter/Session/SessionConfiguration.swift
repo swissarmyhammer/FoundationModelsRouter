@@ -167,5 +167,20 @@ public struct SessionConfiguration: Sendable {
         /// sidecar written before the setting existed. A restore reads `nil`
         /// as ``SessionConfiguration/defaultMailOnlyAnswerLimit``.
         let mailOnlyAnswerLimit: Int?
+
+        /// The compaction settings this slice records, the inverse of the
+        /// flat keys that ``SessionConfiguration/persistable`` writes.
+        ///
+        /// The slice holds no tool output protection, because that is a
+        /// closure. The caller gives it again, as a restore does.
+        ///
+        /// - Parameter toolOutputProtection: The host rule to put in the
+        ///   settings, or `nil` to protect nothing.
+        /// - Returns: The settings with the recorded ``budget`` and
+        ///   ``compactionPrompt``, and `toolOutputProtection`.
+        func compaction(toolOutputProtection: ToolOutputProtection?) -> CompactionSettings {
+            CompactionSettings(
+                budget: budget, prompt: compactionPrompt, toolOutputProtection: toolOutputProtection)
+        }
     }
 }

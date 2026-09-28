@@ -338,6 +338,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // which restores with the pre-envelope defaults below, exactly
             // as it always has (see ``SessionSidecar/configuration``).
             let configuration = node.sidecar.configuration
+            // The recorded budget and prompt, grouped again with the rule
+            // this call's host supplied. A pre-envelope recording gets the
+            // default settings with that rule.
+            let compaction = configuration?.compaction(toolOutputProtection: toolOutputProtection)
+                ?? CompactionSettings(toolOutputProtection: toolOutputProtection)
             // The rehydration match: every recorded tool name with no
             // supplied instance is reported, never silently dropped.
             for toolName in configuration?.toolNames ?? []
@@ -364,7 +369,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             let (outbox, mailbox, instancedTools) = makeSessionToolWiring(
                 tools,
                 sessionID: node.id,
-                cappedToTokenLimit: configuration?.budget?.toolOutputLimit,
+                cappedToTokenLimit: compaction.budget?.toolOutputLimit,
                 tokenCounter: routedLLM.container.tokenCounter
             )
             let backend = routedLLM.container.makeSession(
@@ -476,12 +481,12 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 // come back as the node was vended with them. A pre-envelope
                 // recording carries `nil` and gets the same defaults it
                 // always restored with.
-                autoCompactionBudget: configuration?.budget,
-                autoCompactionPrompt: configuration?.compactionPrompt ?? .default,
+                autoCompactionBudget: compaction.budget,
+                autoCompactionPrompt: compaction.prompt,
                 discoveryPriming: configuration?.discoveryPriming,
                 // Not in the envelope, because it is a closure: the rule this
                 // call's host supplied, for every node, as `tools` is.
-                toolOutputProtection: toolOutputProtection,
+                toolOutputProtection: compaction.toolOutputProtection,
                 // In the envelope since task ^1hcwaqy. A sidecar written
                 // before it carries `nil` and gets the default.
                 repetitionDetection: configuration?.repetitionDetection ?? RepetitionDetection(),

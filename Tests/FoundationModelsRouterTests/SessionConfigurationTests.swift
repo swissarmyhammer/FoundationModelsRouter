@@ -295,6 +295,23 @@ struct SessionConfigurationTests {
         #expect(Set(object.keys) == Self.flatSidecarKeys)
     }
 
+    @Test("the compaction settings round-trip through the encoded Codable slice")
+    func compactionSettingsRoundTripThroughTheSlice() throws {
+        let budget = TokenBudget(limit: 4096, trigger: 0.9, target: 0.6, toolOutputLimit: 256)
+        let prompt = CompactionPrompt(name: "custom", text: "condense")
+        let protection: ToolOutputProtection = { call, _ in call.toolName == "keep" }
+        let configuration = SessionConfiguration(
+            compaction: CompactionSettings(budget: budget, prompt: prompt, toolOutputProtection: protection))
+
+        let encoded = try JSONEncoder().encode(configuration.persistable)
+        let decoded = try JSONDecoder().decode(SessionConfiguration.Persistable.self, from: encoded)
+        let restored = decoded.compaction(toolOutputProtection: configuration.compaction.toolOutputProtection)
+
+        #expect(restored.budget == configuration.compaction.budget)
+        #expect(restored.prompt == configuration.compaction.prompt)
+        #expect(restored.toolOutputProtection != nil)
+    }
+
     @Test("a Codable slice from a sidecar written before the grouped settings decodes")
     func flatSidecarSliceDecodes() throws {
         let data = try #require(Self.flatSidecarSlice.data(using: .utf8))
@@ -305,5 +322,10 @@ struct SessionConfigurationTests {
         #expect(decoded.toolNames == ["ambient-emitter"])
         #expect(decoded.budget == TokenBudget(limit: 4096, trigger: 0.9, target: 0.6, toolOutputLimit: 256))
         #expect(decoded.compactionPrompt == CompactionPrompt(name: "custom", text: "condense"))
+
+        let compaction = decoded.compaction(toolOutputProtection: nil)
+        #expect(compaction.budget == decoded.budget)
+        #expect(compaction.prompt == decoded.compactionPrompt)
+        #expect(compaction.toolOutputProtection == nil)
     }
 }
