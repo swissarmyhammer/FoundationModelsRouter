@@ -813,30 +813,27 @@ final class LiveEmbeddingContainer: LoadedEmbeddingContainer, Sendable {
     /// Embeds `texts` through `container`. Static so a loader can probe the
     /// dimension at load.
     ///
+    /// The texts go to the model as one right-padded batch. The mask of the
+    /// batch (``PaddedTokenBatch/mask``) goes to the model and to the pooling,
+    /// so each vector is the vector of its own text and not of the pads after
+    /// it (task ^nmmnn7k).
+    ///
     /// - Returns: One vector per input string.
     static func embed(texts: [String], in container: EmbedderModelContainer) async throws -> [[Float]] {
         guard !texts.isEmpty else { return [] }
         return await container.perform { context in
             let tokenizer = context.tokenizer
-            let encoded = texts.map { tokenizer.encode(text: $0, addSpecialTokens: true) }
-            let maxLength = encoded.reduce(into: 1) { $0 = max($0, $1.count) }
-            let padded = stacked(
-                encoded.map { tokens in
-                    MLXArray(
-                        tokens
-                            + Array(
-                                repeating: tokenizer.eosTokenId ?? 0,
-                                count: maxLength - tokens.count
-                            )
-                    )
-                }
+            let batch = PaddedTokenBatch(
+                rows: texts.map { tokenizer.encode(text: $0, addSpecialTokens: true) },
+                padToken: tokenizer.eosTokenId ?? 0
             )
-            let mask = padded .!= (tokenizer.eosTokenId ?? 0)
+            let padded = MLXArray(batch.tokens.flatMap { $0 }, batch.shape)
+            let mask = MLXArray(batch.mask.flatMap { $0 }, batch.shape)
             let tokenTypes = MLXArray.zeros(like: padded)
             let output = context.model(
                 padded, positionIds: nil, tokenTypeIds: tokenTypes, attentionMask: mask
             )
-            let pooled = context.pooling(output, normalize: true, applyLayerNorm: true)
+            let pooled = context.pooling(output, mask: mask, normalize: true, applyLayerNorm: true)
             pooled.eval()
             return pooled.map { $0.asArray(Float.self) }
         }

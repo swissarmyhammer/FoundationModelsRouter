@@ -304,16 +304,7 @@ struct IntegrationTests {
         let byteObserver = DownloadByteObserver()
         let loader = PhaseRecordingLoader(
             wrapping: DownloadObservingLoader(
-                wrapped: LiveModelLoader(
-                    downloader: #hubDownloader(),
-                    tokenizerLoader: #huggingFaceTokenizerLoader(),
-                    weightsLocation: { id in
-                        HubClient.default.cache?.repoDirectory(
-                            repo: Repo.ID(rawValue: id) ?? Repo.ID(namespace: id, name: ""),
-                            kind: .model
-                        ) ?? FileManager.default.temporaryDirectory
-                    }
-                ),
+                wrapped: Self.makeLiveLoader(),
                 observer: byteObserver
             ),
             progress: progress
@@ -483,6 +474,85 @@ struct IntegrationTests {
         let ordered = merged.sorted { ($0.ts, $0.seq) < ($1.ts, $1.seq) }
         #expect(merged.map(\.seq) == ordered.map(\.seq))
         #expect(Set(merged.map(\.seq)).count == merged.count)
+    }
+
+    // MARK: - A batch vector is the vector of its own text (task ^nmmnn7k)
+
+    /// The tag the cosine line of ``batchVectorEqualsVectorOfTextAlone()``
+    /// opens with, so a grep of a run finds the measured numbers.
+    private static let batchCosineLabel = "batchEmbedCosine"
+
+    /// The lowest cosine between the batch vector of a text and the vector of
+    /// the same text embedded alone. The two differ only by float error.
+    private static let batchCosineFloor: Float = 0.999
+
+    /// Three texts of clearly different token counts. In one batch, the two
+    /// shorter texts get pads after them, and the longest text gets none.
+    private static let differentLengthTexts = [
+        "A small cat sleeps.",
+        "The router loads one embedding model and keeps it resident, so each "
+            + "later embed call of the profile reuses the loaded weights.",
+        "A batch embed pads each row on the right to the length of the longest "
+            + "row. The model reads the padding mask, so no real token attends to a "
+            + "pad. The pooling must read the same mask: a last-token pool must take "
+            + "the last real token of each row, and a mean pool must divide by the "
+            + "count of real tokens. When the pooling reads no mask, each shorter row "
+            + "gets the hidden state of a pad, and its vector changes with the count "
+            + "of pads rather than with its own text.",
+    ]
+
+    /// Embeds three texts of different lengths as one batch and one at a time,
+    /// and expects each batch vector to equal the vector of its text alone.
+    ///
+    /// Loads only the embedder of ``gatedRealProfile``, through the real
+    /// ``LiveModelLoader``: the question is the embed body of
+    /// `LiveEmbeddingContainer`, not the resolver that ``endToEnd()`` drives.
+    @Test("a batch vector equals the vector of the same text embedded alone")
+    func batchVectorEqualsVectorOfTextAlone() async throws {
+        let loader = Self.makeLiveLoader()
+        let embedder = try await loader.loadEmbedder(
+            ref: RealModels.embedding, slot: .embedding, reporting: { _ in })
+
+        let batchVectors = try await embedder.embed(texts: Self.differentLengthTexts)
+        var aloneVectors: [[Float]] = []
+        for text in Self.differentLengthTexts {
+            aloneVectors.append(contentsOf: try await embedder.embed(texts: [text]))
+        }
+        await loader.evict(container: embedder)
+
+        try #require(batchVectors.count == Self.differentLengthTexts.count)
+        try #require(aloneVectors.count == Self.differentLengthTexts.count)
+        let cosines = zip(batchVectors, aloneVectors).map { Self.cosine($0, $1) }
+        print("[\(Self.batchCosineLabel)] \(cosines)")
+        for (text, cosine) in zip(Self.differentLengthTexts, cosines) {
+            #expect(
+                cosine >= Self.batchCosineFloor,
+                "a text of \(text.count) characters has cosine \(cosine) against its vector alone")
+        }
+    }
+
+    /// The cosine of the angle between two vectors of one length.
+    private static func cosine(_ first: [Float], _ second: [Float]) -> Float {
+        let dot = zip(first, second).reduce(Float.zero) { $0 + $1.0 * $1.1 }
+        let firstNorm = first.reduce(Float.zero) { $0 + $1 * $1 }.squareRoot()
+        let secondNorm = second.reduce(Float.zero) { $0 + $1 * $1 }.squareRoot()
+        return dot / (firstNorm * secondNorm)
+    }
+
+    /// Makes the real Hub-backed ``LiveModelLoader``: the fork's macros supply
+    /// the concrete `Downloader` and `TokenizerLoader`, and the Hub cache
+    /// gives the weights directory of each model.
+    private static func makeLiveLoader() -> LiveModelLoader {
+        LiveModelLoader(
+            downloader: #hubDownloader(),
+            tokenizerLoader: #huggingFaceTokenizerLoader(),
+            weightsLocation: { id in
+                HubClient.default.cache?.repoDirectory(
+                    repo: Repo.ID(rawValue: id) ?? Repo.ID(namespace: id, name: ""),
+                    kind: .model
+                ) ?? FileManager.default.temporaryDirectory
+            }
+        )
     }
 
     /// Creates a unique temporary directory.
