@@ -10,9 +10,8 @@ extension Optional where Wrapped == LanguageModelProfile {
     /// Pooled residency is owned by ARC. Each handle of a profile keeps the
     /// ``ModelHold``s of the profile, and the last release of a hold starts
     /// the eviction of its model. A test therefore ends a residency by
-    /// clearing the references it holds, and then waits for the eviction with
-    /// ``FoundationModelsExtras/ModelPool/settle(until:)``, rather than by
-    /// calling a cleanup method.
+    /// clearing the references it holds, rather than by calling a cleanup
+    /// method, and then reads ``FoundationModelsExtras/ModelPool/admittedFootprint``.
     ///
     /// The clearing goes through this method, and not through a bare `= nil`,
     /// because a local variable that is only ever written draws a compiler
@@ -24,23 +23,16 @@ extension Optional where Wrapped == LanguageModelProfile {
 }
 
 extension ModelPool {
-    /// Waits until the footprint of the pool satisfies `condition`, and until
-    /// the eviction job that made it so has ended.
+    /// The footprint that the next admission job of the pool measures. A
+    /// resolve makes the same measurement.
     ///
-    /// The last release of a hold removes the hold at once, but the pool
-    /// submits the eviction of the model from a detached task. So the
-    /// eviction is not done when the drop returns. The pool publishes a
-    /// footprint after each eviction, when the loader has evicted the model.
-    /// The first footprint of the stream is the current one, and it can show
-    /// a model that a running eviction job removed before its loader ended.
-    /// Thus one empty admission job follows: it starts only after that
-    /// eviction job ends.
+    /// The last release of a hold puts the eviction job of its model in the
+    /// admission queue in the same step. Thus this admission job runs after
+    /// the eviction of each release that came before the read, and the
+    /// footprint shows those models as gone.
     ///
-    /// - Parameter condition: The footprint to wait for, for example no
-    ///   resident model.
     /// - Throws: `CancellationError` when the test task is cancelled.
-    func settle(until condition: @Sendable (ModelPoolFootprint) -> Bool) async throws {
-        for await footprint in footprints where condition(footprint) { break }
-        try await admit { _ in }
+    var admittedFootprint: ModelPoolFootprint {
+        get async throws { try await admit { $0.footprint } }
     }
 }

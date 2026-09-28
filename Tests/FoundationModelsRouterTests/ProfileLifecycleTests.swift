@@ -176,7 +176,7 @@ struct ProfileLifecycleTests {
         profile.dropReference()
 
         // The last release of each hold evicts its model.
-        try await router.pool.settle { $0.resident.isEmpty }
+        #expect(try await router.pool.admittedFootprint.resident.isEmpty)
         #expect(await spy.count == 3)
 
         // A new resolve proves residency is clear by succeeding.
@@ -213,7 +213,7 @@ struct ProfileLifecycleTests {
 
         second.dropReference()
         third.dropReference()
-        try await router.pool.settle { $0.resident.isEmpty }
+        #expect(try await router.pool.admittedFootprint.resident.isEmpty)
         #expect(await spy.count == 3)
     }
 

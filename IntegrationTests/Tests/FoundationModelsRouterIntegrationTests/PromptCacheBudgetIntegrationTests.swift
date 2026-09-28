@@ -129,7 +129,7 @@ struct PromptCacheBudgetIntegrationTests {
         #expect(pool.footprint.totalBytes + Int64(usage.residentBytes) <= workingSet)
 
         profile = nil
-        #expect(try await pool.residentModelCountOnceEvicted() == 0)
+        #expect(try await pool.admittedResidentModelCount == 0)
     }
 
     /// Resolves ``twoModelProfile`` one time on the host working set, reads
@@ -146,7 +146,7 @@ struct PromptCacheBudgetIntegrationTests {
         #expect(profile != nil)
         let footprint = pool.footprint.totalBytes
         profile = nil
-        #expect(try await pool.residentModelCountOnceEvicted() == 0)
+        #expect(try await pool.admittedResidentModelCount == 0)
         return footprint
     }
 

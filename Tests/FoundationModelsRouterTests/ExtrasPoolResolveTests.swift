@@ -179,7 +179,7 @@ struct ExtrasPoolResolveTests {
         fromFirst.dropReference()
         fromSecond.dropReference()
         let keys = Self.keys(of: trio)
-        try await ModelPool.shared.settle { $0.resident.keys.allSatisfy { !keys.contains($0) } }
+        #expect(try await ModelPool.shared.admittedFootprint.resident.keys.allSatisfy { !keys.contains($0) })
         #expect(await firstSpy.evictions == ResidencyFixtures.modelsPerTrio)
     }
 
@@ -209,12 +209,12 @@ struct ExtrasPoolResolveTests {
 
         // The router releases first: the direct hold keeps the model.
         profile.dropReference()
-        try await pool.settle { $0.resident.count == 1 }
+        #expect(try await pool.admittedFootprint.resident.count == 1)
         #expect(pool.isResident(embeddingKey))
 
         // The last release evicts the model.
         directHold = nil
-        try await pool.settle { $0.resident.isEmpty }
+        #expect(try await pool.admittedFootprint.resident.isEmpty)
         #expect(!pool.isResident(embeddingKey))
         #expect(directHold == nil)
     }

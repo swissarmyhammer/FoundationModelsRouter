@@ -239,7 +239,7 @@ struct CrossRouterPoolIntegrationTests {
         // Residency follows ARC: dropping both profiles gives every model back.
         firstProfile = nil
         secondProfile = nil
-        #expect(try await fixture.pool.residentModelCountOnceEvicted() == 0)
+        #expect(try await fixture.pool.admittedResidentModelCount == 0)
     }
 
     @Test("a release from the first router keeps the second router's session alive")

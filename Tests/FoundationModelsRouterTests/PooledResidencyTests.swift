@@ -159,7 +159,7 @@ struct PooledResidencyTests {
         #expect(pool.residentModelCount == 3)
 
         resolved.dropReference()
-        try await pool.settle { $0.resident.isEmpty }
+        #expect(try await pool.admittedFootprint.resident.isEmpty)
         #expect(pool.residentModelCount == 0)
     }
 
@@ -345,7 +345,7 @@ struct PooledResidencyTests {
         #expect(await BoundedWait.conditionReached("the release of the session") { sessionIsReleased() })
 
         // Now unreferenced by anyone: all three models evicted.
-        try await router.pool.settle { $0.resident.isEmpty }
+        #expect(try await router.pool.admittedFootprint.resident.isEmpty)
         #expect(await spy.evictions == 3)
     }
 
@@ -598,7 +598,7 @@ struct PooledResidencyTests {
         #expect(await spy.llmLoads.filter { $0 == "org/ctx-release-std" }.count == 1)
 
         resolvedNarrow.dropReference()
-        try await router.pool.settle { $0.resident.count == ResidencyFixtures.modelsPerTrio }
+        #expect(try await router.pool.admittedFootprint.resident.count == ResidencyFixtures.modelsPerTrio)
         // The wide profile still holds the shared generation model, so only
         // the narrow profile's own flash model and embedder are evicted.
         #expect(await spy.evictions == ResidencyFixtures.modelsPerTrio - 1)
@@ -667,7 +667,7 @@ struct PooledResidencyTests {
         first.dropReference()
         // Nothing lingers in the pool once the last reference is gone: the
         // three evictions end.
-        try await router.pool.settle { $0.resident.isEmpty }
+        #expect(try await router.pool.admittedFootprint.resident.isEmpty)
 
         // A fresh resolve of the same profile after the evictions reloads
         // from scratch.
@@ -770,14 +770,14 @@ struct PooledResidencyTests {
         // solo models (standard/flash) outright and gives back one reference
         // on the shared embedding model — which B alone now holds, so it
         // survives: B's trio stays resident.
-        try await router.pool.settle { $0.resident.count == ResidencyFixtures.modelsPerTrio }
+        #expect(try await router.pool.admittedFootprint.resident.count == ResidencyFixtures.modelsPerTrio)
         #expect(await spy.evictions == 2)
 
         // B's own reference is genuine: dropping it evicts its own two solo
         // models plus the now-fully-unreferenced shared embedding model — 5
         // distinct keys evicted in total across both profiles' residencies.
         resolvedB.dropReference()
-        try await router.pool.settle { $0.resident.isEmpty }
+        #expect(try await router.pool.admittedFootprint.resident.isEmpty)
         #expect(await spy.evictions == 5)
     }
 
@@ -994,15 +994,16 @@ struct PooledResidencyTests {
     // MARK: - Dropping the last reference frees the budget for the very next resolve.
 
     /// Dropping the profile object AND every handle built from it is the one
-    /// eviction trigger here: there is no explicit release to call. Once the
-    /// evictions end, the next ``Router/resolve(profile:reporting:)`` must see
-    /// the freed bytes in its FIRST budget measurement, so a second, disjoint
-    /// trio that fits only in the freed space resolves without any retry.
+    /// eviction trigger here: there is no explicit release to call. The very
+    /// next ``Router/resolve(profile:reporting:)``, with no wait before it,
+    /// must see the freed bytes in its FIRST budget measurement, so a second,
+    /// disjoint trio that fits only in the freed space resolves without any
+    /// retry.
     ///
-    /// The Extras pool submits each eviction from a detached task, so a
-    /// resolve that starts at once after the drop can run before the
-    /// evictions. The test therefore waits for the evictions first.
-    @Test("a resolve after the evictions of a dropped profile sees the freed bytes at once")
+    /// The last release of a hold puts the eviction job in the admission
+    /// queue in the same step, so the admission job of the resolve runs after
+    /// the evictions.
+    @Test("a resolve after the last reference to a profile is dropped sees the freed bytes at once")
     @MainActor
     func droppingLastHandleFreesBudgetForNextResolve() async throws {
         let dir = Self.makeTempDir()
@@ -1030,7 +1031,6 @@ struct PooledResidencyTests {
         #expect(try #require(resolvedA).standard.chosen == "org/drop-a-std")
         // Drops the profile object and, with it, its three handles.
         resolvedA = nil
-        try await router.pool.settle { $0.resident.isEmpty }
 
         let resolvedB = try await router.resolve(profile: profileB, reporting: ResolutionProgress())
         #expect(resolvedB.standard.chosen == "org/drop-b-std")

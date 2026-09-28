@@ -103,12 +103,13 @@ call. When the last hold of a model goes, the pool submits an eviction job. A
 dropped `Router` frees nothing. Read `ModelPool.residentModelCount` to see how
 many models the process holds.
 
-The eviction is not immediate. The pool submits the eviction job from a
-detached task. A resolve that starts immediately after the drop of the last
-reference can run before that job. Then the model is still resident, and the
-resolve holds it again with no new load. If you must have the freed memory,
-wait until the eviction occurs. For example, read `ModelPool.footprints` until
-the model is not resident.
+The last release puts the eviction job in the admission queue of the pool in
+the same step. A resolve that starts immediately after the drop of the last
+reference thus runs after the eviction, and sees the freed memory. A
+synchronous read of `ModelPool.residentModelCount` immediately after the drop
+can still count the model, because the eviction job has not run yet. To see
+the freed memory, read the footprint in an admission job:
+`try await pool.admit { $0.footprint }`.
 
 Pass a fresh pool to `Router(pool:)` to give a router an isolated pool and an
 isolated budget. Pass `Router(samplingMode:)` to set the decoding strategy of

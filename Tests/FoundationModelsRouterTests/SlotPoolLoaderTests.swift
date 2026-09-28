@@ -252,11 +252,10 @@ struct SlotPoolLoaderTests {
             of: Self.ref, in: pool, footprintBytes: Self.footprintBytes, sessionBytes: Self.sessionBytes)
         #expect(hold != nil)
 
-        // The pool publishes the footprint with no resident model only after
-        // the eviction job awaited the loader.
-        let footprints = pool.footprints
+        // The release puts the eviction job in the admission queue, so the
+        // next admission job runs after the eviction job awaited the loader.
         hold = nil
-        for await footprint in footprints where footprint.resident.isEmpty { break }
+        #expect(try await pool.admittedFootprint.resident.isEmpty)
 
         #expect(routerLoader.calls == [.loadLLM(ref: Self.ref, slot: .standard, context: Self.context), .evict])
     }

@@ -287,7 +287,7 @@ struct ToolSharedProfileTests {
 
         second.dropReference()
         third.dropReference()
-        try await router.pool.settle { $0.resident.isEmpty }
+        #expect(try await router.pool.admittedFootprint.resident.isEmpty)
         #expect(await spy.evictions == 3)
     }
 }

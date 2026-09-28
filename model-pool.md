@@ -8,7 +8,7 @@ memory budget counts the union of all resident models in the process, not the
 resident models of one router.
 
 The pool is `ModelPool` in the core `FoundationModelsExtras` target (Extras
-revision `f4bd503`, source
+revision `4a733cd`, source
 `Sources/FoundationModelsExtras/ModelPool/ModelPool.swift`). The router is one
 user of that pool. It does not have its own pool.
 
@@ -277,21 +277,20 @@ Inside a job, a caller must acquire through the `ModelPoolAdmission`.
 
 A `ModelHold` releases in its `deinit`, synchronously: the hold count and the
 session bytes of the hold go at once, and the `footprints` stream gets the
-change. After the last hold of a key, the pool submits an eviction job from a
-detached task. The eviction job examines the hold count again. When the count
-is still zero, the job removes the entry, and then calls `evict` on the loader
-that loaded the container. When a new hold came first, the job does nothing.
+change. The last release of a key puts an eviction job in the admission
+queue in the same step, under the pool lock. The eviction job examines the
+hold count again. When the count is still zero, the job removes the entry,
+and then calls `evict` on the loader that loaded the container. When a new
+hold came first, the job does nothing.
 
-The eviction thus comes after the drop of the last reference, not at the
-drop. This is a difference from the router pool that this design replaced
-(§6). That pool gave a guarantee that the next resolve saw the freed weights.
-Now a resolve that starts immediately after the drop of the last reference can
-run before the eviction job. Then it sees the model as still resident (the
-weights only, with no session bytes), and a new hold of the same key revives
-it with no new load. A caller that needs the freed bytes must wait for the
-eviction. For example, it reads `footprints` until the key is not resident,
-and then runs `try await pool.admit { _ in }` as a barrier: the barrier job
-starts only after the eviction job ends.
+Thus each admission job that a caller submits after the drop of the last
+reference runs after the eviction job. A resolve that starts immediately
+after the drop sees the freed weights in its first measurement, as the router
+pool that this design replaced (§6) did. A synchronous read of `footprint`
+or `residentModelCount` immediately after the drop can still show the model,
+because the eviction job has not run yet. A caller that must see the freed
+bytes reads the footprint in an admission job:
+`try await pool.admit { $0.footprint }`.
 
 ### 2.10 Prompt-cache resize points
 
@@ -324,9 +323,9 @@ Limits:
 - While an acquire of the router runs, its task does not resize, because the
   bytes of the acquire and the `loadingBytes` of the same load would count two
   times. A release in that time resizes when the acquire ends.
-- The last release of a key submits the eviction job from a detached task
-  (Extras task ^adn17rg), so the resize for the freed weights can come a short
-  time after the release.
+- The eviction publishes its value when its job ends. The eviction job waits
+  in the admission queue behind the jobs before it, so the resize for the
+  freed weights comes after those jobs.
 
 ## 3. Testing
 
@@ -364,9 +363,11 @@ Limits:
   `IntegrationTests/.../CrossRouterPoolIntegrationTests.swift`: two `Router`s
   over `LiveModelLoader` resolve one profile. With `InMemoryTracing` bound,
   the second resolve opens zero `load` spans, and a session from each router
-  answers a prompt. After the drop of both profiles, the test waits on
-  `footprints` and an admission barrier (§2.9), and then the pool has no
-  resident model.
+  answers a prompt. After the drop of both profiles, the footprint that an
+  admission job reads (§2.9) has no resident model.
+- **Eviction order test**: in `PooledResidencyTests`, a resolve that starts
+  immediately after the drop of the last reference to a profile, with no
+  wait, sees the freed bytes in its first measurement.
 - **Fork test** per §2.6.
 
 ## 4. Build order

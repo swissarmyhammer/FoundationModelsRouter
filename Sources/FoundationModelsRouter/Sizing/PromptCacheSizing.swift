@@ -43,8 +43,8 @@ import Synchronization
 /// its budget only for that short time.
 ///
 /// An eviction publishes its value when its job ends. The last release of a
-/// key submits the eviction job from a detached task, so the resize for the
-/// freed weights can come a short time after the release.
+/// key puts the eviction job in the admission queue, so the resize for the
+/// freed weights comes after the admission jobs before it in the queue.
 final class PromptCacheSizing: Sendable {
     /// The task that reads the footprints of the pool and resizes the prompt
     /// cache for each value. It ends when this sizing is released.
