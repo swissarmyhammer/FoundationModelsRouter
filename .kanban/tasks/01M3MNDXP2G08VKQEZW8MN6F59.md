@@ -33,10 +33,23 @@ comments:
     - evidence: `swift test --manifest-cache local` (one full run, exit 0): 1409 tests in 178 suites passed (2 known issues), 22 tests in 10 suites passed, 19 tests in 3 suites passed. Clean build `swift build --build-tests` with a separate `--scratch-path`: no compiler warning (only the SwiftPM "missing creator for mutated node" note of the mlx-swift bundle).
     - next: /commit
   timestamp: 2026-09-28T23:09:51.388555+00:00
+- actor: claude-code
+  id: 01m3n4rfbdv4acg5a1f17m67m6
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (7f909f1) — 0 findings, 0 confirmed, 0 refuted; 16 files reviewed, 2 kanban files ignored by .reviewignore. Five tool rules declined only the deleted file SpanContentSafetyTests.swift (the rename). No prior findings.
+    - next: none; the review moved the task to done.
+
+    ### finish iteration 1 — clean
+    - implement: changed — TelemetryContentSafetyTests checks spans, logs and metrics through TelemetryCapture; the pump binds the explicit metrics factory of the session around each job; shared RejectingSessionFixture and ExtrasTelemetryNames. Fail-first proof: a test-only log of the prompt made the test fail with 1 issue; the change is removed.
+    - test: green — swift test: 1409 + 22 + 19 tests passed (2 known issues), exit 0; the clean build with a separate scratch path has no compiler warning.
+    - commit: changed — 7f909f1 fix(telemetry): bind the session metrics factory in the pump, and check all telemetry for content (^8mn6f59)
+    - review: clean — 0 findings; the review moved the task to done.
+  timestamp: 2026-09-28T23:14:20.141733+00:00
 depends_on:
 - 01M3MND1G818WNMRPDFRAG2E91
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffb480
 title: 'OTel router C: the content-safety test covers spans, logs and metrics through the Extras TelemetryCapture helper'
 ---
 ## What
