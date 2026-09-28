@@ -34,10 +34,26 @@ comments:
     - evidence: `swift package clean && swift build --build-tests` — Build complete, no source warning; `swift test --skip-build` — 1466 tests in 178 suites passed (2 known issues that two tests expect on purpose), plus 17 tests in 8 suites and 19 tests in 3 suites; no skipped test; `swift build --build-tests --package-path IntegrationTests` — Build complete, no warning; queue/pool/cancellation/embedder suites 10 times with `--parallel --num-workers 8` — 119 tests in 20 suites passed each time; `--filter AnswerCancellation --parallel --num-workers 8` 10 times — 27 tests passed each time.
     - next: /commit
   timestamp: 2026-09-28T13:23:25.469085+00:00
+- actor: claude-code
+  id: 01m3m39e499ev0h970a0vghxz9
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` on 00cf518 — 0 findings, 0 confirmed, 0 refuted; 14 validator runs attempted, 0 failed; 18 files reviewed (2 `.kanban/` files are excluded by `.reviewignore`; `generation-queue.md` and `model-pool.md`: no validator matched). No earlier findings section on the task.
+    - next: the task moves to done.
+  timestamp: 2026-09-28T13:29:24.361612+00:00
+- actor: claude-code
+  id: 01m3m39hxb5ffps0xzv1shtrba
+  text: |-
+    ### finish iteration 1 — review clean
+    - implement: changed — ModelLoader.swift (`LoadedLLMContainer.submitting(to:)`), SlotPoolLoader.swift, LiveModelLoader.swift (no router queue), QueuePrimitives.swift, RoutedSessionActorCompaction.swift; tests PoolEntryQueueTests.swift (new), Helpers/RoutedLLMBackendQueue.swift (new), LiveBackendContainer, PassObservingFixture and six queue suites; RealModelContainer.swift, IntegrationTests CompactionEvalRealModelContainer.swift; model-pool.md, generation-queue.md.
+    - test: green — clean `swift build --build-tests` with no source warning; `swift test --skip-build` 1466 tests in 178 suites passed (2 known issues), plus 17 and 19; queue/pool/cancellation/embedder suites 10 times in parallel, 119 tests each time; AnswerCancellation 10 times in parallel, 27 tests each time; IntegrationTests build clean.
+    - commit: 00cf518 feat(router): send each model call through the work queue of its pool entry (^5339rgt)
+    - review: clean — `review sha HEAD~1..HEAD`, 0 findings. The task is in done.
+  timestamp: 2026-09-28T13:29:28.235127+00:00
 depends_on:
 - 01M3FNJS6J7KGAJJ5WFEST00WA
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffa780
 title: 'Router: use the work queue of the pool entry, and send embeddings through it'
 ---
 ## What
