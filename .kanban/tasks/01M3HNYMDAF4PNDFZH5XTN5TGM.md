@@ -36,8 +36,24 @@ comments:
     - evidence: 2 files — IntegrationTests/Tests/FoundationModelsRouterEvalIntegrationTests/CompactionContinuityRealModelTests.swift (the eval names its prompt in `compactionContinuityEvalPrompt`), Sources/FoundationModelsRouter/Compaction/CompactionPrompt.swift (doc comment records the v8 trial). v8 text and its shape test were written first (TDD: red, then 5 of 5 `CompactionPromptTests` green), used for the measurement, then removed by the decision rule (tie at 1.0 / 1.0).
     - next: /test
   timestamp: 2026-09-28T18:14:29.961500+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m3mksyf6ep8v6y7r658z6211
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (b7f3bad) — 0 findings, 0 confirmed, 0 refuted, 7 attempted, 0 failed; the 2 `.kanban/` files are excluded by `.reviewignore`. No prior findings.
+    - next: task moved to done.
+  timestamp: 2026-09-28T18:18:02.598780+00:00
+- actor: claude-code
+  id: 01m3mkt1jam5s73ce3rpnrkmzp
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — CompactionContinuityRealModelTests.swift (named eval prompt), CompactionPrompt.swift (doc comment records the v8 trial); gated eval v7 1.0/1.0, v8 1.0/1.0, both integration suites pass with each; v8 removed by the decision rule.
+    - test: green — `swift test`: 1384 tests in 174 suites passed (2 known issues), plus 20 tests in 9 suites and 19 tests in 3 suites passed; exit 0.
+    - commit: changed — b7f3bad test(compaction): measure router-default-v8 against v7 and keep v7 (^xtn5tgm)
+    - review: clean — review sha HEAD~1..HEAD, 0 findings.
+  timestamp: 2026-09-28T18:18:05.770932+00:00
+position_column: done
+position_ordinal: ffffffad80
 title: Try compaction prompt router-default-v8 with the fact rules of Apple's SummarizeHistory, and keep it only when the gated evals show an improvement
 ---
 ## What
