@@ -1,6 +1,6 @@
 import Foundation
 import FoundationModels
-import FoundationModelsExtras
+@testable import FoundationModelsExtras
 import FoundationModelsRouterTestSupport
 import Testing
 

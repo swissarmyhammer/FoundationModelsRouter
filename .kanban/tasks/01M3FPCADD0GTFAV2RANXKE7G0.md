@@ -101,6 +101,20 @@ comments:
     - evidence: Sources (Hosting/ removed except OperationVocabulary.swift; ToolCallSpan, ToolResultAppendBoundary, RaceGate, SerialAsyncChain removed; RoutedLLM, RoutedSessionActor*, ToolOutputCapping, CompactionYield, DiscoveryPriming, SessionOutbox, SessionEvent, OperationEventJournal, RouterTracing, ULID changed), README.md, RoutedSession.md, 12 test files removed, 3 test files added (ExtrasNameClashTests, SessionRunPlaneTests, SessionMountCompositionTests, plus the helper PendingElicitationFixtures), 25 test files changed, IntegrationTests PropagationProbeIntegrationTests. swift test 3x: 1352+17+19 tests pass each time; AnswerCancellation 20x: 27 tests pass each time.
     - next: test
   timestamp: 2026-09-28T14:54:26.617959+00:00
+- actor: claude-code
+  id: 01m3m92aeq6jptq163hh8cq9f0
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (c93452f): 1 finding (1 confirmed, 1 refuted) — Tests/FoundationModelsRouterTests/ToolResultCompactionTests.swift:3
+    - next: implement
+  timestamp: 2026-09-28T15:10:22.679538+00:00
+- actor: claude-code
+  id: 01m3m96jqj52jmhxevrcrqztsj
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — Tests/FoundationModelsRouterTests/ToolResultCompactionTests.swift:3 now uses `@testable import FoundationModelsExtras`. The file has no other plain import of FoundationModelsExtras. swift test: 1352 tests in 169 suites passed (2 known issues), 17 tests in 8 suites passed, 19 tests in 3 suites passed, exit 0.
+    - next: commit
+  timestamp: 2026-09-28T15:12:42.226869+00:00
 depends_on:
 - 01M3FNBZF74DHSGE70C5339RGT
 - 01M3FNC92WA10NG6TX59H3RKXF
@@ -152,3 +166,18 @@ Extras name change: the router's internal actor `SessionMailbox` is `RunPlane` i
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #model-pool #cross-repo
+
+## Review Findings (2026-09-28 09:55)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 79 file(s) reviewed, 4 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+> 2 file(s) not reviewed — no validator matched:
+> - `README.md` — no validator matches this file
+> - `Sources/FoundationModelsRouter/FoundationModelsRouter.docc/RoutedSession.md` — no validator matches this file
+
+> The code-hygiene tool rules (disallowed-constructs-swift, function-length-swift, idioms-swift, magic-numbers-swift, missing-docs-swift) declined each file that this change deleted, because the file is not there.
+
+- [x] `Tests/FoundationModelsRouterTests/ToolResultCompactionTests.swift:3` `completeness/invariant-propagation` — Test files importing FoundationModelsExtras should use @testable to access framework internals, consistent with all other test files updated in this change. The invariant pattern across the test suite is @testable import for internal access, but this line uses plain import without protection. Change line 3 to `@testable import FoundationModelsExtras` to align with the pattern established by other test files in this refactoring.
