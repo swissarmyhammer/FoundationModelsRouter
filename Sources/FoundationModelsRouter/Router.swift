@@ -180,10 +180,10 @@ public actor Router {
         // — the lock wait included — is one span, and each model this resolve
         // has to fetch opens a child span under it. `withSpan` records a
         // thrown error on the span and raises it again.
-        try await RouterTracing.tracer(explicit: tracer)
-            .withSpan(RouterTracing.SpanName.resolve, ofKind: .client) { span in
-                span.attributes[RouterTracing.AttributeKey.routerId] = id.description
-                span.attributes[RouterTracing.AttributeKey.profileDefinitionName] = def.name
+        try await RouterTelemetry.tracer(explicit: tracer)
+            .withSpan(RouterTelemetry.SpanName.resolve, ofKind: .client) { span in
+                span.attributes[RouterTelemetry.AttributeKey.routerId] = id.description
+                span.attributes[RouterTelemetry.AttributeKey.profileDefinitionName] = def.name
                 return try await runResolve(profile: def, reporting: progress, span: span)
             }
     }
@@ -336,7 +336,7 @@ public actor Router {
         let totalBudget = hostBudget()
         let footprint = admission.footprint
         let effectiveBudget = totalBudget - footprint.totalBytes
-        span.attributes[RouterTracing.AttributeKey.budgetBytes] = effectiveBudget
+        span.attributes[RouterTelemetry.AttributeKey.budgetBytes] = effectiveBudget
 
         let resolution = try await runJointFit(
             profile: def,
@@ -430,7 +430,7 @@ public actor Router {
     ///   - span: The resolve span to write the three keys on.
     private static func recordChosenModels(resolution: JointResolution, on span: any Span) {
         for slot in acquisitionOrder {
-            span.attributes[RouterTracing.AttributeKey.chosenModelRef(slot: slot)] =
+            span.attributes[RouterTelemetry.AttributeKey.chosenModelRef(slot: slot)] =
                 chosenRef(of: slot, in: resolution).stringValue
         }
     }
@@ -755,11 +755,11 @@ public actor Router {
         footprintBytes: Int64,
         _ body: () async throws -> Loaded
     ) async throws -> Loaded {
-        try await RouterTracing.tracer(explicit: tracer)
-            .withSpan(RouterTracing.SpanName.load, ofKind: .client) { span in
-                span.attributes[RouterTracing.AttributeKey.modelRef] = chosen.stringValue
-                span.attributes[RouterTracing.AttributeKey.slot] = slot.rawValue
-                span.attributes[RouterTracing.AttributeKey.footprintBytes] = footprintBytes
+        try await RouterTelemetry.tracer(explicit: tracer)
+            .withSpan(RouterTelemetry.SpanName.load, ofKind: .client) { span in
+                span.attributes[RouterTelemetry.AttributeKey.modelRef] = chosen.stringValue
+                span.attributes[RouterTelemetry.AttributeKey.slot] = slot.rawValue
+                span.attributes[RouterTelemetry.AttributeKey.footprintBytes] = footprintBytes
                 return try await body()
             }
     }

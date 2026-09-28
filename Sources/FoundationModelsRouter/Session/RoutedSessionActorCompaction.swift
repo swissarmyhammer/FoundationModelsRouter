@@ -2,11 +2,7 @@ import Foundation
 import Tracing
 import FoundationModels
 import FoundationModelsExtras
-import os
-
-/// The logger an abandoned compaction's discarded summarizer failure is reported to
-/// (see ``RoutedSessionActor/noteAbandonedCompaction(discarding:tier:)``).
-private let sessionCompactionLogger = makeModuleLogger(category: "Compaction")
+import Logging
 
 /// Adapts a ``LanguageModelSessionBackend`` to ``CompactionSummarizer``.
 ///
@@ -178,7 +174,7 @@ extension RoutedSessionActor {
     ///
     /// The whole compaction runs inside one span
     /// (``withCompactionSpan(trigger:_:)``), and the span reports the tier that
-    /// wrote the summary — see ``RouterTracing/AttributeKey/compactionTier``.
+    /// wrote the summary — see ``RouterTelemetry/AttributeKey/compactionTier``.
     ///
     /// - Parameters:
     ///   - prompt: The compaction prompt sent to the summarizer tier that runs.
@@ -218,7 +214,7 @@ extension RoutedSessionActor {
         BackendSummarizerTier(tier: .ownModel, backend: backend, windowTokens: contextTokens, model: model)
     }
 
-    /// Opens one ``RouterTracing/SpanName/compact`` span around a whole
+    /// Opens one ``RouterTelemetry/SpanName/compact`` span around a whole
     /// compaction and writes what the compaction did onto it.
     ///
     /// The one span site both compaction paths share. The tier written is the
@@ -232,20 +228,20 @@ extension RoutedSessionActor {
     /// - Throws: Whatever `body` throws. `withSpan` records the error on the
     ///   span and raises it again.
     private func withCompactionSpan(
-        trigger: RouterTracing.CompactionTrigger,
+        trigger: RouterTelemetry.CompactionTrigger,
         _ body: () async throws -> CompactionResult
     ) async throws -> CompactionResult {
-        try await RouterTracing.tracer(explicit: tracer)
-            .withSpan(RouterTracing.SpanName.compact, ofKind: .internal) { span in
-                span.attributes[RouterTracing.AttributeKey.sessionId] = id.description
-                span.attributes[RouterTracing.AttributeKey.modelRef] = model.stringValue
-                span.attributes[RouterTracing.AttributeKey.compactionTrigger] = trigger.rawValue
+        try await RouterTelemetry.tracer(explicit: tracer)
+            .withSpan(RouterTelemetry.SpanName.compact, ofKind: .internal) { span in
+                span.attributes[RouterTelemetry.AttributeKey.sessionId] = id.description
+                span.attributes[RouterTelemetry.AttributeKey.modelRef] = model.stringValue
+                span.attributes[RouterTelemetry.AttributeKey.compactionTrigger] = trigger.rawValue
                 let result = try await body()
                 if let tier = result.summarizerTier {
-                    span.attributes[RouterTracing.AttributeKey.compactionTier] = tier.rawValue
+                    span.attributes[RouterTelemetry.AttributeKey.compactionTier] = tier.rawValue
                 }
-                span.attributes[RouterTracing.AttributeKey.tokensBefore] = result.tokensBefore
-                span.attributes[RouterTracing.AttributeKey.tokensAfter] = result.tokensAfter
+                span.attributes[RouterTelemetry.AttributeKey.tokensBefore] = result.tokensBefore
+                span.attributes[RouterTelemetry.AttributeKey.tokensAfter] = result.tokensAfter
                 return result
             }
     }
@@ -274,22 +270,24 @@ extension RoutedSessionActor {
     }
 
     /// Logs the summarizer failure an abandoned compaction discards, unless it is a
-    /// `CancellationError`. Only the tier, the session id, and the error's type
-    /// are public in the log; the description can contain transcript content.
+    /// `CancellationError`. The log holds the tier, the session id, and the
+    /// type and code of the error, never its description, which can contain
+    /// transcript content.
     ///
     /// - Parameters:
     ///   - error: The failure the abandoned tier threw.
     ///   - tier: The tier that threw it.
     private func noteAbandonedCompaction(discarding error: Error, tier: CompactionSummarizerTier) {
         guard !(error is CancellationError) else { return }
-        sessionCompactionLogger.warning(
+        sessionLogger(.compaction).warning(
             """
-            abandoning the \(tier.rawValue, privacy: .public) summarizer tier's compaction for session \
-            \(self.id.description, privacy: .public) because a stop is outstanding against its running work; \
-            discarding the \(String(describing: type(of: error)), privacy: .public) it raised: \
-            \(error.localizedDescription)
-            """
-        )
+            abandoning the compaction of a summarizer tier because a stop is outstanding against \
+            its running work; discarding the error it raised
+            """,
+            metadata: RouterTelemetry.errorMetadata(error).merging([
+                RouterTelemetry.LogMetadataKey.sessionId: "\(id.description)",
+                RouterTelemetry.LogMetadataKey.summarizerTier: "\(tier.rawValue)",
+            ]) { _, new in new })
     }
 
     /// The compaction mechanics ``compact(prompt:budget:)`` and

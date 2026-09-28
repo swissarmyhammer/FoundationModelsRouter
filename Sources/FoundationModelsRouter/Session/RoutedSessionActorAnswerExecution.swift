@@ -3,10 +3,7 @@ import FoundationModels
 import FoundationModelsExtras
 import Synchronization
 import Tracing
-import os
-
-/// The logger for a failed pre-discovery seeding of an answer.
-private let sessionPrimingLogger = makeModuleLogger(category: "DiscoveryPriming")
+import Logging
 
 /// ``RoutedSessionActor``'s answer execution: the recorder-bracketed chain of
 /// submissions that the pump runs for one answer, discovery priming, the
@@ -97,7 +94,7 @@ extension RoutedSessionActor {
     /// ``SessionEvent/answered(_:)`` or ``SessionEvent/answerFailed(_:)``.
     /// Each submission of the chain opens its own span (see
     /// `RoutedSessionActorSubmissionEvents.swift`). ``RoutedSession`` states
-    /// the span contract, and ``RouterTracing`` states the rule that keeps
+    /// the span contract, and ``RouterTelemetry`` states the rule that keeps
     /// content off the spans.
     ///
     /// - Parameters:
@@ -221,9 +218,11 @@ extension RoutedSessionActor {
             let transcript = Transcript(entries: backend.transcriptEntries() + seeded)
             backend = backend.replacingTranscript(transcript)
         } catch {
-            sessionPrimingLogger.warning(
-                "generating unseeded: discovery priming failed for session \(self.id.description, privacy: .public): \(String(describing: error), privacy: .public)"
-            )
+            sessionLogger(.discoveryPriming).warning(
+                "generating unseeded: the discovery priming failed",
+                metadata: RouterTelemetry.errorMetadata(error).merging([
+                    RouterTelemetry.LogMetadataKey.sessionId: "\(id.description)"
+                ]) { _, new in new })
             // One call, two routes: `emit` is the composed sink of this answer,
             // which already fans out to the own stream of the answer (when the
             // caller sent the message through ``streamEvents(to:maxTokens:)``)
@@ -456,7 +455,7 @@ extension RoutedSessionActor {
     ) async throws -> String {
         if let retry = RejectedToolCallRetry(error: error) {
             let ordinal = rejectedCallRetries + 1
-            retry.logRetry(sessionID: id, ordinal: ordinal)
+            retry.logRetry(sessionID: id, ordinal: ordinal, to: sessionLogger(.rejectedToolCall))
             return try await runSubmission(
                 grammar: grammar, pendingEvents: [], ownPrompt: retry.prompt(retrying: ownPrompt),
                 responseTokenCeiling: responseTokenCeiling, onEvent: onEvent,
@@ -471,7 +470,7 @@ extension RoutedSessionActor {
 
         let retryTarget = overflowRetryTarget(
             retryPrompt: ownPrompt, requestedResponseTokenCeiling: responseTokenCeiling.requested, budget: budget)
-        retryTarget.log(sessionID: id)
+        retryTarget.log(sessionID: id, to: sessionLogger(.overflowRetry))
         guard retryTarget.leavesRoom else {
             throw error
         }

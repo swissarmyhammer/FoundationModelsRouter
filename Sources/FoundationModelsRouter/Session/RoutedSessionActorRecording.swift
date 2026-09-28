@@ -1,9 +1,6 @@
 import Foundation
 import FoundationModels
-import os
-
-/// The logger for transcript divergence warnings.
-private let sessionRecordingLogger = makeModuleLogger(category: "Recording")
+import Logging
 
 /// The recording path of ``RoutedSessionActor``: the usage delta of each
 /// submission, the transcript diff that becomes recorded events, the re-queue
@@ -292,13 +289,15 @@ extension RoutedSessionActor {
     ///   - divergence: The non-append change the diff of the submission found.
     ///   - grammar: The guided-generation grammar in force.
     private func appendDivergenceMarker(_ divergence: TranscriptDiffer.Divergence, grammar: Grammar?) async {
-        sessionRecordingLogger.warning(
+        sessionLogger(.recording).warning(
             """
-            \(divergence.description, privacy: .public) for session \
-            \(self.id.description, privacy: .public); the unseen entries of the submission are recorded and a \
-            divergence marker follows them
-            """
-        )
+            the transcript diverges from the recorded entries; the unseen entries of the submission \
+            are recorded and a divergence marker follows them
+            """,
+            metadata: [
+                RouterTelemetry.LogMetadataKey.sessionId: "\(id.description)",
+                RouterTelemetry.LogMetadataKey.divergence: "\(divergence.description)",
+            ])
         await append(partial: makePartialEvent(kind: .divergence, grammar: grammar, text: divergence.description))
     }
 

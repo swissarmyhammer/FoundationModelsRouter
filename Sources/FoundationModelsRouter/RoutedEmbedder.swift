@@ -19,8 +19,8 @@ extension RoutedModel where Container == any LoadedEmbeddingContainer {
     /// propagates to the caller.
     ///
     /// Every call opens one OpenTelemetry span named
-    /// ``RouterTracing/SpanName/embed``, of kind `client`, through the tracer
-    /// ``RouterTracing/tracer(explicit:)`` resolves from ``RoutedModel/tracer``.
+    /// ``RouterTelemetry/SpanName/embed``, of kind `client`, through the tracer
+    /// ``RouterTelemetry/tracer(explicit:)`` resolves from ``RoutedModel/tracer``.
     /// Unbootstrapped, that resolves to a no-op tracer, so an application that
     /// does not trace pays nothing. `withSpan` records a thrown error on the
     /// span and rethrows it.
@@ -42,12 +42,12 @@ extension RoutedModel where Container == any LoadedEmbeddingContainer {
     /// - Returns: One ``dimension``-length vector per input, in order.
     /// - Throws: Any error thrown by the embedder container.
     public func embed(texts: [String]) async throws -> [[Float]] {
-        try await RouterTracing.tracer(explicit: tracer)
-            .withSpan(RouterTracing.SpanName.embed, ofKind: .client) { span in
-                span.attributes[RouterTracing.AttributeKey.routerId] = routerId.description
-                span.attributes[RouterTracing.AttributeKey.modelRef] = chosen.stringValue
-                span.attributes[RouterTracing.AttributeKey.embeddingInputCount] = texts.count
-                span.attributes[RouterTracing.AttributeKey.embeddingDimension] = dimension
+        try await RouterTelemetry.tracer(explicit: tracer)
+            .withSpan(RouterTelemetry.SpanName.embed, ofKind: .client) { span in
+                span.attributes[RouterTelemetry.AttributeKey.routerId] = routerId.description
+                span.attributes[RouterTelemetry.AttributeKey.modelRef] = chosen.stringValue
+                span.attributes[RouterTelemetry.AttributeKey.embeddingInputCount] = texts.count
+                span.attributes[RouterTelemetry.AttributeKey.embeddingDimension] = dimension
                 return try await container.embed(texts: texts)
             }
     }

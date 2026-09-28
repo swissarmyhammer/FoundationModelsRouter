@@ -14,6 +14,8 @@ Blocked by Extras task 01M3MN9PAWGYCD0948TC91JNMP (^c91jnmp, Extras OTel D: the 
 - `Sources/FoundationModelsRouter/Tracing/RouterTracing.swift:40` (or `RouterTelemetry.swift`, if OTel router task A 01M3MND1G818WNMRPDFRAG2E91 is done first) and `Sources/FoundationModelsRouter/RoutedLLM.swift:250`: doc comments that name the tool span. Change them to the Extras name.
 - Search the whole repo (Sources, Tests, IntegrationTests, docs, README, DocC) for `FoundationModelsRouter.tool` and change each reference.
 
+Facts from the Extras OTel work (swissarmyhammer session, 2026-09-28; do not start until Extras OTel D is on Extras `origin/main`): the span name is `FoundationModelsExtras.tool`, and the names are in the Extras file `ExtrasTelemetry.swift`. `ToolCallSpan` is internal in Extras, and its `withSpan` body now gets a `ToolCallSpan.Call` value, not a raw span. If the name constant in `ExtrasTelemetry.swift` is not public, the test keeps the string and a comment names the Extras file.
+
 ## Acceptance Criteria
 - [ ] No reference to `FoundationModelsRouter.tool` is left in the repo.
 - [ ] The tool tracing tests check the span name `FoundationModelsExtras.tool`.

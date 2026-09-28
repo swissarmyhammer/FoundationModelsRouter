@@ -1,8 +1,5 @@
 import MLXLMCommon
-import os
-
-/// The logger for a rejected tool call that goes back to the model.
-private let rejectedToolCallLogger = makeModuleLogger(category: "RejectedToolCall")
+import Logging
 
 /// A rejected tool call that goes back to the model, so the answer can continue.
 ///
@@ -76,9 +73,17 @@ struct RejectedToolCallRetry {
     /// - Parameters:
     ///   - sessionID: The session whose answer runs the retry.
     ///   - ordinal: Which retry of the answer this is: 1 for the first retry.
-    func logRetry(sessionID: ULID, ordinal: Int) {
-        rejectedToolCallLogger.warning(
-            "session \(sessionID.description, privacy: .public): a rejected tool call (\(reason, privacy: .public), tool \(toolName ?? "unknown", privacy: .private)) goes back to the model; retry \(ordinal, privacy: .public) of this answer"
-        )
+    ///   - logger: The logger of the session.
+    func logRetry(sessionID: ULID, ordinal: Int, to logger: Logger) {
+        var metadata: Logger.Metadata = [
+            RouterTelemetry.LogMetadataKey.sessionId: "\(sessionID.description)",
+            RouterTelemetry.LogMetadataKey.rejectionReason: "\(reason)",
+            RouterTelemetry.LogMetadataKey.retryOrdinal: "\(ordinal)",
+        ]
+        // A tool name is safe: it names the tool, and it holds no argument.
+        if let toolName {
+            metadata[RouterTelemetry.LogMetadataKey.toolName] = "\(toolName)"
+        }
+        logger.warning("a rejected tool call goes back to the model", metadata: metadata)
     }
 }

@@ -17,6 +17,14 @@ let packageName = "FoundationModelsRouter"
 // product to read the finished spans back.
 let tracingPackage = "swift-distributed-tracing"
 
+// Apple's Swift community logging API (the OpenTelemetry design of
+// 2026-09-28): the library logs through `Logging.Logger` and bootstraps no
+// backend, so each record goes through the handler that the host application
+// bootstrapped. The pin is the same as the pin of FoundationModelsExtras. The
+// executables of this package bootstrap a handler that writes to standard
+// error.
+let loggingPackage = "swift-log"
+
 // Hugging Face Hub client and tokenizer packages. The `mlx-foundationmodels`
 // fork bundles no default Hub client: its `MLXHuggingFace` macros
 // (`#hubDownloader()` / `#huggingFaceTokenizerLoader()`) expand to code that
@@ -63,6 +71,9 @@ let ulidProduct: Target.Dependency = .product(name: "ULID", package: ulidPackage
 let tracingProduct: Target.Dependency = .product(name: "Tracing", package: tracingPackage)
 let inMemoryTracingProduct: Target.Dependency = .product(
     name: "InMemoryTracing", package: tracingPackage)
+
+// The logging API the library target and the executables log through.
+let loggingProduct: Target.Dependency = .product(name: "Logging", package: loggingPackage)
 
 // The Hub client + tokenizer products a live `LiveModelLoader` is constructed
 // from (via the `MLXHuggingFace` macros). The RealModelSupport target, the
@@ -123,6 +134,12 @@ let package = Package(
             url: "https://github.com/apple/\(tracingPackage).git",
             from: "1.4.1"
         ),
+        // The logging API of the library and the executables. The same pin as
+        // FoundationModelsExtras.
+        .package(
+            url: "https://github.com/apple/\(loggingPackage).git",
+            from: "1.15.1"
+        ),
         // The operation-event vocabulary (`OperationEvent`,
         // `OperationOutcome`, `OperationEventSink`, `ToolInvocationRecord`,
         // the `Elicitation` family, `ForkableTool`) moved to the Extras
@@ -138,7 +155,7 @@ let package = Package(
         .target(
             name: packageName,
             dependencies: mlxProducts + [
-                ulidProduct, tracingProduct,
+                ulidProduct, tracingProduct, loggingProduct,
                 .product(name: "FoundationModelsExtras", package: "FoundationModelsExtras"),
             ],
             path: "Sources/\(packageName)",
@@ -162,6 +179,10 @@ let package = Package(
                 .target(name: "\(packageName)RealModelSupport"),
                 inMemoryTracingProduct,
                 .product(name: "Operations", package: "FoundationModelsExtras"),
+                // The log tests read the log records of a capture of the
+                // Extras telemetry helper, and give its logger to a session.
+                loggingProduct,
+                .product(name: "TelemetryTestSupport", package: "FoundationModelsExtras"),
             ] + mlxProducts,
             path: "Tests/\(packageName)Tests",
             // `Fixtures` holds recordings. A test reads them from disk, at a
@@ -243,7 +264,7 @@ let package = Package(
         // `LiveModelLoader` through the `MLXHuggingFace` macros.
         .executableTarget(
             name: "MultiModelGeneration",
-            dependencies: [.target(name: packageName)] + mlxProducts + hubProducts,
+            dependencies: [.target(name: packageName), loggingProduct] + mlxProducts + hubProducts,
             path: "Examples/MultiModelGeneration",
             exclude: ["README.md"]
         ),
@@ -261,7 +282,7 @@ let package = Package(
         // resolves a real profile through `LiveModelLoader`.
         .executableTarget(
             name: "CompactionDemo",
-            dependencies: [.target(name: packageName)] + mlxProducts + hubProducts,
+            dependencies: [.target(name: packageName), loggingProduct] + mlxProducts + hubProducts,
             path: "Examples/CompactionDemo",
             exclude: ["README.md", "Fixtures"]
         ),
@@ -279,7 +300,7 @@ let package = Package(
         .executableTarget(
             name: "RecordCompactionFixture",
             dependencies: [
-                .target(name: packageName), .target(name: "\(packageName)TestSupport"),
+                .target(name: packageName), .target(name: "\(packageName)TestSupport"), loggingProduct,
             ] + mlxProducts + hubProducts,
             path: "Tools/RecordCompactionFixture",
             exclude: ["README.md"]

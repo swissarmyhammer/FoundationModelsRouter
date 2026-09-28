@@ -1,9 +1,6 @@
 import Foundation
 import FoundationModels
-import os
-
-/// The logger the structured-segment bridge reports encode failures to.
-private let structuredSegmentLogger = makeModuleLogger(category: "Recording")
+import Logging
 
 /// A typed value the router carries in a transcript as a
 /// `Transcript.StructuredSegment`, and reads back from one.
@@ -89,9 +86,12 @@ extension PersistableStructuredSegment {
             )
             return try orderPreserving(json: json)
         } catch {
-            structuredSegmentLogger.fault(
-                "PersistableStructuredSegment: \(String(describing: error), privacy: .public); carrying the encoding-failure marker for segment \(id, privacy: .public) (\(schemaName, privacy: .public))"
-            )
+            RouterTelemetry.makeLogger(.recording).critical(
+                "PersistableStructuredSegment: the encode failed; carrying the encoding-failure marker",
+                metadata: RouterTelemetry.errorMetadata(error).merging([
+                    RouterTelemetry.LogMetadataKey.segmentId: "\(id)",
+                    RouterTelemetry.LogMetadataKey.schemaName: "\(schemaName)",
+                ]) { _, new in new })
             // A literal this file controls, and valid JSON, so the parse
             // cannot fail; the fallback keeps this path total.
             return (try? orderPreserving(json: encodingFailureContentJSON)) ?? GeneratedContent("")

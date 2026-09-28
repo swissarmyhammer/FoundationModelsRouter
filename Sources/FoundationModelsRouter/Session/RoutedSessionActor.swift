@@ -1,9 +1,10 @@
 import Foundation
 import FoundationModels
 import FoundationModelsExtras
+import Logging
 import Tracing
 
-/// Writes one session's identity onto its ``RouterTracing/SpanName/session``
+/// Writes one session's identity onto its ``RouterTelemetry/SpanName/session``
 /// span.
 ///
 /// One writer for all three shapes, so every session span carries the same
@@ -19,22 +20,22 @@ import Tracing
 ///   - model: The model the session runs against.
 private func describeSession(
     on span: any Span,
-    origin: RouterTracing.SessionOrigin,
+    origin: RouterTelemetry.SessionOrigin,
     routerId: ULID,
     sessionId: ULID,
     parentId: ULID?,
     model: ModelRef
 ) {
-    span.attributes[RouterTracing.AttributeKey.routerId] = routerId.description
-    span.attributes[RouterTracing.AttributeKey.modelRef] = model.stringValue
-    span.attributes[RouterTracing.AttributeKey.sessionId] = sessionId.description
-    span.attributes[RouterTracing.AttributeKey.sessionOrigin] = origin.rawValue
+    span.attributes[RouterTelemetry.AttributeKey.routerId] = routerId.description
+    span.attributes[RouterTelemetry.AttributeKey.modelRef] = model.stringValue
+    span.attributes[RouterTelemetry.AttributeKey.sessionId] = sessionId.description
+    span.attributes[RouterTelemetry.AttributeKey.sessionOrigin] = origin.rawValue
     if let parentId {
-        span.attributes[RouterTracing.AttributeKey.parentSessionId] = parentId.description
+        span.attributes[RouterTelemetry.AttributeKey.parentSessionId] = parentId.description
     }
 }
 
-/// The kind every ``RouterTracing/SpanName/session`` span opens under.
+/// The kind every ``RouterTelemetry/SpanName/session`` span opens under.
 ///
 /// Written here, and nowhere else, so the two `withSessionSpan` forms below
 /// cannot drift apart on it. With the span's name and the one attribute writer
@@ -42,7 +43,7 @@ private func describeSession(
 /// different effect, and nothing else.
 private let sessionSpanKind: SpanKind = .internal
 
-/// Opens one ``RouterTracing/SpanName/session`` span around the work that
+/// Opens one ``RouterTelemetry/SpanName/session`` span around the work that
 /// brings a session into existence, and writes that session's identity onto
 /// it.
 ///
@@ -59,7 +60,7 @@ private let sessionSpanKind: SpanKind = .internal
 /// exactly the work this span was added to make visible. So the restore path
 /// calls this helper itself, around that read *and* the rebuild that follows
 /// it, and `makeRoutedSessionActor` opens no second span for a
-/// ``RouterTracing/SessionOrigin/restored`` session. The other two shapes have
+/// ``RouterTelemetry/SessionOrigin/restored`` session. The other two shapes have
 /// nothing to measure before the construction, so the factory calls this
 /// helper for them.
 ///
@@ -80,12 +81,12 @@ func withSessionSpan<Result>(
     sessionId: ULID,
     parentId: ULID?,
     model: ModelRef,
-    origin: RouterTracing.SessionOrigin,
+    origin: RouterTelemetry.SessionOrigin,
     tracer: (any Tracer)?,
     _ work: () throws -> Result
 ) rethrows -> Result {
-    try RouterTracing.tracer(explicit: tracer)
-        .withSpan(RouterTracing.SpanName.session, ofKind: sessionSpanKind) { span in
+    try RouterTelemetry.tracer(explicit: tracer)
+        .withSpan(RouterTelemetry.SpanName.session, ofKind: sessionSpanKind) { span in
             describeSession(
                 on: span,
                 origin: origin,
@@ -126,12 +127,12 @@ func withSessionSpan<Result>(
     sessionId: ULID,
     parentId: ULID?,
     model: ModelRef,
-    origin: RouterTracing.SessionOrigin,
+    origin: RouterTelemetry.SessionOrigin,
     tracer: (any Tracer)?,
     _ work: () async throws -> Result
 ) async rethrows -> Result {
-    try await RouterTracing.tracer(explicit: tracer)
-        .withSpan(RouterTracing.SpanName.session, ofKind: sessionSpanKind) { span in
+    try await RouterTelemetry.tracer(explicit: tracer)
+        .withSpan(RouterTelemetry.SpanName.session, ofKind: sessionSpanKind) { span in
             describeSession(
                 on: span,
                 origin: origin,
@@ -145,7 +146,7 @@ func withSessionSpan<Result>(
 }
 
 /// Builds a ``RoutedSessionActor`` inside its own
-/// ``RouterTracing/SpanName/session`` span. Each parameter but `origin`
+/// ``RouterTelemetry/SpanName/session`` span. Each parameter but `origin`
 /// forwards unchanged to the ``RoutedSessionActor`` initializer.
 ///
 /// Every session comes into existence through this one factory — vended,
@@ -156,14 +157,14 @@ func withSessionSpan<Result>(
 /// was made would leave its span unreadable.
 ///
 /// **A forked child carries two spans, and they are not two costs.** The
-/// enclosing ``RouterTracing/SpanName/fork`` span measures the whole fork;
+/// enclosing ``RouterTelemetry/SpanName/fork`` span measures the whole fork;
 /// the session span opened here measures only the construction inside it.
 /// The session span is a child of the fork span — the fork opened its own
 /// before it reached this factory, and the task-local `ServiceContext`
 /// carries it here — so a reader sees one nested inside the other and never
 /// adds the two together.
 ///
-/// A ``RouterTracing/SessionOrigin/restored`` session gets no span from this
+/// A ``RouterTelemetry/SessionOrigin/restored`` session gets no span from this
 /// factory: its span is already open around the transcript read that precedes
 /// this call. See `withSessionSpan`, the one helper both paths open their span
 /// through.
@@ -189,7 +190,7 @@ func makeRoutedSessionActor(
     persistedEntryCount: Int,
     historyOrdinal: Int,
     sidecarOrigin: SessionSidecarOrigin,
-    origin: RouterTracing.SessionOrigin,
+    origin: RouterTelemetry.SessionOrigin,
     contextTokens: Int,
     usageState: ContextUsageState = .none,
     autoCompactionBudget: TokenBudget? = nil,
@@ -331,8 +332,8 @@ actor RoutedSessionActor: RoutedSession {
     /// Carried from the ``RoutedModel`` the session came off, and handed on to
     /// every fork this session takes, so a fork and a restored node report to
     /// the same backend as the handle that owns them. See
-    /// ``RouterTracing/tracer(explicit:)`` for the resolution rule, and
-    /// ``RouterTracing`` for the rule that keeps content off a span.
+    /// ``RouterTelemetry/tracer(explicit:)`` for the resolution rule, and
+    /// ``RouterTelemetry`` for the rule that keeps content off a span.
     nonisolated let tracer: (any Tracer)?
 
     /// The session's system instructions. A forked child inherits them.
@@ -480,6 +481,16 @@ actor RoutedSessionActor: RoutedSession {
     /// ``setGenerationStallReportInterval(_:)``. A fork starts with its
     /// parent's interval.
     var generationStallReportInterval: Duration = .zero
+
+    /// The explicit logger of this session, or `nil` for the loggers of the
+    /// module. See ``useLogger(_:)`` and ``sessionLogger(_:)``.
+    ///
+    /// The pump is a `Task.detached` and inherits no task-local of the
+    /// caller, so a task-local logging context never reaches its records. A
+    /// test or a host gives an explicit logger so that each record of the
+    /// session, also a record of the pump, goes to it. A fork starts with the
+    /// explicit logger of its parent.
+    var explicitLogger: Logging.Logger?
 
     /// The `correlationID` of every background run whose ending this session has
     /// already journaled. A second write for one run is a no-op. See

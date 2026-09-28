@@ -1,11 +1,7 @@
 import Foundation
 import FoundationModels
 import FoundationModelsExtras
-import os
-
-/// The logger for a compaction inside an answer: at a tool-result boundary or
-/// at a ceiling stop.
-private let compactionYieldLogger = makeModuleLogger(category: "CompactionYield")
+import Logging
 
 /// ``RoutedSessionActor``'s compaction inside an answer: at a tool-result
 /// boundary, and after an attempt that stopped at its output token ceiling
@@ -64,13 +60,16 @@ extension RoutedSessionActor {
         toolResultWatch.yield = CompactionYield(
             measuredTokens: measuredTokens, results: toolResultWatch.roundResults,
             liveEntries: liveEntries, snapshotEntries: snapshot?.entries ?? [])
-        compactionYieldLogger.notice(
+        sessionLogger(.compactionYield).notice(
             """
-            session \(self.id.description, privacy: .public): a tool result took the context to \
-            \(measuredTokens, privacy: .public) tokens, at or over the trigger of \
-            \(budget.triggerTokens, privacy: .public); the model call stops and the answer compacts
-            """
-        )
+            a tool result took the context to or over the compaction trigger; \
+            the model call stops and the answer compacts
+            """,
+            metadata: [
+                RouterTelemetry.LogMetadataKey.sessionId: "\(id.description)",
+                RouterTelemetry.LogMetadataKey.measuredTokens: "\(measuredTokens)",
+                RouterTelemetry.LogMetadataKey.triggerTokens: "\(budget.triggerTokens)",
+            ])
         modelCall.cancel()
     }
 
@@ -246,12 +245,12 @@ extension RoutedSessionActor {
         attempt: StoppedAttempt,
         body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
-        compactionYieldLogger.notice(
+        sessionLogger(.compactionYield).notice(
             """
-            session \(self.id.description, privacy: .public): an attempt stopped at its output token \
-            ceiling with the context at or over the trigger; the answer compacts and goes on
-            """
-        )
+            an attempt stopped at its output token ceiling with the context at or over the trigger; \
+            the answer compacts and goes on
+            """,
+            metadata: [RouterTelemetry.LogMetadataKey.sessionId: "\(id.description)"])
         return try await compactAndContinue(
             attempt: attempt, continuationPrompt: Self.ceilingStopContinuationPrompt, body: body)
     }

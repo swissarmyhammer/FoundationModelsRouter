@@ -1,6 +1,7 @@
 import Foundation
 import FoundationModels
 import Synchronization
+import TelemetryTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -492,18 +493,23 @@ struct GenerationStallDiagnosticTests {
     @Test("a stall is logged, so a consumer that subscribed to nothing still sees it", .timeLimit(.minutes(1)))
     @MainActor
     func aStallIsLogged() async throws {
-        let start = Date()
         let (session, backend, dir) = try await Self.makeStallingSession()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let feed = await session.streamSessionEvents()
-        let answerTask = Task { try await session.respond(to: Self.prompt) }
-        #expect(await Self.firstStall(on: feed) != nil)
+        let logs = try await TelemetryCapture.run(forbidding: []) { context in
+            await session.useCaptureLogger(context.logger)
+            let feed = await session.streamSessionEvents()
+            let answerTask = Task { try await session.respond(to: Self.prompt) }
+            #expect(await Self.firstStall(on: feed) != nil)
 
-        backend.release.signal()
-        _ = try await answerTask.value
+            backend.release.signal()
+            _ = try await answerTask.value
+            return context
+        }
 
-        try assertLogged(containing: "generation has made no progress", since: start)
+        logs.expectLogged(
+            containing: "generation stall",
+            metadata: [RouterTelemetry.LogMetadataKey.generationStall: "generation has made no progress"])
     }
 
     // MARK: - Tool calls and snapshots are progress (task ^4799jxg)

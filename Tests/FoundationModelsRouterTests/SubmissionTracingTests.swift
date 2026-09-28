@@ -29,7 +29,7 @@ import Tracing
 @Suite("Submission tracing")
 struct SubmissionTracingTests {
     /// The span name every submission opens.
-    private static let spanName = RouterTracing.SpanName.submission
+    private static let spanName = RouterTelemetry.SpanName.submission
 
     /// The `submission.cause` value of a submission that carries a caller
     /// message.
@@ -176,16 +176,16 @@ struct SubmissionTracingTests {
         #expect(span.operationName == Self.spanName)
         #expect(span.kind == .client)
         #expect(
-            span.attributes.get(RouterTracing.AttributeKey.routerId)
+            span.attributes.get(RouterTelemetry.AttributeKey.routerId)
                 == .string(fixture.router.id.description))
         #expect(
-            span.attributes.get(RouterTracing.AttributeKey.sessionId)
+            span.attributes.get(RouterTelemetry.AttributeKey.sessionId)
                 == .string(fixture.session.id.description))
         #expect(
-            span.attributes.get(RouterTracing.AttributeKey.modelRef)
+            span.attributes.get(RouterTelemetry.AttributeKey.modelRef)
                 == .string(fixture.profile.standard.chosen.stringValue))
-        #expect(span.attributes.get(RouterTracing.AttributeKey.submissionId) == .string(SubmissionID(1).description))
-        #expect(span.attributes.get(RouterTracing.AttributeKey.submissionCause) == .string(Self.messageCause))
+        #expect(span.attributes.get(RouterTelemetry.AttributeKey.submissionId) == .string(SubmissionID(1).description))
+        #expect(span.attributes.get(RouterTelemetry.AttributeKey.submissionCause) == .string(Self.messageCause))
         #expect(span.errors.isEmpty)
     }
 
@@ -199,9 +199,9 @@ struct SubmissionTracingTests {
 
         let span = try Self.singleSpan(reportedTo: tracer)
         #expect(
-            span.attributes.get(RouterTracing.AttributeKey.tokensIn) == .int64(Int64(Self.submissionUsage.input)))
+            span.attributes.get(RouterTelemetry.AttributeKey.tokensIn) == .int64(Int64(Self.submissionUsage.input)))
         #expect(
-            span.attributes.get(RouterTracing.AttributeKey.tokensOut) == .int64(Int64(Self.submissionUsage.output)))
+            span.attributes.get(RouterTelemetry.AttributeKey.tokensOut) == .int64(Int64(Self.submissionUsage.output)))
     }
 
     @Test("two answers on one session open one submission span each, numbered in their session")
@@ -215,11 +215,11 @@ struct SubmissionTracingTests {
 
         let spans = Self.submissionSpans(reportedTo: tracer)
         #expect(
-            spans.map { $0.attributes.get(RouterTracing.AttributeKey.submissionId) }
+            spans.map { $0.attributes.get(RouterTelemetry.AttributeKey.submissionId) }
                 == [.string(SubmissionID(1).description), .string(SubmissionID(Self.secondSubmissionNumber).description)])
         #expect(
             spans.allSatisfy {
-                $0.attributes.get(RouterTracing.AttributeKey.submissionCause) == .string(Self.messageCause)
+                $0.attributes.get(RouterTelemetry.AttributeKey.submissionCause) == .string(Self.messageCause)
             })
     }
 
@@ -237,7 +237,7 @@ struct SubmissionTracingTests {
 
         let span = try Self.singleSpan(reportedTo: tracer)
         #expect(span.operationName == Self.spanName)
-        #expect(span.attributes.get(RouterTracing.AttributeKey.submissionCause) == .string(Self.messageCause))
+        #expect(span.attributes.get(RouterTelemetry.AttributeKey.submissionCause) == .string(Self.messageCause))
         #expect(span.errors.isEmpty)
     }
 
@@ -253,7 +253,7 @@ struct SubmissionTracingTests {
 
         let span = try Self.singleSpan(reportedTo: tracer)
         #expect(span.operationName == Self.spanName)
-        #expect(span.attributes.get(RouterTracing.AttributeKey.submissionCause) == .string(Self.messageCause))
+        #expect(span.attributes.get(RouterTelemetry.AttributeKey.submissionCause) == .string(Self.messageCause))
         #expect(span.errors.isEmpty)
     }
 

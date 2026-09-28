@@ -1,9 +1,6 @@
 import Foundation
 import FoundationModels
-import os
-
-/// The logger a session reports a stalled generation to.
-private let generationStallLogger = makeModuleLogger(category: "Generation")
+import Logging
 
 /// What a session could observe about a generation's progress.
 public enum GenerationProgressVisibility: Sendable, Equatable {
@@ -330,9 +327,12 @@ extension RoutedSessionActor {
             visibility: watch.visibility,
             lastProgress: watch.lastProgressKind
         )
-        generationStallLogger.warning(
-            "session \(self.id.description, privacy: .public): \(stall.description, privacy: .public)"
-        )
+        sessionLogger(.generation).warning(
+            "a generation stall: the model call makes no progress",
+            metadata: [
+                RouterTelemetry.LogMetadataKey.sessionId: "\(id.description)",
+                RouterTelemetry.LogMetadataKey.generationStall: "\(stall.description)",
+            ])
         currentAnswerEventSink?(.generationStalled(stall))
         return true
     }

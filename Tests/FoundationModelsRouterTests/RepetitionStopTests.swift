@@ -1,6 +1,8 @@
 import Foundation
 import FoundationModels
 import FoundationModelsRouterTestSupport
+import Logging
+import TelemetryTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -69,13 +71,19 @@ struct RepetitionStopTests {
     ///   - script: What the first call writes.
     ///   - repeatsAfterStop: Whether a continuation call repeats again.
     ///   - detection: The repetition detection of the session.
+    ///   - logger: The explicit logger of the session, or `nil` for the
+    ///     loggers of the module.
     /// - Returns: The fixture and the events of the answer, in order.
     private static func runAnswer(
-        script: RepeatingReasoningScript, repeatsAfterStop: Bool, detection: RepetitionDetection
+        script: RepeatingReasoningScript, repeatsAfterStop: Bool, detection: RepetitionDetection,
+        logger: Logger? = nil
     ) async throws -> (fixture: RepeatingReasoningSessionFixture, events: [SessionEvent]) {
         let fixture = try await RepeatingReasoningSessionFixture.make(
             script: script, repeatsAfterStop: repeatsAfterStop, detection: detection,
             tempDirPrefix: tempDirPrefix)
+        if let logger {
+            await fixture.session.useCaptureLogger(logger)
+        }
         let events = try await collect(fixture.session.streamEvents(to: prompt))
         return (fixture, events)
     }
@@ -109,9 +117,12 @@ struct RepetitionStopTests {
 
     @Test("a call whose new-line share stays at zero for one window stops, with a log line and an event record")
     func repeatingCallStopsWithLogAndEvent() async throws {
-        let start = Date()
-        let (fixture, events) = try await Self.runAnswer(
-            script: Self.repeatingScript(hold: Self.stoppedHold), repeatsAfterStop: false, detection: Self.detection)
+        let ((fixture, events), logs) = try await TelemetryCapture.run(forbidding: []) { context in
+            let answer = try await Self.runAnswer(
+                script: Self.repeatingScript(hold: Self.stoppedHold), repeatsAfterStop: false,
+                detection: Self.detection, logger: context.logger)
+            return (answer, context)
+        }
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
         let stop = try #require(Self.stops(in: events).first)
@@ -134,7 +145,9 @@ struct RepetitionStopTests {
         for value in namedValues {
             #expect(stop.description.contains(value), "the log line does not name \(value)")
         }
-        try assertLogged(containing: stop.description, since: start)
+        logs.expectLogged(
+            containing: "repetition stop",
+            metadata: [RouterTelemetry.LogMetadataKey.repetitionStop: stop.description])
     }
 
     @Test("normal reasoning with many repeated short lines is not stopped")

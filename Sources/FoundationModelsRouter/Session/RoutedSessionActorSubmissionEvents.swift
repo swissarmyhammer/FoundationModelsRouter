@@ -37,13 +37,13 @@ extension RoutedSessionActor {
         lastSubmissionNumber += 1
         let start = SubmissionStart(
             submissionId: SubmissionID(lastSubmissionNumber), messageIds: messageIds, cause: cause)
-        let span = RouterTracing.tracer(explicit: tracer).startSpan(
-            RouterTracing.SpanName.submission, context: ServiceContext.current ?? .topLevel, ofKind: .client)
-        span.attributes[RouterTracing.AttributeKey.routerId] = routerId.description
-        span.attributes[RouterTracing.AttributeKey.sessionId] = id.description
-        span.attributes[RouterTracing.AttributeKey.modelRef] = model.stringValue
-        span.attributes[RouterTracing.AttributeKey.submissionId] = start.submissionId.description
-        span.attributes[RouterTracing.AttributeKey.submissionCause] = cause.rawValue
+        let span = RouterTelemetry.tracer(explicit: tracer).startSpan(
+            RouterTelemetry.SpanName.submission, context: ServiceContext.current ?? .topLevel, ofKind: .client)
+        span.attributes[RouterTelemetry.AttributeKey.routerId] = routerId.description
+        span.attributes[RouterTelemetry.AttributeKey.sessionId] = id.description
+        span.attributes[RouterTelemetry.AttributeKey.modelRef] = model.stringValue
+        span.attributes[RouterTelemetry.AttributeKey.submissionId] = start.submissionId.description
+        span.attributes[RouterTelemetry.AttributeKey.submissionCause] = cause.rawValue
         runningSubmission = RunningSubmission(start: start, span: span)
     }
 
@@ -109,8 +109,8 @@ extension RoutedSessionActor {
         guard let running = runningSubmission else { return }
         runningSubmission = nil
         if let measuredRender {
-            running.span.attributes[RouterTracing.AttributeKey.tokensIn] = measuredRender.input
-            running.span.attributes[RouterTracing.AttributeKey.tokensOut] = measuredRender.output
+            running.span.attributes[RouterTelemetry.AttributeKey.tokensIn] = measuredRender.input
+            running.span.attributes[RouterTelemetry.AttributeKey.tokensOut] = measuredRender.output
         }
         onEvent?(
             .submissionEnded(

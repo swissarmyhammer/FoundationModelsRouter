@@ -6,7 +6,7 @@ import FoundationModelsExtras
 /// over the same resident model, and closing a session down.
 extension RoutedSessionActor {
     /// Forks a child session over the same resident model, inside one
-    /// ``RouterTracing/SpanName/fork`` span. See
+    /// ``RouterTelemetry/SpanName/fork`` span. See
     /// ``RoutedSession/fork(workingDirectory:)`` for the full contract,
     /// ``withForkSpan(_:)`` for what the span covers, and
     /// ``performFork(workingDirectory:)`` for the mechanics.
@@ -23,7 +23,7 @@ extension RoutedSessionActor {
         }
     }
 
-    /// Opens one ``RouterTracing/SpanName/fork`` span around a whole fork and
+    /// Opens one ``RouterTelemetry/SpanName/fork`` span around a whole fork and
     /// writes the child it produced onto it.
     ///
     /// The span opens before `body` runs, so it covers every part of the call.
@@ -39,13 +39,13 @@ extension RoutedSessionActor {
     private func withForkSpan(
         _ body: () async throws -> RoutedSession
     ) async throws -> RoutedSession {
-        try await RouterTracing.tracer(explicit: tracer)
-            .withSpan(RouterTracing.SpanName.fork, ofKind: .internal) { span in
-                span.attributes[RouterTracing.AttributeKey.routerId] = routerId.description
-                span.attributes[RouterTracing.AttributeKey.sessionId] = id.description
-                span.attributes[RouterTracing.AttributeKey.modelRef] = model.stringValue
+        try await RouterTelemetry.tracer(explicit: tracer)
+            .withSpan(RouterTelemetry.SpanName.fork, ofKind: .internal) { span in
+                span.attributes[RouterTelemetry.AttributeKey.routerId] = routerId.description
+                span.attributes[RouterTelemetry.AttributeKey.sessionId] = id.description
+                span.attributes[RouterTelemetry.AttributeKey.modelRef] = model.stringValue
                 let child = try await body()
-                span.attributes[RouterTracing.AttributeKey.forkChildSessionId] = child.id.description
+                span.attributes[RouterTelemetry.AttributeKey.forkChildSessionId] = child.id.description
                 return child
             }
     }
@@ -242,6 +242,11 @@ extension RoutedSessionActor {
         // The stall report interval is a host setting, as the other settings
         // above are, so the child starts with the interval of this session.
         await child.setGenerationStallReportInterval(generationStallReportInterval)
+        // The explicit logger is a host setting too, so the records of the
+        // child go where the records of this session go.
+        if let explicitLogger {
+            await child.useLogger(explicitLogger)
+        }
         return child
     }
 

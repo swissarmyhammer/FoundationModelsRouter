@@ -1,9 +1,6 @@
 import Foundation
 import FoundationModelsExtras
-import os
-
-/// The logger of the router loader in the Extras model pool.
-private let slotPoolLoaderLogger = makeModuleLogger(category: "ModelPool")
+import Logging
 
 /// The loader that the router gives to the Extras model pool for one slot.
 ///
@@ -59,9 +56,9 @@ struct SlotPoolLoader: PooledModelLoader {
         guard let loaded = container as? any LoadedModelContainer else {
             let containerType = String(describing: type(of: container))
             assertionFailure("the pool gave back a \(containerType), which the router loader did not load")
-            slotPoolLoaderLogger.error(
-                "the pool gave back a \(containerType, privacy: .public), which the router loader did not load; the eviction does nothing"
-            )
+            RouterTelemetry.makeLogger(.modelPool).error(
+                "the pool gave back a container that the router loader did not load; the eviction does nothing",
+                metadata: [RouterTelemetry.LogMetadataKey.containerType: "\(containerType)"])
             return
         }
         await loader.evict(container: loaded)

@@ -18,9 +18,14 @@ The spans that can suspend a long time:
 - Resolve: `withSpan(RouterTelemetry.SpanName.resolve, ofKind: .client)` at `Router.swift:184`.
 Use `TracedCall.run` for load and resolve. Keep the span names, kinds and attributes the same, and keep the tracing context that ^est00wa passes into the admission job (load spans stay children of the resolve span).
 
-Note: Extras task ^c91jnmp may rename the tool span from `FoundationModelsRouter.tool` to `FoundationModelsExtras.tool` (`RouterTracing.swift:40`, `RoutedLLM.swift:250`, `ToolTracingTests.swift:31`). The user has not decided. Do not change the tool span in this task.
+Note: the user decided (2026-09-28) that the tool span becomes `FoundationModelsExtras.tool` (Extras task ^c91jnmp). Router task 01M3MNVA906R6Y1P17JBG4G0NA updates the router references. Do not change the tool span in this task.
 
 The "enter" record carries no content (rule 4): only the span name, ids, and the vocabulary attributes that are already safe.
+
+Facts from the Extras OTel work (swissarmyhammer session, 2026-09-28; do not start until Extras OTel A-D are on Extras `origin/main`):
+- `TracedCall.run` gets the trace id and span id for the "enter" record from the `traceparent` that the tracer injects. `InMemoryTracer` does not inject, so with it the records have no ids. A test that checks the ids needs a tracer that injects W3C `traceparent`. `TelemetryCapture` uses `InMemoryTracer` today, which injects only its own id keys. Extras task 01M3MV1R3D52RAMFNFKWTS388B (^wts388b, Extras OTel E) makes `TelemetryCapture` bind a W3C-capable recording tracer by default. It is a BLOCKER for each id check in this task: it must be on Extras `origin/main` before this task starts. Do not write a test tracer of your own for this. UPDATE 2026-09-28: ^wts388b is on Extras `origin/main` (6c399a4). `TelemetryCapture.Context.tracer` is now a `W3CInMemoryTracer`, and the enter records of `TracedCall.run` in a capture have `trace.id` and `span.id`. Code that needs the `InMemoryTracer` type uses `context.tracer.inMemoryTracer`; code that uses it as `any Tracer` or reads `finishedSpans` still compiles. Resolve Extras at 6c399a4 or later before this task starts.
+- The task-local `withTracer` of `TelemetryCapture` reaches `RouterTelemetry.tracer(explicit: nil)` (`InstrumentationSystem.tracer` checks the task-local instrument first), so the router's spans go to the capture with no router change.
+- The tool span is opened in Extras (`ToolCallSpan.withSpan`, internal; its body now gets a `ToolCallSpan.Call` value). This task does not change it.
 
 ## Acceptance Criteria
 - [ ] Each submission, load and resolve writes exactly one "enter" log record when it starts, with the span name and ids as metadata, and nothing when it ends.

@@ -2,7 +2,7 @@ import CoreImage
 import Foundation
 import FoundationModels
 import FoundationModelsRouterTestSupport
-import OSLog
+import TelemetryTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -655,7 +655,7 @@ struct TranscriptEntryMapperTests {
     }
 
     @Test("a payload with a response-format name but no schema rebuilds without a responseFormat and logs a warning naming it")
-    func nameOnlyResponseFormatDegradesToNilAndWarns() throws {
+    func nameOnlyResponseFormatDegradesToNilAndWarns() async throws {
         // The shape a future ResponseFormat.Kind case would record: the
         // format's name persists, but there is no schema JSON to rebuild
         // from, so the rebuilt prompt carries no response format and the loss
@@ -665,16 +665,19 @@ struct TranscriptEntryMapperTests {
             segments: [.text(id: "s1", content: "hi")],
             responseFormatName: "Weather"
         )
-        let logStart = Date()
 
-        let rebuilt = try TranscriptEntryMapper.entry(from: payload, kind: .prompt)
+        let (rebuilt, logs) = try await TelemetryCapture.run(forbidding: []) { context in
+            (try TranscriptEntryMapper.entry(from: payload, kind: .prompt), context)
+        }
 
         guard case .prompt(let rebuiltPrompt) = rebuilt else {
             Issue.record("expected a rebuilt .prompt entry")
             return
         }
         #expect(rebuiltPrompt.responseFormat == nil)
-        try assertLogged(containing: "response-format name \"Weather\"", since: logStart)
+        logs.expectLogged(
+            containing: "response-format name",
+            metadata: [RouterTelemetry.LogMetadataKey.responseFormatName: "Weather"])
     }
 
     @Test("an attachment with a nil ImageAttachment.url degrades on rebuild to a labeled text segment")
@@ -753,7 +756,7 @@ struct TranscriptEntryMapperTests {
     // MARK: - Unknown-case degradation (task 9n7fna4)
 
     @Test("an unknown segment carrier rebuilds as the documented text degradation and logs a warning")
-    func unknownSegmentCarrierDegradesToTextAndWarns() throws {
+    func unknownSegmentCarrierDegradesToTextAndWarns() async throws {
         // A real unknown SDK segment cannot be constructed against the
         // current SDK, so the carrier enters through its own decode path —
         // exactly what a recording written by a router that met a future
@@ -763,9 +766,10 @@ struct TranscriptEntryMapperTests {
         """
         let carrier = try JSONDecoder().decode(SegmentPayload.self, from: Data(json.utf8))
         let payload = TranscriptEntryPayload(entryId: "e1", segments: [carrier], assetIds: [])
-        let logStart = Date()
 
-        let rebuilt = try TranscriptEntryMapper.entry(from: payload, kind: .response)
+        let (rebuilt, logs) = try await TelemetryCapture.run(forbidding: []) { context in
+            (try TranscriptEntryMapper.entry(from: payload, kind: .response), context)
+        }
 
         guard case .response(let response) = rebuilt, case .text(let textSegment) = response.segments.first
         else {
@@ -774,11 +778,11 @@ struct TranscriptEntryMapperTests {
         }
         #expect(textSegment.id == "s9")
         #expect(textSegment.content == "future segment content")
-        try assertLogged(containing: "unknown segment carrier", since: logStart)
+        logs.expectLogged(containing: "unknown segment carrier")
     }
 
     @Test("an unknown-kind payload rebuilds as a text-only entry and logs a warning")
-    func unknownKindRebuildsAsTextOnlyEntryAndWarns() throws {
+    func unknownKindRebuildsAsTextOnlyEntryAndWarns() async throws {
         // The shape record time writes for a future Transcript.Entry case:
         // the entry's own id, plus one unknown segment carrying the SDK
         // value's description as best-effort text.
@@ -786,9 +790,10 @@ struct TranscriptEntryMapperTests {
             entryId: "e1",
             segments: [.unknown(id: "e1", description: "future entry content")]
         )
-        let logStart = Date()
 
-        let rebuilt = try TranscriptEntryMapper.entry(from: payload, kind: .unknown)
+        let (rebuilt, logs) = try await TelemetryCapture.run(forbidding: []) { context in
+            (try TranscriptEntryMapper.entry(from: payload, kind: .unknown), context)
+        }
 
         guard case .response(let response) = rebuilt, case .text(let textSegment) = response.segments.first
         else {
@@ -799,7 +804,7 @@ struct TranscriptEntryMapperTests {
         #expect(response.assetIDs.isEmpty)
         #expect(response.segments.count == 1)
         #expect(textSegment.content == "future entry content")
-        try assertLogged(containing: "unknown entry kind", since: logStart)
+        logs.expectLogged(containing: "unknown entry kind")
     }
 
     // MARK: - Record-time encode failures
@@ -815,11 +820,12 @@ struct TranscriptEntryMapperTests {
     }
 
     @Test("an unencodable structured-segment content carries the encoding-failure marker and logs the failure")
-    func unencodableStructuredContentCarriesTheMarkerAndLogs() throws {
+    func unencodableStructuredContentCarriesTheMarkerAndLogs() async throws {
         let segment = UnencodableSegment(id: "u1", content: Unencodable(value: .infinity))
-        let logStart = Date()
 
-        let payload = TranscriptEntryMapper.segmentPayload(segment.transcriptSegment)
+        let (payload, logs) = try await TelemetryCapture.run(forbidding: []) { context in
+            (TranscriptEntryMapper.segmentPayload(segment.transcriptSegment), context)
+        }
 
         guard case .structure(_, _, let contentJSON) = payload else {
             Issue.record("expected a .structure segment payload")
@@ -836,7 +842,7 @@ struct TranscriptEntryMapperTests {
             _ = try UnencodableSegment(
                 schemaName: UnencodableSegment.schemaName, contentJSON: contentJSON, id: "u1")
         }
-        try assertLogged(containing: "carrying the encoding-failure marker", since: logStart)
+        logs.expectLogged(containing: "carrying the encoding-failure marker")
     }
 
     // MARK: - Reconstruction failures

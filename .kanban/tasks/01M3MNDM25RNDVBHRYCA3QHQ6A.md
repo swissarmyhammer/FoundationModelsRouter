@@ -24,6 +24,10 @@ Metrics, and where the number exists today:
 - `Package.swift`: add swift-metrics; product `Metrics` to the library target; `MetricsTestKit` (or the Extras `TelemetryCapture`) to the unit test target.
 - Keep every construct in the memory file `routed-session-cancellation-invariants.md`; a metric record must not add a suspension point inside the pump's no-suspension windows.
 
+Facts from the Extras OTel work (swissarmyhammer session, 2026-09-28; do not start until Extras OTel A-D are on Extras `origin/main`):
+- Extras already records the tool metrics `FoundationModelsExtras.tool.calls` and `FoundationModelsExtras.tool.duration`, with the dimensions `tool.name` and `tool.outcome` only (names in `ExtrasTelemetry.swift`). The router must not record a second tool metric.
+- A metric that is made before the first `TelemetryCapture` does not go to the capture. Do not store the router's metrics in `static let`s that a test can touch first; make them per call or per instance, or make sure that the capture starts first. A test process that uses `TelemetryCapture` must not bootstrap logging itself.
+
 ## Acceptance Criteria
 - [ ] Each metric above is recorded through swift-metrics with its name and dimensions in the vocabulary.
 - [ ] No dimension value carries content, and no dimension makes an unbounded label set.

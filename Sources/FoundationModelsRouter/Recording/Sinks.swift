@@ -1,8 +1,5 @@
 import Foundation
-import os
-
-/// The logger best-effort sinks report dropped events to.
-private let recordingLogger = makeModuleLogger(category: "Recording")
+import Logging
 
 /// A ``TranscriptRecorder`` that appends each event as one JSON object per line
 /// to a `transcript.jsonl`, routing each event to a per-session directory while
@@ -129,11 +126,10 @@ package actor JSONLRecorder: TranscriptRecorder {
         appendJSONLine(
             event,
             encoder: encoder,
-            logger: recordingLogger,
+            logger: RouterTelemetry.makeLogger(.recording),
             handle: { try self.handleForAppending(in: target) },
-            describeFailure: { error in
-                "dropping transcript event seq \(event.seq): \(error.localizedDescription)"
-            }
+            failureMessage: "dropping a transcript event",
+            failureMetadata: [RouterTelemetry.LogMetadataKey.eventSeq: "\(event.seq)"]
         )
         guard event.kind == .response else { return }
         synchronizeHandle(in: target, afterSeq: event.seq)
@@ -153,9 +149,9 @@ package actor JSONLRecorder: TranscriptRecorder {
             rootOwnership = try RecordingRootOwnership.acquire(root: directory)
             return true
         } catch {
-            recordingLogger.error(
-                "dropping transcript event: \(error.localizedDescription, privacy: .public)"
-            )
+            RouterTelemetry.makeLogger(.recording).error(
+                "dropping a transcript event: the recording root has another owner",
+                metadata: RouterTelemetry.errorMetadata(error))
             return false
         }
     }
@@ -171,12 +167,11 @@ package actor JSONLRecorder: TranscriptRecorder {
         do {
             try handle.synchronize()
         } catch {
-            recordingLogger.error(
-                """
-                transcript sync after submission-close seq \(eventSeq, privacy: .public) failed: \
-                \(error.localizedDescription, privacy: .public)
-                """
-            )
+            RouterTelemetry.makeLogger(.recording).error(
+                "the transcript sync after a submission close failed",
+                metadata: RouterTelemetry.errorMetadata(error).merging([
+                    RouterTelemetry.LogMetadataKey.eventSeq: "\(eventSeq)"
+                ]) { _, new in new })
         }
     }
 

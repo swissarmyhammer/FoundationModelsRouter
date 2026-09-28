@@ -1,9 +1,6 @@
 import FoundationModels
 import Foundation
-import os
-
-/// The logger that reports a duplicated entry id during restore.
-private let transcriptReconstructionLogger = makeModuleLogger(category: "Recording")
+import Logging
 
 /// A failure reconstructing a `FoundationModels.Transcript` from a session's
 /// effective entry-kind events. Each case names the event's `session` and `seq`.
@@ -126,14 +123,14 @@ extension TranscriptTree {
         for event in events {
             guard let entryId = event.entry?.entryId else { continue }
             if let superseded = byEntryId[entryId] {
-                transcriptReconstructionLogger.warning(
-                    """
-                    duplicate entry id \(entryId, privacy: .public) in session \
-                    \(checkpoint.event.sessionId.description, privacy: .public)'s effective events, \
-                    at seq \(superseded.seq, privacy: .public) and seq \(event.seq, privacy: .public); \
-                    restoring the newest event for this id
-                    """
-                )
+                RouterTelemetry.makeLogger(.recording).warning(
+                    "duplicate entry id in the effective events of a session; restoring the newest event for this id",
+                    metadata: [
+                        RouterTelemetry.LogMetadataKey.entryId: "\(entryId)",
+                        RouterTelemetry.LogMetadataKey.sessionId: "\(checkpoint.event.sessionId.description)",
+                        RouterTelemetry.LogMetadataKey.supersededSeq: "\(superseded.seq)",
+                        RouterTelemetry.LogMetadataKey.eventSeq: "\(event.seq)",
+                    ])
             }
             byEntryId[entryId] = event
         }

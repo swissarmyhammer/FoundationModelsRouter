@@ -3,9 +3,14 @@ import FoundationModels
 import FoundationModelsRouter
 import FoundationModelsRouterTestSupport
 import HuggingFace
+import Logging
 import MLXHuggingFace
 import MLXLMCommon
 import Tokenizers
+
+// Standard output carries the output of the program, so each log line goes
+// to standard error. This runs one time, before any log call.
+LoggingSystem.bootstrap(StreamLogHandler.standardError)
 
 /// # RecordCompactionFixture: records the checked-in compaction fixture again
 ///

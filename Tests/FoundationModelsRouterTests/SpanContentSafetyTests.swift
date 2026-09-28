@@ -4,7 +4,7 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// The router's one standing proof of ``RouterTracing``'s safety rule: no span
+/// The router's one standing proof of ``RouterTelemetry``'s safety rule: no span
 /// attribute carries prompt text, response text, tool arguments, tool output,
 /// or embed input text.
 ///

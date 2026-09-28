@@ -1,6 +1,7 @@
 import Foundation
 import FoundationModels
 import FoundationModelsRouterTestSupport
+import TelemetryTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -1081,8 +1082,7 @@ struct TranscriptReconstructionTests {
     // MARK: - Duplicate entry ids at restore resolve loudly, to the newest event
 
     @Test("a duplicated entry id in the live-window resolution restores the newest recorded event and logs the duplicate")
-    func duplicateEntryIdRestoresNewestEventAndLogs() throws {
-        let start = Date()
+    func duplicateEntryIdRestoresNewestEventAndLogs() async throws {
         let sessionId = ULID.generate()
         let routerId = ULID.generate()
 
@@ -1109,7 +1109,9 @@ struct TranscriptReconstructionTests {
         let events = [superseded, newest, checkpointEvent]
         let checkpoint = try #require(TranscriptTree.newestCompactionCheckpoint(in: events))
 
-        let restored = try TranscriptTree.restoreFilteredEvents(events, checkpoint: checkpoint)
+        let (restored, logs) = try await TelemetryCapture.run(forbidding: []) { context in
+            (try TranscriptTree.restoreFilteredEvents(events, checkpoint: checkpoint), context)
+        }
 
         // The documented winner: the live window resolves "dup-1" to the
         // NEWEST event carrying that id, never the oldest — the later event
@@ -1117,6 +1119,8 @@ struct TranscriptReconstructionTests {
         // and the duplicate is logged with the id and both positions.
         #expect(restored.map(\.seq) == [1, 2])
         #expect(restored.first?.text == "current content")
-        try assertLogged(containing: "duplicate entry id dup-1", since: start)
+        logs.expectLogged(
+            containing: "duplicate entry id",
+            metadata: [RouterTelemetry.LogMetadataKey.entryId: "dup-1"])
     }
 }

@@ -1,9 +1,6 @@
 import Foundation
 import FoundationModels
-import os
-
-/// The logger that receives unknown-case degradation reports.
-private let transcriptEntryMapperLogger = makeModuleLogger(category: "Recording")
+import Logging
 
 /// A failure that occurs when a `Transcript.Entry` is rebuilt from a persisted ``TranscriptEntryPayload``.
 enum TranscriptEntryReconstructionError: Error, Equatable {
@@ -111,9 +108,9 @@ enum TranscriptEntryMapper {
             // case's exact structure is lost until the mapper learns it (see
             // plan.md "Honest fidelity scope").
             let caseName = Mirror(reflecting: entry).children.first?.label ?? "unknown"
-            transcriptEntryMapperLogger.warning(
-                "TranscriptEntryMapper.event(from:): unrecognized Transcript.Entry case \(caseName, privacy: .public); recording as the unknown entry kind with best-effort text"
-            )
+            RouterTelemetry.makeLogger(.recording).warning(
+                "TranscriptEntryMapper.event(from:): unrecognized Transcript.Entry case; recording as the unknown entry kind with best-effort text",
+                metadata: [RouterTelemetry.LogMetadataKey.entryCase: "\(caseName)"])
             let description = String(describing: entry)
             let payload = TranscriptEntryPayload(
                 entryId: entry.id,
@@ -155,9 +152,9 @@ enum TranscriptEntryMapper {
             // whose initializer needs nothing beyond an id and segments, so
             // it fabricates the least — through the metadata-less
             // initializer, which stamps no synthesized `metadata` key.
-            transcriptEntryMapperLogger.warning(
-                "TranscriptEntryMapper.entry(from:kind:): rebuilding unknown entry kind \(payload.entryId, privacy: .public) as a text-only response entry"
-            )
+            RouterTelemetry.makeLogger(.recording).warning(
+                "TranscriptEntryMapper.entry(from:kind:): rebuilding an unknown entry kind as a text-only response entry",
+                metadata: [RouterTelemetry.LogMetadataKey.entryId: "\(payload.entryId)"])
             return .response(
                 Transcript.Response(
                     id: payload.entryId,
@@ -204,9 +201,15 @@ enum TranscriptEntryMapper {
             // name (the shape a future ResponseFormat.Kind case would
             // record) rebuilds without a response format, and the loss is
             // logged by name instead of passing silently.
-            transcriptEntryMapperLogger.warning(
-                "TranscriptEntryMapper.rebuildPrompt: prompt \(payload.entryId, privacy: .public) carries a response-format name \"\(formatName, privacy: .public)\" but no persisted schema; rebuilding without a response format"
-            )
+            RouterTelemetry.makeLogger(.recording).warning(
+                """
+                TranscriptEntryMapper.rebuildPrompt: a prompt carries a response-format name but no \
+                persisted schema; rebuilding without a response format
+                """,
+                metadata: [
+                    RouterTelemetry.LogMetadataKey.entryId: "\(payload.entryId)",
+                    RouterTelemetry.LogMetadataKey.responseFormatName: "\(formatName)",
+                ])
         }
         return Transcript.Prompt(
             id: payload.entryId,
@@ -330,9 +333,9 @@ enum TranscriptEntryMapper {
             // crashing; the segment's `description` is the best-effort text
             // rebuild shows.
             let caseName = Mirror(reflecting: segment).children.first?.label ?? "unknown"
-            transcriptEntryMapperLogger.warning(
-                "TranscriptEntryMapper.segmentPayload(_:): unrecognized Transcript.Segment case \(caseName, privacy: .public); recording as the unknown segment carrier"
-            )
+            RouterTelemetry.makeLogger(.recording).warning(
+                "TranscriptEntryMapper.segmentPayload(_:): unrecognized Transcript.Segment case; recording as the unknown segment carrier",
+                metadata: [RouterTelemetry.LogMetadataKey.entryCase: "\(caseName)"])
             return .unknown(id: segment.id, description: segment.description)
         }
     }
@@ -379,9 +382,9 @@ enum TranscriptEntryMapper {
             // The documented unknown-case degradation, rebuild side: the
             // carrier's best-effort text becomes a real `.text` segment, so
             // reconstruction stays total and the content stays visible.
-            transcriptEntryMapperLogger.warning(
-                "TranscriptEntryMapper: rebuilding unknown segment carrier \(id, privacy: .public) as a text segment"
-            )
+            RouterTelemetry.makeLogger(.recording).warning(
+                "TranscriptEntryMapper: rebuilding an unknown segment carrier as a text segment",
+                metadata: [RouterTelemetry.LogMetadataKey.segmentId: "\(id)"])
             return .text(Transcript.TextSegment(id: id, content: description))
         }
     }
@@ -418,7 +421,7 @@ enum TranscriptEntryMapper {
         case .disallowed:
             return .disallowed
         @unknown default:
-            transcriptEntryMapperLogger.warning(
+            RouterTelemetry.makeLogger(.recording).warning(
                 "TranscriptEntryMapper: unrecognized GenerationOptions.ToolCallingMode kind; recording no tool-calling mode"
             )
             return nil
@@ -516,9 +519,11 @@ enum TranscriptEntryMapper {
         do {
             return try jsonString(for: value, context: context)
         } catch {
-            transcriptEntryMapperLogger.fault(
-                "TranscriptEntryMapper: \(String(describing: error), privacy: .public); persisting the empty-string sentinel for \(context, privacy: .public)"
-            )
+            RouterTelemetry.makeLogger(.recording).critical(
+                "TranscriptEntryMapper: the encode failed; persisting the empty-string sentinel",
+                metadata: RouterTelemetry.errorMetadata(error).merging([
+                    RouterTelemetry.LogMetadataKey.encodeContext: "\(context)"
+                ]) { _, new in new })
             return ""
         }
     }

@@ -213,7 +213,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             sidecarOrigin: .new(under: durableRecording),
             // Vended over a resident model, so the session span this factory
             // opens reports the cost of vending rather than of a restore or a
-            // fork (see ``RouterTracing/SessionOrigin``).
+            // fork (see ``RouterTelemetry/SessionOrigin``).
             origin: .new,
             // This slot's resolved working context — ``contextFill``'s
             // denominator. A brand-new root has
@@ -246,7 +246,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// Each tool is composed by
     /// ``ToolMounting/makeSessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:tokenCounter:tracer:)``,
     /// carrying this handle's own tracer, so each mounted call opens its
-    /// `FoundationModelsRouter.tool` span against the backend the router was
+    /// `FoundationModelsExtras.tool` span against the backend the router was
     /// constructed with.
     /// The outbox and mailbox are fresh per session and never shared.
     ///

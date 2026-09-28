@@ -1,8 +1,5 @@
 import Foundation
-import os
-
-/// The logger recording-root ownership reports stale-lock takeovers to.
-private let lockLogger = makeModuleLogger(category: "Recording")
+import Logging
 
 /// The lock-marker file name a writer creates inside a recording root it owns.
 /// The marker's payload is one JSON-encoded ``RecordingRootOwner``.
@@ -137,9 +134,9 @@ final class RecordingRootOwnership: Sendable {
             isProcessAlive(existing.processId) {
             throw RecordingRootLockError.alreadyOwned(root: root, owner: existing)
         }
-        lockLogger.warning(
-            "taking over stale recording-root lock at \(lockFileURL.path, privacy: .public)"
-        )
+        RouterTelemetry.makeLogger(.recording).warning(
+            "taking over a stale recording-root lock",
+            metadata: [RouterTelemetry.LogMetadataKey.filePath: "\(lockFileURL.path)"])
         try FileManager.default.removeItem(at: lockFileURL)
         guard try createMarkerExclusively(at: lockFileURL, claim: claim) else {
             throw RecordingRootLockError.contested(root: root)

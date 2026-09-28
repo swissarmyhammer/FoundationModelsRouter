@@ -1,8 +1,5 @@
 import Foundation
-import os
-
-/// The logger that reports a dropped sidecar.
-private let sessionSidecarLogger = makeModuleLogger(category: "SessionSidecar")
+import Logging
 
 /// The sidecar's filename in a session's own recording directory.
 let sessionSidecarFileName = "session.json"
@@ -363,9 +360,11 @@ package struct SessionSidecarWriter: Sendable {
         do {
             try SessionSidecar.write(sidecar, to: directory)
         } catch {
-            sessionSidecarLogger.error(
-                "dropping session sidecar for \(directory.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
-            )
+            RouterTelemetry.makeLogger(.sessionSidecar).error(
+                "dropping a session sidecar",
+                metadata: RouterTelemetry.errorMetadata(error).merging([
+                    RouterTelemetry.LogMetadataKey.filePath: "\(directory.path)"
+                ]) { _, new in new })
         }
     }
 }

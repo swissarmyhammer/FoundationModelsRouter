@@ -1,8 +1,5 @@
 import Foundation
-import os
-
-/// The logger torn-tail recovery reports each dropped final line to.
-private let transcriptLineLogger = makeModuleLogger(category: "TranscriptLineDecoding")
+import Logging
 
 /// The one line-decoding path every `transcript.jsonl` reader in this module
 /// (``TranscriptTree`` and ``MergedTranscript``) shares, so the two readers
@@ -48,12 +45,12 @@ enum TranscriptLineDecoding {
                 guard index == lines.indices.last else {
                     throw corruptLineError(fileURL)
                 }
-                transcriptLineLogger.warning(
-                    """
-                    dropping torn final line of \(fileURL.path, privacy: .public) at byte offset \
-                    \(line.byteOffset, privacy: .public): \(error.localizedDescription, privacy: .public)
-                    """
-                )
+                RouterTelemetry.makeLogger(.transcriptLineDecoding).warning(
+                    "dropping the torn final line of a transcript file",
+                    metadata: RouterTelemetry.errorMetadata(error).merging([
+                        RouterTelemetry.LogMetadataKey.filePath: "\(fileURL.path)",
+                        RouterTelemetry.LogMetadataKey.byteOffset: "\(line.byteOffset)",
+                    ]) { _, new in new })
             }
         }
         return events

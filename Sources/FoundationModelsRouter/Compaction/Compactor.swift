@@ -1,4 +1,5 @@
 import Foundation
+import Logging
 import FoundationModels
 
 /// What one compaction did: the size of the live context before and after, the
@@ -186,8 +187,6 @@ package struct CompactionSummarizerSlot: Sendable {
     }
 }
 
-/// The logger a compaction reports each shortfall to.
-private let compactorLogger = makeModuleLogger(category: "Compaction")
 
 /// The compaction: one summarizer call over the whole live context.
 ///
@@ -275,6 +274,35 @@ package enum Compactor {
     ///
     /// - Parameter shortfall: The reason.
     static func log(_ shortfall: CompactionShortfall) {
-        compactorLogger.warning("a compaction left the live context as it was: \(String(describing: shortfall), privacy: .public)")
+        RouterTelemetry.makeLogger(.compaction).warning(
+            "a compaction left the live context as it was", metadata: logMetadata(of: shortfall))
+    }
+
+    /// The log metadata of a shortfall: the name of its case and its token
+    /// counts.
+    ///
+    /// - Parameter shortfall: The reason a compaction left the context as it
+    ///   was.
+    /// - Returns: The case name under ``RouterTelemetry/LogMetadataKey/shortfall``
+    ///   and each token count under its own key.
+    private static func logMetadata(of shortfall: CompactionShortfall) -> Logger.Metadata {
+        switch shortfall {
+        case .targetLeavesNoRoomForSummary(let allowedSummaryTokens):
+            [
+                RouterTelemetry.LogMetadataKey.shortfall: "targetLeavesNoRoomForSummary",
+                RouterTelemetry.LogMetadataKey.allowedSummaryTokens: "\(allowedSummaryTokens)",
+            ]
+        case .inputFillsSummarizerWindow(let inputTokens, let windowTokens):
+            [
+                RouterTelemetry.LogMetadataKey.shortfall: "inputFillsSummarizerWindow",
+                RouterTelemetry.LogMetadataKey.inputTokens: "\(inputTokens)",
+                RouterTelemetry.LogMetadataKey.windowTokens: "\(windowTokens)",
+            ]
+        case .summaryDidNotShrinkContext(let snapshotTokens):
+            [
+                RouterTelemetry.LogMetadataKey.shortfall: "summaryDidNotShrinkContext",
+                RouterTelemetry.LogMetadataKey.snapshotTokens: "\(snapshotTokens)",
+            ]
+        }
     }
 }

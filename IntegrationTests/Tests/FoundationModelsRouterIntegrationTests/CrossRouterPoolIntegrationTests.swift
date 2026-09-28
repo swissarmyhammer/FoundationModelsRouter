@@ -73,7 +73,7 @@ private struct PooledRouter {
 
     /// The `load` spans this router opened so far.
     var loadSpans: [FinishedInMemorySpan] {
-        tracer.finishedSpans.filter { $0.operationName == RouterTracing.SpanName.load }
+        tracer.finishedSpans.filter { $0.operationName == RouterTelemetry.SpanName.load }
     }
 }
 
@@ -126,7 +126,7 @@ private struct TwoRouterFixture {
 private func modelRefs(of spans: [FinishedInMemorySpan]) -> Set<String> {
     Set(
         spans.compactMap { span -> String? in
-            guard case .string(let ref)? = span.attributes.get(RouterTracing.AttributeKey.modelRef)
+            guard case .string(let ref)? = span.attributes.get(RouterTelemetry.AttributeKey.modelRef)
             else { return nil }
             return ref
         })

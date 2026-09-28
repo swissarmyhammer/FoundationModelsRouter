@@ -17,6 +17,11 @@ Blocked by Extras task 01M3MN8N9P4RPET2V5JZ6JQD9G (^z6jqd9g): product `Telemetry
 - Rename the file and suite to `TelemetryContentSafetyTests` if it now covers all three signals.
 - `Package.swift`: add `TelemetryTestSupport` to the unit test target only.
 
+Facts from the Extras OTel work (swissarmyhammer session, 2026-09-28; do not start until Extras OTel A-D are on Extras `origin/main`):
+- `TelemetryCapture` uses the task-local `withTracer` and `withMetricsFactory`, and bootstraps logging one time; the test process must not call `LoggingSystem.bootstrap` itself.
+- A logger or metric made before the first capture does not go to the capture, so the test must start the capture before the router makes its loggers and metrics (task A and B make them per call or per instance).
+- The tool span is now `FoundationModelsExtras.tool` (Extras `ExtrasTelemetry.swift`), and Extras records `FoundationModelsExtras.tool.calls` and `.duration` with dimensions `tool.name` and `tool.outcome`. The test checks these too, because the session's tool call makes them.
+
 ## Acceptance Criteria
 - [ ] The content-safety test checks span attributes, log messages, log metadata values and metric dimensions, with the Extras helper.
 - [ ] It records at least one span, one log record and one metric, so it cannot pass with nothing to check.

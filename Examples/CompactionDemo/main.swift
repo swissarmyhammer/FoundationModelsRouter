@@ -2,9 +2,14 @@ import Foundation
 import FoundationModels
 import FoundationModelsRouter
 import HuggingFace
+import Logging
 import MLXHuggingFace
 import MLXLMCommon
 import Tokenizers
+
+// Standard output carries the output of the program, so each log line goes
+// to standard error. This runs one time, before any log call.
+LoggingSystem.bootstrap(StreamLogHandler.standardError)
 
 /// # Runnable demo: one automatic compaction, narrated (task ^nwe0qt1)
 ///

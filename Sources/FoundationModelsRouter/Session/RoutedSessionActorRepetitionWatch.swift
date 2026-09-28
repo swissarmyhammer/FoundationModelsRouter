@@ -1,10 +1,7 @@
 import Foundation
 import FoundationModels
 import FoundationModelsExtras
-import os
-
-/// The logger for a repetition stop.
-private let repetitionStopLogger = makeModuleLogger(category: "RepetitionStop")
+import Logging
 
 /// The repetition watch of one session: the watch of the model call in
 /// flight, the stop it found, and the recoveries of the answer in flight.
@@ -209,8 +206,12 @@ extension RoutedSessionActor {
             recovery: recoveriesLeft ? repetitionWatch.recoveriesThisAnswer + 1 : nil)
         repetitionWatch.stop = RepetitionStopMarker(
             report: report, keptUTF8Lengths: finding.keptUTF8Lengths, liveEntries: liveEntries)
-        repetitionStopLogger.notice(
-            "session \(self.id.description, privacy: .public): \(report.description, privacy: .public)")
+        sessionLogger(.repetitionStop).notice(
+            "a repetition stop ends the model call",
+            metadata: [
+                RouterTelemetry.LogMetadataKey.sessionId: "\(id.description)",
+                RouterTelemetry.LogMetadataKey.repetitionStop: "\(report.description)",
+            ])
         modelCall.cancel()
     }
 

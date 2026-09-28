@@ -1,6 +1,6 @@
 import CryptoKit
 import Foundation
-import os
+import Logging
 
 /// The raw bytes of the two Hub artifacts that sizing needs. No weights are downloaded.
 public struct RawRepoMetadata: Sendable {
@@ -347,8 +347,6 @@ struct RepoMetadata: Sendable, Equatable, Codable {
     }
 }
 
-/// The logger for the fallback to a cached entry after a failed fetch.
-private let repoMetadataReaderLogger = makeModuleLogger(category: "RepoMetadataReader")
 
 /// Reads ``RepoMetadata`` for a ``ModelRef`` and caches the parsed result per
 /// `(repo, revision)` on disk.
@@ -429,13 +427,14 @@ struct RepoMetadataReader: Sendable {
             guard let cached = try? cache.load(repo: ref.repo, revision: ref.revision) else {
                 throw error
             }
-            repoMetadataReaderLogger.notice(
+            RouterTelemetry.makeLogger(.repoMetadataReader).notice(
                 """
-                repo metadata fetch for \(ref.stringValue, privacy: .public) failed; \
-                using the cached entry, which this revision can have moved past: \
-                \(error.localizedDescription, privacy: .public)
-                """
-            )
+                a repo metadata fetch failed; using the cached entry, which this revision \
+                can have moved past
+                """,
+                metadata: RouterTelemetry.errorMetadata(error).merging([
+                    RouterTelemetry.LogMetadataKey.modelRef: "\(ref.stringValue)"
+                ]) { _, new in new })
             return cached
         }
         return try parseAndCache(raw, for: ref)
@@ -472,8 +471,6 @@ struct RepoMetadataReader: Sendable {
     }
 }
 
-/// The logger for cache decode failures.
-private let repoMetadataCacheLogger = makeModuleLogger(category: "RepoMetadataCache")
 
 /// A disposable on-disk cache of parsed ``RepoMetadata``, keyed by `(repo, revision)`.
 /// Each key maps to its own JSON file.
@@ -499,9 +496,9 @@ struct RepoMetadataCache: Sendable {
         do {
             return try JSONDecoder().decode(RepoMetadata.self, from: data)
         } catch {
-            repoMetadataCacheLogger.error(
-                "repo metadata cache entry failed to decode (stale schema or corruption); treating as a cache miss: \(error.localizedDescription, privacy: .public)"
-            )
+            RouterTelemetry.makeLogger(.repoMetadataCache).error(
+                "a repo metadata cache entry failed to decode (stale schema or corruption); treating it as a cache miss",
+                metadata: RouterTelemetry.errorMetadata(error))
             return nil
         }
     }

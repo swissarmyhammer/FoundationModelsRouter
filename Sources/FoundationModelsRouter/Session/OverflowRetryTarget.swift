@@ -1,7 +1,4 @@
-import os
-
-/// The logger for the compaction that follows a context overflow.
-private let overflowRetryLogger = makeModuleLogger(category: "OverflowRetry")
+import Logging
 
 /// The compaction target of the one retry that follows a context overflow.
 ///
@@ -120,15 +117,24 @@ public struct OverflowRetryTarget: Sendable, Equatable {
     /// Records in the log which rule chose the target, what the retry aims
     /// for, or that no compaction can make the submission fit.
     ///
-    /// - Parameter sessionID: The session whose submission overflowed.
-    func log(sessionID: ULID) {
+    /// - Parameters:
+    ///   - sessionID: The session whose submission overflowed.
+    ///   - logger: The logger of the session.
+    func log(sessionID: ULID, to logger: Logger) {
         let outcome =
             leavesRoom
             ? "the retry compacts the transcript to \(targetTokens) tokens"
             : "no compaction makes the submission fit, so the answer does not retry"
-        overflowRetryLogger.warning(
-            "session \(sessionID.description, privacy: .public): context overflow; window \(contextTokens, privacy: .public), prompt \(promptTokens, privacy: .public), configured target \(configuredTargetTokens, privacy: .public) tokens; \(ruleDescription, privacy: .public); \(outcome, privacy: .public)"
-        )
+        logger.warning(
+            "a context overflow",
+            metadata: [
+                RouterTelemetry.LogMetadataKey.sessionId: "\(sessionID.description)",
+                RouterTelemetry.LogMetadataKey.contextTokens: "\(contextTokens)",
+                RouterTelemetry.LogMetadataKey.promptTokens: "\(promptTokens)",
+                RouterTelemetry.LogMetadataKey.configuredTargetTokens: "\(configuredTargetTokens)",
+                RouterTelemetry.LogMetadataKey.overflowRule: "\(ruleDescription)",
+                RouterTelemetry.LogMetadataKey.overflowOutcome: "\(outcome)",
+            ])
     }
 
     /// The log text that names the rule that chose the target, with the numbers

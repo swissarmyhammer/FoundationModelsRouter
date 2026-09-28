@@ -145,8 +145,8 @@ public protocol RoutedSession: Actor {
     /// ``streamSessionEvents()``.
     ///
     /// Each submission opens one OpenTelemetry span named
-    /// ``RouterTracing/SpanName/submission``, of kind `client`, through the
-    /// tracer ``RouterTracing/tracer(explicit:)`` resolves from the handle
+    /// ``RouterTelemetry/SpanName/submission``, of kind `client`, through the
+    /// tracer ``RouterTelemetry/tracer(explicit:)`` resolves from the handle
     /// this session came off. A chain with a continuation opens one span for
     /// each submission. Unbootstrapped, the tracer is a no-op tracer, so an
     /// application that does not trace pays nothing. A failed submission

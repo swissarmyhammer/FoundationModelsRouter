@@ -28,10 +28,10 @@ import Tracing
 struct ToolTracingTests {
     /// The span name every tool call opens. The tool hosting of
     /// FoundationModelsExtras opens the span of each tool call with this name.
-    private static let toolSpanName = "FoundationModelsRouter.tool"
+    private static let toolSpanName = "FoundationModelsExtras.tool"
 
     /// The span name the enclosing submission opens.
-    private static let submissionSpanName = RouterTracing.SpanName.submission
+    private static let submissionSpanName = RouterTelemetry.SpanName.submission
 
     /// The step name the second call of a two-call round names, beside
     /// ``ScriptedToolFixture/firstStepName`` for the first.

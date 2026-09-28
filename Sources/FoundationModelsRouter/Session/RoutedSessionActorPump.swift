@@ -1,11 +1,8 @@
 import Foundation
 import FoundationModels
 import FoundationModelsExtras
+import Logging
 import Tracing
-
-/// The logger for mail that the pump holds, because the answers in a row that
-/// mail alone started reached ``SessionConfiguration/mailOnlyAnswerLimit``.
-private let mailDeliveryLogger = makeModuleLogger(category: "MailDelivery")
 
 /// The work that the pump of a session runs now (`generation-queue.md`,
 /// section 5.4). The pump runs one work at a time, so a session never has
@@ -333,8 +330,12 @@ extension RoutedSessionActor: SessionMailObserver {
     private func pauseMailDelivery(holding events: [SessionOutbox.PendingEvent]) async {
         await outbox.putBack(holding: events)
         let pause = MailDeliveryPause(limit: mailOnlyAnswerLimit, heldMail: events.map(\.event))
-        mailDeliveryLogger.notice(
-            "session \(self.id.description, privacy: .public): \(pause.description, privacy: .public)")
+        sessionLogger(.mailDelivery).notice(
+            "the mail delivery pauses",
+            metadata: [
+                RouterTelemetry.LogMetadataKey.sessionId: "\(id.description)",
+                RouterTelemetry.LogMetadataKey.mailDeliveryPause: "\(pause.description)",
+            ])
         emitSessionScopedEvent(.mailDeliveryPaused(pause))
     }
 

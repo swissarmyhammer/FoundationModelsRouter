@@ -1,8 +1,8 @@
 import Foundation
-import os
+import Logging
 
 /// The newline byte (`\n`) that terminates every JSONL line this module
-/// writes (``appendJSONLine(_:encoder:logger:handle:describeFailure:)``) and
+/// writes (``appendJSONLine(_:encoder:logger:handle:failureMessage:failureMetadata:)``) and
 /// splits on when reading (``TranscriptLineDecoding``).
 let jsonlNewlineByte: UInt8 = 0x0A
 
@@ -93,13 +93,18 @@ func openHandleForAppending(fileName: String, in directory: URL) throws -> FileH
 ///   - logger: The logger a dropped value is reported to.
 ///   - handle: Produces (creating and/or caching as the caller sees fit) the
 ///     handle to append to.
-///   - describeFailure: Builds the log message for a caught error.
+///   - failureMessage: The constant log message for a caught error.
+///   - failureMetadata: The log metadata of the value, for example its
+///     sequence number. The log record also holds the type and the code of
+///     the error (``RouterTelemetry/errorMetadata(_:)``), and never its
+///     description.
 func appendJSONLine<Value: Encodable>(
     _ value: Value,
     encoder: JSONEncoder,
     logger: Logger,
     handle: () throws -> any TranscriptAppendHandle,
-    describeFailure: (Error) -> String
+    failureMessage: Logger.Message,
+    failureMetadata: Logger.Metadata
 ) {
     do {
         let handle = try handle()
@@ -107,7 +112,8 @@ func appendJSONLine<Value: Encodable>(
         line.append(jsonlNewlineByte)
         try handle.write(contentsOf: line)
     } catch {
-        let message = describeFailure(error)
-        logger.error("\(message, privacy: .public)")
+        logger.error(
+            failureMessage,
+            metadata: RouterTelemetry.errorMetadata(error).merging(failureMetadata) { _, new in new })
     }
 }
