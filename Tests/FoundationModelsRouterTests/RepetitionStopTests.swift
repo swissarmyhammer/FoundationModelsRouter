@@ -82,7 +82,7 @@ struct RepetitionStopTests {
             script: script, repeatsAfterStop: repeatsAfterStop, detection: detection,
             tempDirPrefix: tempDirPrefix)
         if let logger {
-            await fixture.session.useCaptureLogger(logger)
+            await fixture.session.useCaptureLogger(for: logger)
         }
         let events = try await collect(fixture.session.streamEvents(to: prompt))
         return (fixture, events)

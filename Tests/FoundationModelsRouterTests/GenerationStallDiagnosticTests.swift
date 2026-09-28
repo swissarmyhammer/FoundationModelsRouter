@@ -497,7 +497,7 @@ struct GenerationStallDiagnosticTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let logs = try await TelemetryCapture.run(forbidding: []) { context in
-            await session.useCaptureLogger(context.logger)
+            await session.useCaptureLogger(for: context.logger)
             let feed = await session.streamSessionEvents()
             let answerTask = Task { try await session.respond(to: Self.prompt) }
             #expect(await Self.firstStall(on: feed) != nil)

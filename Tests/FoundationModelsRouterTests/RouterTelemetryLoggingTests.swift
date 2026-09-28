@@ -81,7 +81,7 @@ struct RouterTelemetryLoggingTests {
         let session = profile.standard.makeSession()
 
         let logs = try await TelemetryCapture.run(forbidding: []) { context in
-            await session.useCaptureLogger(context.logger)
+            await session.useCaptureLogger(for: context.logger)
             let child = try #require(try await session.fork(workingDirectory: nil) as? RoutedSessionActor)
             // A detached task gets no capture of its own, so only the explicit
             // logger of the child can bring this record to the capture.

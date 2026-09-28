@@ -39,12 +39,23 @@ extension RoutedSessionActor {
             submissionId: SubmissionID(lastSubmissionNumber), messageIds: messageIds, cause: cause)
         let span = RouterTelemetry.tracer(explicit: tracer).startSpan(
             RouterTelemetry.SpanName.submission, context: ServiceContext.current ?? .topLevel, ofKind: .client)
-        span.attributes[RouterTelemetry.AttributeKey.routerId] = routerId.description
-        span.attributes[RouterTelemetry.AttributeKey.sessionId] = id.description
-        span.attributes[RouterTelemetry.AttributeKey.modelRef] = model.stringValue
+        describeSession(on: span)
         span.attributes[RouterTelemetry.AttributeKey.submissionId] = start.submissionId.description
         span.attributes[RouterTelemetry.AttributeKey.submissionCause] = cause.rawValue
         runningSubmission = RunningSubmission(start: start, span: span)
+    }
+
+    /// Writes the attributes that name this session on `span`: the router
+    /// id, the session id and the model reference.
+    ///
+    /// The submission span and the fork span of a session carry these three
+    /// attributes, so one method writes them for both.
+    ///
+    /// - Parameter span: The span of work that runs on this session.
+    func describeSession(on span: any Span) {
+        span.attributes[RouterTelemetry.AttributeKey.routerId] = routerId.description
+        span.attributes[RouterTelemetry.AttributeKey.sessionId] = id.description
+        span.attributes[RouterTelemetry.AttributeKey.modelRef] = model.stringValue
     }
 
     /// What the first submission of an answer delivers, and why the session

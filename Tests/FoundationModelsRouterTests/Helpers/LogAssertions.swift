@@ -18,7 +18,7 @@ extension TelemetryCapture.Context {
     /// parallel with other tests sees only its own records. A log call on a
     /// detached task, for example the pump of a session, reaches the capture
     /// only through an explicit logger: give ``logger`` to the session with
-    /// ``RoutedSession/useCaptureLogger(_:)`` first.
+    /// ``RoutedSession/useCaptureLogger(for:)`` first.
     ///
     /// - Parameters:
     ///   - fragment: The text that the message of the record must contain.
@@ -52,7 +52,7 @@ extension RoutedSession {
     ///
     /// - Parameter logger: The logger of a capture,
     ///   `TelemetryCapture.Context.logger`.
-    func useCaptureLogger(_ logger: Logger) async {
+    func useCaptureLogger(for logger: Logger) async {
         await (self as! RoutedSessionActor).useLogger(logger)
     }
 }

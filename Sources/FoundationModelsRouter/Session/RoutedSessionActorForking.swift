@@ -41,9 +41,7 @@ extension RoutedSessionActor {
     ) async throws -> RoutedSession {
         try await RouterTelemetry.tracer(explicit: tracer)
             .withSpan(RouterTelemetry.SpanName.fork, ofKind: .internal) { span in
-                span.attributes[RouterTelemetry.AttributeKey.routerId] = routerId.description
-                span.attributes[RouterTelemetry.AttributeKey.sessionId] = id.description
-                span.attributes[RouterTelemetry.AttributeKey.modelRef] = model.stringValue
+                describeSession(on: span)
                 let child = try await body()
                 span.attributes[RouterTelemetry.AttributeKey.forkChildSessionId] = child.id.description
                 return child

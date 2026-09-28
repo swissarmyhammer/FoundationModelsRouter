@@ -24,7 +24,23 @@ comments:
     - Resolve facts: `swift package resolve` moved Extras to origin/main 4a733cd. That commit does NOT contain the OTel work (70ad74d is not its ancestor), so I set Package.resolved back to 70ad74d. Also, TelemetryCapture needs swift-distributed-tracing 1.5.0 (`withTracer`), but the Extras manifest says `from: 1.4.1`, so I resolved tracing to 1.5.0. IntegrationTests/Package.resolved has the same pins.
     - Checks: `swift build --build-tests` has no errors. The targeted suites (Telemetry layout, RouterTelemetryLogging, TranscriptEntryMapper, TranscriptReconstruction, RepetitionStop, GenerationStall, JSONLAppend, SpanContentSafety, SubmissionTracing) ran 104 tests and all passed. The IntegrationTests build passes. `ToolCallRepetitionStopTests` failed one time (`stop.newLines == 1`) and passed on the next run: it is flaky.
   timestamp: 2026-09-28T21:15:52.619472+00:00
-position_column: doing
+- actor: claude-code
+  id: 01m3mzxd5q5hfp8rqcx8aqbajj
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD — 2 findings: Sources/FoundationModelsRouter/Session/RoutedSessionActorForking.swift:44 (duplication/duplication), Tests/FoundationModelsRouterTests/Helpers/LogAssertions.swift:55 (swift/fluent-usage)
+    - next: implement the two findings
+  timestamp: 2026-09-28T21:49:38.871018+00:00
+- actor: claude-code
+  id: 01m3mzxgazch8r31xa7r8rbpvh
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — port to swift-log, RouterTelemetry vocabulary, explicit session logger, stderr bootstrap in the executables, new layout and logging tests.
+    - test: red, then green — the first run had 7 ToolTracingTests issues (Extras now names the tool span `FoundationModelsExtras.tool`); after the fix, swift test: 1400 + 22 + 19 tests passed (2 known issues). The clean build with a separate scratch path has no warnings. IntegrationTests builds.
+    - commit: changed — ebdaf8e refactor(telemetry)!: log through swift-log and rename RouterTracing to RouterTelemetry (^rag2e91)
+    - review: findings — 2 (RoutedSessionActorForking.swift:44 duplication; LogAssertions.swift:55 fluent-usage)
+  timestamp: 2026-09-28T21:49:42.111359+00:00
+position_column: review
 position_ordinal: '80'
 title: 'OTel router A: replace os.Logger with swift-log, and rename RouterTracing to one telemetry vocabulary with log metadata keys'
 ---
@@ -60,3 +76,10 @@ Facts from the Extras OTel work (swissarmyhammer session, 2026-09-28). Extras OT
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #otel #cross-repo
+
+## Review Findings (2026-09-28 16:27)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 46 file(s) reviewed, 6 not reviewed.
+
+- [ ] `Sources/FoundationModelsRouter/Session/RoutedSessionActorForking.swift:44` `duplication/duplication` — Three lines setting span attributes (routerId, sessionId, modelRef) are verbatim duplicated across two files in this change. This code block appears identically in RoutedSessionActorSubmissionEvents.swift:42-44 and should be extracted to a shared helper method to avoid drift and reduce surface area. Extract a private helper method on RoutedSessionActor (e.g., `private func setSessionSpanAttributes(_ span: Span)`) that sets these three attributes, then call it from both RoutedSessionActorForking.swift:44-46 and RoutedSessionActorSubmissionEvents.swift:42-44, replacing the duplicated lines with a single call to the helper.
+- [ ] `Tests/FoundationModelsRouterTests/Helpers/LogAssertions.swift:55` `swift/fluent-usage` — First argument label omitted on a non-value-preserving method. The method `useCaptureLogger(_:)` performs side effects (setting an explicit logger), so it should include an external label on its first parameter to form a grammatical phrase at the call site. Change the signature to `func useCaptureLogger(for logger: Logger) async` so the call reads as 'session.useCaptureLogger(for: context.logger)' rather than 'session.useCaptureLogger(context.logger)'.
