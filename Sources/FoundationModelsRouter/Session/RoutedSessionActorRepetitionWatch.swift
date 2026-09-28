@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsExtras
 import os
 
 /// The logger for a repetition stop.
@@ -62,18 +63,25 @@ enum RepeatedPartRemoval {
     /// `entry` with its text cut to `kept` UTF-8 bytes, or `nil` when no text
     /// is left.
     ///
+    /// A watched `.toolCalls` entry stays whole (task ^dzw15st). The rebuild
+    /// of a stopped attempt already removed a call that got no output
+    /// (``InFlightTranscript/removingUnansweredCalls(from:entryIdsBeforeAttempt:)``),
+    /// and a call that got an output keeps its arguments, so the output keeps
+    /// its call.
+    ///
     /// - Parameters:
-    ///   - entry: A watched `.reasoning` or `.response` entry.
+    ///   - entry: A watched `.reasoning`, `.response` or `.toolCalls` entry.
     ///   - kept: The UTF-8 length of the text to keep.
     /// - Returns: The cut entry, the same entry when nothing is cut, or `nil`.
     private static func trimmed(_ entry: Transcript.Entry, toUTF8Length kept: Int) -> Transcript.Entry? {
-        guard kept > 0 else { return nil }
         switch entry {
         case .reasoning(var reasoning):
+            guard kept > 0 else { return nil }
             guard let segments = cut(reasoning.segments, toUTF8Length: kept) else { return entry }
             reasoning.segments = segments
             return .reasoning(reasoning)
         case .response(var response):
+            guard kept > 0 else { return nil }
             guard let segments = cut(response.segments, toUTF8Length: kept) else { return entry }
             response.segments = segments
             return .response(response)
@@ -102,8 +110,10 @@ enum RepeatedPartRemoval {
 }
 
 /// ``RoutedSessionActor``'s repetition watch (task ^1hcwaqy): it reads the
-/// reasoning and the text of each model call of a submission while the call
-/// is in flight, stops a call that no longer writes new lines, and recovers as
+/// reasoning, the text and the tool-call arguments of each model call of a
+/// submission while the call is in flight, and again before each tool body
+/// runs (``checkToolCallForRepetition()``, task ^dzw15st). It stops a call
+/// that no longer writes new lines, and recovers as
 /// a ceiling stop does (``continueAfterCeilingStop(attempt:body:)``): the
 /// stopped attempt is recorded whole, the repeated part leaves the render,
 /// and the same answer goes on with ``repetitionStopContinuationPrompt``, at
@@ -202,6 +212,39 @@ extension RoutedSessionActor {
         repetitionStopLogger.notice(
             "session \(self.id.description, privacy: .public): \(report.description, privacy: .public)")
         modelCall.cancel()
+    }
+
+    /// Stops the model call in flight before a tool body of it runs, when the
+    /// text of the attempt with the arguments of its tool calls fills one
+    /// window of repeated lines (task ^dzw15st).
+    ///
+    /// The backend shows a tool call only after the model ended it, and the
+    /// SDK then runs the tool. So the watch of the pass cannot stop a tool
+    /// call whose arguments repeat. This check runs on the task of each tool
+    /// body of this session's own open model call
+    /// (``ToolCallRepetitionCheck``), where the SDK waits for the tool and
+    /// writes no transcript, so the read of the transcript is safe. It reads
+    /// the whole attempt with a new ``RepetitionDetector``, and a finding
+    /// stops the call as the watch does (``noteRepetition(_:liveEntries:watchId:)``).
+    ///
+    /// Nothing happens when the detection is not enabled, when no watch is
+    /// active, or when the tool body is not in an open model call of this
+    /// session.
+    ///
+    /// - Throws: `CancellationError` when the watch stopped the call, before
+    ///   or in this check. The tool body must then not run.
+    func checkToolCallForRepetition() throws {
+        guard repetitionDetection.isEnabled, let watchId = repetitionWatch.activeWatchId,
+            ModelCallMark.current?.isOpenModelCall(of: id) == true
+        else { return }
+        if repetitionWatch.stop == nil {
+            let entries = backend.transcriptEntries()
+            var detector = RepetitionDetector(detection: repetitionDetection, tokenCounter: tokenCounter)
+            let texts = WatchedText.attemptTexts(in: entries, excluding: toolResultWatch.entryIdsBeforeAttempt)
+            guard let finding = detector.observe(texts) else { return }
+            noteRepetition(finding, liveEntries: entries, watchId: watchId)
+        }
+        guard repetitionWatch.stop == nil else { throw CancellationError() }
     }
 
     /// Takes the repetition stop marker of the attempt that just failed.

@@ -109,8 +109,9 @@ extension Transcript.Prompt {
 /// messages share a submission when they name the same token ceiling. The
 /// grammar of the session is the same for every reply message.
 struct SubmissionOptions: Sendable, Equatable {
-    /// The options of a submission that only mail started: a reply, with the
-    /// resolved context of the model as the ceiling.
+    /// The options of a submission that only mail started: a reply, with no
+    /// ceiling from a caller. The resolved context of the model, bounded by
+    /// the pass token limit of the session, is the ceiling.
     static let mailDelivery = SubmissionOptions(isStream: false, requestedMaxTokens: nil)
 
     /// Whether the submission gives its output as a stream.

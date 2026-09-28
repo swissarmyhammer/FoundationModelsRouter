@@ -232,8 +232,8 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// ceiling.
     ///
     /// A routed session gives every call the ceiling it derives from the
-    /// resolved context of its model (see
-    /// ``RoutedSessionActor/responseTokenCeiling(requested:contextTokens:)``).
+    /// resolved context of its model and its pass token limit (see
+    /// ``ResponseTokenCeiling``).
     /// A caller that names no ceiling gets ``contextWindow``, the window of
     /// the model. The backend never sends `nil`, so the default ceiling of the
     /// engine never applies to a call of the router.
@@ -310,7 +310,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
             model: model, generationQueue: generationQueue, contextWindow: contextWindow,
             instructions: instructions, tools: tools, samplingMode: samplingMode
         ) { sessionModel in
-            LanguageModelSession(model: sessionModel, tools: tools, instructions: instructions)
+            LanguageModelSession(model: sessionModel, tools: Self.checkedTools(tools), instructions: instructions)
         }
     }
 
@@ -343,8 +343,20 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
             instructions: instructions ?? TranscriptDiffer.leadingInstructionsText(of: transcript),
             tools: tools, samplingMode: samplingMode
         ) { sessionModel in
-            LanguageModelSession(model: sessionModel, tools: tools, transcript: transcript)
+            LanguageModelSession(model: sessionModel, tools: Self.checkedTools(tools), transcript: transcript)
         }
+    }
+
+    /// `tools` as the SDK session receives them: each one in a
+    /// ``RepetitionCheckedTool``, so the repetition check of the model call
+    /// runs before each tool body (task ^dzw15st). The check wraps the tool
+    /// that the SDK calls, over every layer of the session mount, and the
+    /// backend keeps ``tools`` as its caller gave them.
+    ///
+    /// - Parameter tools: The tools of the session.
+    /// - Returns: The checked tools, in the same order.
+    private static func checkedTools(_ tools: [any FoundationModels.Tool]) -> [any FoundationModels.Tool] {
+        tools.map { ToolCallRepetitionCheck.makeChecked(tool: $0) }
     }
 
     /// Generates a complete text response through ``liveSession``.

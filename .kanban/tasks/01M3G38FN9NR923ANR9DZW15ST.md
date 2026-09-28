@@ -1,8 +1,44 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: a480
+comments:
+- actor: claude-code
+  id: 01m3mgbzcbhkegpdxz7k493cmw
+  text: |-
+    ### Research: is a partial `.toolCalls` entry visible while the model generates it?
+
+    Answer: NO. The arguments are visible only after the call is complete. There are three causes:
+
+    1. The MLX executor (`mlx-swift-lm` at `.build/checkouts`, `MLXLanguageModel.swift:1550-1577` and `:1785`) collects the whole generation first (`runAllowedToolGeneration`), then sends each tool call in ONE `.appendArguments(arguments, tokenCount: 1)` (`emitToolCall`, `:692-703`). In a turn with tools, it also sends the response text only at the end. Only the reasoning streams while the model generates.
+    2. The SDK itself holds back a `.toolCalls` entry. A probe executor sent the arguments in 4 parts, 200 ms apart. The pass watch (`transcriptUpdates()`) and the `ResponseStream` snapshots of `LanguageModelSession` both showed the entry ONE time only, whole, after the executor sent the last part. No partial state was visible. So a watch on the transcript cannot see partial arguments for ANY executor.
+    3. The raw token stream is not available to the router. `LanguageModelExecutorGenerationChannel.Event` is opaque (no public accessors in the swiftinterface), so a wrapper of the channel cannot read the events. The MLX `generationObserver` is a test-only internal hook, and it also fires only at the end.
+
+    Result: the watch cannot stop a runaway tool-call generation. The fix has three parts:
+
+    - A. A limit on the generated length: new `RepetitionDetection.passTokenLimit` (default 16,384 tokens, `defaultPassTokenLimit`). While detection is on and the caller names no ceiling, the ceiling that each generation pass gets is min(context, limit). A runaway tool call then ends at the ceiling (`FinishReason.maxTokens`) and does not run for hours. This is the only length lever that the router has during generation (`GenerationOptions.maximumResponseTokens`, which the MLX executor reads for each pass).
+    - B. The watch reads the text of the tool-call arguments: `WatchedText.attemptTexts` now reads `.toolCalls` entries. The JSON string values of the arguments are decoded (`\n` and the other escapes) before the line split.
+    - C. A check before each tool body: a new Router decorator on each mounted tool asks the session (through a task-local bound in the submission, as `ToolResultAppendBoundary` is) before the tool runs. The session reads the transcript at this tool boundary (the same read as the compaction yield), runs a detector over the attempt with its tool-call arguments, and on a finding stops the call as a repetition stop (`repetitionStopped`, `FinishReason.repeatedLines`). The tool body then does not run. The rebuild of the stopped attempt already removes the unanswered call (`InFlightTranscript.removingUnansweredCalls`).
+
+    Also: `RepeatedPartRemoval.trimmed` dropped an entry with a kept length of 0 before it looked at the kind; a watched `.toolCalls` entry must stay whole, so that check moves into the text cases.
+  timestamp: 2026-09-28T17:17:59.051741+00:00
+- actor: claude-code
+  id: 01m3mh35z2nxfzthrhr1z8sah9
+  text: |-
+    ### implement — changed
+    - evidence: new `Session/ToolCallArgumentsText.swift`, `Session/ToolCallRepetitionCheck.swift`; changed `RepetitionDetector.swift` (`.toolCalls` text), `RoutedSessionActorRepetitionWatch.swift` (`checkToolCallForRepetition()`, render keeps `.toolCalls` whole), `RepetitionDetection.swift` (`passTokenLimit`, default 16,384, stored-form decode), `ResponseTokenCeiling.swift` + pump (limit applied), `RoutedSessionActorAnswerExecution.swift` (check bound in the submission), `ToolOutputCapping.swift` (check decorator in the mount chain), docs of the `maxTokens: nil` ceiling. Tests: `ToolCallRepetitionStopTests` (200 equal lines stop with `repeatedLines`, tool runs 0 times; 30 different lines run the tool 1 time), `ToolCallArgumentsTextTests`, 2 new detector tests, `PassTokenLimitTests`, fixture `RepeatingToolCallModel`. `AnswerTokenCeilingTests.resolvedContext` moves to 12,288 (under the limit) so its contract stays true. Targeted run: 44 tests in 8 suites pass.
+    - note: the check before the tool body is the part that stops a repeated tool call in the real SDK, because the SDK shows the call only after the pass ends. The pass limit is the part that ends a generation that never ends.
+    - next: full `swift test`, clean build for warnings, IntegrationTests build.
+  timestamp: 2026-09-28T17:30:39.458100+00:00
+- actor: claude-code
+  id: 01m3mhk6rg4h4m0ygp4xprp7xp
+  text: |-
+    ### test — green
+    - evidence: `swift test` — 1384 tests in 174 suites passed (2 known issues from existing `withKnownIssue` tests), plus 20 + 19 in the other test products; clean `swift build --build-tests --scratch-path <scratch>/cleanbuild` — no warning in project code (only C++17 warnings in the Metal kernels of the `mlx-swift` dependency); `swift build --build-tests --package-path IntegrationTests` — Build complete.
+    - what did not work: the first full run had 92 issues. The check decorator sat inside the session mount chain (between the failure-delivery layer and the capping layer), and many existing tests read that chain (`ToolFailureDelivery.throwingTool(of:)` cast to the runner). Fix: the live backend wraps each tool in `RepetitionCheckedTool` only where it builds the SDK `LanguageModelSession` (`LiveModelLoader.checkedTools(_:)`), over every mount layer. The mount chain does not change.
+    - next: commit.
+  timestamp: 2026-09-28T17:39:24.560027+00:00
+position_column: doing
+position_ordinal: '80'
 title: 'Router: the repetition watch does not read tool-call arguments, so a repeated runCode snippet is never stopped'
 ---
 ## What

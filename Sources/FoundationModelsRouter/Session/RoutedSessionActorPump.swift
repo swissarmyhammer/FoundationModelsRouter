@@ -353,7 +353,9 @@ extension RoutedSessionActor: SessionMailObserver {
         carrying letters: [SessionLetter], options: SubmissionOptions, mail: [OperationEvent]
     ) async throws -> String {
         let first = letters.first?.message
-        let ceiling = ResponseTokenCeiling(requested: options.requestedMaxTokens, contextTokens: contextTokens)
+        let ceiling = ResponseTokenCeiling(
+            requested: options.requestedMaxTokens, contextTokens: contextTokens,
+            repetitionDetection: repetitionDetection)
         let work = submissionWork(for: first?.reader ?? .reply, responseTokenCeiling: ceiling)
         let ownPrompt =
             letters.isEmpty

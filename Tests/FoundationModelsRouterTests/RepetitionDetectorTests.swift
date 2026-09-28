@@ -1,3 +1,4 @@
+import FoundationModels
 import FoundationModelsRouterTestSupport
 import Testing
 
@@ -15,6 +16,12 @@ struct RepetitionDetectorTests {
 
     /// The entry id of the watched response entry.
     private static let responseId = "response"
+
+    /// The entry id of a watched tool-calls entry.
+    private static let toolCallsId = "tool-calls"
+
+    /// How many different lines the snippet that does not stop holds.
+    private static let differentLineCount = 30
 
     /// A line long enough to count, with `label` in it.
     private static func longLine(_ label: String) -> String {
@@ -98,5 +105,97 @@ struct RepetitionDetectorTests {
         let finding = try #require(observed)
         #expect(finding.keptUTF8Lengths[Self.reasoningId] == reasoning.utf8.count)
         #expect(finding.keptUTF8Lengths[Self.responseId] == 0)
+    }
+
+    @Test("a JSON string with \\n escapes splits into lines, so its repeated lines fill the window")
+    func escapedLineFeedsSplitIntoLines() throws {
+        var detector = Self.makeDetector()
+        let repeated = Array(repeating: Self.longLine("alpha"), count: Self.window)
+        let escapedSnippet = ([Self.longLine("beta")] + repeated).map { $0 + #"\n"# }.joined()
+        let argumentsJSON = #"{"code": ""# + escapedSnippet + #""}"#
+
+        let text = ToolCallArgumentsText.text(ofArgumentsJSON: argumentsJSON)
+        #expect(text == Self.text([Self.longLine("beta")] + repeated))
+
+        let observed = detector.observe([WatchedText(entryId: Self.toolCallsId, text: text)])
+        let finding = try #require(observed)
+        #expect(finding.newLines == 2)
+        #expect(finding.tokensWithoutNewLine >= Self.window)
+    }
+
+    @Test("30 different lines of a JSON string do not fill the window")
+    func differentEscapedLinesDoNotStop() {
+        var detector = Self.makeDetector()
+        let lines = (0..<Self.differentLineCount).map { Self.longLine("step \($0)") }
+        let argumentsJSON = #"{"code": ""# + lines.map { $0 + #"\n"# }.joined() + #""}"#
+
+        let text = ToolCallArgumentsText.text(ofArgumentsJSON: argumentsJSON)
+        #expect(detector.observe([WatchedText(entryId: Self.toolCallsId, text: text)]) == nil)
+    }
+}
+
+/// The text of the arguments of a tool call, as the repetition watch reads
+/// them (task ^dzw15st): the string values of the JSON, decoded, each on its
+/// own lines.
+@Suite("The repetition watch reads the string values of tool-call arguments")
+struct ToolCallArgumentsTextTests {
+    /// The name of the tool of each call of this suite.
+    private static let toolName = "runCode"
+
+    @Test("a key is not text, and a closed value ends with a line feed")
+    func keysAreNotText() {
+        #expect(ToolCallArgumentsText.text(ofArgumentsJSON: #"{"code": "x = 1"}"#) == "x = 1\n")
+    }
+
+    @Test("a value that ends with a line feed gets no second one")
+    func valueWithTrailingLineFeedKeepsOne() {
+        #expect(ToolCallArgumentsText.text(ofArgumentsJSON: #"{"code": "a\nb\n"}"#) == "a\nb\n")
+    }
+
+    @Test("each JSON escape is decoded")
+    func escapesAreDecoded() {
+        let json = #"{"code": "say \"hi\"\\path\ttab\r\/slash \u00e9 \ud83d\ude00\b\f"}"#
+        let text = ToolCallArgumentsText.text(ofArgumentsJSON: json)
+        #expect(text == "say \"hi\"\\path\ttab\r/slash \u{e9} \u{1F600}\u{8}\u{c}\n")
+    }
+
+    @Test("the values of nested objects and arrays are read in order, and numbers are not text")
+    func nestedValuesAreRead() {
+        let json = #"{"a": ["one", {"b": "two"}], "n": 3, "flag": true, "c": "three"}"#
+        #expect(ToolCallArgumentsText.text(ofArgumentsJSON: json) == "one\ntwo\nthree\n")
+    }
+
+    @Test("a string that is not closed gives its text so far, with no line feed added")
+    func openStringGivesItsTextSoFar() {
+        #expect(ToolCallArgumentsText.text(ofArgumentsJSON: #"{"code": "line one\nline tw"#) == "line one\nline tw")
+    }
+
+    @Test("an escape cut at the end of the text gives the text before it")
+    func cutEscapeIsDropped() {
+        #expect(ToolCallArgumentsText.text(ofArgumentsJSON: #"{"code": "ab\"#) == "ab")
+        #expect(ToolCallArgumentsText.text(ofArgumentsJSON: #"{"code": "ab\u00"#) == "ab")
+    }
+
+    @Test("the attempt texts hold the decoded arguments of a tool-calls entry")
+    func attemptTextsReadToolCalls() throws {
+        let arguments = try GeneratedContent(json: #"{"code": "first line\nsecond line\n"}"#)
+        let calls = Transcript.ToolCalls([
+            Transcript.ToolCall(id: "call-1", toolName: Self.toolName, arguments: arguments)
+        ])
+        let entry = Transcript.Entry.toolCalls(calls)
+
+        let texts = WatchedText.attemptTexts(in: [entry], excluding: [])
+        #expect(texts == [WatchedText(entryId: entry.id, text: "first line\nsecond line\n")])
+        #expect(WatchedText.attemptTexts(in: [entry], excluding: [entry.id]).isEmpty)
+    }
+
+    @Test("the render keeps a watched tool-calls entry whole, also at a kept length of zero")
+    func renderKeepsToolCallsWhole() throws {
+        let arguments = try GeneratedContent(json: #"{"code": "print(1)\n"}"#)
+        let entry = Transcript.Entry.toolCalls(
+            Transcript.ToolCalls([Transcript.ToolCall(id: "call-1", toolName: Self.toolName, arguments: arguments)]))
+
+        let render = RepeatedPartRemoval.render(of: [entry], keeping: [entry.id: 0])
+        #expect(render == [entry])
     }
 }

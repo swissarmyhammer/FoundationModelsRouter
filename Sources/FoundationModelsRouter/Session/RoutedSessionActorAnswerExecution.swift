@@ -20,7 +20,9 @@ extension RoutedSessionActor {
     /// context it decodes in, so the context is the one ceiling that comes from
     /// the model. The length of a submission below that is for the bounds made
     /// to govern it, such as the stall report and a host watchdog, and not for
-    /// a constant.
+    /// a constant. The one bound of that kind is the pass token limit of the
+    /// repetition watch, which ``ResponseTokenCeiling`` applies to this value
+    /// (task ^dzw15st).
     ///
     /// - Parameters:
     ///   - requested: The ceiling the caller named, or `nil`.
@@ -40,7 +42,7 @@ extension RoutedSessionActor {
     /// - Parameters:
     ///   - grammar: The grammar that constrains the response, or `nil`.
     ///   - maxTokens: The ceiling to give the backend, as
-    ///     ``responseTokenCeiling(requested:contextTokens:)`` derives it.
+    ///     ``ResponseTokenCeiling/resolved`` gives it.
     /// - Returns: The closure that runs the model call.
     func respondBody(grammar: Grammar?, responseTokenCeiling maxTokens: Int?) -> @Sendable (String) async throws -> String {
         guard let grammar else {
@@ -673,9 +675,12 @@ extension RoutedSessionActor {
         }
         // The tool-result append boundary of this model call: each tool result
         // the model reads next goes through it (see ``noteToolResult(_:)``).
+        // The repetition check runs before each tool body of the call (see
+        // ``checkToolCallForRepetition()``).
         let submission = Self.submission(
             of: body, composedPrompt: composedPrompt, mark: modelCallMark,
             boundary: ToolResultAppendBoundary { await self.noteToolResult($0) },
+            repetitionCheck: ToolCallRepetitionCheck { try await self.checkToolCallForRepetition() },
             context: ambientToolContext,
             serviceContext: submissionServiceContext)
         let observer = generationPassObserver
@@ -714,6 +719,8 @@ extension RoutedSessionActor {
     ///   - composedPrompt: The composed prompt of the attempt.
     ///   - mark: The mark of the model call.
     ///   - boundary: The tool-result append boundary of the model call.
+    ///   - repetitionCheck: The repetition check before each tool body of the
+    ///     model call.
     ///   - context: The ambient ``ToolContext`` of the model call.
     ///   - serviceContext: The tracing context of the submission
     ///     (``submissionServiceContext``), or `nil`.
@@ -723,6 +730,7 @@ extension RoutedSessionActor {
         composedPrompt: String,
         mark: ModelCallMark,
         boundary: ToolResultAppendBoundary,
+        repetitionCheck: ToolCallRepetitionCheck,
         context: ToolContext,
         serviceContext: ServiceContext?
     ) -> @Sendable () async throws -> String {
@@ -730,8 +738,10 @@ extension RoutedSessionActor {
             try await ServiceContext.$current.withValue(serviceContext) {
                 try await ModelCallMark.$current.withValue(mark) {
                     try await ToolResultAppendBoundary.$current.withValue(boundary) {
-                        try await ToolContext.$current.withValue(context) {
-                            try await body(composedPrompt)
+                        try await ToolCallRepetitionCheck.$current.withValue(repetitionCheck) {
+                            try await ToolContext.$current.withValue(context) {
+                                try await body(composedPrompt)
+                            }
                         }
                     }
                 }

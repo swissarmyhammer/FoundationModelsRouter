@@ -5,12 +5,16 @@ import Foundation
 ///
 /// A reasoning model can write the lines that it already wrote again, in a
 /// different sequence, until the call reaches its ceiling. The share of new
-/// lines then goes to zero and stays there. The session reads the reasoning
-/// and the text of the call in flight, line by line. When one window of
-/// generated tokens holds no new line, the session stops the call, keeps the
-/// repeated part out of the render that the model receives next, and runs
-/// one more submission of the same answer with a short prompt that tells the
-/// model to act.
+/// lines then goes to zero and stays there. The session reads the reasoning,
+/// the text and the tool-call arguments of the call in flight, line by line.
+/// When one window of generated tokens holds no new line, the session stops
+/// the call, keeps the repeated part out of the render that the model
+/// receives next, and runs one more submission of the same answer with a
+/// short prompt that tells the model to act. A tool call whose arguments fill
+/// the window stops before the tool runs (task ^dzw15st).
+///
+/// The session sees a tool call only after the model ended it, so
+/// ``passTokenLimit`` bounds a generation that the session cannot read.
 ///
 /// A host passes this value through ``SessionConfiguration/repetitionDetection``.
 /// A value that the host does not pass keeps its default. Each default is a
@@ -28,6 +32,9 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
 
     /// The default of ``recoveriesPerAnswer``: 2 recoveries.
     public static let defaultRecoveriesPerAnswer = 2
+
+    /// The default of ``passTokenLimit``: 16,384 tokens (task ^dzw15st).
+    public static let defaultPassTokenLimit = 16_384
 
     /// Whether the session watches the calls of its submissions. When `false`, no
     /// call stops for repetition.
@@ -54,6 +61,20 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
     /// an old recording loads (``CodingKeys``).
     public var recoveriesPerAnswer: Int
 
+    /// The most output tokens that one generation pass of a submission may
+    /// make, when the caller of the message names no ceiling (task ^dzw15st).
+    ///
+    /// The watch reads the transcript of the call in flight. The backend
+    /// shows a tool call there only after the model ended it, and the MLX
+    /// executor sends the arguments of a tool call only after the whole
+    /// generation. So the watch cannot stop a model that writes the same line
+    /// into a tool call again and again. This limit ends such a generation:
+    /// each pass gets the smaller of the resolved context and this limit as
+    /// its ceiling, and a pass that reaches it ends with
+    /// ``FinishReason/maxTokens``. A ceiling that the caller names wins, and
+    /// a detection that is not enabled sets no limit.
+    public var passTokenLimit: Int
+
     /// The keys of the stored form. Each key is the name of its property,
     /// except ``recoveriesPerAnswer``: its key stays `recoveriesPerTurn`, and
     /// the schema version does not change (`generation-queue.md`, section 5.6).
@@ -62,6 +83,7 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
         case windowTokens
         case minimumLineLength
         case recoveriesPerAnswer = "recoveriesPerTurn"
+        case passTokenLimit
     }
 
     /// Creates the settings. Each parameter defaults to its named default.
@@ -72,23 +94,51 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
     ///     least one new line.
     ///   - minimumLineLength: The minimum length of a line that counts.
     ///   - recoveriesPerAnswer: How many times one answer goes on after a stop.
+    ///   - passTokenLimit: The most output tokens of one generation pass when
+    ///     the caller names no ceiling.
     public init(
         isEnabled: Bool = defaultIsEnabled,
         windowTokens: Int = defaultWindowTokens,
         minimumLineLength: Int = defaultMinimumLineLength,
-        recoveriesPerAnswer: Int = defaultRecoveriesPerAnswer
+        recoveriesPerAnswer: Int = defaultRecoveriesPerAnswer,
+        passTokenLimit: Int = defaultPassTokenLimit
     ) {
         self.isEnabled = isEnabled
         self.windowTokens = windowTokens
         self.minimumLineLength = minimumLineLength
         self.recoveriesPerAnswer = recoveriesPerAnswer
+        self.passTokenLimit = passTokenLimit
+    }
+
+    /// Decodes the stored form. A stored form from before task ^dzw15st has
+    /// no ``passTokenLimit`` key, and it loads with ``defaultPassTokenLimit``.
+    ///
+    /// - Parameter decoder: The decoder of the stored form.
+    /// - Throws: `DecodingError` when a key other than ``passTokenLimit`` is
+    ///   missing, or when a value has the wrong type.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            isEnabled: try container.decode(Bool.self, forKey: .isEnabled),
+            windowTokens: try container.decode(Int.self, forKey: .windowTokens),
+            minimumLineLength: try container.decode(Int.self, forKey: .minimumLineLength),
+            recoveriesPerAnswer: try container.decode(Int.self, forKey: .recoveriesPerAnswer),
+            passTokenLimit: try container.decodeIfPresent(Int.self, forKey: .passTokenLimit)
+                ?? Self.defaultPassTokenLimit)
+    }
+
+    /// The pass token limit that a session applies: ``passTokenLimit`` when
+    /// the detection is enabled, else `nil`.
+    var passTokenLimitInForce: Int? {
+        isEnabled ? passTokenLimit : nil
     }
 
     /// Each value in force, by name, for a log line.
     var loggedValues: String {
         """
         repetitionDetection: isEnabled = \(isEnabled), windowTokens = \(windowTokens), \
-        minimumLineLength = \(minimumLineLength), recoveriesPerAnswer = \(recoveriesPerAnswer)
+        minimumLineLength = \(minimumLineLength), recoveriesPerAnswer = \(recoveriesPerAnswer), \
+        passTokenLimit = \(passTokenLimit)
         """
     }
 }
@@ -96,13 +146,13 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
 /// A report that the session stopped a generate call because the call no
 /// longer wrote new lines, carried by ``SessionEvent/repetitionStopped(_:)``.
 ///
-/// The counts come from the lines that the session read from the reasoning
-/// and the text of the call. The tokens are counted with the session's
-/// ``TokenCounter``.
+/// The counts come from the lines that the session read from the reasoning,
+/// the text and the tool-call arguments of the call. The tokens are counted
+/// with the session's ``TokenCounter``.
 public struct RepetitionStop: Sendable, Equatable, CustomStringConvertible {
     /// The tokens the call generated before the stop: the tokens of each
-    /// complete line of the reasoning and the text that the session read,
-    /// short lines included.
+    /// complete line of the reasoning, the text and the tool-call arguments
+    /// that the session read, short lines included.
     public let generatedTokens: Int
 
     /// The lines of the call that count: lines that end with a line feed and

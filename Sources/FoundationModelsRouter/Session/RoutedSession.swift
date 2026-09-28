@@ -173,7 +173,8 @@ public protocol RoutedSession: Actor {
     /// the process through whatever backend the host application bootstrapped,
     /// so the payload stays free of the caller's own content.
     ///
-    /// - Parameter maxTokens: The token ceiling, or `nil` for the resolved context of the model.
+    /// - Parameter maxTokens: The token ceiling, or `nil` for the resolved context of the model,
+    ///   bounded by the pass token limit of the session (``RepetitionDetection/passTokenLimit``).
     /// - Returns: The model's complete text response: the final reply of the
     ///   answer that carried the prompt.
     /// - Throws: ``GenerationQueueError/waitInsideOpenSubmission(model:)`` when
@@ -198,7 +199,8 @@ public protocol RoutedSession: Actor {
     /// The first submission has `submission.cause` reading `message`, and a
     /// continuation has `continuation`.
     ///
-    /// - Parameter maxTokens: The token ceiling, or `nil` for the resolved context of the model.
+    /// - Parameter maxTokens: The token ceiling, or `nil` for the resolved context of the model,
+    ///   bounded by the pass token limit of the session (``RepetitionDetection/passTokenLimit``).
     func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error>
 
     /// Streams a rich event sequence for a prompt as it is produced, recording
@@ -239,7 +241,8 @@ public protocol RoutedSession: Actor {
     /// The first submission has `submission.cause` reading `message`, and a
     /// continuation has `continuation`.
     ///
-    /// - Parameter maxTokens: The token ceiling, or `nil` for the resolved context of the model.
+    /// - Parameter maxTokens: The token ceiling, or `nil` for the resolved context of the model,
+    ///   bounded by the pass token limit of the session (``RepetitionDetection/passTokenLimit``).
     func streamEvents(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<SessionEvent, Error>
 
     /// Streams the ``SessionEvent``s of this *session*, for as long as the
@@ -449,17 +452,20 @@ extension RoutedSession {
         try await compact(prompt: .default, budget: budget)
     }
 
-    /// See ``respond(to:maxTokens:)``, with the resolved context of the model as the token ceiling.
+    /// See ``respond(to:maxTokens:)``, with no ceiling from the caller: the resolved context of the
+    /// model, bounded by the pass token limit of the session, is the token ceiling.
     public func respond(to prompt: String) async throws -> String {
         try await respond(to: prompt, maxTokens: nil)
     }
 
-    /// See ``streamResponse(to:maxTokens:)``, with the resolved context of the model as the token ceiling.
+    /// See ``streamResponse(to:maxTokens:)``, with no ceiling from the caller: the resolved context of
+    /// the model, bounded by the pass token limit of the session, is the token ceiling.
     public func streamResponse(to prompt: String) -> AsyncThrowingStream<String, Error> {
         streamResponse(to: prompt, maxTokens: nil)
     }
 
-    /// See ``streamEvents(to:maxTokens:)``, with the resolved context of the model as the token ceiling.
+    /// See ``streamEvents(to:maxTokens:)``, with no ceiling from the caller: the resolved context of
+    /// the model, bounded by the pass token limit of the session, is the token ceiling.
     public func streamEvents(to prompt: String) -> AsyncThrowingStream<SessionEvent, Error> {
         streamEvents(to: prompt, maxTokens: nil)
     }

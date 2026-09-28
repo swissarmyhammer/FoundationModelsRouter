@@ -34,7 +34,8 @@ extension RoutedSessionActor {
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` for the
-    ///     resolved context of the model as the ceiling.
+    ///     resolved context of the model, bounded by the pass token limit of
+    ///     the session (``RepetitionDetection/passTokenLimit``), as the ceiling.
     /// - Returns: The model's complete text response.
     /// - Throws: Any error thrown by the model, `CancellationError` when the
     ///   message was cancelled, or
@@ -165,7 +166,8 @@ extension RoutedSessionActor {
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` for the
-    ///     resolved context of the model as the ceiling.
+    ///     resolved context of the model, bounded by the pass token limit of
+    ///     the session (``RepetitionDetection/passTokenLimit``), as the ceiling.
     /// - Returns: A stream of response fragments, finishing when generation
     ///   completes or throwing if it fails.
     func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
@@ -223,7 +225,7 @@ extension RoutedSessionActor {
     /// - Parameters:
     ///   - composedPrompt: The prompt, already composed with the outbox drain.
     ///   - maxTokens: The ceiling to give the backend, as
-    ///     ``responseTokenCeiling(requested:contextTokens:)`` derives it.
+    ///     ``ResponseTokenCeiling/resolved`` gives it.
     ///   - continuation: The stream continuation each element is yielded to.
     ///   - wrapFragment: Wraps one fragment into zero or more elements.
     /// - Returns: The accumulated, unwrapped response text.
@@ -280,7 +282,8 @@ extension RoutedSessionActor {
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` for the
-    ///     resolved context of the model as the ceiling.
+    ///     resolved context of the model, bounded by the pass token limit of
+    ///     the session (``RepetitionDetection/passTokenLimit``), as the ceiling.
     /// - Returns: A stream of session events, finishing when generation
     ///   completes or throwing if it fails.
     func streamEvents(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<SessionEvent, Error> {

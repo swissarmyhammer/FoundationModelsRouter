@@ -240,7 +240,8 @@ extension RoutedSession {
     ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
-    ///   - maxTokens: The maximum number of tokens to generate, or `nil` for the resolved context of the model.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil` for the resolved context of the model,
+    ///     bounded by the pass token limit of the session (``RepetitionDetection/passTokenLimit``).
     ///   - observing: A callback that receives each raw ``SessionEvent`` as it arrives, or `nil`.
     /// - Returns: The final answer of the chain that carried the prompt.
     /// - Throws: Whatever the chain throws, after `observing` has seen every

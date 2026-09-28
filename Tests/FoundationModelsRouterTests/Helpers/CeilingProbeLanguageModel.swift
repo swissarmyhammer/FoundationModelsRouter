@@ -437,6 +437,7 @@ struct CeilingProbeSessionFixture {
     ///   - ending: How each generation call ends.
     ///   - context: The working context the profile resolves at.
     ///   - tools: The tools the session mounts.
+    ///   - repetitionDetection: The repetition detection of the session.
     ///   - tempDirPrefix: The calling suite's name, so a leaked temp directory
     ///     is attributable.
     /// - Returns: The session, its log, and the temp directory.
@@ -445,6 +446,7 @@ struct CeilingProbeSessionFixture {
         ending: CeilingProbeEnding,
         context: Int = ScriptedSessionContext.tokens,
         tools: [any Tool] = [],
+        repetitionDetection: RepetitionDetection = RepetitionDetection(),
         tempDirPrefix: String
     ) async throws -> CeilingProbeSessionFixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
@@ -456,6 +458,8 @@ struct CeilingProbeSessionFixture {
         let profile = try await router.resolve(
             profile: RouterTestFixtures.profile(context: context), reporting: ResolutionProgress())
         return CeilingProbeSessionFixture(
-            session: profile.standard.makeSession(tools: tools), log: log, directory: directory)
+            session: profile.standard.makeSession(
+                configuration: SessionConfiguration(tools: tools, repetitionDetection: repetitionDetection)),
+            log: log, directory: directory)
     }
 }

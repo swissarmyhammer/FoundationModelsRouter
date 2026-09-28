@@ -22,8 +22,10 @@ struct AnswerTokenCeilingTests {
 
     /// A resolved working context that is not `ScriptedSessionContext.tokens`,
     /// the window most fixtures state, so a test cannot pass on a fixture
-    /// window that happens to equal it.
-    private static let resolvedContext = 32_768
+    /// window that happens to equal it. It is under
+    /// ``RepetitionDetection/defaultPassTokenLimit``, the bound of a larger
+    /// context (task ^dzw15st, `PassTokenLimitTests`).
+    private static let resolvedContext = 12_288
 
     /// An explicit ceiling a caller names, smaller than any context here.
     private static let requestedCeiling = 256

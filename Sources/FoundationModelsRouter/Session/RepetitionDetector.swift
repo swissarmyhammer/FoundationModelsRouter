@@ -7,7 +7,9 @@ struct WatchedText: Sendable, Equatable {
     /// The `Transcript.Entry.id` of the entry.
     let entryId: String
 
-    /// The joined text segments of the entry, as ``text(of:)`` joins them.
+    /// The joined text segments of the entry, as ``text(of:)`` joins them, or
+    /// the text of the arguments of a `.toolCalls` entry, as
+    /// ``ToolCallArgumentsText/text(of:)`` reads them.
     let text: String
 
     /// The joined text of the `.text` segments of `segments`. The detector
@@ -30,9 +32,11 @@ struct WatchedText: Sendable, Equatable {
         }.joined()
     }
 
-    /// The `.reasoning` and `.response` entries of `entries` that are not in
-    /// `entryIdsBeforeAttempt`, in transcript order: the text of the attempt
-    /// in flight.
+    /// The `.reasoning`, `.response` and `.toolCalls` entries of `entries`
+    /// that are not in `entryIdsBeforeAttempt`, in transcript order: the text
+    /// of the attempt in flight. The text of a `.toolCalls` entry is the
+    /// decoded string values of the arguments of its calls
+    /// (``ToolCallArgumentsText``, task ^dzw15st).
     ///
     /// - Parameters:
     ///   - entries: The live transcript of the backend.
@@ -48,7 +52,9 @@ struct WatchedText: Sendable, Equatable {
                 return WatchedText(entryId: entry.id, text: text(of: reasoning.segments))
             case .response(let response):
                 return WatchedText(entryId: entry.id, text: text(of: response.segments))
-            case .instructions, .prompt, .toolCalls, .toolOutput:
+            case .toolCalls(let calls):
+                return WatchedText(entryId: entry.id, text: ToolCallArgumentsText.text(of: calls))
+            case .instructions, .prompt, .toolOutput:
                 return nil
             @unknown default:
                 return nil
