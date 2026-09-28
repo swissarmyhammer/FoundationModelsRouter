@@ -50,10 +50,23 @@ comments:
     - test: swift test — 1409 + 22 + 19 tests passed (2 known issues), exit 0; the build has no warning.
     - next: /commit, then /review HEAD~1..HEAD
   timestamp: 2026-09-28T22:51:33.763444+00:00
+- actor: claude-code
+  id: 01m3n3jst95et8tacfss7typtw
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (e272bc3) — 0 findings, 0 refuted; the prior finding (RoutedSessionActorGenerationCalls.swift:162) is corrected and checked.
+    - next: none; the task is done.
+
+    ### finish iteration 2 — clean
+    - implement: changed — `noteGenerationCallBoundary(at:)` moves the ledger across each tool invocation record; `restartGenerationCallClock()` is gone.
+    - test: green — swift test: 1409 + 22 + 19 tests passed (2 known issues), exit 0.
+    - commit: changed — e272bc3 refactor(session): move the ledger across each tool invocation record in one method (^a3qhq6a)
+    - review: clean — 0 findings; the review moved the task to done.
+  timestamp: 2026-09-28T22:53:45.673696+00:00
 depends_on:
 - 01M3MND1G818WNMRPDFRAG2E91
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffb380
 title: 'OTel router B: record metrics for tokens, time to first token, load time, resident memory, queue depth and compactions'
 ---
 ## What
