@@ -223,8 +223,6 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             usageState: .none,
             autoCompactionBudget: budget,
             autoCompactionPrompt: compactionPrompt,
-            // The stage has no settings (task ^mvm7zjy).
-            summarization: Summarization(),
             agentSpawn: agentSpawn,
             discoveryPriming: discoveryPriming,
             toolOutputProtection: toolOutputProtection,

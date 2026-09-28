@@ -478,9 +478,6 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 // always restored with.
                 autoCompactionBudget: configuration?.budget,
                 autoCompactionPrompt: configuration?.compactionPrompt ?? .default,
-                // The stage has no settings, so the envelope does not record
-                // it (task ^mvm7zjy).
-                summarization: Summarization(),
                 discoveryPriming: configuration?.discoveryPriming,
                 // Not in the envelope, because it is a closure: the rule this
                 // call's host supplied, for every node, as `tools` is.

@@ -194,7 +194,6 @@ func makeRoutedSessionActor(
     usageState: ContextUsageState = .none,
     autoCompactionBudget: TokenBudget? = nil,
     autoCompactionPrompt: CompactionPrompt = .default,
-    summarization: Summarization = Summarization(),
     agentSpawn: SessionSidecar.AgentSpawn? = nil,
     discoveryPriming: DiscoveryPriming? = nil,
     toolOutputProtection: ToolOutputProtection? = nil,
@@ -231,7 +230,6 @@ func makeRoutedSessionActor(
             usageState: usageState,
             autoCompactionBudget: autoCompactionBudget,
             autoCompactionPrompt: autoCompactionPrompt,
-            summarization: summarization,
             agentSpawn: agentSpawn,
             discoveryPriming: discoveryPriming,
             toolOutputProtection: toolOutputProtection,
@@ -541,11 +539,6 @@ actor RoutedSessionActor: RoutedSession {
     /// summarizer, when ``autoCompactionBudget`` is set. Ignored otherwise.
     nonisolated let autoCompactionPrompt: CompactionPrompt
 
-    /// The summarization stage every compaction on this session uses,
-    /// the caller-driven and the automatic compaction alike. A fork carries it
-    /// forward.
-    nonisolated let summarization: Summarization
-
     /// The pre-discovery seeding opt-in, or `nil`. When set, each answer runs
     /// the named tool host-side over its prompt and reseeds ``backend``
     /// before generation (see ``primeDiscoveryIfConfigured(prompt:emit:)``).
@@ -606,7 +599,6 @@ actor RoutedSessionActor: RoutedSession {
         usageState: ContextUsageState = .none,
         autoCompactionBudget: TokenBudget? = nil,
         autoCompactionPrompt: CompactionPrompt = .default,
-        summarization: Summarization = Summarization(),
         agentSpawn: SessionSidecar.AgentSpawn? = nil,
         discoveryPriming: DiscoveryPriming? = nil,
         toolOutputProtection: ToolOutputProtection? = nil,
@@ -650,7 +642,6 @@ actor RoutedSessionActor: RoutedSession {
         self.usageState = usageState
         self.autoCompactionBudget = autoCompactionBudget
         self.autoCompactionPrompt = autoCompactionPrompt
-        self.summarization = summarization
         self.discoveryPriming = discoveryPriming
         self.agentSpawn = agentSpawn
         self.tracer = tracer

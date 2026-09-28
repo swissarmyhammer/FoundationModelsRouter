@@ -218,7 +218,6 @@ package enum Compactor {
     ///   - budget: The token budget to compact against.
     ///   - counter: The counter every size is measured with.
     ///   - summarizers: The summarizer tiers, in the order of preference.
-    ///   - summarization: The summarization stage that makes the call.
     ///   - pendingRuns: The run-plane summaries of the runs still running, in tracking order.
     ///   - protection: The host rule whose protected tool outputs the new
     ///     snapshot keeps word for word, or `nil` (the default) to protect nothing.
@@ -234,12 +233,11 @@ package enum Compactor {
         budget: TokenBudget,
         counter: any TokenCounter,
         summarizers: [CompactionSummarizerSlot],
-        summarization: Summarization = Summarization(),
         pendingRuns: [CompactionSegment.PendingRunSummary] = [],
         protection: ToolOutputProtection? = nil,
         abandoning: @Sendable (any Error, CompactionSummarizerTier) async throws -> Void = { _, _ in }
     ) async throws -> (transcript: Transcript, result: CompactionResult) {
-        let plan = try summarization.plan(
+        let plan = try Summarization().plan(
             transcript, prompt: prompt, budget: budget, counter: counter, pendingRuns: pendingRuns,
             protection: protection)
         let call: CompactionCall

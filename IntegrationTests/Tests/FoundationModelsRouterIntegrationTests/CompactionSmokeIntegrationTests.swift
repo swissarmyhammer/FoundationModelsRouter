@@ -105,7 +105,7 @@ private let compactionSmokeChatTemplateDate = RealModelContainer.chatTemplateFal
 /// - ``compactionSmokeModel`` rather than the 18 GB ``RealModels/standard``.
 /// - One fixture, not a dataset.
 /// - ONE generation: the one summarizer call of
-///   ``Compactor/compact(_:prompt:budget:counter:summarizers:summarization:pendingRuns:protection:abandoning:)``,
+///   ``Compactor/compact(_:prompt:budget:counter:summarizers:pendingRuns:protection:abandoning:)``,
 ///   and nothing after it. No resumed session and no answer after the
 ///   compaction — that is another generation, and "works at all" does not
 ///   need one.

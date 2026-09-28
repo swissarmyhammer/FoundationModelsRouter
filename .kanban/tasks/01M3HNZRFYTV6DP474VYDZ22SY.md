@@ -1,10 +1,27 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m3mnrphx4tbeh6ve74vf131p
+  text: |-
+    Implementation notes:
+    - `RoutedSessionActor` has no `summarization` property now. `init` and `makeRoutedSessionActor` have no `summarization:` parameter. The fork, `RoutedLLM.makeSession(grammar:...)` and `SessionTreeRestoration` pass no `summarization:` argument.
+    - `Compactor.compact` has no `summarization:` parameter. It calls `Summarization().plan(...)`.
+    - The DocC link to `Compactor/compact(_:prompt:budget:counter:summarizers:pendingRuns:protection:abandoning:)` is updated in `RoutedSessionActorCompaction.swift`, `RoutedSessionCompactTests.swift`, `TranscriptCompaction.swift` (RealModelSupport) and `IntegrationTests/.../CompactionSmokeIntegrationTests.swift`.
+    - `SessionTreeRestorationTests` had one `#expect(restoredRoot.summarization == Summarization())`. The property does not exist now, so that one line is removed. No other expectation changed.
+    - The cancellation constructs are not touched: `abandonCompactionIfCancelled` stays non-async, and `runAnswerWork` is not changed.
+    - `rg -n -w summarization Sources` now finds only prose, and the doc comment about old sidecars in `SessionConfiguration.swift`.
+    - SwiftPM prints "failed loading cached manifest ... disk I/O error" for each package. The disk has 227 GB free. This comes from the SwiftPM user cache, not from repo code.
+
+    ### implement — changed
+    - evidence: 10 files. Sources: RoutedSessionActor.swift, RoutedSessionActorForking.swift, RoutedSessionActorCompaction.swift, Compactor.swift, RoutedLLM.swift, SessionTreeRestoration.swift. Tests: SessionTreeRestorationTests.swift, RoutedSessionCompactTests.swift, RealModelSupport/TranscriptCompaction.swift, IntegrationTests CompactionSmokeIntegrationTests.swift. `swift test --filter 'OneCallCompactionTests|RoutedSessionCompactTests|AutoCompactionTests|SessionTreeRestorationTests|CompactionTracingTests'`: 74 tests in 5 suites passed. Clean `swift build --build-tests` (separate scratch path): no warning in repo code (Examples and Tools are targets and compile). `swift build --build-tests --package-path IntegrationTests` passes.
+    - next: /test
+  timestamp: 2026-09-28T18:52:18.877472+00:00
 depends_on:
 - 01M3HNZ864SKTGZG92VMVM7ZJY
-position_column: todo
-position_ordinal: a880
+position_column: doing
+position_ordinal: '80'
 title: Remove the stored Summarization from the session actor and the Compactor
 ---
 ## What

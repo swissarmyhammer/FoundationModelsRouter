@@ -214,9 +214,6 @@ extension RoutedSessionActor {
             // opt-in at fork time.
             autoCompactionBudget: autoCompactionBudget,
             autoCompactionPrompt: autoCompactionPrompt,
-            // A compaction on a fork runs the same summarization stage as a
-            // compaction on its parent.
-            summarization: summarization,
             // A fork carries no spawn context, the same rule as its sidecar
             // (``SessionSidecar/agentSpawn``): its lineage is stated by the
             // parent link and the directory nesting, not by a spawn fact.

@@ -79,7 +79,7 @@ public struct TranscriptCompactionOutcome: Sendable {
     /// The transcript that was compacted.
     public let transcript: Transcript
 
-    /// What ``Compactor/compact(_:prompt:budget:counter:summarizers:summarization:pendingRuns:protection:abandoning:)``
+    /// What ``Compactor/compact(_:prompt:budget:counter:summarizers:pendingRuns:protection:abandoning:)``
     /// reported.
     public let result: CompactionResult
 

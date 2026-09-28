@@ -921,7 +921,6 @@ struct SessionTreeRestorationTests {
         let restoredRoot = try #require(restored.root as? RoutedSessionActor)
         #expect(restoredRoot.autoCompactionBudget == nil)
         #expect(restoredRoot.autoCompactionPrompt == .default)
-        #expect(restoredRoot.summarization == Summarization())
         #expect(restoredRoot.discoveryPriming == nil)
         #expect(restoredRoot.repetitionDetection == RepetitionDetection())
         #expect(restoredRoot.mailOnlyAnswerLimit == SessionConfiguration.defaultMailOnlyAnswerLimit)
