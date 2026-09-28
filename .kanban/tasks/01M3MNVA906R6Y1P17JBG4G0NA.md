@@ -1,8 +1,37 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: ae80
+comments:
+- actor: claude-code
+  id: 01m3n0mchqa3he55spz0y3j6pc
+  text: |-
+    Research (implement, iteration 1):
+    - Task ^rag2e91 (ebdaf8e, 7f747b8) did most of this work. `rg -n "FoundationModelsRouter\.tool"` outside `.build`, `.kanban` and `.git` finds nothing (exit 1).
+    - `FoundationModelsExtras.tool` is in RoutedLLM.swift:249, Tracing/RouterTelemetry.swift:59 and ToolTracingTests.swift (the `toolSpanName` constant).
+    - In Extras 6c399a4, the name is `ExtrasTelemetry.SpanName.tool` in `Sources/FoundationModelsExtras/Telemetry/ExtrasTelemetry.swift`. `enum ExtrasTelemetry` and `enum SpanName` are internal, so the router test cannot read the name. The test keeps the string.
+    - IntegrationTests/Package.resolved had Extras 70ad74d. The root has 6c399a4. All other pins were the same.
+
+    Implementation:
+    - ToolTracingTests.swift: the doc comment of `toolSpanName` now names the Extras file and the internal constant `ExtrasTelemetry.SpanName.tool`, and says why the test repeats the string.
+    - IntegrationTests/Package.resolved (ignored by git): Extras revision set to 6c399a4b4703612ec6a2940c59c7d2b69b416670. It is now the same as the root file (diff is empty).
+    - I stopped sourcekit-lsp pid 9296 (cwd is this repo). Then `swift build --build-tests --package-path IntegrationTests --manifest-cache local` passed: "Build complete!", exit 0. The only warning is the SwiftPM build-system message "missing creator for mutated node" for the mlx-swift_Cmlx.bundle. It is not a compiler warning.
+  timestamp: 2026-09-28T22:02:11.895674+00:00
+- actor: claude-code
+  id: 01m3n0mmm18tz862sjf16vkjf8
+  text: |-
+    ### implement — changed
+    - evidence: 1 tracked file — Tests/FoundationModelsRouterTests/ToolTracingTests.swift (doc comment names the Extras file). 1 ignored file — IntegrationTests/Package.resolved (Extras 6c399a4). IntegrationTests build passes.
+    - next: /test
+  timestamp: 2026-09-28T22:02:20.161613+00:00
+- actor: claude-code
+  id: 01m3n0t7b4y7c6dj61e6wndtc6
+  text: |-
+    ### test — green
+    - evidence: swift test (one full run), exit 0 — 1400 tests in 177 suites passed (2 known issues, the same as in ^rag2e91), 22 tests in 10 suites passed, 19 tests in 3 suites passed. No compiler warning. The only warnings are from SwiftPM: the shared manifest cache "disk I/O error" and "missing creator for mutated node" for mlx-swift_Cmlx.bundle.
+    - next: /commit
+  timestamp: 2026-09-28T22:05:23.172790+00:00
+position_column: doing
+position_ordinal: '80'
 title: 'OTel router E: use the Extras tool span name FoundationModelsExtras.tool in the router tests and docs'
 ---
 ## What

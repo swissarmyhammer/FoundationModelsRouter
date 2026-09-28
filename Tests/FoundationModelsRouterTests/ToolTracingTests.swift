@@ -28,6 +28,11 @@ import Tracing
 struct ToolTracingTests {
     /// The span name every tool call opens. The tool hosting of
     /// FoundationModelsExtras opens the span of each tool call with this name.
+    ///
+    /// The source of this name is `ExtrasTelemetry.SpanName.tool` in the
+    /// Extras file `Sources/FoundationModelsExtras/Telemetry/ExtrasTelemetry.swift`.
+    /// That constant is internal to FoundationModelsExtras, so this test cannot
+    /// read it and keeps the same string. Change both together.
     private static let toolSpanName = "FoundationModelsExtras.tool"
 
     /// The span name the enclosing submission opens.
