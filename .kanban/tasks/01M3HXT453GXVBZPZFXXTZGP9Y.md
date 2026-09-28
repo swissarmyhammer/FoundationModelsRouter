@@ -46,8 +46,23 @@ comments:
     - evidence: Extras at 4a733cd (includes fix 644b897 "fix(modelpool): yield footprints outside the state lock") in the root `Package.resolved`, `IntegrationTests/Package.resolved` and both checkouts. `swift package clean && swift build --build-tests` — Build complete, no source warning (only Cmlx C++17 warnings in the mlx-swift checkout, "missing creator" and the SwiftPM manifest cache "disk I/O error" messages). Full `swift test --skip-build` 4 times in a row, no hang: each run 1464 tests in 177 suites passed (2 known issues, intentional `withKnownIssue`), 17 tests in 8 suites passed, 19 tests in 3 suites passed. 10 pool suites (PromptCacheBudget, ExtrasPoolResolve, PooledResidency, CrossRouterResidency, ResolveCancellation, ProfileLifecycle, SlotPoolLoader, ToolSharedProfile, ModelPoolName, OwningProfile) with `--parallel --num-workers 8`, 10 times — 67 tests in 10 suites passed each time. `swift build --build-tests --package-path IntegrationTests` — Build complete. `model-pool.md` now names Extras revision 4a733cd.
     - next: /commit
   timestamp: 2026-09-28T12:43:13.361119+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m3m0v3jwbx3dmn4azpw9dp3a
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (fba4a68) — 0 findings, 0 confirmed, 0 refuted; 12 files reviewed; README.md and model-pool.md had no validator; the declines are only for the deleted file Support/ModelPoolEviction.swift. No prior findings section on the task.
+    - next: done
+  timestamp: 2026-09-28T12:46:37.660297+00:00
+- actor: claude-code
+  id: 01m3m0vbngdrve21294jf8jmwj
+  text: |-
+    ### finish iteration 2 — review clean
+    - test: green — Extras 4a733cd (fix 644b897) in both Package.resolved files; clean build with no source warning; full `swift test` 4 times in a row with no hang, each 1464 + 17 + 19 tests passed; 10 pool suites with `--parallel --num-workers 8` 10 times, 67 tests passed each time; IntegrationTests build complete.
+    - commit: changed — fba4a68 test(router): remove the eviction waits from the pool tests after the Extras eviction-order fix (^xtzgp9y)
+    - review: clean — `review sha HEAD~1..HEAD`, 0 findings; task moved to done.
+  timestamp: 2026-09-28T12:46:45.936797+00:00
+position_column: done
+position_ordinal: ffffffa580
 title: 'Router: remove the eviction waits from the pool tests after the Extras eviction-order fix'
 ---
 ## What
@@ -61,12 +76,12 @@ Router part:
 - Restore the router test "a resolve after the last reference to a profile is dropped sees the freed bytes at once" (`PooledResidencyTests`) with no wait.
 
 ## Acceptance Criteria
-- [ ] A router resolve that starts at once after the drop of the last reference sees the freed bytes in its first measurement, with no wait in the test.
-- [ ] `swift build` passes with no warnings on a clean build.
+- [x] A router resolve that starts at once after the drop of the last reference sees the freed bytes in its first measurement, with no wait in the test.
+- [x] `swift build` passes with no warnings on a clean build.
 
 ## Tests
-- [ ] `PooledResidencyTests` passes with parallel repetitions (`--parallel --num-workers 8`, 10 times).
-- [ ] `swift test` passes, and the output shows the full count of tests run.
+- [x] `PooledResidencyTests` passes with parallel repetitions (`--parallel --num-workers 8`, 10 times).
+- [x] `swift test` passes, and the output shows the full count of tests run.
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass.
