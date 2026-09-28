@@ -35,7 +35,7 @@ struct CompactionTracingTests {
     private static let spanName = "FoundationModelsRouter.compact"
 
     /// The suite's temp-directory prefix, handed to
-    /// ``AutoCompactionFixtures/makeTriggeredSession(budget:tools:summarization:tracer:samplingMode:tempDirPrefix:)``.
+    /// ``AutoCompactionFixtures/makeTriggeredSession(budget:tools:tracer:samplingMode:tempDirPrefix:)``.
     private static let tempDirPrefix = "CompactionTracingTests"
 
     /// The prompt of the answer that triggers an automatic compaction — the answer

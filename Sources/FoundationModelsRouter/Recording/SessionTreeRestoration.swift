@@ -472,13 +472,15 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 contextTokens: resolvedContextTokens,
                 usageState: usageState,
                 // The recorded configuration envelope re-applied (task
-                // ^ne5g9jn): the budget, its prompt, the summarization
-                // stage, and the priming opt-in come back as the node was
-                // vended with them. A pre-envelope recording carries `nil`
-                // and gets the same defaults it always restored with.
+                // ^ne5g9jn): the budget, its prompt and the priming opt-in
+                // come back as the node was vended with them. A pre-envelope
+                // recording carries `nil` and gets the same defaults it
+                // always restored with.
                 autoCompactionBudget: configuration?.budget,
                 autoCompactionPrompt: configuration?.compactionPrompt ?? .default,
-                summarization: configuration?.summarization ?? Summarization(),
+                // The stage has no settings, so the envelope does not record
+                // it (task ^mvm7zjy).
+                summarization: Summarization(),
                 discoveryPriming: configuration?.discoveryPriming,
                 // Not in the envelope, because it is a closure: the rule this
                 // call's host supplied, for every node, as `tools` is.

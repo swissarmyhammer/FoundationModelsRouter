@@ -23,7 +23,7 @@ import FoundationModelsExtras
 /// diffed and restored by the ordinary machinery with no special case.
 ///
 /// Off by default. A host opts one session in when it vends it
-/// (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:)``),
+/// (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:)``),
 /// and a fork inherits its parent's opt-in. With it off, the transcript
 /// construction of an answer is untouched.
 ///

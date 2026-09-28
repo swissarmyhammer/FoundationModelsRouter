@@ -6,7 +6,7 @@ import Testing
 @testable import FoundationModelsExtras
 @testable import FoundationModelsRouter
 
-/// Exercises task 8213x39 (auto-compaction opt-in): ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:)``'s
+/// Exercises task 8213x39 (auto-compaction opt-in): ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:)``'s
 /// `budget`/`compactionPrompt` parameters, the proactive compaction
 /// ``RoutedSessionActor/runAnswerChain(grammar:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:_:)``
 /// runs before an answer once measured fill reaches the budget's trigger, the
@@ -74,7 +74,7 @@ struct AutoCompactionTests {
 
     /// Vends the shared triggered session under this suite's own temp-directory
     /// prefix. See
-    /// ``AutoCompactionFixtures/makeTriggeredSession(budget:tools:summarization:tracer:samplingMode:tempDirPrefix:)``.
+    /// ``AutoCompactionFixtures/makeTriggeredSession(budget:tools:tracer:samplingMode:tempDirPrefix:)``.
     ///
     /// - Parameters:
     ///   - budget: The auto-compaction opt-in to vend the session with, or
@@ -642,7 +642,7 @@ struct AutoCompactionTests {
 
     /// The resolved `contextTokens` of the triggered session: the
     /// `RouterTestFixtures.profile(context:)` value of
-    /// ``AutoCompactionFixtures/makeTriggeredSession(budget:tools:summarization:tracer:samplingMode:tempDirPrefix:)``.
+    /// ``AutoCompactionFixtures/makeTriggeredSession(budget:tools:tracer:samplingMode:tempDirPrefix:)``.
     private static let hardCeilingContextTokens = 100_000
 
     @Test(

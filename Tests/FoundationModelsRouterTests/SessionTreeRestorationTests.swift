@@ -805,7 +805,7 @@ struct SessionTreeRestorationTests {
     // MARK: - Configuration envelope re-application (task ^ne5g9jn)
 
     @Test(
-        "a session saved with a budget, prompt, summarization, and priming restores with that same configuration applied to every node"
+        "a session saved with a budget, prompt, and priming restores with that same configuration applied to every node"
     )
     @MainActor
     func restoredTreeReappliesRecordedConfiguration() async throws {
@@ -821,13 +821,11 @@ struct SessionTreeRestorationTests {
 
         let budget = TokenBudget(limit: 100_000, toolOutputLimit: 512)
         let prompt = CompactionPrompt(name: "custom", text: "Condense the conversation.")
-        let summarization = Summarization()
         let priming = DiscoveryPriming(tool: "ambient-emitter", queryProperty: "value")
         let root = profile1.standard.makeSession(
             tools: [AmbientEventPostingTool()],
             budget: budget,
             compactionPrompt: prompt,
-            summarization: summarization,
             discoveryPriming: priming
         )
         _ = try await root.respond(to: "hello")
@@ -841,7 +839,6 @@ struct SessionTreeRestorationTests {
         let restoredRoot = try #require(restored.root as? RoutedSessionActor)
         #expect(restoredRoot.autoCompactionBudget == budget)
         #expect(restoredRoot.autoCompactionPrompt == prompt)
-        #expect(restoredRoot.summarization == summarization)
         #expect(restoredRoot.discoveryPriming == priming)
 
         // A fork's own sidecar carries its own envelope — the configuration a

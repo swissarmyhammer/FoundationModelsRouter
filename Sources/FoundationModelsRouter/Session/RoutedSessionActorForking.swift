@@ -81,7 +81,7 @@ extension RoutedSessionActor {
         // for this session. This site's chain is fork →
         // mount → cap (task ^k4nygqa; the root and restore sites each
         // have their own deliberately distinct chain — see
-        // ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:mailOnlyAnswerLimit:)``
+        // ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:mailOnlyAnswerLimit:)``
         // and `restoreSessionTree`). Composition order matters: a tool is
         // forked first via its own `forked()` (falling back to sharing the
         // original unchanged when it doesn't conform to `ForkableTool`),

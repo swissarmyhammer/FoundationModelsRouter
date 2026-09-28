@@ -1,8 +1,24 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: a780
+comments:
+- actor: claude-code
+  id: 01m3mfbyet12dces53av4z6sek
+  text: |-
+    Implementation notes:
+    - `SessionConfiguration.Persistable` no longer has a `summarization` property. The synthesized `Decodable` ignores a key that has no property, so an old sidecar with `"summarization": {}` still decodes. No custom `CodingKeys` is necessary.
+    - `RoutedLLM.makeSession(grammar:...)` and `SessionTreeRestoration` pass `Summarization()` to `makeRoutedSessionActor`. The actor field and the `Compactor` parameter stay for the next card.
+    - The DocC links to `makeSession(...)`, the internal `makeSession(grammar:...)`, `makeGuidedSession(...)` and `AutoCompactionFixtures/makeTriggeredSession(...)` no longer name `summarization:`. This includes `IntegrationTests/`.
+    - The test helper `AutoCompactionFixtures.makeTriggeredSession` lost its `summarization:` parameter (no caller passed it).
+    - New tests in `SessionConfigurationTests`: a new slice has no `summarization` key; a slice with the key decodes. `StoredRecoveriesKeyTests` restores the `PreRequestRenameRecording` fixture, which has the key.
+    - The rule dump from `dump validators` is about 700 KB. I could not read all of it in one context.
+
+    ### implement — changed
+    - evidence: 22 files. Sources: SessionConfiguration.swift, RoutedLLM.swift, GuidedGeneration.swift, GuidedGeneration.md, SessionTreeRestoration.swift, RoutedSessionActor.swift, RoutedSession.swift, RoutedSessionActorForking.swift, DiscoveryPriming.swift. Tests: SessionConfigurationTests, SessionTreeRestorationTests, AutoCompactionFixtures, and DocC links in 7 test files and 2 IntegrationTests files. `swift build --build-tests` clean build (separate scratch path) has no warnings in repo code; `swift build --package-path IntegrationTests --build-tests` passes; 14 filtered tests pass.
+    - next: /test
+  timestamp: 2026-09-28T17:00:29.530792+00:00
+position_column: doing
+position_ordinal: '80'
 title: Remove the settings-free Summarization parameter from the public session API, and keep old sidecars decoding
 ---
 ## What

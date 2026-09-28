@@ -55,7 +55,6 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - tools: The tools the model can call. Each is wrapped by ``makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:)``.
     ///   - budget: The auto-compaction opt-in, or `nil` for manual compaction only.
     ///   - compactionPrompt: The prompt automatic compactions send to the summarizer.
-    ///   - summarization: The summarization stage every compaction runs.
     ///   - agentSpawn: The parent session and tool call this session was spawned from, or `nil`.
     ///   - discoveryPriming: The pre-discovery seeding opt-in, or `nil` to leave it off.
     ///   - toolOutputProtection: The host rule whose protected tool outputs
@@ -71,7 +70,6 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         tools: [any Tool] = [],
         budget: TokenBudget? = nil,
         compactionPrompt: CompactionPrompt = .default,
-        summarization: Summarization = Summarization(),
         agentSpawn: SessionSidecar.AgentSpawn? = nil,
         discoveryPriming: DiscoveryPriming? = nil,
         toolOutputProtection: ToolOutputProtection? = nil,
@@ -85,7 +83,6 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 tools: tools,
                 budget: budget,
                 compactionPrompt: compactionPrompt,
-                summarization: summarization,
                 agentSpawn: agentSpawn,
                 discoveryPriming: discoveryPriming,
                 toolOutputProtection: toolOutputProtection,
@@ -97,7 +94,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///
     /// A configuration with a ``SessionConfiguration/grammar`` vends a guided
     /// session. The precondition of
-    /// ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:)``
+    /// ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:)``
     /// applies.
     ///
     /// - Parameter configuration: The value that describes the session.
@@ -111,7 +108,6 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             tools: configuration.tools,
             budget: configuration.budget,
             compactionPrompt: configuration.compactionPrompt,
-            summarization: configuration.summarization,
             agentSpawn: configuration.agentSpawn,
             discoveryPriming: configuration.discoveryPriming,
             toolOutputProtection: configuration.toolOutputProtection,
@@ -123,7 +119,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///
     /// A non-`nil` `grammar` constrains every `respond` on the vended session
     /// and is stamped onto each recorded submission. The other parameters match
-    /// ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:)``.
+    /// ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:)``.
     ///
     /// - Parameters:
     ///   - grammar: The grammar that constrains the session, or `nil`.
@@ -140,7 +136,6 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         tools: [any Tool] = [],
         budget: TokenBudget? = nil,
         compactionPrompt: CompactionPrompt = .default,
-        summarization: Summarization = Summarization(),
         agentSpawn: SessionSidecar.AgentSpawn? = nil,
         discoveryPriming: DiscoveryPriming? = nil,
         toolOutputProtection: ToolOutputProtection? = nil,
@@ -228,7 +223,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             usageState: .none,
             autoCompactionBudget: budget,
             autoCompactionPrompt: compactionPrompt,
-            summarization: summarization,
+            // The stage has no settings (task ^mvm7zjy).
+            summarization: Summarization(),
             agentSpawn: agentSpawn,
             discoveryPriming: discoveryPriming,
             toolOutputProtection: toolOutputProtection,

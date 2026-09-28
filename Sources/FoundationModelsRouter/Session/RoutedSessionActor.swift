@@ -688,7 +688,6 @@ actor RoutedSessionActor: RoutedSession {
                 tools: originalTools,
                 budget: autoCompactionBudget,
                 compactionPrompt: autoCompactionPrompt,
-                summarization: summarization,
                 agentSpawn: agentSpawn,
                 discoveryPriming: discoveryPriming,
                 grammar: grammar,

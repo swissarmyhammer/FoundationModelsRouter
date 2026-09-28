@@ -26,10 +26,6 @@ public struct SessionConfiguration: Sendable {
     /// The compaction prompt automatic compactions send to the summarizer, when ``budget`` is set.
     public var compactionPrompt: CompactionPrompt
 
-    /// The summarization stage every compaction on the vended session runs.
-    /// It has no settings. The sidecar keeps it so that an old sidecar still decodes.
-    public var summarization: Summarization
-
     /// The parent session/tool-call the session was spawned from, or `nil`.
     public var agentSpawn: SessionSidecar.AgentSpawn?
 
@@ -89,7 +85,6 @@ public struct SessionConfiguration: Sendable {
         tools: [any Tool] = [],
         budget: TokenBudget? = nil,
         compactionPrompt: CompactionPrompt = .default,
-        summarization: Summarization = Summarization(),
         agentSpawn: SessionSidecar.AgentSpawn? = nil,
         discoveryPriming: DiscoveryPriming? = nil,
         grammar: Grammar? = nil,
@@ -103,7 +98,6 @@ public struct SessionConfiguration: Sendable {
         self.tools = tools
         self.budget = budget
         self.compactionPrompt = compactionPrompt
-        self.summarization = summarization
         self.agentSpawn = agentSpawn
         self.discoveryPriming = discoveryPriming
         self.grammar = grammar
@@ -123,7 +117,6 @@ public struct SessionConfiguration: Sendable {
             toolNames: tools.map { $0.name },
             budget: budget,
             compactionPrompt: compactionPrompt,
-            summarization: summarization,
             agentSpawn: agentSpawn,
             discoveryPriming: discoveryPriming,
             grammar: grammar,
@@ -136,6 +129,11 @@ public struct SessionConfiguration: Sendable {
     /// It mirrors the parent value field for field, except ``toolNames``, and
     /// except the parent's ``SessionConfiguration/toolOutputProtection``, which
     /// it does not hold.
+    ///
+    /// A sidecar written before task ^mvm7zjy also holds a `summarization`
+    /// key. The stage has no settings, so the slice does not write the key.
+    /// The synthesized decoder ignores a key that has no property, so an old
+    /// sidecar still decodes.
     // sah:allow duplication mirrors SessionConfiguration field for field by design; the one difference is toolNames standing in for the tool instances
     struct Persistable: Codable, Equatable, Sendable {
         /// The session's system instructions, or `nil`.
@@ -155,10 +153,6 @@ public struct SessionConfiguration: Sendable {
 
         /// The compaction prompt for automatic compactions.
         let compactionPrompt: CompactionPrompt
-
-        /// The summarization stage every compaction runs. It has no settings.
-        /// The sidecar keeps it so that an old sidecar still decodes.
-        let summarization: Summarization
 
         /// The spawn context, or `nil`.
         let agentSpawn: SessionSidecar.AgentSpawn?

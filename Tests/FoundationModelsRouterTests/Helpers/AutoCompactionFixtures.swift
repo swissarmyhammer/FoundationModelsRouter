@@ -192,7 +192,7 @@ enum AutoCompactionFixtures {
     private static let cannedTextRepeatCount = 60
 
     /// How many warm-up answers
-    /// ``makeTriggeredSession(budget:tools:summarization:tracer:samplingMode:tempDirPrefix:)``
+    /// ``makeTriggeredSession(budget:tools:tracer:samplingMode:tempDirPrefix:)``
     /// drives. The warm-up transcript then holds many copies of
     /// ``cannedText``, so a summary of one copy makes it much smaller.
     static let answerCount = 6
@@ -239,7 +239,7 @@ enum AutoCompactionFixtures {
     }()
 
     /// The exact entries
-    /// ``makeTriggeredSession(budget:tools:summarization:tracer:samplingMode:tempDirPrefix:)``'s
+    /// ``makeTriggeredSession(budget:tools:tracer:samplingMode:tempDirPrefix:)``'s
     /// warm-up answers produce, computed without ever running a session —
     /// prompt/response text is fixed regardless of the escalating usage those
     /// answers are driven with, so ``fixedBudget`` can be sized once, up front,
@@ -273,8 +273,6 @@ enum AutoCompactionFixtures {
     ///     `nil` to opt out (the regression case, and the way a caller-driven
     ///     compaction is left as the only compaction that runs).
     ///   - tools: The tools to vend the session with. Defaults to none.
-    ///   - summarization: The summarization stage every compaction on the vended
-    ///     session runs with. Defaults to `Summarization()`.
     ///   - tracer: The tracer every handle of the resolved profile carries, or
     ///     `nil` (the default) to read `InstrumentationSystem.tracer` at call
     ///     time.
@@ -288,19 +286,18 @@ enum AutoCompactionFixtures {
     static func makeTriggeredSession(
         budget: TokenBudget?,
         tools: [any Tool] = [],
-        summarization: Summarization = Summarization(),
         tracer: (any Tracer)? = nil,
         samplingMode: GenerationOptions.SamplingMode? = nil,
         tempDirPrefix: String
     ) async throws -> (session: RoutedSession, standard: ConfiguredLLMContainer, flash: ConfiguredLLMContainer) {
         let flashContainer = ConfiguredLLMContainer(responseText: "FLASH-SUMMARY")
         let (session, standardContainer) = try await makeTriggeredSession(
-            budget: budget, tools: tools, summarization: summarization, tracer: tracer,
+            budget: budget, tools: tools, tracer: tracer,
             samplingMode: samplingMode, flash: flashContainer, tempDirPrefix: tempDirPrefix)
         return (session, standardContainer, flashContainer)
     }
 
-    /// ``makeTriggeredSession(budget:tools:summarization:tracer:samplingMode:tempDirPrefix:)``
+    /// ``makeTriggeredSession(budget:tools:tracer:samplingMode:tempDirPrefix:)``
     /// over a `flash` container that the caller gives, so a test can watch
     /// the flash summarizer call on a container of its own choice.
     ///
@@ -308,8 +305,6 @@ enum AutoCompactionFixtures {
     ///   - budget: The auto-compaction opt-in to vend the session with, or
     ///     `nil` to opt out.
     ///   - tools: The tools to vend the session with. Defaults to none.
-    ///   - summarization: The summarization stage every compaction on the vended
-    ///     session runs with. Defaults to `Summarization()`.
     ///   - tracer: The tracer every handle of the resolved profile carries, or
     ///     `nil` (the default) to read `InstrumentationSystem.tracer` at call
     ///     time.
@@ -323,7 +318,6 @@ enum AutoCompactionFixtures {
     static func makeTriggeredSession(
         budget: TokenBudget?,
         tools: [any Tool] = [],
-        summarization: Summarization = Summarization(),
         tracer: (any Tracer)? = nil,
         samplingMode: GenerationOptions.SamplingMode? = nil,
         flash flashContainer: any LoadedLLMContainer,
@@ -340,7 +334,7 @@ enum AutoCompactionFixtures {
             profile: RouterTestFixtures.profile(context: warmUpContextTokens), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession(
-            tools: tools, budget: budget, summarization: summarization)
+            tools: tools, budget: budget)
         let backend = try #require(standardContainer.lastBackend)
 
         for answer in 0..<answerCount {

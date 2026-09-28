@@ -147,7 +147,6 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - tools: The tools the model can call. Defaults to none.
     ///   - budget: The auto-compaction opt-in. Defaults to `nil`.
     ///   - compactionPrompt: The prompt each compaction sends to the summarizer.
-    ///   - summarization: The summarization stage every compaction runs.
     ///   - agentSpawn: The parent session and tool call this session was spawned from.
     ///   - discoveryPriming: The pre-discovery seeding opt-in. Defaults to `nil`.
     /// - Returns: A new guided ``RoutedSession``.
@@ -158,7 +157,6 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         tools: [any Tool] = [],
         budget: TokenBudget? = nil,
         compactionPrompt: CompactionPrompt = .default,
-        summarization: Summarization = Summarization(),
         agentSpawn: SessionSidecar.AgentSpawn? = nil,
         discoveryPriming: DiscoveryPriming? = nil
     ) -> RoutedSession {
@@ -169,7 +167,6 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 tools: tools,
                 budget: budget,
                 compactionPrompt: compactionPrompt,
-                summarization: summarization,
                 agentSpawn: agentSpawn,
                 discoveryPriming: discoveryPriming,
                 grammar: grammar))

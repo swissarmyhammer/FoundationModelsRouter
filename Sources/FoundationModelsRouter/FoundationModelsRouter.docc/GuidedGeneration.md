@@ -30,7 +30,7 @@ Hold the resolved ``LanguageModelProfile`` for as long as the call runs. A slot
 handle holds its profile weakly.
 
 To constrain every answer of a conversation rather than one answer, vend a session
-with ``RoutedModel/makeGuidedSession(grammar:instructions:workingDirectory:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``.
+with ``RoutedModel/makeGuidedSession(grammar:instructions:workingDirectory:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``.
 The session carries its ``Grammar`` for its whole life, and a fork inherits it.
 
 ## The supported schema subset
@@ -57,7 +57,7 @@ catches by type:
 ### Constrained generation
 
 - ``RoutedModel/respond(to:matching:maxTokens:)``
-- ``RoutedModel/makeGuidedSession(grammar:instructions:workingDirectory:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``
+- ``RoutedModel/makeGuidedSession(grammar:instructions:workingDirectory:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``
 
 ### The grammar and the result
 

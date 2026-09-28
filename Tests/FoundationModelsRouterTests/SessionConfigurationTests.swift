@@ -65,7 +65,6 @@ struct SessionConfigurationTests {
         #expect(configured.instructions == reference.instructions)
         #expect(configured.autoCompactionBudget == reference.autoCompactionBudget)
         #expect(configured.autoCompactionPrompt == reference.autoCompactionPrompt)
-        #expect(configured.summarization == reference.summarization)
         #expect(configured.discoveryPriming == reference.discoveryPriming)
         #expect(configured.tools.isEmpty)
         #expect(configured.originalTools.isEmpty)
@@ -82,7 +81,6 @@ struct SessionConfigurationTests {
         let workingDirectory = dir.appendingPathComponent("work", isDirectory: true)
         let budget = TokenBudget(limit: 4096, trigger: 0.9, target: 0.6)
         let prompt = CompactionPrompt(name: "custom", text: "condense")
-        let summarization = Summarization()
         let priming = DiscoveryPriming(tool: "ambient-emitter", queryProperty: "value")
         let spawn = SessionSidecar.AgentSpawn(
             parentSessionId: ULID.generate(), parentToolCallId: "call-1")
@@ -94,7 +92,6 @@ struct SessionConfigurationTests {
             tools: [tool],
             budget: budget,
             compactionPrompt: prompt,
-            summarization: summarization,
             agentSpawn: spawn,
             discoveryPriming: priming
         )
@@ -107,7 +104,6 @@ struct SessionConfigurationTests {
                 tools: [tool],
                 budget: budget,
                 compactionPrompt: prompt,
-                summarization: summarization,
                 agentSpawn: spawn,
                 discoveryPriming: priming
             ) as? RoutedSessionActor)
@@ -117,7 +113,6 @@ struct SessionConfigurationTests {
         #expect(configured.workingDirectory == workingDirectory)
         #expect(configured.autoCompactionBudget == budget)
         #expect(configured.autoCompactionPrompt == prompt)
-        #expect(configured.summarization == summarization)
         #expect(configured.discoveryPriming == priming)
         #expect(configured.originalTools.count == 1)
         #expect((configured.originalTools.first as? AmbientEventPostingTool) === tool)
@@ -169,7 +164,6 @@ struct SessionConfigurationTests {
         #expect(configuration.tools.isEmpty)
         #expect(configuration.budget == nil)
         #expect(configuration.compactionPrompt == .default)
-        #expect(configuration.summarization == Summarization())
         #expect(configuration.agentSpawn == nil)
         #expect(configuration.discoveryPriming == nil)
         #expect(configuration.grammar == nil)
@@ -186,7 +180,6 @@ struct SessionConfigurationTests {
             tools: [AmbientEventPostingTool(), AmbientNonStringOutputTool()],
             budget: TokenBudget(limit: 4096, hardCeiling: 0.95, toolOutputLimit: 256),
             compactionPrompt: CompactionPrompt(name: "custom", text: "condense"),
-            summarization: Summarization(),
             agentSpawn: SessionSidecar.AgentSpawn(
                 parentSessionId: ULID.generate(), parentToolCallId: "call-1"),
             discoveryPriming: DiscoveryPriming(tool: "ambient-emitter", queryProperty: "value"),
@@ -200,7 +193,6 @@ struct SessionConfigurationTests {
         #expect(persistable.recordingRoot == configuration.recordingRoot)
         #expect(persistable.budget == configuration.budget)
         #expect(persistable.compactionPrompt == configuration.compactionPrompt)
-        #expect(persistable.summarization == configuration.summarization)
         #expect(persistable.agentSpawn == configuration.agentSpawn)
         #expect(persistable.discoveryPriming == configuration.discoveryPriming)
         #expect(persistable.grammar == configuration.grammar)
@@ -217,6 +209,39 @@ struct SessionConfigurationTests {
 
         let encoded = try JSONEncoder().encode(persistable)
         let decoded = try JSONDecoder().decode(SessionConfiguration.Persistable.self, from: encoded)
+        #expect(decoded == persistable)
+    }
+
+    // MARK: - The removed summarization key
+
+    /// The key that sidecars written before task ^mvm7zjy hold. A new
+    /// sidecar does not write it.
+    private static let legacySummarizationKey = "summarization"
+
+    /// Encodes `persistable` and returns the top-level JSON object.
+    ///
+    /// - Parameter persistable: The slice to encode.
+    /// - Returns: The top-level JSON object of the encoded slice.
+    /// - Throws: What the encoder throws, or a failed `#require`.
+    private static func jsonObject(of persistable: SessionConfiguration.Persistable) throws -> [String: Any] {
+        let encoded = try JSONEncoder().encode(persistable)
+        return try #require(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    }
+
+    @Test("a new Codable slice does not write the summarization key")
+    func newPersistableSliceHasNoSummarizationKey() throws {
+        let object = try Self.jsonObject(of: SessionConfiguration().persistable)
+        #expect(object[Self.legacySummarizationKey] == nil)
+    }
+
+    @Test("a Codable slice from an old sidecar with the summarization key decodes")
+    func oldPersistableSliceWithSummarizationKeyDecodes() throws {
+        let persistable = SessionConfiguration(instructions: "system").persistable
+        var object = try Self.jsonObject(of: persistable)
+        object[Self.legacySummarizationKey] = [String: Any]()
+        let oldSidecarSlice = try JSONSerialization.data(withJSONObject: object)
+
+        let decoded = try JSONDecoder().decode(SessionConfiguration.Persistable.self, from: oldSidecarSlice)
         #expect(decoded == persistable)
     }
 }

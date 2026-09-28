@@ -16,7 +16,7 @@ public enum CancellationResult: Sendable, Equatable {
 /// A generation session over a resident model: the recorded surface an
 /// application drives to produce text.
 ///
-/// A session is vended only by ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:)``,
+/// A session is vended only by ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:)``,
 /// and it retains its ``profile`` so the resident models stay loaded. The raw
 /// `LanguageModelSession` is never vended; ``RoutedSession`` is the only
 /// generation surface.
@@ -66,7 +66,7 @@ public protocol RoutedSession: Actor {
     /// The grammar that constrains every ``respond(to:)`` on this session, or
     /// `nil` for an unconstrained session.
     ///
-    /// ``RoutedModel/makeGuidedSession(grammar:instructions:workingDirectory:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``
+    /// ``RoutedModel/makeGuidedSession(grammar:instructions:workingDirectory:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``
     /// sets it, and ``fork(workingDirectory:)`` inherits it.
     /// ``streamResponse(to:)`` is not constrained.
     nonisolated var grammar: Grammar? { get }
