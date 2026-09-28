@@ -37,8 +37,24 @@ comments:
     - what did not work: the first full run had 92 issues. The check decorator sat inside the session mount chain (between the failure-delivery layer and the capping layer), and many existing tests read that chain (`ToolFailureDelivery.throwingTool(of:)` cast to the runner). Fix: the live backend wraps each tool in `RepetitionCheckedTool` only where it builds the SDK `LanguageModelSession` (`LiveModelLoader.checkedTools(_:)`), over every mount layer. The mount chain does not change.
     - next: commit.
   timestamp: 2026-09-28T17:39:24.560027+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m3mj1grvndbjtw3hvzwxegtv
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (0c7115a) — 0 findings, 0 confirmed, 0 refuted; 14 validator runs, 0 failed; 19 files reviewed, 2 `.kanban/` files excluded by `.reviewignore`. No prior findings sections.
+    - next: task moves to done.
+  timestamp: 2026-09-28T17:47:13.563644+00:00
+- actor: claude-code
+  id: 01m3mj1kedzwj79pxtwj3zx2wn
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — watch reads decoded tool-call arguments; check before each tool body stops a repeated call with `repeatedLines`; `RepetitionDetection.passTokenLimit` (16,384) bounds each pass; render keeps `.toolCalls` whole.
+    - test: green — `swift test` 1384 tests in 174 suites pass; clean build has no project warnings; IntegrationTests build completes.
+    - commit: changed — 0c7115a fix(router): stop a tool call whose arguments repeat, and bound a pass the watch cannot read (^dzw15st)
+    - review: clean — `review sha HEAD~1..HEAD`, 0 findings.
+  timestamp: 2026-09-28T17:47:16.301120+00:00
+position_column: done
+position_ordinal: ffffffac80
 title: 'Router: the repetition watch does not read tool-call arguments, so a repeated runCode snippet is never stopped'
 ---
 ## What
