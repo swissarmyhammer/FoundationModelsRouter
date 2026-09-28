@@ -30,8 +30,31 @@ comments:
     - evidence: swift test (one full run), exit 0 — 1400 tests in 177 suites passed (2 known issues, the same as in ^rag2e91), 22 tests in 10 suites passed, 19 tests in 3 suites passed. No compiler warning. The only warnings are from SwiftPM: the shared manifest cache "disk I/O error" and "missing creator for mutated node" for mlx-swift_Cmlx.bundle.
     - next: /commit
   timestamp: 2026-09-28T22:05:23.172790+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m3n0tj6sva66ak13r456028t
+  text: |-
+    ### commit — changed
+    - evidence: 192a0a6 test(tracing): name the Extras file that holds the tool span name (^bg4g0na). Local only; not pushed.
+    - next: /review HEAD~1..HEAD
+  timestamp: 2026-09-28T22:05:34.297688+00:00
+- actor: claude-code
+  id: 01m3n0ypj0x00t7d7tyq5c5t3h
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (192a0a6) — 0 findings, 0 confirmed, 0 refuted, 7 validators attempted, 0 failed. The 2 .kanban files are excluded by .reviewignore. The task had no prior findings.
+    - next: none; the review moved the task to done.
+  timestamp: 2026-09-28T22:07:49.824854+00:00
+- actor: claude-code
+  id: 01m3n0ys4xsb32yk6w0k319y3y
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — the ToolTracingTests `toolSpanName` comment names the Extras file `Sources/FoundationModelsExtras/Telemetry/ExtrasTelemetry.swift` and the internal constant `ExtrasTelemetry.SpanName.tool`. IntegrationTests/Package.resolved (ignored by git) has Extras 6c399a4, the same as the root. The IntegrationTests build passes. `rg "FoundationModelsRouter\.tool"` finds nothing.
+    - test: green — swift test: 1400 + 22 + 19 tests passed (2 known issues), exit 0.
+    - commit: changed — 192a0a6 test(tracing): name the Extras file that holds the tool span name (^bg4g0na)
+    - review: clean — 0 findings; the review moved the task to done.
+  timestamp: 2026-09-28T22:07:52.477348+00:00
+position_column: done
+position_ordinal: ffffffb280
 title: 'OTel router E: use the Extras tool span name FoundationModelsExtras.tool in the router tests and docs'
 ---
 ## What
