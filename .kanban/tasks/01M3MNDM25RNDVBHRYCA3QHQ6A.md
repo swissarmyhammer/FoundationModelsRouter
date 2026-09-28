@@ -1,10 +1,38 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m3n1a3f6av203zvfwat7q62v
+  text: |-
+    Research (implement, iteration 1):
+    - Extras is at 6c399a4. `TelemetryCapture` binds its `TestMetrics` with `withMetricsFactory` (a task-local). A metric that a detached task makes does not reach the capture. swift-metrics 2.11.0 is already in the checkouts (the Extras pin `from: "2.11.0"`). `TestMetrics.makeX` gives the same handler for the same label and dimensions, so a metric made at each call adds to one test handler.
+    - Places with no task-local of the caller: the session pump (`Task.detached`), the worker task of `GenerationQueue` (`Task.detached`), and the admission job of `ModelPool.admit` (a task of its own; the router already carries the `ServiceContext` into it by hand).
+    - Decisions: (1) No stored metric. `RouterMetrics` makes each metric at the record call, from an explicit factory or else from `MetricsSystem.factory`. (2) A session has an explicit metrics factory (`nil` by default, `useMetricsFactory(_:)`), the same shape as the explicit logger of ^rag2e91; a fork copies it. (3) The resolve reads `MetricsSystem.factory` on the task of the caller and binds it with `withMetricsFactory` around the admission job, as it does for the `ServiceContext`. (4) The footprints task of `PromptCacheSizing` is a plain `Task {}`, so it inherits the task-local factory of the code that made the router.
+    - Names: each metric name starts with `FoundationModelsRouter.`. A dimension key has the same text as the span attribute key (`model.ref`, `slot`, `compaction.trigger`), as the Extras tool metrics do (`tool.name`, `tool.outcome`).
+    - The session message queue has no bounded session dimension. A gauge with no dimension would hold only the value of the last session that wrote it. Thus the depth is a recorder (a histogram): each session records its waiting count at each post and at each take.
+    - The resident-bytes gauge has no dimension. Each router over one pool reads the same pool footprint, so two routers over one pool write the same value.
+  timestamp: 2026-09-28T22:14:03.494600+00:00
+- actor: claude-code
+  id: 01m3n1zc9hndr0wesz6bp2n234
+  text: |-
+    Implementation (iteration 1):
+    - Package.swift: swift-metrics `from: "2.11.0"` (the Extras pin). `Metrics` on the library target; `Metrics` and `MetricsTestKit` on the unit test target. The resolve changed no pin (swift-metrics 2.11.0 was already resolved through Extras).
+    - Vocabulary: `RouterTelemetry.MetricName` (9 names, each `FoundationModelsRouter.`-prefixed, `allNames`) and `RouterTelemetry.MetricDimension` (`model.ref`, `slot`, `compaction.trigger`, the same text as the span attribute keys).
+    - `RouterMetrics` (Tracing/RouterMetrics.swift) makes each metric at the record call, from an explicit factory or `MetricsSystem.factory`. No stored metric.
+    - Session: `explicitMetricsFactory`, `useMetricsFactory(_:)`, `sessionMetrics`; a fork copies the explicit logger and the explicit factory in one hop (`inheritTelemetry(logger:metricsFactory:)`).
+    - Record sites: tokens in/out and tokens per second in `takeGenerationCall` (the ledger has `callStartedAt`; a tool close restarts it); time to first token in `noteGenerationProgress` (first progress after `submissionStartedAt`); load duration in `withLoadSpan` (the resolve binds the caller's factory with `withMetricsFactory` around the admission job, beside the `ServiceContext`); resident bytes from each value of the footprints task; session queue depth (a recorder, no dimension) at each post and each take; generation queue waiting (a gauge, `model.ref`) at the start of each queue job on the worker task; compaction count in `withCompactionSpan`.
+    - Invariants: each record is synchronous. The only new `await` is `queue.waitingCount` inside the queue job, on the worker task, not on the pump.
+    - Tests: `RouterMetricsTests` (9 tests) were written first; they did not compile before the implementation. `swift test --filter RouterMetricsTests`: 9 tests in 1 suite passed.
+
+    ### implement — changed
+    - evidence: 16 files — Package.swift, Tracing/RouterTelemetry.swift, Tracing/RouterMetrics.swift (new), Session/RoutedSessionActor.swift, Session/RoutedSessionActorMetrics.swift (new), Session/RoutedSessionActorForking.swift, Session/RoutedSessionActorQueueing.swift, Session/RoutedSessionActorPump.swift, Session/RoutedSessionActorCompaction.swift, Session/RoutedSessionActorGenerationCalls.swift, Session/RoutedSessionActorRunJournal.swift, Session/GenerationStall.swift, Session/RoutedSessionActorAnswerExecution.swift, Router.swift, Sizing/PromptCacheSizing.swift, Tests RouterMetricsTests.swift + Helpers/MetricAssertions.swift (new)
+    - next: /test
+  timestamp: 2026-09-28T22:25:40.657290+00:00
 depends_on:
 - 01M3MND1G818WNMRPDFRAG2E91
-position_column: todo
-position_ordinal: ab80
+position_column: doing
+position_ordinal: '80'
 title: 'OTel router B: record metrics for tokens, time to first token, load time, resident memory, queue depth and compactions'
 ---
 ## What

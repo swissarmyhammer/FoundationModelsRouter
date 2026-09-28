@@ -19,19 +19,20 @@ extension RoutedSessionActor {
         return await enqueue(message).id
     }
 
-    /// Posts `message` behind every caller message that waits, and wakes the
-    /// pump.
+    /// Posts `message` behind every caller message that waits, records the
+    /// new depth of the queue, and wakes the pump.
     ///
-    /// The post and the wake have no suspension point between them, and the
-    /// pump takes a batch only on this actor. So a caller that installs its
-    /// cancellation handler with no suspension point after this call finds
-    /// its message still waiting when the handler runs.
+    /// The post, the record and the wake have no suspension point between
+    /// them, and the pump takes a batch only on this actor. So a caller that
+    /// installs its cancellation handler with no suspension point after this
+    /// call finds its message still waiting when the handler runs.
     ///
     /// - Parameter message: The message to post.
     /// - Returns: The id of the message, and its answer.
     func enqueue(_ message: SessionMessage) async -> (id: MessageID, answer: MailboxAnswer<String>) {
         await attachOutboxJournalIfNeeded()
         let posted = outbox.messages.post(message)
+        recordMessageQueueDepth()
         wakePump()
         return posted
     }

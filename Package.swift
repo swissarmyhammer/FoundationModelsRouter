@@ -25,6 +25,13 @@ let tracingPackage = "swift-distributed-tracing"
 // error.
 let loggingPackage = "swift-log"
 
+// Apple's Swift community metrics API (the OpenTelemetry design of
+// 2026-09-28): the library records its metrics through `Metrics` and
+// bootstraps no backend, so each metric goes to the factory that the host
+// application bootstrapped. The pin is the same as the pin of
+// FoundationModelsExtras.
+let metricsPackage = "swift-metrics"
+
 // Hugging Face Hub client and tokenizer packages. The `mlx-foundationmodels`
 // fork bundles no default Hub client: its `MLXHuggingFace` macros
 // (`#hubDownloader()` / `#huggingFaceTokenizerLoader()`) expand to code that
@@ -74,6 +81,11 @@ let inMemoryTracingProduct: Target.Dependency = .product(
 
 // The logging API the library target and the executables log through.
 let loggingProduct: Target.Dependency = .product(name: "Logging", package: loggingPackage)
+
+// The metrics API the library target records through, and the test metrics
+// factory the unit test target reads the recorded values back from.
+let metricsProduct: Target.Dependency = .product(name: "Metrics", package: metricsPackage)
+let metricsTestKitProduct: Target.Dependency = .product(name: "MetricsTestKit", package: metricsPackage)
 
 // The Hub client + tokenizer products a live `LiveModelLoader` is constructed
 // from (via the `MLXHuggingFace` macros). The RealModelSupport target, the
@@ -140,6 +152,12 @@ let package = Package(
             url: "https://github.com/apple/\(loggingPackage).git",
             from: "1.15.1"
         ),
+        // The metrics API of the library. The same pin as
+        // FoundationModelsExtras.
+        .package(
+            url: "https://github.com/apple/\(metricsPackage).git",
+            from: "2.11.0"
+        ),
         // The operation-event vocabulary (`OperationEvent`,
         // `OperationOutcome`, `OperationEventSink`, `ToolInvocationRecord`,
         // the `Elicitation` family, `ForkableTool`) moved to the Extras
@@ -155,7 +173,7 @@ let package = Package(
         .target(
             name: packageName,
             dependencies: mlxProducts + [
-                ulidProduct, tracingProduct, loggingProduct,
+                ulidProduct, tracingProduct, loggingProduct, metricsProduct,
                 .product(name: "FoundationModelsExtras", package: "FoundationModelsExtras"),
             ],
             path: "Sources/\(packageName)",
@@ -181,7 +199,9 @@ let package = Package(
                 .product(name: "Operations", package: "FoundationModelsExtras"),
                 // The log tests read the log records of a capture of the
                 // Extras telemetry helper, and give its logger to a session.
-                loggingProduct,
+                // The metric tests give its metrics factory to a session, and
+                // read the recorded values back from that `TestMetrics`.
+                loggingProduct, metricsProduct, metricsTestKitProduct,
                 .product(name: "TelemetryTestSupport", package: "FoundationModelsExtras"),
             ] + mlxProducts,
             path: "Tests/\(packageName)Tests",

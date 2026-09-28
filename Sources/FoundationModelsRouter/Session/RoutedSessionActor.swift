@@ -2,6 +2,7 @@ import Foundation
 import FoundationModels
 import FoundationModelsExtras
 import Logging
+import Metrics
 import Tracing
 
 /// Writes one session's identity onto its ``RouterTelemetry/SpanName/session``
@@ -491,6 +492,15 @@ actor RoutedSessionActor: RoutedSession {
     /// session, also a record of the pump, goes to it. A fork starts with the
     /// explicit logger of its parent.
     var explicitLogger: Logging.Logger?
+
+    /// The explicit metrics factory of this session, or `nil` to read
+    /// `MetricsSystem.factory` at each record call. See
+    /// ``useMetricsFactory(_:)`` and ``sessionMetrics``.
+    ///
+    /// The same reason as for ``explicitLogger``: the pump is a
+    /// `Task.detached`, so the task-local factory of a caller never reaches
+    /// its metrics. A fork starts with the explicit factory of its parent.
+    var explicitMetricsFactory: (any MetricsFactory)?
 
     /// The `correlationID` of every background run whose ending this session has
     /// already journaled. A second write for one run is a no-op. See

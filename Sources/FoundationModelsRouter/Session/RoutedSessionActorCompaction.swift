@@ -219,7 +219,9 @@ extension RoutedSessionActor {
     ///
     /// The one span site both compaction paths share. The tier written is the
     /// tier that wrote the applied summary. A compaction that applied no
-    /// summary writes no tier.
+    /// summary writes no tier. The site also counts the compaction by its
+    /// trigger (``RouterTelemetry/MetricName/compactionCount``), before the
+    /// work starts, so a compaction that throws counts too.
     ///
     /// - Parameters:
     ///   - trigger: What asked for this compaction.
@@ -231,7 +233,8 @@ extension RoutedSessionActor {
         trigger: RouterTelemetry.CompactionTrigger,
         _ body: () async throws -> CompactionResult
     ) async throws -> CompactionResult {
-        try await RouterTelemetry.tracer(explicit: tracer)
+        sessionMetrics.recordCompaction(trigger: trigger)
+        return try await RouterTelemetry.tracer(explicit: tracer)
             .withSpan(RouterTelemetry.SpanName.compact, ofKind: .internal) { span in
                 span.attributes[RouterTelemetry.AttributeKey.sessionId] = id.description
                 span.attributes[RouterTelemetry.AttributeKey.modelRef] = model.stringValue

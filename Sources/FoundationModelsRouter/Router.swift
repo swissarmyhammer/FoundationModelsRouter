@@ -1,6 +1,7 @@
 import Foundation
 import FoundationModels
 import FoundationModelsExtras
+import Metrics
 import Tracing
 
 /// Whether a session's activity is recorded: `off` or `full`.
@@ -292,12 +293,18 @@ public actor Router {
 
         // An admission job runs on a task of its own, which inherits no task
         // local. The service context of the resolve span goes into the job,
-        // so each load span stays a child of the resolve span.
+        // so each load span stays a child of the resolve span. The metrics
+        // factory of the caller goes into the job too, so each load metric
+        // goes where the metrics of the caller go.
         let serviceContext = ServiceContext.current
+        let metricsFactory = MetricsSystem.factory
         let admitted = try await pool.admit { admission in
-            try await ServiceContext.withValue(serviceContext) {
-                try await self.runAdmission(
-                    admission: admission, profile: def, metadataByRef: metadataByRef, progress: progress, span: span)
+            try await withMetricsFactory(metricsFactory) {
+                try await ServiceContext.withValue(serviceContext) {
+                    try await self.runAdmission(
+                        admission: admission, profile: def, metadataByRef: metadataByRef, progress: progress,
+                        span: span)
+                }
             }
         }
 
@@ -742,6 +749,11 @@ public actor Router {
     /// span. `withSpan` records a thrown error on the span and raises it
     /// again.
     ///
+    /// A load that ends also records its duration
+    /// (``RouterMetrics/recordLoad(duration:model:slot:)``), through the
+    /// metrics factory that the resolve bound around its admission job. A
+    /// load that throws records no duration.
+    ///
     /// - Parameters:
     ///   - chosen: The model reference being loaded.
     ///   - slot: The slot the model fills.
@@ -760,7 +772,10 @@ public actor Router {
                 span.attributes[RouterTelemetry.AttributeKey.modelRef] = chosen.stringValue
                 span.attributes[RouterTelemetry.AttributeKey.slot] = slot.rawValue
                 span.attributes[RouterTelemetry.AttributeKey.footprintBytes] = footprintBytes
-                return try await body()
+                let startedAt = ContinuousClock.now
+                let loaded = try await body()
+                RouterMetrics().recordLoad(duration: startedAt.duration(to: .now), model: chosen, slot: slot)
+                return loaded
             }
     }
 

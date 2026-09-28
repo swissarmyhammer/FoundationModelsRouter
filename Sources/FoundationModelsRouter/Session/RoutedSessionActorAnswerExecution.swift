@@ -683,9 +683,10 @@ extension RoutedSessionActor {
             context: ambientToolContext,
             serviceContext: submissionServiceContext)
         let observer = generationPassObserver
+        let metrics = sessionMetrics
         let modelCall = Task {
             try await Self.run(
-                submission, on: target?.queue, reportingTo: observer,
+                submission, on: target, reportingTo: observer, metrics: metrics,
                 onStart: { await self.submissionDidStart() })
         }
         cancellationProbe.bind(to: modelCall)
@@ -759,26 +760,35 @@ extension RoutedSessionActor {
     /// only after `onStart` returns, no content of the submission comes before
     /// its start.
     ///
+    /// At the start of a queue item, the item also sets the gauge of the
+    /// submissions that wait behind it in the queue of its model
+    /// (``RouterMetrics/recordGenerationQueueWaiting(_:model:)``). The item
+    /// runs on the worker task of the queue, and not on the pump, so the read
+    /// of the count adds no suspension point to the pump.
+    ///
     /// - Parameters:
     ///   - submission: The submission of one model call.
-    ///   - queue: The queue of the model, or `nil`.
+    ///   - target: The queue of the model and the model, or `nil`.
     ///   - observer: The observer of this session's model calls.
+    ///   - metrics: The metrics recorder of this session.
     ///   - onStart: The closure that reports the start of the submission. It
     ///     runs at the start of the queue item, or before the direct call.
     /// - Returns: What `submission` returns.
     /// - Throws: What the queue or `submission` throws.
     private static func run(
         _ submission: @escaping @Sendable () async throws -> String,
-        on queue: GenerationQueue?,
+        on target: SubmissionTarget?,
         reportingTo observer: GenerationPassObserver,
+        metrics: RouterMetrics,
         onStart: @escaping @Sendable () async -> Void
     ) async throws -> String {
-        guard let queue else {
+        guard let target else {
             await onStart()
             return try await submission()
         }
-        return try await queue.submit(onQueued: { observer.submissionQueued() }) {
+        return try await target.queue.submit(onQueued: { observer.submissionQueued() }) {
             observer.submissionStarted()
+            metrics.recordGenerationQueueWaiting(await target.queue.waitingCount, model: target.model)
             await onStart()
             return try await submission()
         }

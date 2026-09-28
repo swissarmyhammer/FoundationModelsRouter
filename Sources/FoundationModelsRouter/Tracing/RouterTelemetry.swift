@@ -4,8 +4,8 @@ import Tracing
 
 /// The router's telemetry vocabulary: the name of every span it opens, the key
 /// of every attribute those spans carry, the label of every logger, the key of
-/// every log metadata value, and the rules that say which tracer and which
-/// logger a call uses.
+/// every log metadata value, the name and the dimension keys of every metric,
+/// and the rules that say which tracer and which logger a call uses.
 ///
 /// One home for the vocabulary (rule 3 of the OpenTelemetry design of
 /// 2026-09-28), so a name is written once and read everywhere. Each name
@@ -14,17 +14,20 @@ import Tracing
 /// it must keep working, so change a name only as a deliberate break.
 ///
 /// The package uses only the telemetry APIs: `swift-distributed-tracing` for
-/// spans and `swift-log` for logs. They are abstractions and not exporters.
-/// Until a host application bootstraps a backend, `InstrumentationSystem.tracer`
-/// is a no-op tracer and each logger writes through the default handler of
-/// swift-log. The library bootstraps no backend.
+/// spans, `swift-log` for logs and `swift-metrics` for metrics. They are
+/// abstractions and not exporters. Until a host application bootstraps a
+/// backend, `InstrumentationSystem.tracer` is a no-op tracer, each logger
+/// writes through the default handler of swift-log, and each metric does
+/// nothing. The library bootstraps no backend. ``RouterMetrics`` records the
+/// metrics.
 ///
 /// The type was `RouterTracing` before it covered logs. It is internal, so the
 /// rename needs no deprecated alias.
 ///
 /// ## No content in the telemetry
 ///
-/// A span attribute, a log message and a log metadata value must never carry
+/// A span attribute, a log message, a log metadata value and a metric
+/// dimension value must never carry
 /// prompt text, response text, tool arguments, tool output, or embed input
 /// text. A finished span and a log record leave the process through whatever
 /// backend the host application bootstrapped, and the router cannot know where
@@ -45,7 +48,8 @@ import Tracing
 /// carries the fixture's own content. Each new span the router learns to open
 /// is held to that one test.
 enum RouterTelemetry {
-    /// What every span name, logger label and log metadata key begins with.
+    /// What every span name, logger label, log metadata key and metric name
+    /// begins with.
     private static let prefix = "FoundationModelsRouter."
 
     /// The operation name of every span the router opens.
@@ -424,6 +428,72 @@ enum RouterTelemetry {
             rejectionReason, toolName, retryOrdinal, summarizerTier, divergence, shortfall,
             allowedSummaryTokens, inputTokens, windowTokens, snapshotTokens, containerType, modelRef,
         ]
+    }
+
+    /// The name of every metric the router records. ``RouterMetrics`` records
+    /// each one.
+    ///
+    /// Each name begins with the module name. FoundationModelsExtras records
+    /// the tool-call metrics (`FoundationModelsExtras.tool.calls` and
+    /// `FoundationModelsExtras.tool.duration`), so the router records no tool
+    /// metric of its own.
+    enum MetricName {
+        /// The counter of the tokens that each generation call fed the model.
+        static let generationTokensIn = prefix + "generation.tokens.in"
+
+        /// The counter of the tokens that each generation call generated.
+        static let generationTokensOut = prefix + "generation.tokens.out"
+
+        /// The recorder of the output rate of each generation call: its
+        /// generated tokens divided by its duration, in tokens per second.
+        static let generationTokensPerSecond = prefix + "generation.tokens_per_second"
+
+        /// The timer from the start of the submission of a model call to its
+        /// first observable progress.
+        static let timeToFirstToken = prefix + "generation.time_to_first_token"
+
+        /// The timer of each model load of a resolve.
+        static let loadDuration = prefix + "load.duration"
+
+        /// The gauge of the bytes that the models of the pool use now: the
+        /// resident models and the load that runs now.
+        static let residentBytes = prefix + "model_pool.resident_bytes"
+
+        /// The recorder of the count of the caller messages that wait in the
+        /// queue of a session, at each post and at each take.
+        static let sessionQueueDepth = prefix + "session.queue_depth"
+
+        /// The gauge of the count of the submissions that wait in the
+        /// generation queue of a model, at the start of each submission.
+        static let generationQueueWaiting = prefix + "generation_queue.waiting"
+
+        /// The counter of the compactions, by trigger.
+        static let compactionCount = prefix + "compaction.count"
+
+        /// Every name above.
+        static let allNames = [
+            generationTokensIn, generationTokensOut, generationTokensPerSecond, timeToFirstToken, loadDuration,
+            residentBytes, sessionQueueDepth, generationQueueWaiting, compactionCount,
+        ]
+    }
+
+    /// The key of every dimension of a router metric.
+    ///
+    /// A dimension value is an identifier, a name or a slot, and never a piece
+    /// of the caller's content. Each value set is bounded: the models of the
+    /// profiles, the three slots, and the two triggers. No metric has a
+    /// session dimension, because the set of sessions has no bound. A key has
+    /// the same text as the span attribute of the same fact, as the tool-call
+    /// metrics of FoundationModelsExtras do.
+    enum MetricDimension {
+        /// The model reference, in canonical string form.
+        static let modelRef = AttributeKey.modelRef
+
+        /// The ``ModelSlot`` of the model.
+        static let slot = AttributeKey.slot
+
+        /// The ``CompactionTrigger`` of a compaction.
+        static let compactionTrigger = AttributeKey.compactionTrigger
     }
 
     /// Makes a logger of the module for one category, with the label

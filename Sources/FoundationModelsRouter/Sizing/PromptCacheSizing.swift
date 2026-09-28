@@ -19,6 +19,14 @@ import Synchronization
 /// pool at the time it runs, and all the resizes of one sizing run one at a
 /// time. Thus a late value can not send an old budget after a newer one.
 ///
+/// ## The resident bytes gauge
+///
+/// The footprints task also sets the gauge of the bytes of the pool
+/// (``RouterMetrics/recordResidentBytes(_:)``) from each value, in order. The
+/// task is a plain `Task`, so it reads the metrics factory that was bound
+/// when the router was made. Each router over one pool reads the same
+/// footprints, so two routers over one pool write the same value.
+///
 /// ## The router's own loads: the strict order
 ///
 /// Inside its admission job, the router calls
@@ -65,7 +73,8 @@ final class PromptCacheSizing: Sendable {
         let footprints = pool.footprints
         self.resizer = resizer
         footprintsTask = Task {
-            for await _ in footprints {
+            for await footprint in footprints {
+                RouterMetrics().recordResidentBytes(footprint.totalBytes)
                 await resizer.resizeForFootprintChange()
             }
         }

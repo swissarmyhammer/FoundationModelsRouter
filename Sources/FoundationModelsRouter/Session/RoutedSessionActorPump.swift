@@ -293,6 +293,9 @@ extension RoutedSessionActor: SessionMailObserver {
         lastWorkId = workId
         let options = batch.letters.first?.message.options ?? .mailDelivery
         pumpWork?.kind = .answer(options: options, letters: batch.letters)
+        // The batch left the waiting messages: the depth is synchronous, so
+        // it adds no suspension point here.
+        recordMessageQueueDepth()
         startAnswerLimits()
         let result: Result<String, any Error>
         do {
@@ -399,6 +402,7 @@ extension RoutedSessionActor: SessionMailObserver {
         if case .answer(let options, let letters) = pumpWork?.kind {
             pumpWork?.kind = .answer(options: options, letters: letters + joining)
         }
+        recordMessageQueueDepth()
         return (events.map(\.event), joining.map(\.message.text), joining.map(\.id))
     }
 

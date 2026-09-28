@@ -189,6 +189,11 @@ struct GenerationStallWatch: Sendable {
     /// How many text fragments the session has counted for this call.
     var fragmentsObserved: Int = 0
 
+    /// Whether the session recorded the time to the first progress of this
+    /// call (``RouterTelemetry/MetricName/timeToFirstToken``). A call records
+    /// it one time.
+    var recordedTimeToFirstProgress = false
+
     /// Whether this call produces fragments the session counts. Declared by
     /// ``RoutedSessionActor/observeGenerationFragments()`` when the streaming
     /// body starts, not inferred from the first fragment.
@@ -292,13 +297,23 @@ extension RoutedSessionActor {
     /// interval a report is measured over. A text fragment also adds one to
     /// the fragment count.
     ///
+    /// The first append of the call records the time from the start of its
+    /// submission (``GenerationStallWatch/submissionStartedAt``) to now
+    /// (``RouterMetrics/recordTimeToFirstToken(_:model:slot:)``). The record
+    /// is synchronous and adds no suspension point.
+    ///
     /// - Parameter kind: The kind of the append.
     func noteGenerationProgress(_ kind: GenerationProgressKind) {
         guard var watch = generationStallWatch else { return }
+        let now = ContinuousClock.now
         if kind == .fragment {
             watch.fragmentsObserved += 1
         }
-        watch.lastProgressAt = ContinuousClock.now
+        if !watch.recordedTimeToFirstProgress, let submissionStartedAt = watch.submissionStartedAt {
+            watch.recordedTimeToFirstProgress = true
+            sessionMetrics.recordTimeToFirstToken(submissionStartedAt.duration(to: now), model: model, slot: slot)
+        }
+        watch.lastProgressAt = now
         watch.lastProgressKind = kind
         generationStallWatch = watch
     }

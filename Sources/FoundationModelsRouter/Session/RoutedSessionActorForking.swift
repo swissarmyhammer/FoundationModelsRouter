@@ -1,6 +1,8 @@
 import Foundation
 import FoundationModels
 import FoundationModelsExtras
+import Logging
+import Metrics
 
 /// ``RoutedSessionActor``'s session-lifetime boundaries: forking a child session
 /// over the same resident model, and closing a session down.
@@ -240,12 +242,22 @@ extension RoutedSessionActor {
         // The stall report interval is a host setting, as the other settings
         // above are, so the child starts with the interval of this session.
         await child.setGenerationStallReportInterval(generationStallReportInterval)
-        // The explicit logger is a host setting too, so the records of the
-        // child go where the records of this session go.
-        if let explicitLogger {
-            await child.useLogger(explicitLogger)
-        }
+        // The explicit logger and the explicit metrics factory are host
+        // settings too, so the records and the metrics of the child go where
+        // those of this session go.
+        await child.inheritTelemetry(logger: explicitLogger, metricsFactory: explicitMetricsFactory)
         return child
+    }
+
+    /// Takes the explicit telemetry of the parent of this fork.
+    ///
+    /// - Parameters:
+    ///   - logger: The explicit logger of the parent, or `nil`.
+    ///   - metricsFactory: The explicit metrics factory of the parent, or
+    ///     `nil`.
+    private func inheritTelemetry(logger: Logger?, metricsFactory: (any MetricsFactory)?) {
+        explicitLogger = logger
+        explicitMetricsFactory = metricsFactory
     }
 
     /// See ``RoutedSession/close()``.

@@ -26,6 +26,12 @@ struct GenerationCallLedger {
     /// the calls is not a size of the render (task ^tpsc0nf).
     var newestCall: (input: Int, output: Int)?
 
+    /// When the generation call that runs now started: the open of the
+    /// ledger, the end of the last call, or the close of the last tool call.
+    /// The duration of a call runs from here to the report of the call, and
+    /// the output rate of the call is measured over it.
+    var callStartedAt = ContinuousClock.now
+
     /// The usage of the call that ended since the last report.
     ///
     /// - Parameter usageAfter: The cumulative usage of the backend now.
@@ -92,12 +98,15 @@ extension RoutedSessionActor {
     }
 
     /// Takes the usage of the generation call that ended since the last
-    /// report, and adds it to the ledger.
+    /// report, adds it to the ledger, and records its metrics: its tokens in
+    /// and out, and its output rate over its duration
+    /// (``RouterMetrics/recordGenerationCall(tokensIn:tokensOut:duration:model:slot:)``).
     ///
     /// Reads ``backend`` from a task of the running submission at a
     /// tool-call open. The model waits in the tool at that moment, so no
     /// concurrent writer exists (see
-    /// ``LanguageModelSessionBackend/transcriptEntries()``).
+    /// ``LanguageModelSessionBackend/transcriptEntries()``). The record is
+    /// synchronous and adds no suspension point.
     ///
     /// - Parameter entryKind: What the call left in the transcript.
     /// - Returns: The usage of that call, or `nil` when no ledger is open,
@@ -108,6 +117,11 @@ extension RoutedSessionActor {
         else {
             return nil
         }
+        let endedAt = ContinuousClock.now
+        sessionMetrics.recordGenerationCall(
+            tokensIn: call.input, tokensOut: call.output, duration: ledger.callStartedAt.duration(to: endedAt),
+            model: model, slot: slot)
+        generationCallLedger?.callStartedAt = endedAt
         generationCallLedger?.reported = (ledger.reported.input + call.input, ledger.reported.output + call.output)
         generationCallLedger?.newestCall = call
         toolResultWatch.noteEndedCall(tokens: call.input + call.output)
@@ -140,5 +154,12 @@ extension RoutedSessionActor {
     func reportGenerationCallAtToolOpen() async {
         guard let usage = takeGenerationCall(leaving: .toolCall) else { return }
         await report(generationCall: usage)
+    }
+
+    /// Notes that a tool call of the attempt closed. The model reads the tool
+    /// output in the next generation call, which starts now, so the time of
+    /// the tool body is not part of the duration of a generation call.
+    func restartGenerationCallClock() {
+        generationCallLedger?.callStartedAt = ContinuousClock.now
     }
 }
