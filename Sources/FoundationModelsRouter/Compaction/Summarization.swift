@@ -321,14 +321,13 @@ struct CompactionCall {
         }
     }
 
-    /// The result of a compaction that left the live context as it was, and
-    /// logs the reason.
+    /// The result of a compaction that left the live context as it was.
+    /// ``Compactor`` logs the reason through the logger of the session.
     ///
     /// - Parameter shortfall: Why the live context stays as it was.
     /// - Returns: The result.
     func shortfallResult(_ shortfall: CompactionShortfall) -> CompactionResult {
-        Compactor.log(shortfall)
-        return CompactionResult(
+        CompactionResult(
             summary: nil, tokensBefore: tokensBefore, tokensAfter: tokensBefore, stagesApplied: [],
             protectedTokens: protectedTokens, shortfall: shortfall)
     }

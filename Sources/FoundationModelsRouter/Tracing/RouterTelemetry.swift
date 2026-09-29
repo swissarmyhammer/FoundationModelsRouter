@@ -44,12 +44,12 @@ import Tracing
 ///   never by its description, because a description can carry model content.
 ///
 /// The rule is proved, not merely stated: `TelemetryContentSafetyTests` drives
-/// a submission, a tool call, a compaction, an embed and a rejected tool call
-/// retry inside the `TelemetryCapture` of FoundationModelsExtras. It reads each
-/// span name and attribute, each log message and metadata value, and each
-/// metric name and dimension, and it fails on any of them that carries the
-/// content of the fixture. Each new span, log record or metric of the router
-/// is held to that one test.
+/// a submission, a tool call, a compaction, a compaction shortfall, an embed
+/// and a rejected tool call retry inside the `TelemetryCapture` of
+/// FoundationModelsExtras. It reads each span name and attribute, each log
+/// message and metadata value, and each metric name and dimension, and it
+/// fails on any of them that carries the content of the fixture. Each new
+/// span, log record or metric of the router is held to that one test.
 enum RouterTelemetry {
     /// What every span name, logger label, log metadata key and metric name
     /// begins with.
@@ -570,6 +570,16 @@ enum RouterTelemetry {
         static let compactionTrigger = AttributeKey.compactionTrigger
     }
 
+    /// The explicit logger of the session whose pump runs the current job, or
+    /// `nil` when no pump job with an explicit logger runs on this task.
+    ///
+    /// The pump of a session binds it around each job
+    /// (``RoutedSessionActor/withSessionLogger(_:)``). A log call on the pump
+    /// that has no session to ask, for example a log call of the mapper of the
+    /// transcript recording, gets it from ``makeLogger(_:)``. It holds no
+    /// logger outside a job, so no logger is stored at rest.
+    static let pumpJobLogger = TaskLocal<Logger?>(wrappedValue: nil)
+
     /// Makes a logger of the module for one category, with the label
     /// `FoundationModelsRouter.<category>`.
     ///
@@ -578,10 +588,18 @@ enum RouterTelemetry {
     /// misses a backend that the host bootstraps later, and a test capture
     /// that starts later.
     ///
+    /// Inside a job of a session pump that has an explicit logger
+    /// (``pumpJobLogger``), the logger is that explicit logger with the
+    /// category as metadata, so the record goes where each other record of
+    /// the session goes.
+    ///
     /// - Parameter category: The area of the router that logs.
-    /// - Returns: A logger that writes through the logging backend of the host.
+    /// - Returns: The explicit logger of the pump job with the category as
+    ///   metadata, else a logger that writes through the logging backend of
+    ///   the host.
     static func makeLogger(_ category: LogCategory) -> Logger {
-        Logger(label: prefix + category.rawValue)
+        guard let pumpLogger = pumpJobLogger.get() else { return Logger(label: prefix + category.rawValue) }
+        return logger(category, explicit: pumpLogger)
     }
 
     /// The logger a call logs through.

@@ -220,6 +220,11 @@ package enum Compactor {
     ///   - pendingRuns: The run-plane summaries of the runs still running, in tracking order.
     ///   - protection: The host rule whose protected tool outputs the new
     ///     snapshot keeps word for word, or `nil` (the default) to protect nothing.
+    ///   - explicitLogger: The explicit logger of the session that compacts,
+    ///     or `nil` (the default) for a logger of the module. The record of a
+    ///     ``CompactionShortfall`` goes to it (``log(_:to:)``). A session pump
+    ///     is a detached task, so only an explicit logger takes the record to
+    ///     the logger that the caller gave the session.
     ///   - abandoning: Gets each summarizer failure with the tier that raised
     ///     it. It throws to stop the compaction. The default returns.
     /// - Returns: The new live context and a report of what happened.
@@ -234,7 +239,46 @@ package enum Compactor {
         summarizers: [CompactionSummarizerSlot],
         pendingRuns: [CompactionSegment.PendingRunSummary] = [],
         protection: ToolOutputProtection? = nil,
+        explicitLogger: Logger? = nil,
         abandoning: @Sendable (any Error, CompactionSummarizerTier) async throws -> Void = { _, _ in }
+    ) async throws -> (transcript: Transcript, result: CompactionResult) {
+        let compacted = try await planAndSummarize(
+            transcript, prompt: prompt, budget: budget, counter: counter, summarizers: summarizers,
+            pendingRuns: pendingRuns, protection: protection, abandoning: abandoning)
+        if let shortfall = compacted.result.shortfall {
+            log(shortfall, to: RouterTelemetry.logger(.compaction, explicit: explicitLogger))
+        }
+        return compacted
+    }
+
+    /// Plans the compaction of `transcript` and runs its summarizer call. See
+    /// ``compact(_:prompt:budget:counter:summarizers:pendingRuns:protection:explicitLogger:abandoning:)``,
+    /// which logs the shortfall of the result.
+    ///
+    /// - Parameters:
+    ///   - transcript: The live context to compact.
+    ///   - prompt: The compaction prompt sent to the summarizer.
+    ///   - budget: The token budget to compact against.
+    ///   - counter: The counter every size is measured with.
+    ///   - summarizers: The summarizer tiers, in the order of preference.
+    ///   - pendingRuns: The run-plane summaries of the runs still running, in tracking order.
+    ///   - protection: The host rule whose protected tool outputs the new
+    ///     snapshot keeps word for word, or `nil` to protect nothing.
+    ///   - abandoning: Gets each summarizer failure with the tier that raised
+    ///     it. It throws to stop the compaction.
+    /// - Returns: The new live context and a report of what happened.
+    /// - Throws: What the last tier throws, what `abandoning` throws, what
+    ///   `counter` throws, or ``SummarizationError/emptySummary`` when the
+    ///   summary holds no text.
+    private static func planAndSummarize(
+        _ transcript: Transcript,
+        prompt: CompactionPrompt,
+        budget: TokenBudget,
+        counter: any TokenCounter,
+        summarizers: [CompactionSummarizerSlot],
+        pendingRuns: [CompactionSegment.PendingRunSummary],
+        protection: ToolOutputProtection?,
+        abandoning: @Sendable (any Error, CompactionSummarizerTier) async throws -> Void
     ) async throws -> (transcript: Transcript, result: CompactionResult) {
         let plan = try Summarization().plan(
             transcript, prompt: prompt, budget: budget, counter: counter, pendingRuns: pendingRuns,
@@ -270,12 +314,18 @@ package enum Compactor {
         }
     }
 
-    /// Logs why a compaction left the live context as it was.
+    /// The constant message of the log record of a ``CompactionShortfall``.
+    static let shortfallLogMessage = "a compaction left the live context as it was"
+
+    /// Logs why a compaction left the live context as it was. The message is
+    /// constant, and the values are metadata (``logMetadata(of:)``). The call
+    /// is synchronous and adds no suspension point.
     ///
-    /// - Parameter shortfall: The reason.
-    static func log(_ shortfall: CompactionShortfall) {
-        RouterTelemetry.makeLogger(.compaction).warning(
-            "a compaction left the live context as it was", metadata: logMetadata(of: shortfall))
+    /// - Parameters:
+    ///   - shortfall: The reason.
+    ///   - logger: The logger of the record.
+    private static func log(_ shortfall: CompactionShortfall, to logger: Logger) {
+        logger.warning("\(shortfallLogMessage)", metadata: logMetadata(of: shortfall))
     }
 
     /// The log metadata of a shortfall: the name of its case and its token

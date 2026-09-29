@@ -143,15 +143,26 @@ extension RoutedSessionActor: SessionMailObserver {
         while !Task.isCancelled {
             pumpWakeRequested = false
             if !pendingCompactions.isEmpty {
-                await withSessionMetricsFactory { await runNextCallerCompaction() }
+                await withSessionTelemetry { await runNextCallerCompaction() }
                 continue
             }
-            guard await withSessionMetricsFactory({ await runNextAnswer() }) || pumpWakeRequested else { break }
+            guard await withSessionTelemetry({ await runNextAnswer() }) || pumpWakeRequested else { break }
         }
         pumpTask = nil
         if Task.isCancelled {
             wakePump()
         }
+    }
+
+    /// Runs one job of the pump with the explicit telemetry of this session
+    /// bound: the logger (``withSessionLogger(_:)``) and the metrics factory
+    /// (``withSessionMetricsFactory(_:)``). Neither binding adds a suspension
+    /// point.
+    ///
+    /// - Parameter job: The job of the pump.
+    /// - Returns: The value of `job`.
+    private func withSessionTelemetry<Value>(_ job: nonisolated(nonsending) () async -> Value) async -> Value {
+        await withSessionLogger { await withSessionMetricsFactory(job) }
     }
 
     /// Takes the next batch and runs its answer.

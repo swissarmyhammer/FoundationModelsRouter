@@ -295,7 +295,7 @@ extension RoutedSessionActor {
 
     /// The compaction mechanics ``compact(prompt:budget:)`` and
     /// ``performAutoCompaction(prompt:budget:)`` share. Runs
-    /// ``Compactor/compact(_:prompt:budget:counter:summarizers:pendingRuns:protection:abandoning:)``
+    /// ``Compactor/compact(_:prompt:budget:counter:summarizers:pendingRuns:protection:explicitLogger:abandoning:)``
     /// over ``backend``'s transcript, counted by this session's ``tokenCounter``.
     /// When a summary applied, records the compaction's new entries by id and
     /// replaces ``backend`` with one seeded from the new snapshot. Otherwise
@@ -349,6 +349,9 @@ extension RoutedSessionActor {
             // The host rule this session was vended, forked or restored with,
             // so no compaction removes a protected tool output.
             protection: toolOutputProtection,
+            // This session's explicit logger, so the record of a shortfall
+            // goes where each other record of the session goes.
+            explicitLogger: explicitLogger,
             abandoning: { [self] error, tier in try await abandonCompactionIfCancelled(discarding: error, tier: tier) }
         )
 

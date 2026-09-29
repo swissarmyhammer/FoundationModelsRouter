@@ -490,7 +490,12 @@ actor RoutedSessionActor: RoutedSession {
     /// caller, so a task-local logging context never reaches its records. A
     /// test or a host gives an explicit logger so that each record of the
     /// session, also a record of the pump, goes to it. A fork starts with the
-    /// explicit logger of its parent.
+    /// explicit logger of its parent. The pump also binds it as
+    /// ``RouterTelemetry/pumpJobLogger`` around each job
+    /// (``withSessionLogger(_:)``), so a log call that the job reaches and
+    /// that has no session to ask, for example a log call of the transcript
+    /// recording, goes to it. A compaction gives it to ``Compactor``, so the
+    /// record of a ``CompactionShortfall`` goes to it.
     var explicitLogger: Logging.Logger?
 
     /// The explicit metrics factory of this session, or `nil` to read

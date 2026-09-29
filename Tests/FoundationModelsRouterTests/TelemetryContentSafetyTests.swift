@@ -18,7 +18,9 @@ import Testing
 /// The suite drives work that produces content inside one
 /// `TelemetryCapture.run(forbidding:sourceLocation:_:)` of the Extras
 /// `TelemetryTestSupport` helper: a scripted answer, a tool call inside it, a
-/// compaction over what the answer accumulated, an embed, and one more answer
+/// compaction over what the answer accumulated, a compaction whose target
+/// leaves no room for a summary, so that the session logs the shortfall, an
+/// embed, and one more answer
 /// whose first tool call the parser rejects, so that the session logs its
 /// retry. The capture reads *every* span name and attribute, *every* log
 /// message and metadata value and *every* metric label and dimension, and
@@ -42,6 +44,10 @@ struct TelemetryContentSafetyTests {
 
     /// The prompt of the answer whose first tool call the parser rejects.
     private static let rejectedCallPrompt = "rejected-call-prompt-3b1d"
+
+    /// The target fraction of the budget of the shortfall compaction. A
+    /// target of zero tokens leaves no room for a summary.
+    private static let noRoomTarget = 0.0
 
     /// The calling suite's name, so a leaked temp directory is attributable.
     private static let tempDirPrefix = "TelemetryContentSafetyTests"
@@ -88,11 +94,15 @@ struct TelemetryContentSafetyTests {
                         }
                 })
             #expect(context.metricRecords.contains { $0.label == RouterTelemetry.MetricName.compactionCount })
+            context.expectLogged(
+                containing: Compactor.shortfallLogMessage,
+                metadata: [RouterTelemetry.LogMetadataKey.shortfall: "targetLeavesNoRoomForSummary"])
         }
     }
 
     /// Drives the scripted session: one answer with one tool call, a
-    /// compaction over what the answer accumulated, and one embed.
+    /// compaction over what the answer accumulated, a compaction with a
+    /// shortfall, and one embed.
     ///
     /// - Parameter context: The capture the session reports to.
     /// - Throws: Whatever the session, the compaction or the embed throws.
@@ -124,6 +134,12 @@ struct TelemetryContentSafetyTests {
         let compaction = try await fixture.session.compact(
             budget: summarizingCompactionBudget(for: fixture.transcriptEntries()))
         #expect(compaction.tokensAfter < compaction.tokensBefore)
+
+        // A compaction whose target is zero tokens: the target leaves no room for
+        // a summary, so the compaction has a shortfall, and the session logs it.
+        let shortfallCompaction = try await fixture.session.compact(
+            budget: TokenBudget(limit: compaction.tokensAfter, target: noRoomTarget))
+        #expect(shortfallCompaction.shortfall == .targetLeavesNoRoomForSummary(allowedSummaryTokens: 0))
 
         // One embed, over the same profile.
         _ = try await fixture.profile.embedding.embed(texts: [embedInput])
