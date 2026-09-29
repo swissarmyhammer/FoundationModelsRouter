@@ -31,8 +31,21 @@ comments:
     - evidence: `swift test --manifest-cache local` (exit 0): 1415 tests in 179 suites passed (2 known issues), 22 tests in 10 suites passed, 19 tests in 3 suites passed. Note: the first full run showed no failure line, but my output filter removed the count lines, so I ran it one more time with the full output in a file to get the counts. Clean build `swift build --build-tests` with a separate `--scratch-path` (exit 0): no compiler warning; only the SwiftPM notes "missing creator for mutated node" (mlx-swift bundle) and the swift-nio cache lock note.
     - next: /commit
   timestamp: 2026-09-29T12:12:22.475543+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m3phkmng5y5833w8q8ny3x4t
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (66ddea3) — 0 findings, 0 confirmed, 0 refuted; 7 validators attempted, 0 failed; 9 files reviewed, 2 kanban files ignored by .reviewignore. No prior findings.
+    - next: none; the review moved the task to done.
+
+    ### finish iteration 1 — clean
+    - implement: changed — Compactor.compact logs the shortfall through the explicit logger of the session; the pump binds the explicit logger as RouterTelemetry.pumpJobLogger around each job; TelemetryContentSafetyTests requires the shortfall record; new pump-job logger test. Fail-first: the content-safety test failed with 1 issue (no shortfall record in the capture) before the fix.
+    - test: green — swift test: 1415 + 22 + 19 tests passed (2 known issues), exit 0; the clean build with a separate scratch path has no compiler warning.
+    - commit: changed — 66ddea3 fix(telemetry): log the compaction shortfall through the session logger, and bind it in each pump job (^g3qtkdf)
+    - review: clean — 0 findings; the review moved the task to done.
+  timestamp: 2026-09-29T12:18:07.664558+00:00
+position_column: done
+position_ordinal: ffffffb680
 title: 'OTel router F: the compaction shortfall log uses the session logger, so TelemetryCapture sees it, and the content-safety test checks it'
 ---
 ## What
