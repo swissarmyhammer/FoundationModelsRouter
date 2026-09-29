@@ -364,6 +364,10 @@ actor RoutedSessionActor: RoutedSession {
     /// See ``wakePump()``.
     var pumpTask: Task<Void, Never>?
 
+    /// The drain of this session while it runs, or `nil` when no drain runs.
+    /// While it runs, no pump starts. See ``drain()``.
+    var drainTask: Task<Void, Never>?
+
     /// Whether a message arrived since the pump last looked, so the pump
     /// takes one more cycle before it ends.
     var pumpWakeRequested = false

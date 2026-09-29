@@ -262,13 +262,17 @@ extension RoutedSessionActor {
 
     /// See ``RoutedSession/close()``.
     ///
-    /// Runs ``mailbox``'s `RunPlane.sweep()`, then journals each
+    /// Runs the drain (``drain()``), and waits for it with no regard to a
+    /// cancel of the caller. The drain stops the running work, withdraws the
+    /// waiting messages, runs ``mailbox``'s `RunPlane.sweep()`, journals each
     /// terminal event it produced through
     /// `SessionOutbox.journalWithoutStaging(event:)` — reaching the same
     /// ``record(event:)``, and so the same ``makeRunEventPartial(for:)``, a
     /// run's own reports take when they are journaled live. The journal is
     /// complete before this method returns: exactly one terminal event per
-    /// background run, no orphans, no holes.
+    /// background run, no orphans, no holes. The drain then waits until the
+    /// pump and the body of each run ended, so when this method returns, no
+    /// work of the session runs.
     ///
     /// **Why through the outbox rather than straight to the recorder.**
     /// Every other journal write is ordered by `SessionOutbox`'s one FIFO
@@ -332,18 +336,10 @@ extension RoutedSessionActor {
         // not this close has anything to journal.
         finishSessionEventSubscriptions()
 
-        let terminalEvents = await mailbox.sweep()
-        // Before the early return below: most sessions close with no terminal
-        // event, and each of them must release its key too.
+        // The drain sweeps and journals the background runs, and waits until
+        // no work of the session runs. A cancel of the caller does not end
+        // this wait: when close returns, the session holds no work.
+        await startDrainIfNeeded().value
         await releasePromptCache()
-        guard !terminalEvents.isEmpty else { return }
-        // A run can only be backgrounded from inside an answer, so by here the journal
-        // is normally attached already; attaching is idempotent, and doing it
-        // unconditionally means this path never depends on that reasoning
-        // holding for every future caller.
-        await attachOutboxJournalIfNeeded()
-        for event in terminalEvents {
-            await outbox.journalWithoutStaging(event: event)
-        }
     }
 }

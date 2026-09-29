@@ -139,4 +139,5 @@ one message, then waits for its answer.
 ### Lifecycle and forking
 
 - ``fork(workingDirectory:)``
+- ``drain()``
 - ``close()``

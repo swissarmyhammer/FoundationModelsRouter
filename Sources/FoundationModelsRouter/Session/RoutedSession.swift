@@ -357,9 +357,46 @@ public protocol RoutedSession: Actor {
     ///   turns reporting off for later calls.
     func setGenerationStallReportInterval(_ interval: Duration)
 
-    /// Tears the session down: runs `RunPlane.sweep()`, which cancels
-    /// every background run and rejects every pending elicitation, and journals
-    /// the resulting terminal events before it returns. It also finishes every
+    /// Stops all work of this session, and returns when that work ended. It
+    /// is not a tool of the model: a host or a test calls it, for example
+    /// before the process ends.
+    ///
+    /// The drain does these steps:
+    ///
+    /// 1. It stops the running submission and withdraws every waiting caller
+    ///    message and caller compaction, as ``cancel()`` does. Each caller of
+    ///    a withdrawn item gets `CancellationError`.
+    /// 2. It runs `RunPlane.sweep()`, which cancels every background run and
+    ///    rejects every pending elicitation, and journals the resulting
+    ///    terminal events.
+    /// 3. It waits until the body of each background run ended, and until
+    ///    the pump of the session ended. The pump waits for its model call,
+    ///    and the model call waits for its generation on the
+    ///    ``GenerationQueue`` of the model. So when the drain ends, no
+    ///    generation and no prefill of this session runs.
+    ///
+    /// While the drain runs, no new answer starts: the mail of a run that
+    /// settles stays in the queue, held, and it rides the next caller
+    /// message. A message or a compaction that arrives during the drain is
+    /// withdrawn. After the drain, the session is usable again.
+    ///
+    /// The drain has no time limit of its own. Work that does not see its
+    /// cancel keeps the drain waiting. A cancel of the calling task ends the
+    /// wait, not the drain, so a caller can wrap this call in its own timeout,
+    /// and call it again. Two calls at the same time share one drain.
+    /// Safe at any time and any number of times.
+    ///
+    /// - Returns: `true` when no work of the session runs, and `false` when
+    ///   the calling task was cancelled before that.
+    @discardableResult
+    func drain() async -> Bool
+
+    /// Tears the session down: runs ``drain()`` and waits until it ends,
+    /// also when the calling task is cancelled. So when this call returns, no
+    /// work of the session runs: no submission, no background run, and no
+    /// generation on the model. The drain runs `RunPlane.sweep()`, which
+    /// cancels every background run and rejects every pending elicitation,
+    /// and journals the resulting terminal events. Close also finishes every
     /// ``streamSessionEvents()`` subscription, and releases the prompt cache
     /// that the model keeps for this session. A fork has a cache of its own,
     /// so the close of a fork does not release the cache of its parent.

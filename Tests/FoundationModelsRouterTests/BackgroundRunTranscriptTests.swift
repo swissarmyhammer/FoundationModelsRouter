@@ -339,7 +339,13 @@ struct BackgroundRunTranscriptTests {
             canceler: { .cancelled },
             body: { await settling.value })
 
-        await session.close()
+        // The close journals the terminal of the sweep, and then waits for the
+        // body of the run. So the close runs in a task of its own until the
+        // body may end.
+        let closing = Task { await session.close() }
+        try await AwaitedCondition.wait(until: {
+            !Self.journaledTerminals(forRun: token, in: await recorder.events).isEmpty
+        })
 
         // The run finishes after the sweep and reports success — the opposite
         // outcome to the `.cancelled` terminal the sweep already recorded. Two
@@ -351,6 +357,7 @@ struct BackgroundRunTranscriptTests {
                 detail: "exit 0", outcome: .succeeded))
         bodyMayEnd.signal()
         _ = await settling.value
+        await closing.value
 
         let terminals = Self.journaledTerminals(forRun: token, in: await recorder.events)
         #expect(terminals.count == 1)

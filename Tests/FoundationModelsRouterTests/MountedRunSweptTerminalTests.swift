@@ -165,7 +165,14 @@ struct MountedRunSweptTerminalTests {
             arguments: MountArguments(value: Self.callArgument))
         let token = try MountFixtures.decodeEnvelope(rendered).completionToken
 
-        await session.close()
+        // The close sweeps the run and journals the terminal of the sweep. Then
+        // it waits for the body of the run, which the shut gate holds, so the
+        // close runs in a task of its own until the test opens the gate.
+        let closing = Task { await session.close() }
+        _ = try #require(
+            await MountFixtures.poll {
+                await recorder.events.flatMap(\.operationEvents).first { $0.kind == .completed }
+            })
 
         let atClose = await sink.events
 
@@ -201,6 +208,8 @@ struct MountedRunSweptTerminalTests {
         // posts a terminal of its OWN, on the same correlation. That terminal
         // carries an outcome the journal never saw.
         await gate.open()
+        // The close returns only after the body of the run ended.
+        await closing.value
         let ownTerminal = try #require(
             await MountFixtures.poll {
                 await sink.events.first { $0.kind == .completed }

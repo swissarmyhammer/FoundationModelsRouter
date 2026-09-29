@@ -114,10 +114,12 @@ extension RoutedSessionActor: SessionMailObserver {
     /// The pump is a detached task: it inherits no task-local of the caller
     /// that woke it. So a ``ModelCallMark`` of a tool body that sent a
     /// message never reaches a submission of the pump.
+    ///
+    /// While a drain runs (``drainTask``), no pump starts.
     func wakePump() {
         pumpWakeRequested = true
         releasePumpAwaitingLetter()
-        guard pumpTask == nil else { return }
+        guard pumpTask == nil, drainTask == nil else { return }
         pumpTask = Task.detached { await self.runPump() }
     }
 
@@ -138,9 +140,10 @@ extension RoutedSessionActor: SessionMailObserver {
     ///
     /// A released pump (``releasePumpAwaitingLetter()``) is cancelled, so it
     /// ends, and it starts a new pump in its place: the new task is not
-    /// cancelled, so it can run the next answer.
+    /// cancelled, so it can run the next answer. A drain (``drainTask``) ends
+    /// the loop before its next work.
     private func runPump() async {
-        while !Task.isCancelled {
+        while !Task.isCancelled, drainTask == nil {
             pumpWakeRequested = false
             if !pendingCompactions.isEmpty {
                 await withSessionTelemetry { await runNextCallerCompaction() }
