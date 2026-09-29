@@ -77,7 +77,7 @@ let package = Package(
         ),
         .package(
             url: "https://github.com/apple/\(tracingPackage).git",
-            from: "1.4.1"
+            from: "1.5.0"
         ),
     ],
     targets: [
