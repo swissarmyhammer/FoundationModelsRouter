@@ -115,6 +115,36 @@ struct SlotPoolLoaderTests {
         }
     }
 
+    /// The error of ``DownloadThenFailLoader``.
+    private struct LoadFailure: Error {}
+
+    /// A router loader that downloads all the bytes of the model, and then
+    /// fails to load it.
+    private struct DownloadThenFailLoader: ModelLoader {
+        /// The download that each load reports: all the bytes.
+        static let download = DownloadProgress(bytesDownloaded: 2, bytesTotal: 2)
+
+        func loadLLM(
+            ref: ModelRef, slot: ModelSlot, context: Int,
+            reporting: @escaping @Sendable (DownloadProgress) -> Void
+        ) async throws -> any LoadedLLMContainer {
+            reporting(Self.download)
+            throw LoadFailure()
+        }
+
+        func loadEmbedder(
+            ref: ModelRef, slot: ModelSlot,
+            reporting: @escaping @Sendable (DownloadProgress) -> Void
+        ) async throws -> any LoadedEmbeddingContainer {
+            reporting(Self.download)
+            throw LoadFailure()
+        }
+
+        func preload(container: any LoadedModelContainer) async throws {}
+
+        func evict(container: any LoadedModelContainer) async {}
+    }
+
     /// Keeps each progress value that a `reporting` callback receives.
     private final class ProgressSink: Sendable {
         private let values = Mutex<[DownloadProgress]>([])
@@ -238,6 +268,72 @@ struct SlotPoolLoaderTests {
         #expect(routerLoader.calls == [.loadLLM(ref: Self.ref, slot: .standard, context: Self.context), .evict])
     }
 
+    // MARK: - The progress stream of the pool
+
+    @Test("a router load gives the bytes of its download to the progress stream of the pool")
+    func routerLoadGivesDownloadBytesToPoolStream() async throws {
+        let pool = FoundationModelsExtras.ModelPool()
+        let stream = pool.progress(for: Self.ref)
+        let slotLoader = SlotPoolLoader(
+            loader: RecordingModelLoader(), slot: .standard, context: Self.context, reporting: { _ in })
+
+        let hold = try await slotLoader.acquireHold(
+            of: Self.ref, in: pool, footprintBytes: Self.footprintBytes, sessionBytes: Self.sessionBytes)
+
+        let download = RecordingModelLoader.progress
+        #expect(
+            await Self.steps(of: stream) == [
+                .downloading(completedBytes: download.bytesDownloaded, totalBytes: download.bytesTotal),
+                .loading, .ready,
+            ])
+        withExtendedLifetime(hold) {}
+    }
+
+    @Test("a router download that has all its bytes reports the load to the progress stream of the pool")
+    func completeRouterDownloadReportsLoadToPoolStream() async throws {
+        let pool = FoundationModelsExtras.ModelPool()
+        let stream = pool.progress(for: Self.ref)
+        let slotLoader = SlotPoolLoader(
+            loader: DownloadThenFailLoader(), slot: .embedding, context: Self.context, reporting: { _ in })
+
+        await #expect(throws: LoadFailure.self) {
+            try await slotLoader.acquireHold(of: Self.ref, in: pool, footprintBytes: Self.footprintBytes, sessionBytes: 0)
+        }
+
+        // The load fails, thus the pool adds no load step of its own: the
+        // load step comes from the router loader.
+        let download = DownloadThenFailLoader.download
+        #expect(
+            await Self.steps(of: stream) == [
+                .downloading(completedBytes: download.bytesDownloaded, totalBytes: download.bytesTotal),
+                .loading, .failed(LoadFailure().localizedDescription),
+            ])
+    }
+
+    @Test("the live loader gives each step of its model loader to the pool, and the bytes to its callback")
+    func liveLoaderGivesStepsToPoolAndBytesToCallback() async throws {
+        let pool = FoundationModelsExtras.ModelPool()
+        let stream = pool.progress(for: Self.ref)
+        let sink = ProgressSink()
+        let loader = Self.makeLiveLoader(modelLoader: RecordingPoolLoader(), reporting: sink.record)
+
+        let hold = try await pool.acquire(
+            ModelPoolKey(ref: Self.ref, role: .embedding), footprintBytes: Self.footprintBytes, sessionBytes: 0,
+            loader: loader)
+
+        #expect(await Self.steps(of: stream) == Self.reportedSteps + [.ready])
+        #expect(sink.received == [Self.reportedDownload])
+        withExtendedLifetime(hold) {}
+    }
+
+    /// Gives each value of `stream`, until the stream ends.
+    ///
+    /// - Parameter stream: A progress stream of the pool.
+    /// - Returns: The values in order.
+    private static func steps(of stream: AsyncStream<ModelLoadProgress>) async -> [ModelLoadProgress] {
+        await stream.reduce(into: []) { steps, step in steps.append(step) }
+    }
+
     // MARK: - The live loader
 
     @Test("the live loader loads an embedding key through the Extras loader protocol with its model loader")
@@ -253,7 +349,7 @@ struct SlotPoolLoaderTests {
         #expect(modelLoader.loadedKeys == [key])
         #expect(embedding.dimension == Self.foreignVector.count)
         #expect(try await embedding.embed(texts: ["one"]) == [Self.foreignVector])
-        #expect(sink.received == [Self.halfDownloaded])
+        #expect(sink.received == [Self.reportedDownload])
     }
 
     @Test("the live loader loads an embedder of the router with its model loader")
@@ -267,7 +363,7 @@ struct SlotPoolLoaderTests {
         #expect(modelLoader.loadedKeys == [ModelPoolKey(ref: Self.ref, role: .embedding)])
         #expect(embedder.dimension == Self.foreignVector.count)
         #expect(try await embedder.embed(texts: ["one", "two"]) == [Self.foreignVector, Self.foreignVector])
-        #expect(sink.received == [Self.halfDownloaded])
+        #expect(sink.received == [Self.reportedDownload])
     }
 
     @Test("the live loader evicts an embedding container through its model loader")
@@ -300,10 +396,10 @@ struct SlotPoolLoaderTests {
 
         #expect(modelLoader.loadedKeys == [ModelPoolKey(ref: Self.ref, role: .llm)])
         #expect(
-            await BoundedWait.conditionReached("the standard slot shows half of the download") {
-                await progress.slots[.standard]?.bytesDownloaded == Self.halfDownloaded.bytesDownloaded
+            await BoundedWait.conditionReached("the standard slot shows the bytes of the download") {
+                await progress.slots[.standard]?.bytesDownloaded == Self.reportedDownload.bytesDownloaded
             })
-        #expect(progress.slots[.standard]?.bytesTotal == Self.halfDownloaded.bytesTotal)
+        #expect(progress.slots[.standard]?.bytesTotal == Self.reportedDownload.bytesTotal)
     }
 
     @Test("a generation load of the live loader that fails after the load gives the container back to its model loader")
@@ -343,18 +439,22 @@ struct SlotPoolLoaderTests {
 
     // MARK: - Live loader fixtures
 
-    /// The download fraction that ``RecordingPoolLoader`` reports.
-    private static let reportedFraction = 0.5
+    /// The bytes of the download that ``RecordingPoolLoader`` reports. They
+    /// are not a round part of the total, so a scale or a fraction does not
+    /// give them back.
+    private static let reportedDownload = DownloadProgress(bytesDownloaded: 3_000, bytesTotal: 7_000)
 
-    /// The router progress of ``reportedFraction``: that part of
-    /// ``LiveModelLoader/progressScale``.
-    private static let halfDownloaded = DownloadProgress(
-        bytesDownloaded: LiveModelLoader.progressScale / 2,
-        bytesTotal: LiveModelLoader.progressScale)
+    /// The steps that ``RecordingPoolLoader`` reports: the bytes of
+    /// ``reportedDownload``, and then the load.
+    private static let reportedSteps: [ModelLoadProgress] = [
+        .downloading(
+            completedBytes: reportedDownload.bytesDownloaded, totalBytes: reportedDownload.bytesTotal),
+        .loading,
+    ]
 
     /// A model loader in place of `MLXModelLoader`. It records each key it
     /// loads and the type of each container it evicts, and reports
-    /// ``reportedFraction`` of a download and then the load. It gives a
+    /// ``reportedSteps``. It gives a
     /// ``ForeignEmbedding`` for an embedding key, and a ``ForeignContainer``
     /// for a generation key: a real `MLXLanguageModel` would need the metal
     /// library when the live loader wraps it.
@@ -376,8 +476,7 @@ struct SlotPoolLoaderTests {
             key: ModelPoolKey, progressHandler: @escaping @Sendable (ModelLoadProgress) -> Void
         ) async throws -> any Sendable {
             recorded.withLock { $0.keys.append(key) }
-            progressHandler(.downloading(fraction: SlotPoolLoaderTests.reportedFraction))
-            progressHandler(.loading)
+            SlotPoolLoaderTests.reportedSteps.forEach(progressHandler)
             switch key.role {
             case .llm: return ForeignContainer()
             case .embedding: return ForeignEmbedding()

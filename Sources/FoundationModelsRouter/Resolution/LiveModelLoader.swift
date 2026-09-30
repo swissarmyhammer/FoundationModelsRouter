@@ -864,22 +864,18 @@ public enum LiveModelLoaderError: Error, Equatable, LocalizedError {
 /// It is also a loader of the Extras model pool (``PooledModelLoader``), which
 /// loads by ``ModelPoolKey`` only. An application that does not use a
 /// ``Router`` (for example a model registry) can make one and give it to the
-/// Extras pool. A load through the Extras protocol reports its download
-/// progress to the `reporting` callback of the init. A router load reports to
-/// the callback of its resolve.
+/// Extras pool. A load through the Extras protocol gives each step of the
+/// model loader to the progress handler of the pool, and the bytes of each
+/// download to the `reporting` callback of the init. A router load reports
+/// the bytes of each download to the callback of its resolve.
 public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     /// Receives the download progress of each load through the Extras loader
-    /// protocol, ``load(_:)``.
+    /// protocol: ``load(_:)`` and ``load(key:progressHandler:)``.
     private let reporting: @Sendable (DownloadProgress) -> Void
 
     /// The loader of each model: `MLXModelLoader` in a live loader. The pool
     /// evicts each container through it too.
     private let modelLoader: any PooledModelLoader
-
-    /// The total of the ``DownloadProgress`` of each load. `MLXModelLoader`
-    /// reports the part of the download that is done, not its bytes, so each
-    /// report of a load is that part of this scale.
-    static let progressScale: Int64 = 1_000_000
 
     /// Creates a live loader. The init needs no ``Router``.
     ///
@@ -888,7 +884,8 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     /// (`model-pool.md` §2.5): pass it to `Router.init(samplingMode:)`.
     ///
     /// - Parameter reporting: Receives the download progress of each load
-    ///   through ``load(_:)``. The default drops each value. A router load
+    ///   through ``load(_:)`` and ``load(key:progressHandler:)``. The default
+    ///   drops each value. A router load
     ///   does not use it: it reports to the callback of its resolve.
     public init(reporting: @escaping @Sendable (DownloadProgress) -> Void = { _ in }) {
         self.init(reporting: reporting, modelLoader: MLXModelLoader())
@@ -899,7 +896,7 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     ///
     /// - Parameters:
     ///   - reporting: Receives the download progress of each load through
-    ///     ``load(_:)``.
+    ///     ``load(_:)`` and ``load(key:progressHandler:)``.
     ///   - modelLoader: The loader of each model.
     init(reporting: @escaping @Sendable (DownloadProgress) -> Void, modelLoader: any PooledModelLoader) {
         self.reporting = reporting
@@ -909,7 +906,8 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     /// Loads the model of `key` for the Extras model pool: a generation model
     /// for ``ModelRole/llm`` and an embedding model for
     /// ``ModelRole/embedding``. Reports the download progress to the
-    /// `reporting` callback of the init.
+    /// `reporting` callback of the init. See
+    /// ``load(key:progressHandler:)``.
     ///
     /// - Parameter key: The model and its role.
     /// - Returns: A live generation container for ``ModelRole/llm``, or an
@@ -917,9 +915,33 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     /// - Throws: `CancellationError` when the calling task is cancelled, or if
     ///   the download or the load fails.
     public func load(_ key: ModelPoolKey) async throws -> any Sendable {
+        try await load(key: key) { _ in }
+    }
+
+    /// Loads the model of `key` for the Extras model pool, as ``load(_:)``
+    /// does. Gives each step of the model loader to `progressHandler`: the
+    /// real bytes of each download, and then the load. Also reports the bytes
+    /// of each download to the `reporting` callback of the init.
+    ///
+    /// - Parameters:
+    ///   - key: The model and its role.
+    ///   - progressHandler: Gets each step of the load. It can run on any
+    ///     thread.
+    /// - Returns: A live generation container for ``ModelRole/llm``, or an
+    ///   embedding container for ``ModelRole/embedding``.
+    /// - Throws: `CancellationError` when the calling task is cancelled, or if
+    ///   the download or the load fails.
+    public func load(
+        key: ModelPoolKey, progressHandler: @escaping @Sendable (ModelLoadProgress) -> Void
+    ) async throws -> any Sendable {
+        let reportDownload = Self.downloadHandler(reporting: reporting)
+        let handler: @Sendable (ModelLoadProgress) -> Void = { progress in
+            progressHandler(progress)
+            reportDownload(progress)
+        }
         switch key.role {
-        case .llm: try await loadGeneration(ref: key.ref, reporting: reporting)
-        case .embedding: try await loadEmbedding(ref: key.ref, reporting: reporting)
+        case .llm: return try await loadGeneration(ref: key.ref, progressHandler: handler)
+        case .embedding: return try await loadEmbedding(ref: key.ref, progressHandler: handler)
         }
     }
 
@@ -942,27 +964,27 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
         context: Int,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> any LoadedLLMContainer {
-        try await loadGeneration(ref: ref, reporting: reporting)
+        try await loadGeneration(ref: ref, progressHandler: Self.downloadHandler(reporting: reporting))
     }
 
-    /// Loads a generation model through the model loader, reports each
-    /// download step to `reporting` as a part of ``progressScale``, and wraps
+    /// Loads a generation model through the model loader, gives each step of
+    /// the load to `progressHandler`, and wraps
     /// the model in a live container. When the wrap fails, the model loader
     /// evicts the model, so no model stays in memory with no owner. See
     /// ``loadLLM(ref:slot:context:reporting:)``.
     ///
     /// - Parameters:
     ///   - ref: The model to load.
-    ///   - reporting: Receives each download-progress value.
+    ///   - progressHandler: Gets each step of the load.
     /// - Returns: The loaded generation container.
     /// - Throws: `CancellationError` when the calling task is cancelled, the
     ///   error of the model loader or of the wrap, or
     ///   ``LiveModelLoaderError/notAnMLXLanguageModel(key:containerType:)``.
     private func loadGeneration(
-        ref: ModelRef, reporting: @escaping @Sendable (DownloadProgress) -> Void
+        ref: ModelRef, progressHandler: @escaping @Sendable (ModelLoadProgress) -> Void
     ) async throws -> MLXFoundationModelsContainer {
         let key = ModelPoolKey(ref: ref, role: .llm)
-        let loaded = try await loadThroughModelLoader(key, reporting: reporting)
+        let loaded = try await loadThroughModelLoader(key, progressHandler: progressHandler)
         do {
             guard let model = loaded as? MLXLanguageModel else {
                 throw LiveModelLoaderError.notAnMLXLanguageModel(
@@ -993,64 +1015,63 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
         slot: ModelSlot,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> any LoadedEmbeddingContainer {
-        try await loadEmbedding(ref: ref, reporting: reporting)
+        try await loadEmbedding(ref: ref, progressHandler: Self.downloadHandler(reporting: reporting))
     }
 
-    /// Loads an embedding model through the model loader, and reports each
-    /// download step to `reporting` as a part of ``progressScale``. See
+    /// Loads an embedding model through the model loader, and gives each step
+    /// of the load to `progressHandler`. See
     /// ``loadEmbedder(ref:slot:reporting:)``.
     ///
     /// - Parameters:
     ///   - ref: The model to load.
-    ///   - reporting: Receives each download-progress value.
+    ///   - progressHandler: Gets each step of the load.
     /// - Returns: The loaded embedding container.
     /// - Throws: `CancellationError` when the calling task is cancelled, the
     ///   error of the model loader, or
     ///   ``PooledEmbedderError/notAnEmbedding(key:containerType:)``.
     private func loadEmbedding(
-        ref: ModelRef, reporting: @escaping @Sendable (DownloadProgress) -> Void
+        ref: ModelRef, progressHandler: @escaping @Sendable (ModelLoadProgress) -> Void
     ) async throws -> LoadedPooledEmbedding {
         let key = ModelPoolKey(ref: ref, role: .embedding)
-        let container = try await loadThroughModelLoader(key, reporting: reporting)
+        let container = try await loadThroughModelLoader(key, progressHandler: progressHandler)
         return try LoadedPooledEmbedding(container: container, of: key)
     }
 
-    /// Loads the model of `key` through the model loader, and reports each
-    /// download step to `reporting` as a part of ``progressScale``.
+    /// Loads the model of `key` through the model loader, and gives each step
+    /// of the load to `progressHandler`.
     ///
     /// Cancelling the calling task stops the wait. The transfer itself runs
     /// on (``CancellableWait``).
     ///
     /// - Parameters:
     ///   - key: The model and its role.
-    ///   - reporting: Receives each download-progress value.
+    ///   - progressHandler: Gets each step of the load.
     /// - Returns: The container that the model loader gave.
     /// - Throws: `CancellationError` when the calling task is cancelled, or
     ///   the error of the model loader.
     private func loadThroughModelLoader(
-        _ key: ModelPoolKey, reporting: @escaping @Sendable (DownloadProgress) -> Void
+        _ key: ModelPoolKey, progressHandler: @escaping @Sendable (ModelLoadProgress) -> Void
     ) async throws -> any Sendable {
         let modelLoader = self.modelLoader
         return try await CancellableWait.value {
-            try await modelLoader.load(key: key) { progress in
-                guard let download = Self.downloadProgress(of: progress) else { return }
-                reporting(download)
-            }
+            try await modelLoader.load(key: key, progressHandler: progressHandler)
         }
     }
 
-    /// Maps one step of a load to the router progress: the fraction of a
-    /// download as that part of ``progressScale``. The router shows the load
+    /// A progress handler that gives the bytes of each download step to
+    /// `reporting`, and ignores each other step. The router shows the load
     /// step itself: a resolve marks a slot `loading` when the acquire of the
     /// slot returns.
     ///
-    /// - Parameter progress: A step that the model loader reported.
-    /// - Returns: The router progress of a download step, or `nil` for a step
-    ///   that is not a download.
-    private static func downloadProgress(of progress: ModelLoadProgress) -> DownloadProgress? {
-        guard case .downloading(let fraction) = progress else { return nil }
-        let bytesDownloaded = Int64((fraction * Double(progressScale)).rounded())
-        return DownloadProgress(bytesDownloaded: bytesDownloaded, bytesTotal: progressScale)
+    /// - Parameter reporting: Receives the bytes of each download step.
+    /// - Returns: The progress handler.
+    private static func downloadHandler(
+        reporting: @escaping @Sendable (DownloadProgress) -> Void
+    ) -> @Sendable (ModelLoadProgress) -> Void {
+        { progress in
+            guard case .downloading(let completedBytes, let totalBytes) = progress else { return }
+            reporting(DownloadProgress(bytesDownloaded: completedBytes, bytesTotal: totalBytes))
+        }
     }
 
     /// A no-op: the load paths already load weights.

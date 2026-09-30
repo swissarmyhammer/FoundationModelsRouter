@@ -33,19 +33,57 @@ struct SlotPoolLoader: PooledModelLoader {
     let reporting: @Sendable (DownloadProgress) -> Void
 
     /// Loads the model of `key` through the router loader, with the slot data
-    /// of this loader. The role of `key` selects the generation load or the
-    /// embedding load.
+    /// of this loader. See ``load(key:progressHandler:)``.
     ///
     /// - Parameter key: The model and its role.
     /// - Returns: The loaded container.
     /// - Throws: What the router loader throws.
     func load(_ key: ModelPoolKey) async throws -> any Sendable {
+        try await load(key: key) { _ in }
+    }
+
+    /// Loads the model of `key` through the router loader, with the slot data
+    /// of this loader. The role of `key` selects the generation load or the
+    /// embedding load.
+    ///
+    /// Each download value of the router loader goes to ``reporting``, which
+    /// is the one progress path of the resolve. The same bytes also go to
+    /// `progressHandler`, thus the progress stream of the pool shows them too
+    /// (``poolProgress(of:)``).
+    ///
+    /// - Parameters:
+    ///   - key: The model and its role.
+    ///   - progressHandler: The handler that the pool gives to each load.
+    /// - Returns: The loaded container.
+    /// - Throws: What the router loader throws.
+    func load(
+        key: ModelPoolKey, progressHandler: @escaping @Sendable (ModelLoadProgress) -> Void
+    ) async throws -> any Sendable {
+        let reporting = self.reporting
+        let forward: @Sendable (DownloadProgress) -> Void = { download in
+            reporting(download)
+            Self.poolProgress(of: download).forEach(progressHandler)
+        }
         switch key.role {
         case .llm:
-            try await loader.loadLLM(ref: key.ref, slot: slot, context: context, reporting: reporting)
+            return try await loader.loadLLM(ref: key.ref, slot: slot, context: context, reporting: forward)
         case .embedding:
-            try await loader.loadEmbedder(ref: key.ref, slot: slot, reporting: reporting)
+            return try await loader.loadEmbedder(ref: key.ref, slot: slot, reporting: forward)
         }
+    }
+
+    /// The pool steps of one download value of the router loader: the
+    /// download with its bytes, and then the load when the download has all
+    /// its bytes. The pool adds the load step itself when a load ends with no
+    /// complete download, for example when the cache holds the model.
+    ///
+    /// - Parameter download: A download value of the router loader.
+    /// - Returns: The steps to give to the pool, in order.
+    private static func poolProgress(of download: DownloadProgress) -> [ModelLoadProgress] {
+        let step = ModelLoadProgress.downloading(
+            completedBytes: download.bytesDownloaded, totalBytes: download.bytesTotal)
+        let isComplete = download.bytesTotal > 0 && download.bytesDownloaded >= download.bytesTotal
+        return isComplete ? [step, .loading] : [step]
     }
 
     /// Evicts a container that ``load(_:)`` returned, through
