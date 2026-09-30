@@ -219,6 +219,32 @@ struct ExtrasPoolResolveTests {
         #expect(directHold == nil)
     }
 
+    @Test("a PooledEmbedder of the embedding model of a resolve embeds with the model of the router and loads nothing")
+    @MainActor
+    func pooledEmbedderOfResolvedNameSharesTheResidentModel() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "ExtrasPoolResolveTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let poolLoader = DirectLoader(log: nil)
+        let pool = ModelPool(loader: poolLoader)
+        let spy = LoadSpy()
+        let router = ResidencyFixtures.makeRouter(
+            spy: spy, recommendedMaxWorkingSetSize: Self.ampleBudget, cacheDir: dir, pool: pool)
+        let trio = Self.uniqueTrio(named: "pooled-embedder")
+        let embeddingRef = try #require(trio.embedding.first)
+
+        let profile = try await router.resolve(profile: trio, reporting: ResolutionProgress())
+        let vectors = try await PooledEmbedder(ref: embeddingRef, pool: pool).embed(texts: ["one", "two"])
+
+        // One load of the embedding model in all: the router loaded it, and
+        // the embedder took a hold of that model. The loader of the pool
+        // loaded nothing.
+        #expect(await spy.embedderLoads == [embeddingRef])
+        #expect(poolLoader.loadCount.load(ordering: .sequentiallyConsistent) == 0)
+        #expect(vectors.count == 2)
+        #expect(vectors.allSatisfy { $0.count == RouterTestFixtures.stubDimension })
+        #expect(profile.embedding.dimension == RouterTestFixtures.stubDimension)
+    }
+
     @Test("a direct acquire of a new key during a resolve loads only after the admission job of the router ends")
     @MainActor
     func directLoadWaitsForTheAdmissionJobOfTheRouter() async throws {

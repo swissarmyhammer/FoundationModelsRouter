@@ -12,17 +12,24 @@ struct PooledEmbeddingContainer: LoadedEmbeddingContainer {
     /// The embedder over the hold.
     private let embedder: PooledEmbedder
 
+    /// The length of each vector: the dimension of the container of the hold.
+    /// ``PooledEmbedder`` gives no dimension, so the init reads it one time
+    /// from the container.
+    let dimension: Int
+
     /// Makes the container of an embedding hold.
     ///
     /// - Parameter hold: A hold of an embedding model.
     /// - Throws: ``PooledEmbedderError/notAnEmbedding(key:containerType:)``
     ///   when the container of `hold` does not conform to ``PooledEmbedding``.
     init(hold: ModelHold) throws {
+        guard let embedding = hold.container as? any PooledEmbedding else {
+            throw PooledEmbedderError.notAnEmbedding(
+                key: hold.key, containerType: String(describing: type(of: hold.container)))
+        }
         embedder = try PooledEmbedder(hold: hold)
+        dimension = embedding.dimension
     }
-
-    /// The length of each vector.
-    var dimension: Int { embedder.dimension }
 
     /// Gives one vector for each text, in the order of `texts`.
     ///

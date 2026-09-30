@@ -129,16 +129,13 @@ struct SlotPoolLoaderTests {
     /// The failure of ``FailingDownloader``.
     private struct DownloadFailure: Error, Equatable {}
 
-    /// A downloader that reports one progress value and then fails, so a live
-    /// load stops before it reads a file.
+    /// A downloader that fails, so a live load that reaches it stops before it
+    /// reads a file.
     private struct FailingDownloader: Downloader {
         func download(
             id: String, revision: String?, matching patterns: [String], useLatest: Bool,
             progressHandler: @Sendable @escaping (Progress) -> Void
         ) async throws -> URL {
-            let progress = Progress(totalUnitCount: 2)
-            progress.completedUnitCount = 1
-            progressHandler(progress)
             throw DownloadFailure()
         }
     }
@@ -172,7 +169,7 @@ struct SlotPoolLoaderTests {
 
         let hold = try await slotLoader.acquireHold(
             of: Self.ref, in: pool, footprintBytes: Self.footprintBytes, sessionBytes: 0)
-        let embedder = try PooledEmbedder(hold: hold)
+        let embedder = try PooledEmbeddingContainer(hold: hold)
         let vectors = try await embedder.embed(texts: ["one", "two"])
 
         #expect(hold.key == key)
@@ -234,7 +231,7 @@ struct SlotPoolLoaderTests {
 
         let hold = try await slotLoader.acquireHold(
             of: Self.ref, in: pool, footprintBytes: Self.footprintBytes, sessionBytes: 0)
-        let embedder = try PooledEmbedder(hold: hold)
+        let embedder = try PooledEmbeddingContainer(hold: hold)
 
         #expect(hold.key == ModelPoolKey(ref: Self.ref, role: .embedding))
         #expect(embedder.dimension == StubEmbeddingContainer().dimension)
@@ -262,17 +259,105 @@ struct SlotPoolLoaderTests {
 
     // MARK: - The live loader
 
-    @Test("the live loader loads an embedding key through the Extras loader protocol")
-    func liveLoaderLoadsThroughExtrasProtocol() async throws {
+    @Test("the live loader loads an embedding key through the Extras loader protocol with its embedding loader")
+    func liveLoaderLoadsEmbeddingKeyWithEmbeddingLoader() async throws {
         let sink = ProgressSink()
-        let loader: any PooledModelLoader = LiveModelLoader(
-            downloader: FailingDownloader(), tokenizerLoader: UnusedTokenizerLoader(),
-            reporting: sink.record)
+        let embeddingLoader = RecordingEmbeddingLoader()
+        let loader: any PooledModelLoader = Self.makeLiveLoader(
+            embeddingLoader: embeddingLoader, reporting: sink.record)
+        let key = ModelPoolKey(ref: Self.ref, role: .embedding)
 
-        await #expect(throws: DownloadFailure()) {
-            _ = try await loader.load(ModelPoolKey(ref: Self.ref, role: .embedding))
+        let container = try await loader.load(key)
+        let embedding = try #require(container as? any PooledEmbedding)
+
+        #expect(embeddingLoader.loadedKeys == [key])
+        #expect(embedding.dimension == Self.foreignVector.count)
+        #expect(try await embedding.embed(texts: ["one"]) == [Self.foreignVector])
+        #expect(sink.received == [Self.halfDownloaded])
+    }
+
+    @Test("the live loader loads an embedder of the router with its embedding loader")
+    func liveLoaderLoadsEmbedderWithEmbeddingLoader() async throws {
+        let sink = ProgressSink()
+        let embeddingLoader = RecordingEmbeddingLoader()
+        let loader = Self.makeLiveLoader(embeddingLoader: embeddingLoader, reporting: { _ in })
+
+        let embedder = try await loader.loadEmbedder(ref: Self.ref, slot: .embedding, reporting: sink.record)
+
+        #expect(embeddingLoader.loadedKeys == [ModelPoolKey(ref: Self.ref, role: .embedding)])
+        #expect(embedder.dimension == Self.foreignVector.count)
+        #expect(try await embedder.embed(texts: ["one", "two"]) == [Self.foreignVector, Self.foreignVector])
+        #expect(sink.received == [Self.halfDownloaded])
+    }
+
+    @Test("the live loader evicts an embedding container through its embedding loader")
+    func liveLoaderEvictsEmbeddingThroughEmbeddingLoader() async throws {
+        let embeddingLoader = RecordingEmbeddingLoader()
+        let loader = Self.makeLiveLoader(embeddingLoader: embeddingLoader, reporting: { _ in })
+        let embedder = try await loader.loadEmbedder(ref: Self.ref, slot: .embedding, reporting: { _ in })
+
+        await loader.evict(container: embedder)
+
+        #expect(embeddingLoader.evictionCount == 1)
+    }
+
+    // MARK: - Live loader fixtures
+
+    /// The download fraction that ``RecordingEmbeddingLoader`` reports.
+    private static let reportedFraction = 0.5
+
+    /// The router progress of ``reportedFraction``: that part of
+    /// ``LiveModelLoader/embeddingProgressScale``.
+    private static let halfDownloaded = DownloadProgress(
+        bytesDownloaded: LiveModelLoader.embeddingProgressScale / 2,
+        bytesTotal: LiveModelLoader.embeddingProgressScale)
+
+    /// An embedding loader in place of `MLXModelLoader`. It records each key
+    /// it loads and each eviction, reports ``reportedFraction`` of a download
+    /// and then the load, and gives a ``ForeignEmbedding``.
+    private final class RecordingEmbeddingLoader: PooledModelLoader {
+        /// The keys and the count of evictions, under one lock.
+        private let recorded = Mutex<(keys: [ModelPoolKey], evictions: Int)>(([], 0))
+
+        /// The keys of each load, in the order the loads came.
+        var loadedKeys: [ModelPoolKey] { recorded.withLock { $0.keys } }
+
+        /// The count of the evictions.
+        var evictionCount: Int { recorded.withLock { $0.evictions } }
+
+        func load(_ key: ModelPoolKey) async throws -> any Sendable {
+            try await load(key: key) { _ in }
         }
-        #expect(sink.received == [DownloadProgress(bytesDownloaded: 1, bytesTotal: 2)])
+
+        func load(
+            key: ModelPoolKey, progressHandler: @escaping @Sendable (ModelLoadProgress) -> Void
+        ) async throws -> any Sendable {
+            recorded.withLock { $0.keys.append(key) }
+            progressHandler(.downloading(fraction: SlotPoolLoaderTests.reportedFraction))
+            progressHandler(.loading)
+            return ForeignEmbedding()
+        }
+
+        func evict(_ container: any Sendable) async {
+            recorded.withLock { $0.evictions += 1 }
+        }
+    }
+
+    /// Makes a live loader whose embedding loads go to `embeddingLoader`. Its
+    /// downloader fails, so a generation load by mistake fails.
+    ///
+    /// - Parameters:
+    ///   - embeddingLoader: The loader of each embedding model.
+    ///   - reporting: Receives the progress of each load through the Extras
+    ///     loader protocol.
+    /// - Returns: The live loader.
+    private static func makeLiveLoader(
+        embeddingLoader: any PooledModelLoader, reporting: @escaping @Sendable (DownloadProgress) -> Void
+    ) -> LiveModelLoader {
+        LiveModelLoader(
+            downloader: FailingDownloader(), tokenizerLoader: UnusedTokenizerLoader(),
+            weightsLocation: { _ in FileManager.default.temporaryDirectory },
+            reporting: reporting, embeddingLoader: embeddingLoader)
     }
 }
 

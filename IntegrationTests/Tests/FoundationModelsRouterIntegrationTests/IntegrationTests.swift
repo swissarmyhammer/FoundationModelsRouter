@@ -506,8 +506,9 @@ struct IntegrationTests {
     /// and expects each batch vector to equal the vector of its text alone.
     ///
     /// Loads only the embedder of ``gatedRealProfile``, through the real
-    /// ``LiveModelLoader``: the question is the embed body of
-    /// `LiveEmbeddingContainer`, not the resolver that ``endToEnd()`` drives.
+    /// ``LiveModelLoader``: the question is the embed body of the embedding
+    /// model that the Extras `MLXModelLoader` loads, not the resolver that
+    /// ``endToEnd()`` drives.
     @Test("a batch vector equals the vector of the same text embedded alone")
     func batchVectorEqualsVectorOfTextAlone() async throws {
         let loader = Self.makeLiveLoader()

@@ -1,7 +1,6 @@
 import Foundation
 import FoundationModels
-import MLX
-import MLXEmbedders
+import FoundationModelsExtras
 import MLXFoundationModels
 import MLXLLM
 import MLXLMCommon
@@ -22,7 +21,8 @@ import Synchronization
 // orchestration the unit suite drives with stubs. These are the milestone-7
 // live seams: ``MLXFoundationModelsContainer`` runs the real `LanguageModelSession`
 // (`FoundationModels`) pipeline over an `MLXLanguageModel` conformance, and
-// ``LiveEmbeddingContainer`` wraps `MLXEmbedders` with a probed dimension.
+// ``LoadedPooledEmbedding`` gives the router the embedding model that the
+// Extras `MLXModelLoader` loads.
 //
 // **No `MLXLMCommon.ChatSession` and no hand-rolled generation loop.** The
 // session surface every generation call runs through is Apple's own
@@ -790,53 +790,41 @@ extension MLXFoundationModelsSessionBackend: SessionPromptCacheScoping {
     }
 }
 
-/// The live embedding container. Wraps a loaded `EmbedderModelContainer` and
-/// the ``dimension`` probed at load.
-final class LiveEmbeddingContainer: LoadedEmbeddingContainer, Sendable {
-    /// The loaded MLX embedder container the computation runs through.
-    private let container: EmbedderModelContainer
+/// The router container of an embedding model that the embedding loader of
+/// ``LiveModelLoader`` loaded, for example the Extras `MLXModelLoader`. The
+/// router makes no MLX embedder itself: this container only gives the
+/// router's ``LoadedEmbeddingContainer`` shape to the ``PooledEmbedding`` of
+/// that loader.
+struct LoadedPooledEmbedding: LoadedEmbeddingContainer {
+    /// The embedding model that the embedding loader returned. The eviction
+    /// gives it back to that loader.
+    let embedding: any PooledEmbedding
 
-    /// The length of every embedding vector this model produces, probed at load.
-    let dimension: Int
-
-    /// Creates a live embedding container over a loaded MLX container and its probed embedding dimension.
-    init(container: EmbedderModelContainer, dimension: Int) {
-        self.container = container
-        self.dimension = dimension
-    }
-
-    /// Embeds each input into a ``dimension``-length, L2-normalized vector through the real `MLXEmbedders` pipeline.
-    func embed(texts: [String]) async throws -> [[Float]] {
-        try await Self.embed(texts: texts, in: container)
-    }
-
-    /// Embeds `texts` through `container`. Static so a loader can probe the
-    /// dimension at load.
+    /// Takes the container that the embedding loader returned for `key`.
     ///
-    /// The texts go to the model as one right-padded batch. The mask of the
-    /// batch (``PaddedTokenBatch/mask``) goes to the model and to the pooling,
-    /// so each vector is the vector of its own text and not of the pads after
-    /// it (task ^nmmnn7k).
-    ///
-    /// - Returns: One vector per input string.
-    static func embed(texts: [String], in container: EmbedderModelContainer) async throws -> [[Float]] {
-        guard !texts.isEmpty else { return [] }
-        return await container.perform { context in
-            let tokenizer = context.tokenizer
-            let batch = PaddedTokenBatch(
-                rows: texts.map { tokenizer.encode(text: $0, addSpecialTokens: true) },
-                padToken: tokenizer.eosTokenId ?? 0
-            )
-            let padded = MLXArray(batch.tokens.flatMap { $0 }, batch.shape)
-            let mask = MLXArray(batch.mask.flatMap { $0 }, batch.shape)
-            let tokenTypes = MLXArray.zeros(like: padded)
-            let output = context.model(
-                padded, positionIds: nil, tokenTypeIds: tokenTypes, attentionMask: mask
-            )
-            let pooled = context.pooling(output, mask: mask, normalize: true, applyLayerNorm: true)
-            pooled.eval()
-            return pooled.map { $0.asArray(Float.self) }
+    /// - Parameters:
+    ///   - container: The container that the embedding loader returned.
+    ///   - key: The embedding key of the load.
+    /// - Throws: ``PooledEmbedderError/notAnEmbedding(key:containerType:)``
+    ///   when `container` does not conform to ``PooledEmbedding``.
+    init(container: any Sendable, of key: ModelPoolKey) throws {
+        guard let embedding = container as? any PooledEmbedding else {
+            throw PooledEmbedderError.notAnEmbedding(
+                key: key, containerType: String(describing: type(of: container)))
         }
+        self.embedding = embedding
+    }
+
+    /// The length of each vector of ``embedding``.
+    var dimension: Int { embedding.dimension }
+
+    /// Gives one vector for each text through ``embedding``.
+    ///
+    /// - Parameter texts: The texts.
+    /// - Returns: One vector for each text, in the order of `texts`.
+    /// - Throws: What the embedding model throws.
+    func embed(texts: [String]) async throws -> [[Float]] {
+        try await embedding.embed(texts: texts)
     }
 }
 
@@ -846,9 +834,11 @@ enum ModelLoaderError: Error, Equatable {
     case notConfigured
 }
 
-/// The live ``ModelLoader``. Downloads weights through an injected
-/// `Downloader` and `TokenizerLoader`. Makes an ``MLXFoundationModelsContainer``
-/// for generation and a ``LiveEmbeddingContainer`` for embedding.
+/// The live ``ModelLoader``. Downloads the weights of a generation model
+/// through an injected `Downloader` and `TokenizerLoader`, and makes an
+/// ``MLXFoundationModelsContainer``. An embedding model loads through the
+/// Extras `MLXModelLoader`, the one MLX loader of the family, and the router
+/// gets it as a ``LoadedPooledEmbedding``.
 ///
 /// It is also a loader of the Extras model pool (``PooledModelLoader``), which
 /// loads by ``ModelPoolKey`` only. An application that does not use a
@@ -871,6 +861,16 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     /// protocol, ``load(_:)``.
     private let reporting: @Sendable (DownloadProgress) -> Void
 
+    /// The loader of each embedding model: `MLXModelLoader` in a live
+    /// loader. The pool evicts an embedding container through it too.
+    private let embeddingLoader: any PooledModelLoader
+
+    /// The total of the ``DownloadProgress`` of an embedding load.
+    /// `MLXModelLoader` reports the part of the download that is done, not
+    /// its bytes, so each report of an embedding load is that part of this
+    /// scale.
+    static let embeddingProgressScale: Int64 = 1_000_000
+
     /// Creates a live loader. The init needs no ``Router``.
     ///
     /// The loader stores no decoding strategy. A container it vends serves
@@ -892,10 +892,33 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
         },
         reporting: @escaping @Sendable (DownloadProgress) -> Void = { _ in }
     ) {
+        self.init(
+            downloader: downloader, tokenizerLoader: tokenizerLoader, weightsLocation: weightsLocation,
+            reporting: reporting, embeddingLoader: MLXModelLoader())
+    }
+
+    /// Creates a live loader whose embedding models load through
+    /// `embeddingLoader`. A test gives a loader that needs no network.
+    ///
+    /// - Parameters:
+    ///   - downloader: The source that fetches model and tokenizer files.
+    ///   - tokenizerLoader: The factory that loads a tokenizer from downloaded files.
+    ///   - weightsLocation: Resolves a model id to its on-disk weights directory.
+    ///   - reporting: Receives the download progress of each load through
+    ///     ``load(_:)``.
+    ///   - embeddingLoader: The loader of each embedding model.
+    init(
+        downloader: any Downloader,
+        tokenizerLoader: any TokenizerLoader,
+        weightsLocation: @escaping @Sendable (String) -> URL,
+        reporting: @escaping @Sendable (DownloadProgress) -> Void,
+        embeddingLoader: any PooledModelLoader
+    ) {
         self.downloader = downloader
         self.tokenizerLoader = tokenizerLoader
         self.weightsLocation = weightsLocation
         self.reporting = reporting
+        self.embeddingLoader = embeddingLoader
     }
 
     /// Loads the model of `key` for the Extras model pool: a generation model
@@ -904,7 +927,7 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     /// `reporting` callback of the init.
     ///
     /// - Parameter key: The model and its role.
-    /// - Returns: An ``MLXFoundationModelsContainer`` or a ``LiveEmbeddingContainer``.
+    /// - Returns: An ``MLXFoundationModelsContainer`` or a ``LoadedPooledEmbedding``.
     /// - Throws: `CancellationError` when the calling task is cancelled, or if
     ///   the download or the load fails.
     public func load(_ key: ModelPoolKey) async throws -> any Sendable {
@@ -1015,16 +1038,19 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
         return try RepoMetadata.nativeMaxContext(configJSON: configJSON, repo: repo)
     }
 
-    /// Downloads and loads an embedding model. One probe embedding finds the
-    /// dimension before the container is returned. The live loader does not
-    /// use `slot`.
+    /// Loads an embedding model through the embedding loader: the Extras
+    /// `MLXModelLoader` in a live loader, which downloads the model when the
+    /// cache does not hold it and finds its dimension. The live loader does
+    /// not use `slot`.
     ///
     /// Cancelling the calling task stops the wait. The transfer itself runs on,
     /// which is what keeps the part files filling the Hugging Face cache — see
     /// ``CancellableWait``.
     ///
-    /// - Throws: `CancellationError` when the calling task is cancelled, or if
-    ///   the download, MLX container load, or dimension probe fails.
+    /// - Throws: `CancellationError` when the calling task is cancelled, the
+    ///   error of the embedding loader, or
+    ///   ``PooledEmbedderError/notAnEmbedding(key:containerType:)`` when the
+    ///   embedding loader gives no ``PooledEmbedding``.
     public func loadEmbedder(
         ref: ModelRef,
         slot: ModelSlot,
@@ -1033,31 +1059,41 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
         try await loadEmbedding(ref: ref, reporting: reporting)
     }
 
-    /// Downloads and loads an embedding model, and reports the download
-    /// progress to `reporting`. See ``loadEmbedder(ref:slot:reporting:)``.
+    /// Loads an embedding model through the embedding loader, and reports
+    /// each download step to `reporting` as a part of
+    /// ``embeddingProgressScale``. See ``loadEmbedder(ref:slot:reporting:)``.
     ///
     /// - Parameters:
-    ///   - ref: The model to download and load.
+    ///   - ref: The model to load.
     ///   - reporting: Receives each download-progress value.
     /// - Returns: The loaded embedding container.
-    /// - Throws: `CancellationError` when the calling task is cancelled, or if
-    ///   the download, MLX container load, or dimension probe fails.
+    /// - Throws: `CancellationError` when the calling task is cancelled, the
+    ///   error of the embedding loader, or
+    ///   ``PooledEmbedderError/notAnEmbedding(key:containerType:)``.
     private func loadEmbedding(
         ref: ModelRef, reporting: @escaping @Sendable (DownloadProgress) -> Void
-    ) async throws -> LiveEmbeddingContainer {
-        let downloader = self.downloader
-        let tokenizerLoader = self.tokenizerLoader
-        let modelConfiguration = configuration(for: ref)
+    ) async throws -> LoadedPooledEmbedding {
+        let key = ModelPoolKey(ref: ref, role: .embedding)
+        let embeddingLoader = self.embeddingLoader
         let container = try await CancellableWait.value {
-            try await EmbedderModelFactory.shared.loadContainer(
-                from: downloader,
-                using: tokenizerLoader,
-                configuration: modelConfiguration,
-                progressHandler: Self.handler(reporting: reporting)
-            )
+            try await embeddingLoader.load(key: key) { progress in
+                guard let download = Self.downloadProgress(of: progress) else { return }
+                reporting(download)
+            }
         }
-        let probe = try await LiveEmbeddingContainer.embed(texts: ["dimension probe"], in: container)
-        return LiveEmbeddingContainer(container: container, dimension: probe.first?.count ?? 0)
+        return try LoadedPooledEmbedding(container: container, of: key)
+    }
+
+    /// Maps one step of an embedding load to the router progress: the
+    /// fraction of a download as that part of ``embeddingProgressScale``.
+    ///
+    /// - Parameter progress: A step that the embedding loader reported.
+    /// - Returns: The router progress of a download step, or `nil` for a step
+    ///   that is not a download.
+    private static func downloadProgress(of progress: ModelLoadProgress) -> DownloadProgress? {
+        guard case .downloading(let fraction) = progress else { return nil }
+        let bytesDownloaded = Int64((fraction * Double(embeddingProgressScale)).rounded())
+        return DownloadProgress(bytesDownloaded: bytesDownloaded, bytesTotal: embeddingProgressScale)
     }
 
     /// Builds the MLX `ModelConfiguration` for a model ref. An unpinned ref
@@ -1069,22 +1105,29 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     /// A no-op: the load paths already load weights.
     public func preload(container: any LoadedModelContainer) async throws {}
 
-    /// Evicts a live generation container from the `MLXLanguageModel` cache.
-    /// A no-op for any other container. The router eviction goes through the
-    /// Extras loader protocol, ``evict(_:)``.
+    /// Evicts a live generation container from the `MLXLanguageModel` cache,
+    /// and gives an embedding container back to the embedding loader. A no-op
+    /// for any other container. The router eviction goes through the Extras
+    /// loader protocol, ``evict(_:)``.
     public func evict(container: any LoadedModelContainer) async {
         await evict(container as any Sendable)
     }
 
     /// Evicts a container that ``load(_:)`` returned, for the Extras model
-    /// pool: a live generation container leaves the `MLXLanguageModel` cache.
-    /// A no-op for any other container: an embedding container keeps no
-    /// cache, and the pool drops its last reference.
+    /// pool: a live generation container leaves the `MLXLanguageModel` cache,
+    /// and the embedding loader evicts the model of an embedding container.
+    /// A no-op for any other container.
     ///
     /// - Parameter container: The container to evict.
     public func evict(_ container: any Sendable) async {
-        guard let generation = container as? MLXFoundationModelsContainer else { return }
-        await generation.model.evict()
+        switch container {
+        case let generation as MLXFoundationModelsContainer:
+            await generation.model.evict()
+        case let embedding as LoadedPooledEmbedding:
+            await embeddingLoader.evict(embedding.embedding)
+        default:
+            return
+        }
     }
 
     /// Sends the memory budget to the process-wide prompt cache of the fork,
