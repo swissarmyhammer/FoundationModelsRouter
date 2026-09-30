@@ -1,5 +1,4 @@
 import Foundation
-import InMemoryLogging
 import InMemoryTracing
 import Logging
 import TelemetryTestSupport
@@ -123,7 +122,7 @@ struct EnterRecordTests {
     ///   - key: The metadata key.
     /// - Returns: The text of the value, or an empty string when the record
     ///   has no value under `key`.
-    private static func text(of record: InMemoryLogHandler.Entry, key: String) -> String {
+    private static func text(of record: TelemetryCapture.LogRecord, key: String) -> String {
         record.metadata[key].map { "\($0)" } ?? ""
     }
 
