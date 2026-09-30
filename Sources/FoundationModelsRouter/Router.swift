@@ -476,8 +476,8 @@ public actor Router {
         return AdmittedResolve(
             resolution: resolution,
             holds: [standard.hold, flash.hold, embedding.hold],
-            standard: try standard.hold.generationContainer(),
-            flash: try flash.hold.generationContainer(),
+            standard: try await standard.hold.generationContainer(),
+            flash: try await flash.hold.generationContainer(),
             embedding: try PooledEmbeddingContainer(hold: embedding.hold)
         )
     }

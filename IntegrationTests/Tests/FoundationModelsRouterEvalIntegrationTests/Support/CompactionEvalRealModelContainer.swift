@@ -1,9 +1,6 @@
 import Foundation
 import FoundationModels
-import HuggingFace
-import MLXHuggingFace
 import MLXLMCommon
-import Tokenizers
 
 @testable import FoundationModelsRouter
 @testable import FoundationModelsRouterEvalSupport
@@ -13,8 +10,8 @@ import Tokenizers
 /// a gated eval tier in this target puts its real model into a concrete
 /// ``MLXFoundationModelsContainer``.
 ///
-/// The load has three steps. It builds a ``LiveModelLoader`` over the fork's
-/// two Hub macros. It loads the `.standard` slot at the tier's own context.
+/// The load has three steps. It builds a ``LiveModelLoader``, which loads
+/// through the Extras `MLXModelLoader`. It loads the `.standard` slot at the tier's own context.
 /// Then it narrows the returned `any LoadedLLMContainer` to the concrete
 /// type. The tier gives the model, the context, the mode and the error as
 /// parameters. The continuity tier gives ``CompactionContinuityRealModel``.
@@ -106,11 +103,7 @@ struct CompactionEvalRealModelContainer: Sendable {
         let modelName = ref.stringValue
         CompactionEvalProgressLog.emit(CompactionEvalProgressLog.makeModelLoadStartedLine(ref: modelName))
         let startedAt = Date()
-        let loader = LiveModelLoader(
-            downloader: #hubDownloader(),
-            tokenizerLoader: #huggingFaceTokenizerLoader()
-        )
-        let loaded = try await loader.loadLLM(
+        let loaded = try await LiveModelLoader().loadLLM(
             ref: ref,
             slot: .standard,
             context: context,

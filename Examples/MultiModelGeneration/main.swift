@@ -1,10 +1,6 @@
 import Foundation
 import FoundationModelsRouter
-import HuggingFace
 import Logging
-import MLXHuggingFace
-import MLXLMCommon
-import Tokenizers
 
 // Standard output carries the output of the program, so each log line goes
 // to standard error. This runs one time, before any log call.
@@ -162,19 +158,15 @@ func printSubmissionEnd(_ end: SubmissionEnd, label: String) {
 let startedAt = Date()
 
 // In production you build a `Router` with a durable `recordingsDir` and a
-// `LiveModelLoader` configured with a real `Downloader`/`TokenizerLoader`. The
-// `MLXHuggingFace` macros `#hubDownloader()` / `#huggingFaceTokenizerLoader()`
-// expand to code that supplies both, backed by the `HuggingFace` and
-// `Tokenizers` packages linked into this target.
+// `LiveModelLoader`. The live loader loads each model through the Extras
+// `MLXModelLoader`, which downloads a model from Hugging Face when the cache
+// does not hold it.
 let recordingsDir = FileManager.default.temporaryDirectory
     .appendingPathComponent("MultiModelGeneration-\(UUID().uuidString)", isDirectory: true)
 
 let router = Router(
     recordingsDir: recordingsDir,
-    loader: LiveModelLoader(
-        downloader: #hubDownloader(),
-        tokenizerLoader: #huggingFaceTokenizerLoader()
-    )
+    loader: LiveModelLoader()
 )
 
 // MARK: - Author a profile with two distinct generation models

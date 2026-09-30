@@ -2,7 +2,7 @@ import Foundation
 import FoundationModels
 import FoundationModelsExtras
 import FoundationModelsRouterTestSupport
-import MLXLMCommon
+import MLXFoundationModels
 import Synchronization
 import Testing
 
@@ -126,25 +126,6 @@ struct SlotPoolLoaderTests {
         func record(_ progress: DownloadProgress) { values.withLock { $0.append(progress) } }
     }
 
-    /// The failure of ``FailingDownloader``.
-    private struct DownloadFailure: Error, Equatable {}
-
-    /// A downloader that fails, so a live load that reaches it stops before it
-    /// reads a file.
-    private struct FailingDownloader: Downloader {
-        func download(
-            id: String, revision: String?, matching patterns: [String], useLatest: Bool,
-            progressHandler: @Sendable @escaping (Progress) -> Void
-        ) async throws -> URL {
-            throw DownloadFailure()
-        }
-    }
-
-    /// A tokenizer loader that a failed download never reaches.
-    private struct UnusedTokenizerLoader: TokenizerLoader {
-        func load(from directory: URL) async throws -> any Tokenizer { throw DownloadFailure() }
-    }
-
     // MARK: - Roles
 
     @Test("each slot maps to its pool role")
@@ -192,11 +173,11 @@ struct SlotPoolLoaderTests {
         let hold = try await slotLoader.acquireHold(
             of: Self.ref, in: pool, footprintBytes: Self.footprintBytes, sessionBytes: Self.sessionBytes)
 
-        #expect(
+        await #expect(
             throws: PooledGenerationError.notAGenerationContainer(
                 key: key, containerType: String(describing: ForeignContainer.self))
         ) {
-            try hold.generationContainer()
+            try await hold.generationContainer()
         }
         withExtendedLifetime(foreignHold) {}
     }
@@ -213,7 +194,7 @@ struct SlotPoolLoaderTests {
 
         let hold = try await slotLoader.acquireHold(
             of: Self.ref, in: pool, footprintBytes: Self.footprintBytes, sessionBytes: Self.sessionBytes)
-        let container = try hold.generationContainer()
+        let container = try await hold.generationContainer()
 
         #expect(hold.key == ModelPoolKey(ref: Self.ref, role: .llm))
         #expect(container is StubLLMContainer)
@@ -259,71 +240,133 @@ struct SlotPoolLoaderTests {
 
     // MARK: - The live loader
 
-    @Test("the live loader loads an embedding key through the Extras loader protocol with its embedding loader")
-    func liveLoaderLoadsEmbeddingKeyWithEmbeddingLoader() async throws {
+    @Test("the live loader loads an embedding key through the Extras loader protocol with its model loader")
+    func liveLoaderLoadsEmbeddingKeyWithModelLoader() async throws {
         let sink = ProgressSink()
-        let embeddingLoader = RecordingEmbeddingLoader()
-        let loader: any PooledModelLoader = Self.makeLiveLoader(
-            embeddingLoader: embeddingLoader, reporting: sink.record)
+        let modelLoader = RecordingPoolLoader()
+        let loader: any PooledModelLoader = Self.makeLiveLoader(modelLoader: modelLoader, reporting: sink.record)
         let key = ModelPoolKey(ref: Self.ref, role: .embedding)
 
         let container = try await loader.load(key)
         let embedding = try #require(container as? any PooledEmbedding)
 
-        #expect(embeddingLoader.loadedKeys == [key])
+        #expect(modelLoader.loadedKeys == [key])
         #expect(embedding.dimension == Self.foreignVector.count)
         #expect(try await embedding.embed(texts: ["one"]) == [Self.foreignVector])
         #expect(sink.received == [Self.halfDownloaded])
     }
 
-    @Test("the live loader loads an embedder of the router with its embedding loader")
-    func liveLoaderLoadsEmbedderWithEmbeddingLoader() async throws {
+    @Test("the live loader loads an embedder of the router with its model loader")
+    func liveLoaderLoadsEmbedderWithModelLoader() async throws {
         let sink = ProgressSink()
-        let embeddingLoader = RecordingEmbeddingLoader()
-        let loader = Self.makeLiveLoader(embeddingLoader: embeddingLoader, reporting: { _ in })
+        let modelLoader = RecordingPoolLoader()
+        let loader = Self.makeLiveLoader(modelLoader: modelLoader, reporting: { _ in })
 
         let embedder = try await loader.loadEmbedder(ref: Self.ref, slot: .embedding, reporting: sink.record)
 
-        #expect(embeddingLoader.loadedKeys == [ModelPoolKey(ref: Self.ref, role: .embedding)])
+        #expect(modelLoader.loadedKeys == [ModelPoolKey(ref: Self.ref, role: .embedding)])
         #expect(embedder.dimension == Self.foreignVector.count)
         #expect(try await embedder.embed(texts: ["one", "two"]) == [Self.foreignVector, Self.foreignVector])
         #expect(sink.received == [Self.halfDownloaded])
     }
 
-    @Test("the live loader evicts an embedding container through its embedding loader")
-    func liveLoaderEvictsEmbeddingThroughEmbeddingLoader() async throws {
-        let embeddingLoader = RecordingEmbeddingLoader()
-        let loader = Self.makeLiveLoader(embeddingLoader: embeddingLoader, reporting: { _ in })
+    @Test("the live loader evicts an embedding container through its model loader")
+    func liveLoaderEvictsEmbeddingThroughModelLoader() async throws {
+        let modelLoader = RecordingPoolLoader()
+        let loader = Self.makeLiveLoader(modelLoader: modelLoader, reporting: { _ in })
         let embedder = try await loader.loadEmbedder(ref: Self.ref, slot: .embedding, reporting: { _ in })
 
         await loader.evict(container: embedder)
 
-        #expect(embeddingLoader.evictionCount == 1)
+        #expect(modelLoader.evictedTypes == [String(describing: ForeignEmbedding.self)])
+    }
+
+    @Test("a generation load of the live loader goes to its model loader, and the resolution progress shows the download")
+    @MainActor
+    func liveGenerationLoadReportsDownloadToResolutionProgress() async throws {
+        let modelLoader = RecordingPoolLoader()
+        let loader = Self.makeLiveLoader(modelLoader: modelLoader, reporting: { _ in })
+        let progress = ResolutionProgress()
+        progress.slots[.standard] = SlotProgress(state: .downloading)
+
+        // The test loader gives no MLXLanguageModel, thus the load fails
+        // after the download. A unit test cannot wrap a real MLX model: its
+        // load needs the metal library.
+        await #expect(throws: LiveModelLoaderError.self) {
+            try await loader.loadLLM(
+                ref: Self.ref, slot: .standard, context: Self.context,
+                reporting: Router.reporter(slot: .standard, progress: progress))
+        }
+
+        #expect(modelLoader.loadedKeys == [ModelPoolKey(ref: Self.ref, role: .llm)])
+        #expect(
+            await BoundedWait.conditionReached("the standard slot shows half of the download") {
+                await progress.slots[.standard]?.bytesDownloaded == Self.halfDownloaded.bytesDownloaded
+            })
+        #expect(progress.slots[.standard]?.bytesTotal == Self.halfDownloaded.bytesTotal)
+    }
+
+    @Test("a generation load of the live loader that fails after the load gives the container back to its model loader")
+    func failedLiveGenerationLoadEvictsTheContainer() async throws {
+        let modelLoader = RecordingPoolLoader()
+        let loader = Self.makeLiveLoader(modelLoader: modelLoader, reporting: { _ in })
+
+        await #expect(throws: LiveModelLoaderError.self) {
+            try await loader.loadLLM(ref: Self.ref, slot: .standard, context: Self.context, reporting: { _ in })
+        }
+
+        #expect(modelLoader.evictedTypes == [String(describing: ForeignContainer.self)])
+    }
+
+    @Test("a generation load of the live loader throws a clear error when its model loader gives no MLXLanguageModel")
+    func liveGenerationLoadOfForeignContainerThrows() async throws {
+        let loader = Self.makeLiveLoader(modelLoader: RecordingPoolLoader(), reporting: { _ in })
+
+        await #expect(
+            throws: LiveModelLoaderError.notAnMLXLanguageModel(
+                key: ModelPoolKey(ref: Self.ref, role: .llm),
+                containerType: String(describing: ForeignContainer.self))
+        ) {
+            try await loader.loadLLM(ref: Self.ref, slot: .standard, context: Self.context, reporting: { _ in })
+        }
+    }
+
+    @Test("the live loader evicts a generation container through its model loader")
+    func liveLoaderEvictsGenerationThroughModelLoader() async throws {
+        let modelLoader = RecordingPoolLoader()
+        let loader = Self.makeLiveLoader(modelLoader: modelLoader, reporting: { _ in })
+
+        await loader.evict(container: UnloadableMLXModel.liveContainer(repo: Self.ref.repo))
+
+        #expect(modelLoader.evictedTypes == [String(describing: MLXLanguageModel.self)])
     }
 
     // MARK: - Live loader fixtures
 
-    /// The download fraction that ``RecordingEmbeddingLoader`` reports.
+    /// The download fraction that ``RecordingPoolLoader`` reports.
     private static let reportedFraction = 0.5
 
     /// The router progress of ``reportedFraction``: that part of
-    /// ``LiveModelLoader/embeddingProgressScale``.
+    /// ``LiveModelLoader/progressScale``.
     private static let halfDownloaded = DownloadProgress(
-        bytesDownloaded: LiveModelLoader.embeddingProgressScale / 2,
-        bytesTotal: LiveModelLoader.embeddingProgressScale)
+        bytesDownloaded: LiveModelLoader.progressScale / 2,
+        bytesTotal: LiveModelLoader.progressScale)
 
-    /// An embedding loader in place of `MLXModelLoader`. It records each key
-    /// it loads and each eviction, reports ``reportedFraction`` of a download
-    /// and then the load, and gives a ``ForeignEmbedding``.
-    private final class RecordingEmbeddingLoader: PooledModelLoader {
-        /// The keys and the count of evictions, under one lock.
-        private let recorded = Mutex<(keys: [ModelPoolKey], evictions: Int)>(([], 0))
+    /// A model loader in place of `MLXModelLoader`. It records each key it
+    /// loads and the type of each container it evicts, and reports
+    /// ``reportedFraction`` of a download and then the load. It gives a
+    /// ``ForeignEmbedding`` for an embedding key, and a ``ForeignContainer``
+    /// for a generation key: a real `MLXLanguageModel` would need the metal
+    /// library when the live loader wraps it.
+    private final class RecordingPoolLoader: PooledModelLoader {
+        /// The keys and the evicted container types, under one lock.
+        private let recorded = Mutex<(keys: [ModelPoolKey], evicted: [String])>(([], []))
 
         /// The keys of each load, in the order the loads came.
         var loadedKeys: [ModelPoolKey] { recorded.withLock { $0.keys } }
 
-        /// The count of the evictions.
-        var evictionCount: Int { recorded.withLock { $0.evictions } }
+        /// The type of each evicted container, in the order of the evictions.
+        var evictedTypes: [String] { recorded.withLock { $0.evicted } }
 
         func load(_ key: ModelPoolKey) async throws -> any Sendable {
             try await load(key: key) { _ in }
@@ -335,29 +378,28 @@ struct SlotPoolLoaderTests {
             recorded.withLock { $0.keys.append(key) }
             progressHandler(.downloading(fraction: SlotPoolLoaderTests.reportedFraction))
             progressHandler(.loading)
-            return ForeignEmbedding()
+            switch key.role {
+            case .llm: return ForeignContainer()
+            case .embedding: return ForeignEmbedding()
+            }
         }
 
         func evict(_ container: any Sendable) async {
-            recorded.withLock { $0.evictions += 1 }
+            recorded.withLock { $0.evicted.append(String(describing: type(of: container))) }
         }
     }
 
-    /// Makes a live loader whose embedding loads go to `embeddingLoader`. Its
-    /// downloader fails, so a generation load by mistake fails.
+    /// Makes a live loader whose loads go to `modelLoader`.
     ///
     /// - Parameters:
-    ///   - embeddingLoader: The loader of each embedding model.
+    ///   - modelLoader: The loader of each model.
     ///   - reporting: Receives the progress of each load through the Extras
     ///     loader protocol.
     /// - Returns: The live loader.
     private static func makeLiveLoader(
-        embeddingLoader: any PooledModelLoader, reporting: @escaping @Sendable (DownloadProgress) -> Void
+        modelLoader: any PooledModelLoader, reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) -> LiveModelLoader {
-        LiveModelLoader(
-            downloader: FailingDownloader(), tokenizerLoader: UnusedTokenizerLoader(),
-            weightsLocation: { _ in FileManager.default.temporaryDirectory },
-            reporting: reporting, embeddingLoader: embeddingLoader)
+        LiveModelLoader(reporting: reporting, modelLoader: modelLoader)
     }
 }
 

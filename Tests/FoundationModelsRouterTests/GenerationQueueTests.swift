@@ -2,7 +2,6 @@ import Foundation
 import FoundationModels
 import FoundationModelsRouterTestSupport
 import MLXFoundationModels
-import MLXLMCommon
 import Testing
 
 @testable import FoundationModelsRouter
@@ -27,23 +26,15 @@ struct GenerationQueueTests {
     /// model is never loaded.
     private static let rawModelRepository = "org/raw-model"
 
-    /// The window the live container of the wrapper tests declares.
-    private static let rawModelContextWindow = 4096
-
     /// An `MLXLanguageModel` whose load always fails. Nothing in these tests
     /// loads it.
     private static func makeUnloadableMLXModel() -> MLXLanguageModel {
-        MLXLanguageModel(
-            configuration: ModelConfiguration(id: rawModelRepository),
-            weightsLocation: { _ in FileManager.default.temporaryDirectory },
-            load: { _, _ in throw ModelLoaderError.notConfigured })
+        UnloadableMLXModel.make(repo: rawModelRepository)
     }
 
     /// A live container over ``makeUnloadableMLXModel()``.
     private static func makeLiveContainer() -> MLXFoundationModelsContainer {
-        MLXFoundationModelsContainer(
-            model: makeUnloadableMLXModel(), contextWindow: rawModelContextWindow,
-            tokenCounter: CharacterTokenCounter())
+        UnloadableMLXModel.liveContainer(repo: rawModelRepository)
     }
 
     /// Submits one whole call of `backend` to `queue`, as a session submits

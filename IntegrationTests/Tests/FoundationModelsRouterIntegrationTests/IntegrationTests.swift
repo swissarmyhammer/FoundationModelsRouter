@@ -2,11 +2,8 @@ import Foundation
 import FoundationModels
 import FoundationModelsRouterRealModelSupport
 import FoundationModelsRouterTestSupport
-import HuggingFace
-import MLXHuggingFace
 import MLXLMCommon
 import Testing
-import Tokenizers
 
 @testable import FoundationModelsRouter
 
@@ -164,7 +161,7 @@ private struct DownloadObservingLoader: ModelLoader {
 /// The gated end-to-end integration suite (milestone 7).
 ///
 /// It resolves the ``gatedRealProfile`` once — all three slots co-resident — over a
-/// real ``LiveModelLoader`` (a Hub `#hubDownloader()` + `#huggingFaceTokenizerLoader()`)
+/// real ``LiveModelLoader`` (over the Extras `MLXModelLoader`)
 /// and the real ``HuggingFaceMetadataSource``, then asserts every live capability
 /// in that one resolved profile: progress advancement, generation, embedding
 /// (which writes no transcript event, since card ^p3x0bbb), guided generation,
@@ -294,9 +291,9 @@ struct IntegrationTests {
             )
         }
 
-        // A real Hub-backed loader (the fork's macros supply the concrete
-        // Downloader + TokenizerLoader) and the real Hub metadata source, each
-        // wrapped so the suite can observe the resolution phase progression.
+        // The real loader (over the Extras `MLXModelLoader`) and the real Hub
+        // metadata source, each wrapped so the suite can observe the
+        // resolution phase progression.
         let progress = await MainActor.run { ResolutionProgress() }
         let source = PhaseRecordingMetadataSource(
             wrapping: HuggingFaceMetadataSource(),
@@ -542,20 +539,10 @@ struct IntegrationTests {
         return dot / (firstNorm * secondNorm)
     }
 
-    /// Makes the real Hub-backed ``LiveModelLoader``: the fork's macros supply
-    /// the concrete `Downloader` and `TokenizerLoader`, and the Hub cache
-    /// gives the weights directory of each model.
+    /// Makes the real ``LiveModelLoader``: it loads each model through the
+    /// Extras `MLXModelLoader`, over the Hugging Face cache.
     private static func makeLiveLoader() -> LiveModelLoader {
-        LiveModelLoader(
-            downloader: #hubDownloader(),
-            tokenizerLoader: #huggingFaceTokenizerLoader(),
-            weightsLocation: { id in
-                HubClient.default.cache?.repoDirectory(
-                    repo: Repo.ID(rawValue: id) ?? Repo.ID(namespace: id, name: ""),
-                    kind: .model
-                ) ?? FileManager.default.temporaryDirectory
-            }
-        )
+        LiveModelLoader()
     }
 
     /// Creates a unique temporary directory.

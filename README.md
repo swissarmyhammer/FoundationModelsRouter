@@ -15,22 +15,16 @@ when no hold of that model remains.
 ```swift
 import Foundation
 import FoundationModelsRouter
-import HuggingFace
-import MLXHuggingFace
-import MLXLMCommon
-import Tokenizers
 
 // The router records every transcript under this directory.
 let recordingsDir = URL.documentsDirectory.appending(path: "RouterTranscripts")
 
-// The two `MLXHuggingFace` macros expand to code that calls `HuggingFace`,
-// `MLXLMCommon` and `Tokenizers`. The example imports all three modules above.
+// `LiveModelLoader` loads each model through the `MLXModelLoader` of
+// `FoundationModelsExtras`. It downloads a model from Hugging Face when the
+// cache does not hold it.
 let router = Router(
     recordingsDir: recordingsDir,
-    loader: LiveModelLoader(
-        downloader: #hubDownloader(),
-        tokenizerLoader: #huggingFaceTokenizerLoader()
-    )
+    loader: LiveModelLoader()
 )
 
 let coding = ProfileDefinition(
@@ -143,26 +137,22 @@ platforms: [.macOS("27.0")],
 SwiftPM applies macOS 12.0 when your manifest states no floor. The build then
 fails.
 
-The example above needs three packages. Add them to the `dependencies` list in
+The example above needs one package. Add it to the `dependencies` list in
 `Package.swift`:
 
 ```swift
 .package(url: "https://github.com/swissarmyhammer/FoundationModelsRouter", branch: "main"),
-.package(url: "https://github.com/huggingface/swift-huggingface", from: "0.9.0"),
-.package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.0"),
 ```
 
-Then link three products from your own target:
+Then link its product from your own target:
 
 ```swift
 .product(name: "FoundationModelsRouter", package: "FoundationModelsRouter"),
-.product(name: "HuggingFace", package: "swift-huggingface"),
-.product(name: "Tokenizers", package: "swift-transformers"),
 ```
 
-The `#hubDownloader()` and `#huggingFaceTokenizerLoader()` macros expand to code
-that calls `HuggingFace` and `Tokenizers`. Your target must link both products.
-The router package does not link them for you.
+`LiveModelLoader` downloads through the Hugging Face client that
+`FoundationModelsExtras` links. Your target needs no Hugging Face product of its
+own.
 
 ## Documentation
 

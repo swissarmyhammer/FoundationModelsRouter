@@ -1,12 +1,9 @@
 import Foundation
 import FoundationModelsRouterRealModelSupport
 import FoundationModelsRouterTestSupport
-import HuggingFace
-import MLXHuggingFace
 import MLXLMCommon
 import Synchronization
 import Testing
-import Tokenizers
 
 @testable import FoundationModelsRouter
 
@@ -103,8 +100,7 @@ struct PromptCacheBudgetIntegrationTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let probe = AdjustableWorkingSetProbe()
         let pool = ModelPool()
-        let loader = LiveModelLoader(
-            downloader: #hubDownloader(), tokenizerLoader: #huggingFaceTokenizerLoader())
+        let loader = LiveModelLoader()
         let router = Router(
             cacheDir: root.appendingPathComponent("cache", isDirectory: true),
             probe: probe,

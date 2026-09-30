@@ -1,12 +1,12 @@
 import Foundation
 import FoundationModels
+import FoundationModelsExtras
+import FoundationModelsRouterRealModelSupport
 import FoundationModelsRouterTestSupport
-import HuggingFace
 import InMemoryTracing
-import MLXHuggingFace
 import MLXLMCommon
+import Synchronization
 import Testing
-import Tokenizers
 
 @testable import FoundationModelsRouter
 
@@ -53,10 +53,7 @@ private struct PooledRouter {
             cacheDir: home.appendingPathComponent("cache", isDirectory: true),
             recordingsDir: home.appendingPathComponent("recordings", isDirectory: true),
             tracer: tracer,
-            loader: LiveModelLoader(
-                downloader: #hubDownloader(),
-                tokenizerLoader: #huggingFaceTokenizerLoader()
-            ),
+            loader: LiveModelLoader(),
             samplingMode: crossRouterSamplingMode,
             pool: pool
         )
@@ -180,6 +177,12 @@ private func answer(on session: RoutedSession) async throws -> String {
 /// container. A release from the first router keeps the container for the
 /// second router, whose session still answers with no new `load` span.
 ///
+/// A router and an Extras `PooledModel` of one name share one resident model
+/// in either order. After a resolve, a `PooledModel` session answers over the
+/// model of the router, and the loader of the pool loads nothing. After a
+/// `PooledModel` session, a resolve takes that model and opens no `load` span
+/// for it.
+///
 /// ## Why the coverage is gated
 ///
 /// `Tests/FoundationModelsRouterTests/CrossRouterResidencyTests.swift` proves
@@ -264,5 +267,129 @@ struct CrossRouterPoolIntegrationTests {
         #expect(fixture.second.loadSpans.isEmpty)
 
         withExtendedLifetime(secondProfile) {}
+    }
+
+    // MARK: - A router and a PooledModel on one pool
+
+    @Test("a PooledModel of the flash model of a resolve answers over the model of the router, and loads nothing")
+    func pooledModelAfterResolveSharesTheResidentModel() async throws {
+        let fixture = PooledModelFixture.make()
+        defer { fixture.removeDirectories() }
+
+        var profile: LanguageModelProfile? = try await fixture.router.resolve()
+        let flashRef = try #require(profile).flash.chosen
+        let residentAfterResolve = fixture.pool.residentModelCount
+        var session: PooledSession? = try await PooledModel(ref: flashRef, pool: fixture.pool)
+            .session(instructions: crossRouterInstructions)
+        let reply = try await #require(session).respond(to: crossRouterPrompt)
+
+        // The pool loader loaded nothing: the session took a hold of the
+        // flash model that the router loaded.
+        #expect(!reply.isEmpty)
+        #expect(fixture.poolLoader.loadCount == 0)
+        #expect(fixture.pool.residentModelCount == residentAfterResolve)
+
+        session = nil
+        profile = nil
+        #expect(try await fixture.pool.admittedResidentModelCount == 0)
+    }
+
+    @Test("a resolve after a PooledModel of its flash model answers over that model, and the router loads no flash model")
+    func resolveAfterPooledModelSharesTheResidentModel() async throws {
+        let fixture = PooledModelFixture.make()
+        defer { fixture.removeDirectories() }
+
+        var session: PooledSession? = try await PooledModel(ref: RealModels.flash, pool: fixture.pool)
+            .session(instructions: crossRouterInstructions)
+        var profile: LanguageModelProfile? = try await fixture.router.resolve()
+        // The session of the router is a temporary value: a live session keeps
+        // the holds of its profile, and the end of the test drops them all.
+        let reply = try await answer(
+            on: try #require(profile).flash.makeSession(instructions: crossRouterInstructions))
+
+        // The pool loader loaded the flash model one time, and the router
+        // loaded only the other models of the profile.
+        #expect(!reply.isEmpty)
+        #expect(try #require(profile).flash.chosen == RealModels.flash)
+        #expect(fixture.poolLoader.loadCount == 1)
+        #expect(!modelRefs(of: fixture.router.loadSpans).contains(RealModels.flash.stringValue))
+        #expect(fixture.router.loadSpans.count == gatedRealProfileResidentContainerCount - 1)
+        #expect(fixture.pool.residentModelCount == gatedRealProfileResidentContainerCount)
+
+        withExtendedLifetime(session) {}
+        session = nil
+        profile = nil
+        #expect(try await fixture.pool.admittedResidentModelCount == 0)
+    }
+}
+
+// MARK: - A router and a PooledModel on one pool
+
+/// The loader of the pool of ``PooledModelFixture``: the Extras
+/// `MLXModelLoader`, with a count of the loads that it runs. A `PooledModel`
+/// loads through it; the router loads through its own ``LiveModelLoader``.
+private final class CountingPoolLoader: PooledModelLoader {
+    /// The loader that loads each model.
+    private let wrapped = MLXModelLoader()
+
+    /// The count of the loads of this loader.
+    private let loads = Atomic<Int>(0)
+
+    /// The count of the loads of this loader so far.
+    var loadCount: Int { loads.load(ordering: .sequentiallyConsistent) }
+
+    func load(_ key: ModelPoolKey) async throws -> any Sendable {
+        try await load(key: key) { _ in }
+    }
+
+    func load(
+        key: ModelPoolKey, progressHandler: @escaping @Sendable (ModelLoadProgress) -> Void
+    ) async throws -> any Sendable {
+        loads.add(1, ordering: .sequentiallyConsistent)
+        return try await wrapped.load(key: key, progressHandler: progressHandler)
+    }
+
+    func evict(_ container: any Sendable) async {
+        await wrapped.evict(container)
+    }
+
+    func footprintBytes(of key: ModelPoolKey) async throws -> Int64 {
+        try await wrapped.footprintBytes(of: key)
+    }
+}
+
+/// One router and one pool whose own loader is a ``CountingPoolLoader``, and
+/// the directory the router writes under.
+private struct PooledModelFixture {
+    /// The loader of ``pool``: it loads each model that a `PooledModel`
+    /// acquires first.
+    let poolLoader: CountingPoolLoader
+
+    /// The pool of the router and of each `PooledModel` of the test. Never
+    /// ``ModelPool/shared``, so no other suite can hold a resident in it.
+    let pool: ModelPool
+
+    /// The directory the router caches and records under.
+    let root: URL
+
+    /// The router, over its own ``LiveModelLoader``.
+    let router: PooledRouter
+
+    /// Makes the loader, the pool, the directory and the router.
+    ///
+    /// - Returns: The fixture.
+    static func make() -> PooledModelFixture {
+        let poolLoader = CountingPoolLoader()
+        let pool = ModelPool(loader: poolLoader)
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "CrossRouterPoolIntegrationTests-\(UUID().uuidString)", isDirectory: true)
+        return PooledModelFixture(
+            poolLoader: poolLoader, pool: pool, root: root, router: .make(pool: pool, root: root, name: "router"))
+    }
+
+    /// Removes the directory the router wrote under.
+    func removeDirectories() {
+        try? FileManager.default.removeItem(at: root)
     }
 }

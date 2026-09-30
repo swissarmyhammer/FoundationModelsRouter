@@ -37,11 +37,11 @@ let metricsPackage = "swift-metrics"
 // (`#hubDownloader()` / `#huggingFaceTokenizerLoader()`) expand to code that
 // references `HuggingFace.HubClient` and `Tokenizers.AutoTokenizer`, so an
 // integrator must supply these two packages to construct a live `Downloader` /
-// `TokenizerLoader`. They are needed only by the targets that construct a live
-// loader — the RealModelSupport target, the example executables, the fixture
-// tool, and the real-model test targets in the nested `IntegrationTests/`
-// package; the library target injects the resulting loader and never imports
-// these modules. Package/version pins mirror the fork's own
+// `TokenizerLoader`. The library target loads through the Extras
+// `MLXModelLoader`, and FoundationModelsExtras brings its own Hub client, so
+// only the targets that expand the macros themselves need these — the
+// RealModelSupport target and the real-model test targets in the nested
+// `IntegrationTests/` package. Package/version pins mirror the fork's own
 // `IntegrationTesting.xcodeproj`.
 let huggingFacePackage = "swift-huggingface"
 let transformersPackage = "swift-transformers"
@@ -87,9 +87,9 @@ let loggingProduct: Target.Dependency = .product(name: "Logging", package: loggi
 let metricsProduct: Target.Dependency = .product(name: "Metrics", package: metricsPackage)
 let metricsTestKitProduct: Target.Dependency = .product(name: "MetricsTestKit", package: metricsPackage)
 
-// The Hub client + tokenizer products a live `LiveModelLoader` is constructed
-// from (via the `MLXHuggingFace` macros). The RealModelSupport target, the
-// example executables, and the fixture tool link these.
+// The Hub client + tokenizer products that the `MLXHuggingFace` macros need.
+// The RealModelSupport target links these: it makes the model of a
+// pinned-date load itself.
 let hubProducts: [Target.Dependency] = [
     .product(name: "HuggingFace", package: huggingFacePackage),
     .product(name: "Tokenizers", package: transformersPackage),
@@ -252,8 +252,9 @@ let package = Package(
         // test targets reach it through `@testable import` instead. Like its
         // two sibling support targets, it is published as a product (see
         // `products` above) for that package. It links the Hub client +
-        // tokenizer products because `RealModelContainer` constructs a live
-        // `LiveModelLoader` through the `MLXHuggingFace` macros.
+        // tokenizer products because `RealModelContainer` makes the model of a
+        // pinned-date load through the `MLXHuggingFace` macros: the Extras
+        // `MLXModelLoader` takes no tokenizer loader.
         //
         // `Fixtures` is the checked-in recording
         // `RecordedTranscriptCompactionIntegrationTests` compacts and
@@ -279,12 +280,12 @@ let package = Package(
         // Runnable demo (live twin of the offline `ExamplesTests` example): one
         // `Router.resolve` makes two local generation models co-resident and the
         // program routes a quick prompt to `profile.flash` and a heavyweight prompt to
-        // `profile.standard`. Links the same Hub client + tokenizer products as
-        // the gated integration test target, since it also constructs a live
-        // `LiveModelLoader` through the `MLXHuggingFace` macros.
+        // `profile.standard`. It loads each model through `LiveModelLoader()`,
+        // which loads through the Extras `MLXModelLoader`, so it needs no Hub
+        // client product of its own.
         .executableTarget(
             name: "MultiModelGeneration",
-            dependencies: [.target(name: packageName), loggingProduct] + mlxProducts + hubProducts,
+            dependencies: [.target(name: packageName), loggingProduct] + mlxProducts,
             path: "Examples/MultiModelGeneration",
             exclude: ["README.md"]
         ),
@@ -297,12 +298,11 @@ let package = Package(
         // talking to the same session, then restore it from disk. `Fixtures`
         // is excluded alongside `README.md` — the demo reads those files from
         // disk at run time (relative to its own source file) rather than
-        // bundling them as SwiftPM resources. Links the same Hub client +
-        // tokenizer products as `MultiModelGeneration`, since it also
-        // resolves a real profile through `LiveModelLoader`.
+        // bundling them as SwiftPM resources. Like `MultiModelGeneration`, it
+        // resolves a real profile through `LiveModelLoader()`.
         .executableTarget(
             name: "CompactionDemo",
-            dependencies: [.target(name: packageName), loggingProduct] + mlxProducts + hubProducts,
+            dependencies: [.target(name: packageName), loggingProduct] + mlxProducts,
             path: "Examples/CompactionDemo",
             exclude: ["README.md", "Fixtures"]
         ),
@@ -314,14 +314,13 @@ let package = Package(
         // rather than a test, because the run drives the 30B real model for
         // minutes, and every integration test must finish in under two. It
         // depends on the TestSupport target for the shared redaction scan and
-        // entry-kind vocabulary the integration suites also read, and links
-        // the same Hub client + tokenizer products as the demos, since it
-        // resolves a real profile through `LiveModelLoader`.
+        // entry-kind vocabulary the integration suites also read. Like the
+        // demos, it resolves a real profile through `LiveModelLoader()`.
         .executableTarget(
             name: "RecordCompactionFixture",
             dependencies: [
                 .target(name: packageName), .target(name: "\(packageName)TestSupport"), loggingProduct,
-            ] + mlxProducts + hubProducts,
+            ] + mlxProducts,
             path: "Tools/RecordCompactionFixture",
             exclude: ["README.md"]
         ),

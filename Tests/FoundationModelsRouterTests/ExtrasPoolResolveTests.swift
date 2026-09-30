@@ -245,6 +245,33 @@ struct ExtrasPoolResolveTests {
         #expect(profile.embedding.dimension == RouterTestFixtures.stubDimension)
     }
 
+    @Test("a PooledModel of the standard model of a resolve makes its session over the model of the router and loads nothing")
+    @MainActor
+    func pooledModelOfResolvedNameSharesTheResidentModel() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "ExtrasPoolResolveTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let poolLoader = DirectLoader(log: nil)
+        let pool = ModelPool(loader: poolLoader)
+        let spy = LoadSpy()
+        let router = ResidencyFixtures.makeRouter(
+            spy: spy, recommendedMaxWorkingSetSize: Self.ampleBudget, cacheDir: dir, pool: pool,
+            llmContainer: { ref in UnloadableMLXModel.liveContainer(repo: ref.repo) })
+        let trio = Self.uniqueTrio(named: "pooled-model")
+        let standardRef = try #require(trio.standard.first)
+
+        let profile = try await router.resolve(profile: trio, reporting: ResolutionProgress())
+        let session = try await PooledModel(ref: standardRef, pool: pool).session()
+
+        // One load of the standard model in all: the router loaded it, and
+        // the session took a hold of that model. The loader of the pool
+        // loaded nothing.
+        #expect(session.model == standardRef)
+        #expect(await spy.llmLoads.contains(standardRef))
+        #expect(poolLoader.loadCount.load(ordering: .sequentiallyConsistent) == 0)
+        #expect(pool.residentModelCount == ResidencyFixtures.modelsPerTrio)
+        withExtendedLifetime(profile) {}
+    }
+
     @Test("a direct acquire of a new key during a resolve loads only after the admission job of the router ends")
     @MainActor
     func directLoadWaitsForTheAdmissionJobOfTheRouter() async throws {

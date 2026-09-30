@@ -1,11 +1,7 @@
 import Foundation
 import FoundationModels
 import FoundationModelsRouter
-import HuggingFace
 import Logging
-import MLXHuggingFace
-import MLXLMCommon
-import Tokenizers
 
 // Standard output carries the output of the program, so each log line goes
 // to standard error. This runs one time, before any log call.
@@ -185,10 +181,7 @@ let recordingsDir = FileManager.default.temporaryDirectory
 // to the router (`model-pool.md` §2.5).
 let router = Router(
     recordingsDir: recordingsDir,
-    loader: LiveModelLoader(
-        downloader: #hubDownloader(),
-        tokenizerLoader: #huggingFaceTokenizerLoader()
-    ),
+    loader: LiveModelLoader(),
     samplingMode: .greedy
 )
 

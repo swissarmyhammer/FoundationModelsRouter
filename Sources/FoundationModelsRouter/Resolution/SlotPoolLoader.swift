@@ -1,6 +1,7 @@
 import Foundation
 import FoundationModelsExtras
 import Logging
+import MLXFoundationModels
 
 /// The loader that the router gives to the Extras model pool for one slot.
 ///
@@ -91,24 +92,34 @@ extension ModelHold {
     /// name ``queue``, the one work queue of the pool entry. Thus each session
     /// of each holder of the key submits to that queue.
     ///
-    /// - Returns: The container, cast to ``LoadedLLMContainer`` and given
-    ///   ``queue`` through ``LoadedLLMContainer/submitting(to:)``.
+    /// The first loader of the key can be the Extras `MLXModelLoader` of a
+    /// `PooledModel`, which gives a bare `MLXLanguageModel`. The router then
+    /// wraps that model in a live container
+    /// (``MLXFoundationModelsContainer/make(wrapping:repo:)``), so a
+    /// `PooledModel` and a router share one resident model in either order.
+    ///
+    /// - Returns: The container, given ``queue`` through
+    ///   ``LoadedLLMContainer/submitting(to:)``.
     /// - Throws: ``PooledGenerationError/notAGenerationContainer(key:containerType:)``
-    ///   when the first loader of the key gave a container that is not a
-    ///   ``LoadedLLMContainer``.
-    func generationContainer() throws -> any LoadedLLMContainer {
-        guard let generation = container as? any LoadedLLMContainer else {
+    ///   when the first loader of the key gave a container that is neither a
+    ///   ``LoadedLLMContainer`` nor an `MLXLanguageModel`, or the error of the
+    ///   wrap of an `MLXLanguageModel`.
+    func generationContainer() async throws -> any LoadedLLMContainer {
+        if let generation = container as? any LoadedLLMContainer {
+            return generation.submitting(to: queue)
+        }
+        guard let model = container as? MLXLanguageModel else {
             throw PooledGenerationError.notAGenerationContainer(
                 key: key, containerType: String(describing: type(of: container)))
         }
-        return generation.submitting(to: queue)
+        return try await MLXFoundationModelsContainer.make(wrapping: model, repo: key.ref.repo).submitting(to: queue)
     }
 }
 
 /// An error of a generation hold in the Extras model pool.
 enum PooledGenerationError: Error, Equatable, LocalizedError {
     /// The container of `key` has the type `containerType`, which does not
-    /// conform to ``LoadedLLMContainer``.
+    /// conform to ``LoadedLLMContainer`` and is not an `MLXLanguageModel`.
     case notAGenerationContainer(key: ModelPoolKey, containerType: String)
 
     /// A message that tells what is wrong.
@@ -117,8 +128,9 @@ enum PooledGenerationError: Error, Equatable, LocalizedError {
         case .notAGenerationContainer(let key, let containerType):
             """
             The container of \(key.ref.stringValue) is a \(containerType), which does not conform to \
-            LoadedLLMContainer. The first loader of a key gives the container of all holds, so each \
-            loader of a generation key that the router uses must return a LoadedLLMContainer.
+            LoadedLLMContainer and is not an MLXLanguageModel. The first loader of a key gives the \
+            container of all holds, so each loader of a generation key that the router uses must return \
+            a LoadedLLMContainer or an MLXLanguageModel.
             """
         }
     }
