@@ -28,8 +28,15 @@ comments:
     - evidence: 3 files — Package.swift, Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift, Tests/FoundationModelsRouterRealModelSupport/RealModelContainer.swift. `swift test`: 1427 tests in 178 suites passed (2 known issues from before), plus 23 and 19. `swift test --package-path IntegrationTests --filter FoundationModelsRouterIntegrationTests`: 49 tests in 22 suites passed, including the pinned-date suite (^g8rywv2, 2 tests). `--filter FoundationModelsRouterEvalIntegrationTests`: 1 test passed. The only warning is the known mlx-swift_Cmlx.bundle "missing creator" warning.
     - next: review, then commit and push; the CI box needs the pushed commit.
   timestamp: 2026-09-30T09:54:18.414057+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m3rvzh7h87h2szs9v8qm3esk
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 7a73c75): 0 findings, 0 confirmed, 0 refuted. 7 files attempted, 3 reviewed, 4 .kanban files excluded by .reviewignore.
+    - next: the task is in done. The acceptance criterion "CI is green on the pushed commit" is not checked yet. Do the push and the CI check.
+  timestamp: 2026-09-30T09:57:51.985034+00:00
+position_column: done
+position_ordinal: ffffffbb80
 title: RealModelContainer loads through MLXModelLoader(tokenizerLoader:)
 ---
 **Wait for:** FoundationModelsExtras task 01M3RNQ6K5MBEN68C62VGNWW4Y ("MLXModelLoader takes an optional tokenizer loader") on the Extras board: done and pushed.
