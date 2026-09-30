@@ -18,8 +18,6 @@ import PackageDescription
 // that conflicted with the root's would fail to resolve.
 let routerPackage = "FoundationModelsRouter"
 let mlxPackage = "mlx-swift-lm"
-let huggingFacePackage = "swift-huggingface"
-let transformersPackage = "swift-transformers"
 
 // The tracing package the root manifest pins for the library's spans. The
 // integration test target links its `InMemoryTracing` product, the same product
@@ -35,24 +33,14 @@ let routerProducts: [Target.Dependency] = [
     .product(name: "\(routerPackage)RealModelSupport", package: routerPackage),
 ]
 
-// Products from the controlled fork of mlx-swift-lm, the same list the root
-// package's test targets link. See the root manifest for what each one is for.
-let mlxProducts: [Target.Dependency] = [
-    .product(name: "MLXLMCommon", package: mlxPackage),
-    .product(name: "MLXLLM", package: mlxPackage),
-    .product(name: "MLXVLM", package: mlxPackage),
-    .product(name: "MLXEmbedders", package: mlxPackage),
-    .product(name: "MLXHuggingFace", package: mlxPackage),
-    .product(name: "MLXFoundationModels", package: mlxPackage),
-    .product(name: "MLXGuidedGeneration", package: mlxPackage),
-]
-
-// The Hub client + tokenizer products every real-model target links, to
-// construct a live `LiveModelLoader` through the `MLXHuggingFace` macros.
-let hubProducts: [Target.Dependency] = [
-    .product(name: "HuggingFace", package: huggingFacePackage),
-    .product(name: "Tokenizers", package: transformersPackage),
-]
+// Products from the controlled fork of mlx-swift-lm that the test sources
+// import. The router library links the full list of the root manifest, which
+// includes the model factories that `ModelFactoryRegistry` finds at run time.
+// Thus a test binary gets those factories through the router product, and each
+// target below links only the modules that its sources name.
+let mlxCommonProduct: Target.Dependency = .product(name: "MLXLMCommon", package: mlxPackage)
+let mlxFoundationModelsProduct: Target.Dependency = .product(
+    name: "MLXFoundationModels", package: mlxPackage)
 
 let package = Package(
     name: "IntegrationTests",
@@ -68,14 +56,6 @@ let package = Package(
             branch: "stable"
         ),
         .package(
-            url: "https://github.com/huggingface/\(huggingFacePackage)",
-            from: "0.9.0"
-        ),
-        .package(
-            url: "https://github.com/huggingface/\(transformersPackage)",
-            from: "1.3.0"
-        ),
-        .package(
             url: "https://github.com/apple/\(tracingPackage).git",
             from: "1.5.0"
         ),
@@ -88,8 +68,10 @@ let package = Package(
         // router's `load` spans with.
         .testTarget(
             name: "\(routerPackage)IntegrationTests",
-            dependencies: routerProducts + mlxProducts + hubProducts + [
-                .product(name: "InMemoryTracing", package: tracingPackage)
+            dependencies: routerProducts + [
+                mlxCommonProduct,
+                mlxFoundationModelsProduct,
+                .product(name: "InMemoryTracing", package: tracingPackage),
             ],
             path: "Tests/\(routerPackage)IntegrationTests"
         ),
@@ -101,8 +83,9 @@ let package = Package(
         .testTarget(
             name: "\(routerPackage)EvalIntegrationTests",
             dependencies: routerProducts + [
-                .product(name: "\(routerPackage)EvalSupport", package: routerPackage)
-            ] + mlxProducts + hubProducts,
+                .product(name: "\(routerPackage)EvalSupport", package: routerPackage),
+                mlxCommonProduct,
+            ],
             path: "Tests/\(routerPackage)EvalIntegrationTests"
         ),
     ]
