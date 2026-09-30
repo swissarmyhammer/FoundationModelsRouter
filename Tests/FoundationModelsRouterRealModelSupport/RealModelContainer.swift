@@ -1,12 +1,15 @@
 import Foundation
 import FoundationModels
 import FoundationModelsRouter
-import HuggingFace
 import MLXFoundationModels
 import MLXHuggingFace
 import MLXLMCommon
 import Testing
 import Tokenizers
+
+// The one Extras type this file names. A scoped import keeps the other Extras
+// names out of this file, where the router's own names stand.
+import struct FoundationModelsExtras.MLXModelLoader
 
 /// A real model a gated suite loaded, with the decoding strategy the suite
 /// pinned. ``load(ref:context:samplingMode:chatTemplateDate:)`` is the one way
@@ -153,8 +156,8 @@ public struct RealModelContainer: Sendable {
     ///     container at a time.
     /// - Returns: The loaded container and the pinned mode.
     /// - Throws: Whatever ``LiveModelLoader/loadLLM(ref:slot:context:reporting:)``
-    ///   or the load of the pinned model throws, or an expectation failure if
-    ///   what it loaded is not an ``MLXFoundationModelsContainer``.
+    ///   throws, or an expectation failure if what it loaded is not an
+    ///   ``MLXFoundationModelsContainer``.
     // Only the suites in the IntegrationTests package call this.
     // Periphery reads only this package's index, thus it finds no caller.
     // periphery:ignore
@@ -164,17 +167,14 @@ public struct RealModelContainer: Sendable {
         samplingMode: GenerationOptions.SamplingMode? = nil,
         chatTemplateDate: String? = nil
     ) async throws -> RealModelContainer {
-        let loaded: any LoadedLLMContainer
-        if let chatTemplateDate {
+        if chatTemplateDate != nil {
             // The pin lives in the tokenizer, and the tokenizer lives in the
             // cached container, so a cached container from an unpinned load
-            // would win over the model built below. See the parameter doc.
+            // would win over the pinned load below. See the parameter doc.
             await MLXLanguageModel.evictAll()
-            loaded = try await loadPinned(ref: ref, chatTemplateDate: chatTemplateDate)
-        } else {
-            loaded = try await LiveModelLoader().loadLLM(
-                ref: ref, slot: .standard, context: context, reporting: { _ in })
         }
+        let loaded = try await makeLoader(chatTemplateDate: chatTemplateDate).loadLLM(
+            ref: ref, slot: .standard, context: context, reporting: { _ in })
         // A suite uses the container outside the model pool, so this queue
         // stands in for the queue of the pool entry. Each backend of the
         // container submits to it.
@@ -183,50 +183,20 @@ public struct RealModelContainer: Sendable {
         return RealModelContainer(container: container, samplingMode: samplingMode)
     }
 
-    /// The capabilities of the pinned model: the capabilities that the Extras
-    /// `MLXModelLoader` gives each model that ``LiveModelLoader`` loads.
+    /// Makes the live loader of a load. With no pin, it is the plain live
+    /// loader. With a pin, the Extras `MLXModelLoader` under the live loader
+    /// reads each tokenizer through a
+    /// ``FoundationModelsRouter/PinnedDateTokenizerLoader``, so each
+    /// chat-template render of the loaded model states `chatTemplateDate`.
     ///
-    /// `.reasoning` is in the list for each model, not only for the ones that
-    /// reason. A model that always reasons and cannot turn it off — Muse
-    /// Glimmer, the model the gated suites load — throws at the first
-    /// unconstrained submission when `.reasoning` is not declared ("This
-    /// model always reasons; .reasoning must be declared at MLXLanguageModel
-    /// init to receive its output").
-    private static let pinnedModelCapabilities: [LanguageModelCapabilities.Capability] = [
-        .guidedGeneration, .toolCalling, .reasoning,
-    ]
-
-    /// Loads `ref` with a tokenizer that states `chatTemplateDate` to the
-    /// chat template (``FoundationModelsRouter/PinnedDateTokenizerLoader``).
-    ///
-    /// The Extras `MLXModelLoader`, which ``LiveModelLoader`` loads through,
-    /// takes no tokenizer loader. Thus this test support makes the
-    /// `MLXLanguageModel` of a pinned load itself, over the Hub downloader
-    /// and the pinned tokenizer loader, and wraps it as the live loader
-    /// wraps its models.
-    ///
-    /// - Parameters:
-    ///   - ref: The model to download and load.
-    ///   - chatTemplateDate: The date to pin, written the way the template
-    ///     writes it.
-    /// - Returns: The live container over the loaded model.
-    /// - Throws: The error of the download, of the load or of the wrap.
-    private static func loadPinned(ref: ModelRef, chatTemplateDate: String) async throws -> any LoadedLLMContainer {
-        let downloader = #hubDownloader()
+    /// - Parameter chatTemplateDate: The date to pin, written the way the
+    ///   template writes it, or `nil` to leave the template reading the clock.
+    /// - Returns: The live loader.
+    private static func makeLoader(chatTemplateDate: String?) -> LiveModelLoader {
+        guard let chatTemplateDate else { return LiveModelLoader() }
         let tokenizerLoader = PinnedDateTokenizerLoader(
             wrapping: #huggingFaceTokenizerLoader(), dateString: chatTemplateDate)
-        let model = MLXLanguageModel(
-            configuration: ModelConfiguration(id: ref.repo, revision: ref.revision ?? pinnedModelRevision),
-            capabilities: pinnedModelCapabilities,
-            weightsLocation: { id in HubCache.default.repoDirectory(repo: "\(id)", kind: .model) }
-        ) { configuration, progress in
-            try await loadModelContainer(
-                from: downloader, using: tokenizerLoader, configuration: configuration, progressHandler: progress)
-        }
-        return try await MLXFoundationModelsContainer.make(wrapping: model, repo: ref.repo)
+        return LiveModelLoader(
+            reporting: { _ in }, modelLoader: MLXModelLoader(tokenizerLoader: tokenizerLoader))
     }
-
-    /// The revision of a pinned load of a ``ModelRef`` that names no
-    /// revision: the revision that the Extras `MLXModelLoader` loads too.
-    private static let pinnedModelRevision = "main"
 }

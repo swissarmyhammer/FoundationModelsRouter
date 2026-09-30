@@ -32,18 +32,16 @@ let loggingPackage = "swift-log"
 // FoundationModelsExtras.
 let metricsPackage = "swift-metrics"
 
-// Hugging Face Hub client and tokenizer packages. The `mlx-foundationmodels`
-// fork bundles no default Hub client: its `MLXHuggingFace` macros
-// (`#hubDownloader()` / `#huggingFaceTokenizerLoader()`) expand to code that
-// references `HuggingFace.HubClient` and `Tokenizers.AutoTokenizer`, so an
-// integrator must supply these two packages to construct a live `Downloader` /
-// `TokenizerLoader`. The library target loads through the Extras
-// `MLXModelLoader`, and FoundationModelsExtras brings its own Hub client, so
-// only the targets that expand the macros themselves need these — the
-// RealModelSupport target and the real-model test targets in the nested
-// `IntegrationTests/` package. Package/version pins mirror the fork's own
-// `IntegrationTesting.xcodeproj`.
-let huggingFacePackage = "swift-huggingface"
+// The Hugging Face tokenizer package. The `mlx-foundationmodels` fork bundles
+// no default tokenizer: its `MLXHuggingFace` macro
+// `#huggingFaceTokenizerLoader()` expands to code that references
+// `Tokenizers.AutoTokenizer`, so an integrator must supply this package to
+// construct a live `TokenizerLoader`. The library target loads through the
+// Extras `MLXModelLoader`, and FoundationModelsExtras brings its own Hub
+// client and tokenizer loader, so only the targets that expand the macro
+// themselves need this — the RealModelSupport target and the real-model test
+// targets in the nested `IntegrationTests/` package. The version pin mirrors
+// the fork's own `IntegrationTesting.xcodeproj`.
 let transformersPackage = "swift-transformers"
 
 // Products from the controlled fork of mlx-swift-lm that the router builds on.
@@ -87,13 +85,10 @@ let loggingProduct: Target.Dependency = .product(name: "Logging", package: loggi
 let metricsProduct: Target.Dependency = .product(name: "Metrics", package: metricsPackage)
 let metricsTestKitProduct: Target.Dependency = .product(name: "MetricsTestKit", package: metricsPackage)
 
-// The Hub client + tokenizer products that the `MLXHuggingFace` macros need.
-// The RealModelSupport target links these: it makes the model of a
-// pinned-date load itself.
-let hubProducts: [Target.Dependency] = [
-    .product(name: "HuggingFace", package: huggingFacePackage),
-    .product(name: "Tokenizers", package: transformersPackage),
-]
+// The tokenizer product that the `MLXHuggingFace` macro
+// `#huggingFaceTokenizerLoader()` needs. The RealModelSupport target links
+// it: it wraps that loader to pin the date of a chat template.
+let tokenizersProduct: Target.Dependency = .product(name: "Tokenizers", package: transformersPackage)
 
 let package = Package(
     name: packageName,
@@ -133,10 +128,6 @@ let package = Package(
         .package(
             url: "https://github.com/yaslab/\(ulidPackage).git",
             from: "1.3.1"
-        ),
-        .package(
-            url: "https://github.com/huggingface/\(huggingFacePackage)",
-            from: "0.9.0"
         ),
         .package(
             url: "https://github.com/huggingface/\(transformersPackage)",
@@ -251,10 +242,11 @@ let package = Package(
         // signatures, so it cannot widen to `public`; the nested package's
         // test targets reach it through `@testable import` instead. Like its
         // two sibling support targets, it is published as a product (see
-        // `products` above) for that package. It links the Hub client +
-        // tokenizer products because `RealModelContainer` makes the model of a
-        // pinned-date load through the `MLXHuggingFace` macros: the Extras
-        // `MLXModelLoader` takes no tokenizer loader.
+        // `products` above) for that package. It links the Extras product and
+        // the tokenizer product because `RealModelContainer` gives the Extras
+        // `MLXModelLoader` of a pinned-date load a tokenizer loader, and it
+        // makes the base of that loader with the `MLXHuggingFace` macro
+        // `#huggingFaceTokenizerLoader()`.
         //
         // `Fixtures` is the checked-in recording
         // `RecordedTranscriptCompactionIntegrationTests` compacts and
@@ -272,8 +264,9 @@ let package = Package(
         .target(
             name: "\(packageName)RealModelSupport",
             dependencies: [
-                .target(name: packageName)
-            ] + mlxProducts + hubProducts,
+                .target(name: packageName), tokenizersProduct,
+                .product(name: "FoundationModelsExtras", package: "FoundationModelsExtras"),
+            ] + mlxProducts,
             path: "Tests/\(packageName)RealModelSupport",
             resources: [.copy("Fixtures")]
         ),

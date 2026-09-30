@@ -892,13 +892,15 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     }
 
     /// Creates a live loader whose models load through `modelLoader`. A test
-    /// gives a loader that needs no network.
+    /// gives a loader that needs no network. The real-model test support
+    /// gives an Extras `MLXModelLoader` with a tokenizer loader that pins the
+    /// date of the chat template, so the init is `package`.
     ///
     /// - Parameters:
     ///   - reporting: Receives the download progress of each load through
     ///     ``load(_:)`` and ``load(key:progressHandler:)``.
     ///   - modelLoader: The loader of each model.
-    init(reporting: @escaping @Sendable (DownloadProgress) -> Void, modelLoader: any PooledModelLoader) {
+    package init(reporting: @escaping @Sendable (DownloadProgress) -> Void, modelLoader: any PooledModelLoader) {
         self.reporting = reporting
         self.modelLoader = modelLoader
     }
