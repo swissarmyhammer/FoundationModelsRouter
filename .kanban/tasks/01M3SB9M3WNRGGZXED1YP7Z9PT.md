@@ -13,8 +13,15 @@ comments:
     - evidence: 1 file — Tests/FoundationModelsRouterTests/EnterRecordTests.swift. Extras resolves at c5ca65a (after 42ca5b5) in Package.resolved and IntegrationTests/Package.resolved. `swift test` exit 0: 1427 tests in 178 suites (2 known issues), 23 tests in 11 suites, 19 tests in 3 suites. `swift test --package-path IntegrationTests --filter FoundationModelsRouterIntegrationTests`: 49 tests in 22 suites passed. `--filter FoundationModelsRouterEvalIntegrationTests`: 1 test in 1 suite passed. Only warning line is the known build-system "missing creator for mutated node" for mlx-swift_Cmlx.bundle.
     - next: review. The CI box stays open until a push.
   timestamp: 2026-09-30T15:54:43.581623+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m3sghsctbs6jn73wbsxybsxd
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (8c57251): 0 findings, 0 confirmed, 0 refuted, 7 attempted, 0 failed. 1 file reviewed. 2 .kanban files are excluded by .reviewignore.
+    - next: The task is in done. The acceptance item "CI is green on the pushed commit" is not checked. Push the commit and check CI.
+  timestamp: 2026-09-30T15:57:21.690686+00:00
+position_column: done
+position_ordinal: ffffffbd80
 title: 'Adopt Extras 42ca5b5: TelemetryCapture log records are TelemetryCapture.LogRecord'
 ---
 ## What
