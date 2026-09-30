@@ -19,8 +19,15 @@ comments:
     - Extras revision bbf9717 is in both Package.resolved files. By order of the orchestrator, no `swift package update`, no commit and no push in this step. Thus the box "CI is green on the pushed commit" stays open for the commit step.
     - next: /review
   timestamp: 2026-09-30T09:11:29.596068+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m3rskdvc7jk59ccsdrjpnj8p
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (89dbd5d): 0 findings (0 confirmed, 0 refuted); 3 files reviewed, 4 .kanban files excluded by .reviewignore. No prior review findings.
+    - next: The task is in done. The acceptance criterion "CI is green on the pushed commit" is not checked. Examine CI after the push.
+  timestamp: 2026-09-30T09:16:18.156309+00:00
+position_column: done
+position_ordinal: ffffffba80
 title: Resolution progress from the pool stream with real bytes; remove the fixed progress scale
 ---
 **Wait for:** FoundationModelsExtras task 01M3RNQ63F2391R715W156WGBX ("Pool progress for every load, with real byte counts"): done, pushed as bbf9717.
