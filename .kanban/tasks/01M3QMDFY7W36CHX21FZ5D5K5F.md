@@ -69,10 +69,17 @@ comments:
     - evidence: `swift test`: 1424 tests in 178 suites pass (2 known issues by design), 23 tests in 11 suites pass (public surface, was 22), 19 tests in 3 suites pass. `swift build --product RecordCompactionFixture`, `--product CompactionDemo` and `--product MultiModelGeneration`: Build complete. The only warning is the SwiftPM "missing creator for mutated node ... mlx-swift_Cmlx.bundle" line, which does not come from a changed file. 7 files: Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift, Tests/FoundationModelsRouterPublicSurfaceTests/LoaderErrorPublicSurfaceTests.swift (new), Tools/RecordCompactionFixture/main.swift, Examples/CompactionDemo/main.swift, Examples/MultiModelGeneration/main.swift, Package.swift (comments only), .kanban task (findings checked).
     - next: review
   timestamp: 2026-09-30T07:16:55.079237+00:00
+- actor: claude-code
+  id: 01m3rk0kj2p8fjavvy059hza9s
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (afd9b5a): 0 findings (6 files reviewed, 7 attempted, 0 failed). The 2 prior findings are checked.
+    - next: The task is in done. The acceptance criterion "CI is green on the pushed commit" is not checked. Examine CI after the push.
+  timestamp: 2026-09-30T07:21:09.954165+00:00
 depends_on:
 - 01M3QMDDGWZ7CRAE1P3JKFP5FP
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffb980
 title: Generation models load through the Extras MLXModelLoader; map pool progress to resolution progress
 ---
 **Wait for:** FoundationModelsExtras tasks 01M3QMD6V09WGE7MJDV483VHBG ("Built-in MLX loader in the core…") and 01M3QMD7BY8SYK3EGAMG8M6X1Y ("Load progress stream on the model pool") on the Extras board: done and pushed.
