@@ -160,13 +160,15 @@ let startedAt = Date()
 // In production you build a `Router` with a durable `recordingsDir` and a
 // `LiveModelLoader`. The live loader loads each model through the Extras
 // `MLXModelLoader`, which downloads a model from Hugging Face when the cache
-// does not hold it.
+// does not hold it. The `reporting` callback of the loader receives only the
+// loads through the Extras pool protocol; a router load reports to the callback
+// of its resolve, so this example drops each value.
 let recordingsDir = FileManager.default.temporaryDirectory
     .appendingPathComponent("MultiModelGeneration-\(UUID().uuidString)", isDirectory: true)
 
 let router = Router(
     recordingsDir: recordingsDir,
-    loader: LiveModelLoader()
+    loader: LiveModelLoader(reporting: { _ in })
 )
 
 // MARK: - Author a profile with two distinct generation models

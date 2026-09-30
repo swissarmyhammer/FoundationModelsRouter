@@ -832,19 +832,19 @@ struct LoadedPooledEmbedding: LoadedEmbeddingContainer {
 }
 
 /// A failure constructing or invoking a ``ModelLoader``.
-enum ModelLoaderError: Error, Equatable {
+public enum ModelLoaderError: Error, Equatable {
     /// No real loader was configured. See ``UnconfiguredModelLoader``.
     case notConfigured
 }
 
 /// A failure of a load of ``LiveModelLoader``.
-enum LiveModelLoaderError: Error, Equatable, LocalizedError {
+public enum LiveModelLoaderError: Error, Equatable, LocalizedError {
     /// The model loader gave a container of the type `containerType` for the
     /// generation key `key`, which is not an `MLXLanguageModel`.
     case notAnMLXLanguageModel(key: ModelPoolKey, containerType: String)
 
     /// A message that tells what is wrong.
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .notAnMLXLanguageModel(let key, let containerType):
             """
@@ -858,8 +858,8 @@ enum LiveModelLoaderError: Error, Equatable, LocalizedError {
 /// The live ``ModelLoader``. Each model loads through the Extras
 /// `MLXModelLoader`, the one MLX loader of the family, which downloads the
 /// model when the Hugging Face cache does not hold it. The router wraps a
-/// generation model in an ``MLXFoundationModelsContainer``, and gets an
-/// embedding model as a ``LoadedPooledEmbedding``.
+/// generation model in a live generation container, and wraps an embedding
+/// model in an embedding container.
 ///
 /// It is also a loader of the Extras model pool (``PooledModelLoader``), which
 /// loads by ``ModelPoolKey`` only. An application that does not use a
@@ -912,7 +912,8 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     /// `reporting` callback of the init.
     ///
     /// - Parameter key: The model and its role.
-    /// - Returns: An ``MLXFoundationModelsContainer`` or a ``LoadedPooledEmbedding``.
+    /// - Returns: A live generation container for ``ModelRole/llm``, or an
+    ///   embedding container for ``ModelRole/embedding``.
     /// - Throws: `CancellationError` when the calling task is cancelled, or if
     ///   the download or the load fails.
     public func load(_ key: ModelPoolKey) async throws -> any Sendable {
@@ -928,8 +929,8 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     /// returned. The live loader uses neither `slot` nor `context`.
     ///
     /// Cancelling the calling task stops the wait. The transfer itself runs on,
-    /// which is what keeps the part files filling the Hugging Face cache — see
-    /// ``CancellableWait``.
+    /// which is what keeps the part files filling the Hugging Face cache, so a
+    /// later load continues that same transfer.
     ///
     /// - Throws: `CancellationError` when the calling task is cancelled, the
     ///   error of the model loader or of the wrap of the model, or
@@ -980,8 +981,8 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
     /// not use `slot`.
     ///
     /// Cancelling the calling task stops the wait. The transfer itself runs on,
-    /// which is what keeps the part files filling the Hugging Face cache — see
-    /// ``CancellableWait``.
+    /// which is what keeps the part files filling the Hugging Face cache, so a
+    /// later load continues that same transfer.
     ///
     /// - Throws: `CancellationError` when the calling task is cancelled, the
     ///   error of the model loader, or

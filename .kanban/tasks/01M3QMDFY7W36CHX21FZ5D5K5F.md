@@ -37,6 +37,38 @@ comments:
     - evidence: `swift test`: 1424 tests in 178 suites pass (2 known issues by design) + 22 + 19; `swift test --package-path IntegrationTests --filter FoundationModelsRouterIntegrationTests`: 49 tests in 22 suites pass (1070 s); `--filter FoundationModelsRouterEvalIntegrationTests`: 1 test passes. Only warning: the SwiftPM "missing creator for mutated node ... mlx-swift_Cmlx.bundle" line, which comes from the mlx bundle, not from this change. 20 files: Sources/FoundationModelsRouter/Resolution/{LiveModelLoader,SlotPoolLoader,MLXFoundationModelsContainerPooling(new)}.swift, Sources/FoundationModelsRouter/Router.swift, Tests/FoundationModelsRouterTests/{SlotPoolLoaderTests,ExtrasPoolResolveTests,GenerationQueueTests,Helpers/UnloadableMLXModel(new)}.swift, Tests/FoundationModelsRouterTests/LiveModelLoaderTests.swift (deleted), Tests/FoundationModelsRouterRealModelSupport/RealModelContainer.swift, IntegrationTests/.../{CrossRouterPoolIntegrationTests,IntegrationTests,PromptCacheBudgetIntegrationTests,Support/CompactionEvalRealModelContainer}.swift, Examples/{MultiModelGeneration,CompactionDemo}/main.swift, Tools/RecordCompactionFixture/main.swift, Package.swift, README.md
     - next: review
   timestamp: 2026-09-30T06:56:14.338519+00:00
+- actor: claude-code
+  id: 01m3rja55ayvdpvfj0b0th1tva
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (ce67176); 2 findings (2 confirmed, 1 refuted) — Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:841, Tools/RecordCompactionFixture/main.swift:134. Five code-hygiene Swift rules found no file at Tests/FoundationModelsRouterTests/LiveModelLoaderTests.swift (the commit deleted it or moved it).
+    - next: implement the two open items in the "Review Findings (2026-09-30 00:57)" section, then review again.
+  timestamp: 2026-09-30T07:08:54.314437+00:00
+- actor: claude-code
+  id: 01m3rjanzrb3vnzf1nscq5fcrh
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 21 files
+    - test: green — swift test 1424 passed; IntegrationTests 49 + 1 passed (run by implement)
+    - commit: ce67176
+    - review: findings — Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:841, Tools/RecordCompactionFixture/main.swift:134
+  timestamp: 2026-09-30T07:09:11.544459+00:00
+- actor: claude-code
+  id: 01m3rjrq79ab4by4g53485jnnq
+  text: |-
+    Review findings fixed.
+    - Finding 1 (swift/access-control): `LiveModelLoaderError` and its `errorDescription` are `public` now. The same cause in the file: `ModelLoaderError` was `internal`, but the public `UnconfiguredModelLoader` throws it and links it in its docs. It is `public` now. The public docs of `LiveModelLoader` also linked non-public symbols: ``MLXFoundationModelsContainer`` (package) and ``LoadedPooledEmbedding`` (internal) in the type doc and in `load(_:)`, and ``CancellableWait`` (package) in `loadLLM` and `loadEmbedder`. These links are now plain words. The top `//` comment and the private `loadThroughModelLoader` doc keep their links, because they are not public docs.
+    - New test `Tests/FoundationModelsRouterPublicSurfaceTests/LoaderErrorPublicSurfaceTests.swift` (plain import, no `@testable`). RED: "cannot find type 'LiveModelLoaderError' in scope" and "cannot find 'ModelLoaderError' in scope". GREEN after the change.
+    - Finding 2 (swift/initialization): Tools/RecordCompactionFixture, Examples/CompactionDemo and Examples/MultiModelGeneration call `LiveModelLoader(reporting: { _ in })`, with a comment that tells why the value is dropped: a router load reports to the callback of its resolve. The Package.swift comments name `LiveModelLoader(reporting:)` now.
+    - Not changed, because they are out of the scope that the orchestrator gave (Tools and Examples): `LiveModelLoader()` in README.md, Tests/FoundationModelsRouterRealModelSupport/RealModelContainer.swift and the IntegrationTests package. The public init keeps its default `{ _ in }`, so these still compile.
+  timestamp: 2026-09-30T07:16:51.561127+00:00
+- actor: claude-code
+  id: 01m3rjrtn75jv9gkh49p7p9snz
+  text: |-
+    ### implement — changed
+    - evidence: `swift test`: 1424 tests in 178 suites pass (2 known issues by design), 23 tests in 11 suites pass (public surface, was 22), 19 tests in 3 suites pass. `swift build --product RecordCompactionFixture`, `--product CompactionDemo` and `--product MultiModelGeneration`: Build complete. The only warning is the SwiftPM "missing creator for mutated node ... mlx-swift_Cmlx.bundle" line, which does not come from a changed file. 7 files: Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift, Tests/FoundationModelsRouterPublicSurfaceTests/LoaderErrorPublicSurfaceTests.swift (new), Tools/RecordCompactionFixture/main.swift, Examples/CompactionDemo/main.swift, Examples/MultiModelGeneration/main.swift, Package.swift (comments only), .kanban task (findings checked).
+    - next: review
+  timestamp: 2026-09-30T07:16:55.079237+00:00
 depends_on:
 - 01M3QMDDGWZ7CRAE1P3JKFP5FP
 position_column: doing
@@ -66,3 +98,31 @@ title: Generation models load through the Extras MLXModelLoader; map pool progre
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #model-pool
+
+## Review Findings (2026-09-30 00:57)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 18 file(s) reviewed, 3 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+> 1 file(s) not reviewed — no validator matched:
+> - `README.md` — no validator matches this file
+
+> ⚠️ tool rule 'code-hygiene/disallowed-constructs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> disallowed-constructs-swift found no file at Tests/FoundationModelsRouterTests/LiveModelLoaderTests.swift, so its constructs are unread
+
+> ⚠️ tool rule 'code-hygiene/function-length-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> function-length-swift found no file at Tests/FoundationModelsRouterTests/LiveModelLoaderTests.swift, so its bodies are unread
+
+> ⚠️ tool rule 'code-hygiene/idioms-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> idioms-swift found no file at Tests/FoundationModelsRouterTests/LiveModelLoaderTests.swift, so its declarations are unread
+
+> ⚠️ tool rule 'code-hygiene/magic-numbers-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> magic-numbers-swift found no file at Tests/FoundationModelsRouterTests/LiveModelLoaderTests.swift, so its literals are unread
+
+> ⚠️ tool rule 'code-hygiene/missing-docs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> missing-docs-swift found no file at Tests/FoundationModelsRouterTests/LiveModelLoaderTests.swift, so its declarations are unread
+
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:841` `swift/access-control` — Public method `loadLLM` (line 938) documents that it throws `LiveModelLoaderError/notAnMLXLanguageModel(...)` (line 936) with a DocC symbol link, but the error type is defined with implicit `internal` access. Public methods must throw public error types so callers can catch and reference them, and DocC symbol links require the referenced type to be public. Add `public` modifier: `public enum LiveModelLoaderError: Error, Equatable, LocalizedError {`.
+- [x] `Tools/RecordCompactionFixture/main.swift:134` `swift/initialization` — `LiveModelLoader()` is called with no arguments, but the breaking change specifies the new init signature is `LiveModelLoader(reporting:)`, which requires a reporting parameter. Pass the required `reporting` parameter: `loader: LiveModelLoader(reporting: { _ in })`.

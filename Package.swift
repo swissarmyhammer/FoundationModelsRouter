@@ -280,7 +280,7 @@ let package = Package(
         // Runnable demo (live twin of the offline `ExamplesTests` example): one
         // `Router.resolve` makes two local generation models co-resident and the
         // program routes a quick prompt to `profile.flash` and a heavyweight prompt to
-        // `profile.standard`. It loads each model through `LiveModelLoader()`,
+        // `profile.standard`. It loads each model through `LiveModelLoader(reporting:)`,
         // which loads through the Extras `MLXModelLoader`, so it needs no Hub
         // client product of its own.
         .executableTarget(
@@ -299,7 +299,7 @@ let package = Package(
         // is excluded alongside `README.md` — the demo reads those files from
         // disk at run time (relative to its own source file) rather than
         // bundling them as SwiftPM resources. Like `MultiModelGeneration`, it
-        // resolves a real profile through `LiveModelLoader()`.
+        // resolves a real profile through `LiveModelLoader(reporting:)`.
         .executableTarget(
             name: "CompactionDemo",
             dependencies: [.target(name: packageName), loggingProduct] + mlxProducts,
@@ -315,7 +315,7 @@ let package = Package(
         // minutes, and every integration test must finish in under two. It
         // depends on the TestSupport target for the shared redaction scan and
         // entry-kind vocabulary the integration suites also read. Like the
-        // demos, it resolves a real profile through `LiveModelLoader()`.
+        // demos, it resolves a real profile through `LiveModelLoader(reporting:)`.
         .executableTarget(
             name: "RecordCompactionFixture",
             dependencies: [

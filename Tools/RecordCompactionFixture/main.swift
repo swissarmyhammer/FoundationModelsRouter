@@ -128,10 +128,12 @@ let rawRecordingsDirectory = outputDirectory.appendingPathComponent("raw", isDir
 // repeatable: the provider default samples from MLX's process-global PRNG,
 // which seeds itself from the clock. The router carries the mode, not the
 // loader: a loaded container serves every router in the pool, and the mode
-// belongs to the router (`model-pool.md` §2.5).
+// belongs to the router (`model-pool.md` §2.5). The `reporting` callback of the
+// loader receives only the loads through the Extras pool protocol; a router load
+// reports to the callback of its resolve, so this run drops each value.
 let router = Router(
     recordingsDir: rawRecordingsDirectory,
-    loader: LiveModelLoader(),
+    loader: LiveModelLoader(reporting: { _ in }),
     samplingMode: .greedy
 )
 
