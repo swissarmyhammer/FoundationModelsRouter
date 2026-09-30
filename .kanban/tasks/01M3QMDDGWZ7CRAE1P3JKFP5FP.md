@@ -43,10 +43,17 @@ comments:
     - blocker: IntegrationTests.batchVectorEqualsVectorOfTextAlone fails (cosines 0.438, 0.275 < 0.999). Cause is in Extras MLXEmbedding.embed(texts:in:): pooling has no mask. Fix is in ^ap5256j (Extras repository). Sent to the Extras coordinating session.
     - next: after the Extras fix is pushed, move the pin, run the gated test again, then test, commit, review.
   timestamp: 2026-09-30T05:02:11.715185+00:00
+- actor: claude-code
+  id: 01m3re8vfrce4m669j8b1rxcwc
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (f8e6949). 0 findings (0 confirmed, 0 refuted). 7 files reviewed. The engine did not review 8 .kanban files because of .reviewignore. Some rules declined PaddedTokenBatch.swift and PaddedTokenBatchTests.swift because the commit deletes these files.
+    - next: none. The task is in done.
+  timestamp: 2026-09-30T05:58:17.336241+00:00
 depends_on:
 - 01M3RAZRZV5JVTFD960AP5256J
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffb880
 title: Embedding models load through the Extras MLXModelLoader; delete LiveEmbeddingContainer
 ---
 **Wait for:** FoundationModelsExtras tasks 01M3QMD6V09WGE7MJDV483VHBG ("Built-in MLX loader in the core…") and 01M3QMD8KBM42ZRNF447E06VVC ("PooledEmbedder from a Hugging Face name") on the Extras board: done and pushed.

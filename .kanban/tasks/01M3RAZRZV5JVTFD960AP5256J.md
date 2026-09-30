@@ -9,8 +9,8 @@ comments:
     - The fix is in FoundationModelsExtras 0b487c6 (Extras board task 01M3RB2GRGGDBJCGMD9H3ZRFA3): the mask comes from the row lengths, and the model and the pooling get it. Helper: EmbeddingBatchPadding, with a unit test.
     - Router pin moved to 0b487c6 (root and IntegrationTests). IntegrationTests.batchVectorEqualsVectorOfTextAlone passes: cosines [0.9994725, 1.0, 1.0000001].
   timestamp: 2026-09-30T05:54:21.895216+00:00
-position_column: todo
-position_ordinal: '8280'
+position_column: done
+position_ordinal: ffffffb780
 title: 'Extras MLXEmbedding: pool with the padding mask, so a batch vector is the vector of its own text'
 ---
 ## What
