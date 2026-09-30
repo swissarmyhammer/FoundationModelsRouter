@@ -13,8 +13,15 @@ comments:
     - evidence: 1 file — IntegrationTests/Package.swift (removed hubProducts, the swift-huggingface and swift-transformers package dependencies, and the MLX products MLXLLM, MLXVLM, MLXEmbedders, MLXHuggingFace and MLXGuidedGeneration that no target imports; the integration target links MLXLMCommon + MLXFoundationModels, the eval target links MLXLMCommon). Package.resolved files unchanged. `swift build --package-path IntegrationTests --build-tests`: Build complete, no compiler warning (only the known SwiftPM line "missing creator for mutated node ... mlx-swift_Cmlx.bundle", present before this change). `swift test --package-path IntegrationTests --filter FoundationModelsRouterIntegrationTests`: 49 tests in 22 suites passed (2571.9 s). `--filter FoundationModelsRouterEvalIntegrationTests`: 1 test in 1 suite passed (316.2 s). No skipped test, no known issue.
     - next: /review
   timestamp: 2026-09-30T15:09:41.385084+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m3se5dheb2zjn47kdtmvptwx
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (10940a5): 0 findings, 0 confirmed, 0 refuted, 7 attempted, 0 failed. IntegrationTests/Package.swift reviewed. 4 .kanban files excluded by .reviewignore.
+    - next: none. The task is in done.
+  timestamp: 2026-09-30T15:15:39.182239+00:00
+position_column: done
+position_ordinal: ffffffbc80
 title: Remove the unused Hub client and tokenizer products from the IntegrationTests manifest
 ---
 ## What
