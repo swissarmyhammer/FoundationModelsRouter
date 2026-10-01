@@ -120,7 +120,9 @@ struct CeilingStopCompactionTests {
         #expect(!events.streamedText.contains(CeilingStopCompactionModel.Executor.answerText))
     }
 
-    @Test("an output that ends inside the reasoning below the ceiling, over the trigger: no compaction and no continuation")
+    @Test(
+        "an output that ends inside the reasoning below the ceiling, over the trigger: no compaction, and one reasoning recovery"
+    )
     func endedInsideReasoningOverTheTriggerDoesNotCompact() async throws {
         let usage = MeteredGenerationCall(tokensIn: Self.overTriggerUsage.tokensIn, tokensOut: Self.ceiling - 1)
         #expect(usage.tokensIn + usage.tokensOut >= Self.budget.triggerTokens)
@@ -128,10 +130,13 @@ struct CeilingStopCompactionTests {
         let events = try await Self.makeAnswerEvents(
             cutLength: Self.largeCutLength, cutUsage: usage, cutEndsInsideReasoning: true)
 
+        // The output had room left, so no compaction runs. The pass wrote only
+        // reasoning, so a recovery tells the model to act (task ^hm9trt5).
         #expect(events.compactionResults.isEmpty)
-        #expect(Self.finishReasons(in: events) == [.endedInsideReasoning])
-        #expect(Self.submissionCauses(in: events) == [.message])
+        #expect(events.reasoningStops.map(\.passFinishReason) == [.endedInsideReasoning])
+        #expect(Self.finishReasons(in: events) == [.endedInsideReasoning, .completed])
+        #expect(Self.submissionCauses(in: events) == [.message, .continuation])
         _ = eventsInsideAnswerFrame(events)
-        #expect(!events.streamedText.contains(CeilingStopCompactionModel.Executor.answerText))
+        #expect(events.streamedText.contains(CeilingStopCompactionModel.Executor.answerText))
     }
 }

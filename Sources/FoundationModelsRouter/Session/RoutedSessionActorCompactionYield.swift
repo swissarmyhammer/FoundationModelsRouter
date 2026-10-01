@@ -187,7 +187,7 @@ extension RoutedSessionActor {
     ///   - body: The model work to run.
     /// - Returns: The response text of the next attempt.
     /// - Throws: What the compaction or the next attempt throws.
-    private func compactAndContinue(
+    func compactAndContinue(
         attempt: StoppedAttempt,
         continuationPrompt: String,
         body: @escaping @Sendable (String) async throws -> String

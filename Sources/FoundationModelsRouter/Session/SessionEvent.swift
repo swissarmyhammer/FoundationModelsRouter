@@ -123,6 +123,15 @@ public enum SessionEvent: Sendable, Equatable {
     /// is ``FinishReason/repeatedLines``. See ``RepetitionDetection``.
     case repetitionStopped(RepetitionStop)
 
+    /// One pass of the answer reasoned and did not act (task ^hm9trt5): the
+    /// watch stopped the call because its reasoning reached
+    /// ``RepetitionDetection/reasoningTokenLimit``, or the pass ended inside
+    /// its reasoning with no tool call and no text. The report gives the
+    /// reasoning tokens, the limit and the number of the recovery that
+    /// follows. See ``ReasoningStop`` for where the event comes among the
+    /// submission events.
+    case reasoningStopped(ReasoningStop)
+
     /// A background run of this session settled: its one terminal ``OperationEvent``.
     /// Always on ``RoutedSession/streamSessionEvents()``; on the stream of the answer when it settles inside an answer.
     case runSettled(OperationEvent)
@@ -223,7 +232,10 @@ public struct TokenUsage: Sendable, Equatable {
     /// does not reach the ceiling, or is not known, the session reports
     /// ``FinishReason/endedInsideReasoning``. When the session stopped the
     /// attempt because it no longer wrote new lines, the session reports
-    /// ``FinishReason/repeatedLines``.
+    /// ``FinishReason/repeatedLines``. When the session stopped the attempt
+    /// because the reasoning of one pass reached
+    /// ``RepetitionDetection/reasoningTokenLimit``, the session reports
+    /// ``FinishReason/reasoningTokenLimit``.
     public let finishReason: FinishReason
 
     /// Creates a token usage value.

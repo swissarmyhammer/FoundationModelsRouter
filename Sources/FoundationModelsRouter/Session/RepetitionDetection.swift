@@ -44,6 +44,14 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
     /// (task ^ez2g5gw).
     public static let defaultShortLineRepeatThreshold = 8
 
+    /// The default of ``reasoningTokenLimit``: 8,192 tokens (task ^hm9trt5).
+    ///
+    /// The value is a proposal from one SWE-bench run of 12 instances with
+    /// `mlx-community/Qwen3.8-27B-mxfp4`: in the 10 instances that made a
+    /// patch, the longest call made 9,584 tokens, and two instances that
+    /// reasoned with no end made no patch. The owner must confirm it.
+    public static let defaultReasoningTokenLimit = 8_192
+
     /// Whether the session watches the calls of its submissions. When `false`, no
     /// call stops for repetition.
     public var isEnabled: Bool
@@ -100,6 +108,20 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
     /// do not stop a call, and a loop of many lines of one short shape does.
     public var shortLineRepeatThreshold: Int
 
+    /// The most reasoning tokens of one generation pass (task ^hm9trt5), or
+    /// `nil` or `0` for no limit.
+    ///
+    /// A reasoning model can think for a long time in one pass, write no
+    /// tool call, and never act. The watch counts the tokens of the complete
+    /// lines of each reasoning entry of the call in flight. When the
+    /// reasoning entry that the call writes now reaches this limit, the
+    /// session stops the call, keeps the reasoning so far, and runs a
+    /// recovery with ``RoutedSessionActor/reasoningStopContinuationPrompt``,
+    /// which tells the model to act. The recovery counts against
+    /// ``recoveriesPerAnswer``. A detection that is not enabled sets no
+    /// limit.
+    public var reasoningTokenLimit: Int?
+
     /// The keys of the stored form. Each key is the name of its property,
     /// except ``recoveriesPerAnswer``: its key stays `recoveriesPerTurn`, and
     /// the schema version does not change (`generation-queue.md`, section 5.6).
@@ -111,6 +133,7 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
         case passTokenLimit
         case comparesLineShapes
         case shortLineRepeatThreshold
+        case reasoningTokenLimit
     }
 
     /// The text that replaces each run of decimal digits in the shape of a
@@ -131,6 +154,8 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
     ///     each line, and not its exact text.
     ///   - shortLineRepeatThreshold: How many times one short shape can
     ///     occur in a call before it counts.
+    ///   - reasoningTokenLimit: The most reasoning tokens of one generation
+    ///     pass, or `nil` or `0` for no limit.
     public init(
         isEnabled: Bool = defaultIsEnabled,
         windowTokens: Int = defaultWindowTokens,
@@ -138,7 +163,8 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
         recoveriesPerAnswer: Int = defaultRecoveriesPerAnswer,
         passTokenLimit: Int = defaultPassTokenLimit,
         comparesLineShapes: Bool = defaultComparesLineShapes,
-        shortLineRepeatThreshold: Int = defaultShortLineRepeatThreshold
+        shortLineRepeatThreshold: Int = defaultShortLineRepeatThreshold,
+        reasoningTokenLimit: Int? = defaultReasoningTokenLimit
     ) {
         self.isEnabled = isEnabled
         self.windowTokens = windowTokens
@@ -147,6 +173,7 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
         self.passTokenLimit = passTokenLimit
         self.comparesLineShapes = comparesLineShapes
         self.shortLineRepeatThreshold = shortLineRepeatThreshold
+        self.reasoningTokenLimit = reasoningTokenLimit
     }
 
     /// Decodes the stored form. A stored form from before task ^dzw15st has
@@ -154,11 +181,14 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
     /// A stored form from before task ^ez2g5gw has no ``comparesLineShapes``
     /// and no ``shortLineRepeatThreshold`` key, and it loads with
     /// ``defaultComparesLineShapes`` and ``defaultShortLineRepeatThreshold``.
+    /// A stored form from before task ^hm9trt5 has no ``reasoningTokenLimit``
+    /// key, and it loads with ``defaultReasoningTokenLimit``. A stored `null`
+    /// under that key is a `nil` limit: no limit.
     ///
     /// - Parameter decoder: The decoder of the stored form.
     /// - Throws: `DecodingError` when a key other than ``passTokenLimit``,
-    ///   ``comparesLineShapes`` and ``shortLineRepeatThreshold`` is missing,
-    ///   or when a value has the wrong type.
+    ///   ``comparesLineShapes``, ``shortLineRepeatThreshold`` and
+    ///   ``reasoningTokenLimit`` is missing, or when a value has the wrong type.
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
@@ -171,7 +201,28 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
             comparesLineShapes: try container.decodeIfPresent(Bool.self, forKey: .comparesLineShapes)
                 ?? Self.defaultComparesLineShapes,
             shortLineRepeatThreshold: try container.decodeIfPresent(Int.self, forKey: .shortLineRepeatThreshold)
-                ?? Self.defaultShortLineRepeatThreshold)
+                ?? Self.defaultShortLineRepeatThreshold,
+            reasoningTokenLimit: container.contains(.reasoningTokenLimit)
+                ? try container.decodeIfPresent(Int.self, forKey: .reasoningTokenLimit)
+                : Self.defaultReasoningTokenLimit)
+    }
+
+    /// Encodes the stored form. Each key is written, and a `nil`
+    /// ``reasoningTokenLimit`` is written as `null`, so it does not load as
+    /// ``defaultReasoningTokenLimit``.
+    ///
+    /// - Parameter encoder: The encoder of the stored form.
+    /// - Throws: What the encoder throws.
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(isEnabled, forKey: .isEnabled)
+        try container.encode(windowTokens, forKey: .windowTokens)
+        try container.encode(minimumLineLength, forKey: .minimumLineLength)
+        try container.encode(recoveriesPerAnswer, forKey: .recoveriesPerAnswer)
+        try container.encode(passTokenLimit, forKey: .passTokenLimit)
+        try container.encode(comparesLineShapes, forKey: .comparesLineShapes)
+        try container.encode(shortLineRepeatThreshold, forKey: .shortLineRepeatThreshold)
+        try container.encode(reasoningTokenLimit, forKey: .reasoningTokenLimit)
     }
 
     /// The shape of `line`, as the detector compares it: the line without
@@ -193,13 +244,32 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
         isEnabled ? passTokenLimit : nil
     }
 
+    /// The reasoning token limit that a session applies:
+    /// ``reasoningTokenLimit`` when the detection is enabled and the limit is
+    /// more than zero, else `nil`.
+    var reasoningTokenLimitInForce: Int? {
+        guard isEnabled, let reasoningTokenLimit, reasoningTokenLimit > 0 else { return nil }
+        return reasoningTokenLimit
+    }
+
+    /// The words of a stop report for what follows the stop.
+    ///
+    /// - Parameter recovery: The number of the recovery attempt that
+    ///   follows the stop, or `nil` when the answer has no recovery left.
+    /// - Returns: The words, for a log line.
+    func followingStepDescription(recovery: Int?) -> String {
+        recovery.map { "recovery \($0) of \(recoveriesPerAnswer) follows" }
+            ?? "no recovery is left, so the answer ends"
+    }
+
     /// Each value in force, by name, for a log line.
     var loggedValues: String {
         """
         repetitionDetection: isEnabled = \(isEnabled), windowTokens = \(windowTokens), \
         minimumLineLength = \(minimumLineLength), recoveriesPerAnswer = \(recoveriesPerAnswer), \
         passTokenLimit = \(passTokenLimit), comparesLineShapes = \(comparesLineShapes), \
-        shortLineRepeatThreshold = \(shortLineRepeatThreshold)
+        shortLineRepeatThreshold = \(shortLineRepeatThreshold), \
+        reasoningTokenLimit = \(reasoningTokenLimit.map(String.init) ?? "none")
         """
     }
 }
@@ -276,8 +346,7 @@ public struct RepetitionStop: Sendable, Equatable, CustomStringConvertible {
     /// line. It names each value of ``detection``.
     public var description: String {
         let share = String(format: Self.shareFormat, newLineShare)
-        let next = recovery.map { "recovery \($0) of \(detection.recoveriesPerAnswer) follows" }
-            ?? "no recovery is left, so the answer ends"
+        let next = detection.followingStepDescription(recovery: recovery)
         return """
             the call stopped because it repeats itself: it generated \(generatedTokens) tokens, \
             \(newLines) of \(countedLines) counted lines were new (share \(share)), and no new line \

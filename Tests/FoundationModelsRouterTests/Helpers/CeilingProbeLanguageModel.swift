@@ -90,6 +90,10 @@ enum CeilingProbeEnding: Sendable, Hashable {
     /// each later call ends as ``finished``.
     case truncatedOnFirstCallOnly
 
+    /// The first generation call ends as ``truncatedInsideReasoningAtCeiling``,
+    /// and each later call ends as ``finished`` (task ^hm9trt5).
+    case truncatedAtCeilingOnFirstCallOnly
+
     /// The first generation call ends as ``CeilingProbeCallEnding/callsTool``,
     /// and each later call ends as ``truncatedInAnswerText``.
     case toolCallThenTruncatedInAnswerText
@@ -118,6 +122,8 @@ enum CeilingProbeEnding: Sendable, Hashable {
             return .truncatedInAnswerText
         case .truncatedOnFirstCallOnly:
             return callIndex == 0 ? .truncatedInsideReasoning : .finished
+        case .truncatedAtCeilingOnFirstCallOnly:
+            return callIndex == 0 ? .truncatedInsideReasoningAtCeiling : .finished
         case .toolCallThenTruncatedInAnswerText:
             return callIndex == 0 ? .callsTool : .truncatedInAnswerText
         case .toolCallThenFinished:

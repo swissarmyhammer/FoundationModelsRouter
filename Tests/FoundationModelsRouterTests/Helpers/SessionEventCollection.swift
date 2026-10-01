@@ -97,6 +97,14 @@ extension Sequence<SessionEvent> {
             return nil
         }
     }
+
+    /// The reasoning stops among these events, in order (task ^hm9trt5).
+    var reasoningStops: [ReasoningStop] {
+        compactMap { event in
+            if case .reasoningStopped(let stop) = event { return stop }
+            return nil
+        }
+    }
 }
 
 extension Transcript {

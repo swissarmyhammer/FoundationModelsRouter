@@ -176,7 +176,8 @@ public final class SessionProjection {
             transcript.append(
                 TranscriptEntry(id: result.id, kind: .compaction(result), sourceEntryId: result.summaryEntryId))
         case .discoveryPrimingFailed, .generationStalled, .submissionQueued, .repetitionStopped,
-            .runSettled, .toolCallReport, .elicitationRequested, .generationCall, .mailDeliveryPaused:
+            .reasoningStopped, .runSettled, .toolCallReport, .elicitationRequested, .generationCall,
+            .mailDeliveryPaused:
             // Handled explicitly, and deliberately changes nothing. A mail
             // delivery pause changes no entry: the held mail waits in the
             // queue of the session, and the next caller message carries it. A settled
@@ -188,9 +189,10 @@ public final class SessionProjection {
             // still gives its output (see ``SessionEvent/generationStalled(_:)``).
             // A wait of a submission for the worker of its model changes no
             // entry and no counter: the submission gives the same output after
-            // the wait. A repetition stop report comes with the recorded
-            // entries of the stopped attempt, and its
-            // ``SessionEvent/submissionEnded(_:)`` names the stop. A tool call
+            // the wait. A repetition stop report and a reasoning stop report
+            // come with the recorded entries of the stopped attempt, and the
+            // ``SessionEvent/submissionEnded(_:)`` of that attempt names the
+            // stop. A tool call
             // report carries records for a host to decode, and the phase of
             // the call is already mirrored from its
             // ``SessionEvent/toolInvocation(_:)`` records. An elicitation

@@ -19,8 +19,10 @@ public enum FinishReason: Sendable, Equatable {
     /// call did not spend its token ceiling, or its count is not known. The
     /// reasoning ends without a close, and the response can be empty. The
     /// stop came from the model or from the engine, not from the ceiling. A
-    /// session does not compact after this stop and does not send a
+    /// session does not compact after this stop and does not send a ceiling
     /// continuation prompt, because more room does not help this output.
+    /// When the output after the reasoning holds no tool call and no text,
+    /// the session runs the recovery of a reasoning stop (task ^hm9trt5).
     case endedInsideReasoning
 
     /// The session stopped the call because the call no longer wrote new
@@ -31,6 +33,16 @@ public enum FinishReason: Sendable, Equatable {
     /// counts of the stop. The ceiling did not stop the call, so the session
     /// does not compact for it and does not send a ceiling continuation.
     case repeatedLines
+
+    /// The session stopped the call because the reasoning of one pass
+    /// reached ``RepetitionDetection/reasoningTokenLimit`` (task ^hm9trt5).
+    ///
+    /// The model reasoned and did not act, so the session cancelled the call.
+    /// ``SessionEvent/reasoningStopped(_:)`` gives the numbers of the stop.
+    /// When the answer has a recovery left, a continuation submission tells
+    /// the model to act. When it has none, the answer ends with this reason,
+    /// so a host can map it to a stop reason of its own.
+    case reasoningTokenLimit
 }
 
 extension FinishReason {

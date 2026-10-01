@@ -359,8 +359,8 @@ struct RealToolAnswerComparisonTests {
                 failedIds.append(id)
             case .submissionStarted, .toolStatus, .toolInvocation, .toolCallReport, .reasoningDelta, .entryRecorded,
                 .compaction, .discoveryPrimingFailed, .generationStalled, .submissionQueued, .repetitionStopped,
-                .runSettled, .elicitationRequested, .generationCall, .submissionEnded, .answered, .answerFailed,
-                .mailDeliveryPaused:
+                .reasoningStopped, .runSettled, .elicitationRequested, .generationCall, .submissionEnded, .answered,
+                .answerFailed, .mailDeliveryPaused:
                 break
             }
         }

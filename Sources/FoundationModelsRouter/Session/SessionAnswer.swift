@@ -161,7 +161,8 @@ struct SessionAnswerReducer {
             accumulate(end.usage)
         case .submissionQueued, .submissionStarted, .answered, .answerFailed, .textDelta, .textReset,
             .reasoningDelta, .entryRecorded, .discoveryPrimingFailed, .generationStalled, .repetitionStopped,
-            .runSettled, .toolCallReport, .elicitationRequested, .generationCall, .mailDeliveryPaused:
+            .reasoningStopped, .runSettled, .toolCallReport, .elicitationRequested, .generationCall,
+            .mailDeliveryPaused:
             // Deliberately not carried by the answer. A mail delivery pause
             // comes when no answer runs, so no answer can carry it. The frames of a
             // submission and of an answer are the structure the answer sums.
@@ -171,7 +172,8 @@ struct SessionAnswerReducer {
             // excludes, and the recorded-entry closes exist for consumers
             // (like ``SessionProjection``) that key rows on durable SDK entry
             // ids. The priming report, the stall report, the repetition stop
-            // report (its submission's ``SessionEvent/submissionEnded(_:)``
+            // report and the reasoning stop report (the
+            // ``SessionEvent/submissionEnded(_:)`` of the stopped submission
             // names the stop), a background run's settlement, a call's
             // attachments, a pending elicitation, and one generation call's
             // usage (``SessionEvent/submissionEnded(_:)`` sums them) are

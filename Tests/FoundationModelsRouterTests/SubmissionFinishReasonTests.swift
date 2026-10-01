@@ -289,8 +289,12 @@ struct SubmissionFinishReasonTests {
 
     @Test("an answer that finishes after a truncated answer reports completed")
     func finishReasonIsPerAnswer() async throws {
+        // An answer whose pass ends inside the reasoning runs a recovery
+        // (task ^hm9trt5). With no recovery per answer, the first answer
+        // ends truncated, and the second answer shows its own reason.
         let fixture = try await CeilingProbeSessionFixture.make(
-            ending: .truncatedOnFirstCallOnly, tempDirPrefix: Self.tempDirPrefix)
+            ending: .truncatedOnFirstCallOnly, repetitionDetection: RepetitionDetection(recoveriesPerAnswer: 0),
+            tempDirPrefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
         let first: SessionAnswer = try await fixture.session.respond(to: "first", maxTokens: nil)

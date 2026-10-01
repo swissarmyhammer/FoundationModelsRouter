@@ -459,7 +459,7 @@ extension RoutedSessionActor: SessionMailObserver {
     ///   applied no summary stops the next ones of that answer only;
     /// - ``RepetitionWatchState/recoveriesThisAnswer``: the answer goes on
     ///   after at most ``RepetitionDetection/recoveriesPerAnswer`` repetition
-    ///   stops.
+    ///   stops and reasoning stops together.
     ///
     /// The third limit, the one overflow retry, is no stored state: the first
     /// submission of each answer gets the permission

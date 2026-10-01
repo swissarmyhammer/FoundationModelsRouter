@@ -251,7 +251,7 @@ Code and tests that assume an in-band wait, and what each becomes:
 
 - Of the item: `submissionQueued(SubmissionID)`, `submissionStarted(SubmissionStart)` (the id, the delivered `MessageID`s, the cause: caller message, mail or continuation), `submissionEnded(SubmissionEnd)` (the id, the `TokenUsage` of that SDK call, the `FinishReason`). `submissionEnded` replaces `turnEnded`, which already came one time for each SDK call.
 - Of the answer: `answered(SessionAnswer)` one time for each final answer; `answerFailed(AnswerFailure)` when the chain ends with no answer (cancelled, or an error).
-- Of the steps: `toolCall`, `toolStatus`, `toolInvocation`, `toolCallReport`, `textDelta`, `textReset`, `reasoningDelta`, `generationCall`, `generationStalled`, `repetitionStopped`, `entryRecorded` stay.
+- Of the steps: `toolCall`, `toolStatus`, `toolInvocation`, `toolCallReport`, `textDelta`, `textReset`, `reasoningDelta`, `generationCall`, `generationStalled`, `repetitionStopped`, `reasoningStopped` (task ^hm9trt5), `entryRecorded` stay.
 - Of the session: `compaction`, `runSettled`, `elicitationRequested`, `discoveryPrimingFailed` stay.
 - `textDelta` and `textReset` also travel on `streamSessionEvents()`, because no caller owns a submission that mail started.
 

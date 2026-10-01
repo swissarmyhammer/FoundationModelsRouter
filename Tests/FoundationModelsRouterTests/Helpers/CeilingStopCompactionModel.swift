@@ -11,8 +11,8 @@ import FoundationModels
 ///
 /// - a compaction's summarizer call (its prompt holds the compaction prompt):
 ///   it answers with ``Executor/summaryText``;
-/// - the continuation attempt after a compaction: it answers with
-///   ``Executor/answerText``;
+/// - the continuation attempt after a compaction, or after a reasoning stop
+///   (task ^hm9trt5): it answers with ``Executor/answerText``;
 /// - any other call: it writes ``cutText`` and reports ``cutUsage`` as the
 ///   usage of the call, so the call spends its ceiling. When
 ///   ``cutEndsInsideReasoning`` is `true`, it writes ``cutText`` as a thought
@@ -99,7 +99,7 @@ struct CeilingStopCompactionModel: LanguageModel {
                 await Self.send(text: Self.summaryText, entryID: "summary", usage: Self.smallCall, into: channel)
                 return
             }
-            if prompts.contains(where: { $0.contains(RoutedSessionActor.ceilingStopContinuationPrompt) }) {
+            if prompts.contains(where: Self.isContinuationPrompt) {
                 await Self.send(text: Self.answerText, entryID: "answer", usage: Self.smallCall, into: channel)
                 return
             }
@@ -109,6 +109,16 @@ struct CeilingStopCompactionModel: LanguageModel {
             }
             await Self.send(
                 text: configuration.cutText, entryID: "cut", usage: configuration.cutUsage, into: channel)
+        }
+
+        /// Whether `prompt` is the prompt of a continuation attempt: after a
+        /// ceiling stop, or after a reasoning stop (task ^hm9trt5).
+        ///
+        /// - Parameter prompt: The text of one prompt of the transcript.
+        /// - Returns: `true` when the prompt holds a continuation prompt.
+        private static func isContinuationPrompt(_ prompt: String) -> Bool {
+            prompt.contains(RoutedSessionActor.ceilingStopContinuationPrompt)
+                || prompt.contains(RoutedSessionActor.reasoningStopContinuationPrompt)
         }
 
         /// Sends one text response and its usage.

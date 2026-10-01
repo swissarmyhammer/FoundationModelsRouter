@@ -12,6 +12,22 @@ struct WatchedText: Sendable, Equatable {
     /// ``ToolCallArgumentsText/text(of:)`` reads them.
     let text: String
 
+    /// Whether the entry is a `.reasoning` entry, whose tokens count toward
+    /// ``RepetitionDetection/reasoningTokenLimit`` (task ^hm9trt5).
+    let isReasoning: Bool
+
+    /// Creates one watched entry.
+    ///
+    /// - Parameters:
+    ///   - entryId: The `Transcript.Entry.id` of the entry.
+    ///   - text: The text of the entry so far.
+    ///   - isReasoning: Whether the entry is a `.reasoning` entry.
+    init(entryId: String, text: String, isReasoning: Bool = false) {
+        self.entryId = entryId
+        self.text = text
+        self.isReasoning = isReasoning
+    }
+
     /// The joined text of the `.text` segments of `segments`. The detector
     /// and the removal of the repeated part both read an entry through this
     /// one join, so their offsets agree.
@@ -49,7 +65,7 @@ struct WatchedText: Sendable, Equatable {
             guard !entryIdsBeforeAttempt.contains(entry.id) else { return nil }
             switch entry {
             case .reasoning(let reasoning):
-                return WatchedText(entryId: entry.id, text: text(of: reasoning.segments))
+                return WatchedText(entryId: entry.id, text: text(of: reasoning.segments), isReasoning: true)
             case .response(let response):
                 return WatchedText(entryId: entry.id, text: text(of: response.segments))
             case .toolCalls(let calls):
@@ -85,6 +101,16 @@ struct RepetitionFinding: Sendable, Equatable {
     let keptUTF8Lengths: [String: Int]
 }
 
+/// What the detector found when the reasoning entry that the call writes now
+/// reached ``RepetitionDetection/reasoningTokenLimit`` (task ^hm9trt5).
+struct ReasoningLimitFinding: Sendable, Equatable {
+    /// The tokens of the complete lines of the reasoning entry.
+    let reasoningTokens: Int
+
+    /// The limit in force, ``RepetitionDetection/reasoningTokenLimitInForce``.
+    let limit: Int
+}
+
 /// Reads the text of one call in flight line by line, and finds the moment
 /// when one window of generated tokens holds no new line (task ^1hcwaqy).
 ///
@@ -102,6 +128,11 @@ struct RepetitionFinding: Sendable, Equatable {
 ///
 /// The detector reads each entry from where it stopped the last time, so a
 /// text that grows costs only its new part.
+///
+/// The detector also counts the tokens of the complete lines of each
+/// `.reasoning` entry (task ^hm9trt5). ``reasoningLimitFinding()`` reports
+/// the entry that the call writes now when its count reaches
+/// ``RepetitionDetection/reasoningTokenLimit``.
 struct RepetitionDetector {
     /// The settings in force.
     private let detection: RepetitionDetection
@@ -136,6 +167,13 @@ struct RepetitionDetector {
     /// The tokens of the repeated lines since the last new line.
     private var tokensWithoutNewLine = 0
 
+    /// For each watched `.reasoning` entry, the tokens of its complete lines.
+    private var reasoningTokens: [String: Int] = [:]
+
+    /// The last watched entry with text in the last ``observe(_:)``: the
+    /// entry that the call writes now, or `nil` before any text.
+    private var entryInFlight: WatchedText?
+
     /// The byte that ends a line.
     private static let lineFeed = UInt8(ascii: "\n")
 
@@ -154,12 +192,30 @@ struct RepetitionDetector {
     /// - Parameter texts: The watched entries of the call, in transcript order.
     /// - Returns: The finding when one window of repeated lines filled, else `nil`.
     mutating func observe(_ texts: [WatchedText]) -> RepetitionFinding? {
+        entryInFlight = texts.last { !$0.text.isEmpty }
         for watched in texts {
             if let finding = readCompleteLines(of: watched) {
                 return finding
             }
         }
         return nil
+    }
+
+    /// The finding of the reasoning limit: the entry that the call writes now
+    /// is a `.reasoning` entry, and the tokens of its complete lines reached
+    /// ``RepetitionDetection/reasoningTokenLimitInForce``.
+    ///
+    /// When a `.response` or `.toolCalls` entry with text follows the
+    /// reasoning entry, the pass already acts, and the limit does not stop
+    /// it.
+    ///
+    /// - Returns: The finding, or `nil` when no limit is in force or the
+    ///   entry in flight is not a reasoning entry at the limit.
+    func reasoningLimitFinding() -> ReasoningLimitFinding? {
+        guard let limit = detection.reasoningTokenLimitInForce, let entryInFlight, entryInFlight.isReasoning,
+            let tokens = reasoningTokens[entryInFlight.entryId], tokens >= limit
+        else { return nil }
+        return ReasoningLimitFinding(reasoningTokens: tokens, limit: limit)
     }
 
     /// Reads the complete lines of `watched` from its first unread line.
@@ -177,6 +233,7 @@ struct RepetitionDetector {
         var start = lineStarts[watched.entryId] ?? 0
         if start > utf8.count {
             start = 0
+            reasoningTokens[watched.entryId] = nil
         }
         var lineStart = utf8.index(utf8.startIndex, offsetBy: start)
         while let lineEnd = utf8[lineStart...].firstIndex(of: Self.lineFeed) {
@@ -184,7 +241,11 @@ struct RepetitionDetector {
             start += utf8.distance(from: lineStart, to: lineEnd) + 1
             lineStarts[watched.entryId] = start
             lineStart = utf8.index(after: lineEnd)
-            if let finding = read(line: line) {
+            let lineTokens = tokenCounter.count(line + "\n")
+            if watched.isReasoning {
+                reasoningTokens[watched.entryId, default: 0] += lineTokens
+            }
+            if let finding = read(line: line, lineTokens: lineTokens) {
                 return finding
             }
         }
@@ -194,10 +255,11 @@ struct RepetitionDetector {
 
     /// Reads one complete line.
     ///
-    /// - Parameter line: The line, without its line feed.
+    /// - Parameters:
+    ///   - line: The line, without its line feed.
+    ///   - lineTokens: The tokens of the line, with its line feed.
     /// - Returns: The finding when this line filled the window, else `nil`.
-    private mutating func read(line: String) -> RepetitionFinding? {
-        let lineTokens = tokenCounter.count(line + "\n")
+    private mutating func read(line: String, lineTokens: Int) -> RepetitionFinding? {
         generatedTokens += lineTokens
         let shape = detection.shape(of: line)
         guard shape.count >= detection.minimumLineLength else {

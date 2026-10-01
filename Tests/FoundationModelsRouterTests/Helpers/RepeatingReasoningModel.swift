@@ -4,16 +4,30 @@ import FoundationModelsRouterTestSupport
 
 @testable import FoundationModelsRouter
 
+/// How one call of a ``RepeatingReasoningModel`` that plays its script ends
+/// after the hold (task ^hm9trt5).
+enum RepeatingReasoningEnding: Sendable, Hashable {
+    /// The call answers with ``RepeatingReasoningModel/Executor/answerText``.
+    case answer
+
+    /// The call asks for one ``CountingRunCodeTool`` call. The next call,
+    /// whose transcript holds the tool output, answers.
+    case toolCall
+}
+
 /// The reasoning that one call of a ``RepeatingReasoningModel`` writes: the
-/// lines in order, then a hold, then the answer.
+/// lines in order, then a hold, then the ending.
 struct RepeatingReasoningScript: Sendable, Hashable {
     /// The lines the call writes into its reasoning entry, in order. The
     /// model adds a line feed after each one.
     let reasoningLines: [String]
 
     /// How long the call waits after its last reasoning line, before it
-    /// writes the answer. A stop of the session cancels the wait.
+    /// writes the ending. A stop of the session cancels the wait.
     let hold: Duration
+
+    /// What the call writes after the hold.
+    var ending: RepeatingReasoningEnding = .answer
 
     /// Makes the lines `newLines`, then `cycle` repeated `cycleCount` times.
     ///
@@ -36,11 +50,14 @@ struct RepeatingReasoningScript: Sendable, Hashable {
 ///
 /// Each executor call records the transcript it receives in ``log``, then:
 ///
+/// - a call whose transcript holds a tool output answers with
+///   ``Executor/answerText`` at once;
 /// - the first call of the session, and each call whose prompt is
-///   ``RoutedSessionActor/repetitionStopContinuationPrompt`` when
+///   ``RoutedSessionActor/repetitionStopContinuationPrompt`` or
+///   ``RoutedSessionActor/reasoningStopContinuationPrompt`` when
 ///   ``repeatsAfterStop`` is `true`, plays ``script``: it writes the
 ///   reasoning lines one by one, waits for ``RepeatingReasoningScript/hold``,
-///   and answers with ``Executor/answerText``;
+///   and writes ``RepeatingReasoningScript/ending``;
 /// - a continuation call when ``repeatsAfterStop`` is `false` answers with
 ///   ``Executor/answerText`` at once.
 ///
@@ -57,8 +74,9 @@ struct RepeatingReasoningModel: LanguageModel {
     /// Whether a continuation call after a stop plays ``script`` again.
     let repeatsAfterStop: Bool
 
-    /// Declares reasoning, because each call writes a reasoning entry.
-    var capabilities: LanguageModelCapabilities { LanguageModelCapabilities([.reasoning]) }
+    /// Declares reasoning, because each call writes a reasoning entry, and
+    /// tool calling, because a script can end with a tool call.
+    var capabilities: LanguageModelCapabilities { LanguageModelCapabilities([.reasoning, .toolCalling]) }
 
     /// Builds the executor cache key from the log, the script and the flag.
     var executorConfiguration: Executor.Configuration {
@@ -129,14 +147,55 @@ struct RepeatingReasoningModel: LanguageModel {
             streamingInto channel: LanguageModelExecutorGenerationChannel
         ) async throws {
             configuration.log.record(render: request.transcript)
-            let isContinuation = request.transcript.promptTexts.last == RoutedSessionActor.repetitionStopContinuationPrompt
-            if !isContinuation || configuration.repeatsAfterStop {
+            if playsScript(request.transcript) {
                 try await Self.writeReasoning(configuration.script, into: channel)
+                if configuration.script.ending == .toolCall {
+                    await Self.sendToolCall(into: channel)
+                    return
+                }
             }
             await channel.send(
                 .response(
                     entryID: "answer-\(UUID().uuidString)",
                     action: .appendText(Self.answerText, tokenCount: Self.emittedTokenCount)))
+        }
+
+        /// The prompts of the continuation calls after a stop of the session.
+        private static let continuationPrompts: Set<String> = [
+            RoutedSessionActor.repetitionStopContinuationPrompt,
+            RoutedSessionActor.reasoningStopContinuationPrompt,
+        ]
+
+        /// The arguments of the one tool call of a ``RepeatingReasoningEnding/toolCall`` script.
+        private static let toolCallArguments = #"{"code": "print(value)"}"#
+
+        /// The id of the one tool call of a ``RepeatingReasoningEnding/toolCall`` script.
+        private static let toolCallId = "reasoning-run-code-call"
+
+        /// Whether a call over `transcript` plays ``Configuration/script``: the
+        /// transcript holds no tool output, and the call is not a continuation
+        /// after a stop, or a continuation repeats.
+        ///
+        /// - Parameter transcript: The transcript of the call.
+        /// - Returns: `true` when the call plays the script.
+        private func playsScript(_ transcript: Transcript) -> Bool {
+            let holdsToolOutput = transcript.contains { entry in
+                guard case .toolOutput = entry else { return false }
+                return true
+            }
+            let isContinuation = transcript.promptTexts.last.map(Self.continuationPrompts.contains) ?? false
+            return !holdsToolOutput && (!isContinuation || configuration.repeatsAfterStop)
+        }
+
+        /// Sends one ``CountingRunCodeTool`` call with ``toolCallArguments``.
+        ///
+        /// - Parameter channel: The generation channel this call emits into.
+        private static func sendToolCall(into channel: LanguageModelExecutorGenerationChannel) async {
+            await channel.send(
+                .toolCalls(
+                    action: .toolCall(
+                        id: toolCallId, name: CountingRunCodeTool.toolName,
+                        action: .appendArguments(toolCallArguments, tokenCount: emittedTokenCount))))
         }
 
         /// Writes the reasoning lines of `script` one by one, then waits for
@@ -184,6 +243,7 @@ struct RepeatingReasoningSessionFixture {
     ///   - script: What the first call writes.
     ///   - repeatsAfterStop: Whether a continuation call repeats again.
     ///   - detection: The repetition detection the session is made with.
+    ///   - tools: The tools the session mounts.
     ///   - tempDirPrefix: The calling suite's name, so a leaked temp directory
     ///     is attributable.
     /// - Returns: The fixture.
@@ -192,6 +252,7 @@ struct RepeatingReasoningSessionFixture {
         script: RepeatingReasoningScript,
         repeatsAfterStop: Bool,
         detection: RepetitionDetection,
+        tools: [any Tool] = [],
         tempDirPrefix: String
     ) async throws -> RepeatingReasoningSessionFixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
@@ -205,7 +266,7 @@ struct RepeatingReasoningSessionFixture {
                 container: LiveBackendContainer(model: model), dimension: RouterTestFixtures.stubDimension))
         let profile = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let session = profile.standard.makeSession(
-            configuration: SessionConfiguration(repetitionDetection: detection))
+            configuration: SessionConfiguration(tools: tools, repetitionDetection: detection))
         return RepeatingReasoningSessionFixture(session: session, log: log, recorder: recorder, directory: directory)
     }
 }

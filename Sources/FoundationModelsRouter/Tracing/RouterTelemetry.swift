@@ -301,6 +301,9 @@ enum RouterTelemetry {
         /// A model call that repeats itself and stops.
         case repetitionStop = "RepetitionStop"
 
+        /// A pass that reasoned and did not act, and stops (task ^hm9trt5).
+        case reasoningStop = "ReasoningStop"
+
         /// The sidecar file of a session.
         case sessionSidecar = "SessionSidecar"
 
@@ -367,6 +370,9 @@ enum RouterTelemetry {
 
         /// The report of a repetition stop (``RepetitionStop``).
         static let repetitionStop = prefix + "repetition_stop"
+
+        /// The report of a reasoning stop (``ReasoningStop``).
+        static let reasoningStop = prefix + "reasoning_stop"
 
         /// The report of a generation stall (``GenerationStall``).
         static let generationStall = prefix + "generation_stall"
@@ -438,7 +444,7 @@ enum RouterTelemetry {
         static let allKeys = [
             category, sessionId, entryId, segmentId, responseFormatName, entryCase, encodeContext,
             schemaName, errorType, errorCode, filePath, byteOffset, eventSeq, supersededSeq,
-            repetitionStop, generationStall, mailDeliveryPause, contextTokens, promptTokens,
+            repetitionStop, reasoningStop, generationStall, mailDeliveryPause, contextTokens, promptTokens,
             configuredTargetTokens, overflowRule, overflowOutcome, measuredTokens, triggerTokens,
             rejectionReason, toolName, retryOrdinal, summarizerTier, divergence, shortfall,
             allowedSummaryTokens, inputTokens, windowTokens, snapshotTokens, containerType, modelRef,

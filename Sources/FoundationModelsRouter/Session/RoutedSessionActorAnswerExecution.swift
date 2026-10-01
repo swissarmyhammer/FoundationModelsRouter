@@ -259,7 +259,10 @@ extension RoutedSessionActor {
     /// (``compactsAfterCeilingStop(_:)``) goes on in
     /// ``continueAfterCeilingStop(attempt:body:)``. A model call that the
     /// repetition watch stopped (``runWatchedModelCall(composedPrompt:_:)``)
-    /// goes on in ``continueAfterRepetitionStop(_:attempt:body:)``.
+    /// goes on in ``continueAfterWatchStop(_:attempt:body:)``. An attempt
+    /// that ended inside its reasoning with no tool call and no text
+    /// (``reasoningEndStop(finishReason:attempt:)``) goes on in
+    /// ``continueAfterReasoningEnd(_:response:attempt:body:)`` (task ^hm9trt5).
     ///
     /// - Parameters:
     ///   - grammar: The grammar in force for this answer.
@@ -363,8 +366,8 @@ extension RoutedSessionActor {
             if let yield = takeCompactionYield() {
                 return try await continueAfterCompactionYield(yield, attempt: attempt, body: body)
             }
-            if let repetitionStop = takeRepetitionStop() {
-                return try await continueAfterRepetitionStop(repetitionStop, attempt: attempt, body: body)
+            if let watchStop = takeWatchStop() {
+                return try await continueAfterWatchStop(watchStop, attempt: attempt, body: body)
             }
             recordSubmissionError(error)
             await recordFailedSubmission(
@@ -378,6 +381,9 @@ extension RoutedSessionActor {
         }
         // Outside the `do`: the attempt is recorded, so a failure of the
         // compaction or of the next attempt must not record it a second time.
+        if let reasoningStop = reasoningEndStop(finishReason: finishReason, attempt: attempt) {
+            return try await continueAfterReasoningEnd(reasoningStop, response: response, attempt: attempt, body: body)
+        }
         guard compactsAfterCeilingStop(finishReason) else { return response }
         return try await continueAfterCeilingStop(attempt: attempt, body: body)
     }

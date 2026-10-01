@@ -15,22 +15,103 @@ struct RepetitionWatchState {
     var activeWatchId: UInt64?
 
     /// The stop that the watch of the attempt in flight found, or `nil`.
-    var stop: RepetitionStopMarker?
+    var stop: WatchStopMarker?
 
-    /// How many recoveries the running answer ran. The pump sets it to zero
-    /// for each new answer (``RoutedSessionActor/startAnswerLimits()``), and
-    /// a continuation submission of the same answer keeps it.
+    /// How many recoveries the running answer ran, after repetition stops
+    /// and reasoning stops together. The pump sets it to zero for each new
+    /// answer (``RoutedSessionActor/startAnswerLimits()``), and a
+    /// continuation submission of the same answer keeps it.
     var recoveriesThisAnswer = 0
 }
 
-/// The marker a session sets when its watch stops a model call that
-/// repeats itself, and the facts it needs to go on after the stop.
-struct RepetitionStopMarker: Sendable {
+/// The report of one stop of the watch: a call that repeats itself
+/// (task ^1hcwaqy), or a pass whose reasoning reached the reasoning token
+/// limit (task ^hm9trt5).
+enum WatchStopReport: Sendable {
+    /// The call no longer wrote new lines.
+    case repetition(RepetitionStop)
+
+    /// The pass reasoned and did not act.
+    case reasoning(ReasoningStop)
+
+    /// The number of the recovery attempt that follows the stop, or `nil`
+    /// when the answer has no recovery left.
+    var recovery: Int? {
+        switch self {
+        case .repetition(let stop):
+            return stop.recovery
+        case .reasoning(let stop):
+            return stop.recovery
+        }
+    }
+
+    /// The event that the answer emits for the stop.
+    var event: SessionEvent {
+        switch self {
+        case .repetition(let stop):
+            return .repetitionStopped(stop)
+        case .reasoning(let stop):
+            return .reasoningStopped(stop)
+        }
+    }
+
+    /// The finish reason that the stopped attempt closes with.
+    var finishReason: FinishReason {
+        switch self {
+        case .repetition:
+            return .repeatedLines
+        case .reasoning(let stop):
+            return stop.passFinishReason
+        }
+    }
+
+    /// The prompt of the recovery that follows the stop.
+    var continuationPrompt: String {
+        switch self {
+        case .repetition:
+            return RoutedSessionActor.repetitionStopContinuationPrompt
+        case .reasoning:
+            return RoutedSessionActor.reasoningStopContinuationPrompt
+        }
+    }
+
+    /// The log category, the message and the metadata key of the log line
+    /// of the stop.
+    var logLine: (category: RouterTelemetry.LogCategory, message: Logger.Message, metadataKey: String) {
+        switch self {
+        case .repetition:
+            return (
+                .repetitionStop, "a repetition stop ends the model call",
+                RouterTelemetry.LogMetadataKey.repetitionStop
+            )
+        case .reasoning:
+            return (
+                .reasoningStop, "a reasoning stop ends the model call",
+                RouterTelemetry.LogMetadataKey.reasoningStop
+            )
+        }
+    }
+
+    /// The one-line rendering of the report, as the log line gives it.
+    var description: String {
+        switch self {
+        case .repetition(let stop):
+            return stop.description
+        case .reasoning(let stop):
+            return stop.description
+        }
+    }
+}
+
+/// The marker a session sets when its watch stops a model call, and the
+/// facts it needs to go on after the stop.
+struct WatchStopMarker: Sendable {
     /// The report of the stop, as the log line and the event give it.
-    let report: RepetitionStop
+    let report: WatchStopReport
 
     /// For each watched entry id, the UTF-8 length of its text that holds no
-    /// repeated part. See ``RepetitionFinding/keptUTF8Lengths``.
+    /// repeated part. See ``RepetitionFinding/keptUTF8Lengths``. Empty for a
+    /// reasoning stop, which keeps the whole reasoning so far.
     let keptUTF8Lengths: [String: Int]
 
     /// The live transcript that the watch read last, before the stop.
@@ -110,10 +191,11 @@ enum RepeatedPartRemoval {
 /// reasoning, the text and the tool-call arguments of each model call of a
 /// submission while the call is in flight, and again before each tool body
 /// runs (``checkToolCallForRepetition()``, task ^dzw15st). It stops a call
-/// that no longer writes new lines, and recovers as
-/// a ceiling stop does (``continueAfterCeilingStop(attempt:body:)``): the
+/// that no longer writes new lines, and a pass whose reasoning reaches
+/// ``RepetitionDetection/reasoningTokenLimit`` (task ^hm9trt5). It recovers
+/// as a ceiling stop does (``continueAfterCeilingStop(attempt:body:)``): the
 /// stopped attempt is recorded whole, the repeated part leaves the render,
-/// and the same answer goes on with ``repetitionStopContinuationPrompt``, at
+/// and the same answer goes on with the continuation prompt of the stop, at
 /// most ``RepetitionDetection/recoveriesPerAnswer`` times in one answer.
 extension RoutedSessionActor {
     /// The prompt of the attempt that goes on after a repetition stop.
@@ -158,7 +240,8 @@ extension RoutedSessionActor {
     /// The watch reads ``LanguageModelSessionBackend/transcriptUpdates()`` in a
     /// task of its own, feeds the text of the attempt's entries to a
     /// ``RepetitionDetector``, and reports the first finding to
-    /// ``noteRepetition(_:liveEntries:watchId:)``.
+    /// ``noteRepetition(_:liveEntries:watchId:)`` or
+    /// ``noteReasoningLimit(_:liveEntries:watchId:)``.
     ///
     /// - Returns: The task of the watch, which the caller cancels, or `nil`.
     private func startRepetitionWatch() -> Task<Void, Never>? {
@@ -174,45 +257,83 @@ extension RoutedSessionActor {
             var detector = RepetitionDetector(detection: detection, tokenCounter: tokenCounter)
             for await entries in updates {
                 let texts = WatchedText.attemptTexts(in: entries, excluding: entryIdsBeforeAttempt)
-                guard let finding = detector.observe(texts) else { continue }
-                await self?.noteRepetition(finding, liveEntries: entries, watchId: watchId)
-                return
+                if let finding = detector.observe(texts) {
+                    await self?.noteRepetition(finding, liveEntries: entries, watchId: watchId)
+                    return
+                }
+                if let finding = detector.reasoningLimitFinding() {
+                    await self?.noteReasoningLimit(finding, liveEntries: entries, watchId: watchId)
+                    return
+                }
             }
         }
+    }
+
+    /// The number of the recovery that follows a stop now, from 1, or `nil`
+    /// when the running answer ran ``RepetitionDetection/recoveriesPerAnswer``
+    /// recoveries already. Repetition stops and reasoning stops share the
+    /// count.
+    var nextRecovery: Int? {
+        let recoveries = repetitionWatch.recoveriesThisAnswer
+        return recoveries < repetitionDetection.recoveriesPerAnswer ? recoveries + 1 : nil
+    }
+
+    /// Whether the watch named by `watchId` may stop the model call in
+    /// flight: that watch is the active one, a model call is in flight, no
+    /// stop is outstanding against the answer, and no tool result already
+    /// stopped the call for a compaction.
+    ///
+    /// - Parameter watchId: The watch that found a stop.
+    /// - Returns: `true` when the watch may stop the call.
+    func watchMayStopModelCall(watchId: UInt64) -> Bool {
+        repetitionWatch.activeWatchId == watchId && inFlightModelCall != nil && !isWorkCancelled
+            && toolResultWatch.yield == nil
     }
 
     /// Stops the model call in flight for a repetition finding of the watch
     /// named by `watchId`.
     ///
-    /// Nothing happens when that watch is no longer the active one, when no
-    /// model call is in flight, when a stop is outstanding against the answer,
-    /// or when a tool result already stopped the call for a compaction.
-    /// Otherwise the session logs the stop, sets the stop marker, and cancels
-    /// ``inFlightModelCall``.
+    /// Nothing happens when the watch may not stop the call
+    /// (``watchMayStopModelCall(watchId:)``). Otherwise the session logs the
+    /// stop, sets the stop marker, and cancels ``inFlightModelCall``.
     ///
     /// - Parameters:
     ///   - finding: What the detector found.
     ///   - liveEntries: The live transcript the watch read last.
     ///   - watchId: The watch that found it.
     func noteRepetition(_ finding: RepetitionFinding, liveEntries: [Transcript.Entry], watchId: UInt64) {
-        guard repetitionWatch.activeWatchId == watchId, let modelCall = inFlightModelCall,
-            !isWorkCancelled, toolResultWatch.yield == nil
-        else { return }
-        let recoveriesLeft = repetitionWatch.recoveriesThisAnswer < repetitionDetection.recoveriesPerAnswer
+        guard watchMayStopModelCall(watchId: watchId) else { return }
         let report = RepetitionStop(
             generatedTokens: finding.generatedTokens, countedLines: finding.countedLines,
             newLines: finding.newLines, tokensWithoutNewLine: finding.tokensWithoutNewLine,
-            detection: repetitionDetection,
-            recovery: recoveriesLeft ? repetitionWatch.recoveriesThisAnswer + 1 : nil)
-        repetitionWatch.stop = RepetitionStopMarker(
-            report: report, keptUTF8Lengths: finding.keptUTF8Lengths, liveEntries: liveEntries)
-        sessionLogger(.repetitionStop).notice(
-            "a repetition stop ends the model call",
+            detection: repetitionDetection, recovery: nextRecovery)
+        stopModelCall(
+            WatchStopMarker(
+                report: .repetition(report), keptUTF8Lengths: finding.keptUTF8Lengths, liveEntries: liveEntries))
+    }
+
+    /// Logs the stop of `marker`, sets the marker, and cancels
+    /// ``inFlightModelCall``.
+    ///
+    /// - Parameter marker: The stop marker of the call in flight.
+    func stopModelCall(_ marker: WatchStopMarker) {
+        repetitionWatch.stop = marker
+        logWatchStop(marker.report)
+        inFlightModelCall?.cancel()
+    }
+
+    /// Writes the log line of one stop of the watch, with the report under
+    /// the metadata key of its kind.
+    ///
+    /// - Parameter report: The report of the stop.
+    func logWatchStop(_ report: WatchStopReport) {
+        let line = report.logLine
+        sessionLogger(line.category).notice(
+            line.message,
             metadata: [
                 RouterTelemetry.LogMetadataKey.sessionId: "\(id.description)",
-                RouterTelemetry.LogMetadataKey.repetitionStop: "\(report.description)",
+                line.metadataKey: "\(report.description)",
             ])
-        modelCall.cancel()
     }
 
     /// Stops the model call in flight before a tool body of it runs, when the
@@ -227,6 +348,9 @@ extension RoutedSessionActor {
     /// writes no transcript, so the read of the transcript is safe. It reads
     /// the whole attempt with a new ``RepetitionDetector``, and a finding
     /// stops the call as the watch does (``noteRepetition(_:liveEntries:watchId:)``).
+    ///
+    /// The check does not apply the reasoning token limit: a pass that wrote
+    /// a tool call acts, and the limit stops only a pass that does not act.
     ///
     /// Nothing happens when the detection is not enabled, when no watch is
     /// active, or when the tool body is not in an open model call of this
@@ -248,13 +372,13 @@ extension RoutedSessionActor {
         guard repetitionWatch.stop == nil else { throw CancellationError() }
     }
 
-    /// Takes the repetition stop marker of the attempt that just failed.
+    /// Takes the stop marker of the attempt that just failed.
     ///
     /// A stop outstanding against the answer wins: the failure is then a user
     /// stop, and the marker is dropped.
     ///
     /// - Returns: The marker, or `nil` when the watch did not stop the attempt.
-    func takeRepetitionStop() -> RepetitionStopMarker? {
+    func takeWatchStop() -> WatchStopMarker? {
         defer { repetitionWatch.stop = nil }
         guard !isWorkCancelled else { return nil }
         return repetitionWatch.stop
@@ -264,17 +388,21 @@ extension RoutedSessionActor {
     /// render, and runs one more submission of the same answer when the answer
     /// has a recovery left.
     ///
-    /// 1. The answer emits ``SessionEvent/repetitionStopped(_:)``.
+    /// 1. The answer emits the event of the stop
+    ///    (``SessionEvent/repetitionStopped(_:)`` or
+    ///    ``SessionEvent/reasoningStopped(_:)``).
     /// 2. The rebuilt transcript (``InFlightTranscript``) goes into
     ///    ``backend``, and the ordinary diff records its entries, whole. The
-    ///    attempt closes with ``FinishReason/repeatedLines``.
+    ///    attempt closes with the finish reason of the stop
+    ///    (``FinishReason/repeatedLines`` or ``FinishReason/reasoningTokenLimit``).
     /// 3. ``RepeatedPartRemoval`` cuts the repeated part out of ``backend``.
     ///    The record keeps it, and one
     ///    ``TranscriptEvent/Kind/repeatedPartRemoval`` event records the cut,
-    ///    so a restore makes the same cut (task ^gg49g5e).
-    /// 4. With a recovery left, the next attempt sends
-    ///    ``repetitionStopContinuationPrompt``. With none, the answer ends with
-    ///    the response text of the stopped attempt.
+    ///    so a restore makes the same cut (task ^gg49g5e). A reasoning stop
+    ///    cuts nothing, and records no cut.
+    /// 4. With a recovery left, the next attempt sends the continuation
+    ///    prompt of the stop. With none, the answer ends with the response
+    ///    text of the stopped attempt.
     ///
     /// - Parameters:
     ///   - marker: The stop marker of the stopped attempt.
@@ -283,24 +411,26 @@ extension RoutedSessionActor {
     /// - Returns: The response text of the next attempt, or of the stopped
     ///   attempt when no recovery is left.
     /// - Throws: What the next attempt throws.
-    func continueAfterRepetitionStop(
-        _ marker: RepetitionStopMarker,
+    func continueAfterWatchStop(
+        _ marker: WatchStopMarker,
         attempt: StoppedAttempt,
         body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
-        attempt.onEvent?(.repetitionStopped(marker.report))
+        attempt.onEvent?(marker.report.event)
         let rebuilt = await recordStoppedAttempt(marker, attempt: attempt)
         replaceRender(with: RepeatedPartRemoval.render(of: rebuilt, keeping: marker.keptUTF8Lengths))
-        await recordRepeatedPartRemoval(keeping: marker.keptUTF8Lengths, grammar: attempt.grammar)
+        if !marker.keptUTF8Lengths.isEmpty {
+            await recordRepeatedPartRemoval(keeping: marker.keptUTF8Lengths, grammar: attempt.grammar)
+        }
         guard let recovery = marker.report.recovery else {
             return Self.responseText(of: rebuilt, excluding: attempt.entryIdsBeforeAttempt)
         }
         repetitionWatch.recoveriesThisAnswer = recovery
-        return try await runContinuation(after: attempt, prompt: Self.repetitionStopContinuationPrompt, body: body)
+        return try await runContinuation(after: attempt, prompt: marker.report.continuationPrompt, body: body)
     }
 
     /// Puts the rebuilt transcript of the stopped attempt into ``backend``
-    /// and records it with the finish reason ``FinishReason/repeatedLines``.
+    /// and records it with the finish reason of the stop.
     ///
     /// The usage of the attempt is read before the backend is replaced,
     /// because a replaced backend starts a usage count of its own. The
@@ -312,7 +442,7 @@ extension RoutedSessionActor {
     ///   - marker: The stop marker of the stopped attempt.
     ///   - attempt: The stopped attempt.
     /// - Returns: The rebuilt transcript, whole.
-    private func recordStoppedAttempt(_ marker: RepetitionStopMarker, attempt: StoppedAttempt) async -> [Transcript.Entry] {
+    private func recordStoppedAttempt(_ marker: WatchStopMarker, attempt: StoppedAttempt) async -> [Transcript.Entry] {
         let usageOfAttempt = Self.usageDelta(before: attempt.usageBefore, after: backend.usageTokenCounts())
         let rebuilt = InFlightTranscript.rebuilt(
             settledEntries: backend.transcriptEntries(), sources: [marker.liveEntries],
@@ -322,7 +452,7 @@ extension RoutedSessionActor {
             grammar: attempt.grammar, since: attempt.started,
             usageBefore: Self.usageDelta(before: usageOfAttempt, after: backend.usageTokenCounts()),
             responseTokenCeiling: attempt.responseTokenCeiling.resolved, pendingEvents: attempt.pendingEvents,
-            onEvent: attempt.onEvent, stopReason: .repeatedLines)
+            onEvent: attempt.onEvent, stopReason: marker.report.finishReason)
         return rebuilt
     }
 
