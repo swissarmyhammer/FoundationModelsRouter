@@ -45,8 +45,8 @@ import Tracing
 ///
 /// The rule is proved, not merely stated: `TelemetryContentSafetyTests` drives
 /// a submission, a tool call, a compaction, a compaction shortfall, an embed,
-/// a rejected tool call retry, and a session, compact, fork and embed span
-/// whose work throws an error that holds content, inside the
+/// a rejected tool call retry, and a session, compact, fork, submission and
+/// embed span whose work throws an error that holds content, inside the
 /// `TelemetryCapture` of FoundationModelsExtras. It reads each span name and
 /// attribute, each recorded error and status message of a span, each log
 /// message and metadata value, and each metric name and dimension, and it

@@ -106,6 +106,26 @@ extension TelemetryContentSafetyTests {
         }
     }
 
+    @Test("a submission span whose attempt throws records the error type and no content")
+    func failedSubmissionSpanRecordsOnlyTheErrorType() async throws {
+        try await TelemetryCapture.run(forbidding: [Self.failureContent]) { context in
+            let fixture = try await Self.makeFailingSpanFixture(in: context)
+            defer { try? FileManager.default.removeItem(at: fixture.directory) }
+            let session = try #require(fixture.session as? RoutedSessionActor)
+
+            // The answer pump does these three steps for an attempt that
+            // throws: it opens the submission, records the error of the
+            // attempt, and ends the submission.
+            await session.beginSubmission(cause: .message, messageIds: [])
+            await session.recordSubmissionError(Self.contentBearingError)
+            await session.endSubmission(usage: nil, finishReason: .completed, measuredRender: nil, onEvent: nil)
+
+            #expect(
+                Self.failureTypes(ofSpansNamed: RouterTelemetry.SpanName.submission, in: context)
+                    == ["\(ContentBearingError.self)"])
+        }
+    }
+
     @Test("an embed span whose container throws records the error type and no content")
     func failedEmbedSpanRecordsOnlyTheErrorType() async throws {
         try await TelemetryCapture.run(forbidding: [Self.failureContent]) { context in

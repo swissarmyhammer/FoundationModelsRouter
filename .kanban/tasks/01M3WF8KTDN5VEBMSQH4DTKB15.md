@@ -44,6 +44,43 @@ comments:
     - evidence: swift test, exit 0 — 1456 tests in 183 suites passed, 0 failed; 23 tests in 11 suites passed; 19 tests in 3 suites passed. 2 known issues are withKnownIssue checks that already existed (RealModelHarness, BoundedWait).
     - next: review
   timestamp: 2026-10-01T20:17:51.891854+00:00
+- actor: claude-code
+  id: 01m3wj9jp7460wt95ws6b447zt
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (fbb38d70); 1 finding (1 confirmed, 0 refuted) — Sources/FoundationModelsRouter/Session/RoutedSessionActorSubmissionEvents.swift:116 `completeness/invariant-propagation`.
+    - next: Add a content-safety test for the failed submission span in TelemetryContentSafetyTests+FailedSpans.swift. The task stays in review.
+  timestamp: 2026-10-01T20:25:33.127802+00:00
+- actor: claude-code
+  id: 01m3wj9zpz1yjmya6628c6h0v1
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 14 files
+    - test: green — swift test, 1456 tests in 183 suites passed, 0 failures
+    - commit: fbb38d70
+    - review: findings — Sources/FoundationModelsRouter/Session/RoutedSessionActorSubmissionEvents.swift:116
+  timestamp: 2026-10-01T20:25:46.463550+00:00
+- actor: claude-code
+  id: 01m3wjha8bggcdvd37evbstrp1
+  text: |-
+    Review finding (submission span) resolved. Not committed.
+
+    - Call sites checked: `RouterTelemetry.withSpan` has callers for session (2 overloads), compact, fork and embed. Each one already has a test in TelemetryContentSafetyTests+FailedSpans.swift. `RouterTelemetry.recordFailure(of:on:)` has one direct caller outside the helper: `recordSubmissionError`. It had no test. `Router.recordFailure(outcomes:...)` is a different function (resolve failure report), not a span failure.
+    - New test `failedSubmissionSpanRecordsOnlyTheErrorType` drives `beginSubmission`, `recordSubmissionError` and `endSubmission` on a scripted session. The error carries content. The test expects `failureType == ["ContentBearingError"]` for the submission span, and `TelemetryCapture` forbids the content.
+    - RED proof: with `recordSubmissionError` changed to `span.recordError(error)`, the test failed with 2 issues: `failureType` was `[nil]`, and "telemetry carries the forbidden text ... at: span FoundationModelsRouter.submission error: failure-content-8d5e". The protection is restored.
+    - Doc comments that list the failed-span tests now also name the submission span (TelemetryContentSafetyTests.swift, RouterTelemetry.swift).
+
+    ### implement — changed
+    - evidence: `swift test` exit 0 — 1457 tests in 183 suites passed (2 known issues from earlier withKnownIssue tests), 23 tests in 11 suites, 19 tests in 3 suites. One build-system warning from SwiftPM about the mlx-swift_Cmlx bundle ("missing creator for mutated node"), from a dependency, not from this code. Files: Tests/FoundationModelsRouterTests/TelemetryContentSafetyTests+FailedSpans.swift, Tests/FoundationModelsRouterTests/TelemetryContentSafetyTests.swift, Sources/FoundationModelsRouter/Tracing/RouterTelemetry.swift
+    - next: review
+  timestamp: 2026-10-01T20:29:46.635021+00:00
+- actor: claude-code
+  id: 01m3wjmy42evg98ybp93xvkb79
+  text: |-
+    ### test — green
+    - evidence: swift test — 1457 tests in 183 suites passed, 0 failed, 0 skipped; 2 known issues (existing withKnownIssue tests in RealModelHarness and BoundedWait); no compiler warnings (one build-system notice about the mlx-swift_Cmlx bundle, from a dependency).
+    - next: review
+  timestamp: 2026-10-01T20:31:45.282417+00:00
 position_column: doing
 position_ordinal: '80'
 title: Session, compact, fork and embed spans record the full error description through withSpan
@@ -71,3 +108,12 @@ The doc comments of these functions say "`withSpan` records the error on the spa
 - [x] For each of session, compact, fork and embed: a body that throws an error with content gives a span with the error status and `failureType`, and `TelemetryCapture` finds no content in any span, log record or metric (extend `TelemetryContentSafetyTests`).
 
 Found during ^arqwppv.
+
+## Review Findings (2026-10-01 15:18)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 14 file(s) reviewed, 4 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorSubmissionEvents.swift:116` `completeness/invariant-propagation` — Submission error recording was updated to use `RouterTelemetry.recordFailure` (line 116), matching the pattern applied to session, compact, fork, and embed spans. However, there is no content-safety test for submission error recording, while all other four span types have corresponding tests in TelemetryContentSafetyTests+FailedSpans.swift. The documentation at lines 108–111 explicitly states that error descriptions must not be recorded to avoid exposing caller content, so submission spans should be tested for this invariant like the others. Add a test (e.g., `failedSubmissionSpanRecordsOnlyTheErrorType`) in TelemetryContentSafetyTests+FailedSpans.swift that verifies submission error spans record only error type and status, without error descriptions or content.
