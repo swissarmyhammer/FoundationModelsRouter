@@ -105,15 +105,15 @@ extension RoutedSessionActor {
     /// Records the failure of `error` on the span of the running submission,
     /// the error that ended its attempt.
     ///
-    /// The span gets the error status and the type name of the error. It does
-    /// not get the error itself, because the description of an error can hold
-    /// the caller's content, for example the arguments of a rejected tool call.
+    /// The span gets the error status and the type name of the error
+    /// (``RouterTelemetry/recordFailure(of:on:)``). It does not get the error
+    /// itself, because the description of an error can hold the caller's
+    /// content, for example the arguments of a rejected tool call.
     ///
     /// - Parameter error: The error of the attempt.
     func recordSubmissionError(_ error: any Error) {
         guard let span = runningSubmission?.span else { return }
-        span.setStatus(SpanStatus(code: .error))
-        span.attributes[RouterTelemetry.AttributeKey.errorType] = "\(type(of: error))"
+        RouterTelemetry.recordFailure(of: error, on: span)
     }
 
     /// Ends the running submission: it sends

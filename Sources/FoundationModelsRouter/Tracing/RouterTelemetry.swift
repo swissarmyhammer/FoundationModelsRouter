@@ -44,9 +44,11 @@ import Tracing
 ///   never by its description, because a description can carry model content.
 ///
 /// The rule is proved, not merely stated: `TelemetryContentSafetyTests` drives
-/// a submission, a tool call, a compaction, a compaction shortfall, an embed
-/// and a rejected tool call retry inside the `TelemetryCapture` of
-/// FoundationModelsExtras. It reads each span name and attribute, each log
+/// a submission, a tool call, a compaction, a compaction shortfall, an embed,
+/// a rejected tool call retry, and a session, compact, fork and embed span
+/// whose work throws an error that holds content, inside the
+/// `TelemetryCapture` of FoundationModelsExtras. It reads each span name and
+/// attribute, each recorded error and status message of a span, each log
 /// message and metadata value, and each metric name and dimension, and it
 /// fails on any of them that carries the content of the fixture. Each new
 /// span, log record or metric of the router is held to that one test.
@@ -111,7 +113,9 @@ enum RouterTelemetry {
         /// The chosen model reference, in canonical string form.
         static let modelRef = "model.ref"
 
-        /// The type name of the error that ended the attempt of a submission.
+        /// The type name of the error that ended the work of a span: the
+        /// attempt of a submission, or the work of a session, compact, fork or
+        /// embed span. ``RouterTelemetry/recordFailure(of:on:)`` writes it.
         /// Never the description of the error: a description can hold the
         /// caller's content.
         static let errorType = "error.type"

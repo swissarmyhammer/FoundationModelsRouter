@@ -12,8 +12,8 @@ import Tracing
 /// Card ^p3x0bbb took the `.embedding` transcript event away, so an embed call
 /// writes nothing to the transcript. A span is the replacement signal, and
 /// this suite holds its whole contract: the operation name, the span kind, the
-/// four attributes, the error record on a failure, and the rule that no
-/// attribute carries an input text.
+/// four attributes, the error status and the error type on a failure, and the
+/// rule that no attribute carries an input text.
 ///
 /// The router is built over stubs — a stub ``ModelLoader``, a stub embedding
 /// container and an `InMemoryTracer` — so the suite needs no network, no GPU
@@ -23,30 +23,10 @@ struct EmbedTracingTests {
     /// The span name every embed call opens.
     private static let spanName = "FoundationModelsRouter.embed"
 
-    /// A ``LoadedEmbeddingContainer`` stub whose every embed call fails, so a
-    /// test can read what the span records for a failure.
-    ///
-    /// ``HandBuiltProfileFixtures/makeProfile(definitionName:chosen:container:router:)``
-    /// always wraps a ``StubEmbeddingContainer``, which cannot fail, so the
-    /// failing test builds its ``RoutedEmbedder`` by hand over this container
-    /// instead.
-    private struct ThrowingEmbeddingContainer: LoadedEmbeddingContainer {
-        /// The failure every ``embed(texts:)`` call raises.
-        enum Failure: Error {
-            case refused
-        }
-
-        /// The length the stub reports; no vector is ever produced.
-        let dimension: Int
-
-        /// Raises ``Failure/refused`` instead of embedding.
-        ///
-        /// - Parameter texts: The strings the caller asked to embed, ignored.
-        /// - Returns: Never returns.
-        /// - Throws: ``Failure/refused``, always.
-        func embed(texts: [String]) async throws -> [[Float]] {
-            throw Failure.refused
-        }
+    /// The failure that the ``ThrowingEmbeddingContainer`` of the failing
+    /// test throws.
+    private enum EmbedFailure: Error {
+        case refused
     }
 
     /// The embed spans `tracer` holds that have finished, in the order they
@@ -113,7 +93,7 @@ struct EmbedTracingTests {
         #expect(span.errors.isEmpty)
     }
 
-    @Test("a failing embed rethrows the container's error and records it on the one span")
+    @Test("a failing embed rethrows the container's error and records its type on the one span")
     func embedFailureIsRecordedOnTheSpan() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "EmbedTracingTests")
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -127,27 +107,21 @@ struct EmbedTracingTests {
             ),
             tracer: tracer
         )
-        let chosen: ModelRef = "org/emb-a"
-        let embedder = RoutedEmbedder(
-            slot: .embedding,
-            chosen: chosen,
-            footprintBytes: 0,
-            resolution: SlotResolution(
-                slot: .embedding, remainingBudgetBytes: 0, chosen: chosen, considered: [],
-                contextTokens: ScriptedSessionContext.tokens),
-            container: ThrowingEmbeddingContainer(dimension: RouterTestFixtures.stubDimension),
+        let embedder = HandBuiltProfileFixtures.makeEmbedder(
+            chosen: "org/emb-a",
+            container: ThrowingEmbeddingContainer(
+                dimension: RouterTestFixtures.stubDimension, failure: EmbedFailure.refused),
             routerId: router.id,
-            recorder: InMemoryRecorder(),
             tracer: tracer
         )
 
-        await #expect(throws: ThrowingEmbeddingContainer.Failure.self) {
+        await #expect(throws: EmbedFailure.refused) {
             _ = try await embedder.embed(texts: ["a"])
         }
 
         let spans = Self.finishedEmbedSpans(reportedTo: tracer)
         try #require(spans.count == 1)
-        #expect(spans[0].errors.count == 1)
+        #expect(spans[0].failureType == "\(EmbedFailure.self)")
     }
 
     @Test("no span attribute carries any input text")

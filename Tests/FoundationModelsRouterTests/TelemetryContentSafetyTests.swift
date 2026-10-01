@@ -29,6 +29,10 @@ import Testing
 /// new span, log record or metric is held to the rule the moment it lands,
 /// with no edit to this file.
 ///
+/// The extension in `TelemetryContentSafetyTests+FailedSpans.swift` adds the
+/// failure half: a session, compact, fork and embed span whose work throws an
+/// error with content records the error type and none of the content.
+///
 /// Each session gets the logger and the metrics factory of the capture
 /// explicitly: the pump of a session is a detached task, and it does not
 /// inherit the task-locals of the capture.
@@ -50,7 +54,7 @@ struct TelemetryContentSafetyTests {
     private static let noRoomTarget = 0.0
 
     /// The calling suite's name, so a leaked temp directory is attributable.
-    private static let tempDirPrefix = "TelemetryContentSafetyTests"
+    static let tempDirPrefix = "TelemetryContentSafetyTests"
 
     /// The output text of the scripted tool call.
     private static var toolOutput: String {

@@ -13,14 +13,14 @@ import Tracing
 /// automatic compaction the auto-compaction budget drives. This suite holds that
 /// contract: the operation name, the span kind, the identity attributes, the
 /// trigger that asked for the compaction, the compaction's own token counts, the
-/// summarizer tier that actually ran, and the error record on a compaction that
-/// throws.
+/// summarizer tier that actually ran, and the error status and the error type
+/// on a compaction that throws.
 ///
 /// The tier attribute names the tier that wrote the applied summary. On the
 /// automatic path a failed flash tier falls to the session's own model, so
 /// that degrade shows as the tier the span names and never as a failed span.
 /// A compaction that applies no summary writes no tier. When the last tier
-/// fails, the error reaches the caller and the span records it.
+/// fails, the error reaches the caller and the span records its type.
 ///
 /// The rule that no attribute carries the caller's own content lives in
 /// ``TelemetryContentSafetyTests``, which names no span and therefore already
@@ -149,7 +149,7 @@ struct CompactionTracingTests {
         #expect(span.errors.isEmpty)
     }
 
-    @Test("a caller-driven compaction whose summarizer fails keeps its span, with the error recorded")
+    @Test("a caller-driven compaction whose summarizer fails keeps its span, with the error type recorded")
     func callerDrivenCompactionThatThrowsRecordsTheErrorOnItsSpan() async throws {
         let tracer = InMemoryTracer()
         let (session, standard, _) = try await AutoCompactionFixtures.makeTriggeredSession(
@@ -164,7 +164,7 @@ struct CompactionTracingTests {
 
         let span = try Self.singleCompactionSpan(reportedTo: tracer)
         #expect(span.attributes.get("compaction.trigger") == .string("caller"))
-        #expect(span.errors.count == 1)
+        #expect(span.failureType == "\(StubSessionBackend.StubError.self)")
     }
 
     // MARK: - The automatic compaction
@@ -212,7 +212,7 @@ struct CompactionTracingTests {
         #expect(span.errors.isEmpty)
     }
 
-    @Test("an automatic compaction whose every tier fails records the error on its span and writes no tier")
+    @Test("an automatic compaction whose every tier fails records the error type on its span and writes no tier")
     @MainActor
     func automaticCompactionWhoseEveryTierFailsRecordsTheError() async throws {
         let tracer = InMemoryTracer()
@@ -230,7 +230,7 @@ struct CompactionTracingTests {
         let span = try Self.singleCompactionSpan(reportedTo: tracer)
         #expect(span.attributes.get("compaction.trigger") == .string("auto"))
         #expect(span.attributes.get("compaction.tier") == nil)
-        #expect(span.errors.count == 1)
+        #expect(span.failureType == "\(StubSessionBackend.StubError.self)")
     }
 
     @Test("a compaction with no tracer injected and no backend bootstrapped compacts normally")

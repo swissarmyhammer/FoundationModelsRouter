@@ -22,8 +22,10 @@ extension RoutedModel where Container == any LoadedEmbeddingContainer {
     /// ``RouterTelemetry/SpanName/embed``, of kind `client`, through the tracer
     /// ``RouterTelemetry/tracer(explicit:)`` resolves from ``RoutedModel/tracer``.
     /// Unbootstrapped, that resolves to a no-op tracer, so an application that
-    /// does not trace pays nothing. `withSpan` records a thrown error on the
-    /// span and rethrows it.
+    /// does not trace pays nothing. When the container throws, the span gets
+    /// the error status and the type of the error, never its description
+    /// (``RouterTelemetry/withSpan(_:ofKind:tracer:isolation:_:)``), and the
+    /// error is thrown again.
     ///
     /// The span carries four attributes, and their names are stable API:
     ///
@@ -42,8 +44,8 @@ extension RoutedModel where Container == any LoadedEmbeddingContainer {
     /// - Returns: One ``dimension``-length vector per input, in order.
     /// - Throws: Any error thrown by the embedder container.
     public func embed(texts: [String]) async throws -> [[Float]] {
-        try await RouterTelemetry.tracer(explicit: tracer)
-            .withSpan(RouterTelemetry.SpanName.embed, ofKind: .client) { span in
+        try await RouterTelemetry
+            .withSpan(RouterTelemetry.SpanName.embed, ofKind: .client, tracer: tracer) { span in
                 span.attributes[RouterTelemetry.AttributeKey.routerId] = routerId.description
                 span.attributes[RouterTelemetry.AttributeKey.modelRef] = chosen.stringValue
                 span.attributes[RouterTelemetry.AttributeKey.embeddingInputCount] = texts.count

@@ -128,7 +128,7 @@ extension RoutedSessionActor {
     /// pump sees it.
     ///
     /// This compaction offers the own model only, so a summarizer failure
-    /// reaches the caller — and the span records it.
+    /// reaches the caller — and the span records its error type.
     @discardableResult
     func compact(
         prompt: CompactionPrompt = .default,
@@ -227,15 +227,16 @@ extension RoutedSessionActor {
     ///   - trigger: What asked for this compaction.
     ///   - body: The compaction work.
     /// - Returns: What the compaction did.
-    /// - Throws: Whatever `body` throws. `withSpan` records the error on the
-    ///   span and raises it again.
-    private func withCompactionSpan(
+    /// - Throws: Whatever `body` throws, after the span records the error
+    ///   status and the type of the error, never its description
+    ///   (``RouterTelemetry/withSpan(_:ofKind:tracer:isolation:_:)``).
+    func withCompactionSpan(
         trigger: RouterTelemetry.CompactionTrigger,
         _ body: () async throws -> CompactionResult
     ) async throws -> CompactionResult {
         sessionMetrics.recordCompaction(trigger: trigger)
-        return try await RouterTelemetry.tracer(explicit: tracer)
-            .withSpan(RouterTelemetry.SpanName.compact, ofKind: .internal) { span in
+        return try await RouterTelemetry
+            .withSpan(RouterTelemetry.SpanName.compact, ofKind: .internal, tracer: tracer) { span in
                 span.attributes[RouterTelemetry.AttributeKey.sessionId] = id.description
                 span.attributes[RouterTelemetry.AttributeKey.modelRef] = model.stringValue
                 span.attributes[RouterTelemetry.AttributeKey.compactionTrigger] = trigger.rawValue

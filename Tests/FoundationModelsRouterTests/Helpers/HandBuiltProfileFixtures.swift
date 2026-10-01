@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModelsRouterTestSupport
+import Tracing
 
 @testable import FoundationModelsRouter
 
@@ -59,15 +60,41 @@ enum HandBuiltProfileFixtures {
                 router: router,
                 recorder: recorder
             ),
-            embedding: RoutedEmbedder(
-                slot: .embedding,
+            embedding: makeEmbedder(
                 chosen: chosen,
-                footprintBytes: 0,
-                resolution: slotResolution(slot: .embedding, chosen: chosen),
                 container: StubEmbeddingContainer(dimension: RouterTestFixtures.stubDimension),
                 routerId: router.id,
                 recorder: recorder
             )
+        )
+    }
+
+    /// Builds one embedding handle over `container`.
+    ///
+    /// - Parameters:
+    ///   - chosen: The model reference the handle names.
+    ///   - container: The container the handle wraps.
+    ///   - routerId: The recording root id of the router the handle reports.
+    ///   - recorder: The recorder the handle holds.
+    ///   - tracer: The tracer of the embed span, or `nil` (the default) to
+    ///     read `InstrumentationSystem.tracer` at call time.
+    /// - Returns: The embedding handle.
+    static func makeEmbedder(
+        chosen: ModelRef,
+        container: any LoadedEmbeddingContainer,
+        routerId: ULID,
+        recorder: any TranscriptRecorder = InMemoryRecorder(),
+        tracer: (any Tracer)? = nil
+    ) -> RoutedEmbedder {
+        RoutedEmbedder(
+            slot: .embedding,
+            chosen: chosen,
+            footprintBytes: 0,
+            resolution: slotResolution(slot: .embedding, chosen: chosen),
+            container: container,
+            routerId: routerId,
+            recorder: recorder,
+            tracer: tracer
         )
     }
 

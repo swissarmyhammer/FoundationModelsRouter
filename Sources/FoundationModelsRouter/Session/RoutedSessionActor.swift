@@ -75,19 +75,21 @@ private let sessionSpanKind: SpanKind = .internal
 ///     `InstrumentationSystem.tracer` at call time.
 ///   - work: The work the span measures.
 /// - Returns: Whatever `work` returns.
-/// - Throws: Whatever `work` throws. `withSpan` records the error on the span
-///   and raises it again.
-func withSessionSpan<Result>(
+/// - Throws: Whatever `work` throws, after the span records the error status
+///   and the type of the error, never its description
+///   (``RouterTelemetry/withSpan(_:ofKind:tracer:_:)``). A `work` that does
+///   not throw makes this function throw nothing.
+func withSessionSpan<Result, Failure: Error>(
     routerId: ULID,
     sessionId: ULID,
     parentId: ULID?,
     model: ModelRef,
     origin: RouterTelemetry.SessionOrigin,
     tracer: (any Tracer)?,
-    _ work: () throws -> Result
-) rethrows -> Result {
-    try RouterTelemetry.tracer(explicit: tracer)
-        .withSpan(RouterTelemetry.SpanName.session, ofKind: sessionSpanKind) { span in
+    _ work: () throws(Failure) -> Result
+) throws(Failure) -> Result {
+    try RouterTelemetry
+        .withSpan(RouterTelemetry.SpanName.session, ofKind: sessionSpanKind, tracer: tracer) { span throws(Failure) in
             describeSession(
                 on: span,
                 origin: origin,
@@ -121,19 +123,21 @@ func withSessionSpan<Result>(
 ///     `InstrumentationSystem.tracer` at call time.
 ///   - work: The work the span measures.
 /// - Returns: Whatever `work` returns.
-/// - Throws: Whatever `work` throws. `withSpan` records the error on the span
-///   and raises it again.
-func withSessionSpan<Result>(
+/// - Throws: Whatever `work` throws, after the span records the error status
+///   and the type of the error, never its description
+///   (``RouterTelemetry/withSpan(_:ofKind:tracer:isolation:_:)``). A `work`
+///   that does not throw makes this function throw nothing.
+func withSessionSpan<Result, Failure: Error>(
     routerId: ULID,
     sessionId: ULID,
     parentId: ULID?,
     model: ModelRef,
     origin: RouterTelemetry.SessionOrigin,
     tracer: (any Tracer)?,
-    _ work: () async throws -> Result
-) async rethrows -> Result {
-    try await RouterTelemetry.tracer(explicit: tracer)
-        .withSpan(RouterTelemetry.SpanName.session, ofKind: sessionSpanKind) { span in
+    _ work: () async throws(Failure) -> Result
+) async throws(Failure) -> Result {
+    try await RouterTelemetry
+        .withSpan(RouterTelemetry.SpanName.session, ofKind: sessionSpanKind, tracer: tracer) { span async throws(Failure) in
             describeSession(
                 on: span,
                 origin: origin,

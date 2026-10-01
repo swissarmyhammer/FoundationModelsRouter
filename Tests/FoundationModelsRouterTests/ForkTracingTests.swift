@@ -12,8 +12,8 @@ import Tracing
 ///
 /// The span opens as the first statement of the fork, so it covers the whole
 /// call and not only the part that succeeds: a fork that throws still leaves a
-/// span with its error recorded. A fork from inside a tool of its own session
-/// is served (task ^dpn2ytt), and its span names its child.
+/// span with the error status and the error type. A fork from inside a tool of
+/// its own session is served (task ^dpn2ytt), and its span names its child.
 ///
 /// The rule that no attribute carries the caller's own content lives in
 /// ``TelemetryContentSafetyTests``, which names no span and therefore already

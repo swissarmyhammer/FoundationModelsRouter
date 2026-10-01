@@ -17,8 +17,8 @@ extension RoutedSessionActor {
     ///   default to its recording directory.
     /// - Returns: The forked child session.
     /// - Throws: Nothing now: ``performFork(workingDirectory:)`` does not
-    ///   throw. The protocol requirement keeps `throws`, and an error of a
-    ///   later fork step would be recorded on the span.
+    ///   throw. The protocol requirement keeps `throws`, and the span would
+    ///   record the failure of an error of a later fork step.
     func fork(workingDirectory: URL?) async throws -> RoutedSession {
         try await withForkSpan {
             await performFork(workingDirectory: workingDirectory)
@@ -29,20 +29,21 @@ extension RoutedSessionActor {
     /// writes the child it produced onto it.
     ///
     /// The span opens before `body` runs, so it covers every part of the call.
-    /// A fork that throws still leaves a span carrying its error.
+    /// A fork that throws still leaves a span with the error status and the
+    /// type of its error, never the description of the error
+    /// (``RouterTelemetry/withSpan(_:ofKind:tracer:isolation:_:)``).
     ///
     /// The child's id is written only once the child exists, so a fork that
     /// threw names no child.
     ///
     /// - Parameter body: The fork work, producing the child session.
     /// - Returns: The forked child session.
-    /// - Throws: Whatever `body` throws. `withSpan` records the error on the
-    ///   span and raises it again.
-    private func withForkSpan(
+    /// - Throws: Whatever `body` throws, after the span records its failure.
+    func withForkSpan(
         _ body: () async throws -> RoutedSession
     ) async throws -> RoutedSession {
-        try await RouterTelemetry.tracer(explicit: tracer)
-            .withSpan(RouterTelemetry.SpanName.fork, ofKind: .internal) { span in
+        try await RouterTelemetry
+            .withSpan(RouterTelemetry.SpanName.fork, ofKind: .internal, tracer: tracer) { span in
                 describeSession(on: span)
                 let child = try await body()
                 span.attributes[RouterTelemetry.AttributeKey.forkChildSessionId] = child.id.description

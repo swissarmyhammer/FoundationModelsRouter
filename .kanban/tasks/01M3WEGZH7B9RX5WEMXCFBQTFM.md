@@ -35,8 +35,24 @@ comments:
     - note: SwiftPM prints this line in both builds: "warning: missing creator for mutated node: .../mlx-swift_Cmlx.bundle/Contents/MacOS". It is a build-system message about the mlx-swift dependency bundle. It is not a compiler warning, and it is not from this repository's code.
     - next: review. The real-model tests were not rerun (the implementer ran them: 49/22 + 1/1 passed).
   timestamp: 2026-10-01T20:04:20.100457+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m3wh4vwrmztrvgn807bhw0n2
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit fce77967). 0 findings, 0 confirmed, 0 refuted. The 4 changed files are in .kanban/, and .reviewignore excludes them. The code change is in IntegrationTests/Package.resolved. .gitignore ignores this file, thus the commit does not contain it and the engine did not review it.
+    - next: none. The task is in done.
+  timestamp: 2026-10-01T20:05:30.136307+00:00
+- actor: claude-code
+  id: 01m3wh57pc0bxrsnqwg9a80zh8
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — IntegrationTests/Package.resolved (gitignored, local only)
+    - test: green — swift test, 1452 tests in 183 suites passed; IntegrationTests build complete
+    - commit: fce77967 (only .kanban files)
+    - review: clean — 0 findings (no code in the commit)
+  timestamp: 2026-10-01T20:05:42.220008+00:00
+position_column: done
+position_ordinal: ffffffc180
 title: 'The IntegrationTests package does not build: its Package.resolved pins an old FoundationModelsExtras with no Mailbox'
 ---
 ## Problem
