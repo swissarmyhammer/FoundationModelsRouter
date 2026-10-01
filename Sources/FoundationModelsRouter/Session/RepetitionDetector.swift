@@ -88,13 +88,17 @@ struct RepetitionFinding: Sendable, Equatable {
 /// Reads the text of one call in flight line by line, and finds the moment
 /// when one window of generated tokens holds no new line (task ^1hcwaqy).
 ///
-/// A line is the text up to a line feed. A line counts when its length,
-/// without the white space at its two ends, is at least
-/// ``RepetitionDetection/minimumLineLength``. A counted line is new when the
-/// call did not write the same line before, in any watched entry. The tokens
-/// of each counted line that repeats fill the window, and a new line empties
-/// it. A short line is neither new nor repeated, so it does not fill the
-/// window.
+/// A line is the text up to a line feed. The detector compares the shape of
+/// each line (``RepetitionDetection/shape(of:)``): with the default settings,
+/// two lines that differ only in their digits have the same shape (task
+/// ^ez2g5gw). A line is long when its shape is at least
+/// ``RepetitionDetection/minimumLineLength`` long. A long line always counts,
+/// and it is new when the call did not write the same shape before, in any
+/// watched entry. A short line is neither new nor repeated until its shape
+/// occurred ``RepetitionDetection/shortLineRepeatThreshold`` times in the
+/// call. After that, each occurrence of the shape counts as a repeat. The
+/// tokens of each counted line that repeats fill the window, and a new line
+/// empties it.
 ///
 /// The detector reads each entry from where it stopped the last time, so a
 /// text that grows costs only its new part.
@@ -105,8 +109,11 @@ struct RepetitionDetector {
     /// The counter of the session, for the tokens of each line.
     private let tokenCounter: any TokenCounter
 
-    /// The counted lines the call wrote, without white space at the ends.
-    private var seenLines: Set<String> = []
+    /// The shapes of the long lines the call wrote.
+    private var seenShapes: Set<String> = []
+
+    /// For each short shape, how many times the call wrote it.
+    private var shortShapeOccurrences: [String: Int] = [:]
 
     /// For each watched entry, the UTF-8 offset of its first unread line.
     private var lineStarts: [String: Int] = [:]
@@ -192,15 +199,41 @@ struct RepetitionDetector {
     private mutating func read(line: String) -> RepetitionFinding? {
         let lineTokens = tokenCounter.count(line + "\n")
         generatedTokens += lineTokens
-        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count >= detection.minimumLineLength else { return nil }
+        let shape = detection.shape(of: line)
+        guard shape.count >= detection.minimumLineLength else {
+            return readShort(shape: shape, lineTokens: lineTokens)
+        }
         countedLines += 1
-        guard !seenLines.insert(trimmed).inserted else {
+        guard !seenShapes.insert(shape).inserted else {
             newLines += 1
             tokensWithoutNewLine = 0
             lineStartsAtNewLine = lineStarts
             return nil
         }
+        return readRepeat(lineTokens: lineTokens)
+    }
+
+    /// Reads one line whose shape is short. The line counts as a repeat only
+    /// after its shape occurred ``RepetitionDetection/shortLineRepeatThreshold``
+    /// times in the call.
+    ///
+    /// - Parameters:
+    ///   - shape: The shape of the line.
+    ///   - lineTokens: The tokens of the line, with its line feed.
+    /// - Returns: The finding when this line filled the window, else `nil`.
+    private mutating func readShort(shape: String, lineTokens: Int) -> RepetitionFinding? {
+        let occurrences = shortShapeOccurrences[shape, default: 0] + 1
+        shortShapeOccurrences[shape] = occurrences
+        guard occurrences > detection.shortLineRepeatThreshold else { return nil }
+        countedLines += 1
+        return readRepeat(lineTokens: lineTokens)
+    }
+
+    /// Adds the tokens of one counted line that repeats to the window.
+    ///
+    /// - Parameter lineTokens: The tokens of the line, with its line feed.
+    /// - Returns: The finding when this line filled the window, else `nil`.
+    private mutating func readRepeat(lineTokens: Int) -> RepetitionFinding? {
         tokensWithoutNewLine += lineTokens
         guard tokensWithoutNewLine >= detection.windowTokens else { return nil }
         return finding()

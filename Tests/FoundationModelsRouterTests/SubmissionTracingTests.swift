@@ -236,7 +236,7 @@ struct SubmissionTracingTests {
 
         let span = try Self.singleSpan(reportedTo: tracer)
         #expect(span.operationName == Self.spanName)
-        #expect(span.errors.count == 1)
+        #expect(span.failureType == "\(StubSessionBackend.StubError.self)")
     }
 
     @Test("an answer with no tracer injected and no backend bootstrapped comes normally")

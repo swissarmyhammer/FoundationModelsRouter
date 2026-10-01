@@ -36,6 +36,14 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
     /// The default of ``passTokenLimit``: 16,384 tokens (task ^dzw15st).
     public static let defaultPassTokenLimit = 16_384
 
+    /// The default of ``comparesLineShapes``: the detector compares the
+    /// shapes of lines (task ^ez2g5gw).
+    public static let defaultComparesLineShapes = true
+
+    /// The default of ``shortLineRepeatThreshold``: 8 occurrences
+    /// (task ^ez2g5gw).
+    public static let defaultShortLineRepeatThreshold = 8
+
     /// Whether the session watches the calls of its submissions. When `false`, no
     /// call stops for repetition.
     public var isEnabled: Bool
@@ -45,10 +53,11 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
     /// the window. A new line empties it. When it is full, the call stops.
     public var windowTokens: Int
 
-    /// The minimum length, in characters, of a line that counts. The length
-    /// is measured without the white space at the two ends. A shorter line
-    /// is neither new nor repeated, so lines that repeat by nature (```,
-    /// `"""`, `)`, `...`) never stop a call.
+    /// The minimum length, in characters, of a line that always counts. The
+    /// length is that of the shape of the line (``comparesLineShapes``). A
+    /// shorter line is short: it counts only after its shape occurs more
+    /// than ``shortLineRepeatThreshold`` times in the call, so some lines
+    /// that repeat by nature (```, `"""`, `)`, `...`) do not stop a call.
     public var minimumLineLength: Int
 
     /// How many times one answer goes on after a repetition stop. An answer
@@ -75,6 +84,22 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
     /// a detection that is not enabled sets no limit.
     public var passTokenLimit: Int
 
+    /// Whether the detector compares the shape of each line, and not its
+    /// exact text (task ^ez2g5gw). The shape of a line is its text without
+    /// the white space at its two ends, with each run of decimal digits
+    /// replaced by one `#`. Thus `- "Fixed #38692"` and `- "Fixed #38700"`
+    /// have the same shape, and the second line is a repeat. When `false`,
+    /// the shape is the text without the white space at its two ends.
+    public var comparesLineShapes: Bool
+
+    /// How many times one short shape can occur in a call before it counts
+    /// (task ^ez2g5gw). A shape is short when it is shorter than
+    /// ``minimumLineLength``. The first occurrences of a short shape, up to
+    /// this number, are neither new nor repeated. Each occurrence after them
+    /// is a repeat and fills the window. Thus some lines such as ``` or `)`
+    /// do not stop a call, and a loop of many lines of one short shape does.
+    public var shortLineRepeatThreshold: Int
+
     /// The keys of the stored form. Each key is the name of its property,
     /// except ``recoveriesPerAnswer``: its key stays `recoveriesPerTurn`, and
     /// the schema version does not change (`generation-queue.md`, section 5.6).
@@ -84,7 +109,13 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
         case minimumLineLength
         case recoveriesPerAnswer = "recoveriesPerTurn"
         case passTokenLimit
+        case comparesLineShapes
+        case shortLineRepeatThreshold
     }
+
+    /// The text that replaces each run of decimal digits in the shape of a
+    /// line (``comparesLineShapes``).
+    static let digitRunPlaceholder = "#"
 
     /// Creates the settings. Each parameter defaults to its named default.
     ///
@@ -92,30 +123,42 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
     ///   - isEnabled: Whether the session watches the calls of its submissions.
     ///   - windowTokens: The window, in generated tokens, that must hold at
     ///     least one new line.
-    ///   - minimumLineLength: The minimum length of a line that counts.
+    ///   - minimumLineLength: The minimum length of a line that always counts.
     ///   - recoveriesPerAnswer: How many times one answer goes on after a stop.
     ///   - passTokenLimit: The most output tokens of one generation pass when
     ///     the caller names no ceiling.
+    ///   - comparesLineShapes: Whether the detector compares the shape of
+    ///     each line, and not its exact text.
+    ///   - shortLineRepeatThreshold: How many times one short shape can
+    ///     occur in a call before it counts.
     public init(
         isEnabled: Bool = defaultIsEnabled,
         windowTokens: Int = defaultWindowTokens,
         minimumLineLength: Int = defaultMinimumLineLength,
         recoveriesPerAnswer: Int = defaultRecoveriesPerAnswer,
-        passTokenLimit: Int = defaultPassTokenLimit
+        passTokenLimit: Int = defaultPassTokenLimit,
+        comparesLineShapes: Bool = defaultComparesLineShapes,
+        shortLineRepeatThreshold: Int = defaultShortLineRepeatThreshold
     ) {
         self.isEnabled = isEnabled
         self.windowTokens = windowTokens
         self.minimumLineLength = minimumLineLength
         self.recoveriesPerAnswer = recoveriesPerAnswer
         self.passTokenLimit = passTokenLimit
+        self.comparesLineShapes = comparesLineShapes
+        self.shortLineRepeatThreshold = shortLineRepeatThreshold
     }
 
     /// Decodes the stored form. A stored form from before task ^dzw15st has
     /// no ``passTokenLimit`` key, and it loads with ``defaultPassTokenLimit``.
+    /// A stored form from before task ^ez2g5gw has no ``comparesLineShapes``
+    /// and no ``shortLineRepeatThreshold`` key, and it loads with
+    /// ``defaultComparesLineShapes`` and ``defaultShortLineRepeatThreshold``.
     ///
     /// - Parameter decoder: The decoder of the stored form.
-    /// - Throws: `DecodingError` when a key other than ``passTokenLimit`` is
-    ///   missing, or when a value has the wrong type.
+    /// - Throws: `DecodingError` when a key other than ``passTokenLimit``,
+    ///   ``comparesLineShapes`` and ``shortLineRepeatThreshold`` is missing,
+    ///   or when a value has the wrong type.
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
@@ -124,7 +167,24 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
             minimumLineLength: try container.decode(Int.self, forKey: .minimumLineLength),
             recoveriesPerAnswer: try container.decode(Int.self, forKey: .recoveriesPerAnswer),
             passTokenLimit: try container.decodeIfPresent(Int.self, forKey: .passTokenLimit)
-                ?? Self.defaultPassTokenLimit)
+                ?? Self.defaultPassTokenLimit,
+            comparesLineShapes: try container.decodeIfPresent(Bool.self, forKey: .comparesLineShapes)
+                ?? Self.defaultComparesLineShapes,
+            shortLineRepeatThreshold: try container.decodeIfPresent(Int.self, forKey: .shortLineRepeatThreshold)
+                ?? Self.defaultShortLineRepeatThreshold)
+    }
+
+    /// The shape of `line`, as the detector compares it: the line without
+    /// the white space at its two ends and, when ``comparesLineShapes`` is
+    /// `true`, with each run of decimal digits replaced by
+    /// ``digitRunPlaceholder``.
+    ///
+    /// - Parameter line: One complete line, without its line feed.
+    /// - Returns: The shape of the line.
+    func shape(of line: String) -> String {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard comparesLineShapes else { return trimmed }
+        return trimmed.replacing(#/\d+/#, with: Self.digitRunPlaceholder)
     }
 
     /// The pass token limit that a session applies: ``passTokenLimit`` when
@@ -138,7 +198,8 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
         """
         repetitionDetection: isEnabled = \(isEnabled), windowTokens = \(windowTokens), \
         minimumLineLength = \(minimumLineLength), recoveriesPerAnswer = \(recoveriesPerAnswer), \
-        passTokenLimit = \(passTokenLimit)
+        passTokenLimit = \(passTokenLimit), comparesLineShapes = \(comparesLineShapes), \
+        shortLineRepeatThreshold = \(shortLineRepeatThreshold)
         """
     }
 }
@@ -156,7 +217,9 @@ public struct RepetitionStop: Sendable, Equatable, CustomStringConvertible {
     public let generatedTokens: Int
 
     /// The lines of the call that count: lines that end with a line feed and
-    /// that are at least ``RepetitionDetection/minimumLineLength`` long.
+    /// whose shape is at least ``RepetitionDetection/minimumLineLength`` long,
+    /// and short lines whose shape occurred more than
+    /// ``RepetitionDetection/shortLineRepeatThreshold`` times.
     public let countedLines: Int
 
     /// The lines that count and that the call did not write before.

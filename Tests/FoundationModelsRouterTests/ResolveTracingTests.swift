@@ -217,8 +217,8 @@ struct ResolveTracingTests {
         }
 
         let span = try #require(Self.spans(named: Self.resolveSpanName, in: tracer).first)
-        try #require(span.errors.count == 1)
-        #expect(span.errors.first?.error is ResolutionFailure)
+        let failureType = try #require(span.failureType)
+        #expect(failureType.hasPrefix(String(reflecting: ResolutionFailure.self)))
         #expect(Self.spans(named: Self.loadSpanName, in: tracer).isEmpty)
     }
 
@@ -238,13 +238,13 @@ struct ResolveTracingTests {
         }
 
         let resolveSpan = try #require(Self.spans(named: Self.resolveSpanName, in: tracer).first)
-        #expect(resolveSpan.errors.count == 1)
+        #expect(resolveSpan.failureType != nil)
 
         // The resolve stops at the first failing slot, so exactly one load
         // span was opened and it carries the loader's own error.
         let loadSpans = Self.spans(named: Self.loadSpanName, in: tracer)
         try #require(loadSpans.count == 1)
-        #expect(loadSpans[0].errors.count == 1)
+        #expect(loadSpans[0].failureType?.hasPrefix(String(reflecting: ModelLoaderError.self)) == true)
         #expect(loadSpans[0].attributes.get("slot") == .string(ModelSlot.standard.rawValue))
     }
 }

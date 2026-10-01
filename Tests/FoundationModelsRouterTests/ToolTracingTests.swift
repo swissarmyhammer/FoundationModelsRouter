@@ -210,7 +210,7 @@ struct ToolTracingTests {
         _ = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
 
         let span = try Self.singleToolSpan(reportedTo: tracer)
-        #expect(span.errors.count == 1)
+        #expect(span.failureType != nil)
         #expect(span.attributes.get("tool.outcome") == .string("failed"))
     }
 

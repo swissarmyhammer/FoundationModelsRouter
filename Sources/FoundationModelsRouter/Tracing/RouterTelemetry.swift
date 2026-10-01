@@ -111,6 +111,11 @@ enum RouterTelemetry {
         /// The chosen model reference, in canonical string form.
         static let modelRef = "model.ref"
 
+        /// The type name of the error that ended the attempt of a submission.
+        /// Never the description of the error: a description can hold the
+        /// caller's content.
+        static let errorType = "error.type"
+
         /// The name of the authored ``ProfileDefinition`` a resolve ran.
         static let profileDefinitionName = "profile.definition_name"
 

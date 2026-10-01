@@ -141,6 +141,8 @@ struct RepetitionStopTests {
             "windowTokens = \(Self.window)",
             "minimumLineLength = \(RepetitionDetection.defaultMinimumLineLength)",
             "recoveriesPerAnswer = \(RepetitionDetection.defaultRecoveriesPerAnswer)",
+            "comparesLineShapes = \(RepetitionDetection.defaultComparesLineShapes)",
+            "shortLineRepeatThreshold = \(RepetitionDetection.defaultShortLineRepeatThreshold)",
         ]
         for value in namedValues {
             #expect(stop.description.contains(value), "the log line does not name \(value)")
@@ -150,11 +152,13 @@ struct RepetitionStopTests {
             metadata: [RouterTelemetry.LogMetadataKey.repetitionStop: stop.description])
     }
 
-    @Test("normal reasoning with many repeated short lines is not stopped")
+    @Test("normal reasoning with code blocks and other short lines is not stopped")
     func repeatedShortLinesDoNotStop() async throws {
-        let shortLines = ["```", "\"\"\"", ")", "..."]
-        let longLines = (0..<Self.cycleCount).map { index in "Step \(index): check the next branch of the parser." }
-        let lines = longLines.flatMap { line in [line] + Array(repeating: shortLines, count: Self.cycleCount).flatMap { $0 } }
+        let shortLines = ["```swift", "let x = 1", "```", "\"\"\"", ")", "..."]
+        let longLines = (0..<Self.cycleCount).map { index in
+            "Step \(index): check the branch named \(DigitFreeLabel.spelling(index)) of the parser."
+        }
+        let lines = longLines.flatMap { line in [line] + shortLines }
         let script = RepeatingReasoningScript(reasoningLines: lines, hold: Self.unstoppedHold)
 
         let (fixture, events) = try await Self.runAnswer(script: script, repeatsAfterStop: false, detection: Self.detection)

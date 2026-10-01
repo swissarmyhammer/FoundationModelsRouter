@@ -1,3 +1,4 @@
+import Foundation
 import FoundationModels
 import FoundationModelsRouterTestSupport
 import Testing
@@ -23,9 +24,29 @@ struct RepetitionDetectorTests {
     /// How many different lines the snippet that does not stop holds.
     private static let differentLineCount = 30
 
+    /// How many lines the loop of short numbered lines holds, as the report
+    /// of the defect states it (task ^ez2g5gw).
+    private static let numberedLoopLineCount = 1_000
+
+    /// The first number of the loop of short numbered lines.
+    private static let numberedLoopFirstNumber = 38_692
+
+    /// The step from one number of the loop to the next.
+    private static let numberedLoopStep = 8
+
+    /// How many code blocks the normal reasoning holds: more than
+    /// ``RepetitionDetection/defaultShortLineRepeatThreshold``, so each short
+    /// line of a block repeats past the threshold.
+    private static let codeBlockCount = 30
+
     /// A line long enough to count, with `label` in it.
     private static func longLine(_ label: String) -> String {
         "The reasoning checks the branch named \(label)."
+    }
+
+    /// The line of the loop of the report of the defect, with `number` in it.
+    private static func numberedLine(_ number: Int) -> String {
+        #"- "Fixed #\#(number)""#
     }
 
     /// A detector with ``window`` and the default minimum line length.
@@ -66,13 +87,89 @@ struct RepetitionDetectorTests {
         #expect(finding?.keptUTF8Lengths[Self.reasoningId] == Self.text([Self.longLine("alpha")]).utf8.count)
     }
 
-    @Test("short lines that repeat never fill the window")
-    func shortLinesDoNotCount() {
+    @Test("short lines that occur up to the threshold do not fill the window")
+    func shortLinesUpToTheThresholdDoNotCount() {
         var detector = Self.makeDetector()
-        let shortLines = Array(repeating: ["```", "\"\"\"", ")", "..."], count: Self.window).flatMap { $0 }
-        let lines = [Self.longLine("alpha")] + shortLines + [Self.longLine("beta")] + shortLines
+        let shortLines = Array(
+            repeating: ["```", "\"\"\"", ")", "..."], count: RepetitionDetection.defaultShortLineRepeatThreshold
+        ).flatMap { $0 }
+        let lines = [Self.longLine("alpha")] + shortLines
         let finding = detector.observe([WatchedText(entryId: Self.reasoningId, text: Self.text(lines))])
         #expect(finding == nil)
+    }
+
+    @Test("a loop of short lines that differ only in their digits stops within one window")
+    func numberedShortLoopStops() throws {
+        var detector = Self.makeDetector()
+        let numbers = (0..<Self.numberedLoopLineCount).map { Self.numberedLoopFirstNumber + $0 * Self.numberedLoopStep }
+        let lines = numbers.map(Self.numberedLine)
+        let longestLineTokens = try #require(lines.map { $0.count + 1 }.max())
+
+        let observed = detector.observe([WatchedText(entryId: Self.reasoningId, text: Self.text(lines))])
+        let finding = try #require(observed)
+
+        #expect(finding.newLines == 0)
+        #expect(finding.tokensWithoutNewLine >= Self.window)
+        #expect(finding.tokensWithoutNewLine < Self.window + longestLineTokens)
+        #expect(finding.keptUTF8Lengths[Self.reasoningId] == 0)
+    }
+
+    @Test("long lines that differ only in their digits are repeats")
+    func longLinesThatDifferOnlyInDigitsRepeat() throws {
+        var detector = Self.makeDetector()
+        let lines = (0..<Self.differentLineCount).map { Self.longLine("step \($0)") }
+        let observed = detector.observe([WatchedText(entryId: Self.reasoningId, text: Self.text(lines))])
+        let finding = try #require(observed)
+        #expect(finding.newLines == 1)
+    }
+
+    @Test("lines that differ in text, and not only in digits, stay new")
+    func linesThatDifferInTextStayNew() {
+        var detector = Self.makeDetector()
+        let lines = (0..<Self.differentLineCount).map { Self.longLine("\(DigitFreeLabel.spelling($0)) at step \($0)") }
+        let finding = detector.observe([WatchedText(entryId: Self.reasoningId, text: Self.text(lines))])
+        #expect(finding == nil)
+    }
+
+    @Test("normal reasoning with code blocks does not stop")
+    func reasoningWithCodeBlocksDoesNotStop() {
+        var detector = Self.makeDetector()
+        let lines = (0..<Self.codeBlockCount).flatMap { index in
+            [Self.longLine(DigitFreeLabel.spelling(index)), "```swift", "let x = \(index)", "```", "\"\"\"", ")"]
+        }
+        let finding = detector.observe([WatchedText(entryId: Self.reasoningId, text: Self.text(lines))])
+        #expect(finding == nil)
+    }
+
+    @Test("with shape comparison off, long lines that differ only in their digits stay new")
+    func shapeComparisonOffKeepsDigits() {
+        var detector = RepetitionDetector(
+            detection: RepetitionDetection(windowTokens: Self.window, comparesLineShapes: false),
+            tokenCounter: CharacterTokenCounter())
+        let lines = (0..<Self.differentLineCount).map { Self.longLine("step \($0)") }
+        let finding = detector.observe([WatchedText(entryId: Self.reasoningId, text: Self.text(lines))])
+        #expect(finding == nil)
+    }
+
+    @Test("a stored form with no shape keys decodes with the default of each one")
+    func storedFormWithoutShapeKeysDecodesDefaults() throws {
+        let stored = """
+            {"isEnabled": true, "windowTokens": \(Self.window), "minimumLineLength": \
+            \(RepetitionDetection.defaultMinimumLineLength), "recoveriesPerTurn": \
+            \(RepetitionDetection.defaultRecoveriesPerAnswer), "passTokenLimit": \
+            \(RepetitionDetection.defaultPassTokenLimit)}
+            """
+        let decoded = try JSONDecoder().decode(RepetitionDetection.self, from: Data(stored.utf8))
+        #expect(decoded.comparesLineShapes == RepetitionDetection.defaultComparesLineShapes)
+        #expect(decoded.shortLineRepeatThreshold == RepetitionDetection.defaultShortLineRepeatThreshold)
+        #expect(decoded == RepetitionDetection(windowTokens: Self.window))
+    }
+
+    @Test("the log line names each shape setting")
+    func logLineNamesTheShapeSettings() {
+        let values = RepetitionDetection().loggedValues
+        #expect(values.contains("comparesLineShapes = \(RepetitionDetection.defaultComparesLineShapes)"))
+        #expect(values.contains("shortLineRepeatThreshold = \(RepetitionDetection.defaultShortLineRepeatThreshold)"))
     }
 
     @Test("a new line empties the window")
@@ -126,7 +223,7 @@ struct RepetitionDetectorTests {
     @Test("30 different lines of a JSON string do not fill the window")
     func differentEscapedLinesDoNotStop() {
         var detector = Self.makeDetector()
-        let lines = (0..<Self.differentLineCount).map { Self.longLine("step \($0)") }
+        let lines = (0..<Self.differentLineCount).map { Self.longLine("step \(DigitFreeLabel.spelling($0))") }
         let argumentsJSON = #"{"code": ""# + lines.map { $0 + #"\n"# }.joined() + #""}"#
 
         let text = ToolCallArgumentsText.text(ofArgumentsJSON: argumentsJSON)
