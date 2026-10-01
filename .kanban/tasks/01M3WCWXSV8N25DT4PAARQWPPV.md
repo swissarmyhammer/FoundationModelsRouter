@@ -62,8 +62,24 @@ comments:
     - evidence: swift test — 1452 tests in 183 suites passed, 0 failed, 0 skipped. The new test "a detection with no default value decodes as it was encoded" passed. 2 known issues are old withKnownIssue marks in RealModelHarness.swift and BoundedWait.swift. One build-tool line, "missing creator for mutated node" for the mlx-swift_Cmlx bundle, comes from the build system, not from package code.
     - next: review
   timestamp: 2026-10-01T19:43:27.875268+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m3wg17ans56fhtagchvvrkaa
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 68d161c6). 0 findings, 0 confirmed, 0 refuted. 1 file reviewed. The prior Review Findings item is checked.
+    - next: none. The task is in done.
+  timestamp: 2026-10-01T19:46:02.197809+00:00
+- actor: claude-code
+  id: 01m3wg1kv6vycqfn6kkzfeqd9m
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 1 file
+    - test: green — swift test, 1452 tests in 183 suites passed, 0 failures
+    - commit: 68d161c6
+    - review: clean — 0 findings
+  timestamp: 2026-10-01T19:46:15.014960+00:00
+position_column: done
+position_ordinal: ffffffc080
 title: Tracing tests fail with FoundationModelsExtras 50fd4a5 (span error recording changed)
 ---
 ## Problem
