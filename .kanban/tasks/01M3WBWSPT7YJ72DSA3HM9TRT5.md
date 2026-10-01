@@ -40,8 +40,24 @@ comments:
     - warning seen: SwiftPM prints "missing creator for mutated node" for the mlx-swift_Cmlx bundle. It is a build-system message about a dependency. It does not come from package source. The build was incremental (2.27 sec), so a source warning cached from an earlier build would not show.
     - next: review. IntegrationTests package build problem is on card ^cfbqtfm and was not part of this run.
   timestamp: 2026-10-01T19:21:24.897865+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m3wf4g88mg1bpk2dqxjcb72m
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (fd4ed82b). 0 findings, 0 confirmed, 0 refuted. 21 review pairs attempted, 0 failed. 24 files reviewed. 7 files not reviewed: 6 .kanban files (from .reviewignore), and generation-queue.md (no validator matches this file).
+    - next: The task is in done. No more work is necessary.
+  timestamp: 2026-10-01T19:30:21.064313+00:00
+- actor: claude-code
+  id: 01m3wf4x7d97ea6hq4jc64x66z
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 25 files
+    - test: green — swift test, 1451 tests in 183 suites passed, 0 failures
+    - commit: fd4ed82b
+    - review: clean — 0 findings
+  timestamp: 2026-10-01T19:30:34.349375+00:00
+position_column: done
+position_ordinal: ffffffbf80
 title: Stop a pass whose reasoning goes past a limit, and run a recovery that tells the model to act
 ---
 ## Problem
