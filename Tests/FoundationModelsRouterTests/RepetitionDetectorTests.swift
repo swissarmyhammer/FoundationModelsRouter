@@ -165,6 +165,25 @@ struct RepetitionDetectorTests {
         #expect(decoded == RepetitionDetection(windowTokens: Self.window))
     }
 
+    @Test("a detection with no default value decodes as it was encoded")
+    func detectionWithNoDefaultValueRoundTrips() throws {
+        let detection = RepetitionDetection(
+            isEnabled: !RepetitionDetection.defaultIsEnabled,
+            windowTokens: Self.window,
+            minimumLineLength: RepetitionDetection.defaultMinimumLineLength + 1,
+            recoveriesPerAnswer: RepetitionDetection.defaultRecoveriesPerAnswer + 1,
+            passTokenLimit: RepetitionDetection.defaultPassTokenLimit + 1,
+            comparesLineShapes: !RepetitionDetection.defaultComparesLineShapes,
+            shortLineRepeatThreshold: RepetitionDetection.defaultShortLineRepeatThreshold + 1,
+            reasoningTokenLimit: RepetitionDetection.defaultReasoningTokenLimit + 1)
+
+        let decoded = try JSONDecoder().decode(RepetitionDetection.self, from: JSONEncoder().encode(detection))
+
+        #expect(decoded.comparesLineShapes == !RepetitionDetection.defaultComparesLineShapes)
+        #expect(decoded.shortLineRepeatThreshold == RepetitionDetection.defaultShortLineRepeatThreshold + 1)
+        #expect(decoded == detection)
+    }
+
     @Test("the log line names each shape setting")
     func logLineNamesTheShapeSettings() {
         let values = RepetitionDetection().loggedValues
