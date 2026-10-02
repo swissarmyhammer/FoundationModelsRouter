@@ -372,6 +372,14 @@ actor RoutedSessionActor: RoutedSession {
     /// While it runs, no pump starts. See ``drain()``.
     var drainTask: Task<Void, Never>?
 
+    /// Wakes each ``awaitIdle()`` call that waits for the next change of the
+    /// work of this session. See ``signalWorkChange()``.
+    nonisolated let idleChanges = ChangeSignal()
+
+    /// Whether ``close()`` started. It stays set, so no ``awaitIdle()`` call
+    /// waits after it. See ``endIdleWaits()``.
+    var isClosed = false
+
     /// Whether a message arrived since the pump last looked, so the pump
     /// takes one more cycle before it ends.
     var pumpWakeRequested = false

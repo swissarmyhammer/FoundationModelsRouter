@@ -29,6 +29,10 @@ extension RoutedSession {
         get async { await (self as! RoutedSessionActor).isPumpRunning }
     }
 
+    /// How many ``RoutedSession/awaitIdle()`` calls wait now for the next
+    /// change of the session — see ``RoutedSessionActor/idleChanges``.
+    nonisolated var idleWaitCount: Int { (self as! RoutedSessionActor).idleChanges.waiterCount }
+
     /// Whether this session becomes idle inside ``BoundedWait``'s bound: its
     /// pump ends, and no caller message waits in its outbox. The session then
     /// holds no answer, and nothing of it is stranded.

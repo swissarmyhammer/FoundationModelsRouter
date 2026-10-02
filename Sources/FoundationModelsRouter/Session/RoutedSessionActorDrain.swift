@@ -51,7 +51,8 @@ extension RoutedSessionActor {
     /// next caller message. A caller message or a caller compaction that
     /// arrived during the drain is withdrawn, and its caller gets
     /// `CancellationError`. The last steps have no suspension point, so no
-    /// message arrives between them and the end of the drain.
+    /// message arrives between them and the end of the drain. The end of the
+    /// drain is a change of the work of the session (``signalWorkChange()``).
     private func runDrain() async {
         var workRuns = true
         while workRuns {
@@ -69,6 +70,7 @@ extension RoutedSessionActor {
         _ = outbox.withdrawMessages()
         withdrawCallerCompactions()
         drainTask = nil
+        signalWorkChange()
     }
 
     /// Withdraws each caller compaction that waits for the pump. Its caller

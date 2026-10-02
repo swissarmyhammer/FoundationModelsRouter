@@ -109,10 +109,15 @@ extension RoutedSessionActor: BackgroundRunSettlementObserver {
     /// settlement is no new mail, and the forward of it can come after a
     /// submission already took the terminal and gave it back.
     ///
+    /// The settlement is a change of the work of the session
+    /// (``signalWorkChange()``): a run that settles while a drain runs
+    /// starts no pump, so the pump does not report it.
+    ///
     /// - Parameter terminal: The terminal the mailbox forwarded.
     func deliver(settledTerminal terminal: OperationEvent) async {
         await outbox.journalWithoutStaging(event: terminal)
         wakePump()
+        signalWorkChange()
     }
 }
 

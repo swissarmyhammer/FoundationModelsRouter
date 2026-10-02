@@ -140,4 +140,5 @@ one message, then waits for its answer.
 
 - ``fork(workingDirectory:)``
 - ``drain()``
+- ``awaitIdle()``
 - ``close()``

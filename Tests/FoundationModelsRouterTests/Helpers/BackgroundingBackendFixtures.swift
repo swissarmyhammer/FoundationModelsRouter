@@ -85,6 +85,10 @@ final class BackgroundingBackend: LanguageModelSessionBackend {
     /// it, or `nil` to let that answer return at once.
     private let holdFirstAnswer: RunLatch?
 
+    /// Holds each call after the first open until a test opens it, or `nil`
+    /// to let each such call return at once.
+    private let holdLaterAnswers: RunLatch?
+
     /// The one lock the captures are behind.
     private let captures = Mutex(Captures())
 
@@ -103,9 +107,12 @@ final class BackgroundingBackend: LanguageModelSessionBackend {
     ///   - tools: The session's composed tool list.
     ///   - holdFirstAnswer: A latch that holds the first answer open after its
     ///     tool calls, or `nil`.
-    init(tools: [any Tool], holdFirstAnswer: RunLatch? = nil) {
+    ///   - holdLaterAnswers: A latch that holds each call after the first
+    ///     open, or `nil`.
+    init(tools: [any Tool], holdFirstAnswer: RunLatch? = nil, holdLaterAnswers: RunLatch? = nil) {
         self.tools = tools
         self.holdFirstAnswer = holdFirstAnswer
+        self.holdLaterAnswers = holdLaterAnswers
     }
 
     func respond(to prompt: String, maxTokens: Int?) async throws -> String {
@@ -115,6 +122,7 @@ final class BackgroundingBackend: LanguageModelSessionBackend {
         }
         _ = try await inner.respond(to: prompt, maxTokens: maxTokens)
         guard isFirstCall else {
+            await holdLaterAnswers?.waitUntilOpen()
             return Self.answerPrefix + prompt
         }
         var rendered = ""
@@ -178,12 +186,19 @@ final class BackgroundingLLMContainer: LoadedLLMContainer, @unchecked Sendable {
     /// Handed to every vended backend as its first-answer hold.
     private let holdFirstAnswer: RunLatch?
 
+    /// Handed to every vended backend as its hold of each later call.
+    private let holdLaterAnswers: RunLatch?
+
     /// Creates a container.
     ///
-    /// - Parameter holdFirstAnswer: A latch every vended backend holds its
-    ///   first answer open on, or `nil`.
-    init(holdFirstAnswer: RunLatch? = nil) {
+    /// - Parameters:
+    ///   - holdFirstAnswer: A latch every vended backend holds its first
+    ///     answer open on, or `nil`.
+    ///   - holdLaterAnswers: A latch every vended backend holds each call
+    ///     after the first open on, or `nil`.
+    init(holdFirstAnswer: RunLatch? = nil, holdLaterAnswers: RunLatch? = nil) {
         self.holdFirstAnswer = holdFirstAnswer
+        self.holdLaterAnswers = holdLaterAnswers
     }
 
     func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
@@ -191,7 +206,8 @@ final class BackgroundingLLMContainer: LoadedLLMContainer, @unchecked Sendable {
     }
 
     func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
-        let backend = BackgroundingBackend(tools: tools, holdFirstAnswer: holdFirstAnswer)
+        let backend = BackgroundingBackend(
+            tools: tools, holdFirstAnswer: holdFirstAnswer, holdLaterAnswers: holdLaterAnswers)
         lastBackend = backend
         return backend
     }

@@ -337,6 +337,10 @@ extension RoutedSessionActor {
         // not this close has anything to journal.
         finishSessionEventSubscriptions()
 
+        // Also before the drain: no ``awaitIdle()`` call waits for the drain,
+        // which waits for each run body to end.
+        endIdleWaits()
+
         // The drain sweeps and journals the background runs, and waits until
         // no work of the session runs. A cancel of the caller does not end
         // this wait: when close returns, the session holds no work.

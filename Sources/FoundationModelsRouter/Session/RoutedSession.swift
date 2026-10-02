@@ -391,6 +391,39 @@ public protocol RoutedSession: Actor {
     @discardableResult
     func drain() async -> Bool
 
+    /// Waits until this session has no more work, and stops nothing. A host
+    /// calls it when the stream of an answer ended while a background run of
+    /// that answer is open: the result of the run comes back as mail, and
+    /// the answer that the mail starts is visible only on
+    /// ``streamSessionEvents()``.
+    ///
+    /// The session is idle when these three are all true, read together on
+    /// the session:
+    ///
+    /// 1. No background run is open.
+    /// 2. No pump work runs or waits: no answer, no caller compaction, no
+    ///    drain, and no caller message that waits for the pump.
+    /// 3. No waiting mail can start an answer by itself. Mail that the session
+    ///    holds, for example after ``SessionEvent/mailDeliveryPaused(_:)``,
+    ///    waits for the next caller message, so it counts as idle.
+    ///
+    /// A run that settles inside the answer that runs can ride that answer,
+    /// or start an answer of its own. The call waits for the answer of the
+    /// mail in both cases, so when it returns `true`, the
+    /// ``SessionEvent/answered(_:)`` or ``SessionEvent/answerFailed(_:)`` of
+    /// the last answer is already on ``streamSessionEvents()``.
+    ///
+    /// The call returns at once when the session is idle. Else it waits for
+    /// each change of the work of the session, with no poll and no timer.
+    /// A cancel of the calling task ends the wait at once, as it does for
+    /// ``drain()``. ``close()`` ends each wait, and a call after ``close()``
+    /// started does not wait.
+    ///
+    /// - Returns: `true` when the session is idle, and `false` when the
+    ///   calling task was cancelled, or ``close()`` started, before that.
+    @discardableResult
+    func awaitIdle() async -> Bool
+
     /// Tears the session down: runs ``drain()`` and waits until it ends,
     /// also when the calling task is cancelled. So when this call returns, no
     /// work of the session runs: no submission, no background run, and no
@@ -400,6 +433,7 @@ public protocol RoutedSession: Actor {
     /// ``streamSessionEvents()`` subscription, and releases the prompt cache
     /// that the model keeps for this session. A fork has a cache of its own,
     /// so the close of a fork does not release the cache of its parent.
+    /// Before its drain, close ends each ``awaitIdle()`` wait with `false`.
     ///
     /// Call it where a session's life ends. `deinit` does not run this sweep.
     /// Idempotent.

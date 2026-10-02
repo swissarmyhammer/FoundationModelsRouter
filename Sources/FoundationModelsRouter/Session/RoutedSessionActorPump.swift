@@ -141,7 +141,8 @@ extension RoutedSessionActor: SessionMailObserver {
     /// A released pump (``releasePumpAwaitingLetter()``) is cancelled, so it
     /// ends, and it starts a new pump in its place: the new task is not
     /// cancelled, so it can run the next answer. A drain (``drainTask``) ends
-    /// the loop before its next work.
+    /// the loop before its next work. The end of the loop is a change of the
+    /// work of the session (``signalWorkChange()``).
     private func runPump() async {
         while !Task.isCancelled, drainTask == nil {
             pumpWakeRequested = false
@@ -155,6 +156,7 @@ extension RoutedSessionActor: SessionMailObserver {
         if Task.isCancelled {
             wakePump()
         }
+        signalWorkChange()
     }
 
     /// Runs one job of the pump with the explicit telemetry of this session
