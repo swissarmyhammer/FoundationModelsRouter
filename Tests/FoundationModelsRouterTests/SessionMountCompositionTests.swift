@@ -314,59 +314,78 @@ struct SessionMountCompositionTests {
         _ = try await Fixtures.settledTerminal(of: pendingEnvelope.completionToken, in: mailbox)
     }
 
-    /// A settlement observer of a run plane. At each settlement it reads the
-    /// mail of `outbox`, and gives whether the terminal of the settled run is
-    /// already staged there.
-    final class StagedAtSettlementProbe: BackgroundRunSettlementObserver {
-        /// The outbox the probe reads.
-        private let outbox: SessionOutbox
+    /// The sink of a run whose post of the `.completed` terminal returns only
+    /// when its latch opens. Each other event goes through at once.
+    actor TerminalHoldingSink: OperationEventSink {
+        /// The latch that the post of the terminal waits on.
+        private let release: RunLatch
 
-        /// One reading for each settlement: whether the terminal of the run
-        /// was staged when the run plane settled the run.
-        let readings: AsyncStream<Bool>
+        /// The terminal that the sink got, or `nil` before it got one.
+        private(set) var heldTerminal: OperationEvent?
 
-        /// Gives each reading to ``readings``.
-        private let continuation: AsyncStream<Bool>.Continuation
-
-        /// Makes a probe that reads `outbox`.
+        /// Makes a sink that holds the terminal until `release` opens.
         ///
-        /// - Parameter outbox: The outbox that the funnel of each run posts to.
-        init(reading outbox: SessionOutbox) {
-            self.outbox = outbox
-            (readings, continuation) = AsyncStream.makeStream()
+        /// - Parameter release: The latch that the post of the terminal waits on.
+        init(release: RunLatch) {
+            self.release = release
         }
 
-        func deliver(settledTerminal terminal: OperationEvent) async {
-            let mail = await outbox.pending().events
-            continuation.yield(
-                mail.contains { $0.event.kind == .completed && $0.event.correlationID == terminal.correlationID })
+        func post(event: OperationEvent) async {
+            guard event.kind == .completed else { return }
+            heldTerminal = event
+            await release.waitUntilOpen()
         }
+    }
+
+    /// Whether the run with `token` settles while the sink of the run holds
+    /// its terminal. The reading asks the run plane through the yields of
+    /// ``BoundedWait/poll(until:givingUpWhen:)``, and stops after them with
+    /// no clock. A settlement that only a few task suspensions keep back
+    /// lands in these yields.
+    ///
+    /// - Parameters:
+    ///   - token: The completion token of the run.
+    ///   - mailbox: The run plane of the run.
+    /// - Returns: `true` when the run settled before the yields were spent.
+    private static func settlesWhileTheTerminalIsHeld(_ token: String, in mailbox: RunPlane) async -> Bool {
+        await BoundedWait.poll(
+            until: { await mailbox.settledRunTokens().contains(token) }, givingUpWhen: { true })
     }
 
     /// The idle check of a session (``RoutedSessionActor/isIdle()``) reads the
     /// run plane before the outbox. It is correct only when the funnel of a
-    /// run stages the terminal before the run plane settles the run. The
-    /// outbox here has no mail observer, so no pump takes the terminal before
-    /// the probe reads it.
+    /// run stages the terminal before the run plane settles the run. Here the
+    /// sink of the run holds the post of the terminal on a latch. While the
+    /// latch is closed, the run must stay open on the run plane. When the
+    /// latch opens, the run settles.
     @Test("the funnel of a run stages its terminal before the run plane settles the run")
     func theFunnelStagesTheTerminalBeforeTheSettlement() async throws {
         let mailbox = RunPlane()
-        let outbox = SessionOutbox()
-        let probe = StagedAtSettlementProbe(reading: outbox)
-        await mailbox.attach(settlementObserver: probe)
+        let release = RunLatch()
+        let sink = TerminalHoldingSink(release: release)
         let gate = RunLatch()
         let run = BackgroundToolRunner(
             wrapping: Fixtures.GatedTool(gate: gate),
-            site: MountSite(sessionID: ULID.generate(), runPlane: mailbox, sink: outbox),
+            site: MountSite(sessionID: ULID.generate(), runPlane: mailbox, sink: sink),
             timeout: nil
         )
         let envelope = try Fixtures.decodeEnvelope(try await run.call(arguments: MountArguments(value: "held")))
         #expect(envelope.pending)
+        let token = envelope.completionToken
 
         await gate.open()
+        try await AwaitedCondition.wait(until: { await sink.heldTerminal != nil })
 
-        var readings = probe.readings.makeAsyncIterator()
-        #expect(await readings.next() == true)
-        withExtendedLifetime(probe) {}
+        // The latch is closed: the sink holds the terminal.
+        #expect(await Self.settlesWhileTheTerminalIsHeld(token, in: mailbox) == false)
+        #expect(await mailbox.settledRunTokens().contains(token) == false)
+        #expect(await mailbox.backgroundRuns().map(\.completionToken) == [token])
+
+        await release.open()
+        let terminal = try await Fixtures.settledTerminal(of: token, in: mailbox)
+
+        #expect(await mailbox.settledRunTokens().contains(token))
+        #expect(await mailbox.backgroundRuns().isEmpty)
+        #expect(await sink.heldTerminal?.correlationID == terminal.correlationID)
     }
 }

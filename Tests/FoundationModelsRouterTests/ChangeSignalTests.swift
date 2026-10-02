@@ -88,7 +88,7 @@ struct ChangeSignalTests {
         // Ends a wait that registered in spite of its cancel, so the test
         // ends also when the expectation above failed.
         signal.signal()
-        await wait.task.value
+        try await AwaitedCondition.wait(until: { wait.result.value != nil })
         #expect(wait.result.value == false)
     }
 

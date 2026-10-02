@@ -107,9 +107,11 @@ struct SessionIdleWaitTests {
     /// - Parameters:
     ///   - session: The session to wait on.
     ///   - outcome: Gets the result of the call.
-    /// - Returns: The task of the call.
+    /// - Returns: The task of the call, which a test can cancel. A test reads
+    ///   the result from `outcome`, not from the task.
     /// - Throws: ``ConditionNeverHeld`` when the `.timeLimit` of the suite
     ///   ends the wait first.
+    @discardableResult
     private static func startIdleWait(
         on session: any RoutedSession, recording outcome: RecordedWaitResult
     ) async throws -> Task<Bool, Never> {
@@ -120,6 +122,42 @@ struct SessionIdleWaitTests {
         }
         try await AwaitedCondition.wait(until: { session.idleWaitCount == 1 || outcome.value != nil })
         return waiting
+    }
+
+    /// Runs `work` in a task of its own, and records what it gives in the
+    /// result that this function returns.
+    ///
+    /// A test reads the result with ``AwaitedCondition/wait(until:)``, not
+    /// with `await task.value`. The `.timeLimit` cancels the test task, not
+    /// the task of `work`, so a `work` that never returns then fails the
+    /// test, and does not hang the test run.
+    ///
+    /// - Parameter work: The work to run.
+    /// - Returns: The result that gets what `work` gives.
+    private static func startRecorded(_ work: @escaping @Sendable () async -> Bool) -> RecordedWaitResult {
+        let outcome = RecordedWaitResult()
+        Task { outcome.record(await work()) }
+        return outcome
+    }
+
+    /// Waits until `outcome` has a result, and gives it.
+    ///
+    /// - Parameter outcome: The result of a wait that runs in a task of its own.
+    /// - Returns: The result.
+    /// - Throws: ``ConditionNeverHeld`` when the `.timeLimit` of the suite
+    ///   ends the wait first.
+    private static func result(of outcome: RecordedWaitResult) async throws -> Bool? {
+        try await AwaitedCondition.wait(until: { outcome.value != nil })
+        return outcome.value
+    }
+
+    /// Starts the respond to ``jobPrompt`` in a task of its own.
+    ///
+    /// - Parameter session: The session to send the prompt to.
+    /// - Returns: The result: `true` when the respond returned, `false` when
+    ///   it threw.
+    private static func startResponding(on session: any RoutedSession) -> RecordedWaitResult {
+        startRecorded { (try? await session.respond(to: Self.jobPrompt)) != nil }
     }
 
     /// Reads `events` until `count` answers ended, and gives how many did.
@@ -178,7 +216,7 @@ struct SessionIdleWaitTests {
         let events = await fixture.session.streamSessionEvents()
         _ = try await fixture.session.respond(to: Self.jobPrompt)
         let outcome = RecordedWaitResult()
-        let waiting = try await Self.startIdleWait(on: fixture.session, recording: outcome)
+        try await Self.startIdleWait(on: fixture.session, recording: outcome)
         #expect(outcome.value == nil)
 
         // The run settles, and its mail starts an answer, which the backend
@@ -191,7 +229,7 @@ struct SessionIdleWaitTests {
 
         await holdMailAnswer.open()
 
-        #expect(await waiting.value)
+        #expect(try await Self.result(of: outcome) == true)
         #expect(await !fixture.session.isPumpRunning)
         #expect(fixture.backend.receivedPrompts.last?.hasSuffix(RoutedSessionActor.settledRunDeliveryPrompt) == true)
         #expect(await Self.answers(Self.promptsWithAMailAnswer, in: events) == Self.promptsWithAMailAnswer)
@@ -206,19 +244,19 @@ struct SessionIdleWaitTests {
         let fixture = try await Self.makeFixture(
             tools: [InlineSettlingTool(gate: gate)],
             container: BackgroundingLLMContainer(holdFirstAnswer: holdFirstAnswer))
-        let responding = Task { try await fixture.session.respond(to: Self.jobPrompt) }
+        let responded = Self.startResponding(on: fixture.session)
 
         // The run settled inside its own tool call, and the answer is held.
         try await AwaitedCondition.wait(until: { fixture.backend.toolOutputs.count == 1 })
         #expect(await fixture.session.mailbox.backgroundRuns().isEmpty)
         let outcome = RecordedWaitResult()
-        let waiting = try await Self.startIdleWait(on: fixture.session, recording: outcome)
+        try await Self.startIdleWait(on: fixture.session, recording: outcome)
         #expect(outcome.value == nil)
 
         await holdFirstAnswer.open()
-        _ = try await responding.value
+        #expect(try await Self.result(of: responded) == true)
 
-        #expect(await waiting.value)
+        #expect(try await Self.result(of: outcome) == true)
         #expect(fixture.backend.receivedPrompts == [Self.jobPrompt])
         #expect(fixture.backend.toolOutputs.first?.contains(Self.runOutput) == true)
         await Self.end(fixture)
@@ -236,7 +274,7 @@ struct SessionIdleWaitTests {
 
         waiting.cancel()
 
-        #expect(await waiting.value == false)
+        #expect(try await Self.result(of: outcome) == false)
         #expect(await fixture.session.mailbox.backgroundRuns().count == 1)
         await Self.end(fixture, opening: [gate])
     }
@@ -248,16 +286,20 @@ struct SessionIdleWaitTests {
             tools: [LatchedBackgroundToolRunner(name: "pending_job", gate: gate, output: Self.runOutput)])
         _ = try await fixture.session.respond(to: Self.jobPrompt)
         let outcome = RecordedWaitResult()
-        let waiting = try await Self.startIdleWait(on: fixture.session, recording: outcome)
+        try await Self.startIdleWait(on: fixture.session, recording: outcome)
         #expect(outcome.value == nil)
 
         // The body of the run does not see its cancel until the gate opens,
         // so the drain of the close waits for it.
-        let closing = Task { await fixture.session.close() }
+        let closed = Self.startRecorded {
+            await fixture.session.close()
+            return true
+        }
 
-        #expect(await waiting.value == false)
+        #expect(try await Self.result(of: outcome) == false)
+        #expect(closed.value == nil)
         await gate.open()
-        await closing.value
+        #expect(try await Self.result(of: closed) == true)
         await Self.end(fixture)
     }
 
@@ -298,12 +340,13 @@ struct SessionIdleWaitTests {
         _ = try await fixture.session.respond(to: Self.jobPrompt)
         #expect(await fixture.session.mailbox.backgroundRuns().count == 1)
 
-        let waiting = Task {
+        let outcome = Self.startRecorded {
             withUnsafeCurrentTask { $0?.cancel() }
             return await fixture.session.awaitIdle()
         }
+        try await AwaitedCondition.wait(until: { outcome.value != nil })
 
-        #expect(await waiting.value == false)
+        #expect(outcome.value == false)
         #expect(fixture.session.idleWaitCount == 0)
         await Self.end(fixture, opening: [gate])
     }
@@ -382,7 +425,7 @@ struct SessionIdleWaitTests {
         let session = try Self.actor(of: fixture)
         let workId = await session.lastWorkId
         let reads = await session.readRunsAndMail()
-        let responding = Task { try await fixture.session.respond(to: Self.jobPrompt) }
+        let responded = Self.startResponding(on: fixture.session)
         try await AwaitedCondition.wait(until: { fixture.backend.receivedPrompts.count == 1 })
 
         let workIdOfTheAnswer = await session.lastWorkId
@@ -390,7 +433,7 @@ struct SessionIdleWaitTests {
         #expect(await session.isIdle(startedAt: workIdOfTheAnswer, reading: reads) == false)
 
         await holdFirstAnswer.open()
-        _ = try await responding.value
+        #expect(try await Self.result(of: responded) == true)
         await Self.end(fixture)
     }
 }
