@@ -89,8 +89,16 @@ comments:
     - evidence: 3 files - Tests/FoundationModelsRouterTests/SessionMountCompositionTests.swift, Tests/FoundationModelsRouterTests/SessionIdleWaitTests.swift, Tests/FoundationModelsRouterTests/ChangeSignalTests.swift. `swift build` and `swift build --build-tests`: no compiler warnings (only the SwiftPM build-graph line "missing creator for mutated node" for the mlx-swift_Cmlx bundle, which no source change makes). Full `swift test`: 1474 tests in 185 suites passed, 2 known issues (the expected ones in RealModelHarness and BoundedWait tests); 23 and 19 tests in the other targets passed. Extras mutation (settleRun without the await): 20/20 runs failed. Extras checkout clean. Round 2 findings A and B checked.
     - next: review
   timestamp: 2026-10-02T04:05:20.596165+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: wballard
+  id: 01m3xcm4jmjz0jwkd2d7121k2k
+  text: |-
+    ### finish — clean
+    - review: two adversarial checks (the review engine cannot reach this repo from the ACPAgent session); round 1: 4 findings, fixed in 57c01322; round 2: 2 findings (test determinism, hang risk), fixed in HEAD
+    - mutation: funnel order 20/20 failed; each isIdle term and ChangeSignal path failed its test
+    - test: swift test 1474 tests / 185 suites passed
+  timestamp: 2026-10-02T04:05:42.100207+00:00
+position_column: done
+position_ordinal: ffffffc380
 title: 'A host cannot know when a session is idle: add RoutedSession.awaitIdle(), so a prompt can wait for a backgrounded run''s mail answer'
 ---
 ## Problem
