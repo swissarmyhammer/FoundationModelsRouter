@@ -1,7 +1,6 @@
 import Foundation
 import FoundationModels
 import FoundationModelsRouterTestSupport
-import Synchronization
 import Testing
 
 @testable import FoundationModelsExtras
@@ -41,23 +40,6 @@ struct SessionIdleWaitTests {
         func call(arguments: BackgroundFixtureArguments) async throws -> String {
             await gate.waitUntilOpen()
             return SessionIdleWaitTests.runOutput
-        }
-    }
-
-    /// What one ``RoutedSession/awaitIdle()`` call gave, or `nil` while the
-    /// call waits.
-    final class IdleWaitOutcome: Sendable {
-        /// The result of the call, or `nil` while it waits.
-        private let stored = Mutex<Bool?>(nil)
-
-        /// The result of the call, or `nil` while it waits.
-        var value: Bool? { stored.withLock { $0 } }
-
-        /// Records the result of the call.
-        ///
-        /// - Parameter idle: What the call gave.
-        func record(_ idle: Bool) {
-            stored.withLock { $0 = idle }
         }
     }
 
@@ -129,7 +111,7 @@ struct SessionIdleWaitTests {
     /// - Throws: ``ConditionNeverHeld`` when the `.timeLimit` of the suite
     ///   ends the wait first.
     private static func startIdleWait(
-        on session: any RoutedSession, recording outcome: IdleWaitOutcome
+        on session: any RoutedSession, recording outcome: RecordedWaitResult
     ) async throws -> Task<Bool, Never> {
         let waiting = Task {
             let idle = await session.awaitIdle()
@@ -195,7 +177,7 @@ struct SessionIdleWaitTests {
             container: BackgroundingLLMContainer(holdLaterAnswers: holdMailAnswer))
         let events = await fixture.session.streamSessionEvents()
         _ = try await fixture.session.respond(to: Self.jobPrompt)
-        let outcome = IdleWaitOutcome()
+        let outcome = RecordedWaitResult()
         let waiting = try await Self.startIdleWait(on: fixture.session, recording: outcome)
         #expect(outcome.value == nil)
 
@@ -229,7 +211,7 @@ struct SessionIdleWaitTests {
         // The run settled inside its own tool call, and the answer is held.
         try await AwaitedCondition.wait(until: { fixture.backend.toolOutputs.count == 1 })
         #expect(await fixture.session.mailbox.backgroundRuns().isEmpty)
-        let outcome = IdleWaitOutcome()
+        let outcome = RecordedWaitResult()
         let waiting = try await Self.startIdleWait(on: fixture.session, recording: outcome)
         #expect(outcome.value == nil)
 
@@ -248,7 +230,7 @@ struct SessionIdleWaitTests {
         let fixture = try await Self.makeFixture(
             tools: [LatchedBackgroundToolRunner(name: "pending_job", gate: gate, output: Self.runOutput)])
         _ = try await fixture.session.respond(to: Self.jobPrompt)
-        let outcome = IdleWaitOutcome()
+        let outcome = RecordedWaitResult()
         let waiting = try await Self.startIdleWait(on: fixture.session, recording: outcome)
         #expect(outcome.value == nil)
 
@@ -265,7 +247,7 @@ struct SessionIdleWaitTests {
         let fixture = try await Self.makeFixture(
             tools: [LatchedBackgroundToolRunner(name: "pending_job", gate: gate, output: Self.runOutput)])
         _ = try await fixture.session.respond(to: Self.jobPrompt)
-        let outcome = IdleWaitOutcome()
+        let outcome = RecordedWaitResult()
         let waiting = try await Self.startIdleWait(on: fixture.session, recording: outcome)
         #expect(outcome.value == nil)
 
@@ -294,6 +276,121 @@ struct SessionIdleWaitTests {
         #expect(waitingMail.contains { $0.event.kind == .completed })
         #expect(waitingMail.allSatisfy { $0.isHeld })
         #expect(fixture.backend.receivedPrompts == [Self.jobPrompt])
+        await Self.end(fixture)
+    }
+
+    @Test("a call after close() returned gives false at once")
+    func aCallAfterCloseGivesFalse() async throws {
+        let fixture = try await Self.makeFixture(tools: [])
+        await fixture.session.close()
+
+        #expect(await fixture.session.awaitIdle() == false)
+
+        #expect(fixture.session.idleWaitCount == 0)
+        await Self.end(fixture)
+    }
+
+    @Test("a call in a task that was cancelled before the call gives false at once while a run is open")
+    func aCallInACancelledTaskGivesFalse() async throws {
+        let gate = RunLatch()
+        let fixture = try await Self.makeFixture(
+            tools: [LatchedBackgroundToolRunner(name: "pending_job", gate: gate, output: Self.runOutput)])
+        _ = try await fixture.session.respond(to: Self.jobPrompt)
+        #expect(await fixture.session.mailbox.backgroundRuns().count == 1)
+
+        let waiting = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return await fixture.session.awaitIdle()
+        }
+
+        #expect(await waiting.value == false)
+        #expect(fixture.session.idleWaitCount == 0)
+        await Self.end(fixture, opening: [gate])
+    }
+
+    // MARK: - The check, with no schedule
+
+    /// The session of `fixture` as its one concrete type, whose idle check
+    /// the tests below call.
+    ///
+    /// - Parameter fixture: The fixture.
+    /// - Returns: The session actor.
+    /// - Throws: When the session is not a ``RoutedSessionActor``.
+    private static func actor(of fixture: Fixture) throws -> RoutedSessionActor {
+        try #require(fixture.session as? RoutedSessionActor)
+    }
+
+    /// Settles one fake run on the run plane of `session`, and stages its
+    /// terminal in the outbox of `session`, not held. The session never
+    /// attached its journal and its observers, so no pump starts, and the
+    /// settlement reaches no observer.
+    ///
+    /// - Parameter session: The session.
+    /// - Throws: When the run does not settle.
+    private static func stageASettledTerminal(on session: any RoutedSession) async throws {
+        let gate = RunLatch()
+        await gate.open()
+        let token = await trackFakeRun(on: session.mailbox, latch: gate)
+        let terminal = try await MountFixtures.settledTerminal(of: token, in: session.mailbox)
+        await session.outbox.post(event: terminal)
+    }
+
+    @Test("with no pump, an unheld terminal of a settled run is work: the check says not idle")
+    func anUnheldSettledTerminalIsWork() async throws {
+        let fixture = try await Self.makeFixture(tools: [])
+        let session = try Self.actor(of: fixture)
+        try await Self.stageASettledTerminal(on: fixture.session)
+
+        #expect(await session.isPumpRunning == false)
+        #expect(await session.mailbox.backgroundRuns().isEmpty)
+        #expect(await session.isIdle() == false)
+
+        await Self.end(fixture)
+    }
+
+    @Test("with no pump, a held terminal of a settled run is no work: the check says idle")
+    func aHeldSettledTerminalIsNoWork() async throws {
+        let fixture = try await Self.makeFixture(tools: [])
+        let session = try Self.actor(of: fixture)
+        try await Self.stageASettledTerminal(on: fixture.session)
+        await fixture.session.outbox.holdPendingMail()
+
+        #expect(await fixture.session.outbox.pending().events.count == 1)
+        #expect(await session.isIdle())
+
+        await Self.end(fixture)
+    }
+
+    @Test("a new answer between the first and the second read of the session state makes the check say not idle")
+    func aNewAnswerBetweenTheReadsIsWork() async throws {
+        let fixture = try await Self.makeFixture(tools: [])
+        let session = try Self.actor(of: fixture)
+        let workId = await session.lastWorkId
+        let reads = await session.readRunsAndMail()
+
+        #expect(await session.isIdle(startedAt: workId, reading: reads))
+        #expect(await session.isIdle(startedAt: workId &+ 1, reading: reads) == false)
+
+        await Self.end(fixture)
+    }
+
+    @Test("a pump that runs at the second read of the session state makes the check say not idle")
+    func aPumpAtTheSecondReadIsWork() async throws {
+        let holdFirstAnswer = RunLatch()
+        let fixture = try await Self.makeFixture(
+            tools: [], container: BackgroundingLLMContainer(holdFirstAnswer: holdFirstAnswer))
+        let session = try Self.actor(of: fixture)
+        let workId = await session.lastWorkId
+        let reads = await session.readRunsAndMail()
+        let responding = Task { try await fixture.session.respond(to: Self.jobPrompt) }
+        try await AwaitedCondition.wait(until: { fixture.backend.receivedPrompts.count == 1 })
+
+        let workIdOfTheAnswer = await session.lastWorkId
+        #expect(workIdOfTheAnswer != workId)
+        #expect(await session.isIdle(startedAt: workIdOfTheAnswer, reading: reads) == false)
+
+        await holdFirstAnswer.open()
+        _ = try await responding.value
         await Self.end(fixture)
     }
 }

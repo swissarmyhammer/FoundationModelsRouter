@@ -376,8 +376,8 @@ actor RoutedSessionActor: RoutedSession {
     /// work of this session. See ``signalWorkChange()``.
     nonisolated let idleChanges = ChangeSignal()
 
-    /// Whether ``close()`` started. It stays set, so no ``awaitIdle()`` call
-    /// waits after it. See ``endIdleWaits()``.
+    /// Whether ``close()`` started. It stays set, so each ``awaitIdle()``
+    /// call after it returns `false` at once. See ``endIdleWaits()``.
     var isClosed = false
 
     /// Whether a message arrived since the pump last looked, so the pump

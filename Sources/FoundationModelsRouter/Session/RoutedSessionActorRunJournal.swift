@@ -101,9 +101,17 @@ extension RoutedSessionActor: BackgroundRunSettlementObserver {
     /// funnel's copy already claimed the correlation. See
     /// ``claimJournalWrite(for:)``.
     ///
-    /// The funnel can stage the terminal before or after this call, and each
-    /// of the two wakes the pump. The pump delivers the terminal only when it
-    /// is both staged and settled, so one of the two wakes finds it.
+    /// The funnel of a run stages the terminal before the mailbox settles the
+    /// run: the body of the run posts the terminal, waits until the post
+    /// ends, and only then returns, and the mailbox settles the run when the
+    /// body returns. So the terminal is staged before this call, and the
+    /// wake of this call finds it. The idle check (``isIdle()``) needs this
+    /// order. The sweep of a drain is the one case where the terminal is
+    /// staged after the settlement: the sweep settles the run with no call
+    /// here, and the body of the run stages its own terminal when it ends.
+    /// The drain waits for that body, and holds that mail at its end
+    /// (``drain()``). The pump delivers a terminal only when it is both
+    /// staged and settled.
     ///
     /// A held terminal (``SessionOutbox/PendingEvent/isHeld``) stays held: a
     /// settlement is no new mail, and the forward of it can come after a

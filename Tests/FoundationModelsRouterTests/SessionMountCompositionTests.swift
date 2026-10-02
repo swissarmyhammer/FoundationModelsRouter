@@ -313,4 +313,60 @@ struct SessionMountCompositionTests {
         await held.open()
         _ = try await Fixtures.settledTerminal(of: pendingEnvelope.completionToken, in: mailbox)
     }
+
+    /// A settlement observer of a run plane. At each settlement it reads the
+    /// mail of `outbox`, and gives whether the terminal of the settled run is
+    /// already staged there.
+    final class StagedAtSettlementProbe: BackgroundRunSettlementObserver {
+        /// The outbox the probe reads.
+        private let outbox: SessionOutbox
+
+        /// One reading for each settlement: whether the terminal of the run
+        /// was staged when the run plane settled the run.
+        let readings: AsyncStream<Bool>
+
+        /// Gives each reading to ``readings``.
+        private let continuation: AsyncStream<Bool>.Continuation
+
+        /// Makes a probe that reads `outbox`.
+        ///
+        /// - Parameter outbox: The outbox that the funnel of each run posts to.
+        init(reading outbox: SessionOutbox) {
+            self.outbox = outbox
+            (readings, continuation) = AsyncStream.makeStream()
+        }
+
+        func deliver(settledTerminal terminal: OperationEvent) async {
+            let mail = await outbox.pending().events
+            continuation.yield(
+                mail.contains { $0.event.kind == .completed && $0.event.correlationID == terminal.correlationID })
+        }
+    }
+
+    /// The idle check of a session (``RoutedSessionActor/isIdle()``) reads the
+    /// run plane before the outbox. It is correct only when the funnel of a
+    /// run stages the terminal before the run plane settles the run. The
+    /// outbox here has no mail observer, so no pump takes the terminal before
+    /// the probe reads it.
+    @Test("the funnel of a run stages its terminal before the run plane settles the run")
+    func theFunnelStagesTheTerminalBeforeTheSettlement() async throws {
+        let mailbox = RunPlane()
+        let outbox = SessionOutbox()
+        let probe = StagedAtSettlementProbe(reading: outbox)
+        await mailbox.attach(settlementObserver: probe)
+        let gate = RunLatch()
+        let run = BackgroundToolRunner(
+            wrapping: Fixtures.GatedTool(gate: gate),
+            site: MountSite(sessionID: ULID.generate(), runPlane: mailbox, sink: outbox),
+            timeout: nil
+        )
+        let envelope = try Fixtures.decodeEnvelope(try await run.call(arguments: MountArguments(value: "held")))
+        #expect(envelope.pending)
+
+        await gate.open()
+
+        var readings = probe.readings.makeAsyncIterator()
+        #expect(await readings.next() == true)
+        withExtendedLifetime(probe) {}
+    }
 }

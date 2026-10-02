@@ -31,6 +31,42 @@ comments:
     - evidence: 12 files — Sources/FoundationModelsRouter/Concurrency/ChangeSignal.swift (new), Sources/FoundationModelsRouter/Session/RoutedSessionActorIdle.swift (new), Sources/FoundationModelsRouter/Session/RoutedSession.swift, RoutedSessionActor.swift, RoutedSessionActorPump.swift, RoutedSessionActorRunJournal.swift, RoutedSessionActorDrain.swift, RoutedSessionActorForking.swift, FoundationModelsRouter.docc/RoutedSession.md, Tests/FoundationModelsRouterTests/SessionIdleWaitTests.swift (new, 6 tests), Tests/FoundationModelsRouterTests/Helpers/BackgroundingBackendFixtures.swift, Tests/FoundationModelsRouterTests/Helpers/SessionPlumbingAccess.swift. swift build exit 0; swift test exit 0: 1463 tests in 184 suites passed (2 known issues, both pre-existing withKnownIssue), plus 23 and 19 in the other targets; no new warnings in Sources or Tests.
     - next: review
   timestamp: 2026-10-02T02:29:09.608807+00:00
+- actor: wballard
+  id: 01m3x75xqc31wwdvm8p96n2jxk
+  text: |-
+    ### review — stuck
+    - evidence: The review engine did not run on commit 0a1b314e (HEAD~1..HEAD). Route 1: the MCP review tool of the reviewer session resolves the range in the FoundationModelsACPAgent repository; it ignores a cwd argument, and it gives 'revspec 0a1b314e not found'. Route 2: 'sah tool review sha review --sha HEAD~1..HEAD' in this repository gives error -32603: the CLI route has no agent factory, so the review ops cannot run. No findings are recorded. The task stays in review.
+    - next: A person must start the review from a session whose sah MCP server has this repository (FoundationModelsRouter) as its working directory, then run /review ^bm6tpe3 HEAD~1..HEAD again.
+  timestamp: 2026-10-02T02:30:33.452345+00:00
+- actor: wballard
+  id: 01m3xb1y9093svyajvrfdag7qn
+  text: |-
+    Review findings of 2026-10-02 done. What changed, and the mutation checks.
+
+    1. awaitIdle() returns false at entry when isClosed is set (close() sets it at its start), the loop also stops on isClosed, and a check that says idle returns `!isClosed`. RoutedSession.awaitIdle() doc and the card "What to do" item now say: a call after close() started, also after close() returned, returns false at once. New test `aCallAfterCloseGivesFalse` failed before the fix (awaitIdle() gave true), and passes after it.
+    2. Verified in the FoundationModelsExtras checkout: ToolRun.settle calls RunEventFunnel.settleRun, which awaits the post of the terminal to the sink (the outbox stages it synchronously in post), and only then does the body return; RunPlane.settleByItself settles after the body returns. The drain sweep is the one case where the terminal is staged after the settlement (sweep settles; the cancelled body posts later; runDrain joins the bodies and holds the mail; drainTask is set during that time). The deliver(settledTerminal:) comment and the readRunsAndMail()/isIdle() comments now state this. New test `theFunnelStagesTheTerminalBeforeTheSettlement` (SessionMountCompositionTests) uses a RunPlane + SessionOutbox with no mail observer (no pump) and a settlement observer probe that reads outbox.pending().events at settlement.
+    3. isIdle() is internal. It is split: isIdle() = first read + readRunsAndMail() (returns IdleReads) + isIdle(startedAt:reading:) (second read, synchronous). New tests: (a) anUnheldSettledTerminalIsWork, (b) aHeldSettledTerminalIsNoWork, (c) aNewAnswerBetweenTheReadsIsWork, plus (d) aPumpAtTheSecondReadIsWork for the second hasNoPumpWork check. (a)/(b) use trackFakeRun (@_spi(Testing) RunPlane.start) and a session that never attached its observers, so no pump starts.
+    4. ChangeSignalTests (4 tests) and SessionIdleWaitTests.aCallInACancelledTaskGivesFalse. A shared test helper Helpers/RecordedWaitResult.swift replaces SessionIdleWaitTests.IdleWaitOutcome, so a wait that never returns fails at the .timeLimit and does not hang the run.
+
+    Mutation checks (mutate, build, run the suite, restore; git diff showed each restore exact):
+    - remove `!canStartASubmission` term from isIdle(startedAt:reading:) -> (a) fails (also two older tests).
+    - drop `!$0.isHeld` in SessionOutbox.canStartASubmission -> (b) fails (and heldMailCountsAsIdle at the time limit).
+    - remove `lastWorkId == workId` -> (c) fails.
+    - remove the second `hasNoPumpWork` -> (d) fails.
+    - ChangeSignal: remove the `changeCount != seen` check -> change-first test fails; remove the in-lock Task.isCancelled check -> cancel-before-registration test fails at once (waiterCount 1, result true); onCancel does not remove the waiter -> cancel-after-registration test fails at the time limit; signal() resumes one waiter only -> several-waiters test fails at the time limit.
+    - Extras checkout ToolRun.settleRun posts no terminal -> the funnel test fails (probe reads false); checkout restored with git checkout, status clean.
+
+    What did not work: the first ChangeSignalTests version awaited `task.value`; under the "no in-lock cancel check" mutation the waiter registered after its onCancel ran, and the run hung past the .timeLimit (the test task awaited an unstructured task). The RecordedWaitResult + AwaitedCondition shape fixes that.
+
+    The build-system line `warning: missing creator for mutated node: (...mlx-swift_Cmlx.bundle/Contents/MacOS)` is old: it is in the build logs from before this change. No compiler warning in Sources or Tests.
+  timestamp: 2026-10-02T03:38:17.248186+00:00
+- actor: wballard
+  id: 01m3xb1zh7qtbszvhfcpx19a7e
+  text: |-
+    ### implement — changed
+    - evidence: 8 files — Sources/FoundationModelsRouter/Session/RoutedSessionActorIdle.swift, RoutedSession.swift, RoutedSessionActor.swift, RoutedSessionActorRunJournal.swift; Tests/FoundationModelsRouterTests/SessionIdleWaitTests.swift (+6 tests), SessionMountCompositionTests.swift (+1 test), ChangeSignalTests.swift (new, 4 tests), Helpers/RecordedWaitResult.swift (new). swift build exit 0; swift test exit 0: 1474 tests in 185 suites passed (2 known issues, both old withKnownIssue), plus 19 and 23 in the other targets; no new warnings. Mutation checks: each of the 4 isIdle terms, the 4 ChangeSignal paths and the Extras funnel post made its test fail, and each was restored.
+    - next: review
+  timestamp: 2026-10-02T03:38:18.535672+00:00
 position_column: doing
 position_ordinal: '80'
 title: 'A host cannot know when a session is idle: add RoutedSession.awaitIdle(), so a prompt can wait for a backgrounded run''s mail answer'
@@ -54,7 +90,7 @@ Evidence: SWE-bench run of 2026-10-01, `django__django-14608`. A `runCode` snipp
    - Returns `true` when these are all true, read together on the session actor with no suspension point between the checks: no background run is open; no pump work runs or waits; no waiting mail can start a submission by itself (mail held by `mailDeliveryPaused` counts as idle).
    - Returns at once when the session is already idle.
    - Returns `false` at once when the calling task is cancelled (the same rule as `drain()`), so that `session/cancel` ends the wait.
-   - `close()` ends every wait, and never hangs.
+   - `close()` ends every wait with `false`, and never hangs. A call after `close()` starts (or after it completes) returns `false` at once.
 2. Optional: a session-scoped `SessionEvent.idle` on `streamSessionEvents()`, after the `answered`, `answerFailed` or `mailDeliveryPaused` of the last answer.
 3. Optional: `func backgroundRuns() async -> [BackgroundRun]` on the session.
 
@@ -70,3 +106,10 @@ Evidence: SWE-bench run of 2026-10-01, `django__django-14608`. A `runCode` snipp
 ## Consumer
 
 FoundationModelsACPAgent ^64pav2a: `PromptExecution.drive` subscribes to `streamSessionEvents()` before `streamEvents`; when the caller stream ends, it keeps projecting the session events until `awaitIdle()` returns, then maps the stop reason from the last answer. #generation-queue
+
+## Review Findings (2026-10-02)
+
+- [x] 1. RoutedSessionActorIdle.swift `awaitIdle()` (lines ~20–32) vs RoutedSession.swift `- Returns:` text (~422–423): the doc says it returns false when close() started, but a call after close() completes returns true (isIdle() runs before the isClosed guard). Make it return false at entry when the session is closed (or closing), make the doc and the card agree, and add a test that calls awaitIdle() after close() returns and asserts false.
+- [x] 2. RoutedSessionActorIdle.swift `isIdle()` comment and read order (~55–79) and RoutedSessionActorRunJournal.swift `deliver(settledTerminal:)` comment (~104–106): isIdle is correct only if the funnel stages the terminal before RunPlane settles the run, but the deliver comment says "The funnel can stage the terminal before or after this call". Correct the comment (the drain sweep is the only case where the terminal is staged after the settle, and the drain holds that mail), state the invariant in the isIdle comment, and add a Router test that fails if a funnel run settles before its terminal is staged (e.g. an observer of the settlement asserts the run's terminal is already in outbox.pending().events).
+- [x] 3. SessionIdleWaitTests.swift: no test drives the check into the window between settle and wakePump, or a pump that starts and ends during the reads; the six tests can pass with the `canStartASubmission` term or the `lastWorkId == workId` / second `hasNoPumpWork` checks removed, and `heldMailCountsAsIdle` passes with no mail check. Make `isIdle()` internal for @testable tests and add schedule-independent tests: (a) no pump, an unheld `.completed` terminal staged in the outbox and its token settled in the mailbox (use `@_spi(Testing) RunPlane.start` or the existing test plumbing) → isIdle() false; (b) the same terminal held → true; (c) lastWorkId changes between the two reads of the session state → false. Verify each new test fails when its guarded term is removed (mutate, run, restore) and say so in the card comment.
+- [x] 4. ChangeSignal.swift `waitForChange(after:)` (~52–77) has no tests. Add ChangeSignalTests with one deterministic test per path: a change between reading changeCount and waitForChange returns true at once; a cancel before registration; a cancel after registration (waiter removed, waiterCount back to 0); one signal() resumes several waiters. Check waiterCount after each. Also add to SessionIdleWaitTests: awaitIdle() in a task cancelled before the call while a run is open → false and idleWaitCount == 0.

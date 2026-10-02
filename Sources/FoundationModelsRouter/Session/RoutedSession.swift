@@ -416,8 +416,9 @@ public protocol RoutedSession: Actor {
     /// The call returns at once when the session is idle. Else it waits for
     /// each change of the work of the session, with no poll and no timer.
     /// A cancel of the calling task ends the wait at once, as it does for
-    /// ``drain()``. ``close()`` ends each wait, and a call after ``close()``
-    /// started does not wait.
+    /// ``drain()``. ``close()`` ends each wait with `false`. A call after
+    /// ``close()`` started, also a call after ``close()`` returned, returns
+    /// `false` at once and does not wait.
     ///
     /// - Returns: `true` when the session is idle, and `false` when the
     ///   calling task was cancelled, or ``close()`` started, before that.
