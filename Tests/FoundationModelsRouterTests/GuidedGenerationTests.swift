@@ -583,8 +583,8 @@ struct GuidedGenerationTests {
         let triggeringPrompt = Self.warmUpPrompt(Self.autoCompactionAnswerCount)
         let events = eventsInsideAnswerFrame(try await collect(session.streamEvents(to: triggeringPrompt, maxTokens: nil)))
 
-        guard case .compaction(let result) = events.first else {
-            Issue.record("expected the first event to be .compaction, got \(String(describing: events.first))")
+        guard let result = events.leadingCompaction else {
+            Issue.record("expected .compactionStarted then .compaction with one id, got \(Array(events.prefix(2)))")
             return
         }
         #expect(result.stagesApplied.contains("Summarization"))

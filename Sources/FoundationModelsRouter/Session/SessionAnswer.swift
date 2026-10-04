@@ -159,7 +159,8 @@ struct SessionAnswerReducer {
             compactions.append(result)
         case .submissionEnded(let end):
             accumulate(end.usage)
-        case .submissionQueued, .submissionStarted, .answered, .answerFailed, .textDelta, .textReset,
+        case .compactionStarted, .compactionFailed, .submissionQueued, .submissionStarted, .answered, .answerFailed,
+            .textDelta, .textReset,
             .reasoningDelta, .entryRecorded, .discoveryPrimingFailed, .generationStalled, .repetitionStopped,
             .reasoningStopped, .runSettled, .toolCallReport, .elicitationRequested, .generationCall,
             .mailDeliveryPaused:

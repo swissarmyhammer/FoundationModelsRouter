@@ -125,8 +125,9 @@ func runObservedAnswer(
             print(
                 "[\(label)] answered replyCharacters=\(answer.reply.count) messages=\(answer.messageIds.count)")
         case .reasoningDelta, .toolCall, .toolStatus, .toolInvocation, .toolCallReport,
-            .compaction, .discoveryPrimingFailed, .generationStalled, .submissionQueued, .repetitionStopped,
-            .reasoningStopped, .runSettled, .elicitationRequested, .generationCall, .answerFailed, .mailDeliveryPaused:
+            .compactionStarted, .compaction, .compactionFailed, .discoveryPrimingFailed, .generationStalled,
+            .submissionQueued, .repetitionStopped, .reasoningStopped, .runSettled, .elicitationRequested,
+            .generationCall, .answerFailed, .mailDeliveryPaused:
             // Silent by construction — see this function's documentation.
             break
         }

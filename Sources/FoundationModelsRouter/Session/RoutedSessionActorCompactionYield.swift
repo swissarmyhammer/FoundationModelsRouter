@@ -140,7 +140,7 @@ extension RoutedSessionActor {
     ///    disk before the compaction takes them out of the live window.
     /// 2. The measured context becomes the context at the yield, so the
     ///    compaction scales its count onto the engine's scale.
-    /// 3. ``performAutoCompaction(prompt:budget:)`` compacts, and the answer
+    /// 3. ``performAutoCompaction(prompt:budget:reason:overflowRetryTarget:emit:)`` compacts, and the answer
     ///    emits ``SessionEvent/compaction(_:)``.
     /// 4. The next attempt sends ``compactionContinuationPrompt``.
     ///
@@ -169,7 +169,8 @@ extension RoutedSessionActor {
             onEvent: attempt.onEvent)
         usageState = .measured(input: yield.measuredTokens, output: 0)
         return try await compactAndContinue(
-            attempt: attempt, continuationPrompt: Self.compactionContinuationPrompt, body: body)
+            attempt: attempt, reason: .toolResultYield, continuationPrompt: Self.compactionContinuationPrompt,
+            body: body)
     }
 
     /// Compacts the transcript, and runs one more submission of the same
@@ -183,18 +184,20 @@ extension RoutedSessionActor {
     ///
     /// - Parameters:
     ///   - attempt: The attempt that stopped.
+    ///   - reason: Why the attempt stopped for a compaction.
     ///   - continuationPrompt: The prompt of the next attempt.
     ///   - body: The model work to run.
     /// - Returns: The response text of the next attempt.
     /// - Throws: What the compaction or the next attempt throws.
     func compactAndContinue(
         attempt: StoppedAttempt,
+        reason: CompactionReason,
         continuationPrompt: String,
         body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
         if let budget = autoCompactionBudget {
-            let result = try await performAutoCompaction(prompt: autoCompactionPrompt, budget: budget)
-            attempt.onEvent?(.compaction(result))
+            let result = try await performAutoCompaction(
+                prompt: autoCompactionPrompt, budget: budget, reason: reason, emit: attempt.onEvent)
             compactionYieldsStopped = result.summaryEntryId == nil
         }
         return try await runContinuation(after: attempt, prompt: continuationPrompt, body: body)
@@ -252,7 +255,8 @@ extension RoutedSessionActor {
             """,
             metadata: [RouterTelemetry.LogMetadataKey.sessionId: "\(id.description)"])
         return try await compactAndContinue(
-            attempt: attempt, continuationPrompt: Self.ceilingStopContinuationPrompt, body: body)
+            attempt: attempt, reason: .outputCeilingStop, continuationPrompt: Self.ceilingStopContinuationPrompt,
+            body: body)
     }
 
     /// The prompt of the attempt that goes on after a compaction at a

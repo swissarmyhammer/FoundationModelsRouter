@@ -55,8 +55,22 @@ public enum SessionEvent: Sendable, Equatable {
     /// `id` is the `Transcript.Entry.id`, never a `Transcript.ToolCall.id`.
     case entryRecorded(id: String, kind: RecordedEntryKind)
 
+    /// An automatic compaction starts inside an answer. One
+    /// ``compaction(_:)`` or one ``compactionFailed(_:)`` with the same id
+    /// follows. A compaction that ``RoutedSession/compact()`` asks for sends
+    /// no compaction event.
+    case compactionStarted(CompactionStart)
+
     /// An auto-compaction completed against this session, inside an answer.
+    /// Its ``CompactionResult/id`` is the id of the ``compactionStarted(_:)``
+    /// before it.
     case compaction(CompactionResult)
+
+    /// An automatic compaction that ``compactionStarted(_:)`` announced did
+    /// not complete: it failed with an error, or a cancel stopped it. The live
+    /// context of the session stays as it was, and the error goes on out of
+    /// the answer.
+    case compactionFailed(CompactionFailure)
 
     /// The ``DiscoveryPriming`` of this answer could not seed, so the answer generated unseeded.
     /// This is a report, not a failure.

@@ -537,6 +537,80 @@ extension AnswerCancellationTests {
         #expect(recorded.last?.text == nil)
     }
 
+    // MARK: - The events of a compaction that does not complete (task ^k1gepqc)
+
+    @Test("a summarizer failure inside an automatic compaction ends it with compactionFailed(.failed), and no compaction")
+    @MainActor
+    func failedAutomaticCompactionReportsItsFailure() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let fixture = try await Self.makeFixture(cacheDir: dir)
+        let session = try await Self.makeCompactionTriggeredSession(fixture, budget: Self.summarizingCompactionBudget)
+
+        // Each tier fails, and no stop is outstanding: the compaction fails.
+        fixture.hook.midAnswer = { prompt in
+            guard Self.isSummarizerCall(prompt) else { return }
+            throw ProbeError.summarizerFailed
+        }
+
+        let delivered = DeliveredEvents()
+        await #expect(throws: ProbeError.self) {
+            for try await event in await session.streamEvents(to: "compacts-first") {
+                await delivered.append(event)
+            }
+        }
+
+        let events = await delivered.events
+        let start = try #require(events.compactionStarts.first)
+        #expect(events.compactionStarts.count == 1)
+        #expect(start.reason == .triggerReached)
+        #expect(
+            events.compactionFailures
+                == [
+                    CompactionFailure(
+                        id: start.id, reason: .triggerReached,
+                        outcome: .failed(String(describing: ProbeError.summarizerFailed)))
+                ])
+        #expect(events.compactionResults.isEmpty)
+        #expect(events.compactionLifecycleIsOrdered)
+    }
+
+    @Test("a cancel inside an automatic compaction ends it with compactionFailed(.cancelled), and no compaction")
+    @MainActor
+    func cancelledAutomaticCompactionReportsTheCancel() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let fixture = try await Self.makeFixture(cacheDir: dir)
+        let session = try await Self.makeCompactionTriggeredSession(fixture, budget: Self.summarizingCompactionBudget)
+
+        let insideSummarizer = AsyncSemaphore(value: 0)
+        let sawCancellation = Self.suspendInsideCancellationAwareTool(
+            fixture, suspendingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
+
+        // The router-API route: the consumer is not what is cancelled, so it
+        // reads each event up to the end of the answer.
+        let delivered = DeliveredEvents()
+        let answerTask = Task {
+            for try await event in await session.streamEvents(to: "compacts-first") {
+                await delivered.append(event)
+            }
+        }
+        await insideSummarizer.wait()
+        #expect(await session.cancel() == .requested)
+        try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
+
+        let events = await delivered.events
+        let start = try #require(events.compactionStarts.first)
+        #expect(events.compactionStarts.count == 1)
+        #expect(
+            events.compactionFailures
+                == [CompactionFailure(id: start.id, reason: .triggerReached, outcome: .cancelled)])
+        #expect(events.compactionResults.isEmpty)
+        #expect(events.compactionLifecycleIsOrdered)
+    }
+
     @Test("a compaction with no cancellation outstanding makes its one call and runs its answer exactly as before")
     @MainActor
     func compactionWithNoStopOutstandingIsUnaffected() async throws {
@@ -556,8 +630,8 @@ extension AnswerCancellationTests {
         #expect(collected.answers.count == 1)
         #expect(collected.answerFailures.isEmpty)
 
-        guard case .compaction(let result) = events.first else {
-            Issue.record("expected the first event of the answer to be .compaction, got \(String(describing: events.first))")
+        guard let result = events.leadingCompaction else {
+            Issue.record("expected the answer to open with one compaction, got \(Array(events.prefix(2)))")
             return
         }
         let untouchedSize = try characterTokenCounter.count(Transcript(entries: Self.warmUpEntries()))

@@ -175,7 +175,11 @@ public final class SessionProjection {
             phase = .compacting
             transcript.append(
                 TranscriptEntry(id: result.id, kind: .compaction(result), sourceEntryId: result.summaryEntryId))
-        case .discoveryPrimingFailed, .generationStalled, .submissionQueued, .repetitionStopped,
+        case .compactionStarted:
+            // No row yet: the row comes with the ``SessionEvent/compaction(_:)``
+            // that completes the compaction.
+            phase = .compacting
+        case .compactionFailed, .discoveryPrimingFailed, .generationStalled, .submissionQueued, .repetitionStopped,
             .reasoningStopped, .runSettled, .toolCallReport, .elicitationRequested, .generationCall,
             .mailDeliveryPaused:
             // Handled explicitly, and deliberately changes nothing. A mail

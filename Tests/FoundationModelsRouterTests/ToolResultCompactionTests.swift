@@ -109,6 +109,11 @@ struct ToolResultCompactionTests {
         let compaction = try #require(compactions.first)
         #expect(compaction.summaryEntryId != nil)
         #expect(compaction.tokensAfter < compaction.tokensBefore)
+        // Task ^k1gepqc: the compaction announces itself with the id of its
+        // result, and names the yield as its reason.
+        #expect(events.compactionStarts.map(\.id) == [compaction.id])
+        #expect(events.compactionStarts.map(\.reason) == [.toolResultYield])
+        #expect(events.compactionLifecycleIsOrdered)
         #expect(fixture.tool.calls == 1)
         // The first submission delivers the message. The compaction yield
         // stops it, and the continuation is a second submission of the same

@@ -95,6 +95,11 @@ struct CeilingStopCompactionTests {
         let compaction = try #require(compactions.first)
         #expect(compaction.summaryEntryId != nil)
         #expect(compaction.tokensAfter < compaction.tokensBefore)
+        // Task ^k1gepqc: the compaction announces itself with the id of its
+        // result, and names the ceiling stop as its reason.
+        #expect(events.compactionStarts.map(\.id) == [compaction.id])
+        #expect(events.compactionStarts.map(\.reason) == [.outputCeilingStop])
+        #expect(events.compactionLifecycleIsOrdered)
         #expect(Self.finishReasons(in: events) == [.maxTokens, .completed])
         // The first submission delivers the message. The continuation after
         // the compaction delivers no new message.

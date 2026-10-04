@@ -174,8 +174,8 @@ extension RoutedSessionActor {
             let started = Date()
             let usageBefore = backend.usageTokenCounts()
             do {
-                let result = try await performAutoCompaction(prompt: autoCompactionPrompt, budget: budget)
-                emit(.compaction(result))
+                try await performAutoCompaction(
+                    prompt: autoCompactionPrompt, budget: budget, reason: .triggerReached, emit: emit)
             } catch {
                 // A compaction can now throw — a stop landing inside its summarizer call
                 // unwinds it (see ``CancellableCompactionSummarizer``) — and this
@@ -481,9 +481,9 @@ extension RoutedSessionActor {
             throw error
         }
 
-        let result = try await performAutoCompaction(
-            prompt: autoCompactionPrompt, budget: retryTarget.budget(lowering: budget))
-        onEvent?(.compaction(result.withOverflowRetryTarget(retryTarget)))
+        try await performAutoCompaction(
+            prompt: autoCompactionPrompt, budget: retryTarget.budget(lowering: budget), reason: .contextOverflow,
+            overflowRetryTarget: retryTarget, emit: onEvent)
 
         return try await runSubmission(
             grammar: grammar, pendingEvents: [], ownPrompt: ownPrompt,

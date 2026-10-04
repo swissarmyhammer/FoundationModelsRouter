@@ -110,14 +110,16 @@ struct AutoCompactionTests {
 
         let events = eventsInsideAnswerFrame(try await collectEvents(session, prompt: Self.triggeringPrompt))
 
-        guard case .compaction(let result) = events.first else {
-            Issue.record("expected the first event to be .compaction, got \(String(describing: events.first))")
+        guard let result = events.leadingCompaction else {
+            Issue.record("expected .compactionStarted then .compaction with one id, got \(Array(events.prefix(2)))")
             return
         }
         #expect(result.stagesApplied.contains("Summarization"))
         // The summary text is flash's own canned response — proof flash,
         // not the session's own model, actually produced it.
         #expect(result.summary == "FLASH-SUMMARY")
+        // Task ^k1gepqc: the start names why the compaction runs.
+        #expect(events.compactionStarts.map(\.reason) == [.triggerReached])
         // The result names the flash slot's model as the summary's writer —
         // the signal task ^59fd9rt adds, so a consumer can judge the summary
         // against the model that wrote it.
@@ -144,8 +146,8 @@ struct AutoCompactionTests {
         }
 
         #expect(compactions.count == 1, "expected one compaction, got \(compactions.count)")
-        guard case .compaction(let result) = events.first else {
-            Issue.record("expected the first event to be .compaction, got \(String(describing: events.first))")
+        guard let result = events.leadingCompaction else {
+            Issue.record("expected .compactionStarted then .compaction with one id, got \(Array(events.prefix(2)))")
             return
         }
         #expect(
@@ -169,8 +171,8 @@ struct AutoCompactionTests {
 
         let events = eventsInsideAnswerFrame(try await collectEvents(session, prompt: Self.triggeringPrompt))
 
-        guard case .compaction(let result) = events.first else {
-            Issue.record("expected the first event to be .compaction, got \(String(describing: events.first))")
+        guard let result = events.leadingCompaction else {
+            Issue.record("expected .compactionStarted then .compaction with one id, got \(Array(events.prefix(2)))")
             return
         }
         #expect(result.stagesApplied.contains("Summarization"))
@@ -217,8 +219,8 @@ struct AutoCompactionTests {
 
         let events = eventsInsideAnswerFrame(try await collectEvents(forked, prompt: "fork message"))
 
-        guard case .compaction(let result) = events.first else {
-            Issue.record("expected the fork's first event to be .compaction, got \(String(describing: events.first))")
+        guard let result = events.leadingCompaction else {
+            Issue.record("expected the fork to open with one compaction, got \(Array(events.prefix(2)))")
             return
         }
         #expect(result.stagesApplied.contains("Summarization"))
@@ -591,10 +593,12 @@ struct AutoCompactionTests {
         #expect(
             blockedUsage == TokenUsage(tokensIn: 0, tokensOut: 0, contextFill: Self.hardCeilingTriggeredFill))
 
-        // Inside the answer frame, the compaction is the first event.
+        // Inside the answer frame, the compaction is the first thing: its
+        // start, then its result with the same id.
         let result = try #require(inside.compactionResults.first)
         #expect(inside.compactionResults.count == 1)
-        #expect(inside.first == .compaction(result))
+        #expect(inside.leadingCompaction == result)
+        #expect(inside.compactionStarts.map(\.reason) == [.contextOverflow])
         #expect(result.stagesApplied.contains("Summarization"))
 
         // The model call of the refused submission did not run: no textDelta
@@ -906,8 +910,8 @@ struct AutoCompactionTests {
 
         let events = eventsInsideAnswerFrame(try await collectEvents(session, prompt: Self.triggeringPrompt))
 
-        guard case .compaction(let result) = events.first else {
-            Issue.record("expected the first event to be .compaction, got \(String(describing: events.first))")
+        guard let result = events.leadingCompaction else {
+            Issue.record("expected .compactionStarted then .compaction with one id, got \(Array(events.prefix(2)))")
             return
         }
         #expect(result.stagesApplied.contains("Summarization"))
@@ -926,8 +930,8 @@ struct AutoCompactionTests {
 
         // No caller-side compact(): the triggering answer compacts on its own.
         let events = eventsInsideAnswerFrame(try await collectEvents(session, prompt: Self.triggeringPrompt))
-        guard case .compaction(let result) = events.first else {
-            Issue.record("expected the first event to be .compaction, got \(String(describing: events.first))")
+        guard let result = events.leadingCompaction else {
+            Issue.record("expected .compactionStarted then .compaction with one id, got \(Array(events.prefix(2)))")
             return
         }
 

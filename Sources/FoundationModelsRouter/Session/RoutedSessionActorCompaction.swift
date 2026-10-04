@@ -176,9 +176,19 @@ extension RoutedSessionActor {
     /// (``withCompactionSpan(trigger:_:)``), and the span reports the tier that
     /// wrote the summary — see ``RouterTelemetry/AttributeKey/compactionTier``.
     ///
+    /// The compaction reports itself to `emit`: first
+    /// ``SessionEvent/compactionStarted(_:)``, then
+    /// ``SessionEvent/compaction(_:)`` when it completes, or
+    /// ``SessionEvent/compactionFailed(_:)`` when it throws. The three events
+    /// carry the same id.
+    ///
     /// - Parameters:
     ///   - prompt: The compaction prompt sent to the summarizer tier that runs.
     ///   - budget: The token budget to compact against.
+    ///   - reason: Why the compaction runs.
+    ///   - overflowRetryTarget: The target the retry after a context overflow
+    ///     computed, or `nil` (the default). The result carries it.
+    ///   - emit: The sink of the answer for the compaction events, or `nil`.
     /// - Returns: What the compaction did. ``CompactionResult/summarizerModel``
     ///   and ``CompactionResult/summarizerTier`` name the tier that wrote the
     ///   applied summary.
@@ -187,7 +197,40 @@ extension RoutedSessionActor {
     ///   (``isWorkCancelled``). That case does not go on to the next tier. The
     ///   abandoned tier's own failure is logged
     ///   (``noteAbandonedCompaction(discarding:tier:)``).
+    @discardableResult
     func performAutoCompaction(
+        prompt: CompactionPrompt,
+        budget: TokenBudget,
+        reason: CompactionReason,
+        overflowRetryTarget: OverflowRetryTarget? = nil,
+        emit: ((SessionEvent) -> Void)?
+    ) async throws -> CompactionResult {
+        let compactionId = ULID.generate().description
+        emit?(.compactionStarted(CompactionStart(id: compactionId, reason: reason)))
+        do {
+            var result = try await runAutoCompaction(prompt: prompt, budget: budget).withId(compactionId)
+            if let overflowRetryTarget {
+                result = result.withOverflowRetryTarget(overflowRetryTarget)
+            }
+            emit?(.compaction(result))
+            return result
+        } catch {
+            let outcome: CompactionFailure.Outcome =
+                isWorkCancelled || error is CancellationError ? .cancelled : .failed(String(describing: error))
+            emit?(.compactionFailed(CompactionFailure(id: compactionId, reason: reason, outcome: outcome)))
+            throw error
+        }
+    }
+
+    /// Runs one automatic compaction over the two summarizer tiers, inside
+    /// its span. See ``performAutoCompaction(prompt:budget:reason:overflowRetryTarget:emit:)``.
+    ///
+    /// - Parameters:
+    ///   - prompt: The compaction prompt sent to the summarizer tier that runs.
+    ///   - budget: The token budget to compact against.
+    /// - Returns: What the compaction did.
+    /// - Throws: What the own model throws, or `CancellationError`.
+    private func runAutoCompaction(
         prompt: CompactionPrompt,
         budget: TokenBudget
     ) async throws -> CompactionResult {
@@ -295,7 +338,7 @@ extension RoutedSessionActor {
     }
 
     /// The compaction mechanics ``compact(prompt:budget:)`` and
-    /// ``performAutoCompaction(prompt:budget:)`` share. Runs
+    /// ``performAutoCompaction(prompt:budget:reason:overflowRetryTarget:emit:)`` share. Runs
     /// ``Compactor/compact(_:prompt:budget:counter:summarizers:pendingRuns:protection:explicitLogger:abandoning:)``
     /// over ``backend``'s transcript, counted by this session's ``tokenCounter``.
     /// When a summary applied, records the compaction's new entries by id and

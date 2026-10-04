@@ -104,6 +104,22 @@ public struct CompactionResult: Sendable, Equatable {
     /// - Parameter target: The target the retry computed.
     /// - Returns: The copy that carries `target`.
     func withOverflowRetryTarget(_ target: OverflowRetryTarget) -> CompactionResult {
+        copy(id: id, overflowRetryTarget: target)
+    }
+
+    /// Returns a copy of this result with the identity `id`. Every other
+    /// field is copied unchanged. The session gives an automatic compaction
+    /// its id before the compaction runs, so that
+    /// ``SessionEvent/compactionStarted(_:)`` and the result carry the same id.
+    ///
+    /// - Parameter id: The identity of the compaction.
+    /// - Returns: The copy that carries `id`.
+    func withId(_ id: String) -> CompactionResult {
+        copy(id: id, overflowRetryTarget: overflowRetryTarget)
+    }
+
+    /// Returns a copy of this result with `id` and `overflowRetryTarget`.
+    private func copy(id: String, overflowRetryTarget target: OverflowRetryTarget?) -> CompactionResult {
         CompactionResult(
             id: id,
             summary: summary,

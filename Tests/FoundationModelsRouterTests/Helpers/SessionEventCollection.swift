@@ -50,6 +50,61 @@ extension Sequence<SessionEvent> {
         }
     }
 
+    /// The compaction starts among these events, in order.
+    var compactionStarts: [CompactionStart] {
+        compactMap { event in
+            guard case .compactionStarted(let start) = event else { return nil }
+            return start
+        }
+    }
+
+    /// The compaction failures among these events, in order.
+    var compactionFailures: [CompactionFailure] {
+        compactMap { event in
+            guard case .compactionFailed(let failure) = event else { return nil }
+            return failure
+        }
+    }
+
+    /// The result of the compaction that these events open with: the first
+    /// event is ``SessionEvent/compactionStarted(_:)``, and the second is
+    /// ``SessionEvent/compaction(_:)`` with the same id. `nil` when the events
+    /// do not open that way.
+    var leadingCompaction: CompactionResult? {
+        let opening = Array(prefix(2))
+        guard opening.count == 2,
+            case .compactionStarted(let start) = opening[0],
+            case .compaction(let result) = opening[1],
+            result.id == start.id
+        else { return nil }
+        return result
+    }
+
+    /// Whether each compaction among these events ends one time, after its
+    /// start: each ``SessionEvent/compactionStarted(_:)`` is followed by one
+    /// ``SessionEvent/compaction(_:)`` or one
+    /// ``SessionEvent/compactionFailed(_:)`` with the same id, before the
+    /// next start, and no end comes without its start.
+    var compactionLifecycleIsOrdered: Bool {
+        var open: String?
+        for event in self {
+            switch event {
+            case .compactionStarted(let start):
+                guard open == nil else { return false }
+                open = start.id
+            case .compaction(let result):
+                guard open == result.id else { return false }
+                open = nil
+            case .compactionFailed(let failure):
+                guard open == failure.id else { return false }
+                open = nil
+            default:
+                continue
+            }
+        }
+        return open == nil
+    }
+
     /// The text these events streamed, joined.
     var streamedText: String {
         compactMap { event in

@@ -122,8 +122,8 @@ struct ScriptedToolAnswerComparisonTests {
             case .toolStatus(let id, .failed, _, _):
                 failedIds.append(id)
             case .toolStatus, .toolInvocation, .toolCallReport, .reasoningDelta, .entryRecorded,
-                .compaction, .discoveryPrimingFailed, .generationStalled, .submissionQueued, .submissionStarted,
-                .submissionEnded, .answered, .answerFailed,
+                .compactionStarted, .compaction, .compactionFailed, .discoveryPrimingFailed, .generationStalled,
+                .submissionQueued, .submissionStarted, .submissionEnded, .answered, .answerFailed,
                 .repetitionStopped, .reasoningStopped, .runSettled, .elicitationRequested, .generationCall,
                 .mailDeliveryPaused:
                 break

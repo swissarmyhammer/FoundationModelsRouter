@@ -177,6 +177,7 @@ extension RoutedSessionActor {
             return try await runContinuation(after: attempt, prompt: Self.reasoningStopContinuationPrompt, body: body)
         }
         return try await compactAndContinue(
-            attempt: attempt, continuationPrompt: Self.reasoningStopContinuationPrompt, body: body)
+            attempt: attempt, reason: .outputCeilingStop, continuationPrompt: Self.reasoningStopContinuationPrompt,
+            body: body)
     }
 }
