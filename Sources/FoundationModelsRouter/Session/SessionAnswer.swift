@@ -50,6 +50,13 @@ public struct SessionAnswer: Sendable, Equatable {
     /// runs in the background after the chain ended keeps its open record.
     public let toolInvocations: [ToolInvocationRecord]
 
+    /// The last stop of the repetition watch in the chain that found no
+    /// recovery left, or `nil` when no such stop came (task ^0dcsd3t). After
+    /// that stop the chain runs one final pass with the reasoning of the
+    /// model off. ``WatchStop/description`` gives the limit, the tokens and
+    /// the recoveries used, for a log line of the host.
+    public let stop: WatchStop?
+
     /// Creates an answer.
     ///
     /// The session makes one for each final answer. A consumer can make one
@@ -63,13 +70,15 @@ public struct SessionAnswer: Sendable, Equatable {
     ///   - toolCalls: The recorded tool calls of the chain, in order.
     ///   - toolInvocations: The live invocation records of the chain, in open
     ///     order.
+    ///   - stop: The stop that found no recovery left, or `nil`.
     public init(
         reply: String,
         messageIds: [MessageID],
         usage: TokenUsage?,
         compactions: [CompactionResult],
         toolCalls: [ToolCallEntry],
-        toolInvocations: [ToolInvocationRecord]
+        toolInvocations: [ToolInvocationRecord],
+        stop: WatchStop? = nil
     ) {
         self.reply = reply
         self.messageIds = messageIds
@@ -77,6 +86,7 @@ public struct SessionAnswer: Sendable, Equatable {
         self.compactions = compactions
         self.toolCalls = toolCalls
         self.toolInvocations = toolInvocations
+        self.stop = stop
     }
 }
 
@@ -143,6 +153,10 @@ struct SessionAnswerReducer {
     /// correlation id.
     private var invocationIndexByCorrelationID: [String: Int] = [:]
 
+    /// The last watch stop of the chain that found no recovery left, or
+    /// `nil` (task ^0dcsd3t).
+    private var stop: WatchStop?
+
     /// Applies one ``SessionEvent`` of the chain.
     ///
     /// - Parameter event: The event to apply.
@@ -159,11 +173,13 @@ struct SessionAnswerReducer {
             compactions.append(result)
         case .submissionEnded(let end):
             accumulate(end.usage)
+        case .repetitionStopped(let stop):
+            noteStop(WatchStop(stop))
+        case .reasoningStopped(let stop):
+            noteStop(WatchStop(stop))
         case .compactionStarted, .compactionFailed, .submissionQueued, .submissionStarted, .answered, .answerFailed,
-            .textDelta, .textReset,
-            .reasoningDelta, .entryRecorded, .discoveryPrimingFailed, .generationStalled, .repetitionStopped,
-            .reasoningStopped, .runSettled, .toolCallReport, .elicitationRequested, .generationCall,
-            .mailDeliveryPaused:
+            .textDelta, .textReset, .reasoningDelta, .entryRecorded, .discoveryPrimingFailed, .generationStalled,
+            .runSettled, .toolCallReport, .elicitationRequested, .generationCall, .mailDeliveryPaused:
             // Deliberately not carried by the answer. A mail delivery pause
             // comes when no answer runs, so no answer can carry it. The frames of a
             // submission and of an answer are the structure the answer sums.
@@ -172,13 +188,10 @@ struct SessionAnswerReducer {
             // only the last one answers. Reasoning is model prose the reply
             // excludes, and the recorded-entry closes exist for consumers
             // (like ``SessionProjection``) that key rows on durable SDK entry
-            // ids. The priming report, the stall report, the repetition stop
-            // report and the reasoning stop report (the
-            // ``SessionEvent/submissionEnded(_:)`` of the stopped submission
-            // names the stop), a background run's settlement, a call's
-            // attachments, a pending elicitation, and one generation call's
-            // usage (``SessionEvent/submissionEnded(_:)`` sums them) are
-            // live-driver concerns. The `observing` callback of
+            // ids. The priming report, the stall report, a background run's
+            // settlement, a call's attachments, a pending elicitation, and one
+            // generation call's usage (``SessionEvent/submissionEnded(_:)``
+            // sums them) are live-driver concerns. The `observing` callback of
             // ``RoutedSession/respond(to:maxTokens:observing:)`` still
             // delivers every one of them raw.
             break
@@ -194,7 +207,15 @@ struct SessionAnswerReducer {
     func answer(reply: String, messageIds: [MessageID]) -> SessionAnswer {
         SessionAnswer(
             reply: reply, messageIds: messageIds, usage: usage, compactions: compactions, toolCalls: toolCalls,
-            toolInvocations: toolInvocations)
+            toolInvocations: toolInvocations, stop: stop)
+    }
+
+    /// Keeps `stop` as the stop of the chain when it found no recovery left.
+    ///
+    /// - Parameter stop: The short report of one watch stop of the chain.
+    private mutating func noteStop(_ stop: WatchStop) {
+        guard stop.recovery == nil else { return }
+        self.stop = stop
     }
 
     /// Adds the usage of one submission to the usage of the chain.

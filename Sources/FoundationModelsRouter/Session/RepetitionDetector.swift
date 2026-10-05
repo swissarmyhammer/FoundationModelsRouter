@@ -99,6 +99,13 @@ struct RepetitionFinding: Sendable, Equatable {
     /// of the last new line. The text after it is the repeated part. An
     /// entry that got text only after the last new line has length `0`.
     let keptUTF8Lengths: [String: Int]
+
+    /// For each watched entry id, the UTF-8 ranges of its lines before the
+    /// end of the last new line that are not repeats: the new lines, and the
+    /// short lines that do not count yet (task ^0dcsd3t). A loop can put a
+    /// new line between its repeats, so the text up to the last new line can
+    /// hold many repeats; the render keeps only these ranges.
+    let keptUTF8Ranges: [String: [KeptUTF8Range]]
 }
 
 /// What the detector found when the reasoning entry that the call writes now
@@ -170,6 +177,11 @@ struct RepetitionDetector {
     /// For each watched `.reasoning` entry, the tokens of its complete lines.
     private var reasoningTokens: [String: Int] = [:]
 
+    /// For each watched entry, the UTF-8 ranges of the lines read so far
+    /// that are not repeats, with each two ranges that touch merged into one
+    /// (task ^0dcsd3t).
+    private var keptRanges: [String: [KeptUTF8Range]] = [:]
+
     /// The last watched entry with text in the last ``observe(_:)``: the
     /// entry that the call writes now, or `nil` before any text.
     private var entryInFlight: WatchedText?
@@ -234,18 +246,20 @@ struct RepetitionDetector {
         if start > utf8.count {
             start = 0
             reasoningTokens[watched.entryId] = nil
+            keptRanges[watched.entryId] = nil
         }
         var lineStart = utf8.index(utf8.startIndex, offsetBy: start)
         while let lineEnd = utf8[lineStart...].firstIndex(of: Self.lineFeed) {
             let line = String(decoding: utf8[lineStart..<lineEnd], as: UTF8.self)
-            start += utf8.distance(from: lineStart, to: lineEnd) + 1
+            let range = KeptUTF8Range(start: start, end: start + utf8.distance(from: lineStart, to: lineEnd) + 1)
+            start = range.end
             lineStarts[watched.entryId] = start
             lineStart = utf8.index(after: lineEnd)
             let lineTokens = tokenCounter.count(line + "\n")
             if watched.isReasoning {
                 reasoningTokens[watched.entryId, default: 0] += lineTokens
             }
-            if let finding = read(line: line, lineTokens: lineTokens) {
+            if let finding = read(line: line, lineTokens: lineTokens, range: range, of: watched.entryId) {
                 return finding
             }
         }
@@ -253,60 +267,111 @@ struct RepetitionDetector {
         return nil
     }
 
+    /// What one complete line is to the window.
+    private enum LineKind {
+        /// A long line whose shape the call did not write before. It empties
+        /// the window.
+        case new
+
+        /// A counted line whose shape the call wrote before. Its tokens fill
+        /// the window.
+        case repeated
+
+        /// A short line whose shape did not occur more than
+        /// ``RepetitionDetection/shortLineRepeatThreshold`` times. It is
+        /// neither new nor repeated.
+        case uncounted
+    }
+
     /// Reads one complete line.
     ///
     /// - Parameters:
     ///   - line: The line, without its line feed.
     ///   - lineTokens: The tokens of the line, with its line feed.
+    ///   - range: The UTF-8 range of the line, with its line feed, in the
+    ///     text of its entry.
+    ///   - entryId: The id of the entry of the line.
     /// - Returns: The finding when this line filled the window, else `nil`.
-    private mutating func read(line: String, lineTokens: Int) -> RepetitionFinding? {
+    private mutating func read(
+        line: String, lineTokens: Int, range: KeptUTF8Range, of entryId: String
+    ) -> RepetitionFinding? {
         generatedTokens += lineTokens
-        let shape = detection.shape(of: line)
-        guard shape.count >= detection.minimumLineLength else {
-            return readShort(shape: shape, lineTokens: lineTokens)
-        }
-        countedLines += 1
-        guard !seenShapes.insert(shape).inserted else {
+        switch kind(ofShape: detection.shape(of: line)) {
+        case .uncounted:
+            keep(range, of: entryId)
+            return nil
+        case .new:
+            countedLines += 1
             newLines += 1
             tokensWithoutNewLine = 0
             lineStartsAtNewLine = lineStarts
+            keep(range, of: entryId)
             return nil
+        case .repeated:
+            countedLines += 1
+            tokensWithoutNewLine += lineTokens
+            return tokensWithoutNewLine >= detection.windowTokens ? finding() : nil
         }
-        return readRepeat(lineTokens: lineTokens)
     }
 
-    /// Reads one line whose shape is short. The line counts as a repeat only
-    /// after its shape occurred ``RepetitionDetection/shortLineRepeatThreshold``
-    /// times in the call.
+    /// The kind of a line with `shape`, and the count of the shape.
+    ///
+    /// A long shape is new the first time the call writes it. A short shape
+    /// counts as a repeat only after it occurred
+    /// ``RepetitionDetection/shortLineRepeatThreshold`` times in the call.
+    ///
+    /// - Parameter shape: The shape of the line.
+    /// - Returns: The kind of the line.
+    private mutating func kind(ofShape shape: String) -> LineKind {
+        guard shape.count >= detection.minimumLineLength else {
+            let occurrences = shortShapeOccurrences[shape, default: 0] + 1
+            shortShapeOccurrences[shape] = occurrences
+            return occurrences > detection.shortLineRepeatThreshold ? .repeated : .uncounted
+        }
+        return seenShapes.insert(shape).inserted ? .new : .repeated
+    }
+
+    /// Adds `range` to the kept ranges of the entry `entryId`, merged with
+    /// the last range when the two touch.
     ///
     /// - Parameters:
-    ///   - shape: The shape of the line.
-    ///   - lineTokens: The tokens of the line, with its line feed.
-    /// - Returns: The finding when this line filled the window, else `nil`.
-    private mutating func readShort(shape: String, lineTokens: Int) -> RepetitionFinding? {
-        let occurrences = shortShapeOccurrences[shape, default: 0] + 1
-        shortShapeOccurrences[shape] = occurrences
-        guard occurrences > detection.shortLineRepeatThreshold else { return nil }
-        countedLines += 1
-        return readRepeat(lineTokens: lineTokens)
-    }
-
-    /// Adds the tokens of one counted line that repeats to the window.
-    ///
-    /// - Parameter lineTokens: The tokens of the line, with its line feed.
-    /// - Returns: The finding when this line filled the window, else `nil`.
-    private mutating func readRepeat(lineTokens: Int) -> RepetitionFinding? {
-        tokensWithoutNewLine += lineTokens
-        guard tokensWithoutNewLine >= detection.windowTokens else { return nil }
-        return finding()
+    ///   - range: The UTF-8 range of a line that is not a repeat.
+    ///   - entryId: The id of the entry of the line.
+    private mutating func keep(_ range: KeptUTF8Range, of entryId: String) {
+        var ranges = keptRanges[entryId] ?? []
+        if let last = ranges.last, last.end == range.start {
+            ranges[ranges.index(before: ranges.endIndex)] = KeptUTF8Range(start: last.start, end: range.end)
+        } else {
+            ranges.append(range)
+        }
+        keptRanges[entryId] = ranges
     }
 
     /// The finding of the moment the window filled.
+    ///
+    /// The kept ranges of each entry end at the end of its last new line:
+    /// the lines after it are the repeated part.
     private func finding() -> RepetitionFinding {
         let kept = Dictionary(
             uniqueKeysWithValues: watchedEntryIds.map { ($0, lineStartsAtNewLine[$0] ?? 0) })
+        let keptRangesUpToNewLine = Dictionary(
+            uniqueKeysWithValues: kept.map { entryId, bound in
+                (entryId, Self.ranges(keptRanges[entryId] ?? [], endingBy: bound))
+            })
         return RepetitionFinding(
             generatedTokens: generatedTokens, countedLines: countedLines, newLines: newLines,
-            tokensWithoutNewLine: tokensWithoutNewLine, keptUTF8Lengths: kept)
+            tokensWithoutNewLine: tokensWithoutNewLine, keptUTF8Lengths: kept, keptUTF8Ranges: keptRangesUpToNewLine)
+    }
+
+    /// The parts of `ranges` before `bound`.
+    ///
+    /// - Parameters:
+    ///   - ranges: Ranges of one entry, in order.
+    ///   - bound: A UTF-8 offset at the end of a line.
+    /// - Returns: The ranges cut at `bound`.
+    private static func ranges(_ ranges: [KeptUTF8Range], endingBy bound: Int) -> [KeptUTF8Range] {
+        ranges.compactMap { range in
+            range.start < bound ? KeptUTF8Range(start: range.start, end: min(range.end, bound)) : nil
+        }
     }
 }

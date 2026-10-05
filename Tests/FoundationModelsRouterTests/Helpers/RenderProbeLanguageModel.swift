@@ -19,6 +19,10 @@ final class RenderProbeLog: Sendable {
         /// order. A summarizer call is not in this list.
         var renders: [Transcript] = []
 
+        /// The reasoning level of each generation call that a model recorded
+        /// it for, in call order (task ^0dcsd3t).
+        var reasoningLevels: [ContextOptions.ReasoningLevel?] = []
+
         /// The count of the summaries that the summarizer calls wrote.
         var summaryCount = 0
     }
@@ -29,11 +33,23 @@ final class RenderProbeLog: Sendable {
     /// The transcript of each generation call of the session, in call order.
     var renders: [Transcript] { state.withLock { $0.renders } }
 
+    /// The reasoning level of each generation call that a model recorded it
+    /// for, in call order. `nil` is a call that stated no level.
+    var reasoningLevels: [ContextOptions.ReasoningLevel?] { state.withLock { $0.reasoningLevels } }
+
     /// Records the transcript that one generation call of the session received.
     ///
     /// - Parameter render: The transcript of the call.
     func record(render: Transcript) {
         state.withLock { $0.renders.append(render) }
+    }
+
+    /// Records the reasoning level that one generation call of the session
+    /// stated in its context options.
+    ///
+    /// - Parameter reasoningLevel: The reasoning level of the call, or `nil`.
+    func record(reasoningLevel: ContextOptions.ReasoningLevel?) {
+        state.withLock { $0.reasoningLevels.append(reasoningLevel) }
     }
 
     /// Counts one more summary, and gives its number.

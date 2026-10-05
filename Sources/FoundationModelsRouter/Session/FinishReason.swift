@@ -5,7 +5,10 @@ import FoundationModels
 /// A submission that runs out of output tokens gives text and then stops, as a
 /// finished submission does. This value tells the two apart, so a host can report
 /// an honest stop reason.
-public enum FinishReason: Sendable, Equatable {
+///
+/// The stored form is the name of the case, as in a ``WatchStop`` of the run
+/// journal (task ^0dcsd3t).
+public enum FinishReason: Sendable, Equatable, Codable {
     /// The model ended its response itself.
     case completed
 
@@ -40,8 +43,10 @@ public enum FinishReason: Sendable, Equatable {
     /// The model reasoned and did not act, so the session cancelled the call.
     /// ``SessionEvent/reasoningStopped(_:)`` gives the numbers of the stop.
     /// When the answer has a recovery left, a continuation submission tells
-    /// the model to act. When it has none, the answer ends with this reason,
-    /// so a host can map it to a stop reason of its own.
+    /// the model to act. When it has none, one final pass with the reasoning
+    /// of the model off asks for the final answer (task ^0dcsd3t). The stopped
+    /// submission keeps this reason, so a host can map it to a stop reason of
+    /// its own.
     case reasoningTokenLimit
 }
 

@@ -460,7 +460,7 @@ actor RoutedSessionActor: RoutedSession {
 
     /// Whether the running answer stops compacting inside the answer, at a
     /// tool result or at a ceiling stop: set when such a compaction applied
-    /// no summary (``compactAndContinue(attempt:continuationPrompt:body:)``),
+    /// no summary (``compactAndContinue(attempt:reason:continuationPrompt:reasoningOff:body:)``),
     /// and cleared by the pump for each new answer.
     var compactionYieldsStopped = false
 

@@ -11,7 +11,7 @@ import Testing
 /// ``RoutedSessionActor/runAnswerChain(grammar:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:_:)``
 /// runs before an answer once measured fill reaches the budget's trigger, the
 /// reactive compact-and-retry-once recovery
-/// ``RoutedSessionActor/runSubmission(grammar:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetries:isContinuation:_:)``
+/// ``RoutedSessionActor/runSubmission(grammar:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetries:isContinuation:reasoningOff:_:)``
 /// runs on `LanguageModelError.contextSizeExceeded`, the flash-then-own-model
 /// summarizer preference, and ``SessionEvent/compaction(_:)`` emission.
 ///

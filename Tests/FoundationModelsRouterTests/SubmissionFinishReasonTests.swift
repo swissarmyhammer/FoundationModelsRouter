@@ -287,11 +287,12 @@ struct SubmissionFinishReasonTests {
         #expect(outcome.reply == CeilingProbeLanguageModel.Executor.answerText)
     }
 
-    @Test("an answer that finishes after a truncated answer reports completed")
+    @Test("the stop of an answer is per answer: a later answer reports no stop")
     func finishReasonIsPerAnswer() async throws {
         // An answer whose pass ends inside the reasoning runs a recovery
-        // (task ^hm9trt5). With no recovery per answer, the first answer
-        // ends truncated, and the second answer shows its own reason.
+        // (task ^hm9trt5). With no recovery per answer, the first answer runs
+        // one final pass (task ^0dcsd3t): its stop names the truncated pass,
+        // and the final pass finishes. The second answer has no stop.
         let fixture = try await CeilingProbeSessionFixture.make(
             ending: .truncatedOnFirstCallOnly, repetitionDetection: RepetitionDetection(recoveriesPerAnswer: 0),
             tempDirPrefix: Self.tempDirPrefix)
@@ -300,7 +301,9 @@ struct SubmissionFinishReasonTests {
         let first: SessionAnswer = try await fixture.session.respond(to: "first", maxTokens: nil)
         let second: SessionAnswer = try await fixture.session.respond(to: "second", maxTokens: nil)
 
-        #expect(try #require(first.usage).finishReason == .endedInsideReasoning)
+        #expect(try #require(first.stop).passFinishReason == .endedInsideReasoning)
+        #expect(try #require(first.usage).finishReason == .completed)
+        #expect(second.stop == nil)
         #expect(try #require(second.usage).finishReason == .completed)
     }
 

@@ -311,7 +311,7 @@ struct ToolCallArgumentsTextTests {
         let entry = Transcript.Entry.toolCalls(
             Transcript.ToolCalls([Transcript.ToolCall(id: "call-1", toolName: Self.toolName, arguments: arguments)]))
 
-        let render = RepeatedPartRemoval.render(of: [entry], keeping: [entry.id: 0])
+        let render = RepeatedPartRemoval.render(of: [entry], applying: RenderCut(keptUTF8Lengths: [entry.id: 0]))
         #expect(render == [entry])
     }
 }

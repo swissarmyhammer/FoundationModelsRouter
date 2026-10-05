@@ -79,8 +79,9 @@ struct RepeatingReasoningScript: Sendable, Hashable {
 /// - a call whose transcript holds a tool output answers with
 ///   ``Executor/answerText`` at once;
 /// - the first call of the session, and each call whose prompt is
-///   ``RoutedSessionActor/repetitionStopContinuationPrompt`` or
-///   ``RoutedSessionActor/reasoningStopContinuationPrompt`` when
+///   ``RoutedSessionActor/repetitionStopContinuationPrompt``,
+///   ``RoutedSessionActor/reasoningStopContinuationPrompt`` or
+///   ``RoutedSessionActor/finalPassPrompt`` when
 ///   ``repeatsAfterStop`` is `true`, plays ``script``: it writes the
 ///   reasoning lines one by one, waits for ``RepeatingReasoningScript/hold``,
 ///   and writes ``RepeatingReasoningScript/ending``;
@@ -174,6 +175,7 @@ struct RepeatingReasoningModel: LanguageModel {
             streamingInto channel: LanguageModelExecutorGenerationChannel
         ) async throws {
             configuration.log.record(render: request.transcript)
+            configuration.log.record(reasoningLevel: request.contextOptions.reasoningLevel)
             if playsScript(request.transcript) {
                 try await Self.writeReasoning(configuration.script, into: channel)
                 if configuration.script.ending == .toolCall {
@@ -187,10 +189,12 @@ struct RepeatingReasoningModel: LanguageModel {
                     action: .appendText(Self.answerText, tokenCount: Self.emittedTokenCount)))
         }
 
-        /// The prompts of the continuation calls after a stop of the session.
+        /// The prompts of the continuation calls after a stop of the session:
+        /// the two recoveries, and the final pass (task ^0dcsd3t).
         private static let continuationPrompts: Set<String> = [
             RoutedSessionActor.repetitionStopContinuationPrompt,
             RoutedSessionActor.reasoningStopContinuationPrompt,
+            RoutedSessionActor.finalPassPrompt,
         ]
 
         /// The arguments of the one tool call of a ``RepeatingReasoningEnding/toolCall`` script.
@@ -245,6 +249,19 @@ struct RepeatingReasoningModel: LanguageModel {
             }
             try await Task.sleep(for: script.hold)
         }
+    }
+}
+
+/// A ``RepeatingReasoningModel`` turns its reasoning off for one call, as a
+/// model with a chat template flag does (task ^0dcsd3t). The backend then
+/// states ``ReasoningOffRequest/reasoningLevel`` on a call that asks for it,
+/// and the log records the level.
+extension RepeatingReasoningModel: ReasoningSwitchable {
+    /// Always `true`.
+    ///
+    /// - Returns: `true`.
+    func canTurnReasoningOff() async throws -> Bool {
+        true
     }
 }
 

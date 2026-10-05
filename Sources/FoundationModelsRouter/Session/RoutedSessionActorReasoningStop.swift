@@ -94,20 +94,23 @@ enum ReasoningOnlyOutput {
 ///   ``continueAfterWatchStop(_:attempt:body:)``, as after a repetition stop.
 /// - A pass ends inside its reasoning, at its ceiling or before it, with no
 ///   tool call and no text (``reasoningEndStop(finishReason:attempt:)``). The
-///   answer goes on in ``continueAfterReasoningEnd(_:response:attempt:body:)``,
-///   and not with a continuation that ends the answer with no output.
+///   answer goes on in ``continueAfterReasoningEnd(_:attempt:body:)``.
 ///
 /// Both recoveries count against ``RepetitionDetection/recoveriesPerAnswer``,
-/// with the recoveries after repetition stops. A detection that is not
-/// enabled stops nothing.
+/// with the recoveries after repetition stops. Each recovery runs with the
+/// reasoning of the model off, and after the last one a final pass with the
+/// reasoning off asks for the final answer
+/// (``recover(after:attempt:compacts:body:)``, task ^0dcsd3t). A detection
+/// that is not enabled stops nothing.
 extension RoutedSessionActor {
     /// The prompt of the attempt that goes on after a reasoning stop.
     ///
     /// The render already holds the original prompt and the reasoning so
-    /// far, so the attempt does not send the original prompt again.
+    /// far, closed (``ReasoningClosure``), so the attempt does not send the
+    /// original prompt again. The prompt is short and direct (task ^0dcsd3t).
     static let reasoningStopContinuationPrompt = """
-        You reasoned for a long time and did not act, so the session stopped your reasoning. \
-        Do not reason more. Act now: call a tool, or give your answer.
+        Stop reasoning. Your next output must be one tool call that makes the change you decided on, \
+        or your final answer.
         """
 
     /// Stops the model call in flight for a reasoning limit finding of the
@@ -116,7 +119,8 @@ extension RoutedSessionActor {
     /// Nothing happens when the watch may not stop the call
     /// (``watchMayStopModelCall(watchId:)``). Otherwise the session logs the
     /// stop, sets the stop marker, and cancels ``inFlightModelCall``. The
-    /// marker cuts nothing, so the render keeps the reasoning so far.
+    /// marker cuts nothing, so the render keeps the reasoning so far, closed
+    /// (``ReasoningClosure``).
     ///
     /// - Parameters:
     ///   - finding: What the detector found.
@@ -127,7 +131,9 @@ extension RoutedSessionActor {
         let report = ReasoningStop(
             reasoningTokens: finding.reasoningTokens, limit: finding.limit, passFinishReason: .reasoningTokenLimit,
             detection: repetitionDetection, recovery: nextRecovery)
-        stopModelCall(WatchStopMarker(report: .reasoning(report), keptUTF8Lengths: [:], liveEntries: liveEntries))
+        stopModelCall(
+            WatchStopMarker(
+                report: .reasoning(report), keptUTF8Lengths: [:], keptUTF8Ranges: [:], liveEntries: liveEntries))
     }
 
     /// The reasoning stop of an attempt that ended inside its reasoning, at
@@ -154,40 +160,51 @@ extension RoutedSessionActor {
     }
 
     /// Reports the reasoning stop of an attempt that ended inside its
-    /// reasoning, and runs the recovery when the answer has one left.
+    /// reasoning, closes that reasoning in the render, and goes on with the
+    /// same answer.
     ///
     /// The attempt is already recorded, with its own finish reason. The
-    /// answer emits ``SessionEvent/reasoningStopped(_:)`` and the session
-    /// logs the stop. With a recovery left, the next attempt sends
-    /// ``reasoningStopContinuationPrompt``. When the attempt stopped at its
-    /// ceiling with the context at or over the compaction trigger
-    /// (``compactsAfterCeilingStop(_:)``), the answer compacts first, as
-    /// after any ceiling stop. With no recovery left, the answer ends with
-    /// the response text of the attempt.
+    /// answer emits ``SessionEvent/reasoningStopped(_:)``, the session logs
+    /// the stop, the render closes the reasoning
+    /// (``closeStoppedReasoning(grammar:)``), and one
+    /// ``TranscriptEvent/Kind/watchStop`` event records the stop. Then
+    /// ``recover(after:attempt:compacts:body:)`` goes on: when the attempt
+    /// stopped at its ceiling with the context at or over the compaction
+    /// trigger (``compactsAfterCeilingStop(_:)``), the recovery compacts
+    /// first, as after any ceiling stop.
     ///
     /// - Parameters:
     ///   - stop: The report of the stop.
-    ///   - response: The response text of the attempt.
     ///   - attempt: The attempt that ended inside its reasoning.
     ///   - body: The model work to run.
-    /// - Returns: The response text of the next attempt, or `response` when
-    ///   no recovery is left.
+    /// - Returns: The response text of the next attempt, or the text that
+    ///   states the stop when the final pass gives no text.
     /// - Throws: What the compaction or the next attempt throws.
     func continueAfterReasoningEnd(
         _ stop: ReasoningStop,
-        response: String,
         attempt: StoppedAttempt,
         body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
         attempt.onEvent?(.reasoningStopped(stop))
         logWatchStop(.reasoning(stop))
-        guard let recovery = stop.recovery else { return response }
-        repetitionWatch.recoveriesThisAnswer = recovery
-        guard compactsAfterCeilingStop(stop.passFinishReason) else {
-            return try await runContinuation(after: attempt, prompt: Self.reasoningStopContinuationPrompt, body: body)
-        }
-        return try await compactAndContinue(
-            attempt: attempt, reason: .outputCeilingStop, continuationPrompt: Self.reasoningStopContinuationPrompt,
-            body: body)
+        let compacts = compactsAfterCeilingStop(stop.passFinishReason)
+        await closeStoppedReasoning(grammar: attempt.grammar)
+        await recordWatchStop(.reasoning(stop), grammar: attempt.grammar)
+        return try await recover(after: .reasoning(stop), attempt: attempt, compacts: compacts, body: body)
+    }
+
+    /// Closes the reasoning of the last pass of ``backend`` in the render
+    /// (``ReasoningClosure``, task ^0dcsd3t), and records the change, so a
+    /// restore makes the same change. Nothing changes when the last pass
+    /// acted.
+    ///
+    /// - Parameter grammar: The grammar in force for the answer.
+    private func closeStoppedReasoning(grammar: Grammar?) async {
+        let render = RepeatedPartRemoval.renderAfterStop(
+            of: backend.transcriptEntries(), keptUTF8Lengths: [:], keptUTF8Ranges: [:],
+            closureText: Self.reasoningClosureText)
+        guard render.change.changesRender else { return }
+        replaceRender(with: render.entries)
+        await recordRenderChange(render.change, grammar: grammar)
     }
 }

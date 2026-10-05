@@ -168,6 +168,24 @@ package struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     }
 }
 
+/// An `MLXLanguageModel` turns its reasoning off for one call when its
+/// loaded configuration turns the reasoning on and off with a chat template
+/// flag (task ^0dcsd3t). The engine refuses "reasoning off" for any other
+/// strategy: a model that always reasons, and a model with no control of its
+/// reasoning.
+extension MLXLanguageModel: ReasoningSwitchable {
+    /// Whether the loaded configuration of this model turns the reasoning on
+    /// and off with a chat template flag.
+    ///
+    /// - Returns: `true` for a template-flag reasoning strategy, else `false`.
+    /// - Throws: What loading the container of the model throws.
+    func canTurnReasoningOff() async throws -> Bool {
+        let configuration = await (try await loadContainer()).configuration
+        guard case .templateFlag = configuration.reasoningConfig?.promptStrategy else { return false }
+        return true
+    }
+}
+
 /// The live ``LanguageModelSessionBackend``. Wraps one `LanguageModelSession`
 /// for the lifetime of the backend. The caller must not make two calls on one
 /// backend at the same time.
@@ -367,47 +385,81 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
         try await respond(to: prompt, schema: nil, maxTokens: maxTokens)
     }
 
-    /// The reasoning level that asks `MLXLanguageModel` to turn thinking off.
-    ///
-    /// `MLXLanguageModel` reads `.custom("no_think")`, and only that value, as
-    /// "thinking off". For a model that turns thinking on and off with a chat
-    /// template flag, the engine then renders the prompt with that flag off:
-    /// for Qwen3, `enable_thinking` is `false` in the template's additional
-    /// context. The flag applies to the one call that states this level.
-    private static let thinkingOffReasoningLevel = ContextOptions.ReasoningLevel.custom("no_think")
-
     /// Generates a complete text response through ``liveSession`` with
-    /// thinking off, when ``model`` turns thinking on and off with a chat
-    /// template flag. Any other model generates as ``respond(to:maxTokens:)``
-    /// does.
+    /// thinking off, when ``model`` can turn its reasoning off. Any other
+    /// model generates as ``respond(to:maxTokens:)`` does.
     ///
-    /// The engine refuses "thinking off" for a model that always reasons and
-    /// for a model with no thinking control. Thus this call asks for it only
-    /// when the loaded model's reasoning strategy is a template flag.
+    /// The call is ``respond(to:maxTokens:)`` under a
+    /// ``ReasoningOffRequest``, so the reasoning level comes from the one
+    /// place that states it for each call (``contextOptions(includingSchema:)``).
     func respondWithoutReasoning(to prompt: String, maxTokens: Int?) async throws -> String {
-        guard try await modelTurnsThinkingOffByTemplateFlag() else {
-            return try await respond(to: prompt, maxTokens: maxTokens)
+        try await ReasoningOffRequest.$isRequested.withValue(true) {
+            try await respond(to: prompt, maxTokens: maxTokens)
         }
-        return try await respond(
-            to: prompt, schema: nil, maxTokens: maxTokens,
-            contextOptions: ContextOptions(reasoningLevel: Self.thinkingOffReasoningLevel))
     }
 
     /// The raw ``model`` as an `MLXLanguageModel`, or `nil` for any other
     /// model. It reads the raw model, never the per-session wrapper of the
     /// session, so the cast finds the MLX model behind the queue.
+    ///
+    /// The tests of the queue read it: a fork and a replaced transcript keep
+    /// the raw MLX model.
+    // periphery:ignore
     var mlxLanguageModel: MLXLanguageModel? { model as? MLXLanguageModel }
 
-    /// Whether ``model`` is an `MLXLanguageModel` whose loaded configuration
-    /// turns thinking on and off with a chat template flag.
+    /// Whether the call that starts now runs with the reasoning of ``model``
+    /// off: the task asks for it (``ReasoningOffRequest/isRequested``), and
+    /// the raw model can turn its reasoning off (``ReasoningSwitchable``).
     ///
-    /// - Returns: `true` for a template-flag reasoning strategy, else `false`.
-    /// - Throws: What loading the model's container throws.
-    private func modelTurnsThinkingOffByTemplateFlag() async throws -> Bool {
-        guard let mlxModel = mlxLanguageModel else { return false }
-        let configuration = await (try await mlxModel.loadContainer()).configuration
-        guard case .templateFlag = configuration.reasoningConfig?.promptStrategy else { return false }
-        return true
+    /// The engine refuses "reasoning off" for a model that always reasons and
+    /// for a model with no control of its reasoning. Thus a call asks for it
+    /// only when the model says that it can.
+    ///
+    /// - Returns: `true` when the call states ``ReasoningOffRequest/reasoningLevel``.
+    /// - Throws: What the read of the model configuration throws.
+    private func callTurnsReasoningOff() async throws -> Bool {
+        guard ReasoningOffRequest.isRequested, let switchable = model as? any ReasoningSwitchable else {
+            return false
+        }
+        return try await switchable.canTurnReasoningOff()
+    }
+
+    /// The context options of the call that starts now.
+    ///
+    /// Each call starts from the default of the SDK for its kind: a call
+    /// under a schema keeps the schema in its prompt, and any other call
+    /// gets `ContextOptions()`. A call that turns the reasoning off
+    /// (``callTurnsReasoningOff()``) states ``ReasoningOffRequest/reasoningLevel``.
+    ///
+    /// - Parameter includingSchema: Whether the call decodes under a schema.
+    /// - Returns: The context options of the call.
+    /// - Throws: What the read of the model configuration throws.
+    private func contextOptions(includingSchema: Bool) async throws -> ContextOptions {
+        var contextOptions = includingSchema ? ContextOptions(includeSchemaInPrompt: true) : ContextOptions()
+        if try await callTurnsReasoningOff() {
+            contextOptions.reasoningLevel = ReasoningOffRequest.reasoningLevel
+        }
+        return contextOptions
+    }
+
+    /// The fragments of one stream call of ``liveSession``.
+    ///
+    /// - Parameters:
+    ///   - prompt: The prompt text.
+    ///   - options: The generation options of the call.
+    ///   - contextOptions: The context options of the call.
+    /// - Returns: The iterator that gives the fragments of the call.
+    private func fragments(
+        of prompt: String, options: GenerationOptions, contextOptions: ContextOptions
+    ) -> SnapshotDeltaIterator<LanguageModelSession.ResponseStream<String>> {
+        SnapshotDeltaIterator(
+            liveSession.streamResponse(to: prompt, options: options, contextOptions: contextOptions),
+            content: { $0.content },
+            entries: { $0.transcriptEntries },
+            observe: { [self] snapshot in
+                recordLastGenerationCall(usage: snapshot.usage, entries: snapshot.transcriptEntries)
+                keepNewestSnapshot(usage: snapshot.usage, entries: snapshot.transcriptEntries)
+            })
     }
 
     /// Runs ``liveSession`` and returns its response content. With a `schema`
@@ -417,15 +469,10 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     ///   - prompt: The prompt text.
     ///   - schema: The schema that constrains the decode, or `nil`.
     ///   - maxTokens: The ceiling the caller named, or `nil`.
-    ///   - contextOptions: The context options of this one call.
     /// - Returns: The response content.
-    private func respond(
-        to prompt: String,
-        schema: GenerationSchema?,
-        maxTokens: Int?,
-        contextOptions: ContextOptions = ContextOptions()
-    ) async throws -> String {
+    private func respond(to prompt: String, schema: GenerationSchema?, maxTokens: Int?) async throws -> String {
         let options = makeGenerationOptions(maxTokens: maxTokens)
+        let contextOptions = try await contextOptions(includingSchema: schema != nil)
         forgetLastGenerationCall()
         guard let schema else {
             let response = try await liveSession.respond(
@@ -433,7 +480,8 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
             recordLastGenerationCall(usage: response.usage, entries: response.transcriptEntries)
             return response.content
         }
-        let response = try await liveSession.respond(to: prompt, schema: schema, options: options)
+        let response = try await liveSession.respond(
+            to: prompt, schema: schema, options: options, contextOptions: contextOptions)
         recordLastGenerationCall(usage: response.usage, entries: response.transcriptEntries)
         return response.content.jsonString
     }
@@ -566,6 +614,12 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// fragment reports a restart when a snapshot does not extend the response
     /// so far.
     ///
+    /// A call under a ``ReasoningOffRequest`` starts the stream call of the
+    /// session at the first read of the stream: its context options need a
+    /// read of the model configuration, which is `async`
+    /// (``contextOptions(includingSchema:)``). Any other call starts the
+    /// stream call at once.
+    ///
     /// - Returns: A stream of fragments. It throws if generation fails.
     func streamResponseFragments(
         to prompt: String,
@@ -573,15 +627,44 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     ) -> AsyncThrowingStream<ResponseFragment, Error> {
         let options = makeGenerationOptions(maxTokens: maxTokens)
         forgetLastGenerationCall()
-        let fragments = SnapshotDeltaIterator(
-            liveSession.streamResponse(to: prompt, options: options),
-            content: { $0.content },
-            entries: { $0.transcriptEntries },
-            observe: { [self] snapshot in
-                recordLastGenerationCall(usage: snapshot.usage, entries: snapshot.transcriptEntries)
-                keepNewestSnapshot(usage: snapshot.usage, entries: snapshot.transcriptEntries)
-            })
-        return AsyncThrowingStream { try await fragments.next() }
+        guard ReasoningOffRequest.isRequested else {
+            let fragments = fragments(of: prompt, options: options, contextOptions: ContextOptions())
+            return AsyncThrowingStream { try await fragments.next() }
+        }
+        let deferred = DeferredFragments { [self] in
+            try await ReasoningOffRequest.$isRequested.withValue(true) {
+                fragments(
+                    of: prompt, options: options, contextOptions: try await contextOptions(includingSchema: false))
+            }
+        }
+        return AsyncThrowingStream { try await deferred.next() }
+    }
+
+    /// The fragments of a stream call that starts at the first read.
+    /// ``next()`` must not be called concurrently, as for
+    /// ``SnapshotDeltaIterator``.
+    private final class DeferredFragments: @unchecked Sendable {
+        /// Starts the stream call, and gives its fragments.
+        private let start: () async throws -> SnapshotDeltaIterator<LanguageModelSession.ResponseStream<String>>
+
+        /// The fragments of the stream call, or `nil` before the first read.
+        private var fragments: SnapshotDeltaIterator<LanguageModelSession.ResponseStream<String>>?
+
+        /// Keeps `start` for the first read.
+        ///
+        /// - Parameter start: Starts the stream call, and gives its fragments.
+        init(start: @escaping () async throws -> SnapshotDeltaIterator<LanguageModelSession.ResponseStream<String>>) {
+            self.start = start
+        }
+
+        /// Returns the next fragment, or `nil` at the end of the stream. The
+        /// first read starts the stream call.
+        func next() async throws -> ResponseFragment? {
+            if fragments == nil {
+                fragments = try await start()
+            }
+            return try await fragments?.next()
+        }
     }
 
     /// Pulls cumulative snapshots and returns the fragment each one adds.

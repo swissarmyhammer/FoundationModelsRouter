@@ -15,16 +15,24 @@ final class CeilingProbeLog: Sendable, Hashable {
     /// The ceilings seen so far. `nil` is a call that named no ceiling.
     private let ceilings: Mutex<[Int?]> = Mutex([])
 
+    /// The reasoning levels seen so far (task ^0dcsd3t). `nil` is a call
+    /// that stated no level.
+    private let levels: Mutex<[ContextOptions.ReasoningLevel?]> = Mutex([])
+
     /// The `maximumResponseTokens` of each generation call, in call order.
     var requestedCeilings: [Int?] { ceilings.withLock { $0 } }
 
-    /// Records the ceiling of one generation call.
+    /// The reasoning level of each generation call, in call order.
+    var reasoningLevels: [ContextOptions.ReasoningLevel?] { levels.withLock { $0 } }
+
+    /// Records the ceiling and the reasoning level of one generation call.
     ///
-    /// - Parameter ceiling: The `maximumResponseTokens` the call carried.
+    /// - Parameter request: The generation request of the call.
     /// - Returns: The zero-based position of this call in the log.
-    func record(ceiling: Int?) -> Int {
-        ceilings.withLock { ceilings in
-            ceilings.append(ceiling)
+    func record(_ request: LanguageModelExecutorGenerationRequest) -> Int {
+        levels.withLock { $0.append(request.contextOptions.reasoningLevel) }
+        return ceilings.withLock { ceilings in
+            ceilings.append(request.generationOptions.maximumResponseTokens)
             return ceilings.count - 1
         }
     }
@@ -316,7 +324,7 @@ struct CeilingProbeLanguageModel: LanguageModel {
             model: CeilingProbeLanguageModel,
             streamingInto channel: LanguageModelExecutorGenerationChannel
         ) async throws {
-            let callIndex = configuration.log.record(ceiling: request.generationOptions.maximumResponseTokens)
+            let callIndex = configuration.log.record(request)
             await channel.send(
                 .reasoning(
                     entryID: Self.reasoningEntryID(callIndex: callIndex),

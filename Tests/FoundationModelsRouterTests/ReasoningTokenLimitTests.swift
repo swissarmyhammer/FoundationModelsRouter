@@ -118,6 +118,18 @@ struct ReasoningTokenLimitTests {
             metadata: [RouterTelemetry.LogMetadataKey.reasoningStop: stop.description])
     }
 
+    @Test("the recovery after a reasoning stop asks the model to turn its reasoning off")
+    func recoveryRunsWithReasoningOff() async throws {
+        let script = RepeatingReasoningScript(
+            reasoningLines: Self.newLines(totalling: Self.longReasoningTokens), hold: Self.stoppedHold)
+
+        let (fixture, events) = try await Self.runAnswer(script: script)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        #expect(events.reasoningStops.map(\.recovery) == [1])
+        #expect(fixture.log.reasoningLevels == [nil, ReasoningOffRequest.reasoningLevel])
+    }
+
     @Test("a reasoning below the limit that ends in a tool call is not stopped")
     func shortReasoningWithToolCallIsNotStopped() async throws {
         let runs = RunCount()
@@ -134,7 +146,7 @@ struct ReasoningTokenLimitTests {
         #expect(events.streamedText.contains(RepeatingReasoningModel.Executor.answerText))
     }
 
-    @Test("with no recovery left, the answer ends with the finish reason reasoningTokenLimit")
+    @Test("with no recovery left, a final pass with the reasoning off gives the answer")
     func noRecoveryLeftEndsWithNamedFinishReason() async throws {
         let script = RepeatingReasoningScript(
             reasoningLines: Self.newLines(totalling: Self.longReasoningTokens), hold: Self.stoppedHold)
@@ -146,8 +158,11 @@ struct ReasoningTokenLimitTests {
         let stop = try #require(events.reasoningStops.first)
         #expect(events.reasoningStops.count == 1)
         #expect(stop.recovery == nil)
-        #expect(Self.finishReasons(in: events) == [.reasoningTokenLimit])
-        #expect(fixture.log.renders.count == 1)
+        #expect(Self.finishReasons(in: events) == [.reasoningTokenLimit, .completed])
+        #expect(fixture.log.renders.count == 2)
+        #expect(fixture.log.renders.last?.promptTexts.last == RoutedSessionActor.finalPassPrompt)
+        #expect(fixture.log.reasoningLevels == [nil, ReasoningOffRequest.reasoningLevel])
+        #expect(events.answers.first?.reply == RepeatingReasoningModel.Executor.answerText)
         #expect(events.answers.count == 1)
     }
 
@@ -214,18 +229,21 @@ struct ReasoningEndRecoveryTests {
         #expect(events.streamedText.contains(CeilingProbeLanguageModel.Executor.answerText))
     }
 
-    @Test("a pass that always ends inside the reasoning recovers the configured number of times, then ends")
+    @Test(
+        "a pass that always ends inside the reasoning recovers as configured, runs one final pass, and replies"
+    )
     func recoveriesEndAtTheConfiguredCount() async throws {
         let (fixture, events) = try await Self.runAnswer(ending: .truncatedInsideReasoning)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
         let recoveries = RepetitionDetection.defaultRecoveriesPerAnswer
-        #expect(events.reasoningStops.map(\.recovery) == Array(1...recoveries).map(Optional.some) + [nil])
+        #expect(events.reasoningStops.map(\.recovery) == Array(1...recoveries).map(Optional.some) + [nil, nil])
         #expect(
             events.submissionEnds.map(\.finishReason)
-                == Array(repeating: .endedInsideReasoning, count: recoveries + 1))
-        #expect(fixture.log.requestedCeilings.count == recoveries + 1)
+                == Array(repeating: .endedInsideReasoning, count: recoveries + 2))
+        #expect(fixture.log.requestedCeilings.count == recoveries + 2)
         #expect(events.answers.count == 1)
+        #expect(events.answers.first?.reply.isEmpty == false)
     }
 }
 

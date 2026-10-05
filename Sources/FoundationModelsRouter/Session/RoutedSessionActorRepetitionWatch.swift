@@ -22,6 +22,12 @@ struct RepetitionWatchState {
     /// answer (``RoutedSessionActor/startAnswerLimits()``), and a
     /// continuation submission of the same answer keeps it.
     var recoveriesThisAnswer = 0
+
+    /// Whether the running answer ran its final pass: the one pass with the
+    /// reasoning of the model off after a stop that found no recovery left
+    /// (task ^0dcsd3t). A stop in or after the final pass ends the answer.
+    /// The pump clears it for each new answer.
+    var finalPassRan = false
 }
 
 /// The report of one stop of the watch: a call that repeats itself
@@ -37,11 +43,17 @@ enum WatchStopReport: Sendable {
     /// The number of the recovery attempt that follows the stop, or `nil`
     /// when the answer has no recovery left.
     var recovery: Int? {
+        summary.recovery
+    }
+
+    /// The short report of the stop, for the journal and the answer
+    /// (task ^0dcsd3t).
+    var summary: WatchStop {
         switch self {
         case .repetition(let stop):
-            return stop.recovery
+            return WatchStop(stop)
         case .reasoning(let stop):
-            return stop.recovery
+            return WatchStop(stop)
         }
     }
 
@@ -57,12 +69,7 @@ enum WatchStopReport: Sendable {
 
     /// The finish reason that the stopped attempt closes with.
     var finishReason: FinishReason {
-        switch self {
-        case .repetition:
-            return .repeatedLines
-        case .reasoning(let stop):
-            return stop.passFinishReason
-        }
+        summary.passFinishReason
     }
 
     /// The prompt of the recovery that follows the stop.
@@ -114,77 +121,13 @@ struct WatchStopMarker: Sendable {
     /// reasoning stop, which keeps the whole reasoning so far.
     let keptUTF8Lengths: [String: Int]
 
+    /// For each watched entry id, the UTF-8 ranges of its lines that are not
+    /// repeats. See ``RepetitionFinding/keptUTF8Ranges``. Empty for a
+    /// reasoning stop.
+    let keptUTF8Ranges: [String: [KeptUTF8Range]]
+
     /// The live transcript that the watch read last, before the stop.
     let liveEntries: [Transcript.Entry]
-}
-
-/// Removes the repeated part of a stopped attempt from the render that the
-/// model receives next (task ^1hcwaqy).
-///
-/// The recorded transcript keeps each entry whole. Only the render changes:
-/// each watched entry keeps its text up to the end of its last new line,
-/// and an entry with no text left leaves the render.
-enum RepeatedPartRemoval {
-    /// `entries` with the repeated part of each watched entry removed.
-    ///
-    /// - Parameters:
-    ///   - entries: The transcript of the stopped attempt, whole.
-    ///   - keptUTF8Lengths: For each watched entry id, the UTF-8 length to keep.
-    /// - Returns: The render entries.
-    static func render(of entries: [Transcript.Entry], keeping keptUTF8Lengths: [String: Int]) -> [Transcript.Entry] {
-        entries.compactMap { entry in
-            guard let kept = keptUTF8Lengths[entry.id] else { return entry }
-            return trimmed(entry, toUTF8Length: kept)
-        }
-    }
-
-    /// `entry` with its text cut to `kept` UTF-8 bytes, or `nil` when no text
-    /// is left.
-    ///
-    /// A watched `.toolCalls` entry stays whole (task ^dzw15st). The rebuild
-    /// of a stopped attempt already removed a call that got no output
-    /// (``InFlightTranscript/removingUnansweredCalls(from:entryIdsBeforeAttempt:)``),
-    /// and a call that got an output keeps its arguments, so the output keeps
-    /// its call.
-    ///
-    /// - Parameters:
-    ///   - entry: A watched `.reasoning`, `.response` or `.toolCalls` entry.
-    ///   - kept: The UTF-8 length of the text to keep.
-    /// - Returns: The cut entry, the same entry when nothing is cut, or `nil`.
-    private static func trimmed(_ entry: Transcript.Entry, toUTF8Length kept: Int) -> Transcript.Entry? {
-        switch entry {
-        case .reasoning(var reasoning):
-            guard kept > 0 else { return nil }
-            guard let segments = cut(reasoning.segments, toUTF8Length: kept) else { return entry }
-            reasoning.segments = segments
-            return .reasoning(reasoning)
-        case .response(var response):
-            guard kept > 0 else { return nil }
-            guard let segments = cut(response.segments, toUTF8Length: kept) else { return entry }
-            response.segments = segments
-            return .response(response)
-        case .instructions, .prompt, .toolCalls, .toolOutput:
-            return entry
-        @unknown default:
-            return entry
-        }
-    }
-
-    /// One text segment that holds the first `kept` UTF-8 bytes of the text
-    /// of `segments`, or `nil` when the text is not longer than `kept`.
-    ///
-    /// The cut is at the end of a line, so it never splits a character.
-    ///
-    /// - Parameters:
-    ///   - segments: The segments of the entry.
-    ///   - kept: The UTF-8 length of the text to keep.
-    /// - Returns: The new segments, or `nil` when nothing is cut.
-    private static func cut(_ segments: [Transcript.Segment], toUTF8Length kept: Int) -> [Transcript.Segment]? {
-        let utf8 = WatchedText.text(of: segments).utf8
-        guard utf8.count > kept else { return nil }
-        let keptText = String(decoding: utf8.prefix(kept), as: UTF8.self)
-        return [.text(Transcript.TextSegment(content: keptText))]
-    }
 }
 
 /// ``RoutedSessionActor``'s repetition watch (task ^1hcwaqy): it reads the
@@ -197,15 +140,32 @@ enum RepeatedPartRemoval {
 /// stopped attempt is recorded whole, the repeated part leaves the render,
 /// and the same answer goes on with the continuation prompt of the stop, at
 /// most ``RepetitionDetection/recoveriesPerAnswer`` times in one answer.
+///
+/// Each recovery runs its model call with the reasoning of the model off
+/// (``ReasoningOffRequest``), and the render closes the stopped reasoning
+/// before the prompt of the recovery (``ReasoningClosure``). After the last
+/// recovery, one final pass with the reasoning off asks for the final answer,
+/// and the answer never ends with an empty reply (task ^0dcsd3t).
 extension RoutedSessionActor {
     /// The prompt of the attempt that goes on after a repetition stop.
     ///
     /// The render already holds the original prompt and the new part of the
     /// stopped output, so the attempt does not send the original prompt again.
     static let repetitionStopContinuationPrompt = """
-        Your last output repeated lines that you already wrote, so the session stopped it. \
-        Do not go over the same points again. Act now: call a tool, or give your answer.
+        Your last output repeated lines that you already wrote, so the session stopped it. Stop reasoning. \
+        Your next output must be one tool call that makes the change you decided on, or your final answer.
         """
+
+    /// The prompt of the final pass of an answer: the pass after a stop that
+    /// found no recovery left (task ^0dcsd3t).
+    static let finalPassPrompt = """
+        No recovery is left, so this is your last output. Stop reasoning. \
+        Give your final answer now, with what you know now.
+        """
+
+    /// The text of the response that closes a stopped reasoning in the render
+    /// (``ReasoningClosure``, task ^0dcsd3t).
+    static let reasoningClosureText = "(The session stopped this reasoning here.)"
 
     /// Runs the model call of one attempt under the repetition watch.
     ///
@@ -309,7 +269,8 @@ extension RoutedSessionActor {
             detection: repetitionDetection, recovery: nextRecovery)
         stopModelCall(
             WatchStopMarker(
-                report: .repetition(report), keptUTF8Lengths: finding.keptUTF8Lengths, liveEntries: liveEntries))
+                report: .repetition(report), keptUTF8Lengths: finding.keptUTF8Lengths,
+                keptUTF8Ranges: finding.keptUTF8Ranges, liveEntries: liveEntries))
     }
 
     /// Logs the stop of `marker`, sets the marker, and cancels
@@ -384,9 +345,8 @@ extension RoutedSessionActor {
         return repetitionWatch.stop
     }
 
-    /// Records the stopped attempt whole, removes its repeated part from the
-    /// render, and runs one more submission of the same answer when the answer
-    /// has a recovery left.
+    /// Records the stopped attempt whole, changes the render, and goes on
+    /// with the same answer.
     ///
     /// 1. The answer emits the event of the stop
     ///    (``SessionEvent/repetitionStopped(_:)`` or
@@ -395,21 +355,20 @@ extension RoutedSessionActor {
     ///    ``backend``, and the ordinary diff records its entries, whole. The
     ///    attempt closes with the finish reason of the stop
     ///    (``FinishReason/repeatedLines`` or ``FinishReason/reasoningTokenLimit``).
-    /// 3. ``RepeatedPartRemoval`` cuts the repeated part out of ``backend``.
-    ///    The record keeps it, and one
-    ///    ``TranscriptEvent/Kind/repeatedPartRemoval`` event records the cut,
-    ///    so a restore makes the same cut (task ^gg49g5e). A reasoning stop
-    ///    cuts nothing, and records no cut.
-    /// 4. With a recovery left, the next attempt sends the continuation
-    ///    prompt of the stop. With none, the answer ends with the response
-    ///    text of the stopped attempt.
+    /// 3. ``RepeatedPartRemoval`` cuts the repeated part out of ``backend``,
+    ///    and closes the stopped reasoning (``ReasoningClosure``). The record
+    ///    keeps each entry whole, and one
+    ///    ``TranscriptEvent/Kind/repeatedPartRemoval`` event records the
+    ///    change, so a restore makes the same change (task ^gg49g5e).
+    /// 4. One ``TranscriptEvent/Kind/watchStop`` event records the stop.
+    /// 5. The answer goes on (``recover(after:attempt:compacts:body:)``).
     ///
     /// - Parameters:
     ///   - marker: The stop marker of the stopped attempt.
     ///   - attempt: The stopped attempt.
     ///   - body: The model work to run.
-    /// - Returns: The response text of the next attempt, or of the stopped
-    ///   attempt when no recovery is left.
+    /// - Returns: The response text of the next attempt, or the text that
+    ///   states the stop when the final pass gives no text.
     /// - Throws: What the next attempt throws.
     func continueAfterWatchStop(
         _ marker: WatchStopMarker,
@@ -417,16 +376,11 @@ extension RoutedSessionActor {
         body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
         attempt.onEvent?(marker.report.event)
-        let (rebuilt, render) = await recordStoppedAttempt(marker, attempt: attempt)
-        replaceRender(with: render)
-        if !marker.keptUTF8Lengths.isEmpty {
-            await recordRepeatedPartRemoval(keeping: marker.keptUTF8Lengths, grammar: attempt.grammar)
-        }
-        guard let recovery = marker.report.recovery else {
-            return Self.responseText(of: rebuilt, excluding: attempt.entryIdsBeforeAttempt)
-        }
-        repetitionWatch.recoveriesThisAnswer = recovery
-        return try await runContinuation(after: attempt, prompt: marker.report.continuationPrompt, body: body)
+        let render = await recordStoppedAttempt(marker, attempt: attempt)
+        replaceRender(with: render.entries)
+        await recordRenderChange(render.change, grammar: attempt.grammar)
+        await recordWatchStop(marker.report, grammar: attempt.grammar)
+        return try await recover(after: marker.report, attempt: attempt, compacts: false, body: body)
     }
 
     /// Puts the rebuilt transcript of the stopped attempt into ``backend``
@@ -443,25 +397,27 @@ extension RoutedSessionActor {
     /// - Parameters:
     ///   - marker: The stop marker of the stopped attempt.
     ///   - attempt: The stopped attempt.
-    /// - Returns: The rebuilt transcript, whole, and the render that the next
-    ///   pass receives: the rebuilt transcript with the repeated part removed
-    ///   (``RepeatedPartRemoval``).
+    /// - Returns: The render that the next pass receives
+    ///   (``RepeatedPartRemoval/renderAfterStop(of:keptUTF8Lengths:keptUTF8Ranges:closureText:)``),
+    ///   and the change of the render.
     private func recordStoppedAttempt(
         _ marker: WatchStopMarker, attempt: StoppedAttempt
-    ) async -> (rebuilt: [Transcript.Entry], render: [Transcript.Entry]) {
+    ) async -> (entries: [Transcript.Entry], change: RepeatedPartRemovalSegment.Content) {
         let usageOfAttempt = Self.usageDelta(before: attempt.usageBefore, after: backend.usageTokenCounts())
         let rebuilt = InFlightTranscript.rebuilt(
             settledEntries: backend.transcriptEntries(), sources: [marker.liveEntries],
             entryIdsBeforeAttempt: attempt.entryIdsBeforeAttempt, composedPrompt: attempt.composedPrompt)
-        let render = RepeatedPartRemoval.render(of: rebuilt, keeping: marker.keptUTF8Lengths)
-        let measure = measureWatchStop(marker, rebuilt: rebuilt, render: render)
+        let render = RepeatedPartRemoval.renderAfterStop(
+            of: rebuilt, keptUTF8Lengths: marker.keptUTF8Lengths, keptUTF8Ranges: marker.keptUTF8Ranges,
+            closureText: Self.reasoningClosureText)
+        let measure = measureWatchStop(marker, rebuilt: rebuilt, render: render.entries)
         let usage = usageOfAttempt.map {
             (input: $0.input + measure.addedUsage.input, output: $0.output + measure.addedUsage.output)
         }
         await replaceBackendAndRecord(
             with: rebuilt, attempt: attempt, usageOfAttempt: usage, stopReason: marker.report.finishReason,
             measure: measure)
-        return (rebuilt, render)
+        return render
     }
 
     /// Replaces the render that the model receives with `entries`, and moves
@@ -470,7 +426,7 @@ extension RoutedSessionActor {
     /// runs no call yet, so the render is also the new settled transcript.
     ///
     /// - Parameter entries: The new render.
-    private func replaceRender(with entries: [Transcript.Entry]) {
+    func replaceRender(with entries: [Transcript.Entry]) {
         let render = Transcript(entries: entries)
         backend = backend.replacingTranscript(render)
         persistedEntryCount = render.count
@@ -478,39 +434,102 @@ extension RoutedSessionActor {
         settleTranscript()
     }
 
-    /// Records the cut that ``replaceRender(with:)`` made as one
+    /// Records the change that ``replaceRender(with:)`` made as one
     /// ``TranscriptEvent/Kind/repeatedPartRemoval`` event, after the entries
-    /// of the stopped attempt (task ^gg49g5e).
+    /// of the stopped attempt (tasks ^gg49g5e and ^0dcsd3t). A change that
+    /// changes nothing records nothing.
     ///
-    /// The recorded entries stay whole. A restore reads this event and makes
-    /// the same cut of the rebuilt render, so a restored session gives the
-    /// model the render that this session gives it.
+    /// The recorded entries stay whole, and the record holds no closing
+    /// response. A restore reads this event and makes the same change of the
+    /// rebuilt render, so a restored session gives the model the render that
+    /// this session gives it.
     ///
     /// - Parameters:
-    ///   - keptUTF8Lengths: For each watched entry id, the UTF-8 length that
-    ///     the render keeps.
+    ///   - change: The change of the render.
     ///   - grammar: The grammar in force for the answer.
-    private func recordRepeatedPartRemoval(keeping keptUTF8Lengths: [String: Int], grammar: Grammar?) async {
-        let segment = RepeatedPartRemovalSegment(content: .init(keptUTF8Lengths: keptUTF8Lengths))
+    func recordRenderChange(_ change: RepeatedPartRemovalSegment.Content, grammar: Grammar?) async {
+        guard change.changesRender else { return }
+        let segment = RepeatedPartRemovalSegment(content: change)
         await append(
             partial: makePartialEvent(
                 kind: .repeatedPartRemoval, grammar: grammar, text: segment.description, entry: segment.eventPayload))
     }
 
-    /// The joined text of the `.response` entries of the attempt in `entries`.
+    /// Records one stop of the watch as one ``TranscriptEvent/Kind/watchStop``
+    /// event (task ^0dcsd3t): its kind, its tokens, its limit and its
+    /// recovery. A host that logs only warnings reads the stop here.
     ///
     /// - Parameters:
-    ///   - entries: The rebuilt transcript of the stopped attempt.
-    ///   - entryIdsBeforeAttempt: The ids of the entries from before the attempt.
-    /// - Returns: The response text of the attempt, empty when it wrote none.
-    private static func responseText(
-        of entries: [Transcript.Entry], excluding entryIdsBeforeAttempt: Set<String>
-    ) -> String {
-        entries.compactMap { entry -> String? in
-            guard !entryIdsBeforeAttempt.contains(entry.id), case .response(let response) = entry else {
-                return nil
-            }
-            return WatchedText.text(of: response.segments)
-        }.joined()
+    ///   - report: The report of the stop.
+    ///   - grammar: The grammar in force for the answer.
+    func recordWatchStop(_ report: WatchStopReport, grammar: Grammar?) async {
+        let segment = WatchStopSegment(content: report.summary)
+        await append(
+            partial: makePartialEvent(
+                kind: .watchStop, grammar: grammar, text: report.summary.description, entry: segment.eventPayload))
+    }
+
+    /// Goes on with the answer after a stop of the watch.
+    ///
+    /// With a recovery left, the next attempt sends the continuation prompt
+    /// of the stop, with the reasoning of the model off (task ^0dcsd3t). When
+    /// `compacts` is `true`, the answer compacts first, as after any ceiling
+    /// stop. With no recovery left, the answer runs its final pass
+    /// (``runFinalPass(after:attempt:body:)``).
+    ///
+    /// - Parameters:
+    ///   - report: The report of the stop.
+    ///   - attempt: The stopped attempt.
+    ///   - compacts: Whether the answer compacts before the recovery.
+    ///   - body: The model work to run.
+    /// - Returns: The response text of the next attempt, or the text that
+    ///   states the stop.
+    /// - Throws: What the compaction or the next attempt throws.
+    func recover(
+        after report: WatchStopReport,
+        attempt: StoppedAttempt,
+        compacts: Bool,
+        body: @escaping @Sendable (String) async throws -> String
+    ) async throws -> String {
+        guard let recovery = report.recovery else {
+            return try await runFinalPass(after: report, attempt: attempt, body: body)
+        }
+        repetitionWatch.recoveriesThisAnswer = recovery
+        guard compacts else {
+            return try await runContinuation(
+                after: attempt, prompt: report.continuationPrompt, reasoningOff: true, body: body)
+        }
+        return try await compactAndContinue(
+            attempt: attempt, reason: .outputCeilingStop, continuationPrompt: report.continuationPrompt,
+            reasoningOff: true, body: body)
+    }
+
+    /// Runs the final pass of the answer after a stop that found no recovery
+    /// left (task ^0dcsd3t), and never gives an empty reply.
+    ///
+    /// The final pass sends ``finalPassPrompt`` with the reasoning of the
+    /// model off, under the token ceiling of the stopped attempt
+    /// (``StoppedAttempt/responseTokenCeiling``): the pass gets no limit of
+    /// its own. It runs one time in an answer. When it gives no text, or when
+    /// a stop comes in or after it, the reply is the text that states the
+    /// stop (``WatchStop/stoppedAnswerText``).
+    ///
+    /// - Parameters:
+    ///   - report: The report of the stop that found no recovery left.
+    ///   - attempt: The stopped attempt.
+    ///   - body: The model work to run.
+    /// - Returns: The reply of the final pass, or the text that states the stop.
+    /// - Throws: What the final pass throws.
+    private func runFinalPass(
+        after report: WatchStopReport,
+        attempt: StoppedAttempt,
+        body: @escaping @Sendable (String) async throws -> String
+    ) async throws -> String {
+        let stopText = report.summary.stoppedAnswerText
+        guard !repetitionWatch.finalPassRan else { return stopText }
+        repetitionWatch.finalPassRan = true
+        let reply = try await runContinuation(
+            after: attempt, prompt: Self.finalPassPrompt, reasoningOff: true, body: body)
+        return reply.allSatisfy(\.isWhitespace) ? stopText : reply
     }
 }

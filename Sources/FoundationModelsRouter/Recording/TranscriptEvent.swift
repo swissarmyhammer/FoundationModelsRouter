@@ -13,8 +13,8 @@ import Foundation
 public struct TranscriptEvent: Sendable, Codable, Equatable {
     /// What kind of moment an event records. Six kinds mirror
     /// `FoundationModels.Transcript.Entry` cases. ``session``, ``embedding``,
-    /// ``divergence``, ``generationCall`` and ``repeatedPartRemoval`` are
-    /// router-only. ``unknown``
+    /// ``divergence``, ``generationCall``, ``repeatedPartRemoval`` and
+    /// ``watchStop`` are router-only. ``unknown``
     /// carries a newer SDK case.
     public enum Kind: String, Sendable, Codable, Equatable {
         /// The session was created (its first event).
@@ -55,6 +55,14 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         /// entries of the rebuilt render. A journal recorded before this kind
         /// holds no such event, and restores as before.
         case repeatedPartRemoval
+        /// The repetition watch stopped a pass (task ^0dcsd3t): a repetition
+        /// stop or a reasoning stop. Router-only. ``TranscriptEvent/entry``
+        /// holds one ``WatchStopSegment``, whose ``WatchStop`` names the kind
+        /// of the stop, its tokens, its limit and its recovery, and
+        /// ``TranscriptEvent/text`` holds the ``WatchStop/description``. The
+        /// event comes after the entries of the stopped attempt. A restore
+        /// skips it. A journal recorded before this kind holds no such event.
+        case watchStop
         /// A tool invocation was requested. Deprecated: ``toolCalls`` replaces
         /// it. Kept so pre-v2 recordings decode.
         case toolCall
@@ -70,7 +78,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
             switch self {
             case .instructions, .prompt, .toolCalls, .toolOutput, .response, .reasoning, .unknown:
                 return true
-            case .session, .embedding, .divergence, .generationCall, .repeatedPartRemoval, .toolCall:
+            case .session, .embedding, .divergence, .generationCall, .repeatedPartRemoval, .watchStop, .toolCall:
                 return false
             }
         }
@@ -105,8 +113,9 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     public let ms: Int?
     /// The structural mirror of the `FoundationModels.Transcript.Entry` this
     /// event records. `nil` for v1 recordings, and for each router-only kind
-    /// except ``Kind/repeatedPartRemoval``, whose payload carries its
-    /// ``RepeatedPartRemovalSegment`` and mirrors no entry.
+    /// except ``Kind/repeatedPartRemoval`` and ``Kind/watchStop``, whose
+    /// payload carries its ``RepeatedPartRemovalSegment`` or its
+    /// ``WatchStopSegment`` and mirrors no entry.
     public let entry: TranscriptEntryPayload?
     /// The parent session and tool call that spawned this event's session.
     /// Set only on the ``Kind/session`` event of a session made with an
@@ -138,7 +147,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     /// that a reader can rebuild: an entry kind that is not the router's
     /// close of a failed submission. `false` for every router-only marker (``Kind/session``,
     /// ``Kind/embedding``, ``Kind/divergence``, ``Kind/generationCall``,
-    /// ``Kind/repeatedPartRemoval``, the legacy ``Kind/toolCall``)
+    /// ``Kind/repeatedPartRemoval``, ``Kind/watchStop``, the legacy ``Kind/toolCall``)
     /// and for the close, none of which mirrors an entry. A reader that
     /// rebuilds the SDK's transcript skips an event where this is `false`. An
     /// entry-kind event with no `entry` (a v1 line) still reads `true`, so that

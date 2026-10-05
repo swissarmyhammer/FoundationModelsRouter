@@ -213,6 +213,8 @@ extension RoutedSessionActor {
     ///   - attempt: The attempt that stopped.
     ///   - reason: Why the attempt stopped for a compaction.
     ///   - continuationPrompt: The prompt of the next attempt.
+    ///   - reasoningOff: Whether the model call of the next attempt runs with
+    ///     the reasoning of the model off (task ^0dcsd3t).
     ///   - body: The model work to run.
     /// - Returns: The response text of the next attempt.
     /// - Throws: What the compaction or the next attempt throws.
@@ -220,6 +222,7 @@ extension RoutedSessionActor {
         attempt: StoppedAttempt,
         reason: CompactionReason,
         continuationPrompt: String,
+        reasoningOff: Bool = false,
         body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
         if let budget = autoCompactionBudget {
@@ -227,7 +230,8 @@ extension RoutedSessionActor {
                 prompt: autoCompactionPrompt, budget: budget, reason: reason, emit: attempt.onEvent)
             compactionYieldsStopped = result.summaryEntryId == nil
         }
-        return try await runContinuation(after: attempt, prompt: continuationPrompt, body: body)
+        return try await runContinuation(
+            after: attempt, prompt: continuationPrompt, reasoningOff: reasoningOff, body: body)
     }
 
     /// Whether an attempt that ended with `finishReason` compacts and goes on

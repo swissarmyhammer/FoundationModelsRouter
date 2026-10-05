@@ -110,17 +110,18 @@ struct AnswerLimitsTests {
         // The recovery count: a recovery, then a compaction that applies a
         // summary (one more continuation), then a second repetition stop.
         // The count holds through the continuation, so no recovery is left,
-        // and the answer ends at the stop.
+        // and one final pass with the reasoning off answers (task ^0dcsd3t).
         let recovery = try await AnswerLimitsSessionFixture.make(tempDirPrefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: recovery.directory) }
         let exhausted = try await recovery.answer(
-            playing: [.repeating, .ceilingStopThatCompacts, .repeating], to: Self.firstPrompt)
+            playing: [.repeating, .ceilingStopThatCompacts, .repeating, .answer], to: Self.firstPrompt)
 
         #expect(exhausted.repetitionStops.map(\.recovery) == [1, nil])
         #expect(Self.summariesApplied(in: exhausted) == [true])
-        #expect(Self.finishReasons(in: exhausted) == [.repeatedLines, .maxTokens, .repeatedLines])
-        #expect(Self.causes(in: exhausted) == [.message, .continuation, .continuation])
+        #expect(Self.finishReasons(in: exhausted) == [.repeatedLines, .maxTokens, .repeatedLines, .completed])
+        #expect(Self.causes(in: exhausted) == [.message, .continuation, .continuation, .continuation])
         _ = eventsInsideAnswerFrame(exhausted)
+        #expect(exhausted.answers.first?.reply == AnswerLimitsModel.answerText)
         Self.expectScriptPlayed(recovery)
     }
 }

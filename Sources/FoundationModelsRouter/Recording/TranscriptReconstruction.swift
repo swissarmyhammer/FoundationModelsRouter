@@ -224,11 +224,13 @@ extension TranscriptTree {
     /// Content recorded at ``RecordingLevel/full`` round-trips. Some fields
     /// degrade as documented on ``TranscriptEntryMapper``.
     ///
-    /// The ``TranscriptReconstructionView/restore`` view cuts each entry that
-    /// a ``TranscriptEvent/Kind/repeatedPartRemoval`` event names, as the
-    /// live session cut its render after a repetition stop
-    /// (``RepeatedPartRemoval``). The recorded events stay whole. A journal
-    /// with no such event restores as before.
+    /// The ``TranscriptReconstructionView/restore`` view changes the render as
+    /// each ``TranscriptEvent/Kind/repeatedPartRemoval`` event says, as the
+    /// live session changed its render after a stop of its repetition watch
+    /// (``RepeatedPartRemoval``): it cuts each entry that an event names, and
+    /// it closes each stopped reasoning that an event names
+    /// (``ReasoningClosure``). The recorded events stay whole. A journal with
+    /// no such event restores as before.
     ///
     /// - Parameters:
     ///   - id: The session's span id.
@@ -243,24 +245,24 @@ extension TranscriptTree {
             of: Self.reconstructableEvents(renderEvents.filter(\.kind.isEntryKind), view: view))
         guard view == .restore else { return Transcript(entries: entries) }
         return Transcript(
-            entries: RepeatedPartRemoval.render(of: entries, keeping: try Self.keptUTF8Lengths(in: renderEvents)))
+            entries: RepeatedPartRemoval.render(of: entries, applying: try Self.renderCut(in: renderEvents)))
     }
 
-    /// The cut of the render that the ``TranscriptEvent/Kind/repeatedPartRemoval``
-    /// events among `events` record: for each cut entry id, the UTF-8 length
-    /// that the render keeps. A later cut of one entry id replaces an earlier
-    /// one. Empty for a journal recorded before the kind existed.
+    /// The changes of the render that the
+    /// ``TranscriptEvent/Kind/repeatedPartRemoval`` events among `events`
+    /// record, merged in `seq` order (``RenderCut/add(_:)``). Empty for a
+    /// journal recorded before the kind existed.
     ///
     /// - Parameter events: A session's effective events, in `seq` order.
-    /// - Returns: The UTF-8 length to keep, keyed by entry id.
+    /// - Returns: The changes of the render.
     /// - Throws: ``TranscriptReconstructionError`` when a cut event holds no
     ///   ``RepeatedPartRemovalSegment`` that decodes.
-    private static func keptUTF8Lengths(in events: [TranscriptEvent]) throws -> [String: Int] {
-        var kept: [String: Int] = [:]
+    private static func renderCut(in events: [TranscriptEvent]) throws -> RenderCut {
+        var cut = RenderCut()
         for event in events where event.kind == .repeatedPartRemoval {
-            kept.merge(try repeatedPartRemoval(in: event).content.keptUTF8Lengths) { _, newer in newer }
+            cut.add(try repeatedPartRemoval(in: event).content)
         }
-        return kept
+        return cut
     }
 
     /// The ``RepeatedPartRemovalSegment`` that `event` records.

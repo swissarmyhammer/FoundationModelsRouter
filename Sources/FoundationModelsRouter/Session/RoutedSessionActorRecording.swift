@@ -394,7 +394,7 @@ extension RoutedSessionActor {
         case .response:
             onEvent(.entryRecorded(id: entry.entryId, kind: .response))
         case .session, .instructions, .prompt, .embedding, .divergence, .generationCall, .repeatedPartRemoval,
-            .toolCall, .unknown:
+            .watchStop, .toolCall, .unknown:
             break
         }
     }

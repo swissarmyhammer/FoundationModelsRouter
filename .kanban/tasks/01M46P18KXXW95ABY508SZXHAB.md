@@ -28,8 +28,24 @@ comments:
     - note: The build gave one build-system line: "missing creator for mutated node" on the mlx-swift_Cmlx bundle. It is a dependency bundle line. It is not a source warning. The build was incremental (2.55 sec).
     - next: review.
   timestamp: 2026-10-05T19:11:55.856097+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m46qwn3hafksf9eet5qmt1gv
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (6ceef9fc). 0 findings, 0 confirmed, 0 refuted. 6 files reviewed. 4 .kanban files not reviewed (.reviewignore).
+    - next: none. The task is in done.
+  timestamp: 2026-10-05T19:15:45.393798+00:00
+- actor: claude-code
+  id: 01m46qx0cxyxs8m7gz24gheqvc
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 6 files
+    - test: green — swift test --scratch-path, 1483 + 23 + 19 passed
+    - commit: 6ceef9fc
+    - review: clean — 0 findings; task moved to done
+  timestamp: 2026-10-05T19:15:56.957707+00:00
+position_column: done
+position_ordinal: ffffffc680
 title: Usage delta after a compaction yield reads the new backend against the old baseline
 ---
 ## Problem

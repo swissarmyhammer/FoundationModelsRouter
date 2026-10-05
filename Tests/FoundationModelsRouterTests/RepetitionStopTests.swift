@@ -189,7 +189,9 @@ struct RepetitionStopTests {
         #expect(recorded.count > Self.keptReasoning.count + Self.window)
     }
 
-    @Test("recoveries stop at the configured number per answer")
+    @Test(
+        "recoveries stop at the configured count, and a final pass that stops again replies with the stop"
+    )
     func recoveriesStopAtTheConfiguredCount() async throws {
         let (fixture, events) = try await Self.runAnswer(
             script: Self.repeatingScript(hold: Self.stoppedHold), repeatsAfterStop: true, detection: Self.detection)
@@ -197,17 +199,21 @@ struct RepetitionStopTests {
 
         let recoveries = RepetitionDetection.defaultRecoveriesPerAnswer
         let stops = Self.stops(in: events)
-        #expect(stops.count == recoveries + 1)
-        #expect(stops.map(\.recovery) == Array(1...recoveries).map(Optional.some) + [nil])
-        #expect(Self.finishReasons(in: events) == Array(repeating: .repeatedLines, count: recoveries + 1))
-        #expect(fixture.log.renders.count == recoveries + 1)
-        // The first submission delivers the message. Each recovery is one
-        // continuation submission of the same chain, and the chain has one
-        // answer.
+        #expect(stops.count == recoveries + 2)
+        #expect(stops.map(\.recovery) == Array(1...recoveries).map(Optional.some) + [nil, nil])
+        #expect(Self.finishReasons(in: events) == Array(repeating: .repeatedLines, count: recoveries + 2))
+        #expect(fixture.log.renders.count == recoveries + 2)
+        #expect(fixture.log.renders.last?.promptTexts.last == RoutedSessionActor.finalPassPrompt)
+        // The first submission delivers the message. Each recovery and the
+        // final pass is one continuation submission of the same chain, and
+        // the chain has one answer. The final pass stops again, so the reply
+        // is the text that states the stop.
         let causes = events.submissionStarts.map(\.cause)
-        #expect(causes == [.message] + Array(repeating: .continuation, count: recoveries))
+        #expect(causes == [.message] + Array(repeating: .continuation, count: recoveries + 1))
         _ = eventsInsideAnswerFrame(events)
         #expect(events.answers.count == 1)
+        let lastStop = try #require(stops.last)
+        #expect(events.answers.first?.reply == WatchStop(lastStop).stoppedAnswerText)
     }
 
     @Test("a detection that is not enabled does not stop a call that repeats")

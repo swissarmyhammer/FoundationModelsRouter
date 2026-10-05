@@ -60,7 +60,7 @@ extension RoutedSessionActor {
     /// the messages of that submission and before its model call. The pump
     /// calls it for the first submission of an answer, before the proactive
     /// compaction, so an answer that fails before the model call still made
-    /// the hook call. ``runSubmission(grammar:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetries:isContinuation:_:)``
+    /// the hook call. ``runSubmission(grammar:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetries:isContinuation:reasoningOff:_:)``
     /// calls it for each continuation submission. A fork's hook fires only on
     /// the fork's own tools (``ForkableTool`` composition).
     func notifySubmissionBoundaryTools() async {
@@ -164,7 +164,7 @@ extension RoutedSessionActor {
         // Compared in tokens against ``TokenBudget/triggerTokens``, never as
         // `contextFill >= budget.trigger` — see the matching note on the
         // hard-ceiling pre-check in
-        // ``runSubmission(grammar:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetries:isContinuation:_:)``
+        // ``runSubmission(grammar:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetries:isContinuation:reasoningOff:_:)``
         // and ``TokenBudget/triggerTokens`` itself for why those two fractions
         // are not interchangeable.
         if let budget = autoCompactionBudget,
@@ -262,7 +262,7 @@ extension RoutedSessionActor {
     /// goes on in ``continueAfterWatchStop(_:attempt:body:)``. An attempt
     /// that ended inside its reasoning with no tool call and no text
     /// (``reasoningEndStop(finishReason:attempt:)``) goes on in
-    /// ``continueAfterReasoningEnd(_:response:attempt:body:)`` (task ^hm9trt5).
+    /// ``continueAfterReasoningEnd(_:attempt:body:)`` (task ^hm9trt5).
     ///
     /// - Parameters:
     ///   - grammar: The grammar in force for this answer.
@@ -277,6 +277,10 @@ extension RoutedSessionActor {
     ///     (``takeMessagesJoiningTheAnswer()``): the mail goes into its
     ///     preamble, and each caller prompt that can share the submission
     ///     goes after `ownPrompt`.
+    ///   - reasoningOff: Whether the model call of this attempt runs with the
+    ///     reasoning of the model off (``ReasoningOffRequest``, task
+    ///     ^0dcsd3t). Only the model call of this attempt does: a later
+    ///     submission of the answer gets `body` as it is.
     ///   - body: The model work to run.
     /// - Returns: The response text `body` produced.
     /// - Throws: Whatever `body` throws, or the retry's own outcome when a retry ran.
@@ -289,6 +293,7 @@ extension RoutedSessionActor {
         allowOverflowRetry: Bool,
         rejectedCallRetries: Int = 0,
         isContinuation: Bool = false,
+        reasoningOff: Bool = false,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
         var pendingEvents = pendingEvents
@@ -352,7 +357,8 @@ extension RoutedSessionActor {
                 throw ContextBudgetError.hardCeilingExceeded(
                     fill: budget.fill(measuredTokens: measuredTokens), ceiling: hardCeiling)
             }
-            response = try await runWatchedModelCall(composedPrompt: composedPrompt, body)
+            response = try await runWatchedModelCall(
+                composedPrompt: composedPrompt, reasoningOff ? ReasoningOffRequest.requested(around: body) : body)
             // A submission can succeed (return a response) yet still leave the SDK's
             // transcript unchanged for some future conformer — attach-or-requeue
             // applies uniformly on both exits (see the catch branch's matching
@@ -382,7 +388,7 @@ extension RoutedSessionActor {
         // Outside the `do`: the attempt is recorded, so a failure of the
         // compaction or of the next attempt must not record it a second time.
         if let reasoningStop = reasoningEndStop(finishReason: finishReason, attempt: attempt) {
-            return try await continueAfterReasoningEnd(reasoningStop, response: response, attempt: attempt, body: body)
+            return try await continueAfterReasoningEnd(reasoningStop, attempt: attempt, body: body)
         }
         guard compactsAfterCeilingStop(finishReason) else { return response }
         return try await continueAfterCeilingStop(attempt: attempt, body: body)
@@ -400,19 +406,23 @@ extension RoutedSessionActor {
     /// - Parameters:
     ///   - attempt: The attempt that stopped.
     ///   - continuationPrompt: The own prompt of the continuation.
+    ///   - reasoningOff: Whether the model call of the continuation runs with
+    ///     the reasoning of the model off: `true` for a recovery after a
+    ///     reasoning stop or a repetition stop (task ^0dcsd3t).
     ///   - body: The model work to run.
     /// - Returns: The response text of the continuation.
     /// - Throws: What the continuation throws.
     func runContinuation(
         after attempt: StoppedAttempt,
         prompt continuationPrompt: String,
+        reasoningOff: Bool = false,
         body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
         try await runSubmission(
             grammar: attempt.grammar, pendingEvents: [], ownPrompt: continuationPrompt,
             responseTokenCeiling: attempt.responseTokenCeiling, onEvent: attempt.onEvent,
             allowOverflowRetry: attempt.allowOverflowRetry, rejectedCallRetries: attempt.rejectedCallRetries,
-            isContinuation: true, body)
+            isContinuation: true, reasoningOff: reasoningOff, body)
     }
 
     /// Runs the attempt again after a failed attempt that one of the two

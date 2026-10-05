@@ -461,7 +461,9 @@ extension RoutedSessionActor: SessionMailObserver {
     ///   applied no summary stops the next ones of that answer only;
     /// - ``RepetitionWatchState/recoveriesThisAnswer``: the answer goes on
     ///   after at most ``RepetitionDetection/recoveriesPerAnswer`` repetition
-    ///   stops and reasoning stops together.
+    ///   stops and reasoning stops together;
+    /// - ``RepetitionWatchState/finalPassRan``: an answer runs at most one
+    ///   final pass after its last recovery (task ^0dcsd3t).
     ///
     /// The third limit, the one overflow retry, is no stored state: the first
     /// submission of each answer gets the permission
@@ -475,6 +477,7 @@ extension RoutedSessionActor: SessionMailObserver {
     private func startAnswerLimits() {
         compactionYieldsStopped = false
         repetitionWatch.recoveriesThisAnswer = 0
+        repetitionWatch.finalPassRan = false
     }
 
     // MARK: - Batches of a mailbox
