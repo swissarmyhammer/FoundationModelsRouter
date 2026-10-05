@@ -189,7 +189,7 @@ extension MLXLanguageModel: ReasoningSwitchable {
 /// The live ``LanguageModelSessionBackend``. Wraps one `LanguageModelSession`
 /// for the lifetime of the backend. The caller must not make two calls on one
 /// backend at the same time.
-final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unchecked Sendable {
+final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Sendable {
     /// The raw `LanguageModel` conformance. The session of this backend runs
     /// over a per-session ``SessionLanguageModel`` that wraps it, and a fork
     /// builds a new wrapper over it.
@@ -641,11 +641,13 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     }
 
     /// The fragments of a stream call that starts at the first read.
-    /// ``next()`` must not be called concurrently, as for
-    /// ``SnapshotDeltaIterator``.
-    private final class DeferredFragments: @unchecked Sendable {
+    ///
+    /// The actor isolates the state. ``next()`` must not be called
+    /// concurrently, as for ``SnapshotDeltaIterator``: a second call during
+    /// the first read can start a second stream call.
+    private actor DeferredFragments {
         /// Starts the stream call, and gives its fragments.
-        private let start: () async throws -> SnapshotDeltaIterator<LanguageModelSession.ResponseStream<String>>
+        private let start: @Sendable () async throws -> SnapshotDeltaIterator<LanguageModelSession.ResponseStream<String>>
 
         /// The fragments of the stream call, or `nil` before the first read.
         private var fragments: SnapshotDeltaIterator<LanguageModelSession.ResponseStream<String>>?
@@ -653,7 +655,9 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
         /// Keeps `start` for the first read.
         ///
         /// - Parameter start: Starts the stream call, and gives its fragments.
-        init(start: @escaping () async throws -> SnapshotDeltaIterator<LanguageModelSession.ResponseStream<String>>) {
+        init(
+            start: @escaping @Sendable () async throws -> SnapshotDeltaIterator<LanguageModelSession.ResponseStream<String>>
+        ) {
             self.start = start
         }
 
@@ -668,13 +672,15 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     }
 
     /// Pulls cumulative snapshots and returns the fragment each one adds.
-    /// ``next()`` must not be called concurrently.
+    ///
+    /// The actor isolates the state. ``next()`` must not be called
+    /// concurrently: each call pulls from the one snapshot iterator.
     ///
     /// A snapshot that adds transcript entries and no text gives a fragment
     /// with empty text, whose ``ResponseFragment/progress`` names the newest
     /// entry. A tool-using submission thus reports its tool calls and tool results
     /// to the stall watch (task ^4799jxg).
-    private final class SnapshotDeltaIterator<Snapshots: AsyncSequence>: @unchecked Sendable {
+    private actor SnapshotDeltaIterator<Snapshots: AsyncSequence> {
         /// The snapshot stream's own iterator, driven by ``next()``'s caller.
         private var iterator: Snapshots.AsyncIterator
 
@@ -715,7 +721,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
         /// Returns the next fragment, or `nil` at the end of the stream. Skips
         /// snapshots that repeat without change.
         func next() async throws -> ResponseFragment? {
-            while let snapshot = try await iterator.next() {
+            while let snapshot = try await nextSnapshot() {
                 observe(snapshot)
                 let current = content(snapshot)
                 let fragment = MLXFoundationModelsSessionBackend.fragment(of: current, after: previous)
@@ -725,6 +731,20 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
                 if let appended { return ResponseFragment(text: "", progress: appended) }
             }
             return nil
+        }
+
+        /// Pulls the next snapshot from ``iterator`` on this actor.
+        ///
+        /// An actor property cannot be an `inout` argument of an `async`
+        /// call. Thus the pull uses a copy of ``iterator``, and the copy
+        /// replaces ``iterator`` when the pull ends.
+        ///
+        /// - Returns: The next snapshot, or `nil` at the end of the stream.
+        /// - Throws: What the snapshot stream throws.
+        private func nextSnapshot() async throws -> Snapshots.Element? {
+            var pulling = iterator
+            defer { iterator = pulling }
+            return try await pulling.next(isolation: self)
         }
 
         /// The kind of the newest entry `snapshot` added to the transcript, or
