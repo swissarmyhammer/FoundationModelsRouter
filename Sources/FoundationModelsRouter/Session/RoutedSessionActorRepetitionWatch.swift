@@ -417,8 +417,8 @@ extension RoutedSessionActor {
         body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
         attempt.onEvent?(marker.report.event)
-        let rebuilt = await recordStoppedAttempt(marker, attempt: attempt)
-        replaceRender(with: RepeatedPartRemoval.render(of: rebuilt, keeping: marker.keptUTF8Lengths))
+        let (rebuilt, render) = await recordStoppedAttempt(marker, attempt: attempt)
+        replaceRender(with: render)
         if !marker.keptUTF8Lengths.isEmpty {
             await recordRepeatedPartRemoval(keeping: marker.keptUTF8Lengths, grammar: attempt.grammar)
         }
@@ -432,28 +432,39 @@ extension RoutedSessionActor {
     /// Puts the rebuilt transcript of the stopped attempt into ``backend``
     /// and records it with the finish reason of the stop.
     ///
-    /// The usage of the attempt is read before the backend is replaced,
-    /// because a replaced backend starts a usage count of its own. The
-    /// baseline given to the finish is the count of the replaced backend
-    /// minus the usage of the attempt, so the finish records the usage of
-    /// the attempt.
+    /// The usage of the attempt and the measure of the stop
+    /// (``measureWatchStop(_:rebuilt:render:)``, task ^3anq1yz) are read
+    /// before the backend is replaced, because a replaced backend starts a
+    /// usage count of its own. The usage of the attempt adds the tokens of
+    /// the stopped call that the backend did not report. The baseline
+    /// given to the finish is the count of the replaced backend minus that
+    /// usage, so the finish records the usage of the attempt.
     ///
     /// - Parameters:
     ///   - marker: The stop marker of the stopped attempt.
     ///   - attempt: The stopped attempt.
-    /// - Returns: The rebuilt transcript, whole.
-    private func recordStoppedAttempt(_ marker: WatchStopMarker, attempt: StoppedAttempt) async -> [Transcript.Entry] {
+    /// - Returns: The rebuilt transcript, whole, and the render that the next
+    ///   pass receives: the rebuilt transcript with the repeated part removed
+    ///   (``RepeatedPartRemoval``).
+    private func recordStoppedAttempt(
+        _ marker: WatchStopMarker, attempt: StoppedAttempt
+    ) async -> (rebuilt: [Transcript.Entry], render: [Transcript.Entry]) {
         let usageOfAttempt = Self.usageDelta(before: attempt.usageBefore, after: backend.usageTokenCounts())
         let rebuilt = InFlightTranscript.rebuilt(
             settledEntries: backend.transcriptEntries(), sources: [marker.liveEntries],
             entryIdsBeforeAttempt: attempt.entryIdsBeforeAttempt, composedPrompt: attempt.composedPrompt)
+        let render = RepeatedPartRemoval.render(of: rebuilt, keeping: marker.keptUTF8Lengths)
+        let measure = measureWatchStop(marker, rebuilt: rebuilt, render: render)
+        let usage = usageOfAttempt.map {
+            (input: $0.input + measure.addedUsage.input, output: $0.output + measure.addedUsage.output)
+        }
         backend = backend.replacingTranscript(Transcript(entries: rebuilt))
         _ = await finishSubmissionAndRequeueIfUnattached(
             grammar: attempt.grammar, since: attempt.started,
-            usageBefore: Self.usageDelta(before: usageOfAttempt, after: backend.usageTokenCounts()),
+            usageBefore: Self.usageDelta(before: usage, after: backend.usageTokenCounts()),
             responseTokenCeiling: attempt.responseTokenCeiling.resolved, pendingEvents: attempt.pendingEvents,
-            onEvent: attempt.onEvent, stopReason: marker.report.finishReason)
-        return rebuilt
+            onEvent: attempt.onEvent, stopReason: marker.report.finishReason, watchStop: measure)
+        return (rebuilt, render)
     }
 
     /// Replaces the render that the model receives with `entries`, and moves

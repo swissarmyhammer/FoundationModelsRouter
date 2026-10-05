@@ -117,18 +117,89 @@ extension RoutedSessionActor {
         else {
             return nil
         }
+        noteEndedCall(call, backendUsage: call, of: ledger)
+        let finishReason = FinishReason(
+            submissionEntries: unrecordedTranscriptEntries(), outputTokens: call.output,
+            lastCallOutputTokens: call.output, responseTokenCeiling: ledger.responseTokenCeiling)
+        return generationCallUsage(of: call, finishReason: finishReason, entryKind: entryKind)
+    }
+
+    /// Takes the usage of the generation call that a watch stop cancelled
+    /// (task ^3anq1yz), adds it to the ledger, and records its metrics.
+    ///
+    /// The session reads it before it replaces ``backend``, because a
+    /// replaced backend starts a usage count of its own. A cancelled call
+    /// ends before the backend reports its usage: the MLX executor sends its
+    /// one usage update only after a call completes. So each count that the
+    /// backend did not report comes from `counted`.
+    ///
+    /// A call that ended at a tool call is not in flight: the open of its
+    /// tool reported it (``reportGenerationCallAtToolOpen()``). When the usage
+    /// did not move since that report, no call is left to report.
+    ///
+    /// - Parameters:
+    ///   - counted: The counted size of the render that the stopped call
+    ///     received, and of the output that it wrote.
+    ///   - endedAtToolCall: Whether the stopped call ended at a tool call.
+    ///   - finishReason: The finish reason of the stop.
+    ///   - entryKind: What the stopped call left in the transcript.
+    /// - Returns: The usage of the stopped call, and the tokens that it adds
+    ///   to the usage that the backend reported. `nil` when no ledger is
+    ///   open, the backend reports no usage, or a call that ended at a tool
+    ///   call has no usage left to report.
+    func takeStoppedGenerationCall(
+        counted: (input: Int, output: Int), endedAtToolCall: Bool, finishReason: FinishReason,
+        entryKind: GenerationCallEntryKind
+    ) -> (usage: GenerationCallUsage, addedUsage: (input: Int, output: Int))? {
+        guard let ledger = generationCallLedger, let usageAfter = backend.usageTokenCounts() else { return nil }
+        let backendUsage = ledger.usageOfEndedCall(usageAfter: usageAfter)
+        guard backendUsage != nil || !endedAtToolCall else { return nil }
+        let reported = backendUsage ?? (input: 0, output: 0)
+        let call = (
+            input: reported.input > 0 ? reported.input : counted.input,
+            output: reported.output > 0 ? reported.output : counted.output
+        )
+        noteEndedCall(call, backendUsage: reported, of: ledger)
+        let usage = generationCallUsage(of: call, finishReason: finishReason, entryKind: entryKind)
+        return (usage, (input: call.input - reported.input, output: call.output - reported.output))
+    }
+
+    /// Records the metrics of one generation call that ended, and moves the
+    /// ledger past it.
+    ///
+    /// - Parameters:
+    ///   - call: The fed and generated tokens of the call, as the session
+    ///     reports them.
+    ///   - backendUsage: The part of the cumulative usage of the backend that
+    ///     the call accounts for. The ledger adds it, so the next call starts
+    ///     where the backend count is.
+    ///   - ledger: The ledger of the attempt, as it was before the call ended.
+    private func noteEndedCall(
+        _ call: (input: Int, output: Int), backendUsage: (input: Int, output: Int), of ledger: GenerationCallLedger
+    ) {
         let endedAt = ContinuousClock.now
         sessionMetrics.recordGenerationCall(
             tokensIn: call.input, tokensOut: call.output, duration: ledger.callStartedAt.duration(to: endedAt),
             model: model, slot: slot)
         generationCallLedger?.callStartedAt = endedAt
-        generationCallLedger?.reported = (ledger.reported.input + call.input, ledger.reported.output + call.output)
+        generationCallLedger?.reported = (
+            ledger.reported.input + backendUsage.input, ledger.reported.output + backendUsage.output
+        )
         generationCallLedger?.newestCall = call
         toolResultWatch.noteEndedCall(tokens: call.input + call.output)
-        let finishReason = FinishReason(
-            submissionEntries: unrecordedTranscriptEntries(), outputTokens: call.output,
-            lastCallOutputTokens: call.output, responseTokenCeiling: ledger.responseTokenCeiling)
-        return GenerationCallUsage(
+    }
+
+    /// The usage report of one generation call.
+    ///
+    /// - Parameters:
+    ///   - call: The fed and generated tokens of the call.
+    ///   - finishReason: Why the call stopped.
+    ///   - entryKind: What the call left in the transcript.
+    /// - Returns: The report, with the fill of the render after the call.
+    private func generationCallUsage(
+        of call: (input: Int, output: Int), finishReason: FinishReason, entryKind: GenerationCallEntryKind
+    ) -> GenerationCallUsage {
+        GenerationCallUsage(
             tokensIn: call.input,
             tokensOut: call.output,
             finishReason: finishReason,

@@ -29,6 +29,12 @@ struct RepeatingReasoningScript: Sendable, Hashable {
     /// What the call writes after the hold.
     var ending: RepeatingReasoningEnding = .answer
 
+    /// The token count that each reasoning line reports to the session. The
+    /// usage of a call sums these counts. Zero gives a call whose usage does
+    /// not move, as the usage of a cancelled MLX call does not (task
+    /// ^3anq1yz).
+    var lineTokenCount = RepeatingReasoningModel.Executor.emittedTokenCount
+
     /// Makes the lines `newLines`, then `cycle` repeated `cycleCount` times.
     ///
     /// - Parameters:
@@ -42,6 +48,26 @@ struct RepeatingReasoningScript: Sendable, Hashable {
     ) -> RepeatingReasoningScript {
         let repeated = (0..<cycleCount).flatMap { _ in cycle }
         return RepeatingReasoningScript(reasoningLines: newLines + repeated, hold: hold)
+    }
+
+    /// Lines that are all new, whose text with a line feed after each one
+    /// holds at least `tokens` characters: one token per character under the
+    /// ``CharacterTokenCounter``.
+    ///
+    /// Each line differs in its letters, not only in its digits, so the
+    /// repetition detector reads each one as new.
+    ///
+    /// - Parameter tokens: The least number of tokens of the lines.
+    /// - Returns: The lines, in order.
+    static func distinctLines(totalling tokens: Int) -> [String] {
+        var lines: [String] = []
+        var total = 0
+        while total < tokens {
+            let line = "Step \(DigitFreeLabel.spelling(lines.count)): the model reads one more part of the parser."
+            lines.append(line)
+            total += line.count + RepeatingReasoningModel.Executor.lineFeed.count
+        }
+        return lines
     }
 }
 
@@ -115,11 +141,12 @@ struct RepeatingReasoningModel: LanguageModel {
         /// The answer text of a call that ends.
         static let answerText = "The answer, after the reasoning."
 
-        /// The token count every emitted fragment reports.
-        private static let emittedTokenCount = 1
+        /// The token count every emitted fragment reports, unless the script
+        /// names another count for its reasoning lines.
+        static let emittedTokenCount = 1
 
         /// The line feed the model writes after each reasoning line.
-        private static let lineFeed = "\n"
+        static let lineFeed = "\n"
 
         /// The cache-key configuration the SDK constructed this executor with.
         private let configuration: Configuration
@@ -212,7 +239,8 @@ struct RepeatingReasoningModel: LanguageModel {
             for line in script.reasoningLines {
                 try Task.checkCancellation()
                 await channel.send(
-                    .reasoning(entryID: entryID, action: .appendText(line + lineFeed, tokenCount: emittedTokenCount)))
+                    .reasoning(
+                        entryID: entryID, action: .appendText(line + lineFeed, tokenCount: script.lineTokenCount)))
                 await Task.yield()
             }
             try await Task.sleep(for: script.hold)

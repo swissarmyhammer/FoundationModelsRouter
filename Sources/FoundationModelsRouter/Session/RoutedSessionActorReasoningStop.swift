@@ -18,11 +18,21 @@ enum ReasoningOnlyOutput {
     ///   or `nil` when that pass holds no reasoning text, or holds a tool
     ///   call or response text.
     static func trailingReasoningText(of entries: [Transcript.Entry]) -> String? {
-        let passStart = entries.lastIndex(where: isPassInput).map { entries.index(after: $0) } ?? entries.startIndex
-        let texts = entries[passStart...].map(reasoningText)
+        let texts = entries[lastPassStart(in: entries)...].map(reasoningText)
         guard !texts.contains(nil) else { return nil }
         let reasoning = texts.compactMap { $0 }.joined()
         return reasoning.isEmpty ? nil : reasoning
+    }
+
+    /// The index of the first output entry of the last pass in `entries`:
+    /// the index after the last `.prompt` or `.toolOutput` entry, or the
+    /// start index when `entries` holds neither. The entries before it are
+    /// the render that the last pass received.
+    ///
+    /// - Parameter entries: Transcript entries, in transcript order.
+    /// - Returns: The start index of the output of the last pass.
+    static func lastPassStart(in entries: [Transcript.Entry]) -> Int {
+        entries.lastIndex(where: isPassInput).map { entries.index(after: $0) } ?? entries.startIndex
     }
 
     /// Whether `entry` is input that a pass reads: a `.prompt` or a

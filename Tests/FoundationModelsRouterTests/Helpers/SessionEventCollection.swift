@@ -160,6 +160,14 @@ extension Sequence<SessionEvent> {
             return nil
         }
     }
+
+    /// The usage of each generation call among these events, in order.
+    var generationCalls: [GenerationCallUsage] {
+        compactMap { event in
+            if case .generationCall(let usage) = event { return usage }
+            return nil
+        }
+    }
 }
 
 extension Transcript {

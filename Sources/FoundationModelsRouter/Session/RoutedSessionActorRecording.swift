@@ -21,6 +21,8 @@ extension RoutedSessionActor {
     ///   - onEvent: A sink for derived ``SessionEvent``s, or `nil`.
     ///   - stopReason: The reason of a stop that the session made itself, or
     ///     `nil` to read the reason from the entries of the attempt.
+    ///   - watchStop: What a watch stop measured before it replaced
+    ///     ``backend``, or `nil` for any other end of an attempt.
     /// - Returns: Whether the diff included a `.response` entry, the usage
     ///   delta of the submission (`nil` when unknown), whether `pendingEvents`
     ///   were attached to a persisted `.prompt` entry, and why the attempt
@@ -32,7 +34,8 @@ extension RoutedSessionActor {
         responseTokenCeiling: Int?,
         pendingEvents: [OperationEvent],
         onEvent: ((SessionEvent) -> Void)? = nil,
-        stopReason: FinishReason? = nil
+        stopReason: FinishReason? = nil,
+        watchStop: WatchStopMeasure? = nil
     ) async -> (
         diffIncludedResponse: Bool, usage: (input: Int, output: Int)?, pendingEventsAttached: Bool,
         finishReason: FinishReason
@@ -49,12 +52,19 @@ extension RoutedSessionActor {
                 responseTokenCeiling: responseTokenCeiling)
         // The last generation call of the attempt. Taken before the diff for
         // the same reason, and reported after it, so its journal event
-        // follows the entries the call left.
-        let lastGenerationCall = takeGenerationCall(leaving: GenerationCallEntryKind(leftBy: submissionEntries))
+        // follows the entries the call left. A watch stop took its stopped
+        // call before it replaced `backend`, because the replaced backend
+        // starts a usage count of its own (task ^3anq1yz).
+        let lastGenerationCall =
+            watchStop == nil
+            ? takeGenerationCall(leaving: GenerationCallEntryKind(leftBy: submissionEntries)) : watchStop?.stoppedCall
         // The newest call of the attempt is the size of the render. Read it
         // before the ledger closes. An open ledger with no ended call gives
-        // the delta of the attempt, which is then zero.
-        let renderedContext = generationCallLedger?.newestCall ?? usage
+        // the delta of the attempt, which is then zero. After a watch stop,
+        // the next pass receives the render without the cut part, so the
+        // counted size of that render comes first.
+        let renderedContext =
+            watchStop?.renderTokens.map { (input: $0, output: 0) } ?? generationCallLedger?.newestCall ?? usage
         closeGenerationCallLedger()
         let (diffIncludedResponse, pendingEventsAttached) = await recordTranscriptDelta(
             grammar: grammar, since: since, usage: usage, pendingEvents: pendingEvents, onEvent: onEvent)
@@ -77,8 +87,11 @@ extension RoutedSessionActor {
         // measured the render. A submission rejected before it touched
         // `backend` (for example, a guided submission whose grammar validation
         // throws pre-flight) keeps the last known counter, and does not set it
-        // to a meaningless zero. See ``usageState``.
-        if diffIncludedResponse {
+        // to a meaningless zero. See ``usageState``. A watch stop that counted
+        // the render after it measured the render too, whatever its diff
+        // holds: a pass that only reasoned leaves no `.response` entry.
+        let measuredRender = diffIncludedResponse || watchStop?.renderTokens != nil
+        if measuredRender {
             usageState = renderedContext.map { .measured(input: $0.input, output: $0.output) } ?? .unknown
         }
         // Ends the submission that the session opened for this attempt. The
@@ -97,7 +110,7 @@ extension RoutedSessionActor {
                     tokensIn: $0.input, tokensOut: $0.output, contextFill: contextFill, finishReason: finishReason)
             },
             finishReason: finishReason,
-            measuredRender: diffIncludedResponse ? renderedContext : nil,
+            measuredRender: measuredRender ? renderedContext : nil,
             onEvent: onEvent)
         return (diffIncludedResponse, usage, pendingEventsAttached, finishReason)
     }
@@ -127,6 +140,8 @@ extension RoutedSessionActor {
     ///   - onEvent: A sink for derived ``SessionEvent``s, or `nil`.
     ///   - stopReason: The reason of a stop that the session made itself, or
     ///     `nil` to read the reason from the entries of the attempt.
+    ///   - watchStop: What a watch stop measured before it replaced
+    ///     ``backend``, or `nil` for any other end of an attempt.
     /// - Returns: Whether the diff included a `.response` entry, the usage
     ///   delta of the submission, and why the attempt stopped.
     func finishSubmissionAndRequeueIfUnattached(
@@ -136,12 +151,13 @@ extension RoutedSessionActor {
         responseTokenCeiling: Int?,
         pendingEvents: [OperationEvent],
         onEvent: ((SessionEvent) -> Void)? = nil,
-        stopReason: FinishReason? = nil
+        stopReason: FinishReason? = nil,
+        watchStop: WatchStopMeasure? = nil
     ) async -> (diffIncludedResponse: Bool, usage: (input: Int, output: Int)?, finishReason: FinishReason) {
         let (diffIncludedResponse, usage, pendingEventsAttached, finishReason) = await finishSubmission(
             grammar: grammar, since: started, usageBefore: usageBefore,
             responseTokenCeiling: responseTokenCeiling, pendingEvents: pendingEvents, onEvent: onEvent,
-            stopReason: stopReason)
+            stopReason: stopReason, watchStop: watchStop)
         // The pump already destructively took `pendingEvents` from `outbox`
         // before `body()` ran. When this submission's diff produced no
         // `.prompt`-kind partial to attach them to — every `.ebnf`-guided

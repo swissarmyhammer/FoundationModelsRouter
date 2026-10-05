@@ -36,26 +36,13 @@ struct ReasoningTokenLimitTests {
     /// the watch to read the whole reasoning.
     private static let unstoppedHold = Duration.milliseconds(200)
 
-    /// The line feed after each reasoning line.
-    private static let lineFeed = "\n"
-
-    /// Lines that are all new, whose text with a line feed after each one
-    /// holds at least `tokens` characters: one token per character.
-    ///
-    /// Each line differs in its letters, not only in its digits, so the
-    /// repetition detector reads each one as new.
+    /// Lines that are all new, whose text holds at least `tokens` tokens
+    /// (``RepeatingReasoningScript/distinctLines(totalling:)``).
     ///
     /// - Parameter tokens: The least number of tokens of the lines.
     /// - Returns: The lines, in order.
     private static func newLines(totalling tokens: Int) -> [String] {
-        var lines: [String] = []
-        var total = 0
-        while total < tokens {
-            let line = "Step \(DigitFreeLabel.spelling(lines.count)): the model reads one more part of the parser."
-            lines.append(line)
-            total += line.count + lineFeed.count
-        }
-        return lines
+        RepeatingReasoningScript.distinctLines(totalling: tokens)
     }
 
     /// Runs one streamed answer over a fresh fixture.

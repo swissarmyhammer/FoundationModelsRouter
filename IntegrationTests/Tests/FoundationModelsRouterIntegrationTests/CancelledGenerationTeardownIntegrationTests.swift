@@ -53,6 +53,30 @@ private let cancellationDelaySeconds = 2
     .exclusiveRealModel
 )
 struct CancelledGenerationTeardownIntegrationTests {
+    /// Starts a generation on `backend` that cannot finish early, cancels it
+    /// mid-decode, and waits for it to end.
+    ///
+    /// The prompt asks the model to count without stopping, so it decodes
+    /// until the token ceiling, and the cancel after
+    /// ``cancellationDelaySeconds`` always lands mid-decode.
+    ///
+    /// - Parameter backend: The backend to generate on.
+    /// - Returns: How the cancelled generation ended.
+    /// - Throws: What the sleep before the cancel throws.
+    private static func runCancelledGeneration(
+        on backend: any LanguageModelSessionBackend
+    ) async throws -> Result<String, any Error> {
+        let doomed = Task {
+            try await backend.respond(
+                to: "Count upward from 1, one number per line, without stopping.",
+                maxTokens: cancelledGenerationMaxTokens
+            )
+        }
+        try await Task.sleep(for: .seconds(cancellationDelaySeconds))
+        doomed.cancel()
+        return await doomed.result
+    }
+
     @Test("a generation cancelled mid-decode unwinds as CancellationError, and the model evicts and reloads cleanly")
     func aCancelledGenerationUnwindsAndTheProcessSurvives() async throws {
         let loaded = try await RealModelContainer.load(
@@ -62,22 +86,11 @@ struct CancelledGenerationTeardownIntegrationTests {
         let backend = loaded.container.makeSession(
             instructions: "You are a terse, literal assistant.", samplingMode: loaded.samplingMode)
 
-        // A prompt the model cannot finish early: it decodes until the token
-        // ceiling, so the cancel below always lands mid-decode.
-        let doomed = Task {
-            try await backend.respond(
-                to: "Count upward from 1, one number per line, without stopping.",
-                maxTokens: cancelledGenerationMaxTokens
-            )
-        }
-        try await Task.sleep(for: .seconds(cancellationDelaySeconds))
-        doomed.cancel()
-
         // The cancelled call must END, and it must end by observing the
         // cancellation. A `.success` here means cancellation never reached
         // the generation at all — the card's open question 2 — and is a
         // failure of its own, distinct from the signal-6 abort.
-        let outcome = await doomed.result
+        let outcome = try await Self.runCancelledGeneration(on: backend)
         switch outcome {
         case .success(let text):
             Issue.record(
@@ -112,5 +125,30 @@ struct CancelledGenerationTeardownIntegrationTests {
         )
         #expect(!reply.isEmpty)
         await reloaded.container.model.evict()
+    }
+
+    /// Task ^3anq1yz: the MLX executor sends its one usage update only after
+    /// a call completes. A cancelled call ends before that update, so the
+    /// usage of the backend does not move: no fed tokens and no generated
+    /// tokens. A watch stop of the session cancels a call in this way, and
+    /// the session counts the tokens of the stopped call itself
+    /// (``RoutedSessionActor/measureWatchStop(_:rebuilt:render:)``).
+    @Test("a generation cancelled mid-decode reports no fed tokens and no generated tokens")
+    func aCancelledGenerationReportsNoUsage() async throws {
+        let loaded = try await RealModelContainer.load(
+            ref: cancellationSmokeModel,
+            samplingMode: .greedy
+        )
+        let backend = loaded.container.makeSession(
+            instructions: "You are a terse, literal assistant.", samplingMode: loaded.samplingMode)
+        let usageBefore = try #require(backend.usageTokenCounts())
+
+        let outcome = try await Self.runCancelledGeneration(on: backend)
+
+        #expect(throws: CancellationError.self) { try outcome.get() }
+        let usageAfter = try #require(backend.usageTokenCounts())
+        #expect(usageAfter.input - usageBefore.input == 0)
+        #expect(usageAfter.output - usageBefore.output == 0)
+        await loaded.container.model.evict()
     }
 }
