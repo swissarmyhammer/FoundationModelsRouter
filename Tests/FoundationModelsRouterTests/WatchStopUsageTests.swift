@@ -133,7 +133,7 @@ struct WatchStopUsageTests {
     /// render that the recovery call received.
     ///
     /// - Parameter answer: An answer whose first call stopped.
-    private static func expectFillOfRenderAfterStop(_ answer: Answer) throws {
+    private static func expectFillOfRenderAfterStop(of answer: Answer) throws {
         let renderTokens = try renderTokensAfterStop(of: answer)
         #expect(renderTokens >= prompt.count)
         let stoppedEnd = try #require(answer.events.submissionEnds.first)
@@ -148,7 +148,7 @@ struct WatchStopUsageTests {
     /// - Parameters:
     ///   - answer: An answer whose first call stopped.
     ///   - finishReason: The finish reason of the stop.
-    private static func expectStoppedCallReported(_ answer: Answer, finishReason: FinishReason) async throws {
+    private static func expectStoppedCallReported(of answer: Answer, finishReason: FinishReason) async throws {
         let fedTokens = try renderTokensOfStoppedCall(of: answer)
         let calls = answer.events.generationCalls
         #expect(calls.count == 2)
@@ -173,7 +173,7 @@ struct WatchStopUsageTests {
         defer { try? FileManager.default.removeItem(at: answer.fixture.directory) }
 
         #expect(answer.events.reasoningStops.count == 1)
-        try Self.expectFillOfRenderAfterStop(answer)
+        try Self.expectFillOfRenderAfterStop(of: answer)
     }
 
     @Test("after a reasoning stop, the stopped call is a generation call, and its fed tokens are in the answer usage")
@@ -182,7 +182,7 @@ struct WatchStopUsageTests {
         defer { try? FileManager.default.removeItem(at: answer.fixture.directory) }
 
         #expect(answer.events.reasoningStops.count == 1)
-        try await Self.expectStoppedCallReported(answer, finishReason: .reasoningTokenLimit)
+        try await Self.expectStoppedCallReported(of: answer, finishReason: .reasoningTokenLimit)
     }
 
     @Test("when the usage of a stopped call does not move, the session counts its fed and generated tokens")
@@ -195,7 +195,7 @@ struct WatchStopUsageTests {
         #expect(answer.events.reasoningStops.count == 1)
         let stoppedCall = try #require(answer.events.generationCalls.first)
         #expect(stoppedCall.tokensOut == (try Self.reasoningTokensAfterStop(of: answer)))
-        try await Self.expectStoppedCallReported(answer, finishReason: .reasoningTokenLimit)
+        try await Self.expectStoppedCallReported(of: answer, finishReason: .reasoningTokenLimit)
     }
 
     @Test("after a repetition stop, the fill of the stopped submission is the render that the recovery receives")
@@ -205,7 +205,7 @@ struct WatchStopUsageTests {
         defer { try? FileManager.default.removeItem(at: answer.fixture.directory) }
 
         #expect(answer.events.repetitionStops.count == 1)
-        try Self.expectFillOfRenderAfterStop(answer)
+        try Self.expectFillOfRenderAfterStop(of: answer)
     }
 
     @Test("after a repetition stop, the stopped call is a generation call, and its fed tokens are in the answer usage")
@@ -215,6 +215,23 @@ struct WatchStopUsageTests {
         defer { try? FileManager.default.removeItem(at: answer.fixture.directory) }
 
         #expect(answer.events.repetitionStops.count == 1)
-        try await Self.expectStoppedCallReported(answer, finishReason: .repeatedLines)
+        try await Self.expectStoppedCallReported(of: answer, finishReason: .repeatedLines)
+    }
+
+    @Test("when a call stopped for repetition reports no usage, the session counts its fed and generated tokens")
+    func repetitionStopWithNoUsageIsCounted() async throws {
+        var script = Self.repeatingScript
+        script.lineTokenCount = 0
+        let answer = try await Self.runAnswer(
+            script: script, detection: RepetitionDetection(windowTokens: Self.repetitionWindow))
+        defer { try? FileManager.default.removeItem(at: answer.fixture.directory) }
+
+        let stop = try #require(answer.events.repetitionStops.first)
+        #expect(answer.events.repetitionStops.count == 1)
+        let stoppedCall = try #require(answer.events.generationCalls.first)
+        // The output of the stopped pass holds each complete line that the
+        // watch read before the stop, so the counted output is not smaller.
+        #expect(stoppedCall.tokensOut >= stop.generatedTokens)
+        try await Self.expectStoppedCallReported(of: answer, finishReason: .repeatedLines)
     }
 }

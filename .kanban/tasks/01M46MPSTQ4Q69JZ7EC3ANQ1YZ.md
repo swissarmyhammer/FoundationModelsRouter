@@ -49,6 +49,45 @@ comments:
     - note: one build line says "missing creator for mutated node" for the mlx-swift_Cmlx bundle. It comes from the SwiftPM build of a dependency. It is not a source warning.
     - next: review
   timestamp: 2026-10-05T18:45:08.992070+00:00
+- actor: claude-code
+  id: 01m46pq3k2m0dxpxtzzs9y6k16
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (3dc606fb). 3 findings (3 confirmed, 1 refuted). Tests/FoundationModelsRouterTests/WatchStopUsageTests.swift:136, Tests/FoundationModelsRouterTests/WatchStopUsageTests.swift:151, Tests/FoundationModelsRouterTests/WatchStopUsageTests.swift:188
+    - next: Do the 3 open items in "Review Findings (2026-10-05 13:45)". The acceptance item "Tell the FoundationModelsACPAgent session" is for the orchestrator. It is not a code finding.
+  timestamp: 2026-10-05T18:55:15.042840+00:00
+- actor: claude-code
+  id: 01m46pqn4xghpj1smjexhy7g5v
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 11 files
+    - test: green — swift test, 1481 + 23 + 19 passed
+    - commit: 3dc606fb
+    - review: findings — Tests/FoundationModelsRouterTests/WatchStopUsageTests.swift:136, Tests/FoundationModelsRouterTests/WatchStopUsageTests.swift:151, Tests/FoundationModelsRouterTests/WatchStopUsageTests.swift:188
+  timestamp: 2026-10-05T18:55:33.021380+00:00
+- actor: claude-code
+  id: 01m46pzsma9p6n5n1v7her5jm8
+  text: |-
+    Review findings (2026-10-05 13:45) fixed in Tests/FoundationModelsRouterTests/WatchStopUsageTests.swift:
+    - fluent-usage: `expectFillOfRenderAfterStop(of:)` and `expectStoppedCallReported(of:finishReason:)` now label the first parameter. All 6 call sites changed. The other helpers in the file already used `of answer:`.
+    - invariant-propagation: new test `repetitionStopWithNoUsageIsCounted` (line token count 0, repetition window). It also checks that the counted output of the stopped call is not less than `RepetitionStop.generatedTokens`. The exact check of the reasoning test does not apply: a repetition stop cuts the repeated part from the render. The test passed on its first run, because commit 3dc606fb already added the behavior. This change is in the test file only.
+    - Build note: the default `.build` failed. A sourcekit-lsp indexing process (`swift-build --experimental-prepare-for-indexing`) builds in nested `.build/checkouts/swift-huggingface/.build/index-build/...` paths and holds that checkout, so SwiftPM cannot remove it (EPERM). I did not kill that process. I ran the tests with `--scratch-path` in the session scratchpad.
+  timestamp: 2026-10-05T18:59:59.754824+00:00
+- actor: claude-code
+  id: 01m46pzvp889qwkhpx0vq3ex1z
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — Tests/FoundationModelsRouterTests/WatchStopUsageTests.swift. `swift test --scratch-path <scratchpad>/build --filter WatchStopUsageTests`: 6 tests in 1 suite passed, exit 0. The only warnings come from dependencies (the mlx-swift Metal headers, and "missing creator for mutated node"). There are none in project sources.
+    - next: /test, then /review. The acceptance item "Tell the FoundationModelsACPAgent session" stays open for the orchestrator.
+  timestamp: 2026-10-05T19:00:01.864817+00:00
+- actor: claude-code
+  id: 01m46q1yceyg3y0e51vyahr2y7
+  text: |-
+    ### test - green
+    - evidence: swift test --scratch-path <session scratchpad>/build (I used the scratch path from the start, to avoid the EPERM from the indexing process). Main suite: 1482 tests in 186 suites passed. Two other test runs: 23 tests and 19 tests passed. Exit code 0. No failure. No skipped test.
+    - notes: The run shows 2 known issues. They come from withKnownIssue in BoundedWaitTests.swift and RealModelHarnessTests.swift. Each test checks that an issue is recorded, so they are expected. The build shows 1 warning: "missing creator for mutated node" for the mlx-swift_Cmlx.bundle dependency. It is a SwiftPM build-system message, not a source warning. This repository has no source warning.
+    - next: review.
+  timestamp: 2026-10-05T19:01:10.158926+00:00
 position_column: doing
 position_ordinal: '80'
 title: context.fill after a watch stop measures the stopped pass, not the render
@@ -83,3 +122,14 @@ Do this first: confirm with a test what `usage.input` is for a cancelled MLX cal
 - [ ] Tell the FoundationModelsACPAgent session when this is done, so that ^4wsx6t5 can close.
 
 Related: ^0dcsd3t (the recovery after a reasoning stop). Requested by the FoundationModelsACPAgent session. #router #defect #cross-repo
+
+## Review Findings (2026-10-05 13:45)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 10 file(s) reviewed, 6 not reviewed.
+
+> 6 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 6 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/WatchStopUsageTests.swift:136` `swift/fluent-usage` — The first parameter of `expectFillOfRenderAfterStop` lacks a label. Per the fluent-usage rule, omit the first argument label only for value-preserving conversions; otherwise, label it. This is an assertion helper function, not a conversion, so the first parameter should be labeled to clarify intent at call sites. Add a label to the first parameter: `func expectFillOfRenderAfterStop(of answer: Answer) throws`. Update call sites to `Self.expectFillOfRenderAfterStop(of: answer)`.
+- [x] `Tests/FoundationModelsRouterTests/WatchStopUsageTests.swift:151` `swift/fluent-usage` — The first parameter of `expectStoppedCallReported` lacks a label. Per the fluent-usage rule, omit the first argument label only for value-preserving conversions; otherwise, label it. This is an assertion helper function, not a conversion, so the first parameter should be labeled to clarify intent at call sites. Add a label to the first parameter: `func expectStoppedCallReported(of answer: Answer, finishReason: FinishReason) async throws`. Update call sites to `Self.expectStoppedCallReported(of: answer, finishReason: ...)`.
+- [x] `Tests/FoundationModelsRouterTests/WatchStopUsageTests.swift:188` `completeness/invariant-propagation` — The test suite establishes parallel coverage for reasoning stops and repetition stops. The `stoppedCallWithNoUsageIsCounted` test (line 188) exercises an important edge case—the no-usage scenario (lineTokenCount = 0, simulating MLX executor behaviour per the suite comment at lines 15–17)—but only for reasoning stops. There is no corresponding test for repetition stops with the same edge case, creating asymmetric coverage of a scenario the suite identifies as significant. Add a test `repetitionStopWithNoUsageIsCounted()` that mirrors lines 188–199 but uses `Self.repeatingScript`, `RepetitionDetection(windowTokens: Self.repetitionWindow)`, checks `repetitionStops.count == 1`, and calls `expectStoppedCallReported` with `finishReason: .repeatedLines`.
