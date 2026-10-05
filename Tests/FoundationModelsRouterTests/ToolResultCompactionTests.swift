@@ -184,6 +184,37 @@ struct ToolResultCompactionTests {
         #expect(checkpoint.index < continuationIndex)
     }
 
+    /// Task ^8szxhab. The production change that makes this test fail: the
+    /// end of the yielded submission reads the usage after the session
+    /// replaced the backend. The replaced backend starts a usage count of its
+    /// own, so the end then carries the new count minus the baseline of the
+    /// old backend, and not the usage of the attempt.
+    @Test("the yielded submission ends with the usage of its attempt, and the stopped call has a generation call")
+    func yieldedSubmissionEndsWithTheUsageOfItsAttempt() async throws {
+        let fixture = try await Self.makeFixture(resultLength: Self.largeResultLength)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let events = try await Self.streamedAnswer(on: fixture.session)
+
+        #expect(events.compactionResults.count == 1)
+        let yieldedEnd = try #require(events.submissionEnds.first)
+        #expect(yieldedEnd.usage?.tokensIn == Self.toolCallUsage.tokensIn)
+        #expect(yieldedEnd.usage?.tokensOut == Self.toolCallUsage.tokensOut)
+
+        let calls = events.generationCalls
+        let stoppedCall = try #require(calls.first)
+        #expect(stoppedCall.tokensIn == Self.toolCallUsage.tokensIn)
+        #expect(stoppedCall.tokensOut == Self.toolCallUsage.tokensOut)
+        #expect(stoppedCall.entryKind == .toolCall)
+        let journalCalls = await fixture.recorder.events.filter { $0.kind == .generationCall }
+        #expect(journalCalls.map(\.tokensIn) == calls.map { Optional($0.tokensIn) })
+
+        let usage = try #require(events.answers.first?.usage)
+        #expect(usage.tokensIn == events.submissionEnds.compactMap(\.usage?.tokensIn).reduce(0, +))
+        #expect(usage.tokensIn == calls.map(\.tokensIn).reduce(0, +))
+        #expect(usage.tokensOut == calls.map(\.tokensOut).reduce(0, +))
+    }
+
     @Test("with no usage reported yet, the counted context still lets the first tool result cross the trigger")
     func unreportedUsageStillCrosses() async throws {
         let fixture = try await Self.makeFixture(resultLength: Self.largeResultLength, usage: Self.unreportedUsage)

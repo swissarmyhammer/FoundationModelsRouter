@@ -88,8 +88,29 @@ comments:
     - notes: The run shows 2 known issues. They come from withKnownIssue in BoundedWaitTests.swift and RealModelHarnessTests.swift. Each test checks that an issue is recorded, so they are expected. The build shows 1 warning: "missing creator for mutated node" for the mlx-swift_Cmlx.bundle dependency. It is a SwiftPM build-system message, not a source warning. This repository has no source warning.
     - next: review.
   timestamp: 2026-10-05T19:01:10.158926+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m46q6tyqf6hjhbj68ptagh8c
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (65bf36d0). 0 findings (0 confirmed, 0 refuted, 7 attempted, 0 failed). All 3 items in "Review Findings (2026-10-05 13:45)" are checked.
+    - next: The task is in done. The orchestrator must tell the FoundationModelsACPAgent session that this task is done, so that ^4wsx6t5 can close.
+  timestamp: 2026-10-05T19:03:50.487335+00:00
+- actor: claude-code
+  id: 01m46q77w43x0297epm3dw4v2k
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 1 file (WatchStopUsageTests.swift)
+    - test: green — swift test --scratch-path, 1482 + 23 + 19 passed
+    - commit: 65bf36d0
+    - review: clean — 0 findings; task moved to done
+    - orchestrator: told the FoundationModelsACPAgent session that this is done (for ^4wsx6t5).
+  timestamp: 2026-10-05T19:04:03.716939+00:00
+- actor: claude-code
+  id: 01m46q7p5gcv98abj21y5ag3k6
+  text: 'Note: after a watch stop, the fill does not include the stopped reasoning, because `TokenCounter` does not count `.reasoning` entries. This is correct: the next pass does not see that reasoning. The FoundationModelsACPAgent session confirms that this is acceptable.'
+  timestamp: 2026-10-05T19:04:18.352438+00:00
+position_column: done
+position_ordinal: ffffffc580
 title: context.fill after a watch stop measures the stopped pass, not the render
 ---
 ## Problem

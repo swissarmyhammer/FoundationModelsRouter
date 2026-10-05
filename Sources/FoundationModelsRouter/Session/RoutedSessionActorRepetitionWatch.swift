@@ -458,12 +458,9 @@ extension RoutedSessionActor {
         let usage = usageOfAttempt.map {
             (input: $0.input + measure.addedUsage.input, output: $0.output + measure.addedUsage.output)
         }
-        backend = backend.replacingTranscript(Transcript(entries: rebuilt))
-        _ = await finishSubmissionAndRequeueIfUnattached(
-            grammar: attempt.grammar, since: attempt.started,
-            usageBefore: Self.usageDelta(before: usage, after: backend.usageTokenCounts()),
-            responseTokenCeiling: attempt.responseTokenCeiling.resolved, pendingEvents: attempt.pendingEvents,
-            onEvent: attempt.onEvent, stopReason: marker.report.finishReason, watchStop: measure)
+        await replaceBackendAndRecord(
+            with: rebuilt, attempt: attempt, usageOfAttempt: usage, stopReason: marker.report.finishReason,
+            measure: measure)
         return (rebuilt, render)
     }
 

@@ -2,34 +2,6 @@ import Foundation
 import FoundationModels
 import Logging
 
-/// What a watch stop measured before the session replaced ``RoutedSessionActor/backend``
-/// (task ^3anq1yz): the usage of the stopped call, and the size of the render
-/// that the next pass receives.
-///
-/// A replaced backend starts a usage count of its own, so the end of the
-/// stopped submission cannot read the stopped call from the backend. It
-/// reads this measure instead.
-struct WatchStopMeasure {
-    /// The usage of the stopped call, or `nil` when the session has no call
-    /// to report: the backend reports no usage, or the call ended at a tool
-    /// call whose open already reported it.
-    let stoppedCall: GenerationCallUsage?
-
-    /// The tokens that the stopped call adds to the usage that the backend
-    /// reported: the counted tokens that stand for the counts the backend
-    /// did not report.
-    let addedUsage: (input: Int, output: Int)
-
-    /// The size of the render that the next pass receives, as the session's
-    /// ``RoutedSessionActor/tokenCounter`` counts it, or `nil` when the
-    /// backend reports no usage or the counter cannot render the transcript.
-    let renderTokens: Int?
-
-    /// The measure of a stop on a backend that reports no usage: no call,
-    /// no added tokens, and no render size.
-    static let unmeasured = WatchStopMeasure(stoppedCall: nil, addedUsage: (input: 0, output: 0), renderTokens: nil)
-}
-
 /// ``RoutedSessionActor``'s usage of a watch stop (task ^3anq1yz).
 ///
 /// The watch cancels the model call in flight. The MLX executor sends its one
@@ -52,11 +24,11 @@ extension RoutedSessionActor {
     ///   - marker: The stop marker of the stopped attempt.
     ///   - rebuilt: The rebuilt transcript of the stopped attempt, whole.
     ///   - render: The render that the next pass receives.
-    /// - Returns: The measure, or ``WatchStopMeasure/unmeasured`` when the
+    /// - Returns: The measure, or ``ReplacedBackendMeasure/unmeasured`` when the
     ///   backend reports no usage.
     func measureWatchStop(
         _ marker: WatchStopMarker, rebuilt: [Transcript.Entry], render: [Transcript.Entry]
-    ) -> WatchStopMeasure {
+    ) -> ReplacedBackendMeasure {
         guard backend.usageTokenCounts() != nil else { return .unmeasured }
         let passStart = ReasoningOnlyOutput.lastPassStart(in: rebuilt)
         let passOutput = Array(rebuilt[passStart...])
@@ -67,7 +39,7 @@ extension RoutedSessionActor {
         let stoppedCall = takeStoppedGenerationCall(
             counted: counted, endedAtToolCall: Self.endsAtToolCall(marker.liveEntries),
             finishReason: marker.report.finishReason, entryKind: GenerationCallEntryKind(leftBy: passOutput))
-        return WatchStopMeasure(
+        return ReplacedBackendMeasure(
             stoppedCall: stoppedCall?.usage, addedUsage: stoppedCall?.addedUsage ?? (input: 0, output: 0),
             renderTokens: countedTokens(of: render, report: marker.report))
     }
