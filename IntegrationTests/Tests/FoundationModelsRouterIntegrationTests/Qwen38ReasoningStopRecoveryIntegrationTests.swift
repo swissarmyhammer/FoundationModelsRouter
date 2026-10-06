@@ -19,6 +19,12 @@ private let qwen38ReasoningStopModel: ModelRef = "mlx-community/Qwen3.8-27B-mxfp
 /// The session gets a small reasoning token limit, so the first pass of
 /// Qwen 3.8 surely reaches it before it acts. The limit is a setting of this
 /// test only: the default of the session does not change.
+///
+/// The scenario tool always returns the same file text, so a greedy model
+/// calls it again with the same arguments. The session of this test has no
+/// limit on identical consecutive tool calls (task ^8eq31j0), so that the stop
+/// on identical calls does not remove the call that the recovery pass makes.
+/// The tests of that stop are in `IdenticalToolCallLimitTests`.
 @Suite(
     "Gated real-model integration: Qwen 3.8 27B acts in the recovery after a reasoning stop",
     .serialized,
@@ -94,7 +100,8 @@ struct Qwen38ReasoningStopRecoveryIntegrationTests {
         let session = profile.standard.makeSession(
             configuration: SessionConfiguration(
                 instructions: Self.instructions, tools: [ReadFileTool()],
-                repetitionDetection: RepetitionDetection(reasoningTokenLimit: Self.reasoningTokenLimit)))
+                repetitionDetection: RepetitionDetection(
+                    reasoningTokenLimit: Self.reasoningTokenLimit, identicalToolCallLimit: nil)))
 
         let stops = Mutex<[ReasoningStop]>([])
         let answer = try await session.respond(

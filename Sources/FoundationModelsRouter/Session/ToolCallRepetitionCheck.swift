@@ -19,23 +19,27 @@ struct ToolCallRepetitionCheck: Sendable {
     /// outside a model call.
     @TaskLocal static var current: ToolCallRepetitionCheck?
 
-    /// The session operation that checks the tool call.
-    private let check: @Sendable () async throws -> Void
+    /// The session operation that checks the tool call. It gets the identity
+    /// of the call, or `nil` when the arguments cannot be compared
+    /// (task ^8eq31j0).
+    private let check: @Sendable (ToolCallIdentity?) async throws -> Void
 
     /// Makes the check of one model call.
     ///
     /// - Parameter check: The session operation that checks the tool call. It
     ///   throws when the tool body must not run.
-    init(check: @escaping @Sendable () async throws -> Void) {
+    init(check: @escaping @Sendable (ToolCallIdentity?) async throws -> Void) {
         self.check = check
     }
 
-    /// Runs the check.
+    /// Runs the check for one tool call.
     ///
+    /// - Parameter call: The identity of the tool call whose body is about to
+    ///   run, or `nil` when its arguments cannot be compared.
     /// - Throws: `CancellationError` when the session stopped the model call
     ///   for repetition.
-    func run() async throws {
-        try await check()
+    func run(for call: ToolCallIdentity?) async throws {
+        try await check(call)
     }
 
     /// Wraps `tool` in a ``RepetitionCheckedTool``, whatever its argument
@@ -72,14 +76,16 @@ struct RepetitionCheckedTool<Wrapped: Tool>: Tool, SubmissionBoundaryTool, ToolD
     /// Whether the wrapped tool puts its schema in the instructions.
     var includesSchemaInInstructions: Bool { wrapped.includesSchemaInInstructions }
 
-    /// Runs the check of the current model call, then the wrapped tool.
+    /// Runs the check of the current model call, then the wrapped tool. The
+    /// check gets the identity of this call: the name of the tool and the
+    /// JSON text of `arguments` (task ^8eq31j0).
     ///
     /// - Parameter arguments: The arguments of the call, passed through.
     /// - Returns: What the wrapped tool returns.
     /// - Throws: `CancellationError` when the check stopped the model call,
     ///   and what the wrapped tool throws.
     func call(arguments: Wrapped.Arguments) async throws -> Wrapped.Output {
-        try await ToolCallRepetitionCheck.current?.run()
+        try await ToolCallRepetitionCheck.current?.run(for: ToolCallIdentity(toolName: name, arguments: arguments))
         return try await wrapped.call(arguments: arguments)
     }
 }

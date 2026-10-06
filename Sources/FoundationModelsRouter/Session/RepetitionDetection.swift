@@ -52,6 +52,11 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
     /// reasoned with no end made no patch. The owner must confirm it.
     public static let defaultReasoningTokenLimit = 8_192
 
+    /// The default of ``identicalToolCallLimit``: 3 calls (task ^8eq31j0).
+    ///
+    /// The owner set this value on 2026-10-06.
+    public static let defaultIdenticalToolCallLimit = 3
+
     /// Whether the session watches the calls of its submissions. When `false`, no
     /// call stops for repetition.
     public var isEnabled: Bool
@@ -123,6 +128,19 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
     /// not enabled sets no limit.
     public var reasoningTokenLimit: Int?
 
+    /// The most identical consecutive tool calls of one answer (task
+    /// ^8eq31j0), or `nil` or `0` for no limit.
+    ///
+    /// Two calls are identical when they have the same tool name and the
+    /// same arguments. The count runs within one answer, so a recovery and
+    /// the final pass keep it, and a different call that comes between
+    /// starts it again. The call that reaches this limit stops before its
+    /// tool body runs (``RoutedSessionActor/checkToolCallForRepetition(_:)``).
+    /// The stop is a repetition stop, with the same recoveries and the same
+    /// final pass, and its recovery prompt names the tool and the count. A
+    /// detection that is not enabled sets no limit.
+    public var identicalToolCallLimit: Int?
+
     /// The keys of the stored form. Each key is the name of its property,
     /// except ``recoveriesPerAnswer``: its key stays `recoveriesPerTurn`, and
     /// the schema version does not change (`generation-queue.md`, section 5.6).
@@ -135,6 +153,7 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
         case comparesLineShapes
         case shortLineRepeatThreshold
         case reasoningTokenLimit
+        case identicalToolCallLimit
     }
 
     /// The text that replaces each run of decimal digits in the shape of a
@@ -157,6 +176,8 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
     ///     occur in a call before it counts.
     ///   - reasoningTokenLimit: The most reasoning tokens of one generation
     ///     pass, or `nil` or `0` for no limit.
+    ///   - identicalToolCallLimit: The most identical consecutive tool calls
+    ///     of one answer, or `nil` or `0` for no limit.
     public init(
         isEnabled: Bool = defaultIsEnabled,
         windowTokens: Int = defaultWindowTokens,
@@ -165,7 +186,8 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
         passTokenLimit: Int = defaultPassTokenLimit,
         comparesLineShapes: Bool = defaultComparesLineShapes,
         shortLineRepeatThreshold: Int = defaultShortLineRepeatThreshold,
-        reasoningTokenLimit: Int? = defaultReasoningTokenLimit
+        reasoningTokenLimit: Int? = defaultReasoningTokenLimit,
+        identicalToolCallLimit: Int? = defaultIdenticalToolCallLimit
     ) {
         self.isEnabled = isEnabled
         self.windowTokens = windowTokens
@@ -175,6 +197,7 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
         self.comparesLineShapes = comparesLineShapes
         self.shortLineRepeatThreshold = shortLineRepeatThreshold
         self.reasoningTokenLimit = reasoningTokenLimit
+        self.identicalToolCallLimit = identicalToolCallLimit
     }
 
     /// Decodes the stored form. A stored form from before task ^dzw15st has
@@ -183,13 +206,16 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
     /// and no ``shortLineRepeatThreshold`` key, and it loads with
     /// ``defaultComparesLineShapes`` and ``defaultShortLineRepeatThreshold``.
     /// A stored form from before task ^hm9trt5 has no ``reasoningTokenLimit``
-    /// key, and it loads with ``defaultReasoningTokenLimit``. A stored `null`
-    /// under that key is a `nil` limit: no limit.
+    /// key, and it loads with ``defaultReasoningTokenLimit``. A stored form
+    /// from before task ^8eq31j0 has no ``identicalToolCallLimit`` key, and it
+    /// loads with ``defaultIdenticalToolCallLimit``. A stored `null` under one
+    /// of these two keys is a `nil` limit: no limit.
     ///
     /// - Parameter decoder: The decoder of the stored form.
     /// - Throws: `DecodingError` when a key other than ``passTokenLimit``,
-    ///   ``comparesLineShapes``, ``shortLineRepeatThreshold`` and
-    ///   ``reasoningTokenLimit`` is missing, or when a value has the wrong type.
+    ///   ``comparesLineShapes``, ``shortLineRepeatThreshold``,
+    ///   ``reasoningTokenLimit`` and ``identicalToolCallLimit`` is missing, or
+    ///   when a value has the wrong type.
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
@@ -203,14 +229,32 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
                 ?? Self.defaultComparesLineShapes,
             shortLineRepeatThreshold: try container.decodeIfPresent(Int.self, forKey: .shortLineRepeatThreshold)
                 ?? Self.defaultShortLineRepeatThreshold,
-            reasoningTokenLimit: container.contains(.reasoningTokenLimit)
-                ? try container.decodeIfPresent(Int.self, forKey: .reasoningTokenLimit)
-                : Self.defaultReasoningTokenLimit)
+            reasoningTokenLimit: try Self.decodeOptionalLimit(
+                .reasoningTokenLimit, from: container, default: Self.defaultReasoningTokenLimit),
+            identicalToolCallLimit: try Self.decodeOptionalLimit(
+                .identicalToolCallLimit, from: container, default: Self.defaultIdenticalToolCallLimit))
+    }
+
+    /// Decodes one limit that can be `nil`: the stored value when the key is
+    /// there, a stored `null` as `nil`, and `defaultLimit` when the key is
+    /// not there.
+    ///
+    /// - Parameters:
+    ///   - key: The key of the limit.
+    ///   - container: The container of the stored form.
+    ///   - defaultLimit: The limit of a stored form with no key.
+    /// - Returns: The limit.
+    /// - Throws: `DecodingError` when the value has the wrong type.
+    private static func decodeOptionalLimit(
+        _ key: CodingKeys, from container: KeyedDecodingContainer<CodingKeys>, default defaultLimit: Int
+    ) throws -> Int? {
+        guard container.contains(key) else { return defaultLimit }
+        return try container.decodeIfPresent(Int.self, forKey: key)
     }
 
     /// Encodes the stored form. Each key is written, and a `nil`
-    /// ``reasoningTokenLimit`` is written as `null`, so it does not load as
-    /// ``defaultReasoningTokenLimit``.
+    /// ``reasoningTokenLimit`` or ``identicalToolCallLimit`` is written as
+    /// `null`, so it does not load as its default.
     ///
     /// - Parameter encoder: The encoder of the stored form.
     /// - Throws: What the encoder throws.
@@ -224,6 +268,7 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
         try container.encode(comparesLineShapes, forKey: .comparesLineShapes)
         try container.encode(shortLineRepeatThreshold, forKey: .shortLineRepeatThreshold)
         try container.encode(reasoningTokenLimit, forKey: .reasoningTokenLimit)
+        try container.encode(identicalToolCallLimit, forKey: .identicalToolCallLimit)
     }
 
     /// The shape of `line`, as the detector compares it: the line without
@@ -253,6 +298,14 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
         return reasoningTokenLimit
     }
 
+    /// The identical tool call limit that a session applies:
+    /// ``identicalToolCallLimit`` when the detection is enabled and the limit
+    /// is more than zero, else `nil`.
+    var identicalToolCallLimitInForce: Int? {
+        guard isEnabled, let identicalToolCallLimit, identicalToolCallLimit > 0 else { return nil }
+        return identicalToolCallLimit
+    }
+
     /// The words of a stop report for what follows the stop.
     ///
     /// - Parameter recovery: The number of the recovery attempt that
@@ -270,9 +323,13 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
         minimumLineLength = \(minimumLineLength), recoveriesPerAnswer = \(recoveriesPerAnswer), \
         passTokenLimit = \(passTokenLimit), comparesLineShapes = \(comparesLineShapes), \
         shortLineRepeatThreshold = \(shortLineRepeatThreshold), \
-        reasoningTokenLimit = \(reasoningTokenLimit.map(String.init) ?? "none")
+        reasoningTokenLimit = \(reasoningTokenLimit.map(String.init) ?? Self.noLimit), \
+        identicalToolCallLimit = \(identicalToolCallLimit.map(String.init) ?? Self.noLimit)
         """
     }
+
+    /// The word for a limit that is `nil` in ``loggedValues``.
+    private static let noLimit = "none"
 }
 
 /// A report that the session stopped a generate call because the call no
@@ -296,8 +353,10 @@ public struct RepetitionStop: Sendable, Equatable, CustomStringConvertible {
     /// The lines that count and that the call did not write before.
     public let newLines: Int
 
-    /// The tokens of the repeated lines since the last new line. At the stop
-    /// it is at least ``RepetitionDetection/windowTokens``.
+    /// The tokens of the repeated lines since the last new line. At a stop of
+    /// the line window it is at least ``RepetitionDetection/windowTokens``. At
+    /// a stop of the identical tool call limit
+    /// (``stoppedByIdenticalToolCalls``) it can be less.
     public let tokensWithoutNewLine: Int
 
     /// The settings in force for the stop.
@@ -307,6 +366,13 @@ public struct RepetitionStop: Sendable, Equatable, CustomStringConvertible {
     /// `nil` when the answer has no recovery left: one final pass with the
     /// reasoning of the model off then follows (task ^0dcsd3t).
     public let recovery: Int?
+
+    /// The tool call that the answer made more than one time in a row with
+    /// the same arguments, up to the stop, or `nil` when the last tool call
+    /// of the answer was not a repeat (task ^8eq31j0). When its count reached
+    /// ``RepetitionDetection/identicalToolCallLimit``, that count stopped the
+    /// call (``stoppedByIdenticalToolCalls``). The recovery prompt names it.
+    public let repeatedToolCall: RepeatedToolCall?
 
     /// Creates a report.
     ///
@@ -318,13 +384,16 @@ public struct RepetitionStop: Sendable, Equatable, CustomStringConvertible {
     ///     last new line.
     ///   - detection: The settings in force.
     ///   - recovery: The number of the recovery attempt that follows, or `nil`.
+    ///   - repeatedToolCall: The tool call that the answer repeated up to the
+    ///     stop, or `nil`.
     public init(
         generatedTokens: Int,
         countedLines: Int,
         newLines: Int,
         tokensWithoutNewLine: Int,
         detection: RepetitionDetection,
-        recovery: Int?
+        recovery: Int?,
+        repeatedToolCall: RepeatedToolCall? = nil
     ) {
         self.generatedTokens = generatedTokens
         self.countedLines = countedLines
@@ -332,6 +401,15 @@ public struct RepetitionStop: Sendable, Equatable, CustomStringConvertible {
         self.tokensWithoutNewLine = tokensWithoutNewLine
         self.detection = detection
         self.recovery = recovery
+        self.repeatedToolCall = repeatedToolCall
+    }
+
+    /// Whether the count of identical consecutive tool calls stopped the
+    /// call: ``repeatedToolCall`` reached
+    /// ``RepetitionDetection/identicalToolCallLimit`` (task ^8eq31j0).
+    public var stoppedByIdenticalToolCalls: Bool {
+        guard let repeatedToolCall, let limit = detection.identicalToolCallLimitInForce else { return false }
+        return repeatedToolCall.count >= limit
     }
 
     /// The share of the counted lines that were new, from 0 to 1, or 0 when
@@ -345,14 +423,25 @@ public struct RepetitionStop: Sendable, Equatable, CustomStringConvertible {
     private static let shareFormat = "%.3f"
 
     /// A one-line rendering of this report, also used as the session's log
-    /// line. It names each value of ``detection``.
+    /// line. It names the repeated tool call, when there is one, and each
+    /// value of ``detection``.
     public var description: String {
         let share = String(format: Self.shareFormat, newLineShare)
         let next = detection.followingStepDescription(recovery: recovery)
         return """
-            the call stopped because it repeats itself: it generated \(generatedTokens) tokens, \
-            \(newLines) of \(countedLines) counted lines were new (share \(share)), and no new line \
-            came in the last \(tokensWithoutNewLine) tokens; \(next) (\(detection.loggedValues))
+            the call stopped because it repeats itself\(repeatedToolCallClause): it generated \
+            \(generatedTokens) tokens, \(newLines) of \(countedLines) counted lines were new (share \(share)), \
+            and no new line came in the last \(tokensWithoutNewLine) tokens; \(next) (\(detection.loggedValues))
+            """
+    }
+
+    /// The words of ``description`` for ``repeatedToolCall``: empty when
+    /// there is none.
+    private var repeatedToolCallClause: String {
+        guard let repeatedToolCall else { return "" }
+        return """
+             (the model called `\(repeatedToolCall.toolName)` with the same arguments \
+            \(repeatedToolCall.count) times in a row)
             """
     }
 }

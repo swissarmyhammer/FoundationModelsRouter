@@ -209,8 +209,9 @@ struct RepeatingToolCallModel: LanguageModel {
     }
 }
 
-/// A routed session over a ``LiveBackendContainer`` that runs a
-/// ``RepeatingToolCallModel`` with one ``CountingRunCodeTool`` mounted.
+/// A routed session over a ``LiveBackendContainer`` that runs a scripted
+/// tool-call model (``RepeatingToolCallModel`` or ``IdenticalToolCallModel``)
+/// with one ``CountingRunCodeTool`` mounted.
 struct RepeatingToolCallSessionFixture {
     /// The vended session a test drives its answers on.
     let session: RoutedSession
@@ -234,10 +235,28 @@ struct RepeatingToolCallSessionFixture {
     /// - Returns: The fixture.
     /// - Throws: Whatever profile resolution throws.
     static func make(snippetLines: [String], tempDirPrefix: String) async throws -> RepeatingToolCallSessionFixture {
-        let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let log = RenderProbeLog()
+        return try await make(
+            model: RepeatingToolCallModel(log: log, snippetLines: snippetLines), log: log,
+            detection: RepetitionDetection(), tempDirPrefix: tempDirPrefix)
+    }
+
+    /// Builds a router and vends a session over `model`, with one
+    /// ``CountingRunCodeTool`` mounted and `detection` in force.
+    ///
+    /// - Parameters:
+    ///   - model: The scripted model of the session.
+    ///   - log: The log that `model` writes.
+    ///   - detection: The repetition detection of the session.
+    ///   - tempDirPrefix: The calling suite's name, so a leaked temp directory
+    ///     is attributable.
+    /// - Returns: The fixture.
+    /// - Throws: Whatever profile resolution throws.
+    static func make(
+        model: some LanguageModel, log: RenderProbeLog, detection: RepetitionDetection, tempDirPrefix: String
+    ) async throws -> RepeatingToolCallSessionFixture {
+        let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let runs = RunCount()
-        let model = RepeatingToolCallModel(log: log, snippetLines: snippetLines)
         let router = RouterTestFixtures.makeRouter(
             cacheDir: directory,
             loader: StubModelLoader(
@@ -245,7 +264,7 @@ struct RepeatingToolCallSessionFixture {
         let profile = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let session = profile.standard.makeSession(
             configuration: SessionConfiguration(
-                tools: [CountingRunCodeTool(runs: runs)], repetitionDetection: RepetitionDetection()))
+                tools: [CountingRunCodeTool(runs: runs)], repetitionDetection: detection))
         return RepeatingToolCallSessionFixture(session: session, log: log, runs: runs, directory: directory)
     }
 }

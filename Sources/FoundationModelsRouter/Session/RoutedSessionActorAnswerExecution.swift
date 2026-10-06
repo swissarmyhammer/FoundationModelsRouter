@@ -691,11 +691,11 @@ extension RoutedSessionActor {
         // The tool-result append boundary of this model call: each tool result
         // the model reads next goes through it (see ``noteToolResult(_:)``).
         // The repetition check runs before each tool body of the call (see
-        // ``checkToolCallForRepetition()``).
+        // ``checkToolCallForRepetition(_:)``).
         let submission = Self.submission(
             of: body, composedPrompt: composedPrompt, mark: modelCallMark,
             boundary: ToolResultAppendBoundary { await self.noteToolResult($0) },
-            repetitionCheck: ToolCallRepetitionCheck { try await self.checkToolCallForRepetition() },
+            repetitionCheck: ToolCallRepetitionCheck { try await self.checkToolCallForRepetition($0) },
             context: ambientToolContext,
             serviceContext: submissionServiceContext)
         let observer = generationPassObserver

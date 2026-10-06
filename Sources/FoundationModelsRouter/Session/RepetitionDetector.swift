@@ -230,6 +230,19 @@ struct RepetitionDetector {
         return ReasoningLimitFinding(reasoningTokens: tokens, limit: limit)
     }
 
+    /// The counts of the lines read so far, as a finding that cuts nothing
+    /// (task ^8eq31j0): its kept lengths and kept ranges are empty, so the
+    /// render keeps each watched entry whole. A stop for a loop of identical
+    /// tool calls uses it, because the window did not fill and no line is the
+    /// repeated part.
+    ///
+    /// - Returns: The finding.
+    func findingThatKeepsAll() -> RepetitionFinding {
+        RepetitionFinding(
+            generatedTokens: generatedTokens, countedLines: countedLines, newLines: newLines,
+            tokensWithoutNewLine: tokensWithoutNewLine, keptUTF8Lengths: [:], keptUTF8Ranges: [:])
+    }
+
     /// Reads the complete lines of `watched` from its first unread line.
     ///
     /// A text shorter than the part already read is a new text under the

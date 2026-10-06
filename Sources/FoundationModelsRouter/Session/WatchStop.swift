@@ -45,6 +45,12 @@ public struct WatchStop: Sendable, Equatable, Codable, CustomStringConvertible {
     /// (``RepetitionDetection/recoveriesPerAnswer``).
     public let recoveriesAllowed: Int
 
+    /// The tool call that the answer repeated up to a repetition stop
+    /// (``RepetitionStop/repeatedToolCall``, task ^8eq31j0), or `nil`. A
+    /// journal row from before task ^8eq31j0 has no such key, and it decodes
+    /// as `nil`. A `nil` value writes no key.
+    public let repeatedToolCall: RepeatedToolCall?
+
     /// Creates a report.
     ///
     /// - Parameters:
@@ -54,9 +60,11 @@ public struct WatchStop: Sendable, Equatable, Codable, CustomStringConvertible {
     ///   - passFinishReason: Why the stopped pass ended.
     ///   - recovery: The number of the recovery that follows, or `nil`.
     ///   - recoveriesAllowed: How many recoveries one answer runs at most.
+    ///   - repeatedToolCall: The tool call that the answer repeated up to the
+    ///     stop, or `nil`.
     public init(
         kind: Kind, tokens: Int, limit: Int?, passFinishReason: FinishReason, recovery: Int?,
-        recoveriesAllowed: Int
+        recoveriesAllowed: Int, repeatedToolCall: RepeatedToolCall? = nil
     ) {
         self.kind = kind
         self.tokens = tokens
@@ -64,6 +72,7 @@ public struct WatchStop: Sendable, Equatable, Codable, CustomStringConvertible {
         self.passFinishReason = passFinishReason
         self.recovery = recovery
         self.recoveriesAllowed = recoveriesAllowed
+        self.repeatedToolCall = repeatedToolCall
     }
 
     /// The short report of a repetition stop.
@@ -73,7 +82,7 @@ public struct WatchStop: Sendable, Equatable, Codable, CustomStringConvertible {
         self.init(
             kind: .repetition, tokens: stop.tokensWithoutNewLine, limit: stop.detection.windowTokens,
             passFinishReason: .repeatedLines, recovery: stop.recovery,
-            recoveriesAllowed: stop.detection.recoveriesPerAnswer)
+            recoveriesAllowed: stop.detection.recoveriesPerAnswer, repeatedToolCall: stop.repeatedToolCall)
     }
 
     /// The short report of a reasoning stop.
@@ -97,12 +106,24 @@ public struct WatchStop: Sendable, Equatable, Codable, CustomStringConvertible {
 
     /// One line of `key=value` pairs, for example
     /// `reasoning.limit=8192 reasoning.tokens=8070 recovery=none recoveries=2/2 finish=reasoningTokenLimit`.
+    /// A stop with a ``repeatedToolCall`` also names the tool and the count,
+    /// for example `repetition.toolCall=files repetition.toolCallCount=3`.
     public var description: String {
         let limitText = limit.map(String.init) ?? Self.noValue
         let recoveryText = recovery.map(String.init) ?? Self.noValue
         return """
-            \(kind.rawValue).limit=\(limitText) \(kind.rawValue).tokens=\(tokens) recovery=\(recoveryText) \
-            recoveries=\(recoveriesUsed)/\(recoveriesAllowed) finish=\(passFinishReason)
+            \(kind.rawValue).limit=\(limitText) \(kind.rawValue).tokens=\(tokens)\(repeatedToolCallPairs) \
+            recovery=\(recoveryText) recoveries=\(recoveriesUsed)/\(recoveriesAllowed) finish=\(passFinishReason)
+            """
+    }
+
+    /// The `key=value` pairs of ``repeatedToolCall`` in ``description``, with
+    /// a space before them, or empty when there is none.
+    private var repeatedToolCallPairs: String {
+        guard let repeatedToolCall else { return "" }
+        return """
+             \(kind.rawValue).toolCall=\(repeatedToolCall.toolName) \
+            \(kind.rawValue).toolCallCount=\(repeatedToolCall.count)
             """
     }
 

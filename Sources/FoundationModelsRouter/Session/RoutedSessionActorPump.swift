@@ -463,7 +463,9 @@ extension RoutedSessionActor: SessionMailObserver {
     ///   after at most ``RepetitionDetection/recoveriesPerAnswer`` repetition
     ///   stops and reasoning stops together;
     /// - ``RepetitionWatchState/finalPassRan``: an answer runs at most one
-    ///   final pass after its last recovery (task ^0dcsd3t).
+    ///   final pass after its last recovery (task ^0dcsd3t);
+    /// - ``RepetitionWatchState/toolCallRun``: the count of identical
+    ///   consecutive tool calls runs within one answer (task ^8eq31j0).
     ///
     /// The third limit, the one overflow retry, is no stored state: the first
     /// submission of each answer gets the permission
@@ -478,6 +480,7 @@ extension RoutedSessionActor: SessionMailObserver {
         compactionYieldsStopped = false
         repetitionWatch.recoveriesThisAnswer = 0
         repetitionWatch.finalPassRan = false
+        repetitionWatch.toolCallRun = IdenticalToolCallRun()
     }
 
     // MARK: - Batches of a mailbox

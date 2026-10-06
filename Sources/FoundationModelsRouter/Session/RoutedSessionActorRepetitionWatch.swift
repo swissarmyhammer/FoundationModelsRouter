@@ -28,6 +28,11 @@ struct RepetitionWatchState {
     /// (task ^0dcsd3t). A stop in or after the final pass ends the answer.
     /// The pump clears it for each new answer.
     var finalPassRan = false
+
+    /// The run of identical consecutive tool calls of the running answer
+    /// (task ^8eq31j0). The pump starts a new run for each new answer, and a
+    /// recovery or the final pass of the same answer keeps it.
+    var toolCallRun = IdenticalToolCallRun()
 }
 
 /// The report of one stop of the watch: a call that repeats itself
@@ -72,14 +77,24 @@ enum WatchStopReport: Sendable {
         summary.passFinishReason
     }
 
-    /// The prompt of the recovery that follows the stop.
+    /// The prompt of the recovery that follows the stop. A repetition stop
+    /// on a repeated tool call names the tool and the count (task ^8eq31j0).
     var continuationPrompt: String {
         switch self {
-        case .repetition:
-            return RoutedSessionActor.repetitionStopContinuationPrompt
+        case .repetition(let stop):
+            return stop.repeatedToolCall.map(RoutedSessionActor.repeatedToolCallContinuationPrompt)
+                ?? RoutedSessionActor.repetitionStopContinuationPrompt
         case .reasoning:
             return RoutedSessionActor.reasoningStopContinuationPrompt
         }
+    }
+
+    /// The prompt of the final pass that follows the stop when no recovery
+    /// is left: ``RoutedSessionActor/finalPassPrompt``, after the notice of
+    /// the repeated tool call when the stop has one (task ^8eq31j0).
+    var finalPassPrompt: String {
+        guard let repeatedToolCall = summary.repeatedToolCall else { return RoutedSessionActor.finalPassPrompt }
+        return RoutedSessionActor.repeatedToolCallNotice(repeatedToolCall) + " " + RoutedSessionActor.finalPassPrompt
     }
 
     /// The log category, the message and the metadata key of the log line
@@ -133,7 +148,7 @@ struct WatchStopMarker: Sendable {
 /// ``RoutedSessionActor``'s repetition watch (task ^1hcwaqy): it reads the
 /// reasoning, the text and the tool-call arguments of each model call of a
 /// submission while the call is in flight, and again before each tool body
-/// runs (``checkToolCallForRepetition()``, task ^dzw15st). It stops a call
+/// runs (``checkToolCallForRepetition(_:)``, task ^dzw15st). It stops a call
 /// that no longer writes new lines, and a pass whose reasoning reaches
 /// ``RepetitionDetection/reasoningTokenLimit`` (task ^hm9trt5). It recovers
 /// as a ceiling stop does (``continueAfterCeilingStop(attempt:body:)``): the
@@ -147,20 +162,56 @@ struct WatchStopMarker: Sendable {
 /// recovery, one final pass with the reasoning off asks for the final answer,
 /// and the answer never ends with an empty reply (task ^0dcsd3t).
 extension RoutedSessionActor {
+    /// The end of each prompt of a recovery after a repetition stop: it tells
+    /// the model to act.
+    static let repetitionStopActRequest = """
+        Stop reasoning. \
+        Your next output must be one tool call that makes the change you decided on, or your final answer.
+        """
+
     /// The prompt of the attempt that goes on after a repetition stop.
     ///
     /// The render already holds the original prompt and the new part of the
     /// stopped output, so the attempt does not send the original prompt again.
-    static let repetitionStopContinuationPrompt = """
-        Your last output repeated lines that you already wrote, so the session stopped it. Stop reasoning. \
-        Your next output must be one tool call that makes the change you decided on, or your final answer.
+    static let repetitionStopContinuationPrompt =
+        "Your last output repeated lines that you already wrote, so the session stopped it. "
+        + repetitionStopActRequest
+
+    /// The sentences that tell the model which tool call it repeated
+    /// (task ^8eq31j0). A general text that tells the model not to repeat
+    /// does not stop a loop of the same tool call, so the recovery prompt and
+    /// the final pass prompt name the tool and the count.
+    ///
+    /// - Parameter call: The repeated tool call.
+    /// - Returns: The sentences.
+    static func repeatedToolCallNotice(_ call: RepeatedToolCall) -> String {
         """
+        You called `\(call.toolName)` with the same arguments \(call.count) times in a row. \
+        The output does not change. Do not call it again with these arguments.
+        """
+    }
+
+    /// The prompt of the attempt that goes on after a repetition stop on a
+    /// repeated tool call (task ^8eq31j0): the notice of the call, then the
+    /// request to act.
+    ///
+    /// - Parameter call: The repeated tool call.
+    /// - Returns: The prompt.
+    static func repeatedToolCallContinuationPrompt(_ call: RepeatedToolCall) -> String {
+        repeatedToolCallNotice(call) + " The session stopped your last output. " + repetitionStopActRequest
+    }
 
     /// The prompt of the final pass of an answer: the pass after a stop that
     /// found no recovery left (task ^0dcsd3t).
+    ///
+    /// The tools of the session stay available in the final pass, and the
+    /// work of an agent is in a tool call, not in its final text. So the
+    /// prompt lets the model make one tool call that makes the change, and
+    /// the tool loop then goes on to its end (task ^8eq31j0).
     static let finalPassPrompt = """
         No recovery is left, so this is your last output. Stop reasoning. \
-        Give your final answer now, with what you know now.
+        If a change is not made yet, make it now with one tool call. \
+        Then give your final answer with what you know now.
         """
 
     /// The text of the response that closes a stopped reasoning in the render
@@ -255,7 +306,9 @@ extension RoutedSessionActor {
     ///
     /// Nothing happens when the watch may not stop the call
     /// (``watchMayStopModelCall(watchId:)``). Otherwise the session logs the
-    /// stop, sets the stop marker, and cancels ``inFlightModelCall``.
+    /// stop, sets the stop marker, and cancels ``inFlightModelCall``. The
+    /// report names the tool call that the answer repeated up to the stop,
+    /// when there is one (``RepetitionWatchState/toolCallRun``, task ^8eq31j0).
     ///
     /// - Parameters:
     ///   - finding: What the detector found.
@@ -266,7 +319,8 @@ extension RoutedSessionActor {
         let report = RepetitionStop(
             generatedTokens: finding.generatedTokens, countedLines: finding.countedLines,
             newLines: finding.newLines, tokensWithoutNewLine: finding.tokensWithoutNewLine,
-            detection: repetitionDetection, recovery: nextRecovery)
+            detection: repetitionDetection, recovery: nextRecovery,
+            repeatedToolCall: repetitionWatch.toolCallRun.repeatedToolCall)
         stopModelCall(
             WatchStopMarker(
                 report: .repetition(report), keptUTF8Lengths: finding.keptUTF8Lengths,
@@ -299,16 +353,23 @@ extension RoutedSessionActor {
 
     /// Stops the model call in flight before a tool body of it runs, when the
     /// text of the attempt with the arguments of its tool calls fills one
-    /// window of repeated lines (task ^dzw15st).
+    /// window of repeated lines (task ^dzw15st), or when this call is the one
+    /// that reaches ``RepetitionDetection/identicalToolCallLimit`` (task
+    /// ^8eq31j0).
     ///
     /// The backend shows a tool call only after the model ended it, and the
     /// SDK then runs the tool. So the watch of the pass cannot stop a tool
     /// call whose arguments repeat. This check runs on the task of each tool
     /// body of this session's own open model call
     /// (``ToolCallRepetitionCheck``), where the SDK waits for the tool and
-    /// writes no transcript, so the read of the transcript is safe. It reads
-    /// the whole attempt with a new ``RepetitionDetector``, and a finding
-    /// stops the call as the watch does (``noteRepetition(_:liveEntries:watchId:)``).
+    /// writes no transcript, so the read of the transcript is safe. It adds
+    /// `call` to the run of identical consecutive tool calls of the answer,
+    /// reads the whole attempt with a new ``RepetitionDetector``, and a
+    /// finding stops the call as the watch does
+    /// (``noteRepetition(_:liveEntries:watchId:)``). A run that reaches the
+    /// identical tool call limit stops the call with the counts of the
+    /// detector so far, and the render keeps the whole text of the attempt:
+    /// the rebuild removes the tool call that got no output.
     ///
     /// The check does not apply the reasoning token limit: a pass that wrote
     /// a tool call acts, and the limit stops only a pass that does not act.
@@ -317,20 +378,38 @@ extension RoutedSessionActor {
     /// active, or when the tool body is not in an open model call of this
     /// session.
     ///
+    /// - Parameter call: The identity of the tool call whose body is about to
+    ///   run, or `nil` when its arguments cannot be compared.
     /// - Throws: `CancellationError` when the watch stopped the call, before
     ///   or in this check. The tool body must then not run.
-    func checkToolCallForRepetition() throws {
+    func checkToolCallForRepetition(_ call: ToolCallIdentity?) throws {
         guard repetitionDetection.isEnabled, let watchId = repetitionWatch.activeWatchId,
             ModelCallMark.current?.isOpenModelCall(of: id) == true
         else { return }
         if repetitionWatch.stop == nil {
-            let entries = backend.transcriptEntries()
-            var detector = RepetitionDetector(detection: repetitionDetection, tokenCounter: tokenCounter)
-            let texts = WatchedText.attemptTexts(in: entries, excluding: toolResultWatch.entryIdsBeforeAttempt)
-            guard let finding = detector.observe(texts) else { return }
-            noteRepetition(finding, liveEntries: entries, watchId: watchId)
+            repetitionWatch.toolCallRun.add(call)
+            noteToolCallRepetition(watchId: watchId)
         }
         guard repetitionWatch.stop == nil else { throw CancellationError() }
+    }
+
+    /// Reads the whole attempt with a new ``RepetitionDetector`` and stops
+    /// the model call when one window of repeated lines filled, or when the
+    /// run of identical consecutive tool calls reached
+    /// ``RepetitionDetection/identicalToolCallLimit`` (task ^8eq31j0).
+    ///
+    /// - Parameter watchId: The active watch.
+    private func noteToolCallRepetition(watchId: UInt64) {
+        let entries = backend.transcriptEntries()
+        var detector = RepetitionDetector(detection: repetitionDetection, tokenCounter: tokenCounter)
+        let texts = WatchedText.attemptTexts(in: entries, excluding: toolResultWatch.entryIdsBeforeAttempt)
+        if let finding = detector.observe(texts) {
+            noteRepetition(finding, liveEntries: entries, watchId: watchId)
+        } else if let limit = repetitionDetection.identicalToolCallLimitInForce,
+            repetitionWatch.toolCallRun.count >= limit
+        {
+            noteRepetition(detector.findingThatKeepsAll(), liveEntries: entries, watchId: watchId)
+        }
     }
 
     /// Takes the stop marker of the attempt that just failed.
@@ -507,12 +586,14 @@ extension RoutedSessionActor {
     /// Runs the final pass of the answer after a stop that found no recovery
     /// left (task ^0dcsd3t), and never gives an empty reply.
     ///
-    /// The final pass sends ``finalPassPrompt`` with the reasoning of the
-    /// model off, under the token ceiling of the stopped attempt
-    /// (``StoppedAttempt/responseTokenCeiling``): the pass gets no limit of
-    /// its own. It runs one time in an answer. When it gives no text, or when
-    /// a stop comes in or after it, the reply is the text that states the
-    /// stop (``WatchStop/stoppedAnswerText``).
+    /// The final pass sends ``WatchStopReport/finalPassPrompt`` with the
+    /// reasoning of the model off, under the token ceiling of the stopped
+    /// attempt (``StoppedAttempt/responseTokenCeiling``): the pass gets no
+    /// limit of its own. The tools of the session stay available, so the pass
+    /// can make a tool call, and the tool loop goes on to its end
+    /// (task ^8eq31j0). It runs one time in an answer. When it gives no text,
+    /// or when a stop comes in or after it, the reply is the text that states
+    /// the stop (``WatchStop/stoppedAnswerText``).
     ///
     /// - Parameters:
     ///   - report: The report of the stop that found no recovery left.
@@ -529,7 +610,7 @@ extension RoutedSessionActor {
         guard !repetitionWatch.finalPassRan else { return stopText }
         repetitionWatch.finalPassRan = true
         let reply = try await runContinuation(
-            after: attempt, prompt: Self.finalPassPrompt, reasoningOff: true, body: body)
+            after: attempt, prompt: report.finalPassPrompt, reasoningOff: true, body: body)
         return reply.allSatisfy(\.isWhitespace) ? stopText : reply
     }
 }
