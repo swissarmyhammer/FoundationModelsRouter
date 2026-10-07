@@ -55,20 +55,6 @@ struct SubmissionAnswerEventTests {
         return (profile.standard.makeSession(), profile)
     }
 
-    /// Waits, bounded, until `backend` received `count` prompts.
-    ///
-    /// - Parameters:
-    ///   - count: How many prompts to wait for.
-    ///   - backend: The backend to watch.
-    /// - Throws: ``SignalNeverArrived`` when the prompts did not arrive
-    ///   inside the bound.
-    private static func awaitPrompts(_ count: Int, on backend: Backend) async throws {
-        let arrived = await BoundedWait.conditionReached("\(count) prompts reaching the backend") {
-            backend.prompts.count >= count
-        }
-        try #require(arrived)
-    }
-
     /// Waits, bounded, until `log` holds `count` events that end an answer:
     /// ``SessionEvent/answered(_:)`` or ``SessionEvent/answerFailed(_:)``.
     ///
@@ -93,7 +79,7 @@ struct SubmissionAnswerEventTests {
         let (log, drain) = await SessionEventLog.watch(session)
 
         let first = await session.send(Self.firstPrompt)
-        try await Self.awaitPrompts(1, on: backend)
+        try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
         let second = await session.send(Self.secondPrompt)
         let third = await session.send(Self.thirdPrompt)
         await latch.open()
@@ -121,7 +107,7 @@ struct SubmissionAnswerEventTests {
         let (log, drain) = await SessionEventLog.watch(session)
 
         let first = await session.send(Self.firstPrompt)
-        try await Self.awaitPrompts(1, on: backend)
+        try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
         let second = await session.send(Self.secondPrompt)
         // The first submission ends with a rejected tool call. The retry is a
         // continuation of the same chain, and the waiting message joins it.
@@ -150,7 +136,7 @@ struct SubmissionAnswerEventTests {
         let (log, drain) = await SessionEventLog.watch(session)
 
         let id = await session.send(Self.firstPrompt)
-        try await Self.awaitPrompts(1, on: backend)
+        try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
         #expect(await session.cancel() == .requested)
         // The latch never opens, so only the cancel can end the held call.
         let ended = await Self.waitForAnswersToEnd(1, in: log)
@@ -197,7 +183,7 @@ struct SubmissionAnswerEventTests {
         let run = AnswerDrivenRun(waitingFor: "the respond of the first prompt") {
             try await session.respond(to: Self.firstPrompt, observing: nil)
         }
-        try await Self.awaitPrompts(1, on: backend)
+        try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
         // The stream of the message ends with no error when the task that
         // reads it is cancelled. The respond must throw, not stop the process.
         run.cancel()

@@ -226,16 +226,6 @@ struct MailOnlyAnswerLimitTests {
         }
     }
 
-    /// Waits, bounded, until the pump of the session ends.
-    ///
-    /// - Parameter fixture: The fixture whose pump is watched.
-    /// - Returns: `true` when the pump ended inside the bound.
-    private static func pumpStops(on fixture: Fixture) async -> Bool {
-        await BoundedWait.conditionReached("the pump of the session ending") {
-            await fixture.session.isPumpRunning == false
-        }
-    }
-
     /// The mail that waits in the outbox of the session.
     ///
     /// - Parameter fixture: The fixture whose outbox is read.
@@ -264,7 +254,7 @@ struct MailOnlyAnswerLimitTests {
 
         // The caller answer, then `limit` answers that mail alone started.
         #expect(await Self.pausesArrive(1, on: fixture))
-        #expect(await Self.pumpStops(on: fixture))
+        #expect(await BoundedWait.pumpStops(on: fixture.session))
         #expect(fixture.backend.prompts.count == Self.promptsOfOneChain)
         // The mail of the last run waits, held: its progress report and its
         // terminal.
@@ -283,7 +273,7 @@ struct MailOnlyAnswerLimitTests {
         defer { Self.tearDown(fixture) }
         _ = try await fixture.session.respond(to: Self.firstPrompt)
         #expect(await Self.pausesArrive(1, on: fixture))
-        #expect(await Self.pumpStops(on: fixture))
+        #expect(await BoundedWait.pumpStops(on: fixture.session))
         let held = try #require(await Self.waitingMail(of: fixture).first { $0.event.kind == .completed })
 
         _ = try await fixture.session.respond(to: Self.nextPrompt)
@@ -300,14 +290,14 @@ struct MailOnlyAnswerLimitTests {
         defer { Self.tearDown(fixture) }
         _ = try await fixture.session.respond(to: Self.firstPrompt)
         #expect(await Self.pausesArrive(1, on: fixture))
-        #expect(await Self.pumpStops(on: fixture))
+        #expect(await BoundedWait.pumpStops(on: fixture.session))
 
         _ = try await fixture.session.respond(to: Self.nextPrompt)
 
         // The second chain pauses too: one pause for each chain.
         let pausesOfTwoChains = 2
         #expect(await Self.pausesArrive(pausesOfTwoChains, on: fixture))
-        #expect(await Self.pumpStops(on: fixture))
+        #expect(await BoundedWait.pumpStops(on: fixture.session))
         #expect(fixture.backend.prompts.count == Self.promptsOfOneChain + Self.promptsOfOneChain)
     }
 
@@ -324,7 +314,7 @@ struct MailOnlyAnswerLimitTests {
             await BoundedWait.conditionReached("every settled run delivered in an answer of its own") {
                 fixture.backend.prompts.count == Self.promptsOfOneChain
             })
-        #expect(await Self.pumpStops(on: fixture))
+        #expect(await BoundedWait.pumpStops(on: fixture.session))
         #expect(await Self.waitingMail(of: fixture).isEmpty)
         #expect(await fixture.events.mailDeliveryPauses.isEmpty)
         #expect(fixture.backend.prompts.dropFirst().allSatisfy { $0.hasSuffix(RoutedSessionActor.settledRunDeliveryPrompt) })
@@ -338,7 +328,7 @@ struct MailOnlyAnswerLimitTests {
         _ = try await fixture.session.respond(to: Self.firstPrompt)
 
         #expect(await Self.pausesArrive(1, on: fixture))
-        #expect(await Self.pumpStops(on: fixture))
+        #expect(await BoundedWait.pumpStops(on: fixture.session))
         #expect(fixture.backend.prompts == [Self.firstPrompt])
         let held = await Self.waitingMail(of: fixture)
         #expect(!held.isEmpty)

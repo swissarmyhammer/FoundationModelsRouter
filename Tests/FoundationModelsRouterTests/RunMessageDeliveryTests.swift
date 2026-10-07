@@ -123,28 +123,6 @@ struct RunMessageDeliveryTests {
         OperationEvent(tool: FakeRun.tool, op: FakeRun.op, correlationID: token, kind: .message, detail: messageText)
     }
 
-    /// Waits, bounded, until `backend` received `count` prompts.
-    ///
-    /// - Parameters:
-    ///   - count: How many prompts to wait for.
-    ///   - backend: The backend to watch.
-    /// - Throws: ``SignalNeverArrived`` when the prompts did not arrive
-    ///   inside the bound.
-    private static func awaitPrompts(_ count: Int, on backend: Backend) async throws {
-        guard await BoundedWait.conditionReached("\(count) prompts reaching the backend", when: { backend.prompts.count >= count })
-        else { throw SignalNeverArrived() }
-    }
-
-    /// Waits, bounded, until the pump of `session` ends.
-    ///
-    /// - Parameter session: The session whose pump is watched.
-    /// - Returns: `true` when the pump ended inside the bound.
-    private static func pumpStops(on session: any RoutedSession) async -> Bool {
-        await BoundedWait.conditionReached("the pump of the session ending") {
-            await session.isPumpRunning == false
-        }
-    }
-
     /// Whether the run with `token` is open on the mailbox of `session`.
     ///
     /// - Parameters:
@@ -167,11 +145,11 @@ struct RunMessageDeliveryTests {
 
         await fixture.session.outbox.post(event: Self.message(of: token))
 
-        try await Self.awaitPrompts(Self.messageAnswerSubmission, on: fixture.backend)
+        try await BoundedWait.awaitPrompts(Self.messageAnswerSubmission, in: { fixture.backend.prompts })
         let prompt = try #require(fixture.backend.prompts.last)
         #expect(prompt.contains(OperationEventSegment.renderedLine(for: Self.message(of: token))))
         #expect(prompt.hasSuffix(RoutedSessionActor.runMessageDeliveryPrompt))
-        #expect(await Self.pumpStops(on: fixture.session))
+        #expect(await BoundedWait.pumpStops(on: fixture.session))
         #expect(await Self.isOpen(token, on: fixture.session))
         await latch.open()
     }
@@ -184,14 +162,14 @@ struct RunMessageDeliveryTests {
         let token = await Self.openRun(on: fixture.session, until: latch)
         _ = try await fixture.session.respond(to: Self.firstPrompt)
         await fixture.session.outbox.post(event: Self.message(of: token))
-        try await Self.awaitPrompts(Self.messageAnswerSubmission, on: fixture.backend)
-        #expect(await Self.pumpStops(on: fixture.session))
+        try await BoundedWait.awaitPrompts(Self.messageAnswerSubmission, in: { fixture.backend.prompts })
+        #expect(await BoundedWait.pumpStops(on: fixture.session))
 
         await latch.open()
         let terminal = try await MountFixtures.settledTerminal(of: token, in: fixture.session.mailbox)
         await fixture.session.outbox.post(event: terminal)
 
-        try await Self.awaitPrompts(Self.terminalAnswerSubmission, on: fixture.backend)
+        try await BoundedWait.awaitPrompts(Self.terminalAnswerSubmission, in: { fixture.backend.prompts })
         let prompt = try #require(fixture.backend.prompts.last)
         #expect(prompt.contains(OperationEventSegment.renderedLine(for: terminal)))
         #expect(prompt.hasSuffix(RoutedSessionActor.settledRunDeliveryPrompt))
@@ -206,7 +184,7 @@ struct RunMessageDeliveryTests {
         let latch = RunLatch()
         let token = await Self.openRun(on: fixture.session, until: latch)
         let firstAnswer = Task { try await fixture.session.respond(to: Self.firstPrompt) }
-        try await Self.awaitPrompts(1, on: fixture.backend)
+        try await BoundedWait.awaitPrompts(1, in: { fixture.backend.prompts })
 
         await fixture.session.outbox.post(event: Self.message(of: token))
 
@@ -214,7 +192,7 @@ struct RunMessageDeliveryTests {
         #expect(await fixture.session.outbox.pending().events.map(\.event) == [Self.message(of: token)])
         await holdFirstAnswer.open()
         _ = try await firstAnswer.value
-        try await Self.awaitPrompts(Self.messageAnswerSubmission, on: fixture.backend)
+        try await BoundedWait.awaitPrompts(Self.messageAnswerSubmission, in: { fixture.backend.prompts })
         let prompt = try #require(fixture.backend.prompts.last)
         #expect(prompt.contains(OperationEventSegment.renderedLine(for: Self.message(of: token))))
         #expect(prompt.hasSuffix(RoutedSessionActor.runMessageDeliveryPrompt))
@@ -230,7 +208,7 @@ struct RunMessageDeliveryTests {
 
         await fixture.session.outbox.post(event: inBandMessage)
 
-        #expect(await Self.pumpStops(on: fixture.session))
+        #expect(await BoundedWait.pumpStops(on: fixture.session))
         #expect(fixture.backend.prompts == [Self.firstPrompt])
         _ = try await fixture.session.respond(to: Self.nextPrompt)
         let prompt = try #require(fixture.backend.prompts.last)
@@ -253,7 +231,7 @@ struct RunMessageDeliveryTests {
             await BoundedWait.conditionReached("one mail delivery pause on the session feed") {
                 await fixture.events.mailDeliveryPauses.count == 1
             })
-        #expect(await Self.pumpStops(on: fixture.session))
+        #expect(await BoundedWait.pumpStops(on: fixture.session))
         #expect(fixture.backend.prompts == [Self.firstPrompt])
         let held = await fixture.session.outbox.pending().events
         #expect(held.map(\.event) == [Self.message(of: token)])

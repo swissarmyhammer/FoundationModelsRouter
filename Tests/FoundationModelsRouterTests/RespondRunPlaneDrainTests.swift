@@ -343,11 +343,7 @@ struct RespondRunPlaneDrainTests {
     private static func prompts(
         atLeast count: Int, reaching backend: BackgroundingBackend
     ) async throws -> [String] {
-        guard
-            await BoundedWait.conditionReached("\(count) prompts reaching the backend", when: {
-                backend.receivedPrompts.count >= count
-            })
-        else { throw SignalNeverArrived() }
+        try await BoundedWait.awaitPrompts(count, in: { backend.receivedPrompts })
         return backend.receivedPrompts
     }
 
@@ -618,8 +614,7 @@ struct RespondRunPlaneDrainTests {
 
         // A run is not work of the pump, so a cancel finds nothing to stop,
         // and the run stays running, exactly as it was.
-        #expect(
-            await BoundedWait.conditionReached("the pump ending") { await !session.isPumpRunning })
+        #expect(await BoundedWait.pumpStops(on: session))
         #expect(await session.cancel() == .nothingToCancel)
         #expect(await session.mailbox.backgroundRuns().count == 1)
 

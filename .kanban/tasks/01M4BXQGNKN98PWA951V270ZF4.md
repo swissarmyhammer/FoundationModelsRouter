@@ -18,8 +18,40 @@ comments:
     - evidence: 17 files — SessionOutbox.swift, RoutedSessionActorPump.swift, RoutedSessionActorIdle.swift, RoutedSessionActorRunJournal.swift, OperationEventSegment.swift, SessionEvent.swift, SessionAnswer.swift, SessionProjection.swift, SessionTreeRestoration.swift, RoutedSession.md, generation-queue.md, Examples/MultiModelGeneration/main.swift, IntegrationTests RealToolAnswerComparisonTests.swift, Tests SessionOutboxTests.swift, PendingEventInjectionTests.swift, ScriptedToolAnswerComparisonTests.swift, new RunMessageDeliveryTests.swift. With the temporary PooledEmbedding shim (removed after): `swift test --filter "RunMessageDeliveryTests|renderedLineOfARunMessage|SessionOutboxTests"` 45 tests passed; full `swift test` 1529 tests, 9 failed, all embedding-dimension tests that fail only because of the shim (Extras a91911d), 2 known issues. Without the shim the package does not build (Extras a91911d), recorded as ^a6022g2. No CHANGELOG.md in the repo. IntegrationTests package not built.
     - next: ^a6022g2 must land before this card can show a green build; then /review.
   timestamp: 2026-10-07T20:39:09.803859+00:00
+- actor: claude-code
+  id: 01m4c5t8zzvbd2rs6cb9rq9gvq
+  text: |-
+    ### review — findings
+    - evidence: review sha aad6ae5..5713abe — 2 findings (2 confirmed, 2 refuted) — Tests/FoundationModelsRouterTests/RunMessageDeliveryTests.swift:132, Tests/FoundationModelsRouterTests/RunMessageDeliveryTests.swift:141
+    - next: implement — move awaitPrompts and pumpStops into shared test support and use them from all suites that have a copy. The task stays in review.
+  timestamp: 2026-10-07T21:55:19.679016+00:00
+- actor: claude-code
+  id: 01m4c5txd6df6csyhvtr4jkbba
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — earlier in this session (17 files)
+    - test: green — swift test, 1531 tests in 192 suites passed (2 known issues)
+    - commit: 5713abe (pushed)
+    - review: findings — Tests/FoundationModelsRouterTests/RunMessageDeliveryTests.swift:132, Tests/FoundationModelsRouterTests/RunMessageDeliveryTests.swift:141
+  timestamp: 2026-10-07T21:55:40.582842+00:00
+- actor: claude-code
+  id: 01m4c63h65p96zf66g7cfj4ymw
+  text: |-
+    Review findings fixed (not committed). Discoveries:
+    - New shared helper file Tests/FoundationModelsRouterTests/Helpers/SessionPumpWaits.swift: `extension BoundedWait` with `awaitPrompts(_:in:)` (a closure reads the prompts, so each backend type can use it) and `pumpStops(on:)`. It is in the existing Helpers folder of the unit test target, beside BoundedWait.swift. No new target. FoundationModelsRouterTestSupport was not used, because BoundedWait and SignalNeverArrived are in the unit test target.
+    - Copies removed: awaitPrompts in RunMessageDeliveryTests, SessionMessagePumpTests, SubmissionAnswerEventTests, and the same bounded wait in RespondRunPlaneDrainTests.prompts(atLeast:reaching:). pumpStops in RunMessageDeliveryTests, SessionMessagePumpTests, MailOnlyAnswerLimitTests, and the inline `conditionReached("the pump ending") { await !session.isPumpRunning }` in RespondRunPlaneDrainTests.
+    - Not changed, because they are not the same helper: PerCallMountSessionTests uses AwaitedCondition (no wall-clock bound); RespondRunPlaneDrainTests "the pump ending with no run left" also reads the runs; direct `#expect(await session.isPumpRunning ...)` reads do not wait.
+    - Tool note: the `files` edit op with `replace_all: true` replaced only one match in each call. The call-site renames were done with one `perl -pi` substitution and checked with rg and git diff.
+  timestamp: 2026-10-07T22:00:22.981708+00:00
+- actor: claude-code
+  id: 01m4c63zwjmhn74vfjbqk73946
+  text: |-
+    ### implement — changed
+    - evidence: 7 files — new Tests/FoundationModelsRouterTests/Helpers/SessionPumpWaits.swift; RunMessageDeliveryTests.swift, SessionMessagePumpTests.swift, SubmissionAnswerEventTests.swift, MailOnlyAnswerLimitTests.swift, RespondRunPlaneDrainTests.swift. `swift build --build-tests`: Build complete, no warning in a touched file. `swift test --skip-build --filter 'RunMessageDeliveryTests|SessionMessagePumpTests|MailOnlyAnswerLimitTests|SubmissionAnswerEventTests|RespondRunPlaneDrainTests'`: 40 tests in 5 suites passed. Both review findings are checked.
+    - next: /review
+  timestamp: 2026-10-07T22:00:38.034521+00:00
 position_column: doing
-position_ordinal: '80'
+position_ordinal: '8280'
 title: Deliver the run message mail kind (OperationEventKind.message)
 ---
 ## What
@@ -60,3 +92,17 @@ Do not start until FoundationModelsExtras `main` has `OperationEventKind.message
 - Unit tests of `canStartASubmission` for each kind and token set.
 
 Use a filter that matches real test names (see memory on false passes). #session #mail
+
+## Review Findings (2026-10-07 16:49)
+
+> Scope: `review sha aad6ae5..5713abe` — reviewed the diffs only — lines this change added or modified. 15 file(s) reviewed, 8 not reviewed.
+
+> 6 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 6 file(s)
+
+> 2 file(s) not reviewed — no validator matched:
+> - `Sources/FoundationModelsRouter/FoundationModelsRouter.docc/RoutedSession.md` — no validator matches this file
+> - `generation-queue.md` — no validator matches this file
+
+- [x] `Tests/FoundationModelsRouterTests/RunMessageDeliveryTests.swift:132` `reuse/reuse` — The new awaitPrompts helper repeats a bounded-wait helper that already exists in two other suites. Move awaitPrompts into shared test support, parameterized by the backend type or a prompt-count closure, and use it from all three suites.
+- [x] `Tests/FoundationModelsRouterTests/RunMessageDeliveryTests.swift:141` `reuse/reuse` — The new pumpStops helper repeats a helper that already exists in another test suite. Two copies can drift apart, and a fix to one does not reach the other. Move pumpStops to one shared test support location, such as Tests/FoundationModelsRouterTestSupport, and call it from all three suites.
