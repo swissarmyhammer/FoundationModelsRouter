@@ -18,6 +18,11 @@ extension RoutedSessionActor: OperationEventJournal {
     /// (``closeOpenProgressRow()``) before it is written itself, so the
     /// transcript keeps the post order and each event.
     ///
+    /// The trade-off: while a run continues to post progress, its open row is
+    /// only in memory. It is not on disk yet. If the process stops before a
+    /// different event, a different entry or ``close()`` writes the row, the
+    /// open row is lost. The start row and the events written before it stay.
+    ///
     /// - Parameter event: The event the outbox has just accepted.
     func record(event: OperationEvent) async {
         guard claimJournalWrite(for: event) else { return }

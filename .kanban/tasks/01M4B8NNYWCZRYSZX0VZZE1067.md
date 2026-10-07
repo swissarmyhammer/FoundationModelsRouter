@@ -34,8 +34,24 @@ comments:
     - evidence: swift test (FoundationModelsRouter package) — Testing: 1513 tests in 191 suites passed, 0 failed, 0 skipped (2 known issues, each marked with withKnownIssue in tests that existed before this change); two small test targets: 23 and 19 tests passed; XCTest: 0 tests, 0 failures. Forced rebuild of the changed files with swift build --build-tests: zero compiler warnings (only the SwiftPM bundle note "missing creator for mutated node", not from the repo code).
     - next: IntegrationTests package not run (needs real models, left to CI). Ready for review.
   timestamp: 2026-10-07T13:41:30.495377+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m4b9qwh3h4agxm9810sec692
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (c30d1d41). 0 findings, 0 confirmed, 0 refuted. 7 files reviewed. 2 .kanban files are excluded by .reviewignore.
+    - next: The task moved to done. No work remains from this review.
+  timestamp: 2026-10-07T13:44:41.251075+00:00
+- actor: claude-code
+  id: 01m4b9r8ncr6nfnnt7fnead6x4
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 7 files (Session/OpenProgressRow.swift new, RoutedSessionActorRunJournal.swift, RoutedSessionActorRecording.swift, RoutedSessionActor.swift, RoutedSessionActorForking.swift, OperationEventJournal.swift, BackgroundRunTranscriptTests.swift)
+    - test: green — swift test, 1513 tests in 191 suites passed, 0 failed, 0 skipped; 23 + 19 in other targets passed
+    - commit: c30d1d41
+    - review: clean — 0 findings
+  timestamp: 2026-10-07T13:44:53.676021+00:00
+position_column: done
+position_ordinal: ffffffc980
 title: Merge consecutive progress events of one operation into one journal transcript row
 ---
 ## Problem
