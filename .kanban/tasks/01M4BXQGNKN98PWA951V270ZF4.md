@@ -50,8 +50,24 @@ comments:
     - evidence: 7 files — new Tests/FoundationModelsRouterTests/Helpers/SessionPumpWaits.swift; RunMessageDeliveryTests.swift, SessionMessagePumpTests.swift, SubmissionAnswerEventTests.swift, MailOnlyAnswerLimitTests.swift, RespondRunPlaneDrainTests.swift. `swift build --build-tests`: Build complete, no warning in a touched file. `swift test --skip-build --filter 'RunMessageDeliveryTests|SessionMessagePumpTests|MailOnlyAnswerLimitTests|SubmissionAnswerEventTests|RespondRunPlaneDrainTests'`: 40 tests in 5 suites passed. Both review findings are checked.
     - next: /review
   timestamp: 2026-10-07T22:00:38.034521+00:00
-position_column: doing
-position_ordinal: '8280'
+- actor: claude-code
+  id: 01m4c6cg11se0ym6jgh0pc4wvq
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (321339d): 0 findings, 0 confirmed, 1 refuted, 7 attempted, 0 failed. All prior review items are checked.
+    - next: none. The task is in done.
+  timestamp: 2026-10-07T22:05:16.705280+00:00
+- actor: claude-code
+  id: 01m4c6cwpg80kbm0gpk9fcj7fp
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 6 test files (shared SessionPumpWaits helper)
+    - test: green — swift test, 1531 tests in 192 suites passed, 0 failed (2 known issues)
+    - commit: 321339d
+    - review: clean — 0 findings, 2 prior items checked; task in done
+  timestamp: 2026-10-07T22:05:29.680442+00:00
+position_column: done
+position_ordinal: ffffffca80
 title: Deliver the run message mail kind (OperationEventKind.message)
 ---
 ## What
