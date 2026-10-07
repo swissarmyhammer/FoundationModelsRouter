@@ -97,7 +97,7 @@ enum RouterTestFixtures {
         RawRepoMetadata(configJSON: configJSON, treeJSON: treeJSON)
     }
 
-    /// The embedding dimension every stub embedder reports.
+    /// The length of each vector that every stub embedder makes.
     static let stubDimension = 8
 
     /// The fixed hardware every shared-fixture router probes: ample RAM, so

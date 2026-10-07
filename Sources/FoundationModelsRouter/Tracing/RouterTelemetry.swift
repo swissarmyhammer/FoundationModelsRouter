@@ -211,7 +211,10 @@ enum RouterTelemetry {
         /// How many strings one embed call embeds.
         static let embeddingInputCount = "embedding.input_count"
 
-        /// The length of each vector an embed call produces.
+        /// The length of the first vector an embed call produces.
+        ///
+        /// The span does not have this key when the call throws or produces
+        /// no vector.
         static let embeddingDimension = "embedding.dimension"
     }
 

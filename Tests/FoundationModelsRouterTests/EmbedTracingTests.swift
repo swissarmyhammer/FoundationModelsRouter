@@ -12,8 +12,9 @@ import Tracing
 /// Card ^p3x0bbb took the `.embedding` transcript event away, so an embed call
 /// writes nothing to the transcript. A span is the replacement signal, and
 /// this suite holds its whole contract: the operation name, the span kind, the
-/// four attributes, the error status and the error type on a failure, and the
-/// rule that no attribute carries an input text.
+/// four attributes, the error status and the error type on a failure, the rule
+/// that a call that throws or gives no vector sets no `embedding.dimension`,
+/// and the rule that no attribute carries an input text.
 ///
 /// The router is built over stubs — a stub ``ModelLoader``, a stub embedding
 /// container and an `InMemoryTracer` — so the suite needs no network, no GPU
@@ -78,6 +79,7 @@ struct EmbedTracingTests {
 
         let vectors = try await profile.embedding.embed(texts: ["a", "b"])
         #expect(vectors.count == 2)
+        #expect(vectors.allSatisfy { $0.count == RouterTestFixtures.stubDimension })
 
         let spans = Self.finishedEmbedSpans(reportedTo: tracer)
         try #require(spans.count == 1)
@@ -109,8 +111,7 @@ struct EmbedTracingTests {
         )
         let embedder = HandBuiltProfileFixtures.makeEmbedder(
             chosen: "org/emb-a",
-            container: ThrowingEmbeddingContainer(
-                dimension: RouterTestFixtures.stubDimension, failure: EmbedFailure.refused),
+            container: ThrowingEmbeddingContainer(failure: EmbedFailure.refused),
             routerId: router.id,
             tracer: tracer
         )
@@ -122,6 +123,44 @@ struct EmbedTracingTests {
         let spans = Self.finishedEmbedSpans(reportedTo: tracer)
         try #require(spans.count == 1)
         #expect(spans[0].failureType == "\(EmbedFailure.self)")
+    }
+
+    @Test("a failing embed puts no embedding.dimension attribute on its span")
+    func embedFailureSetsNoDimension() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "EmbedTracingTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let tracer = InMemoryTracer()
+        let (router, _) = try await Self.resolveProfile(tracer: tracer, cacheDir: dir)
+        let embedder = HandBuiltProfileFixtures.makeEmbedder(
+            chosen: "org/emb-a",
+            container: ThrowingEmbeddingContainer(failure: EmbedFailure.refused),
+            routerId: router.id,
+            tracer: tracer
+        )
+
+        await #expect(throws: EmbedFailure.refused) {
+            _ = try await embedder.embed(texts: ["a"])
+        }
+
+        let span = try #require(Self.finishedEmbedSpans(reportedTo: tracer).first)
+        #expect(span.attributes.get("embedding.dimension") == nil)
+    }
+
+    @Test("an embed that gives no vector puts no embedding.dimension attribute on its span")
+    func embedOfNoTextSetsNoDimension() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "EmbedTracingTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let tracer = InMemoryTracer()
+        let (_, profile) = try await Self.resolveProfile(tracer: tracer, cacheDir: dir)
+
+        let vectors = try await profile.embedding.embed(texts: [])
+
+        #expect(vectors.isEmpty)
+        let span = try #require(Self.finishedEmbedSpans(reportedTo: tracer).first)
+        #expect(span.attributes.get("embedding.input_count") == .int64(0))
+        #expect(span.attributes.get("embedding.dimension") == nil)
     }
 
     @Test("no span attribute carries any input text")

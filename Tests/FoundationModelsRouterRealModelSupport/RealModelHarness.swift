@@ -51,9 +51,6 @@ public enum RealModelHarness {
     /// here embeds anything, so this is present to satisfy the type — and it
     /// records an issue if a caller drives it all the same.
     private struct UnusedEmbeddingContainer: LoadedEmbeddingContainer {
-        /// The dimension of a vector this container never makes.
-        let dimension = 1
-
         /// Records an issue and answers with no vectors.
         ///
         /// A caller reaches this only by embedding through the `.embedding`

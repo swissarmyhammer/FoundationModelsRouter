@@ -8,7 +8,7 @@ import Testing
 /// Exercises milestone 5a: a resolved profile's residency lifecycle — the
 /// residency ends when the last reference to the profile is dropped, and the
 /// Extras ``ModelPool`` then evicts its models — and the
-/// embedding access surface (``RoutedModel/embed(texts:)`` + `dimension`),
+/// embedding access surface (``RoutedModel/embed(texts:)``),
 /// which writes nothing to the transcript.
 ///
 /// Everything runs against stubs — a stub ``ModelLoader`` with an eviction spy,
@@ -219,17 +219,15 @@ struct ProfileLifecycleTests {
 
     // MARK: - Embedding access
 
-    @Test("embed returns vectors of length dimension from the stub embedder")
+    @Test("embed returns vectors of the stub length from the stub embedder")
     @MainActor
-    func embedReturnsDimensionLengthVectors() async throws {
+    func embedReturnsStubLengthVectors() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let spy = EvictionSpy()
         let router = Self.makeRouter(spy: spy, recorder: InMemoryRecorder(), cacheDir: dir)
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
-        #expect(profile.embedding.dimension == Self.stubDimension)
 
         let vectors = try await profile.embedding.embed(texts: ["x", "y", "z"])
         #expect(vectors.count == 3)

@@ -383,19 +383,19 @@ struct IntegrationTests {
         plainAnswerDuration = ContinuousClock.now - plainStartInstant
         #expect(!reply.isEmpty)
 
-        // 3. Embedding returns dimension-length vectors, and writes no
-        //    transcript event at all. Card ^p3x0bbb took that recording away:
-        //    an embed call is no part of any session's conversation, so it has
-        //    nothing to append to one. A span is the replacement signal, and
-        //    `EmbedTracingTests` holds its whole contract. Step 6 asserts the
-        //    absence against the recordings tree.
-        let dimension = profile.embedding.dimension
-        #expect(dimension > 0)
+        // 3. Embedding returns vectors of one length that is more than zero,
+        //    and writes no transcript event at all. Card ^p3x0bbb took that
+        //    recording away: an embed call is no part of any session's
+        //    conversation, so it has nothing to append to one. A span is the
+        //    replacement signal, and `EmbedTracingTests` holds its whole
+        //    contract. Step 6 asserts the absence against the recordings tree.
         let embedStarted = ContinuousClock.now
         let vectors = try await profile.embedding.embed(texts: ["first document", "second document"])
         embedDuration = ContinuousClock.now - embedStarted
         #expect(vectors.count == 2)
-        #expect(vectors.allSatisfy { $0.count == dimension })
+        let vectorLength = try #require(vectors.first?.count)
+        #expect(vectorLength > 0)
+        #expect(vectors.allSatisfy { $0.count == vectorLength })
 
         // 4. A guided session honors its grammar: the output parses against the
         //    schema (structural validity is the xgrammar guarantee).

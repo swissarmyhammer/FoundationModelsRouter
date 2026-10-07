@@ -54,7 +54,7 @@ struct EmbedTool: Sendable {
     /// Embeds each input string with one recorded call.
     ///
     /// - Parameter texts: The strings to embed.
-    /// - Returns: One ``RoutedEmbedder/dimension``-length vector per input, in order.
+    /// - Returns: One vector per input, in order.
     /// - Throws: Any error thrown by the embedder.
     func embed(texts: [String]) async throws -> [[Float]] {
         try await model.embed(texts: texts)

@@ -180,9 +180,9 @@ extension LoadedLLMContainer {
 /// A loaded embedding model container. ``RoutedEmbedder`` runs its embedding
 /// computation through it.
 ///
-/// The requirements come from the Extras embed protocol, ``PooledEmbedding``:
-/// `dimension`, the length of every vector, and `embed(texts:)`, one vector
-/// for each text, in order. The first loader of a key gives the container of
+/// The requirement comes from the Extras embed protocol, ``PooledEmbedding``:
+/// `embed(texts:)`, one vector for each text, in order. The protocol gives no
+/// vector length; read it from the `count` of a vector. The first loader of a key gives the container of
 /// all holds of that key, so a container in the Extras pool can be a
 /// ``PooledEmbedding`` from a loader that is not the router's. Thus router
 /// code uses a pooled embedding container through ``PooledEmbedding`` and

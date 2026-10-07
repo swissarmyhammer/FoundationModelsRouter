@@ -242,7 +242,7 @@ struct ExtrasPoolResolveTests {
         #expect(poolLoader.loadCount.load(ordering: .sequentiallyConsistent) == 0)
         #expect(vectors.count == 2)
         #expect(vectors.allSatisfy { $0.count == RouterTestFixtures.stubDimension })
-        #expect(profile.embedding.dimension == RouterTestFixtures.stubDimension)
+        withExtendedLifetime(profile) {}
     }
 
     @Test("a PooledModel of the standard model of a resolve makes its session over the model of the router and loads nothing")

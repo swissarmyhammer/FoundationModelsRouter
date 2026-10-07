@@ -57,7 +57,7 @@ struct ResolutionProgressPublicSurfaceTests {
     /// The GPU working set the stub probe reports.
     private static let recommendedMaxWorkingSetBytes: Int64 = 48 << 30
 
-    /// The embedding dimension the stub embedder reports.
+    /// The length of each vector that the stub embedder makes.
     private static let embeddingDimension = 8
 
     /// The bytes the stub loader reports as downloaded for a generation model.

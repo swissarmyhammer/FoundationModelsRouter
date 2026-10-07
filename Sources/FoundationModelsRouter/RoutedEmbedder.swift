@@ -9,10 +9,11 @@ import Tracing
 /// the live container), and no call writes to the transcript: an embed is no
 /// part of any session's conversation.
 extension RoutedModel where Container == any LoadedEmbeddingContainer {
-    /// The length of every embedding vector this model produces.
-    public var dimension: Int { container.dimension }
-
-    /// Embeds each input string into a ``dimension``-length vector.
+    /// Embeds each input string into one vector.
+    ///
+    /// The handle gives no vector length before the first call: the embedding
+    /// model can load at its first call, and only then knows the length. Read
+    /// the length from the `count` of a vector that this call returns.
     ///
     /// The computation runs through the resident embedder container and writes
     /// nothing to the transcript. A failure in the embedding computation
@@ -27,21 +28,24 @@ extension RoutedModel where Container == any LoadedEmbeddingContainer {
     /// (``RouterTelemetry/withSpan(_:ofKind:tracer:isolation:_:)``), and the
     /// error is thrown again.
     ///
-    /// The span carries four attributes, and their names are stable API:
+    /// The span carries up to four attributes, and their names are stable API:
     ///
     /// | Attribute | Value |
     /// |---|---|
     /// | `router.id` | The resolving router's recording root id. |
     /// | `model.ref` | The chosen model reference, in canonical string form. |
     /// | `embedding.input_count` | How many strings this call embeds. |
-    /// | `embedding.dimension` | The length of each vector produced. |
+    /// | `embedding.dimension` | The length of the first vector produced. |
+    ///
+    /// The span gets `embedding.dimension` after the call returns. A call that
+    /// throws, or that returns no vector, sets no `embedding.dimension`.
     ///
     /// No input text and no vector ever reaches the span. A span leaves the
     /// process through whatever backend the host application bootstrapped, so
     /// the payload must stay free of the caller's own content.
     ///
     /// - Parameter texts: The strings to embed.
-    /// - Returns: One ``dimension``-length vector per input, in order.
+    /// - Returns: One vector per input, in order.
     /// - Throws: Any error thrown by the embedder container.
     public func embed(texts: [String]) async throws -> [[Float]] {
         try await RouterTelemetry
@@ -49,8 +53,11 @@ extension RoutedModel where Container == any LoadedEmbeddingContainer {
                 span.attributes[RouterTelemetry.AttributeKey.routerId] = routerId.description
                 span.attributes[RouterTelemetry.AttributeKey.modelRef] = chosen.stringValue
                 span.attributes[RouterTelemetry.AttributeKey.embeddingInputCount] = texts.count
-                span.attributes[RouterTelemetry.AttributeKey.embeddingDimension] = dimension
-                return try await container.embed(texts: texts)
+                let vectors = try await container.embed(texts: texts)
+                if let dimension = vectors.first?.count {
+                    span.attributes[RouterTelemetry.AttributeKey.embeddingDimension] = dimension
+                }
+                return vectors
             }
     }
 }

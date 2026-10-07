@@ -326,10 +326,11 @@ struct ExamplesTests {
 
     // MARK: - Embedding
 
-    @Test("Embed strings and read the vector dimension")
+    @Test("Embed strings and read the length of each vector")
     @MainActor
     func embedStrings() async throws {
-        let router = ExampleHarness.makeRouter(embeddingDimension: 384)
+        let vectorLength = 384
+        let router = ExampleHarness.makeRouter(embeddingDimension: vectorLength)
         let coding = ProfileDefinition(
             name: "coding",
             description: "Local coding assistant.",
@@ -340,14 +341,13 @@ struct ExamplesTests {
         let profile = try await router.resolve(profile: coding, reporting: ResolutionProgress())
 
         let embedder = profile.embedding
-        #expect(embedder.dimension == 384)
 
         let vectors = try await embedder.embed(texts: [
             "func add(_ a: Int, _ b: Int) -> Int { a + b }",
             "let total = a + b",
         ])
         #expect(vectors.count == 2)
-        #expect(vectors.allSatisfy { $0.count == embedder.dimension })
+        #expect(vectors.allSatisfy { $0.count == vectorLength })
     }
 
     // MARK: - Guided generation: raw

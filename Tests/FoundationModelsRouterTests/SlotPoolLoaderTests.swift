@@ -36,7 +36,6 @@ struct SlotPoolLoaderTests {
     /// An embedding model of a loader that is not the router's. It conforms to
     /// the Extras embed protocol only, not to ``LoadedEmbeddingContainer``.
     private struct ForeignEmbedding: PooledEmbedding {
-        let dimension = SlotPoolLoaderTests.foreignVector.count
         func embed(texts: [String]) async throws -> [[Float]] {
             texts.map { _ in SlotPoolLoaderTests.foreignVector }
         }
@@ -68,8 +67,9 @@ struct SlotPoolLoaderTests {
     /// An embedding container of the router's loader. Its vectors differ from
     /// the vectors of ``ForeignEmbedding``.
     private struct StubEmbeddingContainer: LoadedEmbeddingContainer {
-        let dimension = 1
-        func embed(texts: [String]) async throws -> [[Float]] { texts.map { _ in [0] } }
+        /// The vector that the stub gives for each text.
+        static let vector: [Float] = [0]
+        func embed(texts: [String]) async throws -> [[Float]] { texts.map { _ in Self.vector } }
     }
 
     /// One call that the router's loader received.
@@ -184,7 +184,6 @@ struct SlotPoolLoaderTests {
         let vectors = try await embedder.embed(texts: ["one", "two"])
 
         #expect(hold.key == key)
-        #expect(embedder.dimension == Self.foreignVector.count)
         #expect(vectors == [Self.foreignVector, Self.foreignVector])
         #expect(routerLoader.calls.isEmpty)
         withExtendedLifetime(foreignHold) {}
@@ -245,7 +244,7 @@ struct SlotPoolLoaderTests {
         let embedder = try PooledEmbeddingContainer(hold: hold)
 
         #expect(hold.key == ModelPoolKey(ref: Self.ref, role: .embedding))
-        #expect(embedder.dimension == StubEmbeddingContainer().dimension)
+        #expect(try await embedder.embed(texts: ["one"]) == [StubEmbeddingContainer.vector])
         #expect(routerLoader.calls == [.loadEmbedder(ref: Self.ref, slot: .embedding)])
         #expect(sink.received == [RecordingModelLoader.progress])
     }
@@ -347,7 +346,6 @@ struct SlotPoolLoaderTests {
         let embedding = try #require(container as? any PooledEmbedding)
 
         #expect(modelLoader.loadedKeys == [key])
-        #expect(embedding.dimension == Self.foreignVector.count)
         #expect(try await embedding.embed(texts: ["one"]) == [Self.foreignVector])
         #expect(sink.received == [Self.reportedDownload])
     }
@@ -361,7 +359,6 @@ struct SlotPoolLoaderTests {
         let embedder = try await loader.loadEmbedder(ref: Self.ref, slot: .embedding, reporting: sink.record)
 
         #expect(modelLoader.loadedKeys == [ModelPoolKey(ref: Self.ref, role: .embedding)])
-        #expect(embedder.dimension == Self.foreignVector.count)
         #expect(try await embedder.embed(texts: ["one", "two"]) == [Self.foreignVector, Self.foreignVector])
         #expect(sink.received == [Self.reportedDownload])
     }

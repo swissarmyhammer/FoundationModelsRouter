@@ -89,7 +89,7 @@ struct SpyingModelLoader: ModelLoader {
     /// The spy every load and eviction is reported to.
     let spy: LoadSpy
 
-    /// The embedding dimension every stub embedder reports.
+    /// The length of each vector that every stub embedder makes.
     let dimension: Int
 
     /// Optional override so a concurrency test can vend its own container

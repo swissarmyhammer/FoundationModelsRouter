@@ -131,8 +131,7 @@ extension TelemetryContentSafetyTests {
         try await TelemetryCapture.run(forbidding: [Self.failureContent]) { context in
             let embedder = HandBuiltProfileFixtures.makeEmbedder(
                 chosen: Self.failingSpanModel,
-                container: ThrowingEmbeddingContainer(
-                    dimension: RouterTestFixtures.stubDimension, failure: Self.contentBearingError),
+                container: ThrowingEmbeddingContainer(failure: Self.contentBearingError),
                 routerId: ULID(),
                 tracer: context.tracer
             )

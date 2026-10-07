@@ -7,10 +7,8 @@
 /// always wraps a ``StubEmbeddingContainer``, which cannot fail. A test that
 /// needs a failure builds its ``RoutedEmbedder`` over this container with
 /// ``HandBuiltProfileFixtures/makeEmbedder(chosen:container:routerId:recorder:tracer:)``.
+/// The stub never makes a vector.
 struct ThrowingEmbeddingContainer: LoadedEmbeddingContainer {
-    /// The length the stub reports. The stub never makes a vector.
-    let dimension: Int
-
     /// The error that each ``embed(texts:)`` call throws.
     let failure: any Error
 

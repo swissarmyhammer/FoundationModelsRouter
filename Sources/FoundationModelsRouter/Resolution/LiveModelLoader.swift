@@ -921,9 +921,6 @@ struct LoadedPooledEmbedding: LoadedEmbeddingContainer {
         self.embedding = embedding
     }
 
-    /// The length of each vector of ``embedding``.
-    var dimension: Int { embedding.dimension }
-
     /// Gives one vector for each text through ``embedding``.
     ///
     /// - Parameter texts: The texts.
@@ -1104,8 +1101,7 @@ public struct LiveModelLoader: ModelLoader, PooledModelLoader {
 
     /// Loads an embedding model through the model loader: the Extras
     /// `MLXModelLoader` in a live loader, which downloads the model when the
-    /// cache does not hold it and finds its dimension. The live loader does
-    /// not use `slot`.
+    /// cache does not hold it. The live loader does not use `slot`.
     ///
     /// Cancelling the calling task stops the wait. The transfer itself runs on,
     /// which is what keeps the part files filling the Hugging Face cache, so a

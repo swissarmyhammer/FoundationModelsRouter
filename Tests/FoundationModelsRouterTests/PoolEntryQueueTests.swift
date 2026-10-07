@@ -212,7 +212,6 @@ struct PoolEntryQueueTests {
         let profile = try await router.resolve(profile: trio, reporting: ResolutionProgress())
         #expect(directLoader.loadCount.load(ordering: .sequentiallyConsistent) == 1)
         #expect(await spy.embedderLoads.isEmpty)
-        #expect(profile.embedding.dimension == RouterTestFixtures.stubDimension)
 
         // The direct call holds the model. The router call waits in the queue
         // of the pool entry, so it never enters the model at the same time.
