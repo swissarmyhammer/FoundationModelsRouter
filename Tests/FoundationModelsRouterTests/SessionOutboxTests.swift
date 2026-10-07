@@ -227,7 +227,8 @@ struct SessionOutboxTests {
             }
             return taken
         }
-        guard let events = await outbox.takeMailStartingASubmission(deliveringRunsOf: settledRunTokens) else {
+        let runTokens = BackgroundRunTokens(settled: settledRunTokens)
+        guard let events = await outbox.takeMailStartingASubmission(deliveringRunsOf: runTokens) else {
             return nil
         }
         return TakenBatch(events: events, messages: [])
@@ -290,6 +291,84 @@ struct SessionOutboxTests {
         #expect(await Self.takeBatch(from: outbox, deliveringRunsOf: ["c1"]) == nil)
         #expect(await Self.takeBatch(from: outbox, deliveringRunsOf: []) == nil)
         #expect(await outbox.pending().events.count == 2)
+    }
+
+    // MARK: - Which mail can start a submission
+
+    /// The token of a background run that is open in ``runTokens``.
+    private static let openToken = "open-run"
+
+    /// The token of a background run that settled in ``runTokens``.
+    private static let settledToken = "settled-run"
+
+    /// The token of a run that is no background run, such as an in-band run.
+    private static let unknownToken = "in-band-run"
+
+    /// The run tokens of the tests below: one open run and one settled run.
+    private static let runTokens = BackgroundRunTokens(open: [openToken], settled: [settledToken])
+
+    /// Whether one mail event of `kind` on `token` starts a submission with
+    /// no caller message, with ``runTokens``.
+    ///
+    /// - Parameters:
+    ///   - kind: The kind of the event.
+    ///   - token: The completion token of the event.
+    ///   - held: Whether the event is held.
+    /// - Returns: The result of ``SessionOutbox/canStartASubmission(_:runTokens:)``.
+    private static func canStart(_ kind: OperationEventKind, on token: String, held: Bool = false) async -> Bool {
+        let outbox = SessionOutbox()
+        let event = Self.event(correlationID: token, kind: kind)
+        if held {
+            await outbox.requeue(event: event)
+        } else {
+            await outbox.post(event: event)
+        }
+        return SessionOutbox.canStartASubmission(await outbox.pending().events, runTokens: runTokens)
+    }
+
+    @Test("a run message of an open background run starts a submission")
+    func aMessageOfAnOpenRunStartsASubmission() async {
+        #expect(await Self.canStart(.message, on: Self.openToken))
+    }
+
+    @Test("a run message of a settled background run starts a submission")
+    func aMessageOfASettledRunStartsASubmission() async {
+        #expect(await Self.canStart(.message, on: Self.settledToken))
+    }
+
+    @Test("a run message of a run that is no background run starts no submission")
+    func aMessageOfAnUnknownRunStartsNoSubmission() async {
+        #expect(await Self.canStart(.message, on: Self.unknownToken) == false)
+    }
+
+    @Test("a held run message starts no submission")
+    func aHeldMessageStartsNoSubmission() async {
+        #expect(await Self.canStart(.message, on: Self.openToken, held: true) == false)
+    }
+
+    @Test("the terminal of a background run that is still open starts no submission")
+    func aTerminalOfAnOpenRunStartsNoSubmission() async {
+        #expect(await Self.canStart(.completed, on: Self.openToken) == false)
+    }
+
+    @Test("the terminal of a settled background run starts a submission")
+    func aTerminalOfASettledRunStartsASubmission() async {
+        #expect(await Self.canStart(.completed, on: Self.settledToken))
+    }
+
+    @Test("progress and elicitation mail of a background run start no submission")
+    func progressAndElicitationStartNoSubmission() async {
+        #expect(await Self.canStart(.progress, on: Self.openToken) == false)
+        #expect(await Self.canStart(.elicitation, on: Self.settledToken) == false)
+    }
+
+    @Test("two run messages of one run both stay pending, in post order")
+    func runMessagesNeverCoalesce() async {
+        let outbox = SessionOutbox()
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .message, detail: "first"))
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .message, detail: "second"))
+
+        #expect(await outbox.pending().events.map(\.event.detail) == ["first", "second"])
     }
 
     @Test("a held terminal — given back by a failed submission, or held by a cancel — starts no submission by itself, and rides the next caller message")
@@ -454,6 +533,17 @@ struct SessionOutboxTests {
         await outbox.attach(mailObserver: counter)
 
         await outbox.post(event: Self.event(correlationID: "c1", kind: .completed, detail: "woke"))
+
+        #expect(await counter.arrivals == 1)
+    }
+
+    @Test("a posted run message tells the attached mail observer")
+    func postedRunMessageTellsTheMailObserver() async {
+        let outbox = SessionOutbox()
+        let counter = MailArrivalCounter()
+        await outbox.attach(mailObserver: counter)
+
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .message, detail: "halfway"))
 
         #expect(await counter.arrivals == 1)
     }

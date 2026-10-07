@@ -7,8 +7,9 @@ import FoundationModelsExtras
 extension RoutedSessionActor: OperationEventJournal {
     /// Records one posted ``OperationEvent``, in post order. Entries of one
     /// run can interleave with the entries of a submission. A terminal is
-    /// also delivered live as ``SessionEvent/runSettled(_:)``, and an
-    /// elicitation as ``SessionEvent/elicitationRequested(_:)``.
+    /// also delivered live as ``SessionEvent/runSettled(_:)``, a message of a
+    /// run as ``SessionEvent/runMessage(_:)``, and an elicitation as
+    /// ``SessionEvent/elicitationRequested(_:)``.
     ///
     /// Each event gets its own entry, with one exception (task ^zze1067):
     /// consecutive progress events of one run share one merged entry. The
@@ -38,6 +39,9 @@ extension RoutedSessionActor: OperationEventJournal {
         if event.kind == .completed {
             deliverLive(.runSettled(event))
         }
+        if event.kind == .message {
+            deliverLive(.runMessage(event))
+        }
         if event.kind == .elicitation {
             deliverLive(.elicitationRequested(event))
         }
@@ -57,7 +61,8 @@ extension RoutedSessionActor: OperationEventJournal {
 
     /// Whether `event` may be journaled. A run's one terminal (`.completed`)
     /// is claimed on first write; a second terminal for the same run is
-    /// refused. Progress and elicitation events are always admitted. The
+    /// refused. Progress, elicitation and message events are always admitted,
+    /// so each message of a run is journaled and delivered live. The
     /// claim is taken synchronously, before any suspension.
     ///
     /// - Parameter event: The event about to be journaled.

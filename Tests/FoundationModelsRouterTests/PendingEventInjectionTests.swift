@@ -157,6 +157,14 @@ struct PendingEventInjectionTests {
                 == "[shell] run command (3) running: 812 lines so far")
     }
 
+    @Test("renderedLine renders a run message as still running, with its text as the body")
+    func renderedLineOfARunMessage() {
+        let message = Self.event(tool: "shell", op: "run command", correlationID: "3", kind: .message, detail: "half done")
+        #expect(
+            OperationEventSegment.renderedLine(for: message)
+                == "[shell] run command (3) message, still running: half done")
+    }
+
     // MARK: - Empty outbox: byte-identical behavior
 
     @Test("an empty outbox leaves the prompt and recorded transcript unchanged")

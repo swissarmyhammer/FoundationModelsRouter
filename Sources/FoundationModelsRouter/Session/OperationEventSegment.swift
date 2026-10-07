@@ -59,11 +59,14 @@ struct OperationEventSegment: PersistableStructuredSegment, Equatable, CustomStr
     ///
     /// For example: `"[shell] run command (3) completed: exit 0, 2481 lines"`
     /// for a `.completed` event, `"[shell] run command (3) running: 812 lines
-    /// so far"` for a `.progress` one, or `"[snippet] elicit form (3)
-    /// eliciting: Which account?"` for an `.elicitation` one — an
+    /// so far"` for a `.progress` one, `"[shell] run command (3) message,
+    /// still running: half of the files are done"` for a `.message` one, or
+    /// `"[snippet] elicit form (3) eliciting: Which account?"` for an
+    /// `.elicitation` one — an
     /// elicitation's body is its typed request's `message` (the question the
     /// user is being asked), falling back to `detail` when the typed request
-    /// is absent.
+    /// is absent. A message's body is its text, and its state tells the model
+    /// that the run continues.
     ///
     /// Shared by every drained event's preamble line
     /// (``RoutedSessionActor``'s submission chokepoint) and this segment's own
@@ -81,6 +84,8 @@ struct OperationEventSegment: PersistableStructuredSegment, Equatable, CustomStr
             (state, body) = ("completed", event.detail)
         case .elicitation:
             (state, body) = ("eliciting", event.elicitation?.message ?? event.detail)
+        case .message:
+            (state, body) = ("message, still running", event.detail)
         }
         return "[\(event.tool)] \(event.op) (\(event.correlationID)) \(state): \(body)"
     }

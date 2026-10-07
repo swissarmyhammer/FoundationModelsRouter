@@ -408,8 +408,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // "Known limitation: `.ebnf` grammar case").
             let grammar = node.sidecar.grammar.map(Grammar.jsonSchema)
 
-            // Crash-edge run-outcome durability: a journaled run with a non-terminal recorded event (`.progress`
-            // or `.elicitation`) and no `.completed` for the same
+            // Crash-edge run-outcome durability: a journaled run with a non-terminal recorded event (`.progress`,
+            // `.elicitation` or `.message`) and no `.completed` for the same
             // `(tool, correlationID)` pair anywhere in this node's effective
             // stream died with the crashed process — its memory-only mailbox
             // is gone, so no teardown sweep ever journaled a terminal event
@@ -603,7 +603,7 @@ extension TranscriptTree {
             switch event.kind {
             case .completed:
                 completedRuns.insert(run)
-            case .progress, .elicitation:
+            case .progress, .elicitation, .message:
                 if newestNonTerminalByRun.updateValue(event, forKey: run) == nil {
                     orphanCandidateOrder.append(run)
                 }

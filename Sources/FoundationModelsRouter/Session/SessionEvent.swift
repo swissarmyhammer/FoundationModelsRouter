@@ -150,6 +150,17 @@ public enum SessionEvent: Sendable, Equatable {
     /// Always on ``RoutedSession/streamSessionEvents()``; on the stream of the answer when it settles inside an answer.
     case runSettled(OperationEvent)
 
+    /// A background run of this session sent a message to the session through
+    /// `ToolContext.message(_:)`. The run is still open, and its terminal
+    /// comes later as ``runSettled(_:)``. Carries the `.message`
+    /// ``OperationEvent`` the run posted, at the moment the session journals
+    /// it. The event's `detail` is the text of the message, and its
+    /// `correlationID` is the run's `completionToken`.
+    ///
+    /// Always on ``RoutedSession/streamSessionEvents()``; on the stream of the
+    /// answer when the message arrives inside an answer.
+    case runMessage(OperationEvent)
+
     /// A run of this session asked the user a question through
     /// `ToolContext.elicit(_:)` and is suspended until a host answers it.
     /// Carries the `.elicitation` ``OperationEvent`` the run posted, at the

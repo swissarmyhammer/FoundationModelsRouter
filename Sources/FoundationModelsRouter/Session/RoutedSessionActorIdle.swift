@@ -83,7 +83,7 @@ extension RoutedSessionActor {
     /// settles the run. So a run that is not open when ``mailbox`` is read
     /// has its token in the settled tokens, and its terminal, when it is
     /// still staged, in the mail. That pair starts a submission
-    /// (``SessionOutbox/canStartASubmission(_:settledRunTokens:)``), so the
+    /// (``SessionOutbox/canStartASubmission(_:runTokens:)``), so the
     /// check says not idle until the pump takes the mail.
     ///
     /// The sweep of a drain is the one case where a terminal is staged after
@@ -94,10 +94,35 @@ extension RoutedSessionActor {
     ///
     /// - Returns: The reads, in the order above.
     func readRunsAndMail() async -> IdleReads {
+        let runs = await readBackgroundRuns()
+        let mail = await outbox.pending().events
+        return IdleReads(openRuns: runs.open, runTokens: runs.tokens, mail: mail)
+    }
+
+    /// Reads the completion tokens of the background runs of ``mailbox``:
+    /// the open runs first, and then the settled runs.
+    ///
+    /// ``mailbox`` is an actor of its own, so the two reads suspend, and a
+    /// run can settle between them. A run leaves the open runs and joins the
+    /// settled runs in one step of ``mailbox``, so a run that settles between
+    /// the two reads is in the settled runs of the second read. Each run that
+    /// was open at the first read is in one of the two sets.
+    ///
+    /// - Returns: The tokens of the open runs and of the settled runs.
+    func readBackgroundRunTokens() async -> BackgroundRunTokens {
+        await readBackgroundRuns().tokens
+    }
+
+    /// Reads the open runs of ``mailbox``, and then its settled run tokens,
+    /// in the order that ``readBackgroundRunTokens()`` gives.
+    ///
+    /// - Returns: The open runs, and the tokens of the open runs and of the
+    ///   settled runs.
+    private func readBackgroundRuns() async -> (open: [BackgroundRun], tokens: BackgroundRunTokens) {
         let openRuns = await mailbox.backgroundRuns()
         let settledRunTokens = await mailbox.settledRunTokens()
-        let mail = await outbox.pending().events
-        return IdleReads(openRuns: openRuns, settledRunTokens: settledRunTokens, mail: mail)
+        let tokens = BackgroundRunTokens(open: Set(openRuns.map(\.completionToken)), settled: settledRunTokens)
+        return (openRuns, tokens)
     }
 
     /// The end of ``isIdle()``: the second read of the session state, and
@@ -115,7 +140,7 @@ extension RoutedSessionActor {
     func isIdle(startedAt workId: UInt64, reading reads: IdleReads) -> Bool {
         guard hasNoPumpWork, lastWorkId == workId else { return false }
         return reads.openRuns.isEmpty
-            && !SessionOutbox.canStartASubmission(reads.mail, settledRunTokens: reads.settledRunTokens)
+            && !SessionOutbox.canStartASubmission(reads.mail, runTokens: reads.runTokens)
     }
 
     /// Whether no pump work runs or waits: no pump and no drain runs, and no
@@ -132,8 +157,9 @@ struct IdleReads: Sendable {
     /// The background runs that are open.
     let openRuns: [BackgroundRun]
 
-    /// The completion tokens of the background runs that settled.
-    let settledRunTokens: Set<String>
+    /// The completion tokens of the background runs that are open and of the
+    /// background runs that settled.
+    let runTokens: BackgroundRunTokens
 
     /// The mail that waits in the outbox.
     let mail: [SessionOutbox.PendingEvent]

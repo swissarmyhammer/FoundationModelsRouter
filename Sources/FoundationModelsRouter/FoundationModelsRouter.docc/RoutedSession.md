@@ -52,6 +52,12 @@ The session pushes settlement to the model — the model never polls:
 - The terminal of a settled run is mail. The pump of the session delivers it
   to the model in a later submission, with no caller call, and it is also
   reported as ``SessionEvent/runSettled(_:)``.
+- A background run can send a message to its session while it continues
+  (`ToolContext.message(_:)`). The message is mail too: the pump delivers it
+  in a later submission, with no caller call, and it is also reported as
+  ``SessionEvent/runMessage(_:)``. The run stays open, and its terminal comes
+  later. A message of a run that is not a background run starts no
+  submission: it goes with the next submission.
 - `status` and `wait` give an earlier look; they are not required.
 
 A model can start one more background run in each answer, for example to ask

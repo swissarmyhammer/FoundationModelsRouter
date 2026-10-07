@@ -1,0 +1,1 @@
+{"id":"01M4BXQGNTFTQKK8EZ94B411XY","timestamp":"2026-10-07T19:34:00.634827Z","op":"create","item_id":"01M4BXQGNTC4P9KX92R6YG2BJ4","forward_patch":"--- original\n+++ modified\n@@ -0,0 +1,2 @@\n+color: b60205\n+tag_name: session\n","reverse_patch":"--- original\n+++ modified\n@@ -1,2 +0,0 @@\n-color: b60205\n-tag_name: session\n","transaction_id":null}

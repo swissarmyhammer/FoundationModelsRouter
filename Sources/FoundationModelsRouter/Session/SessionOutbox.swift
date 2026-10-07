@@ -12,7 +12,8 @@ import FoundationModelsExtras
 ///   coalesces, to the latest pending one per `(tool, correlationID)`, in
 ///   place. Every posted event is also recorded in the transcript through the
 ///   attached ``OperationEventJournal``, uncoalesced. A posted run terminal
-///   (``OperationEventKind/completed``) tells the attached
+///   (``OperationEventKind/completed``) or run message
+///   (``OperationEventKind/message``) tells the attached
 ///   ``SessionMailObserver``, so the pump can deliver it.
 /// - Caller messages (``SessionMessage``): the prompts of
 ///   ``RoutedSession/send(_:)-(Transcript.Prompt)``,
@@ -40,13 +41,34 @@ import FoundationModelsExtras
 /// ``SessionEvent/runSettled(_:)``, because neither reads the staged events.
 
 /// The observer that a ``SessionOutbox`` tells when mail that the pump can
-/// deliver arrives: a run terminal (``OperationEventKind/completed``).
+/// deliver arrives: a run terminal (``OperationEventKind/completed``) or a
+/// run message (``OperationEventKind/message``).
 ///
 /// A ``RoutedSessionActor`` is the one conformer. It starts its pump when no
 /// pump runs.
 protocol SessionMailObserver: AnyObject, Sendable {
-    /// A run terminal was posted to the outbox.
+    /// A run terminal or a run message was posted to the outbox.
     func mailArrived() async
+}
+
+/// The completion tokens of the background runs of a session, as the run
+/// plane of the session gives them. The pump and the idle check read them to
+/// find the mail that starts a submission with no caller message
+/// (``SessionOutbox/canStartASubmission(_:runTokens:)``).
+struct BackgroundRunTokens: Sendable, Equatable {
+    /// The tokens of the background runs that are open.
+    var open: Set<String> = []
+
+    /// The tokens of the background runs that settled.
+    var settled: Set<String> = []
+
+    /// Whether `token` is the token of a background run, open or settled.
+    ///
+    /// - Parameter token: The completion token.
+    /// - Returns: `true` when `token` is in ``open`` or in ``settled``.
+    func contains(_ token: String) -> Bool {
+        open.contains(token) || settled.contains(token)
+    }
 }
 
 actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdrawing {
@@ -77,9 +99,9 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
         /// Whether the event waits for a submission that something else
         /// starts: a submission gave it back (``requeue(event:)``), a cancel
         /// held it (``holdPendingMail()``), or the bound on answers that mail
-        /// alone starts held it (``putBack(holding:)``). A held run terminal starts no
-        /// submission by itself, so the pump does not retry it at once; it
-        /// rides the next submission.
+        /// alone starts held it (``putBack(holding:)``). A held run terminal
+        /// or run message starts no submission by itself, so the pump does
+        /// not retry it at once; it rides the next submission.
         let isHeld: Bool
 
         /// This event with its id, held (``isHeld``).
@@ -121,8 +143,8 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
     /// ``attach(journal:)``. Weak to avoid a reference cycle.
     private weak var journal: (any OperationEventJournal)?
 
-    /// The observer a posted run terminal wakes, or `nil` before
-    /// ``attach(mailObserver:)``. Weak to avoid a reference cycle.
+    /// The observer a posted run terminal or run message wakes, or `nil`
+    /// before ``attach(mailObserver:)``. Weak to avoid a reference cycle.
     private weak var mailObserver: (any SessionMailObserver)?
 
     /// The observer every posted invocation record and tool call report goes
@@ -140,9 +162,9 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
     ///
     /// The event is staged for the next submission under the coalescing
     /// policy, and recorded uncoalesced in the attached journal, in post
-    /// order. A run terminal then tells the attached ``SessionMailObserver``,
-    /// after its journal write, so the pump delivers a terminal that the
-    /// journal already holds.
+    /// order. A run terminal or a run message then tells the attached
+    /// ``SessionMailObserver``, after its journal write, so the pump delivers
+    /// an event that the journal already holds.
     ///
     /// - Parameter event: The event to post.
     func post(event: OperationEvent) async {
@@ -151,7 +173,7 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
         let journalWrite = enqueueJournalWrite(event: event)
         stage(event: event)
         await journalWrite?.value
-        if event.kind == .completed {
+        if event.kind == .completed || event.kind == .message {
             await mailObserver?.mailArrived()
         }
     }
@@ -224,7 +246,7 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
     ///   - held: Whether the event is held (``PendingEvent/isHeld``).
     private func stage(event: OperationEvent, held: Bool = false) {
         switch event.kind {
-        case .completed, .elicitation:
+        case .completed, .elicitation, .message:
             appendNewPendingEvent(event: event, held: held)
         case .progress:
             if let index = events.firstIndex(where: {
@@ -248,7 +270,8 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
         self.journal = journal
     }
 
-    /// Installs the observer that a posted run terminal wakes from now on.
+    /// Installs the observer that a posted run terminal or run message wakes
+    /// from now on.
     ///
     /// - Parameter mailObserver: The observer to install.
     internal func attach(mailObserver: any SessionMailObserver) {
@@ -322,37 +345,47 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
     }
 
     /// Takes the mail of a submission that no caller message starts: every
-    /// pending mail event, when the terminal of a settled background run that
-    /// is not held (``PendingEvent/isHeld``) is one of them.
+    /// pending mail event, when one of them can start a submission
+    /// (``canStartASubmission(_:runTokens:)``).
     ///
-    /// Other mail — a progress report, an elicitation, or the terminal of an
-    /// in-band run that ended abnormally — starts no submission. The model
-    /// already read the in-band result inside its own submission, so that
-    /// terminal rides the next submission instead.
-    ///
-    /// - Parameter settledRunTokens: The completion tokens of the background
-    ///   runs that settled.
+    /// - Parameter runTokens: The completion tokens of the background runs.
     /// - Returns: The events, in outbox order, or `nil` when no event can
     ///   start a submission. Then nothing is taken.
-    func takeMailStartingASubmission(deliveringRunsOf settledRunTokens: Set<String>) -> [PendingEvent]? {
-        guard Self.canStartASubmission(events, settledRunTokens: settledRunTokens) else {
+    func takeMailStartingASubmission(deliveringRunsOf runTokens: BackgroundRunTokens) -> [PendingEvent]? {
+        guard Self.canStartASubmission(events, runTokens: runTokens) else {
             return nil
         }
         return takeEvents()
     }
 
-    /// Whether `mail` holds the terminal of a background run that settled,
-    /// and that is not held, which starts a submission with no caller
-    /// message.
+    /// Whether `mail` holds an event that starts a submission with no caller
+    /// message. Such an event is not held (``PendingEvent/isHeld``), and it
+    /// is one of these:
+    ///
+    /// - The terminal of a background run that settled.
+    /// - A message of a background run (``OperationEventKind/message``). The
+    ///   run is usually still open, and its terminal comes later.
+    ///
+    /// Other mail — a progress report, an elicitation, or the terminal or a
+    /// message of an in-band run — starts no submission. The model reads the
+    /// in-band result inside its own submission, so that mail rides the next
+    /// submission instead.
     ///
     /// - Parameters:
     ///   - mail: The pending mail events.
-    ///   - settledRunTokens: The completion tokens of the settled background
-    ///     runs.
-    /// - Returns: `true` when one event of `mail` is such a terminal.
-    static func canStartASubmission(_ mail: [PendingEvent], settledRunTokens: Set<String>) -> Bool {
-        mail.contains {
-            !$0.isHeld && $0.event.kind == .completed && settledRunTokens.contains($0.event.correlationID)
+    ///   - runTokens: The completion tokens of the background runs.
+    /// - Returns: `true` when one event of `mail` is such an event.
+    static func canStartASubmission(_ mail: [PendingEvent], runTokens: BackgroundRunTokens) -> Bool {
+        mail.contains { pending in
+            guard !pending.isHeld else { return false }
+            switch pending.event.kind {
+            case .completed:
+                return runTokens.settled.contains(pending.event.correlationID)
+            case .message:
+                return runTokens.contains(pending.event.correlationID)
+            case .progress, .elicitation:
+                return false
+            }
         }
     }
 
