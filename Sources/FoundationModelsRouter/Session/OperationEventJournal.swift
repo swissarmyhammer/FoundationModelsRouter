@@ -15,8 +15,9 @@
 /// whole life, so a strong reference back would be a cycle that keeps every
 /// session alive forever.
 protocol OperationEventJournal: AnyObject, Sendable {
-    /// Records one posted event in this session's transcript, as its own
-    /// entry, in the order it was posted.
+    /// Records one posted event in this session's transcript, in the order it
+    /// was posted. Consecutive progress events of one run can share one
+    /// merged entry; each event stays whole in it (task ^zze1067).
     ///
     /// Idempotent per run *ending*: a run reports exactly one terminal
     /// (`.completed`) event, so a second terminal for a `correlationID` whose

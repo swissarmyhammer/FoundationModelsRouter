@@ -5,16 +5,31 @@ import FoundationModelsExtras
 /// (progress, elicitation, completion) become transcript entries at the
 /// moment they are made.
 extension RoutedSessionActor: OperationEventJournal {
-    /// Records one posted ``OperationEvent`` as its own entry, in post order.
-    /// Entries of one run can interleave with the entries of a submission. A terminal is
+    /// Records one posted ``OperationEvent``, in post order. Entries of one
+    /// run can interleave with the entries of a submission. A terminal is
     /// also delivered live as ``SessionEvent/runSettled(_:)``, and an
     /// elicitation as ``SessionEvent/elicitationRequested(_:)``.
+    ///
+    /// Each event gets its own entry, with one exception (task ^zze1067):
+    /// consecutive progress events of one run share one merged entry. The
+    /// first progress event of a run is its own start row. Each next
+    /// progress event of the same run goes into ``openProgressRow`` and
+    /// writes nothing now. The next different event or entry closes the row
+    /// (``closeOpenProgressRow()``) before it is written itself, so the
+    /// transcript keeps the post order and each event.
     ///
     /// - Parameter event: The event the outbox has just accepted.
     func record(event: OperationEvent) async {
         guard claimJournalWrite(for: event) else { return }
+        if openProgressRow?.accepts(event) == true {
+            openProgressRow?.append(event)
+            return
+        }
         await recordSessionMetaIfNeeded()
-        await append(partial: makeRunEventPartial(for: event))
+        await append(partial: makeRunEventPartial(toolName: event.tool, events: [event]))
+        if event.kind == .progress {
+            openProgressRow = OpenProgressRow(after: event)
+        }
         if event.kind == .completed {
             deliverLive(.runSettled(event))
         }
@@ -48,24 +63,46 @@ extension RoutedSessionActor: OperationEventJournal {
         return journaledTerminalCorrelationIDs.insert(event.correlationID).inserted
     }
 
-    /// Builds the recorded partial for one ``OperationEvent``: a `.toolOutput`
-    /// entry with a fresh ULID id and a typed ``OperationEventSegment``. The
-    /// run's `correlationID` travels in the payload, not in the entry id. The
-    /// body text is ``OperationEventSegment/renderedLine(for:)``.
+    /// Builds the recorded partial for the ``OperationEvent``s of one row: a
+    /// `.toolOutput` entry with a fresh ULID id and one typed
+    /// ``OperationEventSegment`` for each event, in order. The run's
+    /// `correlationID` travels in the payload, not in the entry id. The body
+    /// text is the ``OperationEventSegment/renderedLine(for:)`` of each event,
+    /// one line for each event.
     ///
-    /// - Parameter event: The event to journal.
+    /// - Parameters:
+    ///   - toolName: The name of the tool that posted the events.
+    ///   - events: The events of the row: one event, or the merged progress
+    ///     events of one run.
     /// - Returns: The partial for the recorder to stamp and append.
-    func makeRunEventPartial(for event: OperationEvent) -> TranscriptEvent.Partial {
+    func makeRunEventPartial(toolName: String, events: [OperationEvent]) -> TranscriptEvent.Partial {
         let entry = Transcript.Entry.toolOutput(
             Transcript.ToolOutput(
                 id: ULID.generate().description,
-                toolName: event.tool,
-                segments: [OperationEventSegment(content: event).transcriptSegment]
+                toolName: toolName,
+                segments: events.map { OperationEventSegment(content: $0).transcriptSegment }
             )
         )
         let (kind, payload, _) = TranscriptEntryMapper.event(from: entry)
         return makePartialEvent(
-            kind: kind, text: OperationEventSegment.renderedLine(for: event), entry: payload)
+            kind: kind,
+            text: events.map(OperationEventSegment.renderedLine(for:)).joined(separator: "\n"),
+            entry: payload)
+    }
+
+    /// Writes the merged row of ``openProgressRow``, when it holds events,
+    /// and closes it. Each write to the transcript calls this first
+    /// (``append(partial:)``), so the merged row comes before the different
+    /// entry that closes it. ``close()`` calls it last, so a row that is open
+    /// at the end of the session is not lost.
+    ///
+    /// The row is taken before the write suspends, so a second call that
+    /// starts during the write finds no row and writes it no second time.
+    func closeOpenProgressRow() async {
+        guard let row = openProgressRow else { return }
+        openProgressRow = nil
+        guard !row.events.isEmpty else { return }
+        await appendToRecorder(makeRunEventPartial(toolName: row.toolName, events: row.events))
     }
 
     /// Installs this session as ``outbox``'s ``OperationEventJournal``,

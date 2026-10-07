@@ -123,9 +123,9 @@ struct BackgroundRunTranscriptTests {
         #expect(toolOutput.text == OperationEventSegment.renderedLine(for: terminal))
     }
 
-    // MARK: - Order is the record, and progress is not coalesced
+    // MARK: - Order is the record, and no event is lost
 
-    @Test("every posted event of one run is journaled, in post order, with no progress coalescing")
+    @Test("every posted event of one run is journaled, in post order, with no event lost")
     @MainActor
     func everyPostedEventIsJournaledInPostOrder() async throws {
         let recorder = InMemoryRecorder()
@@ -154,6 +154,93 @@ struct BackgroundRunTranscriptTests {
         // reports share one parent reference but never one entry id.
         #expect(Set(journaled.map(\.entryId)).count == posted.count)
         #expect(Set(journaled.map(\.event.correlationID)).count == 1)
+    }
+
+    // MARK: - Consecutive progress of one run shares one row
+
+    /// The count of one-byte progress events the streaming run posts.
+    private static let streamedProgressEventCount = 10_000
+
+    /// The row count the streaming run must stay below. The count of rows
+    /// must not increase with the count of events.
+    private static let streamedRowCountCeiling = 100
+
+    @Test("10000 one-byte progress events of one run give a small row count, all output text, and the start and end rows")
+    @MainActor
+    func consecutiveProgressOfOneRunSharesOneRow() async throws {
+        let recorder = InMemoryRecorder()
+        let (session, dir) = try await Self.makeSession(recorder: recorder)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        _ = try await session.respond(to: "start the long job")
+
+        let progress = (0..<Self.streamedProgressEventCount).map { _ in
+            Self.event(kind: .progress, detail: ".")
+        }
+        let terminal = Self.event(kind: .completed, detail: "exit 0")
+        for event in progress + [terminal] {
+            await session.outbox.post(event: event)
+        }
+
+        let rows = (await recorder.events).filter { !$0.operationEvents.isEmpty && $0.kind == .toolOutput }
+        #expect(rows.count < Self.streamedRowCountCeiling)
+        // All output text is in the transcript, in post order.
+        #expect(rows.flatMap(\.operationEvents) == progress + [terminal])
+        #expect(
+            rows.flatMap(\.operationEvents).filter { $0.kind == .progress }.map(\.detail).joined()
+                == String(repeating: ".", count: Self.streamedProgressEventCount))
+        // The start row holds the first event alone, and the end row holds the
+        // terminal alone.
+        #expect(rows.first?.operationEvents == [progress[0]])
+        #expect(rows.last?.operationEvents == [terminal])
+    }
+
+    @Test("an event of a different run closes the open progress row, and the transcript keeps the post order")
+    @MainActor
+    func eventOfAnotherRunClosesTheOpenProgressRow() async throws {
+        let recorder = InMemoryRecorder()
+        let (session, dir) = try await Self.makeSession(recorder: recorder)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        _ = try await session.respond(to: "start the long job")
+
+        let otherRun = "01AN4Z07BY79KA1307SR9X4MV4"
+        let posted = [
+            Self.event(kind: .progress, detail: "a1"),
+            Self.event(kind: .progress, detail: "a2"),
+            Self.event(kind: .progress, detail: "a3"),
+            Self.event(completionToken: otherRun, kind: .progress, detail: "b1"),
+            Self.event(kind: .completed, detail: "exit 0"),
+        ]
+        for event in posted {
+            await session.outbox.post(event: event)
+        }
+
+        let rows = (await recorder.events).filter { $0.kind == .toolOutput }.map(\.operationEvents)
+        #expect(rows == [[posted[0]], [posted[1], posted[2]], [posted[3]], [posted[4]]])
+    }
+
+    @Test("a progress row that is open when the session closes is written by the close")
+    @MainActor
+    func openProgressRowIsWrittenAtClose() async throws {
+        let recorder = InMemoryRecorder()
+        let (session, dir) = try await Self.makeSession(recorder: recorder)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        _ = try await session.respond(to: "start the long job")
+
+        let posted = [
+            Self.event(kind: .progress, detail: "a1"),
+            Self.event(kind: .progress, detail: "a2"),
+            Self.event(kind: .progress, detail: "a3"),
+        ]
+        for event in posted {
+            await session.outbox.post(event: event)
+        }
+        await session.close()
+
+        let rows = (await recorder.events).filter { $0.kind == .toolOutput }.map(\.operationEvents)
+        #expect(rows == [[posted[0]], [posted[1], posted[2]]])
     }
 
     // MARK: - The model still receives the outcome

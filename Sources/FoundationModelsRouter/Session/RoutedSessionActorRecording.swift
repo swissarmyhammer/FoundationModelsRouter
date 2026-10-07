@@ -409,11 +409,24 @@ extension RoutedSessionActor {
     }
 
     /// Appends a partial event through the recorder into this session's
-    /// transcript directory. Advances ``historyOrdinal`` for each entry-kind
-    /// partial.
+    /// transcript directory. It first writes and closes the open merged
+    /// progress row (``closeOpenProgressRow()``), because a different event
+    /// closes that row and the row comes first in post order.
     ///
     /// - Parameter partial: The event to record, without `seq` and `ts`.
     func append(partial: TranscriptEvent.Partial) async {
+        await closeOpenProgressRow()
+        await appendToRecorder(partial)
+    }
+
+    /// Appends a partial event through the recorder into this session's
+    /// transcript directory, and leaves ``openProgressRow`` as it is.
+    /// Advances ``historyOrdinal`` for each entry-kind partial. Each write
+    /// other than the write of the merged progress row goes through
+    /// ``append(partial:)``.
+    ///
+    /// - Parameter partial: The event to record, without `seq` and `ts`.
+    func appendToRecorder(_ partial: TranscriptEvent.Partial) async {
         if partial.kind.isEntryKind {
             historyOrdinal += 1
         }

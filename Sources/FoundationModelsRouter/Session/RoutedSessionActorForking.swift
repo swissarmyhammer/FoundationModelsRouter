@@ -268,7 +268,7 @@ extension RoutedSessionActor {
     /// waiting messages, runs ``mailbox``'s `RunPlane.sweep()`, journals each
     /// terminal event it produced through
     /// `SessionOutbox.journalWithoutStaging(event:)` — reaching the same
-    /// ``record(event:)``, and so the same ``makeRunEventPartial(for:)``, a
+    /// ``record(event:)``, and so the same ``makeRunEventPartial(toolName:events:)``, a
     /// run's own reports take when they are journaled live. The journal is
     /// complete before this method returns: exactly one terminal event per
     /// background run, no orphans, no holes. The drain then waits until the
@@ -345,6 +345,11 @@ extension RoutedSessionActor {
         // no work of the session runs. A cancel of the caller does not end
         // this wait: when close returns, the session holds no work.
         await startDrainIfNeeded().value
+        // The drain journals the terminal of each run, and a terminal closes
+        // the merged progress row of its run. A row can still be open when a
+        // run posted progress and no terminal reached the journal, so write it
+        // here: the output text of the row is not lost.
+        await closeOpenProgressRow()
         await releasePromptCache()
     }
 }

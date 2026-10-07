@@ -531,6 +531,12 @@ actor RoutedSessionActor: RoutedSession {
     /// ``claimJournalWrite(for:)``.
     var journaledTerminalCorrelationIDs: Set<String> = []
 
+    /// The progress row that is open: the consecutive progress events of one
+    /// run that the journal writes as one merged transcript row, or `nil`
+    /// when no row is open. The next different event closes it. See
+    /// ``record(event:)`` and ``closeOpenProgressRow()``.
+    var openProgressRow: OpenProgressRow?
+
     /// The positional diff baseline against the current ``backend`` transcript:
     /// how many entries are already persisted or inherited. `0` for a root, the
     /// parent's entry count at fork time for a fork. A compaction rewinds it to the
