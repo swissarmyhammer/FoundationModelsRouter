@@ -124,8 +124,24 @@ comments:
     - warnings: only "missing creator for mutated node" for the mlx-swift_Cmlx.bundle. It comes from the build system and a dependency bundle. No Swift warning comes from the changed code.
     - next: review
   timestamp: 2026-10-08T14:55:40.589995+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m4e0as5v2bzhjfjrzbm4p4vg
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (checkpoint 299c7c2f). 0 findings (confirmed 0, refuted 0; 7 files attempted, 0 failed). The prior finding at Sources/FoundationModelsRouter/Session/SessionEvent.swift:174 is checked.
+    - next: none. The task is in done.
+  timestamp: 2026-10-08T14:57:57.947543+00:00
+- actor: claude-code
+  id: 01m4e0bk7yqwckd0nxehsy7vkv
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 9 files
+    - test: green — swift test, 1546 tests in 194 suites passed, 0 failed; IntegrationTests build complete
+    - commit: 299c7c2f
+    - review: clean — 0 findings; prior finding at Sources/FoundationModelsRouter/Session/SessionEvent.swift:174 is checked
+  timestamp: 2026-10-08T14:58:24.638111+00:00
+position_column: done
+position_ordinal: ffffffcc80
 title: Send .progress operation events live as SessionEvent.runProgress and keep the plan out of the model text
 ---
 ## Origin
