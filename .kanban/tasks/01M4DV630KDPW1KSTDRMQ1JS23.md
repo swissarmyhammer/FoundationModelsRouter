@@ -21,6 +21,13 @@ comments:
 
     Note for step 4: a plan update replaces the plan that has the same `id`. Thus the restore path must replay the last plan for each plan `id`.
   timestamp: 2026-10-08T13:28:33.061708+00:00
+- actor: claude-code
+  id: 01m4dw0ex1s9xg8gz5hsp3d907
+  text: |-
+    ## Extras dependency is satisfied
+
+    The Extras plan work is on FoundationModelsExtras origin/main. The feature commit is ee4a798. Extras main is now 5c1c638. It adds `PlanSnapshot`, `OperationEvent.plan` and `ToolContext.progress(_:plan:)`. The names are the same as in the comment above. Before you start, update the Extras package dependency of Router to a revision at or after 5c1c638.
+  timestamp: 2026-10-08T13:42:25.441037+00:00
 position_column: todo
 position_ordinal: '80'
 title: Send .progress operation events live as SessionEvent.runProgress and keep the plan out of the model text
