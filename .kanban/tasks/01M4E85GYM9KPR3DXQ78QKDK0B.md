@@ -107,8 +107,25 @@ comments:
     - note: SwiftPM prints "missing creator for mutated node" for mlx-swift_Cmlx.bundle. It comes from the build system, not from the change.
     - next: none. No commit, no push, task not moved.
   timestamp: 2026-10-08T18:24:32.302190+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m4ecaz9pvcy1wpcnqpr7bhf6
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (Router commit a43eb38e). 0 findings. The 6 changed files are all in `.kanban/`, and `.reviewignore` excludes them. The review covers only this repository. The mlx-swift-lm change is not in this review, as the user decided.
+    - next: The task is in done.
+  timestamp: 2026-10-08T18:27:47.126027+00:00
+- actor: claude-code
+  id: 01m4ecbj1ctw73zz9n17jmbs0c
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — mlx-swift-lm 6 files (option B; the boundary is found by a second render with one more user message, because `addGenerationPrompt: false` has no implementation); Router 0 files
+    - test: green — mlx-swift-lm xctest on 5 bundles 0 failures; IntegrationTesting build-for-testing succeeded; swift format lint clean after one fix
+    - commit: mlx-swift-lm d609e75 (not pushed); Router a43eb38e
+    - review: clean — 0 findings (Router changes only)
+    - open: the real-weights check `aTurnThatDropsTheGeneratedTurnRestoresTheCheckpoint` runs after the bench of foundationmodelsacpagent-19 ends
+  timestamp: 2026-10-08T18:28:06.316811+00:00
+position_column: done
+position_ordinal: ffffffce80
 title: Restore a hybrid checkpoint at the end of the prompt when the next render drops the last generated turn, so the Qwen 3.5 cache does not rebuild
 ---
 ## Origin
