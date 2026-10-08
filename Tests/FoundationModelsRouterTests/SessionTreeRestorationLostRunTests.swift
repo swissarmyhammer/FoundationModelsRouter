@@ -462,7 +462,7 @@ struct SessionTreeRestorationLostRunTests {
     /// path changes the text the test compares.
     private static let wholeReportLength = 10_000
 
-    @Test("a settled run's 10,000-character report reaches wait, the envelope and the restored session whole")
+    @Test("a settled run's 10,000-character report reaches wait, the call output and the restored session whole")
     @MainActor
     func settledRunReportIsCarriedWhole() async throws {
         let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationLostRunTests")
@@ -480,7 +480,7 @@ struct SessionTreeRestorationLostRunTests {
         let report = MountFixtures.InlineGraceTool.output(for: value)
         #expect(report.count == Self.wholeReportLength)
 
-        // The run settles inside the grace, so the envelope carries the
+        // The run settles inside the grace, so the call answers with the
         // report, and the mailbox keeps the same report for `wait`.
         let gate = RunLatch()
         await gate.open()
@@ -488,19 +488,16 @@ struct SessionTreeRestorationLostRunTests {
             wrapping: MountFixtures.InlineGraceTool(gate: gate, grace: MountFixtures.generousInterval)
         )
         let rendered = try await harness.mounted.call(arguments: MountArguments(value: value))
-        let envelope = try MountFixtures.decodeEnvelope(rendered)
-        #expect(!envelope.pending)
-        #expect(envelope.detail == report)
-        let terminal = try await MountFixtures.settledTerminal(
-            of: envelope.completionToken, in: harness.mailbox
-        )
+        #expect(rendered == report)
+        let completionToken = try #require(await harness.mailbox.settledRunTokens().first)
+        let terminal = try await MountFixtures.settledTerminal(of: completionToken, in: harness.mailbox)
         #expect(terminal.detail == report)
 
         // The restore path: the one recorded event of this run is a progress
         // event that carries the report, and no terminal reached the journal.
         // The manufactured `.lost` terminal carries that report whole.
         let (restored, _) = try await Self.recordAndRestore(
-            journaled: [Self.event(correlationID: envelope.completionToken, kind: .progress, detail: report)],
+            journaled: [Self.event(correlationID: completionToken, kind: .progress, detail: report)],
             cacheDir: cacheDir,
             recordingsDir: recordingsDir
         )

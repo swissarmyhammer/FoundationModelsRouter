@@ -82,7 +82,7 @@ extension RoutedSessionActor {
         // for this session. This site's chain is fork →
         // mount → cap (task ^k4nygqa; the root and restore sites each
         // have their own deliberately distinct chain — see
-        // ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:mailOnlyAnswerLimit:)``
+        // ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:toolOutputProtection:repetitionDetection:mailOnlyAnswerLimit:inlineSettleGrace:)``
         // and `restoreSessionTree`). Composition order matters: a tool is
         // forked first via its own `forked()` (falling back to sharing the
         // original unchanged when it doesn't conform to `ForkableTool`),
@@ -103,13 +103,13 @@ extension RoutedSessionActor {
         // ``LanguageModelSessionBackend/makeFork(tools:seededFrom:)``).
         // Mounting and capping arrive through the shared per-tool
         // composition
-        // ``ToolMounting/makeSessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:tokenCounter:tracer:)``
+        // ``ToolMounting/makeSessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:tokenCounter:tracer:inlineSettleGrace:)``
         // (tasks ^k4nygqa, 1334fk3): the forked copy is mounted with the
         // child's own identity, mailbox, and outbox — so the fork's background
         // runs live in the fork's own mailbox, never the parent's — and,
         // when the fork inherits ``autoCompactionBudget``, capped outermost
         // to its ``TokenBudget/toolOutputLimit``, exactly as
-        // ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:)``
+        // ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:inlineSettleGrace:)``
         // caps a root session's tools. The child's mounts carry this session's
         // tracer, which the child actor is constructed with too, so a tool span
         // the fork opens reports to the same backend as the parent's.
@@ -133,7 +133,10 @@ extension RoutedSessionActor {
                 sink: childOutbox,
                 cappedToTokenLimit: autoCompactionBudget?.toolOutputLimit,
                 tokenCounter: tokenCounter,
-                tracer: tracer
+                tracer: tracer,
+                // The fork waits for a short background run as its parent
+                // does, so it mounts each tool with the same settle period.
+                inlineSettleGrace: inlineSettleGrace
             )
         }
 
@@ -233,6 +236,8 @@ extension RoutedSessionActor {
             // holds a chain of answers that mail alone starts. Its count
             // starts at zero, because the fork has no answer yet.
             mailOnlyAnswerLimit: mailOnlyAnswerLimit,
+            // The settle period is a host setting, so the fork keeps it.
+            inlineSettleGrace: inlineSettleGrace,
             // Same model, so the same tokenizer counts for the child.
             tokenCounter: tokenCounter,
             // The parent's own tracer: a fork continues its parent's

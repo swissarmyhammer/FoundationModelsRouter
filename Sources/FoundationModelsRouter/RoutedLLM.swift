@@ -52,7 +52,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - instructions: The session's system instructions, or `nil`.
     ///   - workingDirectory: A working directory override, or `nil` for the recording directory.
     ///   - recordingRoot: A per-session recording root, or `nil` for the router-level root.
-    ///   - tools: The tools the model can call. Each is wrapped by ``makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:)``.
+    ///   - tools: The tools the model can call. Each is wrapped by ``makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:inlineSettleGrace:)``.
     ///   - budget: The auto-compaction opt-in, or `nil` for manual compaction only.
     ///   - compactionPrompt: The prompt automatic compactions send to the summarizer.
     ///   - agentSpawn: The parent session and tool call this session was spawned from, or `nil`.
@@ -111,7 +111,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             discoveryPriming: configuration.discoveryPriming,
             toolOutputProtection: configuration.compaction.toolOutputProtection,
             repetitionDetection: configuration.repetitionDetection,
-            mailOnlyAnswerLimit: configuration.mailOnlyAnswerLimit)
+            mailOnlyAnswerLimit: configuration.mailOnlyAnswerLimit,
+            inlineSettleGrace: configuration.inlineSettleGrace)
     }
 
     /// The shared builder behind the plain and guided session surfaces.
@@ -126,6 +127,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     session. See ``RepetitionDetection``.
     ///   - mailOnlyAnswerLimit: The most answers in a row that mail alone
     ///     starts. See ``SessionConfiguration/mailOnlyAnswerLimit``.
+    ///   - inlineSettleGrace: How long each background tool call waits for
+    ///     its own run, in seconds. See
+    ///     ``SessionConfiguration/inlineSettleGrace``.
     /// - Returns: A new ``RoutedSession`` over this model.
     func makeSession(
         grammar: Grammar?,
@@ -139,7 +143,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         discoveryPriming: DiscoveryPriming? = nil,
         toolOutputProtection: ToolOutputProtection? = nil,
         repetitionDetection: RepetitionDetection = RepetitionDetection(),
-        mailOnlyAnswerLimit: Int = SessionConfiguration.defaultMailOnlyAnswerLimit
+        mailOnlyAnswerLimit: Int = SessionConfiguration.defaultMailOnlyAnswerLimit,
+        inlineSettleGrace: TimeInterval = ToolMount.defaultInlineSettleGrace
     ) -> RoutedSession {
         let owningProfile = requireOwningProfile(apiName: "makeSession")
 
@@ -148,7 +153,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
 
         // Per-session event wiring plus pure per-session instancing, before
         // the backend is ever built — see
-        // ``makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:)``
+        // ``makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:inlineSettleGrace:)``
         // for the fresh outbox/mailbox scope rule and the mount → cap
         // chain this site applies (task
         // ^k4nygqa; the fork and restore sites each have their own
@@ -165,7 +170,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             tools,
             sessionID: sessionId,
             cappedToTokenLimit: budget?.toolOutputLimit,
-            tokenCounter: container.tokenCounter
+            tokenCounter: container.tokenCounter,
+            inlineSettleGrace: inlineSettleGrace
         )
 
         // The container is only a factory: it manufactures the backend the
@@ -227,6 +233,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             toolOutputProtection: toolOutputProtection,
             repetitionDetection: repetitionDetection,
             mailOnlyAnswerLimit: mailOnlyAnswerLimit,
+            inlineSettleGrace: inlineSettleGrace,
             // Threaded only into the sidecar's configuration envelope (task
             // ^ne5g9jn), so the recorded configuration names the recording
             // root the session was actually vended with.
@@ -244,7 +251,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// against them.
     ///
     /// Each tool is composed by
-    /// ``ToolMounting/makeSessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:tokenCounter:tracer:)``,
+    /// ``ToolMounting/makeSessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:tokenCounter:tracer:inlineSettleGrace:)``,
     /// carrying this handle's own tracer, so each mounted call opens its
     /// `FoundationModelsExtras.tool` span against the backend the router was
     /// constructed with.
@@ -255,12 +262,15 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - sessionID: The owning session's identity.
     ///   - tokenLimit: The ``TokenBudget/toolOutputLimit`` to cap output to, or `nil` for no cap.
     ///   - tokenCounter: The counter the capping layer counts each result with.
+    ///   - inlineSettleGrace: How long each background call waits for its own
+    ///     run, in seconds. See ``SessionConfiguration/inlineSettleGrace``.
     /// - Returns: The session's outbox and mailbox with the instanced tool list.
     func makeSessionToolWiring(
         _ tools: [any Tool],
         sessionID: ULID,
         cappedToTokenLimit tokenLimit: Int?,
-        tokenCounter: any TokenCounter
+        tokenCounter: any TokenCounter,
+        inlineSettleGrace: TimeInterval
     ) -> (outbox: SessionOutbox, mailbox: RunPlane, tools: [any Tool]) {
         let outbox = SessionOutbox()
         let mailbox = RunPlane()
@@ -272,7 +282,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 sink: outbox,
                 cappedToTokenLimit: tokenLimit,
                 tokenCounter: tokenCounter,
-                tracer: tracer
+                tracer: tracer,
+                inlineSettleGrace: inlineSettleGrace
             )
         }
         return (outbox, mailbox, instancedTools)

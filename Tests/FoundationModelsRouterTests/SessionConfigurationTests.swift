@@ -186,7 +186,8 @@ struct SessionConfigurationTests {
             agentSpawn: SessionSidecar.AgentSpawn(
                 parentSessionId: ULID.generate(), parentToolCallId: "call-1"),
             discoveryPriming: DiscoveryPriming(tool: "ambient-emitter", queryProperty: "value"),
-            grammar: .ebnf("root ::= \"yes\" | \"no\"")
+            grammar: .ebnf("root ::= \"yes\" | \"no\""),
+            inlineSettleGrace: 0.25
         )
     }
 
@@ -204,6 +205,7 @@ struct SessionConfigurationTests {
         #expect(persistable.agentSpawn == configuration.agentSpawn)
         #expect(persistable.discoveryPriming == configuration.discoveryPriming)
         #expect(persistable.grammar == configuration.grammar)
+        #expect(persistable.inlineSettleGrace == configuration.inlineSettleGrace)
 
         let encoded = try JSONEncoder().encode(persistable)
         let decoded = try JSONDecoder().decode(SessionConfiguration.Persistable.self, from: encoded)
@@ -262,7 +264,7 @@ struct SessionConfigurationTests {
     private static let flatSidecarKeys: Set<String> = [
         "instructions", "workingDirectory", "recordingRoot", "toolNames",
         "budget", "compactionPrompt", "agentSpawn", "discoveryPriming",
-        "grammar", "repetitionDetection", "mailOnlyAnswerLimit",
+        "grammar", "repetitionDetection", "mailOnlyAnswerLimit", "inlineSettleGrace",
     ]
 
     /// A Codable slice in the format of a sidecar written before task

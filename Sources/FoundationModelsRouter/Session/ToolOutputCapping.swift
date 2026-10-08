@@ -1,3 +1,4 @@
+import Foundation
 import FoundationModels
 import FoundationModelsExtras
 import Tracing
@@ -102,23 +103,18 @@ struct TokenCappingTool<
     /// Recognition is `PendingRunEnvelope.makeDecoded(fromRendered:)`, which
     /// accepts no ordinary tool output.
     ///
-    /// An envelope that carries a settled run's result is still capped, but
-    /// only in its `detail` field. The result there is as big as any other
-    /// tool output, and the same `limit` must hold for it. The control fields
-    /// around it stay whole.
+    /// Each other output is capped. That includes the own output of a
+    /// background run that ends inside its settle period, because that run
+    /// answers with its result and not with an envelope.
     ///
     /// - Throws: Whatever `wrapped` throws, unmodified. This decorator wraps
     ///   the output, never the error.
     func call(arguments: Arguments) async throws -> String {
         let output = try await wrapped.call(arguments: arguments)
-        guard let envelope = PendingRunEnvelope.makeDecoded(fromRendered: output) else {
-            return ToolOutputCapping.capped(text: output, toTokenLimit: limit, counter: counter)
-        }
-        guard let detail = envelope.detail else {
+        guard PendingRunEnvelope.makeDecoded(fromRendered: output) == nil else {
             return output
         }
-        let cappedDetail = ToolOutputCapping.capped(text: detail, toTokenLimit: limit, counter: counter)
-        return envelope.replacing(detail: cappedDetail).rendered
+        return ToolOutputCapping.capped(text: output, toTokenLimit: limit, counter: counter)
     }
 }
 
@@ -156,7 +152,7 @@ extension ToolMounting {
     ///
     /// ``RoutedSessionActor/fork(workingDirectory:)`` forks each tool first and
     /// hands the forked copy here;
-    /// ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:)``
+    /// ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:inlineSettleGrace:)``
     /// is the root and restore site.
     ///
     /// - Parameters:
@@ -172,6 +168,9 @@ extension ToolMounting {
     ///     `InstrumentationSystem.tracer` at call time. The capping layer
     ///     opens no span of its own: the Extras mount layer opens the one
     ///     span of each call.
+    ///   - inlineSettleGrace: How long each background call waits for its own
+    ///     run, in seconds. See ``SessionConfiguration/inlineSettleGrace``.
+    ///     A negative value acts as `0`.
     /// - Returns: The model-facing tool.
     static func makeSessionMounted(
         tool: any Tool,
@@ -180,11 +179,14 @@ extension ToolMounting {
         sink: any OperationEventSink,
         cappedToTokenLimit tokenLimit: Int?,
         tokenCounter: any TokenCounter,
-        tracer: (any Tracer)? = nil
+        tracer: (any Tracer)? = nil,
+        inlineSettleGrace: TimeInterval
     ) -> any Tool {
         let mounted = makeWrapped(
             tool: tool,
-            site: MountSite(sessionID: sessionID, runPlane: mailbox, sink: sink, tracer: tracer),
+            site: MountSite(
+                sessionID: sessionID, runPlane: mailbox, sink: sink, tracer: tracer,
+                inlineSettleGrace: inlineSettleGrace),
             configuration: .synchronous
         )
         let capped = ToolOutputCapping.optionallyCapped(tool: mounted, toTokenLimit: tokenLimit, counter: tokenCounter)

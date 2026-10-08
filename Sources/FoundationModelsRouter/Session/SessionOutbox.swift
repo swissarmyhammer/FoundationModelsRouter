@@ -34,10 +34,10 @@ import FoundationModelsExtras
 /// forwards the report to the attached observer.
 ///
 /// The outbox is also a `StagedEventWithdrawing` sink (an Extras protocol): a
-/// background run that settled inside its tool's
-/// `BackgroundTool.inlineSettleGrace` answers with the result in its own
-/// envelope, so the Extras runner withdraws the staged copy of that run's
-/// events, and it does not also ride in front of the next prompt. The journal
+/// background run that settled inside its settle period
+/// (``SessionConfiguration/inlineSettleGrace``) answers with its own result,
+/// so the Extras runner withdraws the staged copy of that run's events, and
+/// it does not also ride in front of the next prompt. The journal
 /// keeps its own copy, and the host still gets its
 /// ``SessionEvent/runSettled(_:)``, because neither reads the staged events.
 

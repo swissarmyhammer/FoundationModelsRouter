@@ -113,8 +113,9 @@ Forks are not counted: any number of forks over one model can exist at once.
 ## Tool hosting comes from FoundationModelsExtras
 
 The core `FoundationModelsExtras` package hosts the tools of a session: it
-mounts each tool, runs a background tool behind a pending envelope, keeps the
-run plane of the session, and binds the ambient `ToolContext` of each call. A
+mounts each tool, runs a background tool behind a pending envelope when the
+run continues past the settle period of the session, keeps the run plane of
+the session, and binds the ambient `ToolContext` of each call. A
 host that uses only tools, for example the multitool, thus needs no router.
 
 The router makes, manages, compacts and records sessions, and uses that tool

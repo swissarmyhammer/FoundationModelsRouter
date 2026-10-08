@@ -108,10 +108,10 @@ struct GenerationQueueSubmissionTests {
         var mount: ToolMount? { ToolMount(mode: .background) }
 
         /// A later call starts nothing and settles at once, inside this grace,
-        /// so its result goes back in its own envelope and is no mail. Without
+        /// so the call answers with its own output and is no mail. Without
         /// it, the scripted model calls the tool again in each delivery
         /// submission, and each call would start one more delivery.
-        var inlineSettleGrace: TimeInterval? { GenerationQueueSubmissionTests.laterCallSettleGrace }
+        var inlineSettleGrace: TimeInterval { GenerationQueueSubmissionTests.laterCallSettleGrace }
 
         func call(arguments: MountArguments) async throws -> String {
             guard firstCall.take() else { return GenerationQueueSubmissionTests.nothingStarted }

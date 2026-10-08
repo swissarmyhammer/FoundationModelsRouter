@@ -40,8 +40,13 @@ imports both modules finds one type for each name.
 
 A tool declares ahead of time that it runs long, through
 `BackgroundTool.mount`, or for one call through `BackgroundTool.mount(for:)`.
-Such a call runs in the background mode of ``ToolMount``: it returns a
-``PendingRunEnvelope`` handle at once, and the work goes on behind it. Every
+Such a call runs in the background mode of ``ToolMount``: it waits for its
+run up to the settle period of the session,
+``SessionConfiguration/inlineSettleGrace``. A run that ends in that time
+answers with its own result, the same as a synchronous call, and is no mail.
+A run that continues answers with a ``PendingRunEnvelope`` handle, and the
+work goes on behind it. The default settle period is
+`ToolMount.defaultInlineSettleGrace`, and `0` gives the handle at once. Every
 other call runs to completion and returns its result in band;
 `ToolMount.timeout` bounds the work.
 

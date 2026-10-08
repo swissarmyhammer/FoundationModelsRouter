@@ -352,6 +352,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                         session: node.id, toolName: toolName))
             }
 
+            // In the envelope with the settle period setting. A sidecar
+            // written before it carries `nil` and gets the default.
+            let inlineSettleGrace = configuration?.inlineSettleGrace ?? ToolMount.defaultInlineSettleGrace
+
             // Per-node event wiring plus per-session tool instancing —
             // the shared helper mints every restored node its own fresh
             // outbox and mailbox, so a tool's events post to *this* node's
@@ -364,13 +368,14 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // caller's originals, it never derives one live session from
             // another) — mirroring the root site's mount → cap; the fork
             // site is fork → mount → cap (task ^k4nygqa; see
-            // ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:)``
+            // ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:inlineSettleGrace:)``
             // and ``RoutedSessionActor/fork(workingDirectory:)``).
             let (outbox, mailbox, instancedTools) = makeSessionToolWiring(
                 tools,
                 sessionID: node.id,
                 cappedToTokenLimit: compaction.budget?.toolOutputLimit,
-                tokenCounter: routedLLM.container.tokenCounter
+                tokenCounter: routedLLM.container.tokenCounter,
+                inlineSettleGrace: inlineSettleGrace
             )
             let backend = routedLLM.container.makeSession(
                 transcript: seedTranscript, tools: instancedTools, samplingMode: routedLLM.samplingMode)
@@ -494,6 +499,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 // before it carries `nil` and gets the default.
                 mailOnlyAnswerLimit: configuration?.mailOnlyAnswerLimit
                     ?? SessionConfiguration.defaultMailOnlyAnswerLimit,
+                inlineSettleGrace: inlineSettleGrace,
                 // Not in the envelope either: the counter comes from the
                 // container the node is restored over, as a vended session
                 // takes it.

@@ -178,6 +178,10 @@ struct NestedRunTerminalForwardingTests {
     /// Mounts `tool` as a top-level background run on `session`'s own mailbox
     /// and outbox, exactly as a session-registered tool is mounted.
     ///
+    /// The settle period of the site is `0`, so the outer call answers with
+    /// its pending envelope at once, and its body returns the envelope of the
+    /// nested run at once too.
+    ///
     /// - Parameters:
     ///   - tool: The tool to run in the background.
     ///   - session: The session that tracks and journals the run.
@@ -187,7 +191,8 @@ struct NestedRunTerminalForwardingTests {
     ) -> BackgroundToolRunner<MountArguments> {
         BackgroundToolRunner(
             wrapping: tool,
-            site: MountSite(sessionID: session.id, runPlane: session.mailbox, sink: session.outbox),
+            site: MountSite(
+                sessionID: session.id, runPlane: session.mailbox, sink: session.outbox, inlineSettleGrace: 0),
             timeout: nil
         )
     }

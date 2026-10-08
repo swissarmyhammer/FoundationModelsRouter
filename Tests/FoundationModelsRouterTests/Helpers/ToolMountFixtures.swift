@@ -68,15 +68,21 @@ enum MountFixtures {
     /// - Parameters:
     ///   - tool: The tool to mount.
     ///   - timeout: The timeout with no progress, or `nil` for none.
+    ///   - inlineSettleGrace: The settle period of the site, in seconds. The
+    ///     default `0` gives the pending envelope at once, also for a fast
+    ///     tool, so a test can examine the background path.
     /// - Returns: The wiring of the test.
     static func backgroundHarness<Arguments: ConvertibleFromGeneratedContent & Sendable>(
         wrapping tool: any Tool<Arguments, String>,
-        timeout: TimeInterval? = nil
+        timeout: TimeInterval? = nil,
+        inlineSettleGrace: TimeInterval = 0
     ) -> Harness<BackgroundToolRunner<Arguments>> {
         let mailbox = RunPlane()
         let sink = RecordingSink()
         let mounted = BackgroundToolRunner(
-            wrapping: tool, site: MountSite(sessionID: ULID.generate(), runPlane: mailbox, sink: sink),
+            wrapping: tool,
+            site: MountSite(
+                sessionID: ULID.generate(), runPlane: mailbox, sink: sink, inlineSettleGrace: inlineSettleGrace),
             timeout: timeout
         )
         return Harness(mailbox: mailbox, sink: sink, mounted: mounted)
@@ -100,20 +106,18 @@ enum MountFixtures {
             wrapped: tool,
             arguments: arguments,
             site: MountSite(sessionID: ULID.generate(), runPlane: RunPlane(), sink: sink),
-            mountTimeout: nil
+            mountTimeout: nil,
+            inlineSettleDeadline: nil
         )
     }
 
     // MARK: - Envelope and settlement helpers
 
-    /// The envelope's decoded shape. A run still going carries no `outcome`
-    /// and no `detail`; a run that settled inside its tool's grace carries
-    /// both.
+    /// The envelope's decoded shape. Only a run that continues past its
+    /// settle period answers with an envelope, so `pending` is always `true`.
     struct DecodedEnvelope: Decodable {
         let pending: Bool
         let completionToken: String
-        let outcome: String?
-        let detail: String?
         let next: String
     }
 
@@ -210,6 +214,9 @@ enum MountFixtures {
             ToolMount(mode: .background, timeout: nil)
         }
 
+        /// No wait: each call answers with its pending envelope at once.
+        var inlineSettleGrace: TimeInterval { 0 }
+
         func call(arguments: MountArguments) async throws -> String {
             await gate.waitUntilOpen()
             return "background: \(arguments.value)"
@@ -238,7 +245,7 @@ enum MountFixtures {
     }
 
     /// Waits for its gate, then returns. Declares a grace, so a run that
-    /// settles inside that time is answered in the call's own envelope.
+    /// settles inside that time answers with its own output.
     struct InlineGraceTool: Tool, BackgroundTool {
         let name = "inline_grace_tool"
         let description = "waits a short time for its own run before it answers"
@@ -250,20 +257,11 @@ enum MountFixtures {
             "inline: \(value)"
         }
 
-        /// The sentence this tool renders for a settled `completionToken`.
-        static func resultInstruction(forCompletionToken completionToken: String) -> String {
-            "Run \"\(completionToken)\" is done. Read the detail field beside this sentence."
-        }
-
-        var inlineSettleGrace: TimeInterval? { grace }
+        var inlineSettleGrace: TimeInterval { grace }
 
         func call(arguments: MountArguments) async throws -> String {
             await gate.waitUntilOpen()
             return Self.output(for: arguments.value)
-        }
-
-        func resultInstruction(forCompletionToken completionToken: String) -> String {
-            Self.resultInstruction(forCompletionToken: completionToken)
         }
     }
 
@@ -363,6 +361,9 @@ enum MountFixtures {
         var mount: ToolMount? {
             ToolMount(mode: .background, timeout: nil)
         }
+
+        /// No wait: each call answers with its pending envelope at once.
+        var inlineSettleGrace: TimeInterval { 0 }
 
         func call(arguments: MountArguments) async throws -> String {
             try await gated.call(arguments: arguments)

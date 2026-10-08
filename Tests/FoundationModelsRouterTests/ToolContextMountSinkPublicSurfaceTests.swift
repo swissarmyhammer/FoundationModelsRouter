@@ -418,7 +418,9 @@ struct ToolContextMountSinkPublicSurfaceTests {
         let handoff = CallBarrier(partySize: Self.backgroundHandoffCount)
         let snapshot = ReturnSnapshot()
         let host = MountingTool(label: Self.hostLabel, log: log) { context in
-            let mounted = context.mount(
+            // A settle period of `0`: the run waits at the handoff, so the call
+            // answers with its pending envelope at once.
+            let mounted = context.settling(within: 0).mount(
                 RunIdentityTool(label: Self.backgroundLabel, log: log, barrier: handoff),
                 as: ToolMount(mode: .background, timeout: nil),
                 postingTo: sink)

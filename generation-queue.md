@@ -210,11 +210,11 @@ The SDK allows one call at a time on one `LanguageModelSession`. Evidence: `Lang
 
 **A tool must not wait inside a submission.** A tool body that waits for an answer of a session on the same model can never end: the submission of that session waits behind the submission of the tool (the spike observes this). The rules:
 
-1. A tool that starts other work that can take long (a child agent, a build, a wait for a person) is a background tool (`BackgroundTool`, `ToolMount(mode: .background)`). It returns at once with its pending envelope. The result comes back to the session as mail, and the mail causes the next submission.
+1. A tool that starts other work that can take long (a child agent, a build, a wait for a person) is a background tool (`BackgroundTool`, `ToolMount(mode: .background)`). It waits for its run up to its settle period. A run that ends in that time returns its own result, the same as a synchronous call. A run that continues returns its pending envelope. The result of that run comes back to the session as mail, and the mail causes the next submission.
 2. The Router refuses at once the one wait that can never end: a submission to queue Q, or a wait for an answer on a session over Q, from a task inside an open submission on Q. `ModelCallMark` names the queue of its submission for this check. The error is `GenerationQueueError.waitInsideOpenSubmission(model:)` (^1psqdm9). A hang is worse than an error. This is not a lock error: it names a wait cycle. A background body has a closed mark (`ModelCallMark.withBackgroundRunMark`), so it is never refused.
 3. A tool may wait for work on a DIFFERENT model. That work runs on the other worker. The wait still holds its own model for the whole time.
 4. `ToolMount.timeout` still bounds a run-to-completion tool that makes no progress.
-5. `BackgroundTool.inlineSettleGrace` is an in-band wait. It holds the model for its whole time. A run on the same model can never settle inside it. Keep it small, as its doc comment says now.
+5. The settle period of a background call is an in-band wait. It holds the model for its whole time. A run on the same model can never settle inside it. The host sets it for each session with `SessionConfiguration.inlineSettleGrace` (default `ToolMount.defaultInlineSettleGrace`), and a tool can state its own `BackgroundTool.inlineSettleGrace`. Keep it small.
 6. `awaitingUser(_:)` goes (^f33q8gw). A wait for a person inside a tool holds the model. The way to wait for a person is an elicitation from a background run (`SessionEvent.elicitationRequested`, `respond(elicitationId:response:)`).
 
 Code and tests that assume an in-band wait, and what each becomes:

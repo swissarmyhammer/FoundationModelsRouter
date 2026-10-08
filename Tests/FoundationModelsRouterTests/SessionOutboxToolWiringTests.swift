@@ -59,6 +59,9 @@ struct SessionOutboxToolWiringTests {
             ToolMount(mode: .background, timeout: nil)
         }
 
+        /// No wait: each call answers with its pending envelope at once.
+        var inlineSettleGrace: TimeInterval { 0 }
+
         func call(arguments: FakeToolArguments) async throws -> String {
             await gate.waitUntilOpen()
             return "gated: \(arguments.value)"
@@ -83,6 +86,9 @@ struct SessionOutboxToolWiringTests {
             ToolMount(mode: .background, timeout: nil)
         }
 
+        /// No wait: each call answers with its pending envelope at once.
+        var inlineSettleGrace: TimeInterval { 0 }
+
         func call(arguments: BackgroundFixtureArguments) async throws -> String {
             guard let context = ToolContext.current else { throw ToolContextMissing() }
             await context.progress(Self.progressDetail)
@@ -104,6 +110,9 @@ struct SessionOutboxToolWiringTests {
         var mount: ToolMount? {
             ToolMount(mode: .background, timeout: nil)
         }
+
+        /// No wait: each call answers with its pending envelope at once.
+        var inlineSettleGrace: TimeInterval { 0 }
 
         func call(arguments: BackgroundFixtureArguments) async throws -> String {
             guard let context = ToolContext.current else { throw ToolContextMissing() }

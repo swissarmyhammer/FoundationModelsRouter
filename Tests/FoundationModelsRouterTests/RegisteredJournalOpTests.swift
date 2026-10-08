@@ -169,7 +169,10 @@ struct RegisteredJournalOpTests {
       tool: enclosingToolName,
       op: enclosingOp,
       completionToken: RunPlane.makeCompletionToken(),
-      isCancelled: { false }
+      isCancelled: { false },
+      // Each run of this suite continues past its call, so a settle period
+      // of `0` gives the pending envelope at once.
+      inlineSettleGrace: 0
     )
   }
 

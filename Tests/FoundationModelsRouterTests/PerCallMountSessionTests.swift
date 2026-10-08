@@ -35,8 +35,8 @@ struct PerCallMountSessionTests {
     /// The prefix of the temporary directory of each test.
     private static let tempDirPrefix = "PerCallMountSessionTests"
 
-    /// The inline settle grace of the per-call tool in the synchronous test.
-    /// A background call would wait this long for its run and then answer.
+    /// The settle period of the session in the synchronous test. A
+    /// background call would wait this long for its run and then answer.
     private static let inlineSettleGrace: TimeInterval = 0.01
 
     /// The value of a call that the per-call tool runs synchronously.
@@ -71,9 +71,6 @@ struct PerCallMountSessionTests {
         /// The latch the body waits on before it returns.
         let gate: RunLatch
 
-        /// The inline settle grace of a background call, or `nil` for none.
-        let grace: TimeInterval?
-
         /// The output of a call with `value`.
         ///
         /// - Parameter value: The argument of the call.
@@ -81,8 +78,6 @@ struct PerCallMountSessionTests {
         static func output(for value: String) -> String {
             "done: \(value)"
         }
-
-        var inlineSettleGrace: TimeInterval? { grace }
 
         func mount(for arguments: GeneratedContent) -> ToolMount? {
             let value = try? arguments.value(String.self, forProperty: "value")
@@ -156,9 +151,14 @@ struct PerCallMountSessionTests {
     /// - Parameters:
     ///   - tools: The tools of the session.
     ///   - calls: The calls of the first submission.
+    ///   - inlineSettleGrace: The settle period of the session. The default
+    ///     `0` makes each background call answer with its pending envelope at
+    ///     once, also when its run ends at once.
     /// - Returns: The harness.
     /// - Throws: What profile resolution throws.
-    private static func makeHarness(tools: [any Tool], calls: [ScriptedMountCall]) async throws -> Harness {
+    private static func makeHarness(
+        tools: [any Tool], calls: [ScriptedMountCall], inlineSettleGrace: TimeInterval = 0
+    ) async throws -> Harness {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let recorder = InMemoryRecorder()
         let container = MountCallingLLMContainer(calls: calls)
@@ -168,7 +168,8 @@ struct PerCallMountSessionTests {
             loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension)
         )
         let profile = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        let session = profile.standard.makeSession(tools: tools)
+        let session = profile.standard.makeSession(
+            configuration: SessionConfiguration(tools: tools, inlineSettleGrace: inlineSettleGrace))
         let backend = try #require(container.lastBackend)
         return Harness(session: session, backend: backend, recorder: recorder, directory: directory)
     }
@@ -236,9 +237,10 @@ struct PerCallMountSessionTests {
     func aSynchronousCallReturnsItsOutputInBand() async throws {
         let entered = RunLatch()
         let gate = RunLatch()
-        let tool = PerCallMountTool(entered: entered, gate: gate, grace: Self.inlineSettleGrace)
+        let tool = PerCallMountTool(entered: entered, gate: gate)
         let harness = try await Self.makeHarness(
-            tools: [tool], calls: [Self.perCallMountCall(value: Self.synchronousValue)])
+            tools: [tool], calls: [Self.perCallMountCall(value: Self.synchronousValue)],
+            inlineSettleGrace: Self.inlineSettleGrace)
         defer { try? FileManager.default.removeItem(at: harness.directory) }
 
         let answering = Task { try await harness.session.respond(to: "run it in band") }
@@ -267,7 +269,7 @@ struct PerCallMountSessionTests {
         let entered = RunLatch()
         let gate = RunLatch()
         await gate.open()
-        let tool = PerCallMountTool(entered: entered, gate: gate, grace: nil)
+        let tool = PerCallMountTool(entered: entered, gate: gate)
         let harness = try await Self.makeHarness(
             tools: [tool], calls: [Self.perCallMountCall(value: Self.backgroundValue)])
         defer { try? FileManager.default.removeItem(at: harness.directory) }
@@ -275,7 +277,6 @@ struct PerCallMountSessionTests {
         let answer = try await harness.session.respond(to: "run it in the background")
         let envelope = try MountFixtures.decodeEnvelope(answer)
         #expect(envelope.pending)
-        #expect(envelope.outcome == nil)
 
         let terminal = try await Self.settledTerminal(of: envelope.completionToken, on: harness.session)
         #expect(terminal.outcome == .succeeded)

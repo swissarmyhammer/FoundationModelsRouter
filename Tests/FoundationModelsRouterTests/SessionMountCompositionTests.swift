@@ -6,7 +6,7 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises the session mount of the router,
-/// `ToolMounting.makeSessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:tokenCounter:tracer:)`:
+/// `ToolMounting.makeSessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:tokenCounter:tracer:inlineSettleGrace:)`:
 /// the Extras mount layer, the capping layer of the router
 /// (`TokenCappingTool`) over it, and the failure-delivery decorator outermost.
 /// It also exercises the capping layer over a background envelope, and the
@@ -47,6 +47,9 @@ struct SessionMountCompositionTests {
     /// beneath its outermost failure-delivery decorator — the layer this
     /// suite reads.
     ///
+    /// The settle period is `0`, so a background call of a gated tool answers
+    /// with its pending envelope at once.
+    ///
     /// - Parameters:
     ///   - tool: The tool to mount.
     ///   - sessionID: The session of each call.
@@ -59,7 +62,7 @@ struct SessionMountCompositionTests {
         ToolFailureDelivery.throwingTool(
             of: ToolMounting.makeSessionMounted(
                 tool: tool, sessionID: sessionID, mailbox: mailbox, sink: sink, cappedToTokenLimit: nil,
-                tokenCounter: characterTokenCounter
+                tokenCounter: characterTokenCounter, inlineSettleGrace: 0
             ))
     }
 
@@ -184,7 +187,7 @@ struct SessionMountCompositionTests {
         let mounted = ToolMounting.makeSessionMounted(
             tool: ThrowingMarkerTool(), sessionID: .generate(), mailbox: RunPlane(),
             sink: DiscardingOperationEventSink(), cappedToTokenLimit: tokenLimit,
-            tokenCounter: characterTokenCounter)
+            tokenCounter: characterTokenCounter, inlineSettleGrace: ToolMount.defaultInlineSettleGrace)
 
         #expect(mounted is FailureDeliveringTextTool<AmbientToolArguments>)
         let beneath = ToolFailureDelivery.throwingTool(of: mounted)
@@ -197,7 +200,7 @@ struct SessionMountCompositionTests {
         let mounted = ToolMounting.makeSessionMounted(
             tool: ThrowingMarkerTool(), sessionID: .generate(), mailbox: RunPlane(),
             sink: DiscardingOperationEventSink(), cappedToTokenLimit: nil,
-            tokenCounter: characterTokenCounter)
+            tokenCounter: characterTokenCounter, inlineSettleGrace: ToolMount.defaultInlineSettleGrace)
         let tool = try #require(mounted as? FailureDeliveringTextTool<AmbientToolArguments>)
 
         let output = try await tool.call(arguments: Self.arguments)
@@ -241,8 +244,8 @@ struct SessionMountCompositionTests {
         }
     }
 
-    @Test("the capping layer cuts a settled envelope's detail and leaves its completionToken and sentence whole")
-    func tokenCappingCutsOnlyTheDetailOfASettledEnvelope() async throws {
+    @Test("the capping layer caps the own output of a background run that ends inside its grace")
+    func tokenCappingCapsTheOwnOutputOfARunThatEndsInsideItsGrace() async throws {
         let gate = RunLatch()
         await gate.open()
         let harness = Fixtures.backgroundHarness(
@@ -252,23 +255,17 @@ struct SessionMountCompositionTests {
 
         let rendered = try await capping.call(arguments: MountArguments(value: "capped"))
 
-        #expect(PendingRunEnvelope.isRendered(text: rendered))
-        let envelope = try Fixtures.decodeEnvelope(rendered)
-        #expect(!envelope.pending)
-        #expect(envelope.detail != Fixtures.InlineGraceTool.output(for: "capped"))
+        // The run answers with its own output, and not with an envelope.
+        #expect(!PendingRunEnvelope.isRendered(text: rendered))
+        #expect(rendered != Fixtures.InlineGraceTool.output(for: "capped"))
         #expect(
-            envelope.detail
+            rendered
                 == ToolOutputCapping.capped(
                     text: Fixtures.InlineGraceTool.output(for: "capped"),
                     toTokenLimit: Self.tinyTokenLimit,
                     counter: characterTokenCounter
                 )
         )
-        #expect(
-            envelope.next
-                == Fixtures.InlineGraceTool.resultInstruction(forCompletionToken: envelope.completionToken)
-        )
-        #expect(ULID(ulidString: envelope.completionToken) != nil)
     }
 
     // MARK: - The staged events of the session outbox
@@ -277,7 +274,10 @@ struct SessionMountCompositionTests {
     func inlineResultWithdrawsWhatTheRunStaged() async throws {
         let mailbox = RunPlane()
         let outbox = SessionOutbox()
-        let site = MountSite(sessionID: ULID.generate(), runPlane: mailbox, sink: outbox)
+        // The settle period of the site is `0`, so the gated run below answers
+        // with its pending envelope at once. The inline tool states its own
+        // grace, so it still waits for its run.
+        let site = MountSite(sessionID: ULID.generate(), runPlane: mailbox, sink: outbox, inlineSettleGrace: 0)
         let gate = RunLatch()
         await gate.open()
         let inline = BackgroundToolRunner(
@@ -288,8 +288,7 @@ struct SessionMountCompositionTests {
 
         let rendered = try await inline.call(arguments: MountArguments(value: "inline"))
 
-        let envelope = try Fixtures.decodeEnvelope(rendered)
-        #expect(!envelope.pending)
+        #expect(rendered == Fixtures.InlineGraceTool.output(for: "inline"))
         let afterInline = await outbox.pending()
         #expect(afterInline.events.isEmpty)
 
@@ -366,7 +365,7 @@ struct SessionMountCompositionTests {
         let gate = RunLatch()
         let run = BackgroundToolRunner(
             wrapping: Fixtures.GatedTool(gate: gate),
-            site: MountSite(sessionID: ULID.generate(), runPlane: mailbox, sink: sink),
+            site: MountSite(sessionID: ULID.generate(), runPlane: mailbox, sink: sink, inlineSettleGrace: 0),
             timeout: nil
         )
         let envelope = try Fixtures.decodeEnvelope(try await run.call(arguments: MountArguments(value: "held")))

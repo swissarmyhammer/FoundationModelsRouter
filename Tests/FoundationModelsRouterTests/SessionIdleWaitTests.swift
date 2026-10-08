@@ -20,7 +20,7 @@ struct SessionIdleWaitTests {
 
     /// A background tool whose run settles inside its own tool call. Its gate
     /// is open before the call, and its grace is far longer than the run, so
-    /// the runner gives the result in the envelope of the call, and takes
+    /// the call answers with the own output of the run, and the runner takes
     /// back the staged mail of the run.
     struct InlineSettlingTool: Tool, BackgroundTool {
         let name = "inline_settling_job"
@@ -33,7 +33,7 @@ struct SessionIdleWaitTests {
             ToolMount(mode: .background, timeout: nil)
         }
 
-        var inlineSettleGrace: TimeInterval? {
+        var inlineSettleGrace: TimeInterval {
             SessionIdleWaitTests.inlineSettleGrace
         }
 

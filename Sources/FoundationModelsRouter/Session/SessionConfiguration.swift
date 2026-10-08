@@ -71,9 +71,26 @@ public struct SessionConfiguration: Sendable {
     /// a fork inherits it.
     public var mailOnlyAnswerLimit: Int
 
+    /// How long a background tool call waits for its own run before it
+    /// answers, in seconds.
+    ///
+    /// A run that ends in this time answers with its own result, the same as
+    /// a synchronous call: the output of the tool, or the error that it
+    /// threw. A run that continues answers with a `PendingRunEnvelope`, and
+    /// its result arrives later as mail. The model waits this long on each
+    /// background call, so keep the value small.
+    ///
+    /// The default is `ToolMount.defaultInlineSettleGrace`. `0` answers with
+    /// the pending envelope at once. A negative value acts as `0`. A tool
+    /// that states its own `BackgroundTool.inlineSettleGrace` uses its own
+    /// value. The sidecar records the value, a restore applies it again, and
+    /// a fork inherits it.
+    public var inlineSettleGrace: TimeInterval
+
     /// Creates a session configuration. Every parameter defaults to the
-    /// matching default of `RoutedModel.makeSession`, and
-    /// `mailOnlyAnswerLimit` defaults to ``defaultMailOnlyAnswerLimit``.
+    /// matching default of `RoutedModel.makeSession`,
+    /// `mailOnlyAnswerLimit` defaults to ``defaultMailOnlyAnswerLimit``, and
+    /// `inlineSettleGrace` defaults to `ToolMount.defaultInlineSettleGrace`.
     public init(
         instructions: String? = nil,
         workingDirectory: URL? = nil,
@@ -84,7 +101,8 @@ public struct SessionConfiguration: Sendable {
         discoveryPriming: DiscoveryPriming? = nil,
         grammar: Grammar? = nil,
         repetitionDetection: RepetitionDetection = RepetitionDetection(),
-        mailOnlyAnswerLimit: Int = defaultMailOnlyAnswerLimit
+        mailOnlyAnswerLimit: Int = defaultMailOnlyAnswerLimit,
+        inlineSettleGrace: TimeInterval = ToolMount.defaultInlineSettleGrace
     ) {
         self.instructions = instructions
         self.workingDirectory = workingDirectory
@@ -96,6 +114,7 @@ public struct SessionConfiguration: Sendable {
         self.grammar = grammar
         self.repetitionDetection = repetitionDetection
         self.mailOnlyAnswerLimit = mailOnlyAnswerLimit
+        self.inlineSettleGrace = inlineSettleGrace
     }
 
     /// The `Codable` slice of this configuration, persisted in the session sidecar.
@@ -115,7 +134,8 @@ public struct SessionConfiguration: Sendable {
             discoveryPriming: discoveryPriming,
             grammar: grammar,
             repetitionDetection: repetitionDetection,
-            mailOnlyAnswerLimit: mailOnlyAnswerLimit
+            mailOnlyAnswerLimit: mailOnlyAnswerLimit,
+            inlineSettleGrace: inlineSettleGrace
         )
     }
 
@@ -167,6 +187,11 @@ public struct SessionConfiguration: Sendable {
         /// sidecar written before the setting existed. A restore reads `nil`
         /// as ``SessionConfiguration/defaultMailOnlyAnswerLimit``.
         let mailOnlyAnswerLimit: Int?
+
+        /// How long a background call waits for its own run, in seconds, or
+        /// `nil` in a sidecar written before the setting existed. A restore
+        /// reads `nil` as `ToolMount.defaultInlineSettleGrace`.
+        let inlineSettleGrace: TimeInterval?
 
         /// The compaction settings this slice records, the inverse of the
         /// flat keys that ``SessionConfiguration/persistable`` writes.

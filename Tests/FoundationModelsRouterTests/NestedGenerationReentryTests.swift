@@ -800,6 +800,20 @@ struct NestedGenerationReentryTests {
             }
         }
 
+        /// Makes the session whose tool-calling answer a test starts, with
+        /// `tools`.
+        ///
+        /// The settle period of the session is `0`, so a background call
+        /// answers with its pending envelope at once, also when its run ends
+        /// at once. The test then sees the run settle while the submission
+        /// that started it is still open.
+        ///
+        /// - Parameter tools: The tools of the session.
+        /// - Returns: The session.
+        func makeCallerSession(tools: [any Tool]) -> any RoutedSession {
+            profile.standard.makeSession(configuration: SessionConfiguration(tools: tools, inlineSettleGrace: 0))
+        }
+
         /// Lets the held submission end, and reports what its answer produced.
         ///
         /// - Parameter answer: The task ``startAnswer(on:)`` returned.
@@ -817,7 +831,7 @@ struct NestedGenerationReentryTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let harness = try await BackgroundHarness.make(dir: dir)
-        let caller = harness.profile.standard.makeSession(
+        let caller = harness.makeCallerSession(
             tools: [NestedGeneratingTool(target: harness.target, label: "caller", mount: Self.backgroundMount)])
         let nested = harness.profile.standard.makeSession()
         harness.target.set(nested)
@@ -848,7 +862,7 @@ struct NestedGenerationReentryTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let harness = try await BackgroundHarness.make(dir: dir)
-        let caller = harness.profile.standard.makeSession(
+        let caller = harness.makeCallerSession(
             tools: [NestedGeneratingTool(target: harness.target, label: "caller", mount: Self.backgroundMount)])
         // The body asks the very session whose submission started it. Its
         // mark is closed, so the message is not refused: it waits in the
@@ -880,7 +894,7 @@ struct NestedGenerationReentryTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let harness = try await BackgroundHarness.make(dir: dir)
-        let caller = harness.profile.standard.makeSession(
+        let caller = harness.makeCallerSession(
             tools: [ForkingTool(target: harness.target, mount: Self.backgroundMount)])
         harness.target.set(caller)
 
@@ -904,7 +918,7 @@ struct NestedGenerationReentryTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let harness = try await BackgroundHarness.make(dir: dir)
-        let caller = harness.profile.standard.makeSession(
+        let caller = harness.makeCallerSession(
             tools: [TranscriptReadingTool(target: harness.target, mount: Self.backgroundMount)])
         harness.target.set(caller)
 

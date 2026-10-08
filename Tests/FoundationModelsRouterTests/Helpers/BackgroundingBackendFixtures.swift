@@ -21,6 +21,11 @@ struct LatchedToolFailure: Error {}
 /// ``RunLatch`` until a test opens it, and then settles the way the test
 /// chose: with `output`, with a thrown ``LatchedToolFailure``, or — when a
 /// `timeout` is set and the latch stays shut — by that timeout.
+///
+/// It states an ``inlineSettleGrace`` of `0`, so each call answers with its
+/// pending envelope at once, also when its latch is already open. The suites
+/// that use it examine a run that settles behind the envelope and arrives as
+/// mail.
 struct LatchedBackgroundToolRunner: Tool, BackgroundTool {
     let name: String
     let description = "test-only slow tool that declares background"
@@ -40,6 +45,9 @@ struct LatchedBackgroundToolRunner: Tool, BackgroundTool {
     var mount: ToolMount? {
         ToolMount(mode: .background, timeout: timeout)
     }
+
+    /// No wait: each call answers with its pending envelope at once.
+    var inlineSettleGrace: TimeInterval { 0 }
 
     func call(arguments: BackgroundFixtureArguments) async throws -> String {
         await gate.waitUntilOpen()

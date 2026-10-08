@@ -924,6 +924,7 @@ struct SessionTreeRestorationTests {
         #expect(restoredRoot.discoveryPriming == nil)
         #expect(restoredRoot.repetitionDetection == RepetitionDetection())
         #expect(restoredRoot.mailOnlyAnswerLimit == SessionConfiguration.defaultMailOnlyAnswerLimit)
+        #expect(restoredRoot.inlineSettleGrace == ToolMount.defaultInlineSettleGrace)
         #expect(restored.configurationReport.missingTools.isEmpty)
     }
 
@@ -992,6 +993,18 @@ struct SessionTreeRestorationTests {
             limit,
             madeWith: SessionConfiguration(mailOnlyAnswerLimit: limit),
             readBy: \.mailOnlyAnswerLimit)
+    }
+
+    @Test("a session made with a settle period keeps it in a fork and after a restore")
+    @MainActor
+    func restoredTreeReappliesRecordedInlineSettleGrace() async throws {
+        // A value that is not the default, so the fork and the restore cannot
+        // pass by falling back to the default.
+        let grace = ToolMount.defaultInlineSettleGrace / 4
+        try await Self.expectForkAndRestoreKeep(
+            grace,
+            madeWith: SessionConfiguration(inlineSettleGrace: grace),
+            readBy: \.inlineSettleGrace)
     }
 
     // MARK: - Decided restore losses (task ^xky3j8w)

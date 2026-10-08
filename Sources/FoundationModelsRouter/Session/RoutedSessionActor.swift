@@ -205,6 +205,7 @@ func makeRoutedSessionActor(
     toolOutputProtection: ToolOutputProtection? = nil,
     repetitionDetection: RepetitionDetection = RepetitionDetection(),
     mailOnlyAnswerLimit: Int = SessionConfiguration.defaultMailOnlyAnswerLimit,
+    inlineSettleGrace: TimeInterval = ToolMount.defaultInlineSettleGrace,
     recordingRoot: URL? = nil,
     tokenCounter: any TokenCounter,
     tracer: (any Tracer)?
@@ -241,6 +242,7 @@ func makeRoutedSessionActor(
             toolOutputProtection: toolOutputProtection,
             repetitionDetection: repetitionDetection,
             mailOnlyAnswerLimit: mailOnlyAnswerLimit,
+            inlineSettleGrace: inlineSettleGrace,
             recordingRoot: recordingRoot,
             tokenCounter: tokenCounter,
             tracer: tracer
@@ -479,6 +481,13 @@ actor RoutedSessionActor: RoutedSession {
     /// the sidecar records it. See ``SessionConfiguration/mailOnlyAnswerLimit``.
     nonisolated let mailOnlyAnswerLimit: Int
 
+    /// How long each background tool call of this session waits for its own
+    /// run, in seconds, which this session was vended, forked or restored
+    /// with. Never negative. The mount site of each tool of the session holds
+    /// it. A fork carries it forward, and the sidecar records it. See
+    /// ``SessionConfiguration/inlineSettleGrace``.
+    nonisolated let inlineSettleGrace: TimeInterval
+
     /// How many answers in a row mail alone started since the last answer
     /// that delivered a caller message. The pump counts it, and holds new
     /// mail when it reaches ``mailOnlyAnswerLimit``
@@ -655,6 +664,7 @@ actor RoutedSessionActor: RoutedSession {
         toolOutputProtection: ToolOutputProtection? = nil,
         repetitionDetection: RepetitionDetection = RepetitionDetection(),
         mailOnlyAnswerLimit: Int = SessionConfiguration.defaultMailOnlyAnswerLimit,
+        inlineSettleGrace: TimeInterval = ToolMount.defaultInlineSettleGrace,
         recordingRoot: URL? = nil,
         tokenCounter: any TokenCounter,
         tracer: (any Tracer)?
@@ -662,6 +672,7 @@ actor RoutedSessionActor: RoutedSession {
         self.toolOutputProtection = toolOutputProtection
         self.repetitionDetection = repetitionDetection
         self.mailOnlyAnswerLimit = mailOnlyAnswerLimit
+        self.inlineSettleGrace = max(0, inlineSettleGrace)
         self.tokenCounter = tokenCounter
         self.profile = profile
         self.routerId = routerId
@@ -733,7 +744,8 @@ actor RoutedSessionActor: RoutedSession {
                 discoveryPriming: discoveryPriming,
                 grammar: grammar,
                 repetitionDetection: repetitionDetection,
-                mailOnlyAnswerLimit: mailOnlyAnswerLimit
+                mailOnlyAnswerLimit: mailOnlyAnswerLimit,
+                inlineSettleGrace: self.inlineSettleGrace
             ).persistable,
             to: recordingDirectory
         )
