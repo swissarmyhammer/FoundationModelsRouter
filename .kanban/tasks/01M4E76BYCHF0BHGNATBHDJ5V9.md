@@ -49,8 +49,24 @@ comments:
     - environment: swift build --build-tests --package-path IntegrationTests fails with 5 errors "type 'ToolMount' has no member 'defaultInlineSettleGrace'" in RoutedLLM.swift, RoutedSessionActor.swift (2) and SessionConfiguration.swift. Cause: IntegrationTests/.build/checkouts/FoundationModelsExtras is at 5c1c638 (remote main). Commit a149511a needs c18a9aa, which is local only. The main checkout .build/checkouts/FoundationModelsExtras is at c18a9aa and builds. I did not change any checkout, and I did not run package update, reset or edit. Not counted against this task.
     - next: review. The IntegrationTests build must be run again after FoundationModelsExtras c18a9aa is pushed and the IntegrationTests checkout is updated.
   timestamp: 2026-10-08T17:30:30.121379+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m4e9fbnyrkwa0vtrvc19ftew
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (checkpoint 3d471055). 0 findings, 0 confirmed, 0 refuted. 13 files reviewed. 7 files not reviewed: 6 files in .kanban/ (from .reviewignore), and generation-queue.md (no validator matches this file). The task has no prior Review Findings sections.
+    - next: The task moves to done.
+  timestamp: 2026-10-08T17:37:45.150600+00:00
+- actor: claude-code
+  id: 01m4e9fwsjb9exengbgzzbd8b4
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 14 files
+    - test: green — swift test, 1555 tests in 195 suites passed, 0 failed; IntegrationTests build fails only because FoundationModelsExtras c18a9aa is not pushed (environment)
+    - commit: 3d471055
+    - review: clean — 0 findings
+  timestamp: 2026-10-08T17:38:02.674793+00:00
+position_column: done
+position_ordinal: ffffffcd80
 title: Turn thinking off only for the recovery pass after a stop, not for the full tool loop
 ---
 ## Origin
