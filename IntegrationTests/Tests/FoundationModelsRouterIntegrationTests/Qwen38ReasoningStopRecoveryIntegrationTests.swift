@@ -115,7 +115,11 @@ struct Qwen38ReasoningStopRecoveryIntegrationTests {
 
         let stop = try #require(stops.withLock { $0.first })
         #expect(stop.recovery == 1)
-        let recoveryPrompt = try #require(entries.lastIndex(where: Self.isReasoningRecoveryPrompt))
+        // Only the recovery pass runs with the reasoning off (task ^bhdj5v9). The
+        // next pass reasons again, so it can reach the small limit of this test
+        // and start a second recovery. Thus examine the entries after the first
+        // recovery prompt: that recovery belongs to `stop`.
+        let recoveryPrompt = try #require(entries.firstIndex(where: Self.isReasoningRecoveryPrompt))
         let actedAfterRecovery = entries[recoveryPrompt...].contains { entry in
             guard case .toolCalls = entry else { return false }
             return true
