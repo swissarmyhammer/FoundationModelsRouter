@@ -124,6 +124,16 @@ comments:
     - review: clean — 0 findings (Router changes only)
     - open: the real-weights check `aTurnThatDropsTheGeneratedTurnRestoresTheCheckpoint` runs after the bench of foundationmodelsacpagent-19 ends
   timestamp: 2026-10-08T18:28:06.316811+00:00
+- actor: claude-code
+  id: 01m4efcjj92ed2g67vrjh69qjw
+  text: |-
+    ### Real-weights acceptance test: PASS
+    - Test: Qwen35SessionPromptCacheTests/aTurnThatDropsTheGeneratedTurnRestoresTheCheckpoint() in mlx-swift-lm (branch stable, HEAD d609e75). Model: mlx-community/Qwen3.8-27B-mxfp4. Result: passed after 7.817 seconds. xcodebuild: TEST SUCCEEDED.
+    - Turn 1: rule=cold, rendered=73, reused=0, fed=73. Checkpoint saved at 69 (B).
+    - Turn 2 (drops the generated turn): rule=restore, rendered=92, reused=69, fed=23, divergence=69. Checkpoint then moves to 88.
+    - Acceptance met: the turn after the dropped turn uses restore with reused = B = 69. No rebuild.
+    - No file changed.
+  timestamp: 2026-10-08T19:21:05.353659+00:00
 position_column: done
 position_ordinal: ffffffce80
 title: Restore a hybrid checkpoint at the end of the prompt when the next render drops the last generated turn, so the Qwen 3.5 cache does not rebuild
