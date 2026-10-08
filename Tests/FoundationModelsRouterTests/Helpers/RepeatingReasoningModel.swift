@@ -221,7 +221,7 @@ struct RepeatingReasoningModel: LanguageModel {
         /// Sends one ``CountingRunCodeTool`` call with ``toolCallArguments``.
         ///
         /// - Parameter channel: The generation channel this call emits into.
-        private static func sendToolCall(into channel: LanguageModelExecutorGenerationChannel) async {
+        static func sendToolCall(into channel: LanguageModelExecutorGenerationChannel) async {
             await channel.send(
                 .toolCalls(
                     action: .toolCall(

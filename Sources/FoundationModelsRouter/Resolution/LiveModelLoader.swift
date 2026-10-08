@@ -391,7 +391,8 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
     ///
     /// The call is ``respond(to:maxTokens:)`` under a
     /// ``ReasoningOffRequest``, so the reasoning level comes from the one
-    /// place that states it for each call (``contextOptions(includingSchema:)``).
+    /// place that states it for each call (``prepareCall(includingSchema:)``).
+    /// The call has no tools, so its one pass is its first pass.
     func respondWithoutReasoning(to prompt: String, maxTokens: Int?) async throws -> String {
         try await ReasoningOffRequest.$isRequested.withValue(true) {
             try await respond(to: prompt, maxTokens: maxTokens)
@@ -407,15 +408,16 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
     // periphery:ignore
     var mlxLanguageModel: MLXLanguageModel? { model as? MLXLanguageModel }
 
-    /// Whether the call that starts now runs with the reasoning of ``model``
-    /// off: the task asks for it (``ReasoningOffRequest/isRequested``), and
-    /// the raw model can turn its reasoning off (``ReasoningSwitchable``).
+    /// Whether the first pass of the call that starts now runs with the
+    /// reasoning of ``model`` off: the task asks for it
+    /// (``ReasoningOffRequest/isRequested``), and the raw model can turn its
+    /// reasoning off (``ReasoningSwitchable``).
     ///
     /// The engine refuses "reasoning off" for a model that always reasons and
     /// for a model with no control of its reasoning. Thus a call asks for it
     /// only when the model says that it can.
     ///
-    /// - Returns: `true` when the call states ``ReasoningOffRequest/reasoningLevel``.
+    /// - Returns: `true` when the first pass states ``ReasoningOffRequest/reasoningLevel``.
     /// - Throws: What the read of the model configuration throws.
     private func callTurnsReasoningOff() async throws -> Bool {
         guard ReasoningOffRequest.isRequested, let switchable = model as? any ReasoningSwitchable else {
@@ -424,22 +426,26 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
         return try await switchable.canTurnReasoningOff()
     }
 
-    /// The context options of the call that starts now.
+    /// Prepares the call that starts now: states the reasoning level of its
+    /// first pass, and gives its context options.
     ///
     /// Each call starts from the default of the SDK for its kind: a call
     /// under a schema keeps the schema in its prompt, and any other call
-    /// gets `ContextOptions()`. A call that turns the reasoning off
-    /// (``callTurnsReasoningOff()``) states ``ReasoningOffRequest/reasoningLevel``.
+    /// gets `ContextOptions()`. The options of the call state no reasoning
+    /// level, because the SDK gives them to each pass of the tool loop of
+    /// the call. When the call turns the reasoning off
+    /// (``callTurnsReasoningOff()``), only its first pass states
+    /// ``ReasoningOffRequest/reasoningLevel``
+    /// (``SessionLanguageModelState/setFirstPassReasoningLevel(_:)``, task
+    /// ^bhdj5v9). Each later pass of its tool loop reasons as usual.
     ///
     /// - Parameter includingSchema: Whether the call decodes under a schema.
     /// - Returns: The context options of the call.
     /// - Throws: What the read of the model configuration throws.
-    private func contextOptions(includingSchema: Bool) async throws -> ContextOptions {
-        var contextOptions = includingSchema ? ContextOptions(includeSchemaInPrompt: true) : ContextOptions()
-        if try await callTurnsReasoningOff() {
-            contextOptions.reasoningLevel = ReasoningOffRequest.reasoningLevel
-        }
-        return contextOptions
+    private func prepareCall(includingSchema: Bool) async throws -> ContextOptions {
+        let firstPassLevel = try await callTurnsReasoningOff() ? ReasoningOffRequest.reasoningLevel : nil
+        sessionModelState.setFirstPassReasoningLevel(firstPassLevel)
+        return includingSchema ? ContextOptions(includeSchemaInPrompt: true) : ContextOptions()
     }
 
     /// The fragments of one stream call of ``liveSession``.
@@ -472,7 +478,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
     /// - Returns: The response content.
     private func respond(to prompt: String, schema: GenerationSchema?, maxTokens: Int?) async throws -> String {
         let options = makeGenerationOptions(maxTokens: maxTokens)
-        let contextOptions = try await contextOptions(includingSchema: schema != nil)
+        let contextOptions = try await prepareCall(includingSchema: schema != nil)
         forgetLastGenerationCall()
         guard let schema else {
             let response = try await liveSession.respond(
@@ -615,10 +621,10 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
     /// so far.
     ///
     /// A call under a ``ReasoningOffRequest`` starts the stream call of the
-    /// session at the first read of the stream: its context options need a
-    /// read of the model configuration, which is `async`
-    /// (``contextOptions(includingSchema:)``). Any other call starts the
-    /// stream call at once.
+    /// session at the first read of the stream: the reasoning level of its
+    /// first pass needs a read of the model configuration, which is `async`
+    /// (``prepareCall(includingSchema:)``). Any other call starts the stream
+    /// call at once, and its first pass states no reasoning level.
     ///
     /// - Returns: A stream of fragments. It throws if generation fails.
     func streamResponseFragments(
@@ -628,13 +634,13 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
         let options = makeGenerationOptions(maxTokens: maxTokens)
         forgetLastGenerationCall()
         guard ReasoningOffRequest.isRequested else {
+            sessionModelState.setFirstPassReasoningLevel(nil)
             let fragments = fragments(of: prompt, options: options, contextOptions: ContextOptions())
             return AsyncThrowingStream { try await fragments.next() }
         }
         let deferred = DeferredFragments { [self] in
             try await ReasoningOffRequest.$isRequested.withValue(true) {
-                fragments(
-                    of: prompt, options: options, contextOptions: try await contextOptions(includingSchema: false))
+                fragments(of: prompt, options: options, contextOptions: try await prepareCall(includingSchema: false))
             }
         }
         return AsyncThrowingStream { try await deferred.next() }

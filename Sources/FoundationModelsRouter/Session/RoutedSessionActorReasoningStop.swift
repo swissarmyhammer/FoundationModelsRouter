@@ -97,9 +97,10 @@ enum ReasoningOnlyOutput {
 ///   answer goes on in ``continueAfterReasoningEnd(_:attempt:body:)``.
 ///
 /// Both recoveries count against ``RepetitionDetection/recoveriesPerAnswer``,
-/// with the recoveries after repetition stops. Each recovery runs with the
-/// reasoning of the model off, and after the last one a final pass with the
-/// reasoning off asks for the final answer
+/// with the recoveries after repetition stops. The first model pass of each
+/// recovery runs with the reasoning of the model off, and after the last one
+/// a final pass, whose first model pass also runs with the reasoning off,
+/// asks for the final answer
 /// (``recover(after:attempt:compacts:body:)``, task ^0dcsd3t). A detection
 /// that is not enabled stops nothing.
 extension RoutedSessionActor {

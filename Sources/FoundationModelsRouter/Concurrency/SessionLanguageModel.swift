@@ -99,9 +99,11 @@ struct SessionLanguageModel: LanguageModel, Sendable {
         /// of its session.
         ///
         /// The pass is the executor call of the SDK itself, not a copy: it
-        /// calls the wrapped executor with the same `request` and over the
-        /// same `channel` that the SDK gave this call, on the task of this
-        /// call.
+        /// calls the wrapped executor with the `request` and over the same
+        /// `channel` that the SDK gave this call, on the task of this call.
+        /// The one change to `request` is the reasoning level of the first
+        /// pass of an SDK call, when the backend stated one
+        /// (``SessionLanguageModelState/passRequest(from:)``).
         ///
         /// The pass binds the scope itself, around the call of the wrapped
         /// executor (``SessionLanguageModelState/withPromptCacheScope(_:)``).
@@ -119,7 +121,7 @@ struct SessionLanguageModel: LanguageModel, Sendable {
         /// (``SessionLanguageModelState/withPassWatches(_:)``).
         ///
         /// - Parameters:
-        ///   - request: The generation request, passed through unchanged.
+        ///   - request: The generation request of the SDK.
         ///   - model: This wrapper. Unread: the state arrives through the
         ///     configuration.
         ///   - channel: The outer channel the wrapped executor streams into.
@@ -132,9 +134,10 @@ struct SessionLanguageModel: LanguageModel, Sendable {
             let observer = state.passObserver
             observer?.passStarted()
             defer { observer?.passEnded() }
+            let passRequest = state.passRequest(from: request)
             try await state.withPassWatches {
                 try await state.withPromptCacheScope {
-                    try await innerRespond(request, channel)
+                    try await innerRespond(passRequest, channel)
                 }
             }
         }
@@ -145,8 +148,9 @@ struct SessionLanguageModel: LanguageModel, Sendable {
 ///
 /// It is a class because its identity is the executor cache key of the
 /// wrapper: one state is one session, so one executor. The per-pass work of a
-/// session (its prompt-cache scope, the report of a pass, its pass watches)
-/// keeps its session data here.
+/// session (its prompt-cache scope, the report of a pass, its pass watches,
+/// the reasoning level of the first pass of a call) keeps its session data
+/// here.
 final class SessionLanguageModelState: Sendable {
     /// Work that runs beside each pass of this wrapper, on a child task of
     /// the pass (``withPassWatches(_:)``). The pass cancels it when the
@@ -208,6 +212,51 @@ final class SessionLanguageModelState: Sendable {
     /// the owner writes it from its actor while an executor reads it from
     /// the task of a pass.
     private let installation = Mutex(Installation())
+
+    /// The reasoning level of the first pass of the SDK call that starts
+    /// now, or `nil` when that pass keeps the level of the SDK call
+    /// (``setFirstPassReasoningLevel(_:)``). The first pass takes it and
+    /// leaves `nil` (``passRequest(from:)``), so each later pass of the tool
+    /// loop of the call gets the request of the SDK unchanged. A lock guards
+    /// it, because the backend writes it while an executor reads it from the
+    /// task of a pass.
+    private let firstPassReasoningLevel = Mutex<ContextOptions.ReasoningLevel?>(nil)
+
+    /// States the reasoning level of the first pass of the SDK call that
+    /// starts now (task ^bhdj5v9).
+    ///
+    /// The backend calls it at the start of each SDK call, with `nil` too,
+    /// so a call that ends before its first pass leaves no level for the
+    /// next call.
+    ///
+    /// - Parameter level: The level of the first pass, or `nil` for the
+    ///   level of the SDK call.
+    func setFirstPassReasoningLevel(_ level: ContextOptions.ReasoningLevel?) {
+        firstPassReasoningLevel.withLock { $0 = level }
+    }
+
+    /// `request` as the pass that starts now gives it to the wrapped
+    /// executor.
+    ///
+    /// The first pass of an SDK call takes the level that
+    /// ``setFirstPassReasoningLevel(_:)`` stated, and gets `request` with
+    /// that reasoning level. Each later pass of the tool loop of the call
+    /// finds no level, and gets `request` unchanged.
+    ///
+    /// - Parameter request: The generation request of the SDK.
+    /// - Returns: The request of the pass.
+    func passRequest(
+        from request: LanguageModelExecutorGenerationRequest
+    ) -> LanguageModelExecutorGenerationRequest {
+        let level = firstPassReasoningLevel.withLock { level in
+            defer { level = nil }
+            return level
+        }
+        guard let level else { return request }
+        var passRequest = request
+        passRequest.contextOptions.reasoningLevel = level
+        return passRequest
+    }
 
     /// The observer each pass of this wrapper reports to, or `nil` when the
     /// session installed none.

@@ -213,8 +213,9 @@ extension RoutedSessionActor {
     ///   - attempt: The attempt that stopped.
     ///   - reason: Why the attempt stopped for a compaction.
     ///   - continuationPrompt: The prompt of the next attempt.
-    ///   - reasoningOff: Whether the model call of the next attempt runs with
-    ///     the reasoning of the model off (task ^0dcsd3t).
+    ///   - reasoningOff: Whether the first pass of the model call of the next
+    ///     attempt runs with the reasoning of the model off (tasks ^0dcsd3t
+    ///     and ^bhdj5v9).
     ///   - body: The model work to run.
     /// - Returns: The response text of the next attempt.
     /// - Throws: What the compaction or the next attempt throws.

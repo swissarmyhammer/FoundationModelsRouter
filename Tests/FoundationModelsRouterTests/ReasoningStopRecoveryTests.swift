@@ -61,15 +61,26 @@ struct ReasoningStopRecoveryTests {
             reasoningLines: RepeatingReasoningScript.distinctLines(totalling: longReasoningTokens), hold: stoppedHold)
     }
 
+    /// A script whose call writes no reasoning and asks for one
+    /// ``CountingRunCodeTool`` call at once.
+    private static var toolCallScript: RepeatingReasoningScript {
+        RepeatingReasoningScript(reasoningLines: [], hold: .zero, ending: .toolCall)
+    }
+
     /// Runs one streamed answer over a ``StagedReasoningSessionFixture``.
     ///
-    /// - Parameter scripts: The script of each call, in call order.
+    /// - Parameters:
+    ///   - scripts: The script of each call, in call order.
+    ///   - detection: The repetition detection of the session.
+    ///   - tools: The tools the session mounts.
     /// - Returns: The fixture and the events of the answer, in order.
     private static func runStagedAnswer(
-        scripts: [RepeatingReasoningScript]
+        scripts: [RepeatingReasoningScript],
+        detection: RepetitionDetection = detection,
+        tools: [any Tool] = []
     ) async throws -> (fixture: StagedReasoningSessionFixture, events: [SessionEvent]) {
         let fixture = try await StagedReasoningSessionFixture.make(
-            scripts: scripts, detection: detection, tempDirPrefix: tempDirPrefix)
+            scripts: scripts, detection: detection, tools: tools, tempDirPrefix: tempDirPrefix)
         let events = try await collect(fixture.session.streamEvents(to: prompt))
         return (fixture, events)
     }
@@ -132,6 +143,35 @@ struct ReasoningStopRecoveryTests {
 
         #expect(events.reasoningStops.map(\.recovery) == [1])
         #expect(fixture.log.reasoningLevels == [nil, ReasoningOffRequest.reasoningLevel])
+    }
+
+    @Test("after a stop, only the recovery pass runs with the reasoning off, and the pass after its tool call reasons")
+    func recoveryToolLoopTurnsReasoningBackOn() async throws {
+        let runs = RunCount()
+        let (fixture, events) = try await Self.runStagedAnswer(
+            scripts: [Self.longReasoningScript, Self.toolCallScript], tools: [CountingRunCodeTool(runs: runs)])
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        #expect(events.reasoningStops.map(\.recovery) == [1])
+        #expect(runs.value == 1)
+        #expect(fixture.log.reasoningLevels == [nil, ReasoningOffRequest.reasoningLevel, nil])
+        #expect(events.answers.first?.reply == RepeatingReasoningModel.Executor.answerText)
+    }
+
+    @Test("only the first pass of the final pass runs with the reasoning off, and the pass after its tool call reasons")
+    func finalPassToolLoopTurnsReasoningBackOn() async throws {
+        let runs = RunCount()
+        let (fixture, events) = try await Self.runStagedAnswer(
+            scripts: [Self.longReasoningScript, Self.toolCallScript],
+            detection: RepetitionDetection(recoveriesPerAnswer: 0),
+            tools: [CountingRunCodeTool(runs: runs)])
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        #expect(events.reasoningStops.map(\.recovery) == [nil])
+        #expect(runs.value == 1)
+        #expect(fixture.log.renders.dropFirst().first?.promptTexts.last == RoutedSessionActor.finalPassPrompt)
+        #expect(fixture.log.reasoningLevels == [nil, ReasoningOffRequest.reasoningLevel, nil])
+        #expect(events.answers.first?.reply == RepeatingReasoningModel.Executor.answerText)
     }
 
     @Test("a repetition stop, then reasoning stops, use all recoveries, and a final pass with reasoning off answers")

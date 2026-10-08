@@ -23,10 +23,11 @@ struct RepetitionWatchState {
     /// continuation submission of the same answer keeps it.
     var recoveriesThisAnswer = 0
 
-    /// Whether the running answer ran its final pass: the one pass with the
-    /// reasoning of the model off after a stop that found no recovery left
-    /// (task ^0dcsd3t). A stop in or after the final pass ends the answer.
-    /// The pump clears it for each new answer.
+    /// Whether the running answer ran its final pass: the one continuation
+    /// after a stop that found no recovery left, whose first model pass runs
+    /// with the reasoning of the model off (tasks ^0dcsd3t and ^bhdj5v9). A
+    /// stop in or after the final pass ends the answer. The pump clears it
+    /// for each new answer.
     var finalPassRan = false
 
     /// The run of identical consecutive tool calls of the running answer
@@ -156,11 +157,13 @@ struct WatchStopMarker: Sendable {
 /// and the same answer goes on with the continuation prompt of the stop, at
 /// most ``RepetitionDetection/recoveriesPerAnswer`` times in one answer.
 ///
-/// Each recovery runs its model call with the reasoning of the model off
-/// (``ReasoningOffRequest``), and the render closes the stopped reasoning
-/// before the prompt of the recovery (``ReasoningClosure``). After the last
-/// recovery, one final pass with the reasoning off asks for the final answer,
-/// and the answer never ends with an empty reply (task ^0dcsd3t).
+/// Each recovery runs the first pass of its model call with the reasoning of
+/// the model off (``ReasoningOffRequest``), and the render closes the stopped
+/// reasoning before the prompt of the recovery (``ReasoningClosure``). When
+/// that pass calls a tool, the next passes of the tool loop run with the
+/// reasoning on (task ^bhdj5v9). After the last recovery, one final pass asks
+/// for the final answer, with the same rule for the reasoning, and the answer
+/// never ends with an empty reply (task ^0dcsd3t).
 extension RoutedSessionActor {
     /// The end of each prompt of a recovery after a repetition stop: it tells
     /// the model to act.
@@ -551,9 +554,10 @@ extension RoutedSessionActor {
     /// Goes on with the answer after a stop of the watch.
     ///
     /// With a recovery left, the next attempt sends the continuation prompt
-    /// of the stop, with the reasoning of the model off (task ^0dcsd3t). When
-    /// `compacts` is `true`, the answer compacts first, as after any ceiling
-    /// stop. With no recovery left, the answer runs its final pass
+    /// of the stop, and its first model pass runs with the reasoning of the
+    /// model off (tasks ^0dcsd3t and ^bhdj5v9). When `compacts` is `true`,
+    /// the answer compacts first, as after any ceiling stop. With no recovery
+    /// left, the answer runs its final pass
     /// (``runFinalPass(after:attempt:body:)``).
     ///
     /// - Parameters:
@@ -586,14 +590,16 @@ extension RoutedSessionActor {
     /// Runs the final pass of the answer after a stop that found no recovery
     /// left (task ^0dcsd3t), and never gives an empty reply.
     ///
-    /// The final pass sends ``WatchStopReport/finalPassPrompt`` with the
-    /// reasoning of the model off, under the token ceiling of the stopped
-    /// attempt (``StoppedAttempt/responseTokenCeiling``): the pass gets no
-    /// limit of its own. The tools of the session stay available, so the pass
-    /// can make a tool call, and the tool loop goes on to its end
-    /// (task ^8eq31j0). It runs one time in an answer. When it gives no text,
-    /// or when a stop comes in or after it, the reply is the text that states
-    /// the stop (``WatchStop/stoppedAnswerText``).
+    /// The final pass sends ``WatchStopReport/finalPassPrompt`` under the
+    /// token ceiling of the stopped attempt
+    /// (``StoppedAttempt/responseTokenCeiling``): the pass gets no limit of
+    /// its own. Its first model pass runs with the reasoning of the model
+    /// off. The tools of the session stay available, so the pass can make a
+    /// tool call, and the tool loop goes on to its end (task ^8eq31j0), with
+    /// the reasoning on in each later pass (task ^bhdj5v9). It runs one time
+    /// in an answer. When it gives no text, or when a stop comes in or after
+    /// it, the reply is the text that states the stop
+    /// (``WatchStop/stoppedAnswerText``).
     ///
     /// - Parameters:
     ///   - report: The report of the stop that found no recovery left.

@@ -4,10 +4,12 @@ import FoundationModels
 /// model whose own executor calls it directly.
 ///
 /// A wrapper (``SessionLanguageModel``) does its own work around one executor
-/// call and passes the request through, over the same outer channel, so the
-/// wrapped executor sees the request unchanged. ``SessionLanguageModel`` calls
-/// the wrapped executor on the same task, so a task-local value it binds
-/// reaches that executor.
+/// call and passes the request through, over the same outer channel. The
+/// wrapped executor sees the request of the SDK, with one change: the first
+/// pass of a call can get the reasoning level that the backend stated
+/// (``SessionLanguageModelState/passRequest(from:)``).
+/// ``SessionLanguageModel`` calls the wrapped executor on the same task, so a
+/// task-local value it binds reaches that executor.
 enum ExecutorPassthrough {
     /// One call of a wrapped executor.
     typealias Respond = @Sendable (

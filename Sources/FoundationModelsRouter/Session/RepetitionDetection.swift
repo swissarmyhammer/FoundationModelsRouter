@@ -76,8 +76,9 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
     /// How many times one answer goes on after a repetition stop. An answer
     /// is the chain of submissions from the first delivery to the final
     /// answer, so a continuation submission does not reset the count. After
-    /// the last recovery, a stop leads to one final pass with the reasoning of
-    /// the model off, and then the answer ends (task ^0dcsd3t).
+    /// the last recovery, a stop leads to one final pass, whose first model
+    /// pass runs with the reasoning of the model off, and then the answer ends
+    /// (tasks ^0dcsd3t and ^bhdj5v9).
     ///
     /// The key of this value in a stored `session.json` is
     /// `recoveriesPerTurn`, the name of the property before the rename, so
@@ -122,10 +123,10 @@ public struct RepetitionDetection: Sendable, Equatable, Codable {
     /// lines of each reasoning entry of the call in flight. When the
     /// reasoning entry that the call writes now reaches this limit, the
     /// session stops the call, keeps the reasoning so far, and runs a
-    /// recovery with ``RoutedSessionActor/reasoningStopContinuationPrompt``
-    /// and the reasoning of the model off, which tells the model to act. The
-    /// recovery counts against ``recoveriesPerAnswer``. A detection that is
-    /// not enabled sets no limit.
+    /// recovery with ``RoutedSessionActor/reasoningStopContinuationPrompt``,
+    /// whose first model pass runs with the reasoning of the model off, which
+    /// tells the model to act. The recovery counts against
+    /// ``recoveriesPerAnswer``. A detection that is not enabled sets no limit.
     public var reasoningTokenLimit: Int?
 
     /// The most identical consecutive tool calls of one answer (task
@@ -363,8 +364,9 @@ public struct RepetitionStop: Sendable, Equatable, CustomStringConvertible {
     public let detection: RepetitionDetection
 
     /// The number of the recovery attempt that follows the stop, from 1, or
-    /// `nil` when the answer has no recovery left: one final pass with the
-    /// reasoning of the model off then follows (task ^0dcsd3t).
+    /// `nil` when the answer has no recovery left: one final pass, whose first
+    /// model pass runs with the reasoning of the model off, then follows
+    /// (tasks ^0dcsd3t and ^bhdj5v9).
     public let recovery: Int?
 
     /// The tool call that the answer made more than one time in a row with

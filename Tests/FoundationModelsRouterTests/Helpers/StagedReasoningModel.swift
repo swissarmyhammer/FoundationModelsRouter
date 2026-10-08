@@ -8,11 +8,12 @@ import FoundationModelsRouterTestSupport
 /// call order (task ^0dcsd3t).
 ///
 /// Call `i` writes the reasoning of `scripts[i]` and waits for its hold, as a
-/// ``RepeatingReasoningModel`` call does. A call after the last script
-/// answers with ``RepeatingReasoningModel/Executor/answerText`` at once. So a
-/// test can make the first call repeat itself and the next calls reason past
-/// the limit. Each call records its transcript and its reasoning level in
-/// ``log``.
+/// ``RepeatingReasoningModel`` call does, then writes the ending of the
+/// script: the answer, or one ``CountingRunCodeTool`` call. A call after the
+/// last script answers with ``RepeatingReasoningModel/Executor/answerText``
+/// at once. So a test can make the first call repeat itself and the next
+/// calls reason past the limit, or make a recovery call a tool. Each call
+/// records its transcript and its reasoning level in ``log``.
 struct StagedReasoningModel: LanguageModel, ReasoningSwitchable {
     /// The log that records the transcript and the reasoning level of each call.
     let log: RenderProbeLog
@@ -74,7 +75,7 @@ struct StagedReasoningModel: LanguageModel, ReasoningSwitchable {
             self.configuration = configuration
         }
 
-        /// Plays the script of this call, then answers.
+        /// Plays the script of this call, then writes its ending.
         ///
         /// - Parameters:
         ///   - request: The generation request of the call.
@@ -90,8 +91,12 @@ struct StagedReasoningModel: LanguageModel, ReasoningSwitchable {
             configuration.log.record(render: request.transcript)
             configuration.log.record(reasoningLevel: request.contextOptions.reasoningLevel)
             if configuration.scripts.indices.contains(callIndex) {
-                try await RepeatingReasoningModel.Executor.writeReasoning(
-                    configuration.scripts[callIndex], into: channel)
+                let script = configuration.scripts[callIndex]
+                try await RepeatingReasoningModel.Executor.writeReasoning(script, into: channel)
+                if script.ending == .toolCall {
+                    await RepeatingReasoningModel.Executor.sendToolCall(into: channel)
+                    return
+                }
             }
             await channel.send(
                 .response(
@@ -125,12 +130,14 @@ struct StagedReasoningSessionFixture {
     /// - Parameters:
     ///   - scripts: The script of each call, in call order.
     ///   - detection: The repetition detection the session is made with.
+    ///   - tools: The tools the session mounts.
     ///   - tempDirPrefix: The calling suite's name, so a leaked temp directory
     ///     is attributable.
     /// - Returns: The fixture.
     /// - Throws: Whatever profile resolution throws.
     static func make(
-        scripts: [RepeatingReasoningScript], detection: RepetitionDetection, tempDirPrefix: String
+        scripts: [RepeatingReasoningScript], detection: RepetitionDetection, tools: [any Tool] = [],
+        tempDirPrefix: String
     ) async throws -> StagedReasoningSessionFixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let recorder = InMemoryRecorder()
@@ -142,7 +149,8 @@ struct StagedReasoningSessionFixture {
                 container: LiveBackendContainer(model: StagedReasoningModel(log: log, scripts: scripts)),
                 dimension: RouterTestFixtures.stubDimension))
         let profile = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        let session = profile.standard.makeSession(configuration: SessionConfiguration(repetitionDetection: detection))
+        let session = profile.standard.makeSession(
+            configuration: SessionConfiguration(tools: tools, repetitionDetection: detection))
         return StagedReasoningSessionFixture(session: session, log: log, recorder: recorder, directory: directory)
     }
 }

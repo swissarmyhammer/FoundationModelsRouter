@@ -277,9 +277,10 @@ extension RoutedSessionActor {
     ///     (``takeMessagesJoiningTheAnswer()``): the mail goes into its
     ///     preamble, and each caller prompt that can share the submission
     ///     goes after `ownPrompt`.
-    ///   - reasoningOff: Whether the model call of this attempt runs with the
-    ///     reasoning of the model off (``ReasoningOffRequest``, task
-    ///     ^0dcsd3t). Only the model call of this attempt does: a later
+    ///   - reasoningOff: Whether the first pass of the model call of this
+    ///     attempt runs with the reasoning of the model off
+    ///     (``ReasoningOffRequest``, tasks ^0dcsd3t and ^bhdj5v9). Only that
+    ///     pass does: a later pass of its tool loop reasons, and a later
     ///     submission of the answer gets `body` as it is.
     ///   - body: The model work to run.
     /// - Returns: The response text `body` produced.
@@ -406,9 +407,10 @@ extension RoutedSessionActor {
     /// - Parameters:
     ///   - attempt: The attempt that stopped.
     ///   - continuationPrompt: The own prompt of the continuation.
-    ///   - reasoningOff: Whether the model call of the continuation runs with
-    ///     the reasoning of the model off: `true` for a recovery after a
-    ///     reasoning stop or a repetition stop (task ^0dcsd3t).
+    ///   - reasoningOff: Whether the first pass of the model call of the
+    ///     continuation runs with the reasoning of the model off: `true` for
+    ///     a recovery after a reasoning stop or a repetition stop, and for
+    ///     the final pass (tasks ^0dcsd3t and ^bhdj5v9).
     ///   - body: The model work to run.
     /// - Returns: The response text of the continuation.
     /// - Throws: What the continuation throws.
