@@ -20,6 +20,10 @@ enum PlanFixtures {
     /// The id of the plan of each fixture.
     static let planID = "plan-1"
 
+    /// The id of a second plan of the same run. A plan of this id never
+    /// replaces a plan of ``planID``.
+    static let secondPlanID = "plan-2"
+
     /// The text of the first plan entry. No `detail` holds it.
     static let firstEntryText = "read the plan entry that only the host sees"
 

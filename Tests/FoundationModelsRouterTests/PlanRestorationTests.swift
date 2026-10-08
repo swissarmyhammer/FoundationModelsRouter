@@ -5,9 +5,9 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises task ^mq1js23 on the restore path: the journal keeps the plan of
-/// a run (`OperationEvent.plan`) on disk, so the last plan is available for
-/// replay after a restore, and the transcript that a restore gives to the
-/// model holds no plan.
+/// a run (`OperationEvent.plan`) on disk, so the last plan of each plan id is
+/// available for replay after a restore, and the transcript that a restore
+/// gives to the model holds no plan.
 ///
 /// A recorded session posts its events and is not closed, as a process that
 /// stops does. A second router over the same recording root restores the
@@ -31,9 +31,6 @@ struct PlanRestorationTests {
     /// outbox of the session to the journal, so later events are journaled.
     private static let recordedPrompt = "start the plan"
 
-    /// The id of the second plan of the recorded run.
-    private static let secondPlanID = "plan-2"
-
     /// The text progress that starts the progress row of the run.
     private static let startOutput = PlanFixtures.textProgress("first output")
 
@@ -44,8 +41,8 @@ struct PlanRestorationTests {
     /// The last plan of ``PlanFixtures/planID``.
     private static let lastPlan = PlanFixtures.planProgress(PlanFixtures.plan(firstStatus: .completed))
 
-    /// The one plan of ``secondPlanID``.
-    private static let otherPlan = PlanFixtures.planProgress(PlanFixtures.plan(id: secondPlanID))
+    /// The one plan of ``PlanFixtures/secondPlanID``.
+    private static let otherPlan = PlanFixtures.planProgress(PlanFixtures.plan(id: PlanFixtures.secondPlanID))
 
     /// The events the recorded run posts, in post order. Each text progress
     /// after the start goes into the open progress row, which only memory
@@ -193,7 +190,9 @@ struct PlanRestorationTests {
 
             let lastPlanByID = Dictionary(plans.map { ($0.id, $0) }, uniquingKeysWith: { _, newer in newer })
             #expect(
-                lastPlanByID == [PlanFixtures.planID: Self.lastPlan.plan, Self.secondPlanID: Self.otherPlan.plan])
+                lastPlanByID == [
+                    PlanFixtures.planID: Self.lastPlan.plan, PlanFixtures.secondPlanID: Self.otherPlan.plan,
+                ])
             #expect(plans == [Self.replacedPlan, Self.lastPlan, Self.otherPlan].compactMap(\.plan))
         }
     }

@@ -238,7 +238,7 @@ extension TranscriptTree {
     /// backend, and a backend sends the JSON of a structured segment to the
     /// model. A plan goes only to the host (task ^mq1js23). The recorded
     /// events keep each plan, so ``TranscriptEvent/operationEvents`` still
-    /// reads the last plan after a restore.
+    /// reads the last plan of each plan id after a restore.
     ///
     /// - Parameters:
     ///   - id: The session's span id.

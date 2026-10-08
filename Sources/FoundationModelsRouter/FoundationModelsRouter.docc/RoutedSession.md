@@ -64,7 +64,8 @@ The session pushes settlement to the model — the model never polls:
   text line of the event. The agent plan of the event (`OperationEvent.plan`)
   goes only to the host: no model input holds it, also after a restore. The
   journal writes a progress event that has a plan at once, so a host can
-  replay the last plan after a restore.
+  replay the last plan of each plan id after a restore. A plan replaces only
+  the earlier plan that has the same `PlanSnapshot.id`.
 - `status` and `wait` give an earlier look; they are not required.
 
 A model can start one more background run in each answer, for example to ask

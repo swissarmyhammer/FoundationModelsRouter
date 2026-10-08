@@ -70,7 +70,7 @@ struct SessionOutboxTests {
         #expect(await outbox.pending().events.map(\.event) == [text, plan])
     }
 
-    @Test("a plan progress replaces only the older plan progress, and a text progress only the older text progress")
+    @Test("a plan progress replaces only the older plan progress of the same plan id, and a text progress only the older text progress")
     func planReplacesPlanAndTextReplacesText() async {
         let outbox = SessionOutbox()
         await outbox.post(event: PlanFixtures.textProgress("first output"))
@@ -81,6 +81,29 @@ struct SessionOutboxTests {
         await outbox.post(event: newerPlan)
 
         #expect(await outbox.pending().events.map(\.event) == [newerText, newerPlan])
+    }
+
+    @Test("two plans of different ids posted before one submission both reach that submission")
+    func plansOfDifferentIdsPendSeparately() async {
+        let outbox = SessionOutbox()
+        let firstPlan = PlanFixtures.planProgress()
+        let secondPlan = PlanFixtures.planProgress(PlanFixtures.plan(id: PlanFixtures.secondPlanID))
+        await outbox.post(event: firstPlan)
+        await outbox.post(event: secondPlan)
+
+        #expect(await outbox.takeEvents().map(\.event) == [firstPlan, secondPlan])
+    }
+
+    @Test("a plan replaces the pending plan that has the same id, and keeps the pending plan of a different id")
+    func planReplacesOnlyThePlanOfTheSameId() async {
+        let outbox = SessionOutbox()
+        await outbox.post(event: PlanFixtures.planProgress(PlanFixtures.plan(firstStatus: .inProgress)))
+        let otherPlan = PlanFixtures.planProgress(PlanFixtures.plan(id: PlanFixtures.secondPlanID))
+        await outbox.post(event: otherPlan)
+        let newerPlan = PlanFixtures.planProgress(PlanFixtures.plan(firstStatus: .completed))
+        await outbox.post(event: newerPlan)
+
+        #expect(await outbox.takeEvents().map(\.event) == [newerPlan, otherPlan])
     }
 
     @Test("interleaved .completed events all survive, in post order")

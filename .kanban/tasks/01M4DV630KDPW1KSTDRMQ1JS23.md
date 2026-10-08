@@ -82,6 +82,48 @@ comments:
     - formatter: the repo holds no .swiftformat, .swift-format or .swiftlint.yml, and Package.swift has no Airbnb plugin. With tool defaults, 346 of 412 unchanged files also fail `swiftformat --lint`. So no repo rule exists and no file was reformatted.
     - next: review.
   timestamp: 2026-10-08T14:41:12.036334+00:00
+- actor: claude-code
+  id: 01m4dzr9wnqvdy2qnhjg743hhf
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (checkpoint 1d3d6f82): 1 finding (1 confirmed, 5 refuted) — Sources/FoundationModelsRouter/Session/SessionEvent.swift:174 (completeness/invariant-propagation)
+    - next: Correct the finding in the 2026-10-08 09:41 Review Findings section. Make the outbox merge key and the SessionEvent plan-replacement documentation agree, and add a test with two plans of different ids before one submission. The task stays in review.
+  timestamp: 2026-10-08T14:47:52.469992+00:00
+- actor: claude-code
+  id: 01m4dzrtgh8hfxyph4hqdfy5ea
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 19 files
+    - test: green — swift test, 1544 tests in 194 suites passed, 0 failed; IntegrationTests build complete
+    - commit: 1d3d6f82
+    - review: findings — Sources/FoundationModelsRouter/Session/SessionEvent.swift:174
+  timestamp: 2026-10-08T14:48:09.489349+00:00
+- actor: claude-code
+  id: 01m4e02n1xv3m7j3x1ceqthr1v
+  text: |-
+    ## Finding fix: plan id in the outbox merge key
+
+    - Decision: the merge key follows the Extras contract ("An update replaces the plan that has the same id"). The `SessionEvent.runProgress` doc already said this, so the code moved to the doc, not the doc to the code.
+    - `SessionOutbox.progress(_:replaces:)` now compares `older.plan?.id == newer.plan?.id` in place of "has a plan". The key is tool + correlationID + plan id. A text progress has a nil plan id, so text still replaces only text, and a plan never replaces text.
+    - The cause was the "has a plan" wording at several sites. These now say "per plan id" or "the last plan of each plan id": the SessionOutbox type doc and merge-key doc, RoutedSessionActorRunJournal.record(event:) doc, OperationEventSegment.withoutPlan doc, TranscriptTree.effectiveTranscript doc, RoutedSession.md, generation-queue.md, the PlanRestorationTests header.
+    - Durability and restore already agree with per-id semantics: OpenProgressRow.accepts(_:) refuses each event that has a plan, so the journal writes every plan event to disk, whatever its id. PlanRestorationTests.theLastPlanOfEachIdIsOnDiskAfterARestore already holds the last plan of each id. No code change was necessary there.
+    - Tests: SessionOutboxTests.plansOfDifferentIdsPendSeparately (two ids before one take: both stay) and planReplacesOnlyThePlanOfTheSameId (id 1, id 2, id 1 again: [newer id 1, id 2]). RED seen for both before the fix (the second plan replaced the first). `PlanFixtures.secondPlanID` now holds "plan-2"; PlanRestorationTests uses it in place of its own private copy.
+  timestamp: 2026-10-08T14:53:31.581642+00:00
+- actor: claude-code
+  id: 01m4e02sb2ft322508hrqsndfs
+  text: |-
+    ### implement — changed
+    - evidence: 9 files — Sources/FoundationModelsRouter/Session/SessionOutbox.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorRunJournal.swift, Sources/FoundationModelsRouter/Session/OperationEventSegment.swift, Sources/FoundationModelsRouter/Recording/TranscriptReconstruction.swift, Sources/FoundationModelsRouter/FoundationModelsRouter.docc/RoutedSession.md, generation-queue.md, Tests/FoundationModelsRouterTests/SessionOutboxTests.swift, Tests/FoundationModelsRouterTests/Helpers/PlanFixtures.swift, Tests/FoundationModelsRouterTests/PlanRestorationTests.swift. `swift test`: 1546 tests in 194 suites passed (plus 23 and 19 in the other two runs), 0 failures, 2 known issues that were there before (RealModelHarness.swift, BoundedWait.swift). No compiler warning. The one SwiftPM line "missing creator for mutated node ... mlx-swift_Cmlx.bundle" is a build-graph note of the mlx dependency and is not from this change. Finding SessionEvent.swift:174 is checked.
+    - next: /review. Task stays in doing. Nothing is committed.
+  timestamp: 2026-10-08T14:53:35.970443+00:00
+- actor: claude-code
+  id: 01m4e06k1dv219zktcy58jza5q
+  text: |-
+    ### test — green
+    - evidence: swift test — 1546 tests in 194 suites passed, 0 failed, 0 skipped. Two more runs (23 and 19 tests) also passed. 2 known issues exist; both are expected-failure tests that were there before this task (RealModelHarness embedding slot, BoundedWait never-holds wait). swift build --build-tests --package-path IntegrationTests — Build complete.
+    - warnings: only "missing creator for mutated node" for the mlx-swift_Cmlx.bundle. It comes from the build system and a dependency bundle. No Swift warning comes from the changed code.
+    - next: review
+  timestamp: 2026-10-08T14:55:40.589995+00:00
 position_column: doing
 position_ordinal: '80'
 title: Send .progress operation events live as SessionEvent.runProgress and keep the plan out of the model text
@@ -124,3 +166,16 @@ The Extras session will send the final names. Use those names. Do not start befo
 - A plan event and a text progress event of the same tool and correlation ID do not replace each other.
 - After a restore, the last plan is available for replay.
 - Tests cover each item above.
+
+## Review Findings (2026-10-08 09:41)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 15 file(s) reviewed, 4 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+> 2 file(s) not reviewed — no validator matched:
+> - `Sources/FoundationModelsRouter/FoundationModelsRouter.docc/RoutedSession.md` — no validator matches this file
+> - `generation-queue.md` — no validator matches this file
+
+- [x] `Sources/FoundationModelsRouter/Session/SessionEvent.swift:174` `completeness/invariant-propagation` — The documented contract says a plan replaces only the earlier plan with the same `PlanSnapshot.id`. The outbox merge key ignores the plan id, so a plan with a new id replaces the pending plan event of the same run and tool. The two sites disagree on what a plan replacement means. Either add the plan id to the merge key in `progress(_:replaces:)` so it matches the documented contract, or change the `SessionEvent` doc to say a plan replaces any earlier pending plan of the same run. Add a test with two plans of different ids posted before one submission.

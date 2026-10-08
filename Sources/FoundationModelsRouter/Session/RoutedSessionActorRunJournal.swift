@@ -28,8 +28,8 @@ extension RoutedSessionActor: OperationEventJournal {
     /// open row is lost. The start row and the events written before it stay.
     /// A progress event that has a plan (`OperationEvent.plan`) never goes
     /// into the open row (``OpenProgressRow/accepts(_:)``): it closes the row
-    /// and is written at once, so a restore finds the last plan on disk
-    /// (task ^mq1js23).
+    /// and is written at once, so a restore finds the last plan of each plan
+    /// id on disk (task ^mq1js23).
     ///
     /// - Parameter event: The event the outbox has just accepted.
     func record(event: OperationEvent) async {

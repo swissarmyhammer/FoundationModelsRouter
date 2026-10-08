@@ -97,10 +97,10 @@ extension OperationEventSegment {
     /// stay the same.
     ///
     /// A plan goes only to the host (task ^mq1js23). The recorded segment
-    /// keeps the plan on disk, so a host can replay the last plan after a
-    /// restore. A backend sends the JSON of a structured segment of a
-    /// `.toolOutput` entry to the model, so the transcript that a restore
-    /// gives to a backend holds this form.
+    /// keeps the plan on disk, so a host can replay the last plan of each
+    /// plan id after a restore. A backend sends the JSON of a structured
+    /// segment of a `.toolOutput` entry to the model, so the transcript that
+    /// a restore gives to a backend holds this form.
     var withoutPlan: OperationEventSegment {
         OperationEventSegment(
             id: id,

@@ -10,8 +10,9 @@ import FoundationModelsExtras
 ///   ``OperationEventSink`` conformance. The next submission of the pump puts
 ///   them into its prompt preamble. Only ``OperationEventKind/progress``
 ///   coalesces, to the latest pending one per `(tool, correlationID)` and
-///   per "has a plan", in place. Every posted event is also recorded in the
-///   transcript through the attached ``OperationEventJournal``, uncoalesced.
+///   per plan id (`nil` for a text progress), in place. Every posted event
+///   is also recorded in the transcript through the attached
+///   ``OperationEventJournal``, uncoalesced.
 ///   A posted run terminal (``OperationEventKind/completed``) or run message
 ///   (``OperationEventKind/message``) tells the attached
 ///   ``SessionMailObserver``, so the pump can deliver it.
@@ -259,12 +260,14 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
 
     /// Whether the progress event `newer` replaces the pending event `older`.
     ///
-    /// The merge key is the `tool`, the `correlationID`, and whether the
-    /// event has a plan (`OperationEvent.plan`). Thus a plan replaces only an
-    /// older plan, and a text progress replaces only an older text progress.
-    /// One code-mode run posts the events of its nested `tools.*` calls under
-    /// one `tool` and one `correlationID`, so it can send both shell output
-    /// and a plan (task ^mq1js23).
+    /// The merge key is the `tool`, the `correlationID`, and the plan id
+    /// (`OperationEvent.plan?.id`), which is `nil` for a text progress. Thus a
+    /// plan replaces only an older plan that has the same `PlanSnapshot.id`,
+    /// as the Extras contract of `PlanSnapshot` says, and a text progress
+    /// replaces only an older text progress. One code-mode run posts the
+    /// events of its nested `tools.*` calls under one `tool` and one
+    /// `correlationID`, so it can send shell output and one or more plans
+    /// (task ^mq1js23).
     ///
     /// - Parameters:
     ///   - newer: The progress event that is staged now.
@@ -273,7 +276,7 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
     ///   key as `newer`.
     private static func progress(_ newer: OperationEvent, replaces older: OperationEvent) -> Bool {
         older.kind == .progress && older.tool == newer.tool && older.correlationID == newer.correlationID
-            && (older.plan == nil) == (newer.plan == nil)
+            && older.plan?.id == newer.plan?.id
     }
 
     /// Installs the journal that records every event posted from now on.
