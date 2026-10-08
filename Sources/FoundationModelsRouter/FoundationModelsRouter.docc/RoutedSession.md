@@ -12,7 +12,7 @@ A session has three audiences, and each one gets typed capabilities:
   are internal wiring.
 - **Tools** do not use this protocol at all. A running tool reads the
   ambient ``ToolContext`` and uses its capabilities:
-  `ToolContext.post(_:)`, `ToolContext.progress(_:)`, and
+  `ToolContext.post(_:)`, `ToolContext.progress(_:plan:)`, and
   `ToolContext.elicit(_:)`. Its `isCancelled` property is internal to
   FoundationModelsExtras.
 - **Tool hosts** — a tool that shows the run plane to a model — read that
@@ -58,6 +58,13 @@ The session pushes settlement to the model — the model never polls:
   ``SessionEvent/runMessage(_:)``. The run stays open, and its terminal comes
   later. A message of a run that is not a background run starts no
   submission: it goes with the next submission.
+- A run can report its progress while it continues
+  (`ToolContext.progress(_:plan:)`). Each progress event goes live to the
+  host as ``SessionEvent/runProgress(_:)``. The model gets only the short
+  text line of the event. The agent plan of the event (`OperationEvent.plan`)
+  goes only to the host: no model input holds it, also after a restore. The
+  journal writes a progress event that has a plan at once, so a host can
+  replay the last plan after a restore.
 - `status` and `wait` give an earlier look; they are not required.
 
 A model can start one more background run in each answer, for example to ask

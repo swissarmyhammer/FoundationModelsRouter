@@ -8,8 +8,9 @@ import FoundationModelsExtras
 /// the journal writes the first progress event of a run as its own start row,
 /// and then collects the next consecutive progress events of the same run
 /// here. The row closes only when a different event comes: an event of a
-/// different run, an event of a different kind, the end of the run, or a
-/// different transcript entry. No time window and no size limit close it.
+/// different run, an event of a different kind, a progress event that has a
+/// plan, the end of the run, or a different transcript entry. No time window
+/// and no size limit close it.
 ///
 /// The row keeps each event whole. The `detail` of an event is a payload that
 /// the tool owns, so the row does not join the payloads. It writes one
@@ -35,12 +36,18 @@ struct OpenProgressRow: Sendable {
         toolName = start.tool
     }
 
-    /// Whether `event` continues this row: a progress event of the same run.
+    /// Whether `event` continues this row: a progress event of the same run
+    /// that has no plan.
+    ///
+    /// A progress event that has a plan (`OperationEvent.plan`) never goes
+    /// into the row. The row is only in memory, and a restore must find the
+    /// last plan on disk (task ^mq1js23). So the journal writes a plan event
+    /// at once, as its own row.
     ///
     /// - Parameter event: The event the journal records next.
     /// - Returns: `true` when `event` goes into this row.
     func accepts(_ event: OperationEvent) -> Bool {
-        event.kind == .progress && event.correlationID == correlationID
+        event.kind == .progress && event.correlationID == correlationID && event.plan == nil
     }
 
     /// Adds `event` to the end of this row.

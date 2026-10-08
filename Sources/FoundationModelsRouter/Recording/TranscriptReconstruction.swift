@@ -232,6 +232,14 @@ extension TranscriptTree {
     /// (``ReasoningClosure``). The recorded events stay whole. A journal with
     /// no such event restores as before.
     ///
+    /// The ``TranscriptReconstructionView/restore`` view also removes the
+    /// plan (`OperationEvent.plan`) of each journaled operation event
+    /// (``OperationEventSegment/removingPlans(from:)``). This view seeds a
+    /// backend, and a backend sends the JSON of a structured segment to the
+    /// model. A plan goes only to the host (task ^mq1js23). The recorded
+    /// events keep each plan, so ``TranscriptEvent/operationEvents`` still
+    /// reads the last plan after a restore.
+    ///
     /// - Parameters:
     ///   - id: The session's span id.
     ///   - view: Which view to reconstruct. Defaults to ``TranscriptReconstructionView/restore``.
@@ -244,8 +252,8 @@ extension TranscriptTree {
         let entries = try Self.entries(
             of: Self.reconstructableEvents(renderEvents.filter(\.kind.isEntryKind), view: view))
         guard view == .restore else { return Transcript(entries: entries) }
-        return Transcript(
-            entries: RepeatedPartRemoval.render(of: entries, applying: try Self.renderCut(in: renderEvents)))
+        let render = RepeatedPartRemoval.render(of: entries, applying: try Self.renderCut(in: renderEvents))
+        return Transcript(entries: render.map(OperationEventSegment.removingPlans(from:)))
     }
 
     /// The changes of the render that the

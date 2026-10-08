@@ -28,7 +28,61 @@ comments:
 
     The Extras plan work is on FoundationModelsExtras origin/main. The feature commit is ee4a798. Extras main is now 5c1c638. It adds `PlanSnapshot`, `OperationEvent.plan` and `ToolContext.progress(_:plan:)`. The names are the same as in the comment above. Before you start, update the Extras package dependency of Router to a revision at or after 5c1c638.
   timestamp: 2026-10-08T13:42:25.441037+00:00
-position_column: todo
+- actor: claude-code
+  id: 01m4dy0k494emggzrf5fxsfn9t
+  text: |-
+    ## Research results
+
+    ### Extras dependency
+    - Package.swift uses `branch: "main"` for FoundationModelsExtras. `swift package update FoundationModelsExtras` moved Package.resolved and IntegrationTests/Package.resolved from 50fd4a5 to 5c1c638. Both Package.resolved files are in .gitignore, so git shows no diff for them. IntegrationTests/Package.swift does not pin Extras directly. No change to Package.swift is necessary.
+
+    ### Which `tool` name code-mode `tools.*` events carry (step 3)
+    - A synchronous nested `tools.*` call of code mode gets its own ToolContext (inner tool name, inner token). But its events go through `MountedRunUpstreamSink.post(event:)` to the outer context, and `ToolContext.post(_:)` stamps them again with the outer `tool`, `op` and `completionToken`.
+    - Result: the events have `tool == "runCode"` (`MultiTool.name`) and `correlationID ==` the token of the outer runCode run. The plan and the detail stay.
+    - Exception: an inner tool that declares a background mount posts to the session sink with its own name and token.
+    - Thus one runCode run can post text progress (for example shell output) and plan progress under the same `(tool, correlationID)` key. The merge key must include "has a plan".
+    - Sources: FoundationModelsMultitool RunBinding.invoke(_:arguments:journalOp:); Extras ToolContext.mount(_:op:as:), ToolRun.init, MountedRunUpstreamSink.post(event:), ToolContext.post(_:).
+
+    ### Model input paths for `plan` (step 2)
+    - Preamble: `OperationEventSegment.renderedLine(for:)` uses only `detail` (or the elicitation message). The live LanguageModelSession gets only that text.
+    - The structured OperationEventSegment on a recorded `.prompt` entry: the MLX TranscriptConverter reads only text segments of a prompt, so no leak.
+    - LEAK FOUND: the run journal writes `.toolOutput` entries whose structured segment holds the full OperationEvent JSON. On restore, `TranscriptTree.effectiveTranscript(forSession:)` puts these entries into the seed transcript of the backend, and the MLX TranscriptConverter sends `.structure` tool-output content as JSON (`structuredSegment.content.jsonString`). Thus after a restore, the `plan` goes into model input. The fix must remove `plan` from the seed transcript, and keep it on disk.
+    - Compaction (`Summarization.render`) uses only text segments, so no leak there.
+
+    ### Durability (step 4)
+    - `OpenProgressRow.accepts(_:)` admits each progress event of the same run. A plan event must not go into the open row.
+    - Restore reads the journal with `TranscriptEvent.operationEvents`, which decodes the full OperationEvent JSON, so `plan` stays readable after restore. `lostRunTerminalEvents(in:)` makes a `.completed` event, which never has a plan; that is correct.
+  timestamp: 2026-10-08T14:17:26.921341+00:00
+- actor: claude-code
+  id: 01m4dz41x4d04t56vbwe0yj8x2
+  text: |-
+    ## Implementation landed (not committed)
+
+    - Step 1, live delivery: added `SessionEvent.runProgress(OperationEvent)`. `RoutedSessionActorRunJournal.record(event:)` now delivers each recorded event live through `liveEvent(for:)`, an exhaustive switch on `OperationEventKind`. A progress event that goes into the open progress row is also delivered live. New case added to the switches in SessionAnswer, SessionProjection, ScriptedToolAnswerComparisonTests, Examples/MultiModelGeneration and IntegrationTests RealToolAnswerComparisonTests.
+    - Step 2, plan out of model input: `renderedLine(for:)` already used only `detail` (a test now holds this). The one leak was the restore seed: `TranscriptTree.effectiveTranscript(forSession:view: .restore)` now maps each entry through the new `OperationEventSegment.removingPlans(from:)` (`.prompt` and `.toolOutput` entries; `withoutPlan` keeps the segment id and every other field). The disk keeps the plan, so `TranscriptEvent.operationEvents` still reads it.
+    - Step 3, merge rule: `SessionOutbox.stage` uses `progress(_:replaces:)`, whose key is tool + correlationID + "has a plan". The code-mode answer is in the research comment: `tool == "runCode"` and the outer run token.
+    - Step 4, durability: `OpenProgressRow.accepts(_:)` refuses an event that has a plan, so the journal writes it at once as its own row. Restore path examined: the lost terminal is a `.completed` event with no plan and the detail of the newest event.
+    - Docs: SessionEvent.runProgress doc, RoutedSession.md bullet, generation-queue.md bullet.
+    - Tests: RunProgressDeliveryTests (7), PlanRestorationTests (4), SessionOutboxTests (+2), helper PlanFixtures.
+    - RED seen for: merge tests, live delivery tests, plan durability tests, restore seed tests. The rendered-line test, the next-prompt test, the restore-reads-the-last-plan test and the lost-terminal test passed at once: they hold behavior that was correct already. The prompt-entry unit test of `removingPlans(from:)` was written after the code.
+    - Not changed: no public `PlanSnapshot` typealias was added to OperationVocabulary.swift, because the card does not ask for it. A consumer reads `OperationEvent.plan` through `import FoundationModelsExtras`.
+  timestamp: 2026-10-08T14:36:48.932303+00:00
+- actor: claude-code
+  id: 01m4dz48zy8x7gce2jeecywaf3
+  text: |-
+    ### implement — changed
+    - evidence: 19 files — Sources: SessionEvent.swift, RoutedSessionActorRunJournal.swift, OpenProgressRow.swift, SessionOutbox.swift, OperationEventSegment.swift, TranscriptReconstruction.swift, SessionAnswer.swift, SessionProjection.swift, FoundationModelsRouter.docc/RoutedSession.md; Tests: RunProgressDeliveryTests.swift (new), PlanRestorationTests.swift (new), Helpers/PlanFixtures.swift (new), SessionOutboxTests.swift, ScriptedToolAnswerComparisonTests.swift; Examples/MultiModelGeneration/main.swift; IntegrationTests RealToolAnswerComparisonTests.swift; generation-queue.md; Package.resolved and IntegrationTests/Package.resolved moved to Extras 5c1c638 (both are git-ignored). `swift test`: 1544 tests in 194 suites passed, 0 failures, 2 known issues that were there before; no compiler warnings in the changed files; `swift build --package-path IntegrationTests --build-tests` builds.
+    - next: /review. Task stays in doing. Nothing is committed.
+  timestamp: 2026-10-08T14:36:56.190776+00:00
+- actor: claude-code
+  id: 01m4dzc2v4pfvntnvggekhd65t
+  text: |-
+    ### test - green
+    - evidence: `swift test` - 1544 tests in 194 suites passed, plus 23 and 19 tests in the two other runs, 0 failed, 0 skipped. 2 known issues are expected (withKnownIssue) in RealModelHarness.swift and BoundedWait.swift, which this task did not change. `swift build --build-tests --package-path IntegrationTests` - build complete. No compiler warning in the changed code.
+    - formatter: the repo holds no .swiftformat, .swift-format or .swiftlint.yml, and Package.swift has no Airbnb plugin. With tool defaults, 346 of 412 unchanged files also fail `swiftformat --lint`. So no repo rule exists and no file was reformatted.
+    - next: review.
+  timestamp: 2026-10-08T14:41:12.036334+00:00
+position_column: doing
 position_ordinal: '80'
 title: Send .progress operation events live as SessionEvent.runProgress and keep the plan out of the model text
 ---

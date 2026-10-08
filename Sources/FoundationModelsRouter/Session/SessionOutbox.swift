@@ -9,10 +9,10 @@ import FoundationModelsExtras
 /// - Mail (``PendingEvent``): ``OperationEvent``s posted through the
 ///   ``OperationEventSink`` conformance. The next submission of the pump puts
 ///   them into its prompt preamble. Only ``OperationEventKind/progress``
-///   coalesces, to the latest pending one per `(tool, correlationID)`, in
-///   place. Every posted event is also recorded in the transcript through the
-///   attached ``OperationEventJournal``, uncoalesced. A posted run terminal
-///   (``OperationEventKind/completed``) or run message
+///   coalesces, to the latest pending one per `(tool, correlationID)` and
+///   per "has a plan", in place. Every posted event is also recorded in the
+///   transcript through the attached ``OperationEventJournal``, uncoalesced.
+///   A posted run terminal (``OperationEventKind/completed``) or run message
 ///   (``OperationEventKind/message``) tells the attached
 ///   ``SessionMailObserver``, so the pump can deliver it.
 /// - Caller messages (``SessionMessage``): the prompts of
@@ -249,15 +249,31 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
         case .completed, .elicitation, .message:
             appendNewPendingEvent(event: event, held: held)
         case .progress:
-            if let index = events.firstIndex(where: {
-                $0.event.kind == .progress && $0.event.tool == event.tool
-                    && $0.event.correlationID == event.correlationID
-            }) {
+            if let index = events.firstIndex(where: { Self.progress(event, replaces: $0.event) }) {
                 events[index] = PendingEvent(id: events[index].id, event: event, isHeld: held)
             } else {
                 appendNewPendingEvent(event: event, held: held)
             }
         }
+    }
+
+    /// Whether the progress event `newer` replaces the pending event `older`.
+    ///
+    /// The merge key is the `tool`, the `correlationID`, and whether the
+    /// event has a plan (`OperationEvent.plan`). Thus a plan replaces only an
+    /// older plan, and a text progress replaces only an older text progress.
+    /// One code-mode run posts the events of its nested `tools.*` calls under
+    /// one `tool` and one `correlationID`, so it can send both shell output
+    /// and a plan (task ^mq1js23).
+    ///
+    /// - Parameters:
+    ///   - newer: The progress event that is staged now.
+    ///   - older: A pending event.
+    /// - Returns: `true` when `older` is a progress event with the same merge
+    ///   key as `newer`.
+    private static func progress(_ newer: OperationEvent, replaces older: OperationEvent) -> Bool {
+        older.kind == .progress && older.tool == newer.tool && older.correlationID == newer.correlationID
+            && (older.plan == nil) == (newer.plan == nil)
     }
 
     /// Installs the journal that records every event posted from now on.

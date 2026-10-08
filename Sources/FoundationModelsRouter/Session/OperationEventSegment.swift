@@ -91,6 +91,64 @@ struct OperationEventSegment: PersistableStructuredSegment, Equatable, CustomStr
     }
 }
 
+extension OperationEventSegment {
+    /// This segment with no plan (`OperationEvent.plan`) in its event: the
+    /// form that model input holds. The id and every other field of the event
+    /// stay the same.
+    ///
+    /// A plan goes only to the host (task ^mq1js23). The recorded segment
+    /// keeps the plan on disk, so a host can replay the last plan after a
+    /// restore. A backend sends the JSON of a structured segment of a
+    /// `.toolOutput` entry to the model, so the transcript that a restore
+    /// gives to a backend holds this form.
+    var withoutPlan: OperationEventSegment {
+        OperationEventSegment(
+            id: id,
+            content: OperationEvent(
+                tool: content.tool, op: content.op, correlationID: content.correlationID, kind: content.kind,
+                detail: content.detail, outcome: content.outcome, elicitation: content.elicitation))
+    }
+
+    /// `entry` with no plan in each ``OperationEventSegment`` it carries
+    /// (``withoutPlan``). The journal puts these segments on `.toolOutput`
+    /// entries, and the submission chokepoint puts them on `.prompt` entries.
+    /// Every other entry, and every other segment, stays as it is.
+    ///
+    /// - Parameter entry: An entry of a transcript that goes to a backend.
+    /// - Returns: The entry, with the plans removed.
+    static func removingPlans(from entry: Transcript.Entry) -> Transcript.Entry {
+        switch entry {
+        case .prompt(let prompt):
+            return .prompt(
+                Transcript.Prompt(
+                    id: prompt.id, segments: removingPlans(from: prompt.segments), options: prompt.options,
+                    responseFormat: prompt.responseFormat))
+        case .toolOutput(let output):
+            return .toolOutput(
+                Transcript.ToolOutput(
+                    id: output.id, toolName: output.toolName, segments: removingPlans(from: output.segments)))
+        case .instructions, .toolCalls, .response, .reasoning:
+            return entry
+        @unknown default:
+            return entry
+        }
+    }
+
+    /// `segments` with no plan in each ``OperationEventSegment`` among them.
+    ///
+    /// - Parameter segments: The segments of one entry.
+    /// - Returns: The segments, in order, with the plans removed.
+    private static func removingPlans(from segments: [Transcript.Segment]) -> [Transcript.Segment] {
+        segments.map { segment in
+            guard case .structure(let structure) = segment,
+                let eventSegment = (try? OperationEventSegment(structuredSegment: structure)) ?? nil,
+                eventSegment.content.plan != nil
+            else { return segment }
+            return eventSegment.withoutPlan.transcriptSegment
+        }
+    }
+}
+
 extension TranscriptEvent {
     /// Every ``OperationEvent`` this event's entry carries, in segment order.
     ///

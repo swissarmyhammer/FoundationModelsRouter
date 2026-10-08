@@ -59,6 +59,30 @@ struct SessionOutboxTests {
         #expect(pending.events.count == 2)
     }
 
+    @Test("a plan progress and a text progress of one (tool, correlationID) do not replace each other (task ^mq1js23)")
+    func planAndTextProgressPendSeparately() async {
+        let outbox = SessionOutbox()
+        let text = PlanFixtures.textProgress("shell output")
+        let plan = PlanFixtures.planProgress()
+        await outbox.post(event: text)
+        await outbox.post(event: plan)
+
+        #expect(await outbox.pending().events.map(\.event) == [text, plan])
+    }
+
+    @Test("a plan progress replaces only the older plan progress, and a text progress only the older text progress")
+    func planReplacesPlanAndTextReplacesText() async {
+        let outbox = SessionOutbox()
+        await outbox.post(event: PlanFixtures.textProgress("first output"))
+        await outbox.post(event: PlanFixtures.planProgress(PlanFixtures.plan(firstStatus: .inProgress)))
+        let newerText = PlanFixtures.textProgress("second output")
+        let newerPlan = PlanFixtures.planProgress(PlanFixtures.plan(firstStatus: .completed))
+        await outbox.post(event: newerText)
+        await outbox.post(event: newerPlan)
+
+        #expect(await outbox.pending().events.map(\.event) == [newerText, newerPlan])
+    }
+
     @Test("interleaved .completed events all survive, in post order")
     func completedEventsAllSurviveInOrder() async {
         let outbox = SessionOutbox()

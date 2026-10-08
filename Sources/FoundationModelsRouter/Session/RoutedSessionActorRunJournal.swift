@@ -6,9 +6,11 @@ import FoundationModelsExtras
 /// moment they are made.
 extension RoutedSessionActor: OperationEventJournal {
     /// Records one posted ``OperationEvent``, in post order. Entries of one
-    /// run can interleave with the entries of a submission. A terminal is
-    /// also delivered live as ``SessionEvent/runSettled(_:)``, a message of a
-    /// run as ``SessionEvent/runMessage(_:)``, and an elicitation as
+    /// run can interleave with the entries of a submission. Each recorded
+    /// event is also delivered live (``liveEvent(for:)``): a terminal as
+    /// ``SessionEvent/runSettled(_:)``, a message of a run as
+    /// ``SessionEvent/runMessage(_:)``, a progress event as
+    /// ``SessionEvent/runProgress(_:)``, and an elicitation as
     /// ``SessionEvent/elicitationRequested(_:)``.
     ///
     /// Each event gets its own entry, with one exception (task ^zze1067):
@@ -17,33 +19,47 @@ extension RoutedSessionActor: OperationEventJournal {
     /// progress event of the same run goes into ``openProgressRow`` and
     /// writes nothing now. The next different event or entry closes the row
     /// (``closeOpenProgressRow()``) before it is written itself, so the
-    /// transcript keeps the post order and each event.
+    /// transcript keeps the post order and each event. A progress event that
+    /// goes into the open row is also delivered live at once.
     ///
     /// The trade-off: while a run continues to post progress, its open row is
     /// only in memory. It is not on disk yet. If the process stops before a
     /// different event, a different entry or ``close()`` writes the row, the
     /// open row is lost. The start row and the events written before it stay.
+    /// A progress event that has a plan (`OperationEvent.plan`) never goes
+    /// into the open row (``OpenProgressRow/accepts(_:)``): it closes the row
+    /// and is written at once, so a restore finds the last plan on disk
+    /// (task ^mq1js23).
     ///
     /// - Parameter event: The event the outbox has just accepted.
     func record(event: OperationEvent) async {
         guard claimJournalWrite(for: event) else { return }
         if openProgressRow?.accepts(event) == true {
             openProgressRow?.append(event)
-            return
+        } else {
+            await recordSessionMetaIfNeeded()
+            await append(partial: makeRunEventPartial(toolName: event.tool, events: [event]))
+            if event.kind == .progress {
+                openProgressRow = OpenProgressRow(after: event)
+            }
         }
-        await recordSessionMetaIfNeeded()
-        await append(partial: makeRunEventPartial(toolName: event.tool, events: [event]))
-        if event.kind == .progress {
-            openProgressRow = OpenProgressRow(after: event)
-        }
-        if event.kind == .completed {
-            deliverLive(.runSettled(event))
-        }
-        if event.kind == .message {
-            deliverLive(.runMessage(event))
-        }
-        if event.kind == .elicitation {
-            deliverLive(.elicitationRequested(event))
+        deliverLive(Self.liveEvent(for: event))
+    }
+
+    /// The live ``SessionEvent`` that carries a recorded event to the host.
+    ///
+    /// - Parameter event: The event the journal records.
+    /// - Returns: The session event of the kind of `event`.
+    static func liveEvent(for event: OperationEvent) -> SessionEvent {
+        switch event.kind {
+        case .completed:
+            return .runSettled(event)
+        case .message:
+            return .runMessage(event)
+        case .progress:
+            return .runProgress(event)
+        case .elicitation:
+            return .elicitationRequested(event)
         }
     }
 

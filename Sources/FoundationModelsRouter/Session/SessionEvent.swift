@@ -161,6 +161,22 @@ public enum SessionEvent: Sendable, Equatable {
     /// answer when the message arrives inside an answer.
     case runMessage(OperationEvent)
 
+    /// A run of this session reported its progress through
+    /// `ToolContext.progress(_:plan:)`. The run is still open. Carries the
+    /// `.progress` ``OperationEvent`` the run posted, at the moment the
+    /// session journals it. The session sends one for each progress event,
+    /// also for an event that the journal merges into the open progress row
+    /// of the run (task ^mq1js23).
+    ///
+    /// The event's `detail` is the short text line that the model also gets.
+    /// The event's `plan` is the agent plan for the host, or `nil`. The plan
+    /// goes only to the host: no model input holds it. A plan replaces the
+    /// earlier plan that has the same `PlanSnapshot.id`.
+    ///
+    /// Always on ``RoutedSession/streamSessionEvents()``; on the stream of the
+    /// answer when the progress arrives inside an answer.
+    case runProgress(OperationEvent)
+
     /// A run of this session asked the user a question through
     /// `ToolContext.elicit(_:)` and is suspended until a host answers it.
     /// Carries the `.elicitation` ``OperationEvent`` the run posted, at the

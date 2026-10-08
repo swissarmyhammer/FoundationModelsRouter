@@ -124,8 +124,8 @@ struct ScriptedToolAnswerComparisonTests {
             case .toolStatus, .toolInvocation, .toolCallReport, .reasoningDelta, .entryRecorded,
                 .compactionStarted, .compaction, .compactionFailed, .discoveryPrimingFailed, .generationStalled,
                 .submissionQueued, .submissionStarted, .submissionEnded, .answered, .answerFailed,
-                .repetitionStopped, .reasoningStopped, .runSettled, .runMessage, .elicitationRequested, .generationCall,
-                .mailDeliveryPaused:
+                .repetitionStopped, .reasoningStopped, .runSettled, .runMessage, .runProgress, .elicitationRequested,
+                .generationCall, .mailDeliveryPaused:
                 break
             }
         }

@@ -180,13 +180,14 @@ public final class SessionProjection {
             // that completes the compaction.
             phase = .compacting
         case .compactionFailed, .discoveryPrimingFailed, .generationStalled, .submissionQueued, .repetitionStopped,
-            .reasoningStopped, .runSettled, .runMessage, .toolCallReport, .elicitationRequested, .generationCall,
-            .mailDeliveryPaused:
+            .reasoningStopped, .runSettled, .runMessage, .runProgress, .toolCallReport, .elicitationRequested,
+            .generationCall, .mailDeliveryPaused:
             // Handled explicitly, and deliberately changes nothing. A mail
             // delivery pause changes no entry: the held mail waits in the
             // queue of the session, and the next caller message carries it. A settled
-            // run's terminal, and a message of a run, reach this mirror as the
-            // recorded tool output of the submission that next carries them. A submission whose
+            // run's terminal, a message of a run, and the progress of a run
+            // reach this mirror as the recorded tool output of the submission
+            // that next carries them. A submission whose
             // discovery priming could not seed generates as an unprimed
             // submission does (see ``SessionEvent/discoveryPrimingFailed(_:)``).
             // A stall report bounds nothing: the submission still runs and
