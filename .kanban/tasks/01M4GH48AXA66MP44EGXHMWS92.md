@@ -89,8 +89,31 @@ comments:
     - next: review.
     - output files: scratchpad build.txt and test.txt.
   timestamp: 2026-10-09T21:47:56.328398+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m4ha6sazay5bpsj68752hjjz
+  text: |-
+    ### commit — changed
+    - evidence: 1b77ef2b test(session): use shared open and close invocation helpers (^xhmws92)
+    - next: none. The commit is local. It is not pushed.
+  timestamp: 2026-10-09T21:48:16.095199+00:00
+- actor: claude-code
+  id: 01m4hascd6cqym5w9nc2nskttb
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (1b77ef2b). 0 findings (0 confirmed, 3 refuted, 7 attempted). 3 files reviewed. 2 .kanban files not reviewed (.reviewignore). All prior Review Findings items are checked.
+    - next: Task moved to done.
+  timestamp: 2026-10-09T21:58:25.446381+00:00
+- actor: claude-code
+  id: 01m4hasrf60sk64dqvq7v3vbja
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 3 test files use the shared isOpenInvocation / isCloseInvocation helpers
+    - test: green — swift test, 1563 tests in 196 suites passed, 0 failed
+    - commit: 1b77ef2b
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-10-09T21:58:37.798283+00:00
+position_column: done
+position_ordinal: ffffffd080
 title: Join the SDK tool-call id with the run completion token
 ---
 ## Problem

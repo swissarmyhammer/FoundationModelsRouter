@@ -34,7 +34,9 @@ The router names ``ToolContext``, ``BackgroundTool``, ``ToolMount``,
 ``BackgroundRun``, ``WaitOutcome``, ``CancelOutcome``, ``PendingRunEnvelope``,
 ``ToolCallAttachment``, ``ToolCallReport``, ``ElicitationAnswerDelivery`` and
 ``ElicitationCompletionDelivery`` are aliases of the Extras types. A file that
-imports both modules finds one type for each name.
+imports both modules finds one type for each name. The router also re-exports
+the Extras display types ``ToolDisplayEvent`` and ``ToolDisplayContent``, which
+``SessionEvent/toolDisplay(_:)`` carries.
 
 ## Long-running tools
 
@@ -71,6 +73,14 @@ The session pushes settlement to the model — the model never polls:
   journal writes a progress event that has a plan at once, so a host can
   replay the last plan of each plan id after a restore. A plan replaces only
   the earlier plan that has the same `PlanSnapshot.id`.
+- A tool can send output for the client to show while it runs
+  (`ToolContext.emit(chunk:)`, `ToolContext.update(title:kind:locations:)`
+  and `ToolContext.post(display:)`). Each display event goes live to the host
+  as ``SessionEvent/toolDisplay(_:)``, in post order with the progress events
+  of the same run. The model never gets it, the session never combines two of
+  them, and the journal never records one. A display event resets the
+  timeout of the run, the same as a progress event. A run that settles inside
+  its settle period keeps its display events: the host already has them.
 - `status` and `wait` give an earlier look; they are not required.
 
 A model can start one more background run in each answer, for example to ask

@@ -86,6 +86,30 @@ public enum SessionEvent: Sendable, Equatable {
     /// answer when the call closes inside an answer.
     case toolCallReport(ToolCallReport)
 
+    /// A display-only event of a running tool: a part of its output, all of
+    /// its output, or new metadata of the call, for the client to show. The
+    /// tool posts it through `ToolContext.post(display:)`,
+    /// `ToolContext.emit(chunk:)` or `ToolContext.update(title:kind:locations:)`.
+    /// Its `ToolDisplayEvent.correlationID` is the run's `completionToken`,
+    /// the same value as the ``ToolInvocationRecord/correlationID`` of the
+    /// call, never a `Transcript.ToolCall.id`.
+    ///
+    /// Delivery only. The session sends each display event live, at the
+    /// moment the tool posts it, in post order with the
+    /// ``runProgress(_:)`` events of the same run. The session never:
+    ///
+    /// - puts it into the input of a submission,
+    /// - combines it with another display event,
+    /// - records it in the journal.
+    ///
+    /// A background run that settles inside its settle period
+    /// (``SessionConfiguration/inlineSettleGrace``) withdraws its staged
+    /// events, but not its display events: the host already has them.
+    ///
+    /// Always on ``RoutedSession/streamSessionEvents()``; on the stream of the
+    /// answer when the tool posts it inside an answer.
+    case toolDisplay(ToolDisplayEvent)
+
     /// The diff of a submission recorded one SDK transcript entry under its durable id.
     /// Emitted once per recorded `.response`, `.reasoning`, or `.toolCalls` entry.
     /// `id` is the `Transcript.Entry.id`, never a `Transcript.ToolCall.id`.

@@ -179,8 +179,8 @@ struct SessionAnswerReducer {
             noteStop(WatchStop(stop))
         case .compactionStarted, .compactionFailed, .submissionQueued, .submissionStarted, .answered, .answerFailed,
             .textDelta, .textReset, .reasoningDelta, .entryRecorded, .discoveryPrimingFailed, .generationStalled,
-            .runSettled, .runMessage, .runProgress, .toolCallReport, .elicitationRequested, .generationCall,
-            .mailDeliveryPaused:
+            .runSettled, .runMessage, .runProgress, .toolCallReport, .toolDisplay, .elicitationRequested,
+            .generationCall, .mailDeliveryPaused:
             // Deliberately not carried by the answer. A mail delivery pause
             // comes when no answer runs, so no answer can carry it. The frames of a
             // submission and of an answer are the structure the answer sums.
@@ -191,7 +191,8 @@ struct SessionAnswerReducer {
             // (like ``SessionProjection``) that key rows on durable SDK entry
             // ids. The priming report, the stall report, a background run's
             // settlement, its messages and its progress, a call's
-            // attachments, a pending elicitation, and one
+            // attachments, the display events of a tool, a pending
+            // elicitation, and one
             // generation call's usage (``SessionEvent/submissionEnded(_:)``
             // sums them) are live-driver concerns. The `observing` callback of
             // ``RoutedSession/respond(to:maxTokens:observing:)`` still

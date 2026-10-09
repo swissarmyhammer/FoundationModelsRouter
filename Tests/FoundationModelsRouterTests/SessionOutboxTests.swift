@@ -623,16 +623,24 @@ struct SessionOutboxTests {
 
     // MARK: - post(report:): forwarded to the observer, never staged, never journaled
 
-    /// Keeps every ``ToolCallReport`` the outbox forwards to it, so a test can
-    /// compare what arrived with what was posted.
-    private actor ReportRecordingObserver: ToolInvocationObserver {
+    /// Keeps every ``ToolCallReport`` and every ``ToolDisplayEvent`` the
+    /// outbox forwards to it, so a test can compare what arrived with what
+    /// was posted.
+    private actor DeliveryRecordingObserver: ToolInvocationObserver {
         /// Every forwarded report, in delivery order.
         private(set) var reports: [ToolCallReport] = []
+
+        /// Every forwarded display event, in delivery order.
+        private(set) var displays: [ToolDisplayEvent] = []
 
         func deliver(invocation record: ToolInvocationRecord) {}
 
         func deliver(report: ToolCallReport) {
             reports.append(report)
+        }
+
+        func deliver(display event: ToolDisplayEvent) {
+            displays.append(event)
         }
     }
 
@@ -658,7 +666,7 @@ struct SessionOutboxTests {
     @Test("post(report:) hands the same report to the attached observer")
     func postReportReachesTheObserver() async {
         let outbox = SessionOutbox()
-        let observer = ReportRecordingObserver()
+        let observer = DeliveryRecordingObserver()
         await outbox.attach(invocationObserver: observer)
         let report = Self.report()
 
@@ -670,7 +678,7 @@ struct SessionOutboxTests {
     @Test("post(report:) stages nothing and writes nothing to the journal")
     func postReportStagesNothingAndJournalsNothing() async {
         let outbox = SessionOutbox()
-        let observer = ReportRecordingObserver()
+        let observer = DeliveryRecordingObserver()
         let journal = RecordingJournal()
         await outbox.attach(invocationObserver: observer)
         await outbox.attach(journal: journal)
@@ -693,6 +701,64 @@ struct SessionOutboxTests {
 
         let pending = await outbox.pending()
         #expect(pending.events.isEmpty)
+    }
+
+    // MARK: - post(display:): forwarded to the observer, never staged, never combined, never journaled
+
+    /// Builds a display event that adds `text` to the output of the call with
+    /// the completion token `correlationID`.
+    ///
+    /// - Parameters:
+    ///   - text: The text of the chunk.
+    ///   - correlationID: The completion token of the run.
+    /// - Returns: The display event.
+    private static func display(_ text: String, correlationID: String = "1") -> ToolDisplayEvent {
+        ToolDisplayEvent(
+            tool: "shell", op: "run command", correlationID: correlationID, kind: .contentChunk(.text(text)))
+    }
+
+    @Test("post(display:) hands the same display event to the attached observer")
+    func postDisplayReachesTheObserver() async {
+        let outbox = SessionOutbox()
+        let observer = DeliveryRecordingObserver()
+        await outbox.attach(invocationObserver: observer)
+        let display = Self.display("first line")
+
+        await outbox.post(display: display)
+
+        #expect(await observer.displays == [display])
+    }
+
+    @Test("each display event of one run reaches the observer in post order, and none is combined")
+    func displayEventsOfOneRunAreNotCombined() async {
+        let outbox = SessionOutbox()
+        let observer = DeliveryRecordingObserver()
+        await outbox.attach(invocationObserver: observer)
+        let displays = [Self.display("first line"), Self.display("second line"), Self.display("third line")]
+
+        for display in displays {
+            await outbox.post(display: display)
+        }
+
+        #expect(await observer.displays == displays)
+    }
+
+    @Test("post(display:) stages nothing and writes nothing to the journal")
+    func postDisplayStagesNothingAndJournalsNothing() async {
+        let outbox = SessionOutbox()
+        let observer = DeliveryRecordingObserver()
+        let journal = RecordingJournal()
+        await outbox.attach(invocationObserver: observer)
+        await outbox.attach(journal: journal)
+
+        await outbox.post(display: Self.display("first line"))
+        // The positive control: a plain event posted after the display event
+        // does reach the journal, so an empty journal is not a stalled chain.
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .completed, detail: "control"))
+
+        let pending = await outbox.pending()
+        #expect(pending.events.map(\.event.detail) == ["control"])
+        #expect(await journal.recorded.map(\.detail) == ["control"])
     }
 
     // MARK: - Helpers

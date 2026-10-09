@@ -361,7 +361,7 @@ struct RealToolAnswerComparisonTests {
                 .compactionStarted, .compaction, .compactionFailed, .discoveryPrimingFailed, .generationStalled,
                 .submissionQueued, .repetitionStopped, .reasoningStopped, .runSettled, .runMessage, .runProgress,
                 .elicitationRequested, .generationCall, .submissionEnded, .answered, .answerFailed,
-                .mailDeliveryPaused:
+                .mailDeliveryPaused, .toolDisplay:
                 break
             }
         }

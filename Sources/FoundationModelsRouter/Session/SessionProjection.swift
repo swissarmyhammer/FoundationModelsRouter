@@ -180,8 +180,8 @@ public final class SessionProjection {
             // that completes the compaction.
             phase = .compacting
         case .compactionFailed, .discoveryPrimingFailed, .generationStalled, .submissionQueued, .repetitionStopped,
-            .reasoningStopped, .runSettled, .runMessage, .runProgress, .toolCallReport, .elicitationRequested,
-            .generationCall, .mailDeliveryPaused:
+            .reasoningStopped, .runSettled, .runMessage, .runProgress, .toolCallReport, .toolDisplay,
+            .elicitationRequested, .generationCall, .mailDeliveryPaused:
             // Handled explicitly, and deliberately changes nothing. A mail
             // delivery pause changes no entry: the held mail waits in the
             // queue of the session, and the next caller message carries it. A settled
@@ -200,7 +200,9 @@ public final class SessionProjection {
             // stop. A tool call
             // report carries records for a host to decode, and the phase of
             // the call is already mirrored from its
-            // ``SessionEvent/toolInvocation(_:toolCallID:)`` records. An elicitation
+            // ``SessionEvent/toolInvocation(_:toolCallID:)`` records. A display
+            // event of a tool is output for a client to show, and the phase of
+            // the call is already mirrored from its records. An elicitation
             // request names a question that only a host can answer, and the
             // call that asks still runs. The usage of one generation call is
             // a part of the usage of the submission, and

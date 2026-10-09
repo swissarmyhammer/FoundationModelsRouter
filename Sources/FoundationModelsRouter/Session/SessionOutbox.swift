@@ -40,6 +40,11 @@ import FoundationModelsExtras
 /// it does not also ride in front of the next prompt. The journal
 /// keeps its own copy, and the host still gets its
 /// ``SessionEvent/runSettled(_:)``, because neither reads the staged events.
+///
+/// The outbox also forwards each ``ToolDisplayEvent`` of a tool through
+/// ``post(display:)``. A display event is for the client of the host only: it
+/// is never mail, never combined and never journaled, and a withdraw never
+/// removes it.
 
 /// The observer that a ``SessionOutbox`` tells when mail that the pump can
 /// deliver arrives: a run terminal (``OperationEventKind/completed``) or a
@@ -148,9 +153,9 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
     /// before ``attach(mailObserver:)``. Weak to avoid a reference cycle.
     private weak var mailObserver: (any SessionMailObserver)?
 
-    /// The observer every posted invocation record and tool call report goes
-    /// to, or `nil` before ``attach(invocationObserver:)``. Weak to avoid a
-    /// reference cycle.
+    /// The observer every posted invocation record, tool call report and
+    /// display event goes to, or `nil` before ``attach(invocationObserver:)``.
+    /// Weak to avoid a reference cycle.
     private weak var invocationObserver: (any ToolInvocationObserver)?
 
     /// The FIFO chain every journal write is enqueued onto.
@@ -297,8 +302,8 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
         self.mailObserver = mailObserver
     }
 
-    /// Installs the observer that receives every ``ToolInvocationRecord`` and
-    /// ``ToolCallReport`` posted from now on.
+    /// Installs the observer that receives every ``ToolInvocationRecord``,
+    /// ``ToolCallReport`` and ``ToolDisplayEvent`` posted from now on.
     ///
     /// - Parameter invocationObserver: The observer to install.
     internal func attach(invocationObserver: any ToolInvocationObserver) {
@@ -323,6 +328,20 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
     /// - Parameter report: The report to forward.
     func post(report: ToolCallReport) async {
         await invocationObserver?.deliver(report: report)
+    }
+
+    /// Posts one ``ToolDisplayEvent`` to the attached observer.
+    ///
+    /// The event is not staged, not combined with another display event and
+    /// not journaled: the model never reads it, and a client shows each one
+    /// in post order. A withdraw of the staged events of a run
+    /// (``withdrawStagedEvents(correlationID:)``) never touches it, because
+    /// it was never staged. Before an observer is attached, the event is
+    /// dropped.
+    ///
+    /// - Parameter event: The display event to forward.
+    func post(display event: ToolDisplayEvent) async {
+        await invocationObserver?.deliver(display: event)
     }
 
     /// Chains one journal write onto ``journalChain``.

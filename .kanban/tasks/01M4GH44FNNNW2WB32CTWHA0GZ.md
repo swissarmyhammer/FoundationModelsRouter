@@ -46,7 +46,62 @@ comments:
 
     The user pushed FoundationModelsExtras `main`. The commits for Extras ^1vhftw2 and ^jt7qx6k are now on the remote. Before you build this task, run `swift package update FoundationModelsExtras` so that `Package.resolved` gets the display-lane commits. Do not put a local path in `Package.swift`.
   timestamp: 2026-10-09T21:04:35.343476+00:00
-position_column: todo
+- actor: claude-code
+  id: 01m4hb9v526xp769jqw5gc3def
+  text: |-
+    ## Research (implement)
+
+    - `swift package update FoundationModelsExtras` resolved Extras `main` at 5bc870a. This commit holds 23974f0 (display lane) and ba381a0 (helpers, timeout reset, no withdraw). `Package.resolved` is in `.gitignore`, so git shows no change for it.
+    - Extras `RunEventFunnel.post(display:)` increments the timeout reset count and sends the event upstream in order with the other events of the run. Thus the timeout reset is Extras behavior. Router must only forward the event.
+    - Extras `StagedEventWithdrawing` withdraws only staged `OperationEvent` values. A display event never goes into the outbox stage, so a run that settles inside the grace period keeps its display events if Router delivers them live.
+    - Order: the funnel waits for each upstream post. `SessionOutbox.post(event:)` waits for its journal write, and the journal write calls `deliverLive`. Thus a display event that goes straight to `invocationObserver` -> `deliverLive` keeps the post order with the progress events of the same run.
+    - Plan: add `deliver(display:)` to `ToolInvocationObserver`; `SessionOutbox.post(display:)` forwards it; `RoutedSessionActor.deliver(display:)` calls `deliverLive(.toolDisplay(event))`. Add the new case to each exhaustive switch: `SessionProjection`, `SessionAnswer`, `Examples/MultiModelGeneration/main.swift`, `ScriptedToolAnswerComparisonTests`, `IntegrationTests/.../RealToolAnswerComparisonTests`. The test conformer `ReportRecordingObserver` in `SessionOutboxTests` must get the new method.
+  timestamp: 2026-10-09T22:07:24.834015+00:00
+- actor: claude-code
+  id: 01m4hcg8zbka8aj9nyg5g4fhqa
+  text: |-
+    ## Implementation landed (not committed)
+
+    TDD order: the new tests failed first (compile error for the missing API, then 7 runtime failures because no display event arrived), then passed after the change.
+
+    ### Production
+    - `Hosting/OperationVocabulary.swift`: `@_exported import struct FoundationModelsExtras.ToolDisplayEvent` and `enum ToolDisplayContent`. This is the original-declaration form (not a typealias), so a router user can name `ToolDisplayEvent.Kind` in a public declaration.
+    - `Session/SessionEvent.swift`: new case `toolDisplay(ToolDisplayEvent)`.
+    - `Session/OperationEventJournal.swift`: `ToolInvocationObserver.deliver(display:)`.
+    - `Session/SessionOutbox.swift`: `post(display:)` forwards to `invocationObserver`. No stage, no merge, no journal write.
+    - `Session/RoutedSessionActorRunJournal.swift`: `deliver(display:)` calls `deliverLive(.toolDisplay(event))`, so the event goes to the answer stream inside an answer and to `streamSessionEvents()`.
+    - Exhaustive switches got the new case: `SessionProjection`, `SessionAnswer` (no-op arms), `Examples/MultiModelGeneration/main.swift`, `ScriptedToolAnswerComparisonTests`, `IntegrationTests/.../RealToolAnswerComparisonTests`.
+    - Docs: `RoutedSession.md` (DocC) and `generation-queue.md` section 5.4 and the event set.
+
+    ### Tests
+    - `SessionOutboxTests`: 3 new tests (forward, no merge in post order, no stage and no journal). The test observer `ReportRecordingObserver` is now `DeliveryRecordingObserver` and also records display events.
+    - New `ToolDisplayDeliveryTests` (4 tests): order with progress on `streamEvents(to:)`; next submission input holds the progress line and not the display text; display event of a run that settles inside the settle period arrives on `streamSessionEvents()`; 8 display beats at 100 ms with a 0.5 s timeout run past the timeout.
+    - New `ToolDisplayEventPublicSurfaceTests` (plain router import).
+
+    ### Discoveries
+    - The background runner posts its own progress event (the pending envelope) on the run, so the order test keeps only the posts of the tool.
+    - The timeout reset is Extras behavior (`RunEventFunnel.post(display:)` increments `resetCount`). Router only forwards.
+    - `IntegrationTests/Package.resolved` is local and ignored too. It pinned Extras at c18a9aa, so I ran `swift package --package-path IntegrationTests update FoundationModelsExtras` (now 5bc870a). Nothing to commit for it.
+    - One full run had an intermittent failure in `WatchStopUsageTests` (usage.tokensOut 151 vs generation call sum 152). It passed alone. Not related to this task. New task ^0depfwy records it.
+  timestamp: 2026-10-09T22:28:24.171560+00:00
+- actor: claude-code
+  id: 01m4hcgkjnz30g3ae1r3wzn831
+  text: |-
+    ### implement — changed
+    - evidence: `swift build --build-tests` clean (no compiler warnings); new tests red then green (`ToolDisplayDeliveryTests` 4/4, `SessionOutboxTests` 49/49 with the 3 new ones, `ToolDisplayEventPublicSurfaceTests` 1/1); full `swift test`: 1570 tests, 1 intermittent failure in `WatchStopUsageTests` that passed alone (6/6) and is not related (task ^0depfwy); `swift build --build-tests --package-path IntegrationTests` clean. Files: 13 modified, 2 new test files.
+    - next: /review. Task stays in doing. Nothing committed.
+  timestamp: 2026-10-09T22:28:35.029424+00:00
+- actor: claude-code
+  id: 01m4hcne3408pbd9t8wk0zs537
+  text: |-
+    ### test — green
+    - evidence: swift build exit 0. swift test exit 0. Main target: 1570 tests in 197 suites passed, 0 failures. Other targets: 24 tests and 19 tests passed. 0 skipped.
+    - WatchStopUsageTests did not fail in this run.
+    - The 2 known issues are from withKnownIssue in BoundedWaitTests and RealModelHarnessTests. Each one checks that an issue is recorded. They are not skips.
+    - The only warning is a build-system message, "missing creator for mutated node" for the mlx-swift Cmlx bundle. It is not Router code.
+    - next: review
+  timestamp: 2026-10-09T22:31:13.252675+00:00
+position_column: doing
 position_ordinal: '80'
 title: Forward tool display events as SessionEvent.toolDisplay
 ---

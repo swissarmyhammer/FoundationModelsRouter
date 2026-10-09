@@ -43,6 +43,23 @@ import FoundationModelsExtras
 // definition: `FoundationModelsExtras.ToolMount`.
 @_exported import struct FoundationModelsExtras.ToolMount
 
+// MARK: - Display event names that only the router re-exports
+
+// The router re-exports the ORIGINAL declaration of each display name, not a
+// typealias, for the same reason as the names above: a file that imports only
+// the router can then name a nested type, for example
+// `ToolDisplayEvent.Kind`, in a public declaration.
+// `ToolDisplayEventPublicSurfaceTests` guards this.
+
+// A display-only event of a tool: output or metadata for the client of the
+// host, and never for the model. `SessionEvent.toolDisplay(_:)` carries it.
+// Canonical definition: `FoundationModelsExtras.ToolDisplayEvent`.
+@_exported import struct FoundationModelsExtras.ToolDisplayEvent
+
+// One part of the display output of a tool: text, a diff, or JSON. Canonical
+// definition: `FoundationModelsExtras.ToolDisplayContent`.
+@_exported import enum FoundationModelsExtras.ToolDisplayContent
+
 // MARK: - Operation event names that only the router re-exports
 
 /// One tool call's live lifecycle record. Canonical definition:
