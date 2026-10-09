@@ -157,10 +157,7 @@ struct GenerationCallUsageTests {
             if case .generationCall = events[index] { return true }
             return false
         }
-        let openIndices = events.indices.filter { index in
-            if case .toolInvocation(let record, _) = events[index] { return record.closedAt == nil }
-            return false
-        }
+        let openIndices = events.indices.filter { events[$0].isOpenInvocation }
         let submissionEndedIndex = try #require(
             events.firstIndex {
                 if case .submissionEnded = $0 { return true }

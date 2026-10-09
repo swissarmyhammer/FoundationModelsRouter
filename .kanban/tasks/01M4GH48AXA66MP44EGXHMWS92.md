@@ -50,6 +50,45 @@ comments:
     - evidence: b9b5fdcd feat(session): join the SDK tool-call id with the run completion token (^xhmws92)
     - next: review
   timestamp: 2026-10-09T21:30:32.568880+00:00
+- actor: claude-code
+  id: 01m4h9p9dz77304v4asw5hq5q8
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (commit 7f20163b); 2 findings (2 confirmed, 2 refuted) — Tests/FoundationModelsRouterTests/GenerationCallUsageTests.swift:161, Tests/FoundationModelsRouterTests/QueuedPassStallWatchTests.swift:69
+    - next: implement the 2 open items in the "Review Findings (2026-10-09 16:30)" section, then test, commit and review again.
+  timestamp: 2026-10-09T21:39:15.519051+00:00
+- actor: claude-code
+  id: 01m4h9pwdyq7763kzvrhdb3jt9
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 14 files (2 new: ToolCallRunJoin.swift, ToolCallRunJoinTests.swift)
+    - test: green — swift test, 1563 tests in 196 suites passed, 0 failed
+    - commit: 7f20163b
+    - review: findings — Tests/FoundationModelsRouterTests/GenerationCallUsageTests.swift:161, Tests/FoundationModelsRouterTests/QueuedPassStallWatchTests.swift:69
+  timestamp: 2026-10-09T21:39:34.974280+00:00
+- actor: claude-code
+  id: 01m4ha27an7xrwfj2h3c45qmfq
+  text: |-
+    Fixed the two review findings. The cause in each finding is an inline match of `.toolInvocation` plus a `closedAt` test, which repeats the shared test helpers `isOpenInvocation`, `isCloseInvocation` and `carriedInvocation` (Helpers/SessionEventCollection.swift). I removed this cause from each test file that this task changed:
+    - GenerationCallUsageTests.swift: `openIndices` now uses `events[$0].isOpenInvocation`.
+    - QueuedPassStallWatchTests.swift: deleted the helper `isToolInvocation(_:closed:)`. The two call sites use `$0.isOpenInvocation` and `$0.isCloseInvocation`.
+    - ToolInvocationLivenessTests.swift: the same pattern was at 6 more locations. The open-record loop, `openIndex`, `closeIndex`, the close-record guard, the `sawLiveInvocation` check, the quick-close loop and the guard in `expectOneReportFollowsClose` now use the shared helpers. No `case .toolInvocation` match is left in this file.
+    - ToolCallRunJoinTests.swift: has no inline match. No change.
+
+    ### implement — changed
+    - evidence: 3 files — Tests/FoundationModelsRouterTests/GenerationCallUsageTests.swift, Tests/FoundationModelsRouterTests/QueuedPassStallWatchTests.swift, Tests/FoundationModelsRouterTests/ToolInvocationLivenessTests.swift; `swift test --filter 'GenerationCallUsageTests|QueuedPassStallWatchTests|ToolInvocationLivenessTests|ToolCallRunJoinTests'`: 44 tests in 4 suites passed, 0 failed. Findings: 2 of 2 checked.
+    - next: review
+  timestamp: 2026-10-09T21:45:46.581408+00:00
+- actor: claude-code
+  id: 01m4ha6618fbwx2e7wvze3sw91
+  text: |-
+    ### test — green
+    - evidence: swift build exit 0. swift test exit 0. Swift Testing: 1563 tests in 196 suites passed, 0 failures, 0 skipped. Second target runs: 23 tests and 19 tests passed.
+    - warnings: no Router warning. One build-system line "missing creator for mutated node" names the mlx-swift_Cmlx.bundle dependency product. It is not Router code.
+    - known issues: 2 in the count. Each is a test that proves a stub records an issue on purpose (RealModelHarness embedding stub, BoundedWait never-true condition). They pass. They are not skips.
+    - next: review.
+    - output files: scratchpad build.txt and test.txt.
+  timestamp: 2026-10-09T21:47:56.328398+00:00
 position_column: doing
 position_ordinal: '80'
 title: Join the SDK tool-call id with the run completion token
@@ -76,3 +115,13 @@ Router has two id spaces for one tool run, and no code joins them:
 ## Consumer
 
 FoundationModelsACPAgent uses this join to show one tool call for each tool run.
+
+## Review Findings (2026-10-09 16:30)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 14 file(s) reviewed, 4 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/GenerationCallUsageTests.swift:161` `reuse/reuse` — The open-record test re-matches `.toolInvocation` and reads `closedAt` inline. This repeats `SessionEvent.isOpenInvocation`, which already exists for this check. The copy can drift from the shared accessor. Replace the `openIndices` filter body with `events.indices.filter { events[$0].isOpenInvocation }`, which returns the same indices with no inline pattern match.
+- [x] `Tests/FoundationModelsRouterTests/QueuedPassStallWatchTests.swift:69` `reuse/reuse` — The new `isToolInvocation(_:closed:)` helper rebuilds the open/close test that the shared helper already provides. Its `closed` flag selects between two existing predicates, so the helper duplicates behavior the test target already has. Delete the helper body logic and return `closed ? event.isCloseInvocation : event.isOpenInvocation`, or replace the call sites with the two properties directly.

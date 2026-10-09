@@ -205,8 +205,8 @@ struct ToolInvocationLivenessTests {
         var iterator = stream.makeAsyncIterator()
         while openRecord == nil, let event = try await iterator.next() {
             events.append(event)
-            if case .toolInvocation(let record, _) = event, record.closedAt == nil {
-                openRecord = record
+            if event.isOpenInvocation {
+                openRecord = event.carriedInvocation
             }
         }
 
@@ -231,16 +231,8 @@ struct ToolInvocationLivenessTests {
         _ = eventsInsideAnswerFrame(events)
         let submissionStartIndex = try #require(Self.submissionStartedIndex(in: events))
         let submissionEndIndex = try #require(Self.submissionEndedIndex(in: events))
-        let openIndex = try #require(
-            events.firstIndex {
-                if case .toolInvocation(let record, _) = $0 { return record.closedAt == nil }
-                return false
-            })
-        let closeIndex = try #require(
-            events.firstIndex {
-                if case .toolInvocation(let record, _) = $0 { return record.closedAt != nil }
-                return false
-            })
+        let openIndex = try #require(events.firstIndex { $0.isOpenInvocation })
+        let closeIndex = try #require(events.firstIndex { $0.isCloseInvocation })
         let toolCallIndex = try #require(
             events.firstIndex {
                 if case .toolCall = $0 { return true }
@@ -268,7 +260,7 @@ struct ToolInvocationLivenessTests {
         #expect(id != open.correlationID)
 
         // The close record pairs with the open record.
-        guard case .toolInvocation(let closed, _) = events[closeIndex] else {
+        guard let closed = events[closeIndex].carriedInvocation else {
             Issue.record("expected a .toolInvocation at index \(closeIndex)")
             return
         }
@@ -294,7 +286,7 @@ struct ToolInvocationLivenessTests {
 
         var sawLiveInvocation = false
         for try await event in await fixture.session.streamEvents(to: ScriptedToolFixture.prompt) {
-            if case .toolInvocation = event { sawLiveInvocation = true }
+            if event.carriedInvocation != nil { sawLiveInvocation = true }
         }
         #expect(sawLiveInvocation)
 
@@ -491,8 +483,8 @@ struct ToolInvocationLivenessTests {
         var iterator = stream.makeAsyncIterator()
         while quickClose == nil, let event = try await iterator.next() {
             events.append(event)
-            if case .toolInvocation(let record, _) = event,
-                record.tool == MarkerEmittingTool.toolName, record.closedAt != nil
+            if event.isCloseInvocation, let record = event.carriedInvocation,
+                record.tool == MarkerEmittingTool.toolName
             {
                 quickClose = record
             }
@@ -597,7 +589,7 @@ struct ToolInvocationLivenessTests {
         let reportIndex = try #require(events.firstIndex { $0.carriedReport != nil })
         #expect(closeIndex < reportIndex)
         #expect(events.compactMap(\.carriedReport).count == 1)
-        guard case .toolInvocation(let close, _) = events[closeIndex],
+        guard let close = events[closeIndex].carriedInvocation,
             let report = events[reportIndex].carriedReport
         else {
             Issue.record("expected the close record at \(closeIndex) and the report at \(reportIndex)")

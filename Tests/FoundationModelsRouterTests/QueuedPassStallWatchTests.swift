@@ -59,17 +59,6 @@ struct QueuedPassStallWatchTests {
         PassBoundaryProbeTool(log: PassBoundaryLog(), holdDuration: heldLongerThanTheInterval)
     }
 
-    /// Whether `event` is the open or the close record of a tool call.
-    ///
-    /// - Parameters:
-    ///   - event: The event to read.
-    ///   - closed: `true` to match a close record, `false` to match an open one.
-    /// - Returns: `true` when `event` is such a record.
-    private static func isToolInvocation(_ event: SessionEvent, closed: Bool) -> Bool {
-        guard case .toolInvocation(let record, _) = event else { return false }
-        return (record.closedAt != nil) == closed
-    }
-
     /// The ids that the `submissionQueued` events among `events` carry, in
     /// order.
     ///
@@ -163,8 +152,8 @@ struct QueuedPassStallWatchTests {
         try await answer.value
 
         let events = await log.events
-        let bodyOpened = try #require(events.firstIndex { Self.isToolInvocation($0, closed: false) })
-        let bodyClosed = try #require(events.firstIndex { Self.isToolInvocation($0, closed: true) })
+        let bodyOpened = try #require(events.firstIndex { $0.isOpenInvocation })
+        let bodyClosed = try #require(events.firstIndex { $0.isCloseInvocation })
         let stallsDuringTheBody = events[bodyOpened...bodyClosed].filter { event in
             guard case .generationStalled = event else { return false }
             return true
