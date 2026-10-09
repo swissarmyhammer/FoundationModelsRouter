@@ -38,11 +38,47 @@ public enum SessionEvent: Sendable, Equatable {
     /// A live ``ToolInvocationRecord``: an open record before a wrapped tool call
     /// starts, and a close record when it returns or throws. Delivery-only, never recorded.
     /// Its ``ToolInvocationRecord/correlationID`` is the run's `completionToken`, never a `Transcript.ToolCall.id`.
-    case toolInvocation(ToolInvocationRecord)
+    ///
+    /// `toolCallID` joins the two id spaces of one tool run. It is the
+    /// `Transcript.ToolCall.id` of the SDK call that started the run: the same
+    /// id that ``toolCall(id:name:argumentsJSON:)`` and
+    /// ``toolStatus(id:status:summary:output:)`` carry for that call. The
+    /// session finds it when the open record arrives: the SDK waits in the
+    /// tool call at that time, and the `.toolCalls` entry of the call is
+    /// already in the transcript. The session joins the record to the first
+    /// call of that entry that has the same tool name and no run yet. The
+    /// close record carries the id of its open record. The id is `nil` when
+    /// no call of the submission in flight has the tool name of the record,
+    /// for example for a record that opens between two answers.
+    ///
+    /// The id never goes into the record, and the record's
+    /// `correlationID` never goes into a `toolCall` or `toolStatus` event.
+    /// The event carries the two ids side by side, so a consumer can show one
+    /// tool run as one tool call.
+    ///
+    /// The order of the events of one tool run inside its submission is:
+    ///
+    /// 1. ``toolInvocation(_:toolCallID:)`` with the open record, live, while
+    ///    the tool runs.
+    /// 2. ``toolInvocation(_:toolCallID:)`` with the close record, live, when
+    ///    the tool returns or throws. A run that continues in the background
+    ///    can close after the submission ended.
+    /// 3. ``toolCallReport(_:)``, when the call attached records.
+    /// 4. ``toolCall(id:name:argumentsJSON:)`` and the
+    ///    ``ToolCallStatus/running`` ``toolStatus(id:status:summary:output:)``,
+    ///    from the diff of the submission, after the SDK call returned.
+    /// 5. ``toolStatus(id:status:summary:output:)`` with
+    ///    ``ToolCallStatus/completed`` or ``ToolCallStatus/failed``, from the
+    ///    same diff.
+    /// 6. ``submissionEnded(_:)``.
+    ///
+    /// So a consumer sees the SDK id first on the open record, and later on
+    /// the events of the diff.
+    case toolInvocation(ToolInvocationRecord, toolCallID: String? = nil)
 
     /// The records one tool call attached through `ToolContext.attach(_:)`.
     /// Delivery-only, never recorded. Emitted one time per call, after the
-    /// call's close ``toolInvocation(_:)`` record, and only when the call
+    /// call's close ``toolInvocation(_:toolCallID:)`` record, and only when the call
     /// attached at least one record. Its `ToolCallReport.correlationID` is the
     /// run's `completionToken`, the same value as the call's
     /// ``ToolInvocationRecord/correlationID``, never a `Transcript.ToolCall.id`.

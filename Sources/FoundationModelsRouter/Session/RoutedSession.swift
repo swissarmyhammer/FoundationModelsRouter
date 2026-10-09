@@ -230,7 +230,7 @@ public protocol RoutedSession: Actor {
     /// ``SessionEvent/runSettled(_:)``; a later one is reported on
     /// ``streamSessionEvents()``. A call that closes inside the answer reports
     /// its attachments here as ``SessionEvent/toolCallReport(_:)``, after its
-    /// close ``SessionEvent/toolInvocation(_:)`` record; a call that closes
+    /// close ``SessionEvent/toolInvocation(_:toolCallID:)`` record; a call that closes
     /// later reports them on ``streamSessionEvents()``. A tool that elicits
     /// inside the answer reports its request here as
     /// ``SessionEvent/elicitationRequested(_:)`` before the tool resumes; an

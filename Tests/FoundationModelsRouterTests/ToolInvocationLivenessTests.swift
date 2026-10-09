@@ -7,7 +7,7 @@ import Testing
 
 /// Exercises task ^zfd8e69: the per-call binding layers post a typed
 /// ``ToolInvocationRecord`` when a call opens and when it closes, and the
-/// session actor delivers those records live as ``SessionEvent/toolInvocation(_:)``
+/// session actor delivers those records live as ``SessionEvent/toolInvocation(_:toolCallID:)``
 /// — during the answer, not after it.
 ///
 /// The identity rule these tests hold the design to (cards ^zn8n9md,
@@ -205,7 +205,7 @@ struct ToolInvocationLivenessTests {
         var iterator = stream.makeAsyncIterator()
         while openRecord == nil, let event = try await iterator.next() {
             events.append(event)
-            if case .toolInvocation(let record) = event, record.closedAt == nil {
+            if case .toolInvocation(let record, _) = event, record.closedAt == nil {
                 openRecord = record
             }
         }
@@ -233,12 +233,12 @@ struct ToolInvocationLivenessTests {
         let submissionEndIndex = try #require(Self.submissionEndedIndex(in: events))
         let openIndex = try #require(
             events.firstIndex {
-                if case .toolInvocation(let record) = $0 { return record.closedAt == nil }
+                if case .toolInvocation(let record, _) = $0 { return record.closedAt == nil }
                 return false
             })
         let closeIndex = try #require(
             events.firstIndex {
-                if case .toolInvocation(let record) = $0 { return record.closedAt != nil }
+                if case .toolInvocation(let record, _) = $0 { return record.closedAt != nil }
                 return false
             })
         let toolCallIndex = try #require(
@@ -268,7 +268,7 @@ struct ToolInvocationLivenessTests {
         #expect(id != open.correlationID)
 
         // The close record pairs with the open record.
-        guard case .toolInvocation(let closed) = events[closeIndex] else {
+        guard case .toolInvocation(let closed, _) = events[closeIndex] else {
             Issue.record("expected a .toolInvocation at index \(closeIndex)")
             return
         }
@@ -491,7 +491,7 @@ struct ToolInvocationLivenessTests {
         var iterator = stream.makeAsyncIterator()
         while quickClose == nil, let event = try await iterator.next() {
             events.append(event)
-            if case .toolInvocation(let record) = event,
+            if case .toolInvocation(let record, _) = event,
                 record.tool == MarkerEmittingTool.toolName, record.closedAt != nil
             {
                 quickClose = record
@@ -597,7 +597,7 @@ struct ToolInvocationLivenessTests {
         let reportIndex = try #require(events.firstIndex { $0.carriedReport != nil })
         #expect(closeIndex < reportIndex)
         #expect(events.compactMap(\.carriedReport).count == 1)
-        guard case .toolInvocation(let close) = events[closeIndex],
+        guard case .toolInvocation(let close, _) = events[closeIndex],
             let report = events[reportIndex].carriedReport
         else {
             Issue.record("expected the close record at \(closeIndex) and the report at \(reportIndex)")

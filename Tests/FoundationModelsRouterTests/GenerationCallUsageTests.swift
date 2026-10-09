@@ -158,7 +158,7 @@ struct GenerationCallUsageTests {
             return false
         }
         let openIndices = events.indices.filter { index in
-            if case .toolInvocation(let record) = events[index] { return record.closedAt == nil }
+            if case .toolInvocation(let record, _) = events[index] { return record.closedAt == nil }
             return false
         }
         let submissionEndedIndex = try #require(

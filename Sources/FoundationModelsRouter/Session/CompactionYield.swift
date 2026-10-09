@@ -212,8 +212,11 @@ enum InFlightTranscript {
     }
 
     /// The calls of `entries` that no `.toolOutput` entry answers, in
-    /// transcript order.
-    private static func openCalls(in entries: [Transcript.Entry]) -> [Transcript.ToolCall] {
+    /// transcript order. ``ToolCallRunJoin`` also reads them.
+    ///
+    /// - Parameter entries: The transcript entries to read.
+    /// - Returns: The calls with no output, in transcript order.
+    static func openCalls(in entries: [Transcript.Entry]) -> [Transcript.ToolCall] {
         let answered = answeredCallIds(in: entries)
         return entries.flatMap { entry -> [Transcript.ToolCall] in
             guard case .toolCalls(let calls) = entry else { return [] }

@@ -433,8 +433,13 @@ actor RoutedSessionActor: RoutedSession {
     /// The composed event sink of the running answer (see
     /// ``answerEventSink(_:)``), or `nil` between answers.
     /// ``deliver(invocation:)`` uses it to hand a live
-    /// ``SessionEvent/toolInvocation(_:)`` to the running answer.
+    /// ``SessionEvent/toolInvocation(_:toolCallID:)`` to the running answer.
     var currentAnswerEventSink: ((SessionEvent) -> Void)?
+
+    /// The join of the live tool run records of this session to the SDK tool
+    /// calls that started them. ``deliver(invocation:)`` reads it for each
+    /// record. See ``ToolCallRunJoin``.
+    var toolCallRunJoin = ToolCallRunJoin()
 
     /// The number of the last submission this session opened. The next
     /// ``SubmissionID`` takes the next number. See

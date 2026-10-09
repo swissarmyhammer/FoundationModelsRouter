@@ -163,7 +163,7 @@ public final class SessionProjection {
             if Self.updateToolCallRow(id: id, status: status, summary: summary, output: output, in: &transcript) {
                 phase = .runningTool
             }
-        case .toolInvocation(let record):
+        case .toolInvocation(let record, _):
             applyToolInvocation(record)
         case .entryRecorded(let id, let kind):
             // Bookkeeping only, deliberately no phase change: the close
@@ -200,7 +200,7 @@ public final class SessionProjection {
             // stop. A tool call
             // report carries records for a host to decode, and the phase of
             // the call is already mirrored from its
-            // ``SessionEvent/toolInvocation(_:)`` records. An elicitation
+            // ``SessionEvent/toolInvocation(_:toolCallID:)`` records. An elicitation
             // request names a question that only a host can answer, and the
             // call that asks still runs. The usage of one generation call is
             // a part of the usage of the submission, and
@@ -332,12 +332,12 @@ public final class SessionProjection {
         return true
     }
 
-    /// The `correlationID` of every open ``SessionEvent/toolInvocation(_:)``
+    /// The `correlationID` of every open ``SessionEvent/toolInvocation(_:toolCallID:)``
     /// record of the running submission. Cleared at each
     /// ``SessionEvent/submissionEnded(_:)``.
     private var openInvocationCorrelationIDs: Set<String> = []
 
-    /// Applies one ``SessionEvent/toolInvocation(_:)`` to ``phase``. An open
+    /// Applies one ``SessionEvent/toolInvocation(_:toolCallID:)`` to ``phase``. An open
     /// record sets ``Phase/runningTool``. The last tracked close returns the
     /// phase to ``Phase/generating``. An untracked close changes nothing.
     ///

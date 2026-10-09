@@ -193,12 +193,12 @@ extension RoutedSessionActor: BackgroundRunSettlementObserver {
 }
 
 /// ``RoutedSessionActor``'s live invocation delivery. A
-/// ``ToolInvocationRecord`` becomes a ``SessionEvent/toolInvocation(_:)`` and
+/// ``ToolInvocationRecord`` becomes a ``SessionEvent/toolInvocation(_:toolCallID:)`` and
 /// a ``ToolCallReport`` becomes a ``SessionEvent/toolCallReport(_:)`` the
 /// moment it is posted. Delivery only: neither is ever journaled.
 extension RoutedSessionActor: ToolInvocationObserver {
     /// Delivers one live ``ToolInvocationRecord`` as
-    /// ``SessionEvent/toolInvocation(_:)``. See ``deliverLive(_:)``.
+    /// ``SessionEvent/toolInvocation(_:toolCallID:)``. See ``deliverLive(_:)``.
     ///
     /// An open record ends the generation call that asked for the tool, so
     /// that call's usage is reported first, and a close record starts the
@@ -209,11 +209,22 @@ extension RoutedSessionActor: ToolInvocationObserver {
     /// flight: an open record is a tool call, and a close record is a tool
     /// result (task ^4799jxg).
     ///
+    /// The event carries the SDK tool-call id of the call that started the
+    /// run, which ``toolCallRunJoin`` finds (task ^xhmws92). For an open
+    /// record, the join reads the entries that the submission in flight
+    /// appended. An open record arrives while the SDK waits in the tool call,
+    /// so the `.toolCalls` entry of the call is in those entries, and no call
+    /// of the backend writes the transcript. A close record reads no entries:
+    /// the SDK can continue when the tool returns, and the close record
+    /// carries the id that its open record joined.
+    ///
     /// - Parameter record: The record the outbox forwarded.
     func deliver(invocation record: ToolInvocationRecord) async {
         noteGenerationProgress(record.closedAt == nil ? .toolCall : .toolResult)
+        let submissionEntries = record.closedAt == nil ? unrecordedTranscriptEntries() : []
+        let toolCallID = toolCallRunJoin.toolCallID(for: record, in: submissionEntries)
         await noteGenerationCallBoundary(at: record)
-        deliverLive(.toolInvocation(record))
+        deliverLive(.toolInvocation(record, toolCallID: toolCallID))
     }
 
     /// Delivers one live ``ToolCallReport`` as

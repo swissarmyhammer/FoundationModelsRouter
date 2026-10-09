@@ -66,7 +66,7 @@ struct QueuedPassStallWatchTests {
     ///   - closed: `true` to match a close record, `false` to match an open one.
     /// - Returns: `true` when `event` is such a record.
     private static func isToolInvocation(_ event: SessionEvent, closed: Bool) -> Bool {
-        guard case .toolInvocation(let record) = event else { return false }
+        guard case .toolInvocation(let record, _) = event else { return false }
         return (record.closedAt != nil) == closed
     }
 

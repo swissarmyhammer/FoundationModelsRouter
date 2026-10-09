@@ -196,7 +196,15 @@ extension SessionEvent {
 
     /// The ``ToolInvocationRecord`` this event carries, or `nil` for any other event.
     var carriedInvocation: ToolInvocationRecord? {
-        if case .toolInvocation(let record) = self { return record }
+        if case .toolInvocation(let record, _) = self { return record }
+        return nil
+    }
+
+    /// The SDK tool-call id that this event joins to its
+    /// ``ToolInvocationRecord``, or `nil` for any other event and for a
+    /// record that joined no call.
+    var carriedToolCallID: String? {
+        if case .toolInvocation(_, let toolCallID) = self { return toolCallID }
         return nil
     }
 

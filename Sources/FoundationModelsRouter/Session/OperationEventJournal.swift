@@ -38,7 +38,7 @@ protocol OperationEventJournal: AnyObject, Sendable {
 /// at the same attach point (``RoutedSessionActor/attachOutboxJournalIfNeeded()``,
 /// at the top of every answer): where the journal *records* an event in the
 /// transcript, this observer only *delivers* the record live, as
-/// ``SessionEvent/toolInvocation(_:)`` or ``SessionEvent/toolCallReport(_:)``
+/// ``SessionEvent/toolInvocation(_:toolCallID:)`` or ``SessionEvent/toolCallReport(_:)``
 /// — neither is ever staged or recorded, so the post-submission diff stays the one
 /// recording authority.
 ///

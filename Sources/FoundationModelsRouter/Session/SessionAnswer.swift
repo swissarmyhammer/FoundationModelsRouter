@@ -167,7 +167,7 @@ struct SessionAnswerReducer {
                 ToolCallEntry(id: id, name: name, argumentsJSON: argumentsJSON, status: .running, summary: nil))
         case .toolStatus(let id, let status, let summary, let output):
             updateToolCall(id: id, status: status, summary: summary, output: output)
-        case .toolInvocation(let record):
+        case .toolInvocation(let record, _):
             applyToolInvocation(record)
         case .compaction(let result):
             compactions.append(result)
