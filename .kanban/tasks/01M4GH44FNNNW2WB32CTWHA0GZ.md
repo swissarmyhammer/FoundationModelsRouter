@@ -101,8 +101,31 @@ comments:
     - The only warning is a build-system message, "missing creator for mutated node" for the mlx-swift Cmlx bundle. It is not Router code.
     - next: review
   timestamp: 2026-10-09T22:31:13.252675+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m4hcp1x4amd0gv3rbnd35cdj
+  text: |-
+    ### commit — changed
+    - evidence: 29b60440 feat(session): forward tool display events as SessionEvent.toolDisplay (^twha0gz)
+    - next: review
+  timestamp: 2026-10-09T22:31:33.540195+00:00
+- actor: claude-code
+  id: 01m4hd9c7b7a8505tm9y3s963w
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (29b60440). 0 findings (0 confirmed, 2 refuted, 14 attempted, 0 failed). 13 files reviewed. 8 files not reviewed: 6 .kanban files (.reviewignore), RoutedSession.md and generation-queue.md (no validator matches).
+    - next: The task has no earlier review findings. The task moved to done.
+  timestamp: 2026-10-09T22:42:06.699081+00:00
+- actor: claude-code
+  id: 01m4hda01rw179fjd1b90zjqra
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 13 files changed, 2 new test files
+    - test: green — swift test, 1570 tests in 197 suites passed, 0 failed
+    - commit: 29b60440
+    - review: clean — 0 findings; task in done
+  timestamp: 2026-10-09T22:42:27.000438+00:00
+position_column: done
+position_ordinal: ffffffd180
 title: Forward tool display events as SessionEvent.toolDisplay
 ---
 ## Goal
