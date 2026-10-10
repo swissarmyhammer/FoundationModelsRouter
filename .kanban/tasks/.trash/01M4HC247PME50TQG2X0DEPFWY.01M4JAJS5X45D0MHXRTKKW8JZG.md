@@ -1,7 +1,7 @@
 ---
 assignees:
 - claude-code
-position_column: todo
+position_column: doing
 position_ordinal: '80'
 title: Make WatchStopUsageTests reasoning-stop usage sum stable under a parallel run
 ---
