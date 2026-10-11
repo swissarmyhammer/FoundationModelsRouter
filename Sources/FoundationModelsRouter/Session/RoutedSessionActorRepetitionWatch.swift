@@ -294,14 +294,15 @@ extension RoutedSessionActor {
 
     /// Whether the watch named by `watchId` may stop the model call in
     /// flight: that watch is the active one, a model call is in flight, no
-    /// stop is outstanding against the answer, and no tool result already
-    /// stopped the call for a compaction.
+    /// stop is outstanding against the answer, no tool result already
+    /// stopped the call for a compaction, and no no-op tool call already
+    /// stopped the call (``noOpToolCallStop``).
     ///
     /// - Parameter watchId: The watch that found a stop.
     /// - Returns: `true` when the watch may stop the call.
     func watchMayStopModelCall(watchId: UInt64) -> Bool {
         repetitionWatch.activeWatchId == watchId && inFlightModelCall != nil && !isWorkCancelled
-            && toolResultWatch.yield == nil
+            && toolResultWatch.yield == nil && noOpToolCallStop == nil
     }
 
     /// Stops the model call in flight for a repetition finding of the watch

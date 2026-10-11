@@ -311,6 +311,10 @@ enum RouterTelemetry {
         /// A pass that reasoned and did not act, and stops (task ^hm9trt5).
         case reasoningStop = "ReasoningStop"
 
+        /// A no-op tool call that stops the model call while an operation of
+        /// the session is pending (task ^rw72f4j).
+        case noOpToolCallStop = "NoOpToolCallStop"
+
         /// The sidecar file of a session.
         case sessionSidecar = "SessionSidecar"
 

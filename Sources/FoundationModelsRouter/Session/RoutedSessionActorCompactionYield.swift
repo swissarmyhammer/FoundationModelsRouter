@@ -39,17 +39,20 @@ extension RoutedSessionActor {
     ///
     /// Nothing happens when the session has no ``autoCompactionBudget``, when
     /// a stop is outstanding against the answer, when the answer already
-    /// yielded and that compaction applied no summary, or when a yield is
-    /// already set.
+    /// yielded and that compaction applied no summary, when a yield is
+    /// already set, or when a no-op tool call already stopped the model call
+    /// (``noOpToolCallStop``).
     ///
-    /// Before the check, the boundary is a settled point of the transcript
-    /// (``settleTranscriptAtToolResult()``).
+    /// Before the check, the round of the no-op check records the result
+    /// (``noteRealToolResult(_:)``, task ^rw72f4j), and the boundary is a
+    /// settled point of the transcript (``settleTranscriptAtToolResult()``).
     ///
     /// - Parameter result: The tool result that the model reads next.
     func noteToolResult(_ result: ToolResultAppend) {
+        noteRealToolResult(result)
         settleTranscriptAtToolResult()
         guard let budget = autoCompactionBudget, let modelCall = inFlightModelCall,
-            !isWorkCancelled, !compactionYieldsStopped, toolResultWatch.yield == nil
+            !isWorkCancelled, !compactionYieldsStopped, toolResultWatch.yield == nil, noOpToolCallStop == nil
         else { return }
         toolResultWatch.append(result, tokens: tokenCounter.count(result.text))
         let snapshot = backend.inFlightResponse()
@@ -167,20 +170,8 @@ extension RoutedSessionActor {
     }
 
     /// Puts the rebuilt transcript of the yielded attempt into ``backend``,
-    /// and records it (task ^8szxhab).
-    ///
-    /// The usage of the attempt, and the generation call that the backend
-    /// reported since the last report, are read before the backend is
-    /// replaced, because a replaced backend starts a usage count of its own.
-    /// The finish then records the usage of the attempt, and the generation
-    /// call row of the call that the yield cancelled.
-    ///
-    /// The yield cancels the model call while the SDK waits in a tool, so the
-    /// call that the yield cancelled ended at a tool call. When the backend
-    /// reported no usage for it since the open of its tool, the session
-    /// cannot tell a call that the open already reported from a call that
-    /// the backend never reported. So it counts no tokens for that call, and
-    /// it does not report the call two times.
+    /// and records it (task ^8szxhab), through
+    /// ``recordAttemptStoppedAtToolCall(_:attempt:)``.
     ///
     /// The measured context of the yield sets ``usageState`` after this
     /// record, so the measure carries no render size.
@@ -189,13 +180,37 @@ extension RoutedSessionActor {
     ///   - yield: The yield marker of the stopped attempt.
     ///   - attempt: The stopped attempt.
     private func recordYieldedAttempt(_ yield: CompactionYield, attempt: StoppedAttempt) async {
+        let rebuilt = InFlightTranscript.rebuilt(
+            settledEntries: backend.transcriptEntries(), yield: yield,
+            entryIdsBeforeAttempt: attempt.entryIdsBeforeAttempt, composedPrompt: attempt.composedPrompt)
+        await recordAttemptStoppedAtToolCall(rebuilt, attempt: attempt)
+    }
+
+    /// Puts `rebuilt` into ``backend``, and records the attempt that a stop
+    /// cancelled while the SDK waited in a tool call: a compaction yield, or
+    /// a no-op tool call while an operation is pending (task ^rw72f4j).
+    ///
+    /// The usage of the attempt, and the generation call that the backend
+    /// reported since the last report, are read before the backend is
+    /// replaced, because a replaced backend starts a usage count of its own.
+    /// The finish then records the usage of the attempt, and the generation
+    /// call row of the call that the stop cancelled.
+    ///
+    /// The call that the stop cancelled ended at a tool call. When the
+    /// backend reported no usage for it since the open of its tool, the
+    /// session cannot tell a call that the open already reported from a call
+    /// that the backend never reported. So it counts no tokens for that call,
+    /// and it does not report the call two times.
+    ///
+    /// - Parameters:
+    ///   - rebuilt: The rebuilt transcript of the stopped attempt
+    ///     (``InFlightTranscript``), read from ``backend`` before this call.
+    ///   - attempt: The stopped attempt.
+    func recordAttemptStoppedAtToolCall(_ rebuilt: [Transcript.Entry], attempt: StoppedAttempt) async {
         let usageOfAttempt = Self.usageDelta(before: attempt.usageBefore, after: backend.usageTokenCounts())
         let measure = ReplacedBackendMeasure(
             stoppedCall: takeGenerationCall(leaving: .toolCall), addedUsage: (input: 0, output: 0),
             renderTokens: nil)
-        let rebuilt = InFlightTranscript.rebuilt(
-            settledEntries: backend.transcriptEntries(), yield: yield,
-            entryIdsBeforeAttempt: attempt.entryIdsBeforeAttempt, composedPrompt: attempt.composedPrompt)
         await replaceBackendAndRecord(
             with: rebuilt, attempt: attempt, usageOfAttempt: usageOfAttempt, stopReason: nil, measure: measure)
     }

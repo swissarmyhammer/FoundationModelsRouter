@@ -225,7 +225,8 @@ enum InFlightTranscript {
     }
 
     /// The ids of the calls that a `.toolOutput` entry of `entries` answers.
-    private static func answeredCallIds(in entries: [Transcript.Entry]) -> Set<String> {
+    /// The no-op tool call stop also reads them (task ^rw72f4j).
+    static func answeredCallIds(in entries: [Transcript.Entry]) -> Set<String> {
         Set(
             entries.compactMap { entry in
                 guard case .toolOutput(let output) = entry else { return nil }

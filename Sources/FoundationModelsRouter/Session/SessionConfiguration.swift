@@ -87,10 +87,28 @@ public struct SessionConfiguration: Sendable {
     /// a fork inherits it.
     public var inlineSettleGrace: TimeInterval
 
+    /// The default of ``isNoOpToolCall``: no tool call is a no-op, so the
+    /// session runs each call as it did before the check existed.
+    public static let defaultIsNoOpToolCall: NoOpToolCallCheck = { _, _ in false }
+
+    /// The host check that marks a tool call as a no-op (task ^rw72f4j).
+    ///
+    /// While at least one operation of the session is pending, the session
+    /// does not run a call that this check marks, does not answer it, and
+    /// does not put it in the context. Every other call of the same round
+    /// runs. A round of only marked calls stops the generation, and the
+    /// injected result of the pending operation is the next message that
+    /// starts the model. See ``NoOpToolCallCheck``.
+    ///
+    /// The default is ``defaultIsNoOpToolCall``. The check is a closure, so
+    /// ``persistable`` does not record it. A fork inherits it.
+    public var isNoOpToolCall: NoOpToolCallCheck
+
     /// Creates a session configuration. Every parameter defaults to the
     /// matching default of `RoutedModel.makeSession`,
-    /// `mailOnlyAnswerLimit` defaults to ``defaultMailOnlyAnswerLimit``, and
-    /// `inlineSettleGrace` defaults to `ToolMount.defaultInlineSettleGrace`.
+    /// `mailOnlyAnswerLimit` defaults to ``defaultMailOnlyAnswerLimit``,
+    /// `inlineSettleGrace` defaults to `ToolMount.defaultInlineSettleGrace`,
+    /// and `isNoOpToolCall` defaults to ``defaultIsNoOpToolCall``.
     public init(
         instructions: String? = nil,
         workingDirectory: URL? = nil,
@@ -102,7 +120,8 @@ public struct SessionConfiguration: Sendable {
         grammar: Grammar? = nil,
         repetitionDetection: RepetitionDetection = RepetitionDetection(),
         mailOnlyAnswerLimit: Int = defaultMailOnlyAnswerLimit,
-        inlineSettleGrace: TimeInterval = ToolMount.defaultInlineSettleGrace
+        inlineSettleGrace: TimeInterval = ToolMount.defaultInlineSettleGrace,
+        isNoOpToolCall: @escaping NoOpToolCallCheck = defaultIsNoOpToolCall
     ) {
         self.instructions = instructions
         self.workingDirectory = workingDirectory
@@ -115,13 +134,14 @@ public struct SessionConfiguration: Sendable {
         self.repetitionDetection = repetitionDetection
         self.mailOnlyAnswerLimit = mailOnlyAnswerLimit
         self.inlineSettleGrace = inlineSettleGrace
+        self.isNoOpToolCall = isNoOpToolCall
     }
 
     /// The `Codable` slice of this configuration, persisted in the session sidecar.
     /// ``tools`` is represented by each tool's ``FoundationModels/Tool/name``, in order.
     /// ``compaction`` gives the flat `budget` and `compactionPrompt` keys. Its
     /// ``CompactionSettings/toolOutputProtection`` is a closure and has no
-    /// place in the slice.
+    /// place in the slice, and ``isNoOpToolCall`` is a closure as well.
     var persistable: Persistable {
         Persistable(
             instructions: instructions,

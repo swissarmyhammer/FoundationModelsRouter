@@ -370,6 +370,9 @@ extension RoutedSessionActor {
                 responseTokenCeiling: responseTokenCeiling.resolved, pendingEvents: pendingEvents, onEvent: onEvent
             ).finishReason
         } catch {
+            if let noOpStop = takeNoOpToolCallStop() {
+                return try await continueAfterNoOpToolCallStop(noOpStop, attempt: attempt, body: body)
+            }
             if let yield = takeCompactionYield() {
                 return try await continueAfterCompactionYield(yield, attempt: attempt, body: body)
             }
@@ -692,12 +695,15 @@ extension RoutedSessionActor {
         }
         // The tool-result append boundary of this model call: each tool result
         // the model reads next goes through it (see ``noteToolResult(_:)``).
-        // The repetition check runs before each tool body of the call (see
-        // ``checkToolCallForRepetition(_:)``).
+        // The no-op check and then the repetition check run before each tool
+        // body of the call (see ``checkToolCallForNoOp(toolName:arguments:)``
+        // and ``checkToolCallForRepetition(_:)``).
         let submission = Self.submission(
             of: body, composedPrompt: composedPrompt, mark: modelCallMark,
             boundary: ToolResultAppendBoundary { await self.noteToolResult($0) },
-            repetitionCheck: ToolCallRepetitionCheck { try await self.checkToolCallForRepetition($0) },
+            checks: ModelCallToolChecks(
+                noOp: ToolCallNoOpCheck { try await self.checkToolCallForNoOp(toolName: $0, arguments: $1) },
+                repetition: ToolCallRepetitionCheck { try await self.checkToolCallForRepetition($0) }),
             context: ambientToolContext,
             serviceContext: submissionServiceContext)
         let observer = generationPassObserver
@@ -737,8 +743,7 @@ extension RoutedSessionActor {
     ///   - composedPrompt: The composed prompt of the attempt.
     ///   - mark: The mark of the model call.
     ///   - boundary: The tool-result append boundary of the model call.
-    ///   - repetitionCheck: The repetition check before each tool body of the
-    ///     model call.
+    ///   - checks: The checks before each tool body of the model call.
     ///   - context: The ambient ``ToolContext`` of the model call.
     ///   - serviceContext: The tracing context of the submission
     ///     (``submissionServiceContext``), or `nil`.
@@ -748,7 +753,7 @@ extension RoutedSessionActor {
         composedPrompt: String,
         mark: ModelCallMark,
         boundary: ToolResultAppendBoundary,
-        repetitionCheck: ToolCallRepetitionCheck,
+        checks: ModelCallToolChecks,
         context: ToolContext,
         serviceContext: ServiceContext?
     ) -> @Sendable () async throws -> String {
@@ -756,7 +761,7 @@ extension RoutedSessionActor {
             try await ServiceContext.$current.withValue(serviceContext) {
                 try await ModelCallMark.$current.withValue(mark) {
                     try await ToolResultAppendBoundary.$current.withValue(boundary) {
-                        try await ToolCallRepetitionCheck.$current.withValue(repetitionCheck) {
+                        try await checks.bound {
                             try await ToolContext.$current.withValue(context) {
                                 try await body(composedPrompt)
                             }

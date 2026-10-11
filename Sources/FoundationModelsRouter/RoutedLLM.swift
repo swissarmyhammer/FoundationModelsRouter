@@ -112,7 +112,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             toolOutputProtection: configuration.compaction.toolOutputProtection,
             repetitionDetection: configuration.repetitionDetection,
             mailOnlyAnswerLimit: configuration.mailOnlyAnswerLimit,
-            inlineSettleGrace: configuration.inlineSettleGrace)
+            inlineSettleGrace: configuration.inlineSettleGrace,
+            isNoOpToolCall: configuration.isNoOpToolCall)
     }
 
     /// The shared builder behind the plain and guided session surfaces.
@@ -130,6 +131,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - inlineSettleGrace: How long each background tool call waits for
     ///     its own run, in seconds. See
     ///     ``SessionConfiguration/inlineSettleGrace``.
+    ///   - isNoOpToolCall: The host check that marks a tool call as a no-op.
+    ///     See ``SessionConfiguration/isNoOpToolCall``.
     /// - Returns: A new ``RoutedSession`` over this model.
     func makeSession(
         grammar: Grammar?,
@@ -144,7 +147,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         toolOutputProtection: ToolOutputProtection? = nil,
         repetitionDetection: RepetitionDetection = RepetitionDetection(),
         mailOnlyAnswerLimit: Int = SessionConfiguration.defaultMailOnlyAnswerLimit,
-        inlineSettleGrace: TimeInterval = ToolMount.defaultInlineSettleGrace
+        inlineSettleGrace: TimeInterval = ToolMount.defaultInlineSettleGrace,
+        isNoOpToolCall: @escaping NoOpToolCallCheck = SessionConfiguration.defaultIsNoOpToolCall
     ) -> RoutedSession {
         let owningProfile = requireOwningProfile(apiName: "makeSession")
 
@@ -234,6 +238,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             repetitionDetection: repetitionDetection,
             mailOnlyAnswerLimit: mailOnlyAnswerLimit,
             inlineSettleGrace: inlineSettleGrace,
+            isNoOpToolCall: isNoOpToolCall,
             // Threaded only into the sidecar's configuration envelope (task
             // ^ne5g9jn), so the recorded configuration names the recording
             // root the session was actually vended with.

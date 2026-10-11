@@ -369,15 +369,16 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
     }
 
     /// `tools` as the SDK session receives them: each one in a
-    /// ``RepetitionCheckedTool``, so the repetition check of the model call
-    /// runs before each tool body (task ^dzw15st). The check wraps the tool
-    /// that the SDK calls, over every layer of the session mount, and the
-    /// backend keeps ``tools`` as its caller gave them.
+    /// ``SessionCheckedTool``, so the no-op check (task ^rw72f4j) and the
+    /// repetition check (task ^dzw15st) of the model call run before each
+    /// tool body. The decorator wraps the tool that the SDK calls, over every
+    /// layer of the session mount, and the backend keeps ``tools`` as its
+    /// caller gave them.
     ///
     /// - Parameter tools: The tools of the session.
     /// - Returns: The checked tools, in the same order.
     private static func checkedTools(_ tools: [any FoundationModels.Tool]) -> [any FoundationModels.Tool] {
-        tools.map { ToolCallRepetitionCheck.makeChecked(tool: $0) }
+        tools.map(\.sessionChecked)
     }
 
     /// Generates a complete text response through ``liveSession``.

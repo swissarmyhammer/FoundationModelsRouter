@@ -82,6 +82,17 @@ The session pushes settlement to the model — the model never polls:
   timeout of the run, the same as a progress event. A run that settles inside
   its settle period keeps its display events: the host already has them.
 - `status` and `wait` give an earlier look; they are not required.
+- A model that waits for a run must do nothing. A host can give
+  ``SessionConfiguration/isNoOpToolCall``, the check that marks a tool call
+  that does no work (``NoOpToolCallCheck``). While at least one run is open,
+  or a settled run's terminal waits as mail, the session does not run a
+  marked call, does not answer it, and does not put it in the transcript.
+  Every other call of the same round runs to its end, and its result goes
+  into the transcript. Then the generation stops. When the round had a real
+  call, the answer goes on with the real results. When the round had only
+  marked calls, the answer ends, and the terminal of the run is the next
+  message that starts the model. With no pending run, the check changes
+  nothing.
 
 A model can start one more background run in each answer, for example to ask
 a status tool again after each result. Each settled run then starts one more

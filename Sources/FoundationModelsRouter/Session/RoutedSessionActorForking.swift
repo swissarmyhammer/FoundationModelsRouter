@@ -238,6 +238,8 @@ extension RoutedSessionActor {
             mailOnlyAnswerLimit: mailOnlyAnswerLimit,
             // The settle period is a host setting, so the fork keeps it.
             inlineSettleGrace: inlineSettleGrace,
+            // The no-op check is a host setting, so the fork keeps it.
+            isNoOpToolCall: isNoOpToolCall,
             // Same model, so the same tokenizer counts for the child.
             tokenCounter: tokenCounter,
             // The parent's own tracer: a fork continues its parent's

@@ -76,8 +76,10 @@ extension GenerationCallEntryKind {
 /// that one call. The stream gives no snapshot for a call that sends no
 /// text, so the tool-call open is the one signal for such a call.
 extension RoutedSessionActor {
-    /// Opens the ledger of one attempt, and starts the attempt's
-    /// ``ToolResultWatch`` from the backend entries that are there now.
+    /// Opens the ledger of one attempt, starts the attempt's
+    /// ``ToolResultWatch`` from the backend entries that are there now, and
+    /// clears the ``noOpToolCallStop`` and the ``noOpToolCallRound`` of an
+    /// earlier attempt.
     ///
     /// - Parameters:
     ///   - usageBefore: The cumulative usage of the backend when the attempt
@@ -90,6 +92,8 @@ extension RoutedSessionActor {
             GenerationCallLedger(usageBefore: $0, responseTokenCeiling: responseTokenCeiling)
         }
         toolResultWatch = ToolResultWatch(entryIdsBeforeAttempt: Set(backend.transcriptEntries().map(\.id)))
+        noOpToolCallStop = nil
+        noOpToolCallRound = NoOpToolCallRound()
     }
 
     /// Closes the ledger of the attempt.

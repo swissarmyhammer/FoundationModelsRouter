@@ -206,6 +206,7 @@ func makeRoutedSessionActor(
     repetitionDetection: RepetitionDetection = RepetitionDetection(),
     mailOnlyAnswerLimit: Int = SessionConfiguration.defaultMailOnlyAnswerLimit,
     inlineSettleGrace: TimeInterval = ToolMount.defaultInlineSettleGrace,
+    isNoOpToolCall: @escaping NoOpToolCallCheck = SessionConfiguration.defaultIsNoOpToolCall,
     recordingRoot: URL? = nil,
     tokenCounter: any TokenCounter,
     tracer: (any Tracer)?
@@ -243,6 +244,7 @@ func makeRoutedSessionActor(
             repetitionDetection: repetitionDetection,
             mailOnlyAnswerLimit: mailOnlyAnswerLimit,
             inlineSettleGrace: inlineSettleGrace,
+            isNoOpToolCall: isNoOpToolCall,
             recordingRoot: recordingRoot,
             tokenCounter: tokenCounter,
             tracer: tracer
@@ -493,6 +495,26 @@ actor RoutedSessionActor: RoutedSession {
     /// ``SessionConfiguration/inlineSettleGrace``.
     nonisolated let inlineSettleGrace: TimeInterval
 
+    /// The host check that marks a tool call as a no-op, which this session
+    /// was vended or forked with. A fork carries it forward. The sidecar never
+    /// records it, because it is a closure. See ``NoOpToolCallCheck`` and
+    /// ``checkToolCallForNoOp(toolName:arguments:)``.
+    nonisolated let isNoOpToolCall: NoOpToolCallCheck
+
+    /// The stop marker of the model call in flight when a no-op tool call
+    /// stopped it, else `nil`. ``openGenerationCallLedger(usageBefore:responseTokenCeiling:)``
+    /// clears it for each attempt. See ``NoOpToolCallStop``.
+    var noOpToolCallStop: NoOpToolCallStop?
+
+    /// The round of tool calls in flight, as the no-op check reads it: its
+    /// real results and the count of its real calls. See
+    /// ``NoOpToolCallRound``.
+    var noOpToolCallRound = NoOpToolCallRound()
+
+    /// Wakes each no-op tool call that waits for the real calls of its round
+    /// (``noteRealToolResult(_:)``).
+    nonisolated let noOpRoundChanges = ChangeSignal()
+
     /// How many answers in a row mail alone started since the last answer
     /// that delivered a caller message. The pump counts it, and holds new
     /// mail when it reaches ``mailOnlyAnswerLimit``
@@ -670,11 +692,13 @@ actor RoutedSessionActor: RoutedSession {
         repetitionDetection: RepetitionDetection = RepetitionDetection(),
         mailOnlyAnswerLimit: Int = SessionConfiguration.defaultMailOnlyAnswerLimit,
         inlineSettleGrace: TimeInterval = ToolMount.defaultInlineSettleGrace,
+        isNoOpToolCall: @escaping NoOpToolCallCheck = SessionConfiguration.defaultIsNoOpToolCall,
         recordingRoot: URL? = nil,
         tokenCounter: any TokenCounter,
         tracer: (any Tracer)?
     ) {
         self.toolOutputProtection = toolOutputProtection
+        self.isNoOpToolCall = isNoOpToolCall
         self.repetitionDetection = repetitionDetection
         self.mailOnlyAnswerLimit = mailOnlyAnswerLimit
         self.inlineSettleGrace = max(0, inlineSettleGrace)
