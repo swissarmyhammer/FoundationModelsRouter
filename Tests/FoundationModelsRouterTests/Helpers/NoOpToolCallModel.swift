@@ -246,6 +246,20 @@ struct NoOpToolCallSessionFixture {
         return toolName == CountingRunCodeTool.toolName && code == noOpCode
     }
 
+    /// The step that gets the session of a fixture. The two fixture
+    /// factories differ only in this step.
+    ///
+    /// - Parameters:
+    ///   - container: The container that runs the ``NoOpToolCallModel`` of
+    ///     the fixture.
+    ///   - tools: The tools of the fixture, in order.
+    ///   - directory: The temp directory of the fixture.
+    /// - Returns: The session of the fixture.
+    /// - Throws: Whatever the step throws.
+    private typealias SessionStep = (
+        _ container: LiveBackendContainer<NoOpToolCallModel>, _ tools: [any Tool], _ directory: URL
+    ) async throws -> RoutedSession
+
     /// Builds a router and vends a session over a ``NoOpToolCallModel``.
     ///
     /// - Parameters:
@@ -259,20 +273,51 @@ struct NoOpToolCallSessionFixture {
     static func make(
         startsJob: Bool, codes: [String], tempDirPrefix: String
     ) async throws -> NoOpToolCallSessionFixture {
+        try await make(
+            startsJob: startsJob, codes: codes, tempDirPrefix: tempDirPrefix, sessionStep: vendSession)
+    }
+
+    /// Makes the shared parts of a fixture (the log, the temp directory, the
+    /// run count, the latch, the container and the tools), then gets the
+    /// session with `sessionStep`.
+    ///
+    /// - Parameters:
+    ///   - startsJob: Whether the model starts the background job first.
+    ///   - codes: The snippets of the `runCode` calls of the model, all in
+    ///     one round.
+    ///   - tempDirPrefix: The calling suite's name, so a leaked temp directory
+    ///     is attributable.
+    ///   - sessionStep: The step that gets the session of the fixture.
+    /// - Returns: The fixture.
+    /// - Throws: Whatever `sessionStep` throws.
+    private static func make(
+        startsJob: Bool, codes: [String], tempDirPrefix: String, sessionStep: SessionStep
+    ) async throws -> NoOpToolCallSessionFixture {
         let log = RenderProbeLog()
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let runs = RunCount()
         let gate = RunLatch()
-        let model = NoOpToolCallModel(log: log, startsJob: startsJob, codes: codes)
-        let router = RouterTestFixtures.makeRouter(
-            cacheDir: directory,
-            loader: StubModelLoader(
-                container: LiveBackendContainer(model: model), dimension: RouterTestFixtures.stubDimension))
-        let profile = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        let session = profile.standard.makeSession(
-            configuration: SessionConfiguration(
-                tools: tools(runs: runs, gate: gate), isNoOpToolCall: isNoOp(toolName:arguments:)))
+        let container = LiveBackendContainer(model: NoOpToolCallModel(log: log, startsJob: startsJob, codes: codes))
+        let session = try await sessionStep(container, tools(runs: runs, gate: gate), directory)
         return NoOpToolCallSessionFixture(session: session, log: log, runs: runs, gate: gate, directory: directory)
+    }
+
+    /// The session step of ``make(startsJob:codes:tempDirPrefix:)``: resolves
+    /// the test profile over one router and vends a session with the host
+    /// check ``isNoOp(toolName:arguments:)``.
+    ///
+    /// - Parameters:
+    ///   - container: The container that runs the model.
+    ///   - tools: The tools of the session.
+    ///   - directory: The temp directory that holds the cache.
+    /// - Returns: The vended session.
+    /// - Throws: Whatever profile resolution throws.
+    private static func vendSession(
+        over container: LiveBackendContainer<NoOpToolCallModel>, tools: [any Tool], directory: URL
+    ) async throws -> RoutedSession {
+        let profile = try await RouterTestFixtures.resolveStandardProfile(over: container, cacheDir: directory).profile
+        return profile.standard.makeSession(
+            configuration: SessionConfiguration(tools: tools, isNoOpToolCall: isNoOp(toolName:arguments:)))
     }
 
     /// The tools of the fixture: one ``CountingRunCodeTool`` and one
@@ -311,29 +356,43 @@ struct NoOpToolCallSessionFixture {
     static func makeRestored(
         startsJob: Bool, codes: [String], restoreCheck: NoOpToolCallCheck?, tempDirPrefix: String
     ) async throws -> NoOpToolCallSessionFixture {
-        let log = RenderProbeLog()
-        let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
-        let runs = RunCount()
-        let gate = RunLatch()
-        let loader = StubModelLoader(
-            container: LiveBackendContainer(model: NoOpToolCallModel(log: log, startsJob: startsJob, codes: codes)),
-            dimension: RouterTestFixtures.stubDimension)
+        try await make(startsJob: startsJob, codes: codes, tempDirPrefix: tempDirPrefix) { container, tools, directory in
+            try await recordAndRestoreSession(
+                over: container, tools: tools, directory: directory, restoreCheck: restoreCheck)
+        }
+    }
+
+    /// The session step of
+    /// ``makeRestored(startsJob:codes:restoreCheck:tempDirPrefix:)``: records
+    /// a session with no check on one router, closes it, and restores it on
+    /// a second router with the same id.
+    ///
+    /// - Parameters:
+    ///   - container: The container that runs the model, on both routers.
+    ///   - tools: The tools of the recorded and of the restored session.
+    ///   - directory: The temp directory that holds the cache and the
+    ///     recordings.
+    ///   - restoreCheck: The check that the restore gives, or `nil` to call
+    ///     the restore with no check argument.
+    /// - Returns: The restored session.
+    /// - Throws: Whatever profile resolution and the restore throw.
+    private static func recordAndRestoreSession(
+        over container: LiveBackendContainer<NoOpToolCallModel>, tools: [any Tool], directory: URL,
+        restoreCheck: NoOpToolCallCheck?
+    ) async throws -> RoutedSession {
+        let loader = StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension)
         let routerId = ULID.generate()
-        let sessionTools = tools(runs: runs, gate: gate)
         let recording = try await recordingProfile(id: routerId, under: directory, loader: loader)
-        let recorded = recording.standard.makeSession(configuration: SessionConfiguration(tools: sessionTools))
+        let recorded = recording.standard.makeSession(configuration: SessionConfiguration(tools: tools))
         await recorded.close()
 
         let restoring = try await recordingProfile(id: routerId, under: directory, loader: loader)
-        let session: RoutedSession
-        if let restoreCheck {
-            session = try await restoring.standard.restoreSession(
-                id: recorded.id, tools: sessionTools, isNoOpToolCall: restoreCheck
-            ).session
-        } else {
-            session = try await restoring.standard.restoreSession(id: recorded.id, tools: sessionTools).session
+        guard let restoreCheck else {
+            return try await restoring.standard.restoreSession(id: recorded.id, tools: tools).session
         }
-        return NoOpToolCallSessionFixture(session: session, log: log, runs: runs, gate: gate, directory: directory)
+        return try await restoring.standard.restoreSession(
+            id: recorded.id, tools: tools, isNoOpToolCall: restoreCheck
+        ).session
     }
 
     /// Resolves the test profile over a router that records to disk under
