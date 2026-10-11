@@ -11,7 +11,7 @@ import Testing
 /// `(tool, correlationID)` pair anywhere in that stream died with the
 /// crashed process — its memory-only `RunPlane` is gone, so no
 /// teardown sweep ever journaled a terminal event for it.
-/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:)``
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:)``
 /// closes that hole at restore time: it manufactures exactly one terminal
 /// `.completed` event with outcome ``OperationOutcome/lost`` per orphaned
 /// run and posts it to the restored node's own fresh outbox, so the next

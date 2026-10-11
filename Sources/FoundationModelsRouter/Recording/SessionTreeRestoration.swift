@@ -2,8 +2,8 @@ import Foundation
 import FoundationModels
 
 /// A failure to restore recorded sessions from disk, through
-/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:)`` or
-/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:)``.
+/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:)`` or
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:)``.
 ///
 /// A session that is not on disk at all raises
 /// ``TranscriptTreeError/sessionNotFound(_:)`` instead, because the tree read
@@ -82,7 +82,7 @@ public struct SessionConfigurationRestorationReport: Sendable, Equatable {
 ///
 /// This type stays internal. A caller resumes a session by an id it holds,
 /// and it holds no id for a fork, so
-/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:)`` is the
+/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:)`` is the
 /// published surface.
 struct RestoredSessionTree: Sendable {
     /// The restored root session.
@@ -202,6 +202,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     every compaction on every restored node keeps word for word, or `nil`
     ///     (the default) to protect nothing. No recording holds it, because it
     ///     is a closure; the host gives it here, as it gives the tools.
+    ///   - isNoOpToolCall: The host check that marks a tool call of every
+    ///     restored node as a no-op, or
+    ///     ``SessionConfiguration/defaultIsNoOpToolCall`` (the default) to
+    ///     mark no call. No recording holds it, because it is a closure; the
+    ///     host gives it here, as it gives the tools.
     /// - Returns: The restored tree, rooted at the session named by `rootId`.
     /// - Throws: ``SessionTreeRestorationError`` for a restoration-specific
     ///   failure; ``TranscriptTreeError`` or ``TranscriptReconstructionError``
@@ -212,7 +217,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         recordingRoot: URL? = nil,
         instructions: String? = nil,
         tools: [any Tool] = [],
-        toolOutputProtection: ToolOutputProtection? = nil
+        toolOutputProtection: ToolOutputProtection? = nil,
+        isNoOpToolCall: @escaping NoOpToolCallCheck = SessionConfiguration.defaultIsNoOpToolCall
     ) async throws -> RestoredSessionTree {
         // The handle references its profile weakly, mirroring
         // `makeSession(instructions:workingDirectory:)`'s own invariant: a
@@ -500,6 +506,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 mailOnlyAnswerLimit: configuration?.mailOnlyAnswerLimit
                     ?? SessionConfiguration.defaultMailOnlyAnswerLimit,
                 inlineSettleGrace: inlineSettleGrace,
+                // Not in the envelope, because it is a closure: the check
+                // this call's host supplied, for every node, as `tools` is.
+                isNoOpToolCall: isNoOpToolCall,
                 // Not in the envelope either: the counter comes from the
                 // container the node is restored over, as a vended session
                 // takes it.
@@ -516,7 +525,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         /// A caller resumes one session by the id it holds, so the override
         /// reaches the named root alone. Every recorded fork under that root
         /// keeps its own recorded string, and
-        /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:)``
+        /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:)``
         /// releases those forks anyway. A live fork taken later from the
         /// restored root does inherit the override, because it inherits both
         /// the backend transcript and ``RoutedSessionActor/instructions``.

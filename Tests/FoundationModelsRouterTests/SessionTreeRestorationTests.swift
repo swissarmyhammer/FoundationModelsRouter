@@ -7,7 +7,7 @@ import Testing
 
 /// Exercises task zcxnbst: restoring a whole session tree from disk by root
 /// session id —
-/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:)``
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:)``
 /// — the final piece of plan.md's "Transcript fidelity" section,
 /// "Reconstruction end-to-end".
 ///
@@ -543,7 +543,7 @@ struct SessionTreeRestorationTests {
     }
 
     /// Documents and locks in a known, deliberate restoration limitation (see
-    /// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:)``'s
+    /// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:)``'s
     /// doc comment, "Known limitation: the `.ebnf` grammar case"):
     /// `SessionSidecar.grammar`
     /// persists only the grammar's `source` string, not which `Grammar` case

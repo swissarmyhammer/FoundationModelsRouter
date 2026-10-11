@@ -3,7 +3,7 @@ import FoundationModels
 
 /// One session restored from disk, with what the restore could not re-apply.
 ///
-/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:)`` returns
+/// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:)`` returns
 /// this value. It names one session, never that session's recorded forks: a
 /// caller resumes a session by an id it holds, and it holds no id for a fork.
 ///
@@ -88,7 +88,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// transcript already on disk. Its model and slot resolve from its
     /// ``SessionSidecar`` against this call's owning profile, and a mismatch
     /// is a typed error. See
-    /// ``restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:)`` for what
+    /// ``restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:)`` for what
     /// the restore re-applies and what it does not.
     ///
     /// The recorded forks under the named session are rebuilt too, and are
@@ -120,6 +120,12 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     (the default) to protect nothing. The recording does not hold the
     ///     rule, because it is a closure, so a host gives it again here, as
     ///     it gives the tools. See ``ToolOutputProtection``.
+    ///   - isNoOpToolCall: The host check that marks a tool call of the
+    ///     restored session as a no-op, or
+    ///     ``SessionConfiguration/defaultIsNoOpToolCall`` (the default) to
+    ///     mark no call. The recording does not hold the check, because it
+    ///     is a closure, so a host gives it again here, as it gives the
+    ///     tools. See ``SessionConfiguration/isNoOpToolCall``.
     /// - Returns: The restored session and the two restore reports.
     /// - Throws: ``TranscriptTreeError/sessionNotFound(_:)`` when the
     ///   recording root holds no session with this id;
@@ -131,11 +137,12 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         recordingRoot: URL? = nil,
         instructions: String? = nil,
         tools: [any Tool] = [],
-        toolOutputProtection: ToolOutputProtection? = nil
+        toolOutputProtection: ToolOutputProtection? = nil,
+        isNoOpToolCall: @escaping NoOpToolCallCheck = SessionConfiguration.defaultIsNoOpToolCall
     ) async throws -> RestoredSession {
         let tree = try await restoreSessionTree(
             root: id, recordingRoot: recordingRoot, instructions: instructions, tools: tools,
-            toolOutputProtection: toolOutputProtection)
+            toolOutputProtection: toolOutputProtection, isNoOpToolCall: isNoOpToolCall)
         return RestoredSession(
             session: tree.root,
             configurationReport: tree.configurationReport,

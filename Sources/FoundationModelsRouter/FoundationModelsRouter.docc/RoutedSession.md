@@ -92,7 +92,9 @@ The session pushes settlement to the model — the model never polls:
   call, the answer goes on with the real results. When the round had only
   marked calls, the answer ends, and the terminal of the run is the next
   message that starts the model. With no pending run, the check changes
-  nothing.
+  nothing. The recording does not hold the check, so a host gives it again to
+  ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:)``
+  when it restores a session.
 
 A model can start one more background run in each answer, for example to ask
 a status tool again after each result. Each settled run then starts one more

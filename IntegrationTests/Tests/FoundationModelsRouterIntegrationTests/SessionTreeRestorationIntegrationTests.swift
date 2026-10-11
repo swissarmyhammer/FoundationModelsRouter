@@ -395,7 +395,7 @@ struct SessionTreeRestorationIntegrationTests {
     // MARK: - Tools threaded through restoration (task jkdae4b)
 
     /// Task jkdae4b: proves
-    /// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:)``
+    /// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:)``
     /// gives a restored session real, live tool-calling — not the fixed
     /// `tools: []` a restore used to hardcode all the way down through
     /// ``LoadedLLMContainer/makeSession(transcript:)``. A root session is

@@ -12,7 +12,7 @@ import Testing
 /// seeded rows equal the rows a live projection produced during the original
 /// run, row for row by id — runs through a real recorded tool answer, a
 /// fresh-process
-/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:)``,
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:)``,
 /// and the new read-only ``RoutedSession/transcript`` accessor.
 @Suite("SessionProjection seeding from a cold Transcript (task ^5aky6xr)")
 struct SessionProjectionSeedingTests {

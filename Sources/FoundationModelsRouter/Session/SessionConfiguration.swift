@@ -101,7 +101,9 @@ public struct SessionConfiguration: Sendable {
     /// starts the model. See ``NoOpToolCallCheck``.
     ///
     /// The default is ``defaultIsNoOpToolCall``. The check is a closure, so
-    /// ``persistable`` does not record it. A fork inherits it.
+    /// ``persistable`` does not record it. A fork inherits it. A restore gets
+    /// it again from the host, through the `isNoOpToolCall` argument of
+    /// ``RoutedModel/restoreSession(id:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:)``.
     public var isNoOpToolCall: NoOpToolCallCheck
 
     /// Creates a session configuration. Every parameter defaults to the

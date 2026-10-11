@@ -11,6 +11,7 @@ import Testing
 /// and the injected result of the pending operation is the next message that
 /// starts the model. A real call always runs, also in the same round as a
 /// no-op call, and with no pending operation a no-op call runs as before.
+/// Task ^4nk083c: a restored session gets the check from the restore call.
 ///
 /// Each test drives the production backend and a real `LanguageModelSession`
 /// over a ``NoOpToolCallModel``. No GPU is in the loop. A ``RunLatch`` holds
@@ -134,6 +135,34 @@ struct NoOpToolCallStopTests {
 
         #expect(child.isNoOpToolCall(CountingRunCodeTool.toolName, noOpArguments))
         await child.close()
+        await fixture.end()
+    }
+
+    @Test("a session restored with the check stops at a no-op call while a job is pending")
+    func aRestoredSessionWithTheCheckStopsAtANoOpCall() async throws {
+        let fixture = try await NoOpToolCallSessionFixture.makeRestored(
+            startsJob: true, codes: [NoOpToolCallSessionFixture.noOpCode],
+            restoreCheck: NoOpToolCallSessionFixture.isNoOp(toolName:arguments:), tempDirPrefix: Self.tempDirPrefix)
+
+        _ = try await fixture.session.respond(to: Self.prompt)
+
+        #expect(fixture.runs.value == 0)
+        #expect(fixture.log.renders.count == Self.callsBeforeTheResult)
+        #expect(!Self.holdsRunCodeCall(await fixture.session.transcript))
+        await fixture.end()
+    }
+
+    @Test("a session restored with no check runs a no-op call while a job is pending, as before")
+    func aRestoredSessionWithNoCheckRunsANoOpCall() async throws {
+        let fixture = try await NoOpToolCallSessionFixture.makeRestored(
+            startsJob: true, codes: [NoOpToolCallSessionFixture.noOpCode], restoreCheck: nil,
+            tempDirPrefix: Self.tempDirPrefix)
+
+        let answer = try await fixture.session.respond(to: Self.prompt)
+
+        #expect(fixture.runs.value == 1)
+        #expect(answer == NoOpToolCallModel.Executor.answerText)
+        #expect(Self.holdsRunCodeCall(await fixture.session.transcript))
         await fixture.end()
     }
 
