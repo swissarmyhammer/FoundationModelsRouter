@@ -26,7 +26,7 @@ struct CompactionSummaryRoleTests {
     /// The size after the compaction that the checkpoint of the test entry states.
     private static let checkpointTokensAfter = 1
 
-    /// A summary entry, as ``CompactionSegment/boundaryEntry(id:summaryText:content:)``
+    /// A summary entry, as ``CompactionSegment/boundaryEntry(id:summaryText:content:checkpointId:)``
     /// builds it for an applied compaction.
     private static func makeSummaryEntry() -> Transcript.Entry {
         CompactionSegment.boundaryEntry(

@@ -294,10 +294,17 @@ struct OriginAndTerminalEventTests {
         #expect(summarizerCalls.allSatisfy { $0.origin == .signal(signal) })
     }
 
-    @Test("the work of a caller compaction runs with the origin of a signal, and each answer with the mail of its message")
-    func callerCompactionRunsWithASignal() async throws {
-        let (session, standard, _) = try await AutoCompactionFixtures.makeTriggeredSession(
+    /// The production change that makes this test fail: a requested
+    /// compaction that sends no event, sends an event with an origin other
+    /// than the signal that ``RoutedSession/compact(prompt:budget:)``
+    /// returned, or runs its summarizer call with an other origin.
+    @Test(
+        "each event of a requested compaction and its summarizer call have the origin of the returned signal, and each answer the mail of its message"
+    )
+    func requestedCompactionEventsHaveTheReturnedSignal() async throws {
+        let (session, standard, flash) = try await AutoCompactionFixtures.makeTriggeredSession(
             budget: nil, tempDirPrefix: Self.tempDirPrefix)
+        let feed = await session.streamSessionEvents()
         let answerCalls = standard.generationLog.calls
         #expect(answerCalls.count == AutoCompactionFixtures.answerCount)
         #expect(
@@ -307,19 +314,34 @@ struct OriginAndTerminalEventTests {
             }, "\(answerCalls.map(\.origin))")
         #expect(Set(answerCalls.map(\.origin)).count == AutoCompactionFixtures.answerCount)
 
-        try await session.compact(budget: AutoCompactionFixtures.fixedBudget)
-
-        // A caller compaction sends no event of its own yet, so the test
-        // reads the origin that its summarizer call ran with: the value each
-        // event of the compaction reads.
-        let summarizerCalls = standard.generationLog.calls.dropFirst(answerCalls.count)
-        #expect(!summarizerCalls.isEmpty)
-        let origins = Set(summarizerCalls.map(\.origin))
-        #expect(origins.count == 1)
-        #expect(
-            origins.allSatisfy { Self.signal(of: $0) != nil },
-            "the summarizer call of a caller compaction ran with the origin \(origins)")
+        let id = session.compact(budget: AutoCompactionFixtures.fixedBudget)
+        let terminal = try await session.awaitTerminal(of: id)
+        _ = try compactionResult(of: terminal)
         await session.close()
+
+        // A requested compaction sends its start and its terminal event on
+        // the feed of the session, each with the origin of its signal.
+        let outputs = await Self.collectOutputs(feed)
+        let compaction = outputs.filter { Self.isCompactionEvent($0.event) }
+        #expect(compaction.count == 2, "\(compaction)")
+        #expect(compaction.allSatisfy { $0.origin == .signal(id) }, "\(compaction)")
+        guard case .compactionStarted(let start)? = compaction.first?.event else {
+            Issue.record("the first compaction event is not compactionStarted: \(compaction)")
+            return
+        }
+        #expect(start.id == id.description)
+        #expect(start.reason == .requested)
+        #expect(compaction.last?.event == terminal)
+
+        // A requested compaction offers the flash slot first. Its summarizer
+        // call keeps the signal of its compaction, and the session's own
+        // model makes no call for it.
+        let summarizerCalls = flash.generationLog.calls
+        #expect(!summarizerCalls.isEmpty)
+        #expect(
+            summarizerCalls.allSatisfy { $0.origin == .signal(id) },
+            "the summarizer call of a requested compaction ran with the origins \(summarizerCalls.map(\.origin))")
+        #expect(standard.generationLog.calls.count == answerCalls.count)
     }
 
     // MARK: - Terminal events

@@ -342,7 +342,19 @@ extension RoutedSessionActor {
     /// model until the byte LRU and the disk budget of the cache remove it,
     /// so the cache stays in its limits. A pass that ends after the close
     /// can write the entry again, and the same limits remove it.
+    ///
+    /// **A running compaction.** No signal affects a running compaction, and
+    /// close is the one exception to that rule. Close cancels its summarizer
+    /// call (``cancelActiveCompaction()``), and the compaction ends with
+    /// ``SessionEvent/compactionFailed(_:)`` before the feeds finish. Nothing
+    /// is lost: the transcript keeps no compacted value, and a restore uses
+    /// the full transcript.
     func close() async {
+        // The signals that wait behind the work that runs now do not run
+        // after close. They send no event, and a wait for their terminal
+        // event ends with ``MailRefusal/closed``.
+        signals.close()
+
         // The queue closes first: each queued mail gets its terminal event
         // ``SessionEvent/cancelled(_:)`` while the feeds still read, and
         // ``mail(_:)`` refuses new mail with ``MailRefusal/closed`` from now
@@ -352,6 +364,14 @@ extension RoutedSessionActor {
         // Before the drain: no ``awaitIdle()`` call waits for the drain,
         // which waits for each run body to end.
         endIdleWaits()
+
+        // Close is the one exception to the rule that no signal affects a
+        // running compaction. It does not wait in the order of the signals:
+        // it cancels the summarizer call, and the compaction ends with
+        // ``SessionEvent/compactionFailed(_:)`` (cancelled) before the feeds
+        // finish. Nothing is lost, because the transcript keeps no compacted
+        // value and a restore uses the full transcript.
+        await cancelActiveCompaction()
 
         // The stop of all work: the running answer ends at once, and the
         // sweep of the runs starts. Close runs the work of ``cancelAll()``

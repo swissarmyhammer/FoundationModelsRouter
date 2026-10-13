@@ -72,6 +72,8 @@ public struct Summarization: Sendable, Equatable, Codable {
     ///   - pendingRuns: The run-plane summaries of the runs still running, in tracking order.
     ///   - protection: The host rule whose protected tool outputs the new
     ///     snapshot keeps, or `nil` to protect nothing.
+    ///   - id: The identity of the compaction. Each result carries it, and the
+    ///     checkpoint of the summary entry carries it as its id.
     /// - Returns: The finished result when no call runs, or the call to make.
     /// - Throws: What `counter` throws.
     func plan(
@@ -80,7 +82,8 @@ public struct Summarization: Sendable, Equatable, Codable {
         budget: TokenBudget,
         counter: any TokenCounter,
         pendingRuns: [CompactionSegment.PendingRunSummary],
-        protection: ToolOutputProtection?
+        protection: ToolOutputProtection?,
+        id: String
     ) throws -> CompactionPlan {
         let entries = Array(transcript)
         let tokensBefore = try counter.count(transcript)
@@ -89,7 +92,7 @@ public struct Summarization: Sendable, Equatable, Codable {
         guard tokensBefore > budget.targetTokens else {
             return .finished(
                 CompactionResult(
-                    summary: nil, tokensBefore: tokensBefore, tokensAfter: tokensBefore, stagesApplied: [],
+                    id: id, summary: nil, tokensBefore: tokensBefore, tokensAfter: tokensBefore, stagesApplied: [],
                     protectedTokens: protectedTokens))
         }
 
@@ -104,6 +107,7 @@ public struct Summarization: Sendable, Equatable, Codable {
         let assembled = Self.assembledPrompt(
             prompt, allowedSummaryTokens: allowedSummaryTokens, content: Self.render(entries))
         let call = CompactionCall(
+            id: id,
             transcript: transcript,
             promptName: prompt.name,
             prompt: assembled,
@@ -248,7 +252,7 @@ public struct Summarization: Sendable, Equatable, Codable {
     }
 }
 
-/// What ``Summarization/plan(_:prompt:budget:counter:pendingRuns:protection:)``
+/// What ``Summarization/plan(_:prompt:budget:counter:pendingRuns:protection:id:)``
 /// decided.
 enum CompactionPlan {
     /// No call runs. The result states why.
@@ -261,6 +265,10 @@ enum CompactionPlan {
 /// The one summarizer call of a compaction, and what the new snapshot keeps
 /// next to its summary.
 struct CompactionCall {
+    /// The identity of the compaction. Each result of the call carries it, and
+    /// the checkpoint of the summary entry carries it as its id.
+    let id: String
+
     /// The live context the call compacts.
     let transcript: Transcript
 
@@ -328,7 +336,7 @@ struct CompactionCall {
     /// - Returns: The result.
     func shortfallResult(_ shortfall: CompactionShortfall) -> CompactionResult {
         CompactionResult(
-            summary: nil, tokensBefore: tokensBefore, tokensAfter: tokensBefore, stagesApplied: [],
+            id: id, summary: nil, tokensBefore: tokensBefore, tokensAfter: tokensBefore, stagesApplied: [],
             protectedTokens: protectedTokens, shortfall: shortfall)
     }
 
@@ -386,7 +394,8 @@ struct CompactionCall {
                     stagesApplied: [Summarization.stageName],
                     promptName: promptName,
                     pendingRuns: pendingRuns.isEmpty ? nil : pendingRuns
-                )
+                ),
+                checkpointId: id
             )
             return instructions + [boundary] + keptEntries
         }
@@ -406,6 +415,7 @@ struct CompactionCall {
         return (
             Transcript(entries: snapshotEntries(tokensAfter: tokensAfter)),
             CompactionResult(
+                id: id,
                 summary: summary,
                 summaryEntryId: entryId,
                 summarizerModel: slot.model,

@@ -169,6 +169,9 @@ extension RoutedSessionActor {
         // ``RoutedSessionActor/currentAnswerEventSink``.
         currentAnswerEventSink = emit
         defer { currentAnswerEventSink = nil }
+        // A compaction that runs ends first, so the trigger check below and
+        // the render of the first submission use the compacted value.
+        await awaitActiveCompaction()
 
         // Compared in tokens against ``TokenBudget/triggerTokens``, never as
         // `contextFill >= budget.trigger` — see the matching note on the
@@ -183,11 +186,12 @@ extension RoutedSessionActor {
             let started = Date()
             let usageBefore = backend.usageTokenCounts()
             do {
-                try await performAutoCompaction(
-                    prompt: autoCompactionPrompt, budget: budget, reason: .triggerReached, emit: emit)
+                try await compactInsideAnswer(
+                    prompt: autoCompactionPrompt, budget: budget, reason: .triggerReached)
             } catch {
-                // A compaction can now throw — a stop landing inside its summarizer call
-                // unwinds it (see ``CancellableCompactionSummarizer``) — and this
+                // A compaction can throw — a summarizer failure, or
+                // `CancellationError` when the answer was stopped before the
+                // compaction started or close cancelled it — and this
                 // answer has not reached `runSubmission`, where a failed
                 // submission's recording and the outbox's attach-or-requeue rule
                 // both live. So the compaction's failure path has to run them
@@ -301,6 +305,10 @@ extension RoutedSessionActor {
         reasoningOff: Bool = false,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
+        // The next render of the answer uses the compacted value of a
+        // compaction that runs. The answer holds no open submission while it
+        // waits, so the compaction never waits for it.
+        await awaitActiveCompaction()
         let attempt = SubmissionAttemptState(
             grammar: grammar, responseTokenCeiling: responseTokenCeiling, onEvent: onEvent,
             allowOverflowRetry: allowOverflowRetry, rejectedCallRetries: rejectedCallRetries,
@@ -574,9 +582,9 @@ extension RoutedSessionActor {
             throw error
         }
 
-        try await performAutoCompaction(
+        try await compactInsideAnswer(
             prompt: autoCompactionPrompt, budget: retryTarget.budget(lowering: budget), reason: .contextOverflow,
-            overflowRetryTarget: retryTarget, emit: onEvent)
+            overflowRetryTarget: retryTarget)
 
         return try await runSubmission(
             grammar: grammar, pendingEvents: [], ownPrompt: ownPrompt,
@@ -691,9 +699,7 @@ extension RoutedSessionActor {
     /// for the worker, or unwinds `body` and every in-band tool call under it.
     /// A background run keeps running in the session's ``mailbox``. The
     /// recording of the submission runs after this returns or throws and is
-    /// never cancelled. ``CancellableCompactionSummarizer`` also routes a
-    /// compaction's summarizer call through here, to the queue of the
-    /// container that runs it.
+    /// never cancelled.
     ///
     /// - Parameters:
     ///   - composedPrompt: This attempt's composed prompt, handed to `body`.
@@ -711,11 +717,11 @@ extension RoutedSessionActor {
         submittingTo target: SubmissionTarget?,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
-        // A cancellation that landed while this work held no model call — between two
-        // summarizer tiers of a compaction, or between a failed attempt and this
-        // retry — had no task to cancel, so it is honored here instead of being
-        // dropped, and the model (with every tool call it would make) is never
-        // re-entered on behalf of work already cancelled.
+        // A cancellation that landed while this work held no model call —
+        // between a failed attempt and this retry — had no task to cancel, so
+        // it is honored here instead of being dropped, and the model (with
+        // every tool call it would make) is never re-entered on behalf of
+        // work already cancelled.
         if isWorkCancelled {
             throw CancellationError()
         }
@@ -909,7 +915,7 @@ extension RoutedSessionActor {
     /// by any route: `Task.isCancelled` of the task that reads it, or
     /// ``cancelRequestedWorkId`` set for that work by
     /// ``requestCancelOfRunningWork()`` (``RoutedSession/cancelAll()``,
-    /// ``RoutedSession/close()``, or the cancel of a caller compaction). This is the one read site of
+    /// ``RoutedSession/close()``). This is the one read site of
     /// ``cancelRequestedWorkId``, so the routes cannot diverge. Every cancel
     /// decision keys on this predicate, never on the type of a
     /// `CancellationError`. Read after each `await`; do not cache.

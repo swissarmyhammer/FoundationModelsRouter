@@ -14,7 +14,8 @@ import Testing
 /// pass records the `MLXLanguageModel.promptCacheScope` that the executor of
 /// the fork would see, with no GPU. The flash slot and the standard slot of
 /// the profile resolve to the same model, so the log holds the passes of
-/// both summarizer tiers.
+/// both summarizer tiers. The own-model test gives the flash slot a stub
+/// that fails, so that its requested compaction falls back to the own model.
 ///
 /// Every compaction path (the caller compaction, the proactive compaction,
 /// the compaction after a tool-result yield, a ceiling stop or an overflow)
@@ -56,8 +57,8 @@ struct SummarizerPromptCacheTests {
         /// The log of the model.
         let log: PromptCacheScopeLog
 
-        /// The resolved profile. Its standard and flash slots run over the
-        /// model.
+        /// The resolved profile. Its standard slot runs over the model, and
+        /// its flash slot too, unless the fixture gave it a stub that fails.
         let profile: LanguageModelProfile
 
         /// The directory of the router, which the test removes.
@@ -66,32 +67,51 @@ struct SummarizerPromptCacheTests {
 
     /// Makes a router over a new ``PromptCacheScopeRecordingModel``.
     ///
-    /// - Parameter reportedInputTokens: The input count each pass reports, or
-    ///   zero for no usage report.
+    /// - Parameters:
+    ///   - reportedInputTokens: The input count each pass reports, or zero
+    ///     for no usage report.
+    ///   - failingFlash: Whether the flash slot resolves to a stub whose each
+    ///     call fails, so that a compaction falls back to the own model. With
+    ///     `false` (the default), the flash slot resolves to the recording
+    ///     model too.
     /// - Returns: The fixture.
     /// - Throws: What the resolution of the profile throws.
-    private static func makeFixture(reportedInputTokens: Int = 0) async throws -> Fixture {
+    private static func makeFixture(reportedInputTokens: Int = 0, failingFlash: Bool = false) async throws -> Fixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let log = PromptCacheScopeLog()
         let container = LiveBackendContainer(
             model: PromptCacheScopeRecordingModel(log: log, reportedInputTokens: reportedInputTokens))
-        let resolved = try await RouterTestFixtures.resolveStandardProfile(over: container, cacheDir: directory)
-        return Fixture(log: log, profile: resolved.profile, directory: directory)
+        guard failingFlash else {
+            let resolved = try await RouterTestFixtures.resolveStandardProfile(over: container, cacheDir: directory)
+            return Fixture(log: log, profile: resolved.profile, directory: directory)
+        }
+        let router = RouterTestFixtures.makeRouter(
+            cacheDir: directory,
+            loader: PerSlotModelLoader(
+                standard: container,
+                flash: ConfiguredLLMContainer(responseText: "unused flash answer", shouldThrow: true),
+                dimension: RouterTestFixtures.stubDimension))
+        let profile = try await router.resolve(profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        return Fixture(log: log, profile: profile, directory: directory)
     }
 
     /// The production change that makes this test fail: an own-model
     /// summarizer backend that binds no scope, or binds `Optional.none` in
     /// place of `.uncached`. Its pass then sees `nil`, and the fork keys it
     /// by its first transcript entry, which adds a key.
+    ///
+    /// A requested compaction offers the flash slot first. The flash slot of
+    /// this fixture fails, so the compaction falls back to the own model,
+    /// and the log holds the pass of the own-model summarizer call only.
     @Test("the own-model summarizer call of a caller compaction binds the uncached scope and adds no key")
     func ownModelSummarizerOfACallerCompactionAddsNoKey() async throws {
-        let fixture = try await Self.makeFixture()
+        let fixture = try await Self.makeFixture(failingFlash: true)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let session = fixture.profile.standard.makeSession()
         _ = try await session.respond(to: Self.fillingPrompt)
         let keysBefore = fixture.log.storeKeys
 
-        let result = try await session.compact(budget: Self.budget)
+        let result = try await session.compactAndAwait(budget: Self.budget)
 
         #expect(result.stagesApplied == [Summarization.stageName])
         #expect(result.summarizerTier == .ownModel)

@@ -6,8 +6,8 @@ import Testing
 
 /// Tasks ^1psqdm9 and ^6wqketz: each summarizer call of a compaction is one
 /// item on the queue of the pool entry of the model that runs it
-/// (`generation-queue.md`, section 5.3), and a cancel of the session reaches
-/// that item while it waits.
+/// (`generation-queue.md`, section 5.3), and the close of the session, the
+/// one cancel of a running compaction, reaches that item while it waits.
 ///
 /// The flash slot resolves to a ``LiveBackendContainer`` over a
 /// ``PassObservingModel``, so the flash summarizer call and each call of a
@@ -128,44 +128,44 @@ struct SummarizerSubmissionTests {
         #expect(await waiting.flashQueue.isRunning == false)
     }
 
-    /// Task ^6wqketz. The production change that makes this test fail: a
-    /// queue that does not take a waiting item out when its submitter is
-    /// cancelled (the answer then ends only after the latch opens), or a
-    /// compaction that goes on to the own-model tier after a cancel (the
-    /// standard log then grows, and the reason is not `.cancelled`).
-    @Test("a cancel while the flash summarizer call waits for the worker cancels the answer")
-    func aCancelWhileTheSummarizerWaitsCancelsTheAnswer() async throws {
+    /// Task ^6wqketz. Only ``RoutedSession/close()`` cancels a running
+    /// compaction. The production change that makes this test fail: a queue
+    /// that does not take a waiting item out when the task of the compaction
+    /// is cancelled (the close then ends only after the latch opens), or a
+    /// compaction that goes on to the own-model tier after the cancel (the
+    /// standard log then grows, and the outcome is not `.cancelled`).
+    @Test("close while the flash summarizer call waits for the worker takes the call out of the queue and cancels the compaction")
+    func closeWhileTheSummarizerWaitsTakesItOutOfTheQueue() async throws {
         let waiting = try await Self.startSummarizerBehindAFlashSubmission()
         let flash = waiting.flash
-        let standardCallsBeforeTheCancel = waiting.standard.generationLog.calls.count
+        let standardCallsBeforeTheClose = waiting.standard.generationLog.calls.count
 
-        // The test is about the stop of the running answer only, so it stops
-        // the running work and does not wait for the end of the pump.
-        let stopped = await waiting.session.stopRunningWork()
+        // No signal and no stop of the answer affects a running compaction:
+        // only the close cancels it.
+        let closing = Task { await waiting.session.close() }
         // The answer ends while the flash submission still holds the worker:
         // the waiting summarizer item left the queue and never ran.
-        let answerEnded = await BoundedWait.conditionReached("the end of the cancelled answer") {
+        let answerEnded = await BoundedWait.conditionReached("the end of the answer of the closed session") {
             await !waiting.log.events.answerFailures.isEmpty
         }
-        let waitingAfterTheCancel = await waiting.flashQueue.waitingCount
-        let passesAfterTheCancel = await flash.observer.enteredCount
+        let waitingAfterTheClose = await waiting.flashQueue.waitingCount
+        let passesAfterTheClose = await flash.observer.enteredCount
 
         await flash.latch.open()
         _ = try await waiting.flashAnswer.value
+        await closing.value
 
         #expect(waiting.flashInside)
         #expect(waiting.summarizerWaits)
-        #expect(stopped)
         #expect(answerEnded)
-        #expect(waitingAfterTheCancel == 0)
-        #expect(passesAfterTheCancel == 1)
+        #expect(waitingAfterTheClose == 0)
+        #expect(passesAfterTheClose == 1)
         let events = await waiting.log.events
-        // `.cancelled` is the reason only when `isWorkCancelled` holds at the
-        // end of the answer.
         #expect(events.answerFailures.map(\.reason) == [.cancelled])
         #expect(events.compactionResults.isEmpty)
+        #expect(events.compactionFailures.map(\.outcome) == [.cancelled])
         // The compaction did not go on to the own-model tier.
-        #expect(waiting.standard.generationLog.calls.count == standardCallsBeforeTheCancel)
+        #expect(waiting.standard.generationLog.calls.count == standardCallsBeforeTheClose)
         await #expect(throws: CancellationError.self) {
             try await waiting.compactingAnswer.value
         }

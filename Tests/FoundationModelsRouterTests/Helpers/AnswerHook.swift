@@ -22,4 +22,20 @@ final class AnswerHook: Sendable {
         get { installed.withLock { $0 } }
         set { installed.withLock { $0 = newValue } }
     }
+
+    /// The closure that gives the reply text of a model call in place of the
+    /// reply text of the backend. It gets the prompt of the submission, and
+    /// gives `nil` to keep the reply text of the backend.
+    typealias Reply = @Sendable (String) -> String?
+
+    /// The installed reply closure, or `nil` when the test installed none.
+    private let installedReply = Mutex<Reply?>(nil)
+
+    /// The closure that gives the reply text of each model call, or `nil`
+    /// (the default) to keep the reply text of the backend. A test that
+    /// needs a short summary, so that a compaction applies, installs it.
+    var reply: Reply? {
+        get { installedReply.withLock { $0 } }
+        set { installedReply.withLock { $0 = newValue } }
+    }
 }

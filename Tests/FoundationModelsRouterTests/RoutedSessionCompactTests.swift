@@ -9,9 +9,13 @@ import Testing
 /// Exercises task ffsjqha (compaction epic): ``RoutedSession/compact(prompt:budget:)``, the
 /// session-level entry point that compacts a ``RoutedSessionActor``'s live
 /// transcript in place. The session compacts with
-/// ``Compactor/compact(_:prompt:budget:counter:summarizers:pendingRuns:protection:abandoning:)``,
-/// one summarizer call on its own model, and then
-/// ``LanguageModelSessionBackend/replacingTranscript(_:)``.
+/// ``Compactor/compact(_:prompt:budget:counter:summarizers:pendingRuns:protection:explicitLogger:abandoning:id:)``,
+/// one summarizer call (on the flash slot first, and on its own model when the
+/// flash slot fails), and then
+/// ``LanguageModelSessionBackend/replacingTranscript(_:)``. The call
+/// ``RoutedSession/compact(prompt:budget:)`` returns a signal id at once, so
+/// each test waits for the terminal event with
+/// ``RoutedSession/compactAndAwait(prompt:budget:)``.
 ///
 /// Everything runs against a stub ``LoadedLLMContainer``/``StubSessionBackend``
 /// and an ``InMemoryRecorder``, so the suite needs no network and no GPU. The
@@ -41,6 +45,12 @@ struct RoutedSessionCompactTests {
 
         private(set) var lastBackend: StubSessionBackend?
 
+        /// Whether each backend that this container vends from now on throws
+        /// on each call. A requested compaction builds its flash summarizer
+        /// backend from the container when it runs, so a test sets this flag
+        /// to make the flash tier fail.
+        var vendsFailingBackends = false
+
         init(responseText: String, usageIncrement: (input: Int, output: Int)? = nil) {
             self.responseText = responseText
             self.usageIncrement = usageIncrement
@@ -48,8 +58,8 @@ struct RoutedSessionCompactTests {
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
             let backend = StubSessionBackend(
-                responseText: responseText, instructions: instructions, usageIncrement: usageIncrement,
-                generationLog: generationLog)
+                responseText: responseText, shouldThrow: vendsFailingBackends, instructions: instructions,
+                usageIncrement: usageIncrement, generationLog: generationLog)
             lastBackend = backend
             return backend
         }
@@ -184,9 +194,9 @@ struct RoutedSessionCompactTests {
 
     /// `model-pool.md` §2.5 step A: the flash summarizer is the one backend
     /// a compaction builds from a container, so it is where a router's sampling
-    /// mode would be lost. The compaction path is the automatic one: a caller-driven
-    /// `compact()` compacts on the session's own live backend and builds no
-    /// backend from a container.
+    /// mode would be lost. The compaction path is the automatic one. A
+    /// requested compaction builds its flash summarizer backend in the same
+    /// way.
     @Test("an automatic compaction's flash summarizer backend receives the router's sampling mode")
     @MainActor
     func autoCompactionFlashSummarizerReceivesTheRoutersSamplingMode() async throws {
@@ -241,13 +251,14 @@ struct RoutedSessionCompactTests {
         // A target under the live context, so the compaction makes its one
         // summarizer call.
         let budget = summarizingCompactionBudget(for: backend.transcriptEntries())
-        let result = try await session.compact(budget: budget)
+        let result = try await session.compactAndAwait(budget: budget)
 
         #expect(result.stagesApplied == [Summarization.stageName])
         #expect(result.tokensBefore == preCompactionTokens)
         #expect(result.tokensAfter < result.tokensBefore)
-        // A caller compaction summarizes with the session's own model only.
-        #expect(result.summarizerTier == .ownModel)
+        // A requested compaction offers the flash slot first. The window of
+        // the flash slot holds the call, so the flash slot writes the summary.
+        #expect(result.summarizerTier == .flash)
 
         let postCompactionFill = await session.contextFill
         #expect(postCompactionFill < preCompactionFill)
@@ -295,7 +306,7 @@ struct RoutedSessionCompactTests {
         // uses, so what this test measures is the unit the shrink is reported
         // in and nothing else.
         let budget = summarizingCompactionBudget(for: backend.transcriptEntries())
-        let result = try await session.compact(budget: budget)
+        let result = try await session.compactAndAwait(budget: budget)
         #expect(result.tokensAfter < result.tokensBefore)
         // The premise of this test: the counter's size of the new snapshot is
         // larger than everything the session has measured, so to report the
@@ -336,13 +347,13 @@ struct RoutedSessionCompactTests {
         let beforeEvents = await recorder.events
         #expect(!beforeEvents.isEmpty)
 
-        let result = try await session.compact(budget: budget)
+        let result = try await session.compactAndAwait(budget: budget)
         #expect(result.summary != nil)
         #expect(result.stagesApplied == [Summarization.stageName])
-        // A manual compact() always summarizes with the session's own model,
-        // and the result names it — the same signal an automatic compaction carries
-        // (task ^59fd9rt).
-        #expect(result.summarizerModel == "org/std-a")
+        // A requested compaction offers the flash slot first, and the result
+        // names the model that wrote the summary: the same signal an
+        // automatic compaction carries (task ^59fd9rt).
+        #expect(result.summarizerModel == "org/flash-a")
 
         // Identity: requirement 4.
         #expect(session.id == sessionId)
@@ -388,7 +399,7 @@ struct RoutedSessionCompactTests {
         let backend = try #require(container.lastBackend)
         let preCompactionTokens = try Self.characterTokenCounter.count(Transcript(entries: backend.transcriptEntries()))
         let budget = TokenBudget(limit: preCompactionTokens * 2, target: 0.25)
-        try await session.compact(budget: budget)
+        try await session.compactAndAwait(budget: budget)
 
         let beforeAnswerEvents = await recorder.events
 
@@ -436,7 +447,7 @@ struct RoutedSessionCompactTests {
         let session2 = profile2.standard.makeSession()
         try await driveAnswers(6, on: session2)
 
-        let result = try await session2.compact()
+        let result = try await session2.compactAndAwait()
 
         #expect(result.stagesApplied == [Summarization.stageName])
         #expect(result.summary != nil)
@@ -477,7 +488,7 @@ struct RoutedSessionCompactTests {
         let budget = summarizingCompactionBudget(for: backend.transcriptEntries())
         let customPrompt = CompactionPrompt(name: "custom-test-prompt-v1", text: "Summarize tersely.")
 
-        let result = try await session.compact(prompt: customPrompt, budget: budget)
+        let result = try await session.compactAndAwait(prompt: customPrompt, budget: budget)
         #expect(result.stagesApplied.contains("Summarization"))
 
         let events = await recorder.events
@@ -527,13 +538,17 @@ struct RoutedSessionCompactTests {
         // `BackendCompactionSummarizer` builds its blank-slate backend via
         // `replacingTranscript(_:)`, which (per `StubSessionBackend`'s own
         // implementation) propagates `shouldThrow` from the backend it is
-        // built from — so flipping it here on the session's live backend
-        // makes every summarizer call fail.
+        // built from. The flag on the session's live backend makes the
+        // own-model call fail. The flag on the container makes the flash
+        // backend that the compaction builds fail too.
         backend.shouldThrow = true
+        container.vendsFailingBackends = true
 
-        await #expect(throws: StubSessionBackend.StubError.self) {
-            try await session.compact(budget: budget)
+        let thrown = await #expect(throws: CompactionDidNotComplete.self) {
+            try await session.compactAndAwait(budget: budget)
         }
+        #expect(thrown?.failure.reason == .requested)
+        #expect(thrown?.failure.outcome == .failed(String(describing: StubSessionBackend.StubError.boom)))
 
         // Nothing changed: identity, fill, and the recorded transcript are
         // exactly as they were before the failed compaction attempt.
@@ -572,7 +587,7 @@ struct RoutedSessionCompactTests {
         let budget = TokenBudget(limit: 1_000_000, target: 0.9)
         let beforeEvents = await recorder.events
 
-        let result = try await session.compact(budget: budget)
+        let result = try await session.compactAndAwait(budget: budget)
 
         #expect(result.stagesApplied.isEmpty)
         #expect(result.summary == nil)
@@ -633,7 +648,7 @@ struct RoutedSessionCompactTests {
         // compaction writes its boundary entry.
         let budget = summarizingCompactionBudget(for: backend.transcriptEntries())
 
-        let result = try await session.compact(budget: budget)
+        let result = try await session.compactAndAwait(budget: budget)
         #expect(result.stagesApplied.contains("Summarization"))
 
         let (boundary, compactionSegment) = try await Self.lastRecordedBoundary(in: recorder)
@@ -686,7 +701,7 @@ struct RoutedSessionCompactTests {
         let backend = try #require(container.lastBackend)
         let budget = summarizingCompactionBudget(for: backend.transcriptEntries())
 
-        let result = try await session.compact(budget: budget)
+        let result = try await session.compactAndAwait(budget: budget)
         #expect(result.stagesApplied == [Summarization.stageName])
 
         let (boundary, compactionSegment) = try await Self.lastRecordedBoundary(in: recorder)
@@ -699,13 +714,16 @@ struct RoutedSessionCompactTests {
         #expect(boundary.segments.count == 3)
     }
 
-    // MARK: - The one own-model call of a caller compaction
+    // MARK: - The one flash call of a requested compaction
 
+    /// The production change that makes this test fail: a requested
+    /// compaction that offers only the own model of the session, or that
+    /// makes more than one summarizer call.
     @Test(
-        "compact() makes one call on the session's own model, over the whole live context, with the allowed summary size capped at the room its window leaves after the input"
+        "compact() makes one call on the flash slot, over the whole live context, with the allowed summary size capped at the room its window leaves after the input"
     )
     @MainActor
-    func compactMakesOneOwnModelCallCappedAtTheAllowedSize() async throws {
+    func compactMakesOneFlashCallCappedAtTheAllowedSize() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let contextTokens = 100_000
@@ -722,8 +740,10 @@ struct RoutedSessionCompactTests {
         let entries = backend.transcriptEntries()
         let budget = summarizingCompactionBudget(for: entries)
         let allowedTokens = budget.allowedSummaryTokens(for: entries)
-        let result = try await session.compact(budget: budget)
+        let result = try await session.compactAndAwait(budget: budget)
 
+        // The flash slot and the standard slot resolve to this one container,
+        // with the same context, so the log holds the flash call.
         let calls = Array(container.generationLog.calls.suffix(from: callsBeforeCompaction))
         #expect(calls.count == 1)
         let call = try #require(calls.first)
@@ -733,7 +753,8 @@ struct RoutedSessionCompactTests {
         #expect(call.reasoningOff)
         #expect(call.prompt.contains("User: text 0"))
         #expect(call.prompt.contains("User: text 5"))
-        #expect(result.summarizerTier == .ownModel)
+        #expect(result.summarizerTier == .flash)
+        #expect(result.summarizerModel == "org/flash-a")
         #expect(result.summary == Self.cannedText)
     }
 
@@ -773,7 +794,7 @@ struct RoutedSessionCompactTests {
         let budget = summarizingCompactionBudget(for: backend.transcriptEntries())
 
         let beforeEvents = await recorder.events
-        let result = try await session.compact(budget: budget)
+        let result = try await session.compactAndAwait(budget: budget)
 
         // The compaction under test wrote a summary: the summary entry is the
         // one new entry the diff picks up.
@@ -831,7 +852,7 @@ struct RoutedSessionCompactTests {
 
         let backend = try #require(container.lastBackend)
         let preCompactionEntries = backend.transcriptEntries()
-        let result = try await session.compact(budget: summarizingCompactionBudget(for: preCompactionEntries))
+        let result = try await session.compactAndAwait(budget: summarizingCompactionBudget(for: preCompactionEntries))
         let summary = try #require(result.summary)
         let postCompactionFill = await session.contextFill
 

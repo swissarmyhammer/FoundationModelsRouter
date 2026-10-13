@@ -14,9 +14,10 @@ import FoundationModels
 /// session and returns its output at once. All output is
 /// ``SessionOutput``: each event carries the ``Origin`` of the work that
 /// sent it, so a caller reads the events of its mail by id. Control is
-/// signals: ``cancel(_:)``, ``cancelAll()`` and ``replace(_:with:)`` never
-/// wait in the mail queue. Each returns a ``SignalID`` at once, and the
-/// session runs the work of its signals one at a time, in arrival order.
+/// signals: ``cancel(_:)``, ``cancelAll()``, ``replace(_:with:)`` and
+/// ``compact(prompt:budget:)`` never wait in the mail queue. Each returns a
+/// ``SignalID`` at once, and the session runs the work of its signals one at
+/// a time, in arrival order.
 /// ``close()`` does not wait in that order.
 /// ``respond(to:maxTokens:)``, ``streamEvents(to:maxTokens:)`` and
 /// ``streamResponse(to:maxTokens:)`` are helpers on top of the core: each
@@ -99,29 +100,64 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// Compacts this session's transcript in place: same ``id``, same
     /// ``recordingDirectory``, shorter live window.
     ///
-    /// The compaction is one summarizer call on this session's own model. The
-    /// call reads the compaction prompt and the whole live context, the
-    /// instructions included. The summary restarts the live context as the
-    /// instructions, the summary entry and the protected tool outputs. A
-    /// compaction that applies appends the summary entry to `transcript.jsonl`
-    /// and reseeds the backend. A transcript already under target stays as
-    /// it is. A summary that does not shrink the live context is discarded,
-    /// and ``CompactionResult/shortfall`` states why.
+    /// The call is a signal (`mailbox.md`, section 3). It makes a new
+    /// ``SignalID`` and returns it at once, and does not wait. The session
+    /// runs the work of its signals one at a time, in arrival order: the work
+    /// of a signal starts when the work of the earlier signal ended. A
+    /// requested compaction runs the same steps as an automatic compaction:
     ///
-    /// The pump runs the compaction between two submissions, so it never runs
-    /// beside a submission of this session, and ``close()`` can
-    /// cancel it. To recover from `LanguageModelError.contextSizeExceeded`,
-    /// compact with a lower target and retry once.
+    /// 1. The mail queue pauses.
+    /// 2. The session sends ``SessionEvent/compactionStarted(_:)`` with the
+    ///    reason ``CompactionReason/requested``.
+    /// 3. One summarizer call runs. It goes to the flash slot of the profile
+    ///    first, and to this session's own model when the flash slot fails or
+    ///    its window is too small. The call reads the compaction prompt and
+    ///    the whole live context, the instructions included. The summary
+    ///    restarts the live context as the instructions, the summary entry
+    ///    and the protected tool outputs. A compaction that applies appends
+    ///    the summary entry to `transcript.jsonl` and reseeds the backend. A
+    ///    transcript already under target stays as it is. A summary that
+    ///    does not shrink the live context is discarded, and
+    ///    ``CompactionResult/shortfall`` states why.
+    /// 4. The session sends ``SessionEvent/compaction(_:)`` or
+    ///    ``SessionEvent/compactionFailed(_:)``. This event is the terminal
+    ///    event of the signal.
+    /// 5. The mail queue resumes.
     ///
-    /// - Parameter budget: The token budget to compact against, or `nil` for this
-    ///   session's resolved working context.
-    /// - Throws: The summarizer's error. A caller-driven compaction offers the
-    ///   own model only, so a summarizer failure here reaches the caller.
-    ///   Also `CancellationError` when cancelled, or
-    ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)`` when called
-    ///   from an in-band tool of this session's own submission.
+    /// The id of each of these events is the string form of the returned
+    /// ``SignalID``.
+    ///
+    /// The compaction does not wait for a safe point, and does not stop a
+    /// running answer: the next submission of that answer uses the compacted
+    /// value. No signal affects a running compaction: ``cancelAll()`` runs
+    /// after the compaction ends. Only ``close()`` cancels it. A tool body of
+    /// this session's own submission can call it, because it waits for
+    /// nothing. Use ``awaitTerminal(of:)-(SignalID)`` to wait for the end.
+    ///
+    /// To recover from `LanguageModelError.contextSizeExceeded`, compact to a
+    /// lower target, wait for the terminal event of the signal, and retry one
+    /// time:
+    ///
+    /// ```swift
+    /// do {
+    ///     return try await session.respond(to: prompt)
+    /// } catch LanguageModelError.contextSizeExceeded(let context) {
+    ///     let id = session.compact(budget: TokenBudget(limit: contextTokens, target: 0.35))
+    ///     guard case .compaction = try await session.awaitTerminal(of: id) else {
+    ///         // compactionFailed: the live context stays as it was.
+    ///         throw LanguageModelError.contextSizeExceeded(context)
+    ///     }
+    ///     return try await session.respond(to: prompt)
+    /// }
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - prompt: The compaction prompt that the summarizer call reads.
+    ///   - budget: The token budget to compact against, or `nil` for this
+    ///     session's resolved working context.
+    /// - Returns: The id of the signal.
     @discardableResult
-    func compact(prompt: CompactionPrompt, budget: TokenBudget?) async throws -> CompactionResult
+    nonisolated func compact(prompt: CompactionPrompt, budget: TokenBudget?) -> SignalID
 
     /// Generates a complete text response to a prompt, recording the call.
     ///
@@ -223,6 +259,7 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     ///
     /// Order within one answer: first one ``SessionEvent/mailDelivered(_:)``
     /// for each mail that the answer delivers, then the
+    /// ``SessionEvent/compactionStarted(_:)`` and the
     /// ``SessionEvent/compaction(_:)`` of a proactive compaction. Then, for
     /// each submission of the chain: one ``SessionEvent/mailDelivered(_:)``
     /// for each mail that joins a continuation,
@@ -233,7 +270,8 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// ``SessionEvent/reasoningDelta(_:)``, and
     /// ``SessionEvent/entryRecorded(id:kind:)`` for each recorded entry, and
     /// last ``SessionEvent/submissionEnded(_:)``. The
-    /// ``SessionEvent/compaction(_:)`` of a reactive compaction comes between
+    /// ``SessionEvent/compactionStarted(_:)`` and the
+    /// ``SessionEvent/compaction(_:)`` of a reactive compaction come between
     /// two submissions. The stream ends with ``SessionEvent/answered(_:)``, or
     /// with ``SessionEvent/answerFailed(_:)`` when the chain gives no answer:
     /// then the stream throws the error of the failed answer
@@ -318,7 +356,9 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// tool-lifecycle events, ``SessionEvent/toolCallReport(_:)``,
     /// ``SessionEvent/elicitationRequested(_:)``,
     /// ``SessionEvent/entryRecorded(id:kind:)``,
-    /// ``SessionEvent/compaction(_:)``, ``SessionEvent/discoveryPrimingFailed(_:)``,
+    /// ``SessionEvent/compactionStarted(_:)``, ``SessionEvent/compaction(_:)``,
+    /// ``SessionEvent/compactionFailed(_:)``,
+    /// ``SessionEvent/discoveryPrimingFailed(_:)``,
     /// and ``SessionEvent/generationStalled(_:)``. A run's
     /// ``SessionEvent/runSettled(_:)`` and
     /// ``SessionEvent/elicitationRequested(_:)`` travel here also between
@@ -330,7 +370,9 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// the answer, user-type mail and run mail. Mail that joins a
     /// continuation adds its id to the origin of the later events of the
     /// answer. The events of a compaction have the origin
-    /// ``Origin/signal(_:)``. The ``SessionEvent/cancelled(_:)`` of a mail
+    /// ``Origin/signal(_:)`` of its compaction signal, also for an automatic
+    /// compaction inside an answer; the readers of the mail of that answer
+    /// also get them. The ``SessionEvent/cancelled(_:)`` of a mail
     /// has the origin ``Origin/signal(_:)`` of the signal that removed it
     /// (``cancel(_:)``, ``cancelAll()``), else the origin of that mail alone.
     /// Each signal ends with ``SessionEvent/signalDone(_:)``, with the origin
@@ -401,9 +443,11 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// ``SessionEvent/answerFailed(_:)`` of the stopped answer. It does not
     /// wait for slow run cancels.
     ///
-    /// The signal never interferes with signal work: it never pauses the
-    /// mail queue, never drops an output of a signal, and does not stop a
-    /// running compaction. After the signal, the session is usable:
+    /// The signal never interferes with signal work: it never changes the
+    /// pause of the mail queue, and never drops an output of a signal. It
+    /// does not stop a running compaction: signals run in order, so the
+    /// running compaction ends first, and the work of this signal runs after
+    /// it. After the signal, the session is usable:
     /// ``mail(_:)`` and the other signals work as usual, and the pump takes
     /// new mail when the stopped work ended. Safe at any time and any number
     /// of times, from any task.
@@ -478,8 +522,9 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// the session:
     ///
     /// 1. No background run is open.
-    /// 2. No pump work runs or waits: no answer, no caller compaction, no
-    ///    end of all work of ``close()``, and no user-type mail in the queue.
+    /// 2. No pump work runs or waits: no answer, no requested compaction
+    ///    that waits or runs, no end of all work of ``close()``, and no
+    ///    user-type mail in the queue.
     /// 3. No queued run mail can start an answer by itself. Run mail that the
     ///    session holds, for example after
     ///    ``SessionEvent/mailDeliveryPaused(_:)``, waits for the next
@@ -509,9 +554,7 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// until all work ended, also when the calling task is
     /// cancelled. Each queued mail gets its terminal event
     /// ``SessionEvent/cancelled(_:)``, and ``mail(_:)`` refuses later mail
-    /// with ``MailRefusal/closed``. Close also stops a running compaction,
-    /// and withdraws each caller compaction that waits: each caller of one
-    /// gets `CancellationError`. Close waits for the pump, for the sweep of
+    /// with ``MailRefusal/closed``. Close waits for the pump, for the sweep of
     /// the background runs, and for the body of each run. So when this call
     /// returns, no work of the session runs: no submission, no background
     /// run, and no generation on the model. The sweep runs
@@ -524,6 +567,17 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// own, so the close of a fork does not release the cache of its parent.
     /// Before it waits for the end of all work, close ends each
     /// ``awaitIdle()`` wait with `false`.
+    ///
+    /// Close is the one exception to the rule that no signal affects a
+    /// running compaction. It does not wait in the order of the signals: it
+    /// cancels the summarizer call of a running compaction, and that
+    /// compaction ends with ``SessionEvent/compactionFailed(_:)``
+    /// (``CompactionFailure/Outcome/cancelled``) before the event streams
+    /// finish. Close does not wait for the compaction to finish its work.
+    /// Nothing is lost: the transcript keeps no compacted value, so a restore
+    /// uses the full transcript. A signal that waits behind the running
+    /// signal work does not run after close: it sends no event, and a wait
+    /// for its terminal event ends with ``MailRefusal/closed``.
     ///
     /// Call it where a session's life ends. `deinit` does not run this sweep.
     /// Idempotent.
@@ -596,18 +650,21 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
 
 extension RoutedSession {
     /// See ``compact(prompt:budget:)``, with both parameters at their defaults.
+    ///
+    /// - Returns: The id of the signal.
     @discardableResult
-    public func compact() async throws -> CompactionResult {
-        try await compact(prompt: .default, budget: nil)
+    public nonisolated func compact() -> SignalID {
+        compact(prompt: .default, budget: nil)
     }
 
     /// See ``compact(prompt:budget:)``, with `prompt` at ``CompactionPrompt/default``.
     ///
     /// - Parameter budget: The token budget to compact against, or `nil` for this
     ///   session's resolved working context.
+    /// - Returns: The id of the signal.
     @discardableResult
-    public func compact(budget: TokenBudget?) async throws -> CompactionResult {
-        try await compact(prompt: .default, budget: budget)
+    public nonisolated func compact(budget: TokenBudget?) -> SignalID {
+        compact(prompt: .default, budget: budget)
     }
 
     /// See ``respond(to:maxTokens:)``, with no ceiling from the caller: the resolved context of the

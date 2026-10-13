@@ -22,13 +22,6 @@ struct PumpWork {
         ///
         /// - Parameter options: The options of every submission of the chain.
         case answer(options: SubmissionOptions)
-
-        /// A compaction that a caller asked for
-        /// (``RoutedSession/compact(prompt:budget:)``).
-        ///
-        /// - Parameter requestID: The id that ``RoutedSessionActor/compactionRequests``
-        ///   gave the request.
-        case compaction(requestID: FoundationModelsExtras.MessageID)
     }
 
     /// The id of the work. Ids are monotonic in their session.
@@ -37,27 +30,6 @@ struct PumpWork {
     /// What the work is.
     var kind: Kind
 }
-
-/// A compaction that a caller asked for, which waits for the pump
-/// (``RoutedSession/compact(prompt:budget:)``). The pump runs it between two
-/// submissions, as it runs every compaction.
-struct CompactionRequest: Sendable {
-    /// The compaction prompt sent to the summarizer.
-    let prompt: CompactionPrompt
-
-    /// The token budget to compact against, or `nil` for the resolved
-    /// working context of the session.
-    let budget: TokenBudget?
-
-    /// The tracing context of the caller, so the compaction span is a child
-    /// of the span of the caller.
-    let serviceContext: ServiceContext?
-}
-
-/// The queue of the caller compactions of one session: an Extras `Mailbox`
-/// whose answer is the result of the compaction
-/// (``RoutedSessionActor/compactionRequests``).
-typealias CompactionRequestMailbox = FoundationModelsExtras.Mailbox<CompactionRequest, CompactionResult>
 
 /// ``RoutedSessionActor``'s pump: the one task of the session that submits
 /// for it (`generation-queue.md`, section 5.4, and `mailbox.md`, section 5).
@@ -126,9 +98,7 @@ extension RoutedSessionActor: SessionMailObserver {
     }
 
     /// Starts the pump when no pump runs. When a pump runs, it takes one
-    /// more cycle before it ends. A pump that waits for a caller compaction
-    /// that a cancel withdrew is released (``releasePumpAwaitingCompaction()``),
-    /// and a new pump takes its place.
+    /// more cycle before it ends.
     ///
     /// The pump is a detached task: it inherits no task-local of the caller
     /// that woke it. So a ``ModelCallMark`` of a tool body that sent mail
@@ -137,44 +107,21 @@ extension RoutedSessionActor: SessionMailObserver {
     /// While a drain runs (``drainTask``), no pump starts.
     func wakePump() {
         pumpWakeRequested = true
-        releasePumpAwaitingCompaction()
         guard pumpTask == nil, drainTask == nil else { return }
         pumpTask = Task.detached { await self.runPump() }
     }
 
-    /// Stops the pump when it waits in ``compactionRequests`` for a request
-    /// (``pumpAwaitsCompaction``). The pump reads that a request waits, and
-    /// then takes it with no suspension point between the two. A cancel from
-    /// the handler of a caller task does not run on this actor, so it can
-    /// withdraw the request between the two, and the take then waits for a
-    /// request that never comes. The cancel of the pump task ends that wait
-    /// with nothing taken, and the pump then starts a new pump
-    /// (``runPump()``).
-    func releasePumpAwaitingCompaction() {
-        guard pumpAwaitsCompaction else { return }
-        pumpTask?.cancel()
-    }
-
     /// The loop of the pump: one cycle for each work, until no work waits.
     ///
-    /// A released pump (``releasePumpAwaitingCompaction()``) is cancelled, so
-    /// it ends, and it starts a new pump in its place: the new task is not
-    /// cancelled, so it can run the next answer. A drain (``drainTask``) ends
-    /// the loop before its next work. The end of the loop is a change of the
-    /// work of the session (``signalWorkChange()``).
+    /// A drain (``drainTask``) ends the loop before its next work. The end of
+    /// the loop is a change of the work of the session
+    /// (``signalWorkChange()``).
     private func runPump() async {
-        while !Task.isCancelled, drainTask == nil {
+        while drainTask == nil {
             pumpWakeRequested = false
-            if !pendingCompactions.isEmpty {
-                await withSessionTelemetry { await runNextCallerCompaction() }
-                continue
-            }
             guard await withSessionTelemetry({ await runNextAnswer() }) || pumpWakeRequested else { break }
         }
         pumpTask = nil
-        if Task.isCancelled {
-            wakePump()
-        }
         signalWorkChange()
     }
 
@@ -455,53 +402,5 @@ extension RoutedSessionActor: SessionMailObserver {
         repetitionWatch.recoveriesThisAnswer = 0
         repetitionWatch.finalPassRan = false
         repetitionWatch.toolCallRun = IdenticalToolCallRun()
-    }
-
-    // MARK: - Caller compactions
-
-    /// The caller compactions that wait for the pump, first in first out.
-    var pendingCompactions: [CompactionRequest] {
-        compactionRequests.pending.map(\.message)
-    }
-
-    /// Takes the next caller compaction and runs it as one work of the pump.
-    /// No other request joins it: each caller compaction is one work.
-    ///
-    /// ``pumpAwaitsCompaction`` is set from the call until the compaction
-    /// starts, so ``releasePumpAwaitingCompaction()`` can end a take that
-    /// waits for a request that a cancel withdrew.
-    private func runNextCallerCompaction() async {
-        pumpAwaitsCompaction = true
-        defer { pumpAwaitsCompaction = false }
-        await compactionRequests.answerNextBatch(joining: { _, _ in false }) { letters in
-            pumpAwaitsCompaction = false
-            return try await runCallerCompaction(of: letters)
-        }
-    }
-
-    /// Runs one caller compaction.
-    ///
-    /// - Parameter letters: The batch of the compaction mailbox: one request.
-    /// - Returns: The result of the compaction.
-    /// - Throws: What the compaction throws, or `CancellationError` when the
-    ///   caller was cancelled before the compaction started.
-    private func runCallerCompaction(of letters: [CompactionRequestMailbox.Letter]) async throws -> CompactionResult {
-        // A request that a cancel took out of the batch before this read is
-        // no longer a running item of the mailbox.
-        let running = Set(compactionRequests.depth.running)
-        guard let letter = letters.first(where: { running.contains($0.id) }) else {
-            throw CancellationError()
-        }
-        lastWorkId += 1
-        pumpWork = PumpWork(id: lastWorkId, kind: .compaction(requestID: letter.id))
-        defer { endPumpWork() }
-        await attachOutboxJournalIfNeeded()
-        let request = letter.message
-        // Each event of the compaction has the origin of a signal of its own.
-        return try await OriginContext.$current.withValue(.signal(SignalID())) {
-            try await ServiceContext.$current.withValue(request.serviceContext) {
-                try await compactOwnModel(prompt: request.prompt, budget: request.budget)
-            }
-        }
     }
 }

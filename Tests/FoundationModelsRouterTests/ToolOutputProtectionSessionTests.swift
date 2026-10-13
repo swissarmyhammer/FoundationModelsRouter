@@ -90,7 +90,7 @@ struct ToolOutputProtectionSessionTests {
     /// - Throws: What the compaction throws.
     @discardableResult
     private static func compact(session: any RoutedSession) async throws -> CompactionResult {
-        try await session.compact(budget: budgetJustUnder(await session.transcript))
+        try await session.compactAndAwait(budget: budgetJustUnder(await session.transcript))
     }
 
     /// Asserts that `transcript` keeps the skill body word for word and holds

@@ -89,7 +89,7 @@ enum TranscriptFixtures {
     /// Builds a raw compaction boundary `.response` entry: a text segment
     /// with `summaryText` (id `<entryId>-text`) plus a `.structure`
     /// ``CompactionSegment`` — the shape
-    /// ``CompactionSegment/boundaryEntry(id:summaryText:content:)`` produces,
+    /// ``CompactionSegment/boundaryEntry(id:summaryText:content:checkpointId:)`` produces,
     /// built directly so the segment id is deterministic (the production
     /// construction generates its own segment id).
     ///
@@ -132,7 +132,7 @@ enum TranscriptFixtures {
 
     /// Builds a `.response`-kind event carrying a text summary segment plus a
     /// ``CompactionSegment`` — the exact shape a real compaction's
-    /// summary entry takes (see ``CompactionSegment/boundaryEntry(id:summaryText:content:)``).
+    /// summary entry takes (see ``CompactionSegment/boundaryEntry(id:summaryText:content:checkpointId:)``).
     ///
     /// Shared by `TranscriptReconstructionTests` and
     /// `SessionTreeRestorationTests` — both exercise task x3nggmx's

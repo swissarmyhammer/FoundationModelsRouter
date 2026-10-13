@@ -155,11 +155,25 @@ extension AnswerCancellationTests {
             if !appendsPromptBeforeToolCall {
                 appendPrompt(prompt)
             }
-            let responseText = "ok-\(prompt)"
+            let responseText = replyText(to: prompt)
             appendResponse(responseText)
             meterOneSubmission()
             await observer.exit(prompt)
             return responseText
+        }
+
+        /// The reply text of the model call that carries `prompt`: the text of
+        /// ``AnswerHook/reply`` when the test installed one that gives a text,
+        /// else `"ok-"` and the prompt.
+        ///
+        /// Only ``respond(to:maxTokens:)`` reads it. A summarizer call comes
+        /// through that path. The stream path yields its fixed first chunk
+        /// before the reply, so it always replies `"ok-"` and the prompt.
+        ///
+        /// - Parameter prompt: The prompt of the model call.
+        /// - Returns: The reply text.
+        private func replyText(to prompt: String) -> String {
+            hook.reply?(prompt) ?? "ok-\(prompt)"
         }
 
         private func appendPrompt(_ prompt: String) {

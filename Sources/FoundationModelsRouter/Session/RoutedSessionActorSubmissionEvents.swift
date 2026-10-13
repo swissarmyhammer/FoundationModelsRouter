@@ -23,8 +23,7 @@ struct RunningSubmission {
 /// starts, ``submissionDidStart()`` reports its start when its SDK call
 /// starts, and ``endSubmission(usage:finishReason:measuredRender:onEvent:)``
 /// ends it where the attempt is recorded. A summarizer call of a compaction
-/// runs between two submissions, so it opens none and sends no event of its
-/// own.
+/// opens no submission and sends no event of its own.
 extension RoutedSessionActor {
     /// Opens the next submission of the running answer: it takes the next
     /// ``SubmissionID`` and opens the span of the submission, a child of the
@@ -100,8 +99,8 @@ extension RoutedSessionActor {
     ///
     /// The reported phases apply first, so a ``SessionEvent/submissionQueued(_:)``
     /// of the same submission always comes before its start. A second call
-    /// for the same submission, and a call with no open submission (a
-    /// summarizer call of a compaction), send nothing.
+    /// for the same submission, and a call with no open submission, send
+    /// nothing.
     func submissionDidStart() {
         drainGenerationPassPhases()
         guard var running = runningSubmission, !running.hasStarted else { return }
@@ -145,6 +144,8 @@ extension RoutedSessionActor {
     ) {
         guard let running = runningSubmission else { return }
         runningSubmission = nil
+        // A compaction that waits to apply its snapshot wakes.
+        submissionCloses.signal()
         if let measuredRender {
             running.span.attributes[RouterTelemetry.AttributeKey.tokensIn] = measuredRender.input
             running.span.attributes[RouterTelemetry.AttributeKey.tokensOut] = measuredRender.output

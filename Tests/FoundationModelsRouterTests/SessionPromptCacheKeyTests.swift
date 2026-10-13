@@ -150,7 +150,7 @@ struct SessionPromptCacheKeyTests {
         _ = try await session.respond(to: fillingPrompt)
         let firstEntryBefore = try #require(Array(await session.transcript).first).id
 
-        let result = try await session.compact(budget: Self.compactionBudget)
+        let result = try await session.compactAndAwait(budget: Self.compactionBudget)
         let firstEntryAfter = try #require(Array(await session.transcript).first).id
         _ = try await session.respond(to: Self.afterCompactionPrompt)
 

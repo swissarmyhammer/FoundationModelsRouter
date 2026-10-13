@@ -16,11 +16,13 @@ import Tracing
 /// summarizer tier that actually ran, and the error status and the error type
 /// on a compaction that throws.
 ///
-/// The tier attribute names the tier that wrote the applied summary. On the
-/// automatic path a failed flash tier falls to the session's own model, so
-/// that degrade shows as the tier the span names and never as a failed span.
-/// A compaction that applies no summary writes no tier. When the last tier
-/// fails, the error reaches the caller and the span records its type.
+/// The tier attribute names the tier that wrote the applied summary. On both
+/// paths a failed flash tier falls to the session's own model, so that
+/// degrade shows as the tier the span names and never as a failed span. A
+/// compaction that applies no summary writes no tier. When the last tier
+/// fails, the span records the type of its error. The answer of an automatic
+/// compaction gets the error, and a requested compaction ends with
+/// ``SessionEvent/compactionFailed(_:)``.
 ///
 /// The rule that no attribute carries the caller's own content lives in
 /// ``TelemetryContentSafetyTests``, which names no span and therefore already
@@ -96,7 +98,7 @@ struct CompactionTracingTests {
         let (session, _, _) = try await AutoCompactionFixtures.makeTriggeredSession(
             budget: nil, tracer: tracer, tempDirPrefix: Self.tempDirPrefix)
 
-        let result = try await session.compact(budget: AutoCompactionFixtures.fixedBudget)
+        let result = try await session.compactAndAwait(budget: AutoCompactionFixtures.fixedBudget)
 
         let span = try Self.singleCompactionSpan(reportedTo: tracer)
         #expect(span.operationName == Self.spanName)
@@ -107,10 +109,10 @@ struct CompactionTracingTests {
         #expect(span.errors.isEmpty)
 
         // The fixed budget's target is under the warm-up transcript, so the
-        // compaction made its one call and the session's own model wrote the
-        // summary that applied.
-        #expect(result.summarizerModel == "org/std-a")
-        #expect(span.attributes.get("compaction.tier") == .string("own-model"))
+        // compaction made its one call. A requested compaction offers the
+        // flash slot first, and the flash slot wrote the summary that applied.
+        #expect(result.summarizerModel == "org/flash-a")
+        #expect(span.attributes.get("compaction.tier") == .string("flash"))
     }
 
     @Test("a compaction span carries the compaction's own before and after token estimates")
@@ -119,7 +121,7 @@ struct CompactionTracingTests {
         let (session, _, _) = try await AutoCompactionFixtures.makeTriggeredSession(
             budget: nil, tracer: tracer, tempDirPrefix: Self.tempDirPrefix)
 
-        let result = try await session.compact(budget: AutoCompactionFixtures.fixedBudget)
+        let result = try await session.compactAndAwait(budget: AutoCompactionFixtures.fixedBudget)
 
         let span = try Self.singleCompactionSpan(reportedTo: tracer)
         #expect(span.attributes.get("tokens.before") == .int64(Int64(result.tokensBefore)))
@@ -138,7 +140,7 @@ struct CompactionTracingTests {
         // A target as large as the whole warm-up transcript: the live context
         // is already under it, so no summarizer runs and no summary applies.
         let warmUpTokens = characterCount(of: AutoCompactionFixtures.expectedWarmUpEntries())
-        let result = try await session.compact(budget: TokenBudget(limit: warmUpTokens, target: 1))
+        let result = try await session.compactAndAwait(budget: TokenBudget(limit: warmUpTokens, target: 1))
         #expect(result.summarizerTier == nil)
         #expect(result.summarizerModel == nil)
         #expect(result.tokensAfter == result.tokensBefore)
@@ -152,15 +154,18 @@ struct CompactionTracingTests {
     @Test("a caller-driven compaction whose summarizer fails keeps its span, with the error type recorded")
     func callerDrivenCompactionThatThrowsRecordsTheErrorOnItsSpan() async throws {
         let tracer = InMemoryTracer()
-        let (session, standard, _) = try await AutoCompactionFixtures.makeTriggeredSession(
+        let (session, standard, flash) = try await AutoCompactionFixtures.makeTriggeredSession(
             budget: nil, tracer: tracer, tempDirPrefix: Self.tempDirPrefix)
-        // The live backend, not the container: the caller's compaction builds its
-        // summarizer from the backend the session already holds.
+        // Both summarizer tiers fail. The flash slot vends a failing backend,
+        // and the own-model tier builds its summarizer from the live backend
+        // of the session, not from the container.
+        flash.shouldThrow = true
         standard.lastBackend?.shouldThrow = true
 
-        await #expect(throws: StubSessionBackend.StubError.boom) {
-            _ = try await session.compact(budget: AutoCompactionFixtures.fixedBudget)
+        let thrown = await #expect(throws: CompactionDidNotComplete.self) {
+            _ = try await session.compactAndAwait(budget: AutoCompactionFixtures.fixedBudget)
         }
+        #expect(thrown?.failure.outcome == .failed(String(describing: StubSessionBackend.StubError.boom)))
 
         let span = try Self.singleCompactionSpan(reportedTo: tracer)
         #expect(span.attributes.get("compaction.trigger") == .string("caller"))
@@ -238,9 +243,9 @@ struct CompactionTracingTests {
         let (session, _, _) = try await AutoCompactionFixtures.makeTriggeredSession(
             budget: nil, tempDirPrefix: Self.tempDirPrefix)
 
-        let result = try await session.compact(budget: AutoCompactionFixtures.fixedBudget)
+        let result = try await session.compactAndAwait(budget: AutoCompactionFixtures.fixedBudget)
 
-        #expect(result.summarizerModel == "org/std-a")
+        #expect(result.summarizerModel == "org/flash-a")
         #expect(result.tokensAfter < result.tokensBefore)
     }
 }

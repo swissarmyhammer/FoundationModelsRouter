@@ -34,7 +34,8 @@ extension RoutedSessionActor {
     /// - The drop of late output covers only the stopped answer (its
     ///   ``Origin/mail(_:)`` origin) and the runs of that answer, which carry
     ///   the same origin. An output with the origin ``Origin/signal(_:)`` is
-    ///   never dropped. A running caller compaction does not stop.
+    ///   never dropped. A running compaction does not stop: ``cancelAll()``
+    ///   runs after it ends, in the order of the signals.
     /// - After the call, the other signals and ``mail(_:)`` work as usual:
     ///   mail that arrives later waits in the queue, and the pump takes it
     ///   when the stopped work ended.
@@ -47,7 +48,8 @@ extension RoutedSessionActor {
     }
 
     /// Stops the answer that runs now, or the take of the next batch, and
-    /// waits for nothing. A caller compaction that runs does not stop.
+    /// waits for nothing. A running compaction does not stop: it is the work
+    /// of a signal.
     ///
     /// The answer ends at once for its readers: the terminal event of its
     /// mail goes out now, with the error `CancellationError` in the ledger,
@@ -63,7 +65,7 @@ extension RoutedSessionActor {
             requestCancelOfRunningWork()
         case .taking:
             requestCancelOfRunningWork()
-        case .compaction, nil:
+        case nil:
             return
         }
     }
@@ -125,41 +127,35 @@ extension RoutedSessionActor {
     /// a session (``close()``). While this runs, ``drainTask`` is set, so no
     /// pump starts (``wakePump()``).
     ///
-    /// One cycle stops the running work, also a caller compaction
-    /// (``requestCancelOfRunningWork()``), withdraws each waiting caller
-    /// compaction (``withdrawCallerCompactions()``), waits for the sweep that
+    /// One cycle stops the running work of the pump
+    /// (``requestCancelOfRunningWork()``), waits for the sweep that
     /// ``cancelAll()`` started, sweeps the background runs
     /// (``sweepBackgroundRuns()``), waits for the body of each run
-    /// (``RunPlane/joinRunBodies()``), and waits for the pump. The work can
-    /// start a background run before the cancel reaches it, so the cycle
-    /// runs again until no pump runs and no run is open. The end is a change
-    /// of the work of the session (``signalWorkChange()``).
+    /// (``RunPlane/joinRunBodies()``), waits for a compaction that runs
+    /// (``activeCompaction``), and waits for the pump. ``close()`` cancelled
+    /// the running compaction before (``cancelActiveCompaction()``), so that
+    /// wait is short. The work can start a background run before the cancel
+    /// reaches it, so the cycle runs again until no pump runs, no compaction
+    /// runs, and no run is open. The end is a change of the work of the
+    /// session (``signalWorkChange()``).
     private func runDrain() async {
         var workRuns = true
         while workRuns {
             requestCancelOfRunningWork()
-            withdrawCallerCompactions()
-            releasePumpAwaitingCompaction()
             await sweepTask?.value
             await sweepBackgroundRuns()
             await mailbox.joinRunBodies()
+            if let activeCompaction {
+                _ = await activeCompaction.value
+            }
             if let pumpTask {
                 await pumpTask.value
             }
             let openRuns = await mailbox.backgroundRuns()
-            workRuns = pumpTask != nil || !openRuns.isEmpty
+            workRuns = pumpTask != nil || activeCompaction != nil || !openRuns.isEmpty
         }
-        withdrawCallerCompactions()
         drainTask = nil
         signalWorkChange()
-    }
-
-    /// Withdraws each caller compaction that waits for the pump. Its caller
-    /// gets `CancellationError`.
-    private func withdrawCallerCompactions() {
-        for letter in compactionRequests.pending {
-            compactionRequests.cancel(letter.id)
-        }
     }
 
     /// Runs `RunPlane.sweep()`, which cancels every background run and

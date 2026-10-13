@@ -58,7 +58,7 @@ struct CompactionPartCostTests {
         let (compacted, result) = try await Compactor.compact(
             live, prompt: .default, budget: budget, counter: counter,
             summarizers: [unboundedOwnModelSlot(RecordingSummarizer(summary: summary))], pendingRuns: [],
-            protection: ProtectedToolOutputFixtures.rule)
+            protection: ProtectedToolOutputFixtures.rule, id: SignalID())
         return (live, compacted, result)
     }
 

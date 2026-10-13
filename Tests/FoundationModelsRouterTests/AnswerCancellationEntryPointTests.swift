@@ -55,7 +55,7 @@ extension AnswerCancellationTests {
         // this wait, when the chunk genuinely never arrives.
         try await firstChunkAtConsumer.wait()
 
-        let stop = await Self.requestStop(of: session, by: .cancelAll, callerTask: answerTask)
+        let stop = await Self.requestStop(of: session, by: .cancelAll)
         try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
         // The signal does not wait for the pump. The check of the recording
         // needs the end of the stopped work, so the test waits for the pump.
@@ -400,7 +400,7 @@ extension AnswerCancellationTests {
         // re-enter the model for an answer that has a stop. The tool ignores
         // the stop, so the work cannot end before the release: the wait for
         // the stop request is safe.
-        let stop = await Self.requestStop(of: session, by: route, callerTask: answerTask)
+        let stop = await Self.requestStop(of: session, by: route)
         try await Self.awaitStopRequested(on: session)
         release.signal()
 

@@ -58,13 +58,9 @@ struct AnswerCancellationTests {
         /// not wait for the pump.
         case cancelAll
 
-        /// The cancel of the caller task of a caller compaction
-        /// (``RoutedSession/compact(prompt:budget:)``). It stops that
-        /// compaction. A cancel of the caller task of an answer does not stop
-        /// the answer, so only a caller compaction test uses this route.
-        case callerTask
-
-        /// The routes that stop a running answer.
+        /// The routes that stop a running answer. A cancel of a caller task
+        /// stops no answer, and no route stops a running compaction: only
+        /// ``RoutedSession/close()`` cancels a compaction.
         static let answerRoutes: [CancellationRoute] = [.stopRunningWork, .cancelAll]
 
         /// The name of the route in the test report.
@@ -72,12 +68,11 @@ struct AnswerCancellationTests {
             switch self {
             case .stopRunningWork: "stopRunningWork()"
             case .cancelAll: "cancelAll()"
-            case .callerTask: "the caller's own Task"
             }
         }
     }
 
-    /// The stop that ``requestStop(of:by:callerTask:)`` sent with
+    /// The stop that ``requestStop(of:by:)`` sent with
     /// ``RoutedSession/cancelAll()``: the session and the id of the signal.
     struct StopRequest: Sendable {
         /// The session that got the signal.
@@ -96,22 +91,15 @@ struct AnswerCancellationTests {
     /// - Parameters:
     ///   - session: The session whose pump runs the work.
     ///   - route: The route of the stop.
-    ///   - callerTask: The caller task that ``CancellationRoute/callerTask``
-    ///     cancels.
     /// - Returns: The stop request for ``CancellationRoute/cancelAll``, and
-    ///   `nil` for the other routes.
-    static func requestStop<Value: Sendable>(
-        of session: any RoutedSession, by route: CancellationRoute, callerTask: Task<Value, Error>
-    ) async -> StopRequest? {
+    ///   `nil` for ``CancellationRoute/stopRunningWork``.
+    static func requestStop(of session: any RoutedSession, by route: CancellationRoute) async -> StopRequest? {
         switch route {
         case .stopRunningWork:
             #expect(await session.stopRunningWork())
             return nil
         case .cancelAll:
             return StopRequest(session: session, signal: session.cancelAll())
-        case .callerTask:
-            callerTask.cancel()
-            return nil
         }
     }
 
@@ -191,7 +179,7 @@ struct AnswerCancellationTests {
         let answerTask = Task { try await session.respond(to: "cancel-me") }
         await insideTool.wait()
 
-        let stop = await Self.requestStop(of: session, by: route, callerTask: answerTask)
+        let stop = await Self.requestStop(of: session, by: route)
 
         // The important result: the tool call *inside* the model call sees the
         // cancel, and then the answer unwinds with it.

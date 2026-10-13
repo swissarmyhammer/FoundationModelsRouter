@@ -40,9 +40,11 @@ LoggingSystem.bootstrap(StreamLogHandler.standardError)
 let demoModel: ModelRef = "mlx-community/Llama-3.2-1B-Instruct-4bit"
 
 /// The model the demo's profile carries in its `flash` slot — the slot
-/// auto-compaction prefers as its summarizer tier, so this is the model
-/// that actually WRITES the compaction's summary
-/// (see `RoutedSessionActor.performAutoCompaction(prompt:budget:)`).
+/// a compaction prefers as its summarizer tier, so this is the model
+/// that actually WRITES the compaction's summary (see the one compaction
+/// handler `RoutedSessionActor.performCompaction(_:_:)`; an automatic
+/// compaction runs it through
+/// `compactInsideAnswer(prompt:budget:reason:overflowRetryTarget:)`).
 ///
 /// Deliberately a capable mid-size model rather than a tiny placeholder.
 /// Measured on 2026-08-19: with `mlx-community/SmolLM-135M-Instruct-4bit`

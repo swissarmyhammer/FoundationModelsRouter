@@ -1,4 +1,5 @@
 import FoundationModelsExtras
+import Synchronization
 
 /// ``RoutedSessionActor``'s idle wait: a host waits until the session has no
 /// more work (``RoutedSession/awaitIdle()``).
@@ -131,8 +132,8 @@ extension RoutedSessionActor {
     /// The end of ``isIdle()``: the second read of the session state, and
     /// the result. It has no suspension point.
     ///
-    /// Only pump work starts a run, and each answer and each caller
-    /// compaction takes a new ``lastWorkId``. So no pump work at the first
+    /// Only pump work starts a run, and each answer takes a new
+    /// ``lastWorkId``. A compaction starts no run. So no pump work at the first
     /// read and at this read, and the same ``lastWorkId``, prove that no run
     /// started while the reads of ``mailbox`` and ``outbox`` suspended.
     ///
@@ -146,13 +147,14 @@ extension RoutedSessionActor {
             && !SessionOutbox.canStartASubmission(reads.mail, runTokens: reads.runTokens)
     }
 
-    /// Whether no pump work runs or waits: no pump and no drain runs, and no
-    /// user-type mail and no caller compaction waits for the pump. Queued
-    /// run mail is no pump work by itself: ``isIdle(startedAt:reading:)``
-    /// checks whether it can start an answer.
+    /// Whether no pump work runs or waits: no pump and no drain runs, no
+    /// user-type mail waits for the pump, and no requested compaction waits
+    /// or runs (``openRequestedCompactions``). Queued run mail is no pump
+    /// work by itself: ``isIdle(startedAt:reading:)`` checks whether it can
+    /// start an answer.
     private var hasNoPumpWork: Bool {
         pumpTask == nil && drainTask == nil && !outbox.queue.pending.contains { !$0.isRunMail }
-            && pendingCompactions.isEmpty
+            && openRequestedCompactions.withLock { $0 } == 0
     }
 }
 

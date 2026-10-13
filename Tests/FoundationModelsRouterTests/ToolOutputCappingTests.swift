@@ -233,9 +233,9 @@ struct ToolOutputCappingTests {
     /// `makeSession(instructions:tools:)`; `lastBackend` is written by both
     /// that method and `makeSession(instructions:)` (required by
     /// `LoadedLLMContainer` — see `ModelLoader.swift` — and, in production,
-    /// the entry point `performAutoCompaction`/`runCompaction` calls on the *flash*
-    /// tier's container, from `RoutedSessionActor`'s own actor isolation, to
-    /// build the compaction summarizer). Both overloads write synchronously
+    /// the entry point that the compaction handler `performCompaction(_:_:)`
+    /// calls on the *flash* tier's container, from `RoutedSessionActor`'s own
+    /// actor isolation, to build the compaction summarizer). Both overloads write synchronously
     /// (no `await` between call and write) from whichever context calls
     /// them.
     ///

@@ -650,9 +650,11 @@ struct ExamplesTests {
 
             // The proactive pattern (RoutedSession.compact(prompt:budget:)'s
             // own doc comment): check fill between answers, compact before it
-            // gets too high — answers never die.
+            // gets too high — answers never die. The call returns the signal
+            // at once, so the pattern waits for its terminal event.
             if await session.contextFill >= budget.trigger {
-                try await session.compact(budget: budget)
+                let id = session.compact(budget: budget)
+                _ = try await session.awaitTerminal(of: id)
                 compactedAtAnswer = answer
             }
         }
@@ -675,21 +677,22 @@ struct ExamplesTests {
 
     /// Counts how many times an ``OverflowOnceBackend``'s
     /// ``OverflowOnceBackend/replacingTranscript(_:)`` was called — the only
-    /// way to observe, from outside the session, that a `compact()` call
-    /// actually performed a genuine compaction. `RoutedSessionActor.compact(prompt:budget:)`
-    /// only swaps its backend (calling `replacingTranscript(_:)`) when
-    /// compaction changed something; a no-op compaction (already under target) never
-    /// does. Shared across every backend a compaction produces, since
+    /// way to observe, from outside the session, that a `compact()` signal
+    /// actually performed a genuine compaction. The compaction handler
+    /// (`RoutedSessionActor.performCompaction(_:_:)`) only swaps its backend
+    /// (calling `replacingTranscript(_:)`) when the compaction changed
+    /// something; a no-op compaction (already under target) never does.
+    /// Shared across every backend a compaction produces, since
     /// `replacingTranscript(_:)` returns a fresh instance each time.
     ///
     /// `@unchecked Sendable` invariant: `recordReplace()` is only ever called
-    /// from inside `RoutedSessionActor`'s isolated methods (`respond`,
-    /// `compact`, …), which serialize every call onto the actor's own
-    /// executor — so mutations of `replaceCount` never race with each other.
-    /// The test's own read of `replaceCount` happens only after `await`ing
-    /// the actor call that could have mutated it, and Swift's async/await
-    /// suspension establishes the happens-before edge that makes that final
-    /// read safe without a lock.
+    /// from inside `RoutedSessionActor`'s isolated methods (the work of an
+    /// answer, and the compaction handler), which serialize every call onto
+    /// the actor's own executor — so mutations of `replaceCount` never race
+    /// with each other. The test's own read of `replaceCount` happens only
+    /// after it `await`s the terminal event of the work that could have
+    /// mutated it, and Swift's async/await suspension establishes the
+    /// happens-before edge that makes that final read safe without a lock.
     private final class ReplaceSpy: @unchecked Sendable {
         private(set) var replaceCount = 0
         func recordReplace() { replaceCount += 1 }
@@ -790,9 +793,10 @@ struct ExamplesTests {
             // the blank-slate backend its summarizer call runs on, and once
             // with the new snapshot when it swaps the backend. Only the swap
             // is recorded, and a no-op compaction (already under target)
-            // never swaps (see RoutedSessionActor.compact(prompt:budget:)'s
-            // own doc comment). The fresh backend is already past its
-            // one-time overflow, so the summarizer call answers.
+            // never swaps (see the doc comment of
+            // RoutedSessionActor.performCompaction(_:_:)). The fresh backend
+            // is already past its one-time overflow, so the summarizer call
+            // answers.
             if !Array(transcript).isEmpty {
                 replaceSpy.recordReplace()
             }
@@ -811,8 +815,12 @@ struct ExamplesTests {
     ) async throws -> String {
         do {
             return try await session.respond(to: prompt)
-        } catch LanguageModelError.contextSizeExceeded {
-            try await session.compact(budget: TokenBudget(limit: contextTokens, target: 0.35))
+        } catch LanguageModelError.contextSizeExceeded(let context) {
+            let id = session.compact(budget: TokenBudget(limit: contextTokens, target: 0.35))
+            guard case .compaction = try await session.awaitTerminal(of: id) else {
+                // compactionFailed: the live context stays as it was.
+                throw LanguageModelError.contextSizeExceeded(context)
+            }
             return try await session.respond(to: prompt)
         }
     }

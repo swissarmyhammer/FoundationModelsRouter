@@ -73,6 +73,11 @@ final class OpenAnswerMail: Sendable {
 /// internal function (``performCancel(_:)``, ``performCancelAll()``,
 /// ``performReplace(_:with:)``), and each signal ends with its terminal event
 /// ``SessionEvent/signalDone(_:)``, after all its other events.
+///
+/// ``compact(prompt:budget:)`` is one more signal of the session. Its work is
+/// in `RoutedSessionActorCompaction.swift`, and its terminal event is
+/// ``SessionEvent/compaction(_:)`` or ``SessionEvent/compactionFailed(_:)``,
+/// not ``SessionEvent/signalDone(_:)``.
 extension RoutedSessionActor {
     /// See ``RoutedSession/cancel(_:)``.
     ///
@@ -179,83 +184,15 @@ extension RoutedSessionActor {
     /// A cancel that lands between two model calls of the work stops the
     /// next one before it starts (``isWorkCancelled``). Only ``cancelAll()``
     /// and ``close()`` call it: a cancel of one mail never stops the work.
-    ///
-    /// A pump that waits in ``compactionRequests`` for a request
-    /// (``pumpAwaitsCompaction``) runs no work: the compaction that its next
-    /// request starts is not cancelled.
+    /// It never reaches a running compaction: a compaction is signal work,
+    /// and its summarizer call is not ``inFlightModelCall``.
     ///
     /// - Returns: `true` when the pump ran work.
     @discardableResult
     func requestCancelOfRunningWork() -> Bool {
-        guard !pumpAwaitsCompaction, let workId = pumpWork?.id else { return false }
+        guard let workId = pumpWork?.id else { return false }
         cancelRequestedWorkId = workId
         inFlightModelCall?.cancel()
         return true
-    }
-
-    // MARK: - Caller compactions
-
-    /// Waits for `answer`, the answer of the caller compaction `id` that the
-    /// caller just posted to ``compactionRequests``. A cancel of the caller
-    /// cancels the compaction at once (``cancelCompactionFromCallerTask(_:)``).
-    ///
-    /// The caller posts the request and calls this with no suspension point
-    /// between the two, and this installs the cancel handler before its
-    /// first suspension point. The pump takes a request only on this actor,
-    /// so the pump cannot take it before the handler is in place.
-    ///
-    /// - Parameters:
-    ///   - id: The id that ``compactionRequests`` gave the request.
-    ///   - answer: The answer that ``compactionRequests`` gave the request.
-    /// - Returns: The result of the compaction.
-    /// - Throws: What the compaction throws, or `CancellationError`.
-    func awaitCompactionAnswer(
-        id: FoundationModelsExtras.MessageID, answer: MailboxAnswer<CompactionResult>
-    ) async throws -> CompactionResult {
-        try await withTaskCancellationHandler {
-            try await answer.value
-        } onCancel: {
-            cancelCompactionFromCallerTask(id)
-        }
-    }
-
-    /// Cancels the caller compaction `id` from the cancellation handler of a
-    /// caller task, which does not run on this actor. A waiting request is
-    /// withdrawn at once. The rest needs this actor, so it runs in a task of
-    /// its own: a pump that waits for the withdrawn request is released, and
-    /// a running compaction is stopped.
-    ///
-    /// - Parameter id: The id that ``compactionRequests`` gave the request.
-    nonisolated func cancelCompactionFromCallerTask(_ id: FoundationModelsExtras.MessageID) {
-        let result: MessageCancellationResult =
-            compactionRequests.depth.running.contains(id) ? .cancelledInSubmission : compactionRequests.cancel(id)
-        guard result != .alreadyAnswered else { return }
-        Task { await self.settleCompactionCancel(of: id, result) }
-    }
-
-    /// The second half of a cancel of the caller compaction `id`, after the
-    /// first half gave `result`.
-    ///
-    /// - ``MessageCancellationResult/withdrawn``: the pump can wait for that
-    ///   request, so it is released (``releasePumpAwaitingCompaction()``).
-    /// - ``MessageCancellationResult/cancelledInSubmission``: the compaction
-    ///   is stopped (``requestCancelOfRunningWork()``) when it still runs.
-    /// - ``MessageCancellationResult/alreadyAnswered``: nothing to do.
-    ///
-    /// - Parameters:
-    ///   - id: The id of the compaction request.
-    ///   - result: What the first half did.
-    private func settleCompactionCancel(
-        of id: FoundationModelsExtras.MessageID, _ result: MessageCancellationResult
-    ) {
-        switch result {
-        case .withdrawn:
-            releasePumpAwaitingCompaction()
-        case .cancelledInSubmission:
-            guard case .compaction(id) = pumpWork?.kind else { return }
-            requestCancelOfRunningWork()
-        case .alreadyAnswered:
-            return
-        }
     }
 }

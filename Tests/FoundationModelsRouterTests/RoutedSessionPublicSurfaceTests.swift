@@ -53,7 +53,7 @@ struct RoutedSessionPublicSurfaceTests {
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         _ = try await fixture.session.respond(to: ScriptedToolFixture.prompt)
 
-        let result = try await fixture.session.compact()
+        let result = try await fixture.session.compactAndAwait()
 
         // The default budget is the session's resolved working context, which
         // one scripted answer comes nowhere near: the pipeline measured a real
@@ -71,7 +71,7 @@ struct RoutedSessionPublicSurfaceTests {
         let (session, _, _) = try await AutoCompactionFixtures.makeTriggeredSession(
             budget: nil, tempDirPrefix: Self.tempDirPrefix)
 
-        let result = try await session.compact(budget: AutoCompactionFixtures.fixedBudget)
+        let result = try await session.compactAndAwait(budget: AutoCompactionFixtures.fixedBudget)
 
         // The target of the fixture's budget is less than the warm-up
         // transcript, so the compaction makes the one summarizer call and

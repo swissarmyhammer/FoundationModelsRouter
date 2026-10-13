@@ -75,8 +75,8 @@ enum RouterTelemetry {
         /// answers its messages, with every tool call inside it.
         static let submission = prefix + "submission"
 
-        /// One compaction of a session's transcript, driven by a caller or by the
-        /// auto-compaction budget.
+        /// One compaction of a session's transcript: a requested compaction,
+        /// or an automatic compaction inside an answer.
         static let compact = prefix + "compact"
 
         /// One ``Router/resolve(profile:reporting:)`` call: the whole joint
@@ -221,16 +221,20 @@ enum RouterTelemetry {
     /// The value ``AttributeKey/compactionTrigger`` carries: what asked for a
     /// compaction.
     ///
-    /// Both compaction paths run the same mechanics and open the same span, so the
-    /// span alone cannot say which of the two opened it. This attribute says
-    /// so, and it lets a query separate the compactions a caller drove from the
-    /// compactions the auto-compaction budget drove.
+    /// A requested compaction and an automatic compaction run the same
+    /// handler and open the same span, so the span alone cannot say which of
+    /// the two opened it. This attribute says so, and it lets a query
+    /// separate the requested compactions from the automatic compactions.
     enum CompactionTrigger: String {
-        /// ``RoutedSession/compact(prompt:budget:)``.
+        /// A requested compaction: ``RoutedSession/compact(prompt:budget:)``,
+        /// with the reason ``CompactionReason/requested``.
         case caller
 
-        /// The auto-compaction budget: the proactive compaction before an answer, and
-        /// the reactive compaction after a context overflow.
+        /// An automatic compaction inside an answer, with one of the four
+        /// automatic reasons: ``CompactionReason/triggerReached``,
+        /// ``CompactionReason/contextOverflow``,
+        /// ``CompactionReason/toolResultYield`` or
+        /// ``CompactionReason/outputCeilingStop``.
         case auto
     }
 

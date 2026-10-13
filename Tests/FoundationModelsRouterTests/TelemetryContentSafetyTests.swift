@@ -136,13 +136,13 @@ struct TelemetryContentSafetyTests {
 
         // A compaction over what the answer accumulated. The budget is derived from
         // the measured pre-compaction size, and the shrink says the compaction really ran.
-        let compaction = try await fixture.session.compact(
+        let compaction = try await fixture.session.compactAndAwait(
             budget: summarizingCompactionBudget(for: fixture.transcriptEntries()))
         #expect(compaction.tokensAfter < compaction.tokensBefore)
 
         // A compaction whose target is zero tokens: the target leaves no room for
         // a summary, so the compaction has a shortfall, and the session logs it.
-        let shortfallCompaction = try await fixture.session.compact(
+        let shortfallCompaction = try await fixture.session.compactAndAwait(
             budget: TokenBudget(limit: compaction.tokensAfter, target: noRoomTarget))
         #expect(shortfallCompaction.shortfall == .targetLeavesNoRoomForSummary(allowedSummaryTokens: 0))
 

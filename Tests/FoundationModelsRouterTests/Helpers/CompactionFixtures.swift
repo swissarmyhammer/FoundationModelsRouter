@@ -104,7 +104,8 @@ func compactWithUnboundedWindow(
 ) async throws -> (transcript: Transcript, result: CompactionResult) {
     try await Compactor.compact(
         transcript, prompt: prompt, budget: budget, counter: characterTokenCounter,
-        summarizers: [unboundedOwnModelSlot(summarizer)], pendingRuns: pendingRuns, protection: protection)
+        summarizers: [unboundedOwnModelSlot(summarizer)], pendingRuns: pendingRuns, protection: protection,
+        id: SignalID())
 }
 
 /// A budget whose target is one token under the size of `transcript`, so a

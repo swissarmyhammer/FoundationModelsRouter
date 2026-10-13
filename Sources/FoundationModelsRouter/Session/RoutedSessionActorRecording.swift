@@ -83,8 +83,9 @@ extension RoutedSessionActor {
         // call receives the whole render, so the fed and generated tokens of
         // the newest call are that size. The delta of the attempt is not: a
         // tool loop sends the whole render again at each call, and the delta
-        // adds each of them. A compaction restarts the counter
-        // (``runCompaction(prompt:budget:summarizers:)``).
+        // adds each of them. A compaction restarts the counter when it
+        // applies its snapshot (the compaction handler
+        // ``performCompaction(_:_:)``, in `RoutedSessionActorCompaction.swift`).
         //
         // Only a submission whose diff included a `.response`-kind entry
         // measured the render. A submission rejected before it touched

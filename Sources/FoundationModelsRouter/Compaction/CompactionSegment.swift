@@ -192,11 +192,15 @@ package struct CompactionSegment: PersistableStructuredSegment, Equatable, Custo
     ///   - entryId: The boundary entry's `Transcript.Entry.id`.
     ///   - summaryText: The model-visible summary text.
     ///   - content: The compaction manifest the `.structure` segment wraps.
+    ///   - checkpointId: The id of the `.structure` ``CompactionSegment``
+    ///     manifest. A compaction gives the string form of its ``SignalID``.
+    ///     Defaults to a new UUID.
     /// - Returns: The boundary entry.
     internal static func boundaryEntry(
         id entryId: String,
         summaryText: String,
-        content: Content
+        content: Content,
+        checkpointId: String = UUID().uuidString
     ) -> Transcript.Entry {
         var segments: [Transcript.Segment] = [
             .text(Transcript.TextSegment(id: "\(entryId)-header", content: summaryHeader)),
@@ -216,7 +220,7 @@ package struct CompactionSegment: PersistableStructuredSegment, Equatable, Custo
                 )
             )
         }
-        segments.append(CompactionSegment(content: content).transcriptSegment)
+        segments.append(CompactionSegment(id: checkpointId, content: content).transcriptSegment)
         return .prompt(Transcript.Prompt(id: entryId, segments: segments))
     }
 

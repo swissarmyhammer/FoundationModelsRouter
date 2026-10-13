@@ -115,21 +115,31 @@ public enum SessionEvent: Sendable, Equatable {
     /// `id` is the `Transcript.Entry.id`, never a `Transcript.ToolCall.id`.
     case entryRecorded(id: String, kind: RecordedEntryKind)
 
-    /// An automatic compaction starts inside an answer. One
-    /// ``compaction(_:)`` or one ``compactionFailed(_:)`` with the same id
-    /// follows. A compaction that ``RoutedSession/compact()`` asks for sends
-    /// no compaction event.
+    /// A compaction starts: a requested compaction
+    /// (``RoutedSession/compact(prompt:budget:)``), or an automatic
+    /// compaction inside an answer. One ``compaction(_:)`` or one
+    /// ``compactionFailed(_:)`` with the same id follows. That event is the
+    /// terminal event of the compaction signal. The id is the string form of
+    /// the ``SignalID`` of the compaction, and the origin is
+    /// ``Origin/signal(_:)`` of that id.
     case compactionStarted(CompactionStart)
 
-    /// An auto-compaction completed against this session, inside an answer.
-    /// Its ``CompactionResult/id`` is the id of the ``compactionStarted(_:)``
-    /// before it.
+    /// A compaction that ``compactionStarted(_:)`` announced completed
+    /// against this session. It is the terminal event of the compaction
+    /// signal. Its ``CompactionResult/id`` is the id of the
+    /// ``compactionStarted(_:)`` before it: the string form of the
+    /// ``SignalID`` of the compaction. The origin is ``Origin/signal(_:)`` of
+    /// that id.
     case compaction(CompactionResult)
 
-    /// An automatic compaction that ``compactionStarted(_:)`` announced did
-    /// not complete: it failed with an error, or a cancel stopped it. The live
-    /// context of the session stays as it was, and the error goes on out of
-    /// the answer.
+    /// A compaction that ``compactionStarted(_:)`` announced did not
+    /// complete: it failed with an error, or a cancel (only
+    /// ``RoutedSession/close()``) stopped it. The live context stays as it
+    /// was. For an automatic compaction, the error goes on out of the answer.
+    /// It is the terminal event of the compaction signal. Its id is the id
+    /// of the ``compactionStarted(_:)`` before it: the string form of the
+    /// ``SignalID`` of the compaction. The origin is ``Origin/signal(_:)`` of
+    /// that id.
     case compactionFailed(CompactionFailure)
 
     /// The ``DiscoveryPriming`` of this answer could not seed, so the answer generated unseeded.

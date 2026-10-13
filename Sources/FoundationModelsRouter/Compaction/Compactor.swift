@@ -5,7 +5,16 @@ import FoundationModels
 /// What one compaction did: the size of the live context before and after, the
 /// stage that ran, and the summary text.
 public struct CompactionResult: Sendable, Equatable {
-    /// This compaction's own identity, a generated ``ULID`` string.
+    /// The identity of this compaction: the string form of the ``SignalID``
+    /// of the compaction signal that ran it. A compaction that
+    /// ``RoutedSession/compact(prompt:budget:)`` asks for has the id that the
+    /// call returns. An automatic compaction has a signal id of its own. The
+    /// ``CompactionStart/id`` and the ``CompactionFailure/id`` of the same
+    /// compaction hold the same value.
+    ///
+    /// The id is a string because a result rebuilt from a recorded checkpoint
+    /// holds the id of that checkpoint, and an older recording has checkpoint
+    /// ids that are not a ``SignalID``.
     public let id: String
 
     /// The summary the compaction wrote, or `nil` when no summary applies.
@@ -105,17 +114,6 @@ public struct CompactionResult: Sendable, Equatable {
     /// - Returns: The copy that carries `target`.
     func withOverflowRetryTarget(_ target: OverflowRetryTarget) -> CompactionResult {
         copy(id: id, overflowRetryTarget: target)
-    }
-
-    /// Returns a copy of this result with the identity `id`. Every other
-    /// field is copied unchanged. The session gives an automatic compaction
-    /// its id before the compaction runs, so that
-    /// ``SessionEvent/compactionStarted(_:)`` and the result carry the same id.
-    ///
-    /// - Parameter id: The identity of the compaction.
-    /// - Returns: The copy that carries `id`.
-    func withId(_ id: String) -> CompactionResult {
-        copy(id: id, overflowRetryTarget: overflowRetryTarget)
     }
 
     /// Returns a copy of this result with `id` and `overflowRetryTarget`.
@@ -243,6 +241,9 @@ package enum Compactor {
     ///     the logger that the caller gave the session.
     ///   - abandoning: Gets each summarizer failure with the tier that raised
     ///     it. It throws to stop the compaction. The default returns.
+    ///   - id: The id of the compaction signal that runs this compaction. The
+    ///     result and the checkpoint of the summary entry carry its string
+    ///     form. The compaction makes no id of its own.
     /// - Returns: The new live context and a report of what happened.
     /// - Throws: What the last tier throws, what `abandoning` throws, what
     ///   `counter` throws, or ``SummarizationError/emptySummary`` when the
@@ -256,11 +257,12 @@ package enum Compactor {
         pendingRuns: [CompactionSegment.PendingRunSummary] = [],
         protection: ToolOutputProtection? = nil,
         explicitLogger: Logger? = nil,
-        abandoning: @Sendable (any Error, CompactionSummarizerTier) async throws -> Void = { _, _ in }
+        abandoning: @Sendable (any Error, CompactionSummarizerTier) async throws -> Void = { _, _ in },
+        id: SignalID
     ) async throws -> (transcript: Transcript, result: CompactionResult) {
         let compacted = try await planAndSummarize(
             transcript, prompt: prompt, budget: budget, counter: counter, summarizers: summarizers,
-            pendingRuns: pendingRuns, protection: protection, abandoning: abandoning)
+            pendingRuns: pendingRuns, protection: protection, abandoning: abandoning, id: id.description)
         if let shortfall = compacted.result.shortfall {
             log(shortfall, to: RouterTelemetry.logger(.compaction, explicit: explicitLogger))
         }
@@ -268,7 +270,7 @@ package enum Compactor {
     }
 
     /// Plans the compaction of `transcript` and runs its summarizer call. See
-    /// ``compact(_:prompt:budget:counter:summarizers:pendingRuns:protection:explicitLogger:abandoning:)``,
+    /// ``compact(_:prompt:budget:counter:summarizers:pendingRuns:protection:explicitLogger:abandoning:id:)``,
     /// which logs the shortfall of the result.
     ///
     /// - Parameters:
@@ -282,6 +284,7 @@ package enum Compactor {
     ///     snapshot keeps word for word, or `nil` to protect nothing.
     ///   - abandoning: Gets each summarizer failure with the tier that raised
     ///     it. It throws to stop the compaction.
+    ///   - id: The identity of the compaction, which the result carries.
     /// - Returns: The new live context and a report of what happened.
     /// - Throws: What the last tier throws, what `abandoning` throws, what
     ///   `counter` throws, or ``SummarizationError/emptySummary`` when the
@@ -294,11 +297,12 @@ package enum Compactor {
         summarizers: [CompactionSummarizerSlot],
         pendingRuns: [CompactionSegment.PendingRunSummary],
         protection: ToolOutputProtection?,
-        abandoning: @Sendable (any Error, CompactionSummarizerTier) async throws -> Void
+        abandoning: @Sendable (any Error, CompactionSummarizerTier) async throws -> Void,
+        id: String
     ) async throws -> (transcript: Transcript, result: CompactionResult) {
         let plan = try Summarization().plan(
             transcript, prompt: prompt, budget: budget, counter: counter, pendingRuns: pendingRuns,
-            protection: protection)
+            protection: protection, id: id)
         let call: CompactionCall
         switch plan {
         case .finished(let result):

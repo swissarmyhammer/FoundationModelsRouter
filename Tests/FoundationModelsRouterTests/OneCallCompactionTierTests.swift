@@ -105,7 +105,7 @@ struct OneCallCompactionTierTests {
     ) async throws -> (transcript: Transcript, result: CompactionResult) {
         try await Compactor.compact(
             transcript, budget: budget, counter: characterTokenCounter, summarizers: slots,
-            abandoning: { error, tier in await log.record(error, tier: tier) })
+            abandoning: { error, tier in await log.record(error, tier: tier) }, id: SignalID())
     }
 
     /// A flash slot and an own-model slot, each over its own summarizer.

@@ -181,10 +181,12 @@ let router = Router(
 // really are two different resident models, not the same one reused.
 //
 // SmolLM-135M in `flash` is safe here ONLY because no session in this demo
-// opts into auto-compaction with a `budget:`. Auto-compaction prefers the
+// opts into auto-compaction with a `budget:`. A compaction prefers the
 // `flash` slot as its summarizer, and this model is too small to summarize —
-// see the summary quality hazard on
-// `RoutedSessionActor.performAutoCompaction(prompt:budget:)` (task ^59fd9rt).
+// see the summarizer choice of the one compaction handler
+// `RoutedSessionActor.performCompaction(_:_:)` (task ^59fd9rt); an automatic
+// compaction runs it through
+// `compactInsideAnswer(prompt:budget:reason:overflowRetryTarget:)`.
 // A demo that adds a `budget:` must also put a capable model into `flash`,
 // as `CompactionDemo` does.
 let demo = ProfileDefinition(

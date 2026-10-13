@@ -79,7 +79,7 @@ public struct TranscriptCompactionOutcome: Sendable {
     /// The transcript that was compacted.
     public let transcript: Transcript
 
-    /// What ``Compactor/compact(_:prompt:budget:counter:summarizers:pendingRuns:protection:abandoning:)``
+    /// What ``Compactor/compact(_:prompt:budget:counter:summarizers:pendingRuns:protection:explicitLogger:abandoning:id:)``
     /// reported.
     public let result: CompactionResult
 
@@ -186,7 +186,8 @@ public enum TranscriptCompaction {
             summarizers: [
                 CompactionSummarizerSlot(
                     tier: .ownModel, summarizer: summarizer, windowTokens: windowTokens, model: nil)
-            ]
+            ],
+            id: SignalID()
         )
         let outcome = TranscriptCompactionOutcome(
             transcript: transcript,

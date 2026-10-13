@@ -231,7 +231,7 @@ struct RestoreFidelityTests {
         let root = profile1.standard.makeSession()
         try await driveAnswers(Self.compactionWarmupAnswerCount, on: root)
         let firstCompactionBackend = try #require(registry.created.last)
-        let firstResult = try await root.compact(
+        let firstResult = try await root.compactAndAwait(
             budget: summarizingCompactionBudget(for: firstCompactionBackend.transcriptEntries()))
         #expect(firstResult.stagesApplied.contains("Summarization"))
 
@@ -240,7 +240,7 @@ struct RestoreFidelityTests {
         // ^6z1msg1) must hold across repeated live compactions, not just one.
         try await driveAnswers(Self.compactionWarmupAnswerCount, on: root)
         let secondCompactionBackend = try #require(registry.created.last)
-        let secondResult = try await root.compact(
+        let secondResult = try await root.compactAndAwait(
             budget: summarizingCompactionBudget(for: secondCompactionBackend.transcriptEntries()))
         #expect(secondResult.stagesApplied.contains("Summarization"))
 

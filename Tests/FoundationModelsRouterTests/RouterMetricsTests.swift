@@ -105,7 +105,7 @@ struct RouterMetricsTests {
                 budget: nil, tempDirPrefix: Self.tempDirPrefix)
             await session.useCaptureMetrics(for: context.metricsFactory)
 
-            _ = try await session.compact(budget: AutoCompactionFixtures.fixedBudget)
+            _ = try await session.compactAndAwait(budget: AutoCompactionFixtures.fixedBudget)
             return context.metricsFactory
         }
 

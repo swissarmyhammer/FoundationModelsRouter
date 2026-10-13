@@ -1,7 +1,16 @@
 import Foundation
 
-/// Why an automatic compaction ran inside an answer.
+/// Why a compaction ran. Only the reason tells a requested compaction from
+/// an automatic one: both run the same handler and send the same events
+/// (`mailbox.md`, section 3, "Decision: one compaction, two triggers").
 public enum CompactionReason: String, Sendable, Equatable {
+    /// A caller asked for the compaction with
+    /// ``RoutedSession/compact(prompt:budget:)``, for example the `/compact`
+    /// command of a host, a library caller, or a tool. The compaction runs
+    /// in the order of the signals of the session, and it is the only
+    /// reason that no budget trigger of an answer gives.
+    case requested
+
     /// The measured context reached ``TokenBudget/triggerTokens`` before the
     /// answer started its first submission.
     case triggerReached
@@ -19,10 +28,11 @@ public enum CompactionReason: String, Sendable, Equatable {
     case outputCeilingStop
 }
 
-/// The start of an automatic compaction, carried by
+/// The start of a compaction, carried by
 /// ``SessionEvent/compactionStarted(_:)``.
 public struct CompactionStart: Sendable, Equatable {
-    /// The identity of the compaction. The ``CompactionResult/id`` of the
+    /// The identity of the compaction: the string form of the ``SignalID``
+    /// of its compaction signal. The ``CompactionResult/id`` of the
     /// ``SessionEvent/compaction(_:)`` that completes it, or the
     /// ``CompactionFailure/id`` of the ``SessionEvent/compactionFailed(_:)``
     /// that ends it, holds the same value.
@@ -42,15 +52,15 @@ public struct CompactionStart: Sendable, Equatable {
     }
 }
 
-/// An automatic compaction that did not complete, carried by
+/// A compaction that did not complete, carried by
 /// ``SessionEvent/compactionFailed(_:)``. A compaction that fails leaves the
 /// live context of the session as it was.
 public struct CompactionFailure: Sendable, Equatable {
     /// How the compaction ended.
     public enum Outcome: Sendable, Equatable {
-        /// A cancel stopped the compaction: ``RoutedSession/close()``, or
-        /// the cancel of the caller task of
-        /// ``RoutedSession/compact(prompt:budget:)``.
+        /// A cancel stopped the compaction: ``RoutedSession/close()``
+        /// cancelled its summarizer call. No other signal stops a running
+        /// compaction.
         case cancelled
 
         /// The compaction failed with an error. The text is the description
@@ -59,7 +69,8 @@ public struct CompactionFailure: Sendable, Equatable {
     }
 
     /// The identity of the compaction, the same value as the
-    /// ``CompactionStart/id`` of its ``SessionEvent/compactionStarted(_:)``.
+    /// ``CompactionStart/id`` of its ``SessionEvent/compactionStarted(_:)``:
+    /// the string form of the ``SignalID`` of its compaction signal.
     public let id: String
 
     /// Why the compaction ran.

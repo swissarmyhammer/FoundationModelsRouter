@@ -176,7 +176,7 @@ extension AnswerCancellationTests {
         )
     }
 
-    /// The prompt ``cancellingTheReactiveCompactionStopsTheRetry()`` drives its answer with,
+    /// The prompt ``aStopDuringTheReactiveCompactionLetsItEndAndSkipsTheRetry()`` drives its answer with,
     /// named because its mid-answer hook has to tell the own model call of that
     /// answer (which must overflow) from the compaction's summarizer call (which
     /// must suspend).

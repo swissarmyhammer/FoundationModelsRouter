@@ -3,6 +3,7 @@ import FoundationModels
 import FoundationModelsExtras
 import Logging
 import Metrics
+import Synchronization
 import Tracing
 
 /// Writes one session's identity onto its ``RouterTelemetry/SpanName/session``
@@ -394,15 +395,23 @@ actor RoutedSessionActor: RoutedSession {
     /// The id of the last work the pump started. Ids are monotonic.
     var lastWorkId: UInt64 = 0
 
-    /// The caller compactions that wait for the pump, first in first out,
-    /// and the one the pump runs. Each request gets its id and its answer
-    /// here (``RoutedSession/compact(prompt:budget:)``).
-    nonisolated let compactionRequests = CompactionRequestMailbox()
+    /// The count of the requested compactions
+    /// (``RoutedSession/compact(prompt:budget:)``) that wait in ``signals``
+    /// or run. The idle check reads it (``awaitIdle()``).
+    nonisolated let openRequestedCompactions = Mutex(0)
 
-    /// Whether the pump waits in ``compactionRequests`` for a request: set
-    /// from the start of a take until the take runs its request. See
-    /// ``releasePumpAwaitingCompaction()``.
-    var pumpAwaitsCompaction = false
+    /// The task of the compaction that runs now, or `nil`. Only the
+    /// compaction handler (``performCompaction(_:_:)``) sets it, and only
+    /// ``close()`` cancels it (``cancelActiveCompaction()``).
+    var activeCompaction: Task<Result<CompactionResult, any Error>, Never>?
+
+    /// Wakes each wait for the end of the running compaction
+    /// (``awaitActiveCompaction()``).
+    nonisolated let compactionEnds = ChangeSignal()
+
+    /// Wakes each wait of a compaction for the end of the open submission
+    /// (``endSubmission(usage:finishReason:measuredRender:onEvent:)``).
+    nonisolated let submissionCloses = ChangeSignal()
 
     /// The ids of the mail of the open answer, in delivery order: the mail
     /// of its first submission and the mail that joined a continuation. A

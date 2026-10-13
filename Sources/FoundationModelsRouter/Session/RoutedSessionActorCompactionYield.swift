@@ -143,7 +143,7 @@ extension RoutedSessionActor {
     ///    disk before the compaction takes them out of the live window.
     /// 2. The measured context becomes the context at the yield, so the
     ///    compaction scales its count onto the engine's scale.
-    /// 3. ``performAutoCompaction(prompt:budget:reason:overflowRetryTarget:emit:)`` compacts, and the answer
+    /// 3. ``compactInsideAnswer(prompt:budget:reason:overflowRetryTarget:)`` compacts, and the answer
     ///    emits ``SessionEvent/compaction(_:)``.
     /// 4. The next attempt sends ``compactionContinuationPrompt``.
     ///
@@ -218,7 +218,7 @@ extension RoutedSessionActor {
     /// Compacts the transcript, and runs one more submission of the same
     /// answer with `continuationPrompt`.
     ///
-    /// ``performAutoCompaction(prompt:budget:)`` compacts, and the answer
+    /// ``compactInsideAnswer(prompt:budget:reason:overflowRetryTarget:)`` compacts, and the answer
     /// emits ``SessionEvent/compaction(_:)``. When the compaction applied no
     /// summary, the answer does not compact inside itself again
     /// (``compactionYieldsStopped``): the next attempt would cross the same
@@ -242,8 +242,8 @@ extension RoutedSessionActor {
         body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
         if let budget = autoCompactionBudget {
-            let result = try await performAutoCompaction(
-                prompt: autoCompactionPrompt, budget: budget, reason: reason, emit: attempt.onEvent)
+            let result = try await compactInsideAnswer(
+                prompt: autoCompactionPrompt, budget: budget, reason: reason)
             compactionYieldsStopped = result.summaryEntryId == nil
         }
         return try await runContinuation(

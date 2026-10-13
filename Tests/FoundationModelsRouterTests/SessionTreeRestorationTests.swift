@@ -754,9 +754,10 @@ struct SessionTreeRestorationTests {
     @Test("restoredUsageState: the after-checkpoint slice starts strictly at checkpoint.index + 1, excluding the checkpoint event's own position")
     func restoredUsageStateAfterSliceExcludesCheckpointsOwnIndex() throws {
         // A real compaction checkpoint never carries a `tokensIn`/`tokensOut`
-        // stamp of its own — `RoutedSessionActor.compact(prompt:budget:)`
-        // appends its diff partials with no usage stamped on them (see
-        // `RoutedSession.swift`) — so this event is synthetic: it
+        // stamp of its own — the compaction handler
+        // `RoutedSessionActor.performCompaction(_:_:)` appends its diff
+        // partials with no usage stamped on them (see
+        // `RoutedSessionActorCompaction.swift`) — so this event is synthetic: it
         // deliberately carries both a `CompactionSegment` *and* a stamp, the
         // only way to make the exact array-slice boundary
         // (`events[(checkpoint.index + 1)...]`, not `events[checkpoint.index...]`)

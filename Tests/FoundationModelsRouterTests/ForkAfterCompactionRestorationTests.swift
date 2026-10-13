@@ -135,7 +135,7 @@ struct ForkAfterCompactionRestorationTests {
         let root = profile1.standard.makeSession()
         try await driveAnswers(6, on: root)
         let rootBackend = try #require(container.lastBackend)
-        let result = try await root.compact(budget: summarizingCompactionBudget(for: rootBackend.transcriptEntries()))
+        let result = try await root.compactAndAwait(budget: summarizingCompactionBudget(for: rootBackend.transcriptEntries()))
         #expect(result.stagesApplied == [Summarization.stageName])
 
         let fork = try await root.fork(workingDirectory: nil)
@@ -213,7 +213,7 @@ struct ForkAfterCompactionRestorationTests {
         let root = profile1.standard.makeSession()
         try await driveAnswers(6, on: root)
         let rootBackend = try #require(container.lastBackend)
-        let result = try await root.compact(budget: summarizingCompactionBudget(for: rootBackend.transcriptEntries()))
+        let result = try await root.compactAndAwait(budget: summarizingCompactionBudget(for: rootBackend.transcriptEntries()))
         #expect(result.stagesApplied == [Summarization.stageName])
         _ = try await root.respond(to: "root answer after the compaction")
 
