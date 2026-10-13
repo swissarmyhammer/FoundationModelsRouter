@@ -5,7 +5,7 @@ import FoundationModelsRouter
 
 /// Holds the message API of ``RoutedSession`` to the access level a consumer
 /// outside this package needs (task ^cbhpdjy): ``RoutedSession/send(_:)-(Transcript.Prompt)``,
-/// ``MessageID``, ``RoutedSession/cancel()`` and
+/// ``MailID``, ``RoutedSession/cancel()`` and
 /// ``RoutedSession/cancel(message:)``, with their result types.
 ///
 /// The import is plain, with no `@testable`, so a member or a case that loses
@@ -15,7 +15,7 @@ struct MessageQueuePublicSurfaceTests {
     /// What a consumer's queue view keeps for one message it sent.
     struct SentMessage {
         /// The id ``RoutedSession/send(_:)-(String)`` gave the message.
-        let id: MessageID
+        let id: MailID
     }
 
     /// Sends `text` to `session`, as a consumer's queue view does, and keeps
@@ -91,18 +91,18 @@ struct MessageQueuePublicSurfaceTests {
     }
 
     @Test(
-        "a consumer keys its queue view by MessageID, and drives send, take-back and stop through the public protocol"
+        "a consumer keys its queue view by MailID, and drives send, take-back and stop through the public protocol"
     )
     func aConsumerDrivesTheMessageAPIThroughTheProtocol() {
         // The four calls a queue view makes type-check over the plain import.
         let send: (String, any RoutedSession) async -> SentMessage = Self.send(_:to:)
         let takeBack: (SentMessage, any RoutedSession) async -> String = Self.takeBack(_:from:)
         let stop: (any RoutedSession) async -> String = Self.stop(_:)
-        let sendPrompt: (any RoutedSession) async -> MessageID = { await $0.send(Transcript.Prompt(segments: [])) }
+        let sendPrompt: (any RoutedSession) async -> MailID = { await $0.send(Transcript.Prompt(segments: [])) }
         withExtendedLifetime((send, takeBack, stop, sendPrompt)) {}
 
         // A view keeps a message in a dictionary keyed by its id, and shows it.
-        let identifier: Any.Type = MessageID.self
+        let identifier: Any.Type = MailID.self
         let isAQueueKey = identifier is any QueueKey.Type
         #expect(isAQueueKey)
     }

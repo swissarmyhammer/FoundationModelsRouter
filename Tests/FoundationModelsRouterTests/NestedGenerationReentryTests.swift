@@ -636,10 +636,10 @@ struct NestedGenerationReentryTests {
     }
 
     @Test(
-        "an in-band tool body that sends a message to its own session gets its MessageID at once, and the message is the prompt of the next submission"
+        "an in-band tool body that sends a message to its own session gets its MailID at once, and the message is the prompt of the next submission"
     )
     @MainActor
-    func aToolBodyThatSendsToItsOwnSessionGetsAMessageIDAtOnce() async throws {
+    func aToolBodyThatSendsToItsOwnSessionGetsAMailIDAtOnce() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -650,7 +650,7 @@ struct NestedGenerationReentryTests {
         // The tool sends to the very session whose submission invoked it. A
         // send waits for nothing, so it returns at once, with no refusal.
         target.set(caller)
-        let events = await caller.streamSessionEvents()
+        let events = await caller.streamSessionEvents().events
 
         let outcome = await Self.outcome(
             of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.answerTimeout)
@@ -666,9 +666,9 @@ struct NestedGenerationReentryTests {
         #expect(starts.map(\.cause) == [.message, .message])
         let first = try #require(starts.first)
         let second = try #require(starts.last)
-        #expect(first.messageIds.count == 1)
-        #expect(!first.messageIds.map(\.description).contains(sentID))
-        #expect(second.messageIds.map(\.description) == [sentID])
+        #expect(first.mailIds.count == 1)
+        #expect(!first.mailIds.map(\.description).contains(sentID))
+        #expect(second.mailIds.map(\.description) == [sentID])
         let prompts = Array(await caller.transcript).compactMap { entry -> String? in
             guard case .prompt(let prompt) = entry else { return nil }
             return TranscriptEntryMapper.flattenedText(prompt)

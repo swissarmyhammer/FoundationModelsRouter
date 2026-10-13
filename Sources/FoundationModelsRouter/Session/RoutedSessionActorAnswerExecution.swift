@@ -116,6 +116,11 @@ extension RoutedSessionActor {
     ) async throws -> String {
         let emit = answerEventSink(onEvent)
         answerReducer = SessionAnswerReducer()
+        // The model sees each caller message of the answer from now on. The
+        // delivery comes before each other event of the answer.
+        for mailID in deliveredMailIds {
+            emit(.mailDelivered(mailID))
+        }
         let result: Result<String, any Error>
         do {
             result = .success(
@@ -125,7 +130,12 @@ extension RoutedSessionActor {
         } catch {
             result = .failure(error)
         }
-        emit(answerEndEvent(for: result))
+        // The end of the answer is the terminal event of each message that
+        // the answer delivered, also of a message that joined a continuation,
+        // so its origin holds each of them.
+        OriginContext.$current.withValue(Self.origin(adding: deliveredMailIds)) {
+            emit(answerEndEvent(for: result))
+        }
         return try result.get()
     }
 
@@ -240,7 +250,7 @@ extension RoutedSessionActor {
     /// of the answer, and its recording.
     ///
     /// The attempt opens its submission first
-    /// (``beginSubmission(cause:messageIds:)``). The first attempt of an
+    /// (``beginSubmission(cause:mailIds:)``). The first attempt of an
     /// answer delivers the caller messages of the answer, or mail alone. A
     /// continuation delivers the caller messages that joined it. The
     /// recording of the attempt ends the submission.
@@ -297,18 +307,93 @@ extension RoutedSessionActor {
         reasoningOff: Bool = false,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
-        var pendingEvents = pendingEvents
-        var ownPrompt = ownPrompt
-        if isContinuation {
-            let joining = await takeMessagesJoiningTheAnswer()
-            await notifySubmissionBoundaryTools()
-            pendingEvents += joining.events
-            ownPrompt = ([ownPrompt] + joining.texts).joined(separator: Self.messageSeparator)
-            beginSubmission(cause: .continuation, messageIds: joining.ids)
-        } else {
+        let attempt = SubmissionAttemptState(
+            grammar: grammar, responseTokenCeiling: responseTokenCeiling, onEvent: onEvent,
+            allowOverflowRetry: allowOverflowRetry, rejectedCallRetries: rejectedCallRetries,
+            reasoningOff: reasoningOff)
+        guard isContinuation else {
             let delivery = firstSubmissionDelivery()
-            beginSubmission(cause: delivery.cause, messageIds: delivery.messageIds)
+            beginSubmission(cause: delivery.cause, mailIds: delivery.mailIds)
+            return try await runOpenedSubmission(attempt, pendingEvents: pendingEvents, ownPrompt: ownPrompt, body)
         }
+        let joining = await takeMessagesJoiningTheAnswer()
+        await notifySubmissionBoundaryTools()
+        // A message that joins the answer adds its id to the origin of the
+        // rest of the answer, and the model sees it from this submission on.
+        return try await OriginContext.$current.withValue(Self.origin(adding: joining.mailIds)) {
+            for mailID in joining.mailIds {
+                onEvent?(.mailDelivered(mailID))
+            }
+            beginSubmission(cause: .continuation, mailIds: joining.mailIds)
+            return try await runOpenedSubmission(
+                attempt, pendingEvents: pendingEvents + joining.events,
+                ownPrompt: ([ownPrompt] + joining.texts).joined(separator: Self.messageSeparator), body)
+        }
+    }
+
+    /// The origin of the work that runs now, with the caller messages
+    /// `mailIds` added: the origin of the rest of an answer that these
+    /// messages joined.
+    ///
+    /// - Parameter mailIds: The correlation ids of the joining messages.
+    /// - Returns: ``OriginContext/current`` when `mailIds` is empty, and else
+    ///   ``Origin/mail(_:)`` with the ids of the current origin and `mailIds`.
+    static func origin(adding mailIds: [MailID]) -> Origin {
+        guard !mailIds.isEmpty else { return OriginContext.current }
+        guard case .mail(let ids) = OriginContext.current else { return .mail(Set(mailIds)) }
+        return .mail(ids.union(mailIds))
+    }
+
+    /// The settings of one submission attempt that
+    /// ``runSubmission(grammar:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetries:isContinuation:reasoningOff:_:)``
+    /// gives to ``runOpenedSubmission(_:pendingEvents:ownPrompt:_:)``.
+    private struct SubmissionAttemptState {
+        /// The grammar in force for this answer.
+        let grammar: Grammar?
+
+        /// The token ceiling the body gives the backend, and the ceiling the
+        /// caller named.
+        let responseTokenCeiling: ResponseTokenCeiling
+
+        /// A sink for the ``SessionEvent``s of this answer, or `nil`.
+        let onEvent: ((SessionEvent) -> Void)?
+
+        /// Whether a recoverable context overflow compacts and retries once.
+        let allowOverflowRetry: Bool
+
+        /// How many rejected tool calls this answer has already sent back to
+        /// the model.
+        let rejectedCallRetries: Int
+
+        /// Whether the first pass of the model call runs with the reasoning
+        /// of the model off.
+        let reasoningOff: Bool
+    }
+
+    /// Runs one submission attempt that
+    /// ``runSubmission(grammar:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetries:isContinuation:reasoningOff:_:)``
+    /// opened (``beginSubmission(cause:mailIds:)``): the model call, its
+    /// recording, and the recovery or the continuation after it.
+    ///
+    /// - Parameters:
+    ///   - settings: The settings of the attempt.
+    ///   - pendingEvents: The events this attempt carries in its preamble.
+    ///   - ownPrompt: This attempt's own prompt text.
+    ///   - body: The model work to run.
+    /// - Returns: The response text `body` produced.
+    /// - Throws: Whatever `body` throws, or the retry's own outcome when a retry ran.
+    private func runOpenedSubmission(
+        _ settings: SubmissionAttemptState,
+        pendingEvents: [OperationEvent],
+        ownPrompt: String,
+        _ body: @escaping @Sendable (String) async throws -> String
+    ) async throws -> String {
+        let grammar = settings.grammar
+        let responseTokenCeiling = settings.responseTokenCeiling
+        let onEvent = settings.onEvent
+        let allowOverflowRetry = settings.allowOverflowRetry
+        let rejectedCallRetries = settings.rejectedCallRetries
+        let reasoningOff = settings.reasoningOff
         let composedPrompt = Self.composedPrompt(pendingEvents: pendingEvents, prompt: ownPrompt)
 
         let started = Date()
@@ -674,6 +759,10 @@ extension RoutedSessionActor {
         // ``ModelCallMark``.
         let modelCallMark = ModelCallMark(sessionID: id, submission: target)
         defer { modelCallMark.close() }
+        // The origin of the work that makes this call. The worker task of the
+        // queue inherits no task-local, so the submission and the report of
+        // its start bind it again, and each event of the call keeps it.
+        let origin = OriginContext.current
         // The stall watch (task ^z6xcmnh), opened before the call and closed
         // by its own `defer`. It bounds nothing: the watchdog only reports a
         // ``GenerationStall`` on each interval the call goes without observable
@@ -705,13 +794,14 @@ extension RoutedSessionActor {
                 noOp: ToolCallNoOpCheck { try await self.checkToolCallForNoOp(toolName: $0, arguments: $1) },
                 repetition: ToolCallRepetitionCheck { try await self.checkToolCallForRepetition($0) }),
             context: ambientToolContext,
-            serviceContext: submissionServiceContext)
+            serviceContext: submissionServiceContext,
+            origin: origin)
         let observer = generationPassObserver
         let metrics = sessionMetrics
         let modelCall = Task {
             try await Self.run(
                 submission, on: target, reportingTo: observer, metrics: metrics,
-                onStart: { await self.submissionDidStart() })
+                onStart: { await OriginContext.$current.withValue(origin) { await self.submissionDidStart() } })
         }
         cancellationProbe.bind(to: modelCall)
         inFlightModelCall = modelCall
@@ -747,6 +837,8 @@ extension RoutedSessionActor {
     ///   - context: The ambient ``ToolContext`` of the model call.
     ///   - serviceContext: The tracing context of the submission
     ///     (``submissionServiceContext``), or `nil`.
+    ///   - origin: The origin of the work that makes the call
+    ///     (``OriginContext/current``).
     /// - Returns: The submission.
     private static func submission(
         of body: @escaping @Sendable (String) async throws -> String,
@@ -755,15 +847,18 @@ extension RoutedSessionActor {
         boundary: ToolResultAppendBoundary,
         checks: ModelCallToolChecks,
         context: ToolContext,
-        serviceContext: ServiceContext?
+        serviceContext: ServiceContext?,
+        origin: Origin
     ) -> @Sendable () async throws -> String {
         {
-            try await ServiceContext.$current.withValue(serviceContext) {
-                try await ModelCallMark.$current.withValue(mark) {
-                    try await ToolResultAppendBoundary.$current.withValue(boundary) {
-                        try await checks.bound {
-                            try await ToolContext.$current.withValue(context) {
-                                try await body(composedPrompt)
+            try await OriginContext.$current.withValue(origin) {
+                try await ServiceContext.$current.withValue(serviceContext) {
+                    try await ModelCallMark.$current.withValue(mark) {
+                        try await ToolResultAppendBoundary.$current.withValue(boundary) {
+                            try await checks.bound {
+                                try await ToolContext.$current.withValue(context) {
+                                    try await body(composedPrompt)
+                                }
                             }
                         }
                     }
@@ -830,11 +925,11 @@ extension RoutedSessionActor {
     ///
     /// The mark is necessary. A cancelled caller task sets the mark at once,
     /// in its cancellation handler (``requestCancel(of:in:)``), but the stop
-    /// of the work (``settleCancel(of:_:)``) runs in a task of its own that
+    /// of the work (``settleCancel(of:mailID:_:)``) runs in a task of its own that
     /// must get this actor. The pump can get the actor first, for example
     /// after a failed attempt, and start the overflow retry before
     /// ``cancelRequestedWorkId`` is set. The mark closes that window: an item
-    /// of the work with the mark is the case where ``settleCancel(of:_:)``
+    /// of the work with the mark is the case where ``settleCancel(of:mailID:_:)``
     /// stops this work, so the result is the same, only earlier. The read
     /// holds the lock of the marks for one look, with no suspension point.
     var isWorkCancelled: Bool {

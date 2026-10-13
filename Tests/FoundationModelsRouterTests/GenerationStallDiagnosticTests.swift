@@ -334,7 +334,7 @@ struct GenerationStallDiagnosticTests {
         let (session, backend, dir) = try await Self.makeStallingSession()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let feed = await session.streamSessionEvents()
+        let feed = await session.streamSessionEvents().events
         let answerTask = Task { try await session.respond(to: Self.prompt) }
         let reported = await Self.firstStall(on: feed)
         backend.release.signal()
@@ -354,7 +354,7 @@ struct GenerationStallDiagnosticTests {
         let (session, backend, dir) = try await Self.makeStallingSession()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let feed = await session.streamSessionEvents()
+        let feed = await session.streamSessionEvents().events
         let answerTask = Task { try await session.respond(to: Self.prompt) }
         #expect(await Self.firstStall(on: feed) != nil)
 
@@ -464,7 +464,7 @@ struct GenerationStallDiagnosticTests {
         let (session, backend, dir) = try await Self.makeStallingSession(reportInterval: reportInterval)
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let feed = await session.streamSessionEvents()
+        let feed = await session.streamSessionEvents().events
         let answerTask = Task { try await session.respond(to: Self.prompt) }
         let reported = await Self.firstStall(on: feed)
 
@@ -498,7 +498,7 @@ struct GenerationStallDiagnosticTests {
 
         let logs = try await TelemetryCapture.run(forbidding: []) { context in
             await session.useCaptureLogger(for: context.logger)
-            let feed = await session.streamSessionEvents()
+            let feed = await session.streamSessionEvents().events
             let answerTask = Task { try await session.respond(to: Self.prompt) }
             #expect(await Self.firstStall(on: feed) != nil)
 
@@ -587,7 +587,7 @@ struct GenerationStallDiagnosticTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let actor = try #require(session as? RoutedSessionActor)
 
-        let feed = await session.streamSessionEvents()
+        let feed = await session.streamSessionEvents().events
         let answerTask = Task { try await session.respond(to: Self.prompt) }
         try await backend.suspended.wait()
 

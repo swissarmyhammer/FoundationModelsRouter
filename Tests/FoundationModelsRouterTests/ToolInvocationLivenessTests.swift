@@ -399,7 +399,7 @@ struct ToolInvocationLivenessTests {
     /// - Parameter submission: The submission that starts.
     /// - Returns: The start event.
     private static func submissionStarted(_ submission: SubmissionID) -> SessionEvent {
-        .submissionStarted(SubmissionStart(submissionId: submission, messageIds: [], cause: .message))
+        .submissionStarted(SubmissionStart(submissionId: submission, mailIds: [], cause: .message))
     }
 
     /// A ``SessionEvent/submissionEnded(_:)`` for `submission`, with a small
@@ -530,7 +530,7 @@ struct ToolInvocationLivenessTests {
 
         // Subscribed before the post, so the report cannot be lost by a late
         // subscription.
-        let sessionEvents = await fixture.session.streamSessionEvents()
+        let sessionEvents = await fixture.session.streamSessionEvents().events
 
         // The post awaits the session actor's `deliverLive`, which yields the
         // report to every session-event subscription before it returns. So
@@ -649,7 +649,7 @@ struct ToolInvocationLivenessTests {
 
         // Subscribed before the gate opens, so the run cannot settle before
         // the stream exists.
-        let sessionEvents = await fixture.session.streamSessionEvents()
+        let sessionEvents = await fixture.session.streamSessionEvents().events
 
         // The run posts its close record and its report through awaited actor
         // hops before its work completes, and the mailbox settles the run only

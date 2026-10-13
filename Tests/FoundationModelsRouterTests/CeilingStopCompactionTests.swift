@@ -104,7 +104,7 @@ struct CeilingStopCompactionTests {
         // The first submission delivers the message. The continuation after
         // the compaction delivers no new message.
         #expect(Self.submissionCauses(in: events) == [.message, .continuation])
-        #expect(events.submissionStarts.map(\.messageIds.count) == [1, 0])
+        #expect(events.submissionStarts.map(\.mailIds.count) == [1, 0])
         // The chain has one answer, and it is the last event.
         _ = eventsInsideAnswerFrame(events)
         let answer = try #require(events.answers.first)

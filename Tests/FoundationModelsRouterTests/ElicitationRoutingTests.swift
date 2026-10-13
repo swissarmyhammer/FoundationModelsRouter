@@ -444,7 +444,7 @@ struct ElicitationRoutingTests {
         // request whenever the answer raises it. Each task is cancelled at exit
         // so a failed assertion above its await leaves nothing suspended.
         let watch = Self.ElicitationWatch()
-        let draining = watch.drain(await session.streamSessionEvents())
+        let draining = watch.drain(await session.streamSessionEvents().events)
         defer { draining.cancel() }
         let answer = Task { try await session.respond(to: ScriptedToolFixture.prompt) }
         defer { answer.cancel() }
@@ -477,7 +477,7 @@ struct ElicitationRoutingTests {
         let session = fixture.session
 
         let sessionWatch = Self.ElicitationWatch()
-        let sessionDraining = sessionWatch.drain(await session.streamSessionEvents())
+        let sessionDraining = sessionWatch.drain(await session.streamSessionEvents().events)
         defer { sessionDraining.cancel() }
         let answerWatch = Self.ElicitationWatch()
         let answerDraining = answerWatch.drain(await session.streamEvents(to: ScriptedToolFixture.prompt))
@@ -512,7 +512,7 @@ struct ElicitationRoutingTests {
         // this test does the same before it posts from outside one.
         _ = try await session.respond(to: "first message")
         let watch = Self.ElicitationWatch()
-        let draining = watch.drain(await session.streamSessionEvents())
+        let draining = watch.drain(await session.streamSessionEvents().events)
         defer { draining.cancel() }
 
         let elicitationId = ULID.generate()

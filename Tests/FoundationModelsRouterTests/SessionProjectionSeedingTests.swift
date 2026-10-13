@@ -384,12 +384,12 @@ struct SessionProjectionSeedingTests {
     @MainActor
     func seedReplacesEarlierObservedState() throws {
         let projection = SessionProjection()
-        let message = MessageID.unposted()
+        let message = MailID()
         // One stale submission ends with usage. Its message still waits for
         // an answer, because no answer came. A second submission is still
         // open.
         projection.apply(
-            .submissionStarted(SubmissionStart(submissionId: SubmissionID(1), messageIds: [message], cause: .message)))
+            .submissionStarted(SubmissionStart(submissionId: SubmissionID(1), mailIds: [message], cause: .message)))
         projection.apply(.textDelta("stale live text"))
         projection.apply(
             .submissionEnded(
@@ -397,7 +397,7 @@ struct SessionProjectionSeedingTests {
         projection.apply(
             .submissionStarted(
                 SubmissionStart(
-                    submissionId: SubmissionID(Self.openSubmissionNumber), messageIds: [], cause: .continuation)))
+                    submissionId: SubmissionID(Self.openSubmissionNumber), mailIds: [], cause: .continuation)))
         // The stale state is really there: the reset below is not a reset of
         // an empty projection.
         #expect(projection.tokensIn == Self.staleUsage.tokensIn)

@@ -416,7 +416,7 @@ struct HumanWaitGateTests {
     /// - Parameter session: The session whose submission is to wait.
     /// - Returns: The run that ends on the report.
     private static func submissionQueued(on session: any RoutedSession) async -> ObservedRun<Void> {
-        let events = await session.streamSessionEvents()
+        let events = await session.streamSessionEvents().events
         return ObservedRun {
             for await event in events {
                 if case .submissionQueued = event { return }

@@ -158,7 +158,7 @@ struct NestedRunTerminalForwardingTests {
         _ = try await session.respond(to: attachingPrompt)
 
         let settledRuns = SettledRunLog()
-        let stream = await session.streamSessionEvents()
+        let stream = await session.streamSessionEvents().events
         let collecting = Task {
             for await event in stream {
                 if case .runSettled(let terminal) = event {

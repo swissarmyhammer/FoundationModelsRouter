@@ -40,6 +40,9 @@ struct EnterRecordTests {
     /// The names of the spans that write an "enter" record.
     private static let enteredSpanNames: Set<String> = [
         RouterTelemetry.SpanName.submission, RouterTelemetry.SpanName.resolve, RouterTelemetry.SpanName.load,
+        // The Extras model pool also opens one model-load span for each load,
+        // and that span writes its own "enter" record.
+        ExtrasTelemetryNames.modelLoadSpan,
     ]
 
     /// How many slots one profile resolves, and thus how many models a fresh

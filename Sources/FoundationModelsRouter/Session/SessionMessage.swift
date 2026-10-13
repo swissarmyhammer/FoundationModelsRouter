@@ -74,6 +74,10 @@ struct SessionMessage: Sendable {
     /// of the caller.
     let serviceContext: ServiceContext?
 
+    /// The correlation id of the message. Each output event of the answer
+    /// that carries the message has an origin that holds it.
+    var mailID = MailID()
+
     /// The options that the submission of this message fixes at its start.
     var options: SubmissionOptions {
         SubmissionOptions(isStream: reader.isStream, requestedMaxTokens: requestedMaxTokens)

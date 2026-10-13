@@ -72,7 +72,7 @@ extension RoutedSessionActor {
     }
 
     /// Posts `message` to ``SessionOutbox/messages`` and waits for its
-    /// answer (``awaitMailboxAnswer(id:answer:in:)``). A cancel of the caller
+    /// answer (``awaitMailboxAnswer(id:mailID:answer:in:)``). A cancel of the caller
     /// cancels the message at once: the mailbox withdraws a message that
     /// waits, and a message that the running answer carries gets a mark, and
     /// the session stops that answer. A caller that is cancelled before this
@@ -84,7 +84,7 @@ extension RoutedSessionActor {
     /// - Throws: What its answer throws, or `CancellationError`.
     private func enqueueAndAwaitAnswer(of message: SessionMessage) async throws -> String {
         let (id, answer) = await enqueue(message)
-        return try await awaitMailboxAnswer(id: id, answer: answer, in: outbox.messages)
+        return try await awaitMailboxAnswer(id: id, mailID: message.mailID, answer: answer, in: outbox.messages)
     }
 
     /// Refuses a wait for an answer of this session that could never end
@@ -293,10 +293,10 @@ extension RoutedSessionActor {
     /// See ``RoutedSession/streamSessionEvents()``. Registers a continuation in
     /// ``sessionEventSubscriptions`` with unbounded buffering. The termination
     /// handler captures `self` weakly and drops the subscription.
-    func streamSessionEvents() -> AsyncStream<SessionEvent> {
+    func streamSessionEvents() -> AsyncStream<SessionOutput> {
         let subscriptionId = ULID.generate()
         let (stream, continuation) = AsyncStream.makeStream(
-            of: SessionEvent.self, bufferingPolicy: .unbounded)
+            of: SessionOutput.self, bufferingPolicy: .unbounded)
         continuation.onTermination = { [weak self] _ in
             guard let self else { return }
             Task { await self.dropSessionEventSubscription(subscriptionId) }
@@ -313,12 +313,28 @@ extension RoutedSessionActor {
     }
 
     /// Fans one session-scoped event out to every live
-    /// ``streamSessionEvents()`` subscription.
+    /// ``streamSessionEvents()`` subscription, with the origin of the work
+    /// that sends it (``OriginContext/current``).
     ///
     /// - Parameter event: The event to deliver.
     func emitSessionScopedEvent(_ event: SessionEvent) {
+        let output = SessionOutput(origin: OriginContext.current, event: event)
         for continuation in sessionEventSubscriptions.values {
-            continuation.yield(event)
+            continuation.yield(output)
+        }
+    }
+
+    /// Sends the terminal event ``SessionEvent/cancelled(_:)`` of each
+    /// caller message that left the queue before the pump took it. The
+    /// origin of each event is the message itself.
+    ///
+    /// - Parameter mailIDs: The correlation ids of the messages, in queue
+    ///   order.
+    func emitCancelled(_ mailIDs: [MailID]) {
+        for mailID in mailIDs {
+            OriginContext.$current.withValue(.mail([mailID])) {
+                emitSessionScopedEvent(.cancelled(mailID))
+            }
         }
     }
 

@@ -89,9 +89,9 @@ struct SubmissionAnswerEventTests {
         #expect(ended)
         let events = await log.events
         #expect(events.eventsInsideEachAnswerFrame().count == Self.twoAnswers)
-        #expect(events.answers.map(\.messageIds) == [[first], [second, third]])
+        #expect(events.answers.map(\.mailIds) == [[first], [second, third]])
         #expect(events.answers.map(\.reply) == [Backend.answer(ofCall: 1), Backend.answer(ofCall: 2)])
-        #expect(events.submissionStarts.map(\.messageIds) == [[first], [second, third]])
+        #expect(events.submissionStarts.map(\.mailIds) == [[first], [second, third]])
         #expect(events.submissionStarts.map(\.cause) == [.message, .message])
         #expect(events.answerFailures.isEmpty)
         withExtendedLifetime(profile) {}
@@ -118,9 +118,9 @@ struct SubmissionAnswerEventTests {
         #expect(ended)
         let events = await log.events
         _ = eventsInsideAnswerFrame(events)
-        #expect(events.answers.map(\.messageIds) == [[first, second]])
+        #expect(events.answers.map(\.mailIds) == [[first, second]])
         let starts = events.submissionStarts
-        #expect(starts.map(\.messageIds) == [[first], [second]])
+        #expect(starts.map(\.mailIds) == [[first], [second]])
         #expect(starts.map(\.cause) == [.message, .continuation])
         #expect(events.submissionEnds.map(\.submissionId) == starts.map(\.submissionId))
         withExtendedLifetime(profile) {}
@@ -145,7 +145,7 @@ struct SubmissionAnswerEventTests {
         #expect(ended)
         let events = await log.events
         _ = eventsInsideAnswerFrame(events)
-        #expect(events.answerFailures == [AnswerFailure(messageIds: [id], reason: .cancelled)])
+        #expect(events.answerFailures == [AnswerFailure(mailIds: [id], reason: .cancelled)])
         #expect(events.answers.isEmpty)
         #expect(events.submissionEnds.count == 1)
         withExtendedLifetime(profile) {}
@@ -167,7 +167,7 @@ struct SubmissionAnswerEventTests {
         let events = await log.events
         _ = eventsInsideAnswerFrame(events)
         let reason = AnswerFailure.Reason.error(String(describing: SessionMessagePumpTests.PumpProbeError.refused))
-        #expect(events.answerFailures == [AnswerFailure(messageIds: [id], reason: reason)])
+        #expect(events.answerFailures == [AnswerFailure(mailIds: [id], reason: reason)])
         #expect(events.answers.isEmpty)
         withExtendedLifetime(profile) {}
     }
@@ -198,7 +198,7 @@ struct SubmissionAnswerEventTests {
 
     @Test("a message stream that ends with answerFailed and no error throws that failure to the reader")
     func aStreamThatEndsWithAnAnswerFailureThrowsIt() async throws {
-        let failure = AnswerFailure(messageIds: [], reason: .error(Self.failureText))
+        let failure = AnswerFailure(mailIds: [], reason: .error(Self.failureText))
         let events = AsyncThrowingStream<SessionEvent, Error> { continuation in
             continuation.yield(.answerFailed(failure))
             continuation.finish()

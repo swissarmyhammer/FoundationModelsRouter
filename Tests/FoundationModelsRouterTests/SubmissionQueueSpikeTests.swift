@@ -180,7 +180,7 @@ struct SubmissionQueueSpikeTests {
         // The mail: the terminal of the background run, whose detail is the
         // answer of the child. The subscription opens before the first
         // submission, so it cannot miss the terminal.
-        let sessionEvents = await parent.streamSessionEvents()
+        let sessionEvents = await parent.streamSessionEvents().events
         let runSettled = AsyncSemaphore(value: 0)
         let settledRun = Task { () -> OperationEvent? in
             defer { runSettled.signal() }

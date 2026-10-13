@@ -6,12 +6,12 @@ import FoundationModelsExtras
 /// Extras `Mailbox`, and only the mailbox makes an id. This alias keeps the
 /// router name, so a router user needs no `import FoundationModelsExtras`.
 ///
-/// ``RoutedSession/send(_:)-(Transcript.Prompt)`` returns one, and
+/// The mailbox of the session names a message by it inside the router. The
+/// public API names a message by its ``MailID``:
+/// ``RoutedSession/send(_:)-(Transcript.Prompt)`` returns it, and
 /// ``RoutedSession/cancel(message:)``, ``RoutedSession/replace(id:prompt:)``,
-/// ``RoutedSession/pendingMessages()`` and ``RoutedSession/messageQueueDepth()``
-/// name a message by it. The id names the message for as long as the session
-/// owes it an answer. Comparing two of these, and printing one, is the whole
-/// of what a client does with it.
+/// ``RoutedSession/pendingMessages()`` and ``RoutedSession/mailQueueDepth()``
+/// take or give it.
 public typealias MessageID = FoundationModelsExtras.MessageID
 
 /// The outcome of ``RoutedSession/replace(id:prompt:)``:
@@ -21,11 +21,11 @@ public typealias MessageID = FoundationModelsExtras.MessageID
 /// `import FoundationModelsExtras`.
 public typealias MessageQueueMutationResult = FoundationModelsExtras.MessageQueueMutationResult
 
-/// How much caller-message work a session carries, as
-/// ``RoutedSession/messageQueueDepth()`` reports it: the count of the waiting
-/// caller messages, and the ids of the messages the running answer carries.
+/// How much caller-message work an Extras `Mailbox` carries: the count of the
+/// waiting messages, and the ids of the messages of the running batch.
 /// `FoundationModelsExtras` owns the type. This alias keeps the router name,
-/// so a router user needs no `import FoundationModelsExtras`.
+/// so a router user needs no `import FoundationModelsExtras`. A session
+/// reports its depth as ``MailQueueDepth`` (``RoutedSession/mailQueueDepth()``).
 public typealias MessageQueueDepth = FoundationModelsExtras.MessageQueueDepth
 
 /// The outcome of ``RoutedSession/cancel(message:)``. `FoundationModelsExtras`

@@ -348,7 +348,7 @@ struct SessionMessagePumpTests {
 
         let id = await session.send(Self.firstPrompt)
         try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
-        #expect(await session.messageQueueDepth().running == [id])
+        #expect(await session.mailQueueDepth().running == [id])
 
         #expect(await session.cancel(message: id) == .cancelledInSubmission)
 
@@ -519,7 +519,7 @@ struct SessionMessagePumpTests {
         let retryPrompt = try #require(backend.prompts.last)
         #expect(retryPrompt.contains(RoutedSessionActor.settledRunDeliveryPrompt))
         #expect(retryPrompt.hasSuffix(RoutedSessionActor.messageSeparator + Self.secondPrompt))
-        #expect(await session.messageQueueDepth() == MessageQueueDepth(waiting: 0, running: []))
+        #expect(await session.mailQueueDepth() == MailQueueDepth(waiting: 0, depthByKind: [:], running: []))
         withExtendedLifetime(profile) {}
     }
 

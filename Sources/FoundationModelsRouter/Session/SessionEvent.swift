@@ -279,6 +279,24 @@ public enum SessionEvent: Sendable, Equatable {
     /// answer runs when the session holds the mail. The session sends one for
     /// each hold.
     case mailDeliveryPaused(MailDeliveryPause)
+
+    /// The pump took the mail with this id for a submission. From now on the
+    /// model sees the mail. The event comes before the events of the
+    /// submission that carries the mail, and its origin is the answer that
+    /// delivers it. It is not a terminal event: ``answered(_:)`` or
+    /// ``answerFailed(_:)`` of the same answer follows.
+    case mailDelivered(MailID)
+
+    /// The mail with this id left the queue before the pump took it: a
+    /// cancel removed it, or a drain or a close removed the queued mail. The
+    /// model never sees it. This is the terminal event of the mail: no other
+    /// event of the mail follows.
+    case cancelled(MailID)
+
+    /// The mail with this id was queued or delivered when the process
+    /// stopped, and its answer never ended. The session sends it at restore.
+    /// This is the terminal event of the mail.
+    case lost(MailID)
 }
 
 /// The kind of SDK transcript entry a ``SessionEvent/entryRecorded(id:kind:)`` names.

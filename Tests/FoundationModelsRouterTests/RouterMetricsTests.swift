@@ -211,7 +211,7 @@ struct RouterMetricsTests {
             await fixture.latch.open()
             _ = try await holding.value
             let drained = await BoundedWait.conditionReached("the answer of the waiting messages") {
-                await session.messageQueueDepth().total == 0
+                await session.mailQueueDepth().total == 0
             }
             #expect(holdingInside)
             #expect(drained)

@@ -59,10 +59,9 @@ public struct SubmissionStart: Sendable, Equatable {
     /// The submission that started.
     public let submissionId: SubmissionID
 
-    /// The caller messages this submission delivers to the model, in the
-    /// order they arrived. Empty for a submission that delivers no caller
-    /// message.
-    public let messageIds: [MessageID]
+    /// The ids of the mail this submission delivers to the model, in take
+    /// order. Empty for a submission that delivers no mail.
+    public let mailIds: [MailID]
 
     /// Why the session made this submission.
     public let cause: Cause
@@ -75,11 +74,11 @@ public struct SubmissionStart: Sendable, Equatable {
     ///
     /// - Parameters:
     ///   - submissionId: The submission that started.
-    ///   - messageIds: The caller messages the submission delivers.
+    ///   - mailIds: The ids of the mail the submission delivers.
     ///   - cause: Why the session made the submission.
-    public init(submissionId: SubmissionID, messageIds: [MessageID], cause: Cause) {
+    public init(submissionId: SubmissionID, mailIds: [MailID], cause: Cause) {
         self.submissionId = submissionId
-        self.messageIds = messageIds
+        self.mailIds = mailIds
         self.cause = cause
     }
 }

@@ -11,12 +11,13 @@ extension RoutedSessionActor {
     /// message and wakes the pump. It waits for no submission and no answer.
     ///
     /// - Parameter prompt: The prompt of the message.
-    /// - Returns: The id of the message.
+    /// - Returns: The correlation id of the message.
     @discardableResult
-    func send(_ prompt: Transcript.Prompt) async -> MessageID {
+    func send(_ prompt: Transcript.Prompt) async -> MailID {
         let message = SessionMessage(
             prompt: prompt, requestedMaxTokens: nil, reader: .reply, serviceContext: ServiceContext.current)
-        return await enqueue(message).id
+        await enqueue(message)
+        return message.mailID
     }
 
     /// Posts `message` behind every caller message that waits, records the
@@ -28,7 +29,8 @@ extension RoutedSessionActor {
     /// call finds its message still waiting when the handler runs.
     ///
     /// - Parameter message: The message to post.
-    /// - Returns: The id of the message, and its answer.
+    /// - Returns: The id that the mailbox gave the message, and its answer.
+    @discardableResult
     func enqueue(_ message: SessionMessage) async -> (id: MessageID, answer: MailboxAnswer<String>) {
         await attachOutboxJournalIfNeeded()
         let posted = outbox.messages.post(message)
@@ -44,30 +46,44 @@ extension RoutedSessionActor {
     /// only mail starts (``PumpWork/mailDeliveryLetter``) waits only between
     /// its post and its take, with no suspension point between the two on
     /// this actor, so the snapshot never shows it.
-    func pendingMessages() async -> [(id: MessageID, prompt: Transcript.Prompt)] {
-        outbox.messages.pending.map { (id: $0.id, prompt: $0.message.prompt) }
+    func pendingMessages() async -> [(id: MailID, prompt: Transcript.Prompt)] {
+        outbox.messages.pending.map { (id: $0.message.mailID, prompt: $0.message.prompt) }
     }
 
-    /// Replaces the prompt of a caller message that waits.
+    /// Replaces the prompt of a caller message that waits. The message is
+    /// found by its correlation id, and replaced in the mailbox by the id
+    /// that the mailbox gave it.
     ///
     /// - Parameters:
-    ///   - id: The id of the message.
+    ///   - id: The correlation id of the message.
     ///   - prompt: The new prompt.
     /// - Returns: Whether the message waited and was changed.
     @discardableResult
-    nonisolated func replace(id: MessageID, prompt: Transcript.Prompt) async -> MessageQueueMutationResult {
-        outbox.replace(id: id, prompt: prompt)
+    nonisolated func replace(id: MailID, prompt: Transcript.Prompt) async -> MessageQueueMutationResult {
+        guard let letter = outbox.messages.pending.first(where: { $0.message.mailID == id }) else {
+            return .alreadySent
+        }
+        return outbox.replace(id: letter.id, prompt: prompt)
     }
 
-    /// The count of the waiting caller messages, and the ids of the messages
-    /// of the running answer. The delivery letter of an answer that only mail
-    /// starts (``PumpWork/mailDeliveryLetter``) is no caller message, so the
-    /// depth leaves it out. It never waits when this actor reads the depth
-    /// (``pendingMessages()``).
-    func messageQueueDepth() async -> MessageQueueDepth {
-        let depth = outbox.messages.depth
-        let deliveryLetter = pumpWork?.mailDeliveryLetter
-        return MessageQueueDepth(waiting: depth.waiting, running: depth.running.filter { $0 != deliveryLetter })
+    /// The mail that waits, by kind, and the correlation ids of the caller
+    /// messages of the running answer (``deliveredMailIds``). The waiting
+    /// caller messages are ``MailKind/userMessage``, and the run events that
+    /// wait in ``outbox`` are ``MailKind/runEvent``.
+    ///
+    /// The delivery letter of an answer that only mail starts
+    /// (``PumpWork/mailDeliveryLetter``) is no caller message. It never waits
+    /// when this actor reads the mailbox (``pendingMessages()``), and the
+    /// running answer carries no letter for it, so the depth never counts
+    /// it. The read of the mailbox comes after the one suspension point, so
+    /// both of its counts come from one moment on this actor.
+    func mailQueueDepth() async -> MailQueueDepth {
+        let runEvents = await outbox.pending().events.count
+        let userMessages = outbox.messages.depth.waiting
+        let counts: [MailKind: Int] = [.userMessage: userMessages, .runEvent: runEvents]
+        return MailQueueDepth(
+            waiting: userMessages + runEvents, depthByKind: counts.filter { $0.value > 0 },
+            running: deliveredMailIds)
     }
 
     /// Delivers the user's answer to a pending elicitation on this session.

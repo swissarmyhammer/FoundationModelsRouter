@@ -639,7 +639,7 @@ struct DiscoveryPrimingTests {
         )
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
 
-        let sessionEvents = await fixture.session.streamSessionEvents()
+        let sessionEvents = await fixture.session.streamSessionEvents().events
         let response = try await fixture.session.respond(to: Self.prompt)
 
         // The answer ran anyway, unseeded.
@@ -665,7 +665,7 @@ struct DiscoveryPrimingTests {
         )
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
 
-        let sessionEvents = await fixture.session.streamSessionEvents()
+        let sessionEvents = await fixture.session.streamSessionEvents().events
         await fixture.session.send(Self.prompt)
 
         // The submission ran anyway, unseeded.

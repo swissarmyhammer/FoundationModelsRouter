@@ -253,7 +253,7 @@ struct SessionAnswerTests {
 
     /// The start event of the first submission of a synthetic chain.
     private static let firstSubmissionStarted = SessionEvent.submissionStarted(
-        SubmissionStart(submissionId: SubmissionID(1), messageIds: [], cause: .message))
+        SubmissionStart(submissionId: SubmissionID(1), mailIds: [], cause: .message))
 
     @Test("the reducer sums the usage of the chain, keeps every compaction, and replaces an open invocation record with its close")
     func reducerSumsUsageAndKeepsCompactionsAndClosedInvocations() {
@@ -284,7 +284,7 @@ struct SessionAnswerTests {
                     submissionId: SubmissionID(Self.thirdSubmissionNumber), usage: last,
                     finishReason: last.finishReason)))
 
-        let answer = reducer.answer(reply: Self.expectedAnswer, messageIds: [])
+        let answer = reducer.answer(reply: Self.expectedAnswer, mailIds: [])
         // The token counts are the sums. The fill and the finish reason come
         // from the last submission that had usage.
         #expect(
@@ -294,7 +294,7 @@ struct SessionAnswerTests {
                     contextFill: last.contextFill, finishReason: last.finishReason))
         #expect(answer.contextFill == last.contextFill)
         #expect(answer.reply == Self.expectedAnswer)
-        #expect(answer.messageIds.isEmpty)
+        #expect(answer.mailIds.isEmpty)
         #expect(answer.compactions == [compacted])
         #expect(answer.toolInvocations.count == 1)
         #expect(answer.toolInvocations.first?.closedAt != nil)
@@ -308,7 +308,7 @@ struct SessionAnswerTests {
         reducer.apply(
             .submissionEnded(SubmissionEnd(submissionId: SubmissionID(1), usage: nil, finishReason: .completed)))
 
-        let answer = reducer.answer(reply: Self.expectedAnswer, messageIds: [])
+        let answer = reducer.answer(reply: Self.expectedAnswer, mailIds: [])
 
         #expect(answer.usage == nil)
         #expect(answer.contextFill == nil)
@@ -324,7 +324,7 @@ struct SessionAnswerTests {
         for event in events {
             reducer.apply(event)
         }
-        return reducer.answer(reply: "", messageIds: [])
+        return reducer.answer(reply: "", mailIds: [])
     }
 
     /// The open record of the one call the live-driver-event tests reduce.

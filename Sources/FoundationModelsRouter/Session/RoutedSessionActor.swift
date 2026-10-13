@@ -445,7 +445,7 @@ actor RoutedSessionActor: RoutedSession {
 
     /// The number of the last submission this session opened. The next
     /// ``SubmissionID`` takes the next number. See
-    /// ``beginSubmission(cause:messageIds:)``.
+    /// ``beginSubmission(cause:mailIds:)``.
     var lastSubmissionNumber: UInt64 = 0
 
     /// The submission of the running answer that is open now, or `nil`
@@ -654,7 +654,7 @@ actor RoutedSessionActor: RoutedSession {
     /// The live ``streamSessionEvents()`` subscriptions, keyed by subscription
     /// id. ``emitSessionScopedEvent(_:)`` fans each session-scoped event out
     /// to them.
-    var sessionEventSubscriptions: [ULID: AsyncStream<SessionEvent>.Continuation] = [:]
+    var sessionEventSubscriptions: [ULID: AsyncStream<SessionOutput>.Continuation] = [:]
 
     /// Creates a session and writes its `session.json` when the session is new.
     /// A failed sidecar write is logged and dropped.

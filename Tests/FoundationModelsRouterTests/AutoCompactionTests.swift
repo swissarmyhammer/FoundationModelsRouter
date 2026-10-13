@@ -584,8 +584,11 @@ struct AutoCompactionTests {
         #expect(events.submissionStarts.map(\.submissionId) == [retry.submissionId])
         #expect(events.submissionStarts.map(\.cause) == [.continuation])
 
-        // The end of the refused submission is the first event.
-        #expect(events.first == .submissionEnded(blocked))
+        // The delivery of the one message opens the answer, and the end of
+        // the refused submission is the first event after it.
+        let afterDelivery = events.drop { if case .mailDelivered = $0 { return true } else { return false } }
+        #expect(events.count - afterDelivery.count == 1)
+        #expect(afterDelivery.first == .submissionEnded(blocked))
         // The refused submission did not touch the backend: a true zero
         // delta, and contextFill stays at its value before the message (it
         // does not go back to zero).

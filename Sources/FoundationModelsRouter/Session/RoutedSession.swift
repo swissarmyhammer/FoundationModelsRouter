@@ -206,8 +206,11 @@ public protocol RoutedSession: Actor {
     /// Streams a rich event sequence for a prompt as it is produced, recording
     /// the call exactly like ``streamResponse(to:maxTokens:)``.
     ///
-    /// Order within one answer: first the ``SessionEvent/compaction(_:)`` of
-    /// a proactive compaction. Then, for each submission of the chain:
+    /// Order within one answer: first one ``SessionEvent/mailDelivered(_:)``
+    /// for each caller message that the answer delivers, then the
+    /// ``SessionEvent/compaction(_:)`` of a proactive compaction. Then, for
+    /// each submission of the chain: one ``SessionEvent/mailDelivered(_:)``
+    /// for each caller message that joins a continuation,
     /// ``SessionEvent/submissionQueued(_:)`` (only when the submission must
     /// wait for the worker), ``SessionEvent/submissionStarted(_:)``, the
     /// ``SessionEvent/textDelta(_:)`` fragments, then, after the diff of the
@@ -264,10 +267,21 @@ public protocol RoutedSession: Actor {
     /// ``SessionEvent/elicitationRequested(_:)`` travel here also between
     /// submissions.
     ///
+    /// Each element is a ``SessionOutput``: the event, and the
+    /// ``SessionOutput/origin`` of the work that sent it. The events of an
+    /// answer have the origin ``Origin/mail(_:)`` with the ids of the caller
+    /// messages of the answer (an empty set for an answer that only mail
+    /// starts). A message that joins a continuation adds its id to the origin
+    /// of the later events of the answer. The events of a compaction have the
+    /// origin ``Origin/signal(_:)``. The ``SessionEvent/cancelled(_:)`` of a
+    /// message has the origin of that message alone. Other events, for example
+    /// the events of a run that settles between answers, have the origin of
+    /// the work that started them, or ``Origin/system``.
+    ///
     /// Each call vends an independent subscription, buffered without bound.
     /// Ending iteration drops the subscription; ``close()`` finishes every
     /// outstanding one.
-    func streamSessionEvents() -> AsyncStream<SessionEvent>
+    func streamSessionEvents() -> AsyncStream<SessionOutput>
 
     /// Stops the work of this session (`generation-queue.md`, section 5.6).
     /// Best-effort, and safe at any time and any number of times.
@@ -291,12 +305,13 @@ public protocol RoutedSession: Actor {
     /// cancelled on the task that runs it.
     ///
     /// Every caller message that waits for the pump is withdrawn: its caller
-    /// gets `CancellationError`, and it never reaches the model. The mail is
-    /// not withdrawn: it stays in the outbox for a later submission, because a
-    /// run terminal must not be lost. It waits there for new mail or a new
-    /// message, so the cancel does not start a submission of its own. A
-    /// compaction's summarizer call is cancelled where it stands. A background
-    /// run keeps running.
+    /// gets `CancellationError`, it never reaches the model, and
+    /// ``streamSessionEvents()`` gets its ``SessionEvent/cancelled(_:)``. The
+    /// mail is not withdrawn: it stays in the outbox for a later submission,
+    /// because a run terminal must not be lost. It waits there for new mail
+    /// or a new message, so the cancel does not start a submission of its
+    /// own. A compaction's summarizer call is cancelled where it stands. A
+    /// background run keeps running.
     ///
     /// - Returns: ``CancellationResult/requested`` when the pump ran work or
     ///   a caller message waited, and ``CancellationResult/nothingToCancel``
@@ -306,12 +321,13 @@ public protocol RoutedSession: Actor {
 
     /// Takes back one message (`generation-queue.md`, section 5.6).
     ///
-    /// A message that waits is withdrawn: it never reaches a prompt, and a
+    /// A message that waits is withdrawn: it never reaches a prompt, a
     /// caller that waits for its answer (``respond(to:maxTokens:)``, a
-    /// stream) gets `CancellationError`. A message that a submission carries
-    /// cancels that submission, as ``cancel()`` does; the other messages of
-    /// that submission share its answer, so they end with it. Safe at any
-    /// time and any number of times.
+    /// stream) gets `CancellationError`, and ``streamSessionEvents()`` gets
+    /// its ``SessionEvent/cancelled(_:)``. A message that a submission
+    /// carries cancels that submission, as ``cancel()`` does; the other
+    /// messages of that submission share its answer, so they end with it.
+    /// Safe at any time and any number of times.
     ///
     /// - Parameter message: The id ``send(_:)-(Transcript.Prompt)`` returned.
     /// - Returns: ``MessageCancellationResult/withdrawn``,
@@ -319,7 +335,7 @@ public protocol RoutedSession: Actor {
     ///   ``MessageCancellationResult/alreadyAnswered`` when the message has no
     ///   open answer.
     @discardableResult
-    func cancel(message: MessageID) async -> MessageCancellationResult
+    func cancel(message: MailID) async -> MessageCancellationResult
 
     /// Forks a child session over the same resident model.
     ///
@@ -463,16 +479,17 @@ public protocol RoutedSession: Actor {
     /// `message`.
     ///
     /// - Parameter prompt: The prompt of the message.
-    /// - Returns: The stable id of the message, usable with
+    /// - Returns: The correlation id of the message, usable with
     ///   ``cancel(message:)``, ``replace(id:prompt:)``, ``pendingMessages()``
-    ///   and ``messageQueueDepth()``.
+    ///   and ``mailQueueDepth()``. The ``SessionOutput/origin`` of each event
+    ///   of its answer holds it.
     @discardableResult
-    func send(_ prompt: Transcript.Prompt) async -> MessageID
+    func send(_ prompt: Transcript.Prompt) async -> MailID
 
     /// A snapshot of every caller message that waits for a submission, in the
     /// order the messages arrived. A message that a submission took is not in
     /// it.
-    func pendingMessages() async -> [(id: MessageID, prompt: Transcript.Prompt)]
+    func pendingMessages() async -> [(id: MailID, prompt: Transcript.Prompt)]
 
     /// Replaces the prompt of a message that waits, in place. The message
     /// keeps its place in the queue.
@@ -483,11 +500,11 @@ public protocol RoutedSession: Actor {
     /// - Returns: ``MessageQueueMutationResult/applied`` when the message
     ///   waited, and ``MessageQueueMutationResult/alreadySent`` otherwise.
     @discardableResult
-    func replace(id: MessageID, prompt: Transcript.Prompt) async -> MessageQueueMutationResult
+    func replace(id: MailID, prompt: Transcript.Prompt) async -> MessageQueueMutationResult
 
-    /// How much caller-message work this session carries: the messages that
-    /// wait, and the messages of the running answer.
-    func messageQueueDepth() async -> MessageQueueDepth
+    /// How much mail work this session carries: the mail that waits, by
+    /// kind, and the ids of the caller messages of the running answer.
+    func mailQueueDepth() async -> MailQueueDepth
 
     /// Delivers the user's answer to a pending elicitation raised by a run on
     /// this session.
@@ -546,9 +563,9 @@ extension RoutedSession {
     /// message as one `.text` segment.
     ///
     /// - Parameter prompt: The prompt text of the message.
-    /// - Returns: The stable id of the message.
+    /// - Returns: The correlation id of the message.
     @discardableResult
-    public func send(_ prompt: String) async -> MessageID {
+    public func send(_ prompt: String) async -> MailID {
         await send(.plainText(prompt))
     }
 }

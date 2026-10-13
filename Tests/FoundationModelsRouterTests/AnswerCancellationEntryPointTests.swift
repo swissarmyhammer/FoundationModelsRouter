@@ -70,7 +70,7 @@ extension AnswerCancellationTests {
         #expect(deliveredEvents.answerFailures.count == 1)
         #expect(deliveredEvents.answers.isEmpty)
         #expect(failure.reason == .cancelled)
-        #expect(failure.messageIds.count == 1)
+        #expect(failure.mailIds.count == 1)
         #expect(deliveredEvents.last == .answerFailed(failure))
     }
 

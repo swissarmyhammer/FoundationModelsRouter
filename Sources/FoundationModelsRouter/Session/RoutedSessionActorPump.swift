@@ -40,9 +40,17 @@ struct PumpWork {
     /// The letter that the pump posted to ``SessionOutbox/messages`` to start
     /// the batch of an answer that only mail starts, or `nil` when a caller
     /// message started the batch. The letter is no caller message: the answer
-    /// carries no letter for it, and ``RoutedSessionActor/messageQueueDepth()``
+    /// carries no letter for it, and ``RoutedSessionActor/mailQueueDepth()``
     /// leaves it out.
     var mailDeliveryLetter: MessageID?
+
+    /// The caller messages that the pump took for the next answer, as the
+    /// mailbox gave them. The pump sets them when it takes the batch, before
+    /// its first suspension point, and the answer holds the live ones later
+    /// (``Kind/answer(options:letters:)``). Between the two,
+    /// ``RoutedSessionActor/cancel(message:)`` finds a message here by its
+    /// correlation id.
+    var takenLetters: [SessionLetter] = []
 }
 
 /// A compaction that a caller asked for, which waits for the pump
@@ -244,11 +252,14 @@ extension RoutedSessionActor: SessionMailObserver {
     private func answerCallerBatch(runTokens: BackgroundRunTokens, workId: UInt64) async -> Bool {
         let answered = await answerNextBatch(of: outbox.messages, joining: SessionMessage.sharesSubmission) {
             letters in
+            // Before the first suspension point: ``cancel(message:)`` finds
+            // a taken message here until the answer holds it.
+            pumpWork?.takenLetters = letters
             let mail = await outbox.takeEvents()
             // No suspension point between the read of the cancel marks
             // and the work that holds the live letters: ``cancel(message:)``
             // relies on it.
-            let live = liveLetters(letters, of: outbox.messages)
+            let live = liveMessageLetters(letters)
             return try await runAnswer(
                 of: SubmissionBatch(letters: live, events: mail), runTokens: runTokens, workId: workId
             ).get()
@@ -334,13 +345,17 @@ extension RoutedSessionActor: SessionMailObserver {
         // it adds no suspension point here.
         recordMessageQueueDepth()
         startAnswerLimits()
-        let result: Result<String, any Error>
-        do {
-            result = .success(
-                try await runFirstSubmission(
-                    carrying: batch.letters, options: options, mail: batch.events.map(\.event)))
-        } catch {
-            result = .failure(error)
+        // Each event of the answer has the origin of its batch. The pump is a
+        // detached task, so no origin of a caller reaches it.
+        let origin = Origin.mail(Set(batch.letters.map(\.message.mailID)))
+        let result: Result<String, any Error> = await OriginContext.$current.withValue(origin) {
+            do {
+                return .success(
+                    try await runFirstSubmission(
+                        carrying: batch.letters, options: options, mail: batch.events.map(\.event)))
+            } catch {
+                return .failure(error)
+            }
         }
         countAnswer(delivering: deliveredMessages ?? batch.letters)
         endPumpWork()
@@ -428,19 +443,20 @@ extension RoutedSessionActor: SessionMailObserver {
     /// admit waits for the next answer.
     ///
     /// - Returns: The mail events, the texts of the joining messages, and the
-    ///   ids of the joining messages, in the same order as the texts.
-    func takeMessagesJoiningTheAnswer() async -> (events: [OperationEvent], texts: [String], ids: [MessageID]) {
+    ///   correlation ids of the joining messages, in the same order as the
+    ///   texts.
+    func takeMessagesJoiningTheAnswer() async -> (events: [OperationEvent], texts: [String], mailIds: [MailID]) {
         guard case .answer(let options, _) = pumpWork?.kind else { return ([], [], []) }
         let events = await outbox.takeEvents()
         // No suspension point between the take, the read of the cancel marks
         // and the work that holds the joining letters: ``cancel(message:)``
         // relies on it.
-        let joining = liveLetters(outbox.messages.takeJoining(admitting: options.admits), of: outbox.messages)
+        let joining = liveMessageLetters(outbox.messages.takeJoining(admitting: options.admits))
         if case .answer(let options, let letters) = pumpWork?.kind {
             pumpWork?.kind = .answer(options: options, letters: letters + joining)
         }
         recordMessageQueueDepth()
-        return (events.map(\.event), joining.map(\.message.text), joining.map(\.id))
+        return (events.map(\.event), joining.map(\.message.text), joining.map(\.message.mailID))
     }
 
     /// The ids of the items the work of the pump carries: the messages the
@@ -562,6 +578,21 @@ extension RoutedSessionActor: SessionMailObserver {
         }
     }
 
+    /// The live caller messages of `letters` (``liveLetters(_:of:)`` over
+    /// ``SessionOutbox/messages``). Each message that leaves the batch here
+    /// gets its terminal event ``SessionEvent/cancelled(_:)``: a cancel took
+    /// it out of the batch, or marked it, before the answer held it, so the
+    /// model never sees it and no answer names it.
+    ///
+    /// - Parameter letters: The caller messages the pump took.
+    /// - Returns: The live letters, in order.
+    private func liveMessageLetters(_ letters: [SessionLetter]) -> [SessionLetter] {
+        let live = liveLetters(letters, of: outbox.messages)
+        let liveIds = Set(live.map(\.id))
+        emitCancelled(letters.filter { !liveIds.contains($0.id) }.map(\.message.mailID))
+        return live
+    }
+
     // MARK: - Caller compactions
 
     /// The caller compactions that wait for the pump, first in first out.
@@ -594,8 +625,11 @@ extension RoutedSessionActor: SessionMailObserver {
         defer { endPumpWork() }
         await attachOutboxJournalIfNeeded()
         let request = letter.message
-        return try await ServiceContext.$current.withValue(request.serviceContext) {
-            try await compactOwnModel(prompt: request.prompt, budget: request.budget)
+        // Each event of the compaction has the origin of a signal of its own.
+        return try await OriginContext.$current.withValue(.signal(SignalID())) {
+            try await ServiceContext.$current.withValue(request.serviceContext) {
+                try await compactOwnModel(prompt: request.prompt, budget: request.budget)
+            }
         }
     }
 }

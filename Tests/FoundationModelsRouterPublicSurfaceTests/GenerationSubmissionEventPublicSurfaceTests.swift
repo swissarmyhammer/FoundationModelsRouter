@@ -61,8 +61,8 @@ struct GenerationSubmissionEventPublicSurfaceTests {
     @Test("a consumer matches the answer events by name, and no other event reads as one")
     func aConsumerMatchesTheAnswerEvents() {
         let answer = SessionAnswer(
-            reply: "", messageIds: [], usage: nil, compactions: [], toolCalls: [], toolInvocations: [])
-        let failure = AnswerFailure(messageIds: [], reason: .cancelled)
+            reply: "", mailIds: [], usage: nil, compactions: [], toolCalls: [], toolInvocations: [])
+        let failure = AnswerFailure(mailIds: [], reason: .cancelled)
 
         #expect(Self.submissionLabel(for: .answered(answer)) == "answered")
         #expect(Self.submissionLabel(for: .answerFailed(failure)) == "no answer")

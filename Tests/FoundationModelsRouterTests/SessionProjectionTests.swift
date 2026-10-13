@@ -165,10 +165,10 @@ struct SessionProjectionTests {
     ///
     /// - Parameters:
     ///   - number: The number of the submission.
-    ///   - messageIds: The messages the submission delivers.
+    ///   - mailIds: The messages the submission delivers.
     /// - Returns: The start record.
-    private static func start(_ number: UInt64, delivering messageIds: [MessageID] = []) -> SubmissionStart {
-        SubmissionStart(submissionId: SubmissionID(number), messageIds: messageIds, cause: .message)
+    private static func start(_ number: UInt64, delivering mailIds: [MailID] = []) -> SubmissionStart {
+        SubmissionStart(submissionId: SubmissionID(number), mailIds: mailIds, cause: .message)
     }
 
     /// The end of a submission, with `usage`.
@@ -189,7 +189,7 @@ struct SessionProjectionTests {
     @MainActor
     private static func expectProjectionUnchanged(by event: SessionEvent) {
         let projection = SessionProjection()
-        projection.apply(.submissionStarted(start(1, delivering: [MessageID.unposted()])))
+        projection.apply(.submissionStarted(start(1, delivering: [MailID()])))
         projection.apply(.toolCall(id: "call-1", name: "search", argumentsJSON: "{}"))
         projection.apply(.toolStatus(id: "call-1", status: .running, summary: nil, output: nil))
         let phaseBefore = projection.phase
@@ -322,11 +322,11 @@ struct SessionProjectionTests {
     @MainActor
     func messagesAwaitingAnswerHoldsTheDeliveredMessagesUntilTheirAnswer() {
         let projection = SessionProjection()
-        let first = MessageID.unposted()
-        let second = MessageID.unposted()
-        let third = MessageID.unposted()
+        let first = MailID()
+        let second = MailID()
+        let third = MailID()
         let answer = SessionAnswer(
-            reply: "done", messageIds: [first, second], usage: nil, compactions: [], toolCalls: [], toolInvocations: [])
+            reply: "done", mailIds: [first, second], usage: nil, compactions: [], toolCalls: [], toolInvocations: [])
 
         projection.apply(.submissionStarted(Self.start(1, delivering: [first])))
         projection.apply(.submissionStarted(Self.start(2, delivering: [second])))
@@ -334,7 +334,7 @@ struct SessionProjectionTests {
         projection.apply(.answered(answer))
         let afterTheAnswer = projection.messagesAwaitingAnswer
         projection.apply(.submissionStarted(Self.start(3, delivering: [third])))
-        projection.apply(.answerFailed(AnswerFailure(messageIds: [third], reason: .cancelled)))
+        projection.apply(.answerFailed(AnswerFailure(mailIds: [third], reason: .cancelled)))
 
         #expect(bothDelivered == [first, second])
         #expect(afterTheAnswer.isEmpty)

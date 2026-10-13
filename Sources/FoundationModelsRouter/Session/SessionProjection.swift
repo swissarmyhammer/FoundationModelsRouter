@@ -99,11 +99,12 @@ public final class SessionProjection {
     /// `nil` between submissions.
     public private(set) var currentSubmission: SubmissionStart?
 
-    /// The caller messages that a started submission delivered and that no
-    /// ``SessionEvent/answered(_:)`` or ``SessionEvent/answerFailed(_:)``
-    /// named yet, in delivery order. A view shows them as the messages in
-    /// flight.
-    public private(set) var messagesAwaitingAnswer: [MessageID] = []
+    /// The ids of the mail that a started submission delivered and that no
+    /// terminal event named yet (``SessionEvent/answered(_:)``,
+    /// ``SessionEvent/answerFailed(_:)``, ``SessionEvent/cancelled(_:)`` or
+    /// ``SessionEvent/lost(_:)``), in delivery order. A view shows them as
+    /// the messages in flight.
+    public private(set) var messagesAwaitingAnswer: [MailID] = []
 
     /// The running transcript observed so far, oldest first.
     public private(set) var transcript: [TranscriptEntry] = []
@@ -134,9 +135,11 @@ public final class SessionProjection {
         case .submissionEnded(let end):
             applySubmissionEnded(end)
         case .answered(let answer):
-            removeAwaitingAnswer(answer.messageIds)
+            removeAwaitingAnswer(answer.mailIds)
         case .answerFailed(let failure):
-            removeAwaitingAnswer(failure.messageIds)
+            removeAwaitingAnswer(failure.mailIds)
+        case .cancelled(let mailID), .lost(let mailID):
+            removeAwaitingAnswer([mailID])
         case .textDelta(let fragment):
             phase = .generating
             appendTextFragment(fragment)
@@ -181,8 +184,11 @@ public final class SessionProjection {
             phase = .compacting
         case .compactionFailed, .discoveryPrimingFailed, .generationStalled, .submissionQueued, .repetitionStopped,
             .reasoningStopped, .runSettled, .runMessage, .runProgress, .toolCallReport, .toolDisplay,
-            .elicitationRequested, .generationCall, .mailDeliveryPaused:
-            // Handled explicitly, and deliberately changes nothing. A mail
+            .elicitationRequested, .generationCall, .mailDeliveryPaused, .mailDelivered:
+            // Handled explicitly, and deliberately changes nothing. The
+            // delivery of a mail changes no entry: the
+            // ``SessionEvent/submissionStarted(_:)`` of its submission names
+            // it in ``messagesAwaitingAnswer``. A mail
             // delivery pause changes no entry: the held mail waits in the
             // queue of the session, and the next caller message carries it. A settled
             // run's terminal, a message of a run, and the progress of a run
@@ -221,8 +227,8 @@ public final class SessionProjection {
     /// - Parameter start: The start record of the submission.
     private func applySubmissionStarted(_ start: SubmissionStart) {
         currentSubmission = start
-        for messageId in start.messageIds where !messagesAwaitingAnswer.contains(messageId) {
-            messagesAwaitingAnswer.append(messageId)
+        for mailID in start.mailIds where !messagesAwaitingAnswer.contains(mailID) {
+            messagesAwaitingAnswer.append(mailID)
         }
     }
 
@@ -250,13 +256,13 @@ public final class SessionProjection {
         phase = .idle
     }
 
-    /// Removes each of `messageIds` from ``messagesAwaitingAnswer``: an
-    /// answer or a failure named them.
+    /// Removes each of `mailIds` from ``messagesAwaitingAnswer``: a terminal
+    /// event named them.
     ///
-    /// - Parameter messageIds: The caller messages that the answer or the
-    ///   failure names.
-    private func removeAwaitingAnswer(_ messageIds: [MessageID]) {
-        messagesAwaitingAnswer.removeAll { messageIds.contains($0) }
+    /// - Parameter mailIds: The ids of the mail that the terminal event
+    ///   names.
+    private func removeAwaitingAnswer(_ mailIds: [MailID]) {
+        messagesAwaitingAnswer.removeAll { mailIds.contains($0) }
     }
 
     /// Drains `stream` and applies every event as it arrives.

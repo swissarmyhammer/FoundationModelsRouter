@@ -19,7 +19,7 @@ struct RunningSubmission {
 /// 5.6).
 ///
 /// A submission is one attempt of the chain that answers the messages of the
-/// session. ``beginSubmission(cause:messageIds:)`` opens it when the attempt
+/// session. ``beginSubmission(cause:mailIds:)`` opens it when the attempt
 /// starts, ``submissionDidStart()`` reports its start when its SDK call
 /// starts, and ``endSubmission(usage:finishReason:measuredRender:onEvent:)``
 /// ends it where the attempt is recorded. A summarizer call of a compaction
@@ -41,11 +41,11 @@ extension RoutedSessionActor {
     ///
     /// - Parameters:
     ///   - cause: Why the session makes the submission.
-    ///   - messageIds: The caller messages the submission delivers.
-    func beginSubmission(cause: SubmissionStart.Cause, messageIds: [MessageID]) {
+    ///   - mailIds: The ids of the mail the submission delivers.
+    func beginSubmission(cause: SubmissionStart.Cause, mailIds: [MailID]) {
         lastSubmissionNumber += 1
         let start = SubmissionStart(
-            submissionId: SubmissionID(lastSubmissionNumber), messageIds: messageIds, cause: cause)
+            submissionId: SubmissionID(lastSubmissionNumber), mailIds: mailIds, cause: cause)
         let spanTracer = RouterTelemetry.tracer(explicit: tracer)
         let span = spanTracer.startSpan(
             RouterTelemetry.SpanName.submission, context: ServiceContext.current ?? .topLevel, ofKind: .client)
@@ -74,9 +74,15 @@ extension RoutedSessionActor {
     /// makes it: the caller messages of the answer, or mail alone.
     ///
     /// - Returns: The cause and the ids of the caller messages.
-    func firstSubmissionDelivery() -> (cause: SubmissionStart.Cause, messageIds: [MessageID]) {
-        let messageIds = (deliveredMessages ?? []).map(\.id)
-        return (messageIds.isEmpty ? .mail : .message, messageIds)
+    func firstSubmissionDelivery() -> (cause: SubmissionStart.Cause, mailIds: [MailID]) {
+        let mailIds = deliveredMailIds
+        return (mailIds.isEmpty ? .mail : .message, mailIds)
+    }
+
+    /// The ids of the caller messages the running answer delivered so far,
+    /// in delivery order. Empty when no answer runs.
+    var deliveredMailIds: [MailID] {
+        (deliveredMessages ?? []).map(\.message.mailID)
     }
 
     /// The tracing context of the running submission, or the context of the
@@ -159,13 +165,13 @@ extension RoutedSessionActor {
     /// - Returns: ``SessionEvent/answered(_:)`` or
     ///   ``SessionEvent/answerFailed(_:)``.
     func answerEndEvent(for result: Result<String, any Error>) -> SessionEvent {
-        let messageIds = (deliveredMessages ?? []).map(\.id)
+        let mailIds = deliveredMailIds
         switch result {
         case .success(let reply):
-            return .answered(answerReducer.answer(reply: reply, messageIds: messageIds))
+            return .answered(answerReducer.answer(reply: reply, mailIds: mailIds))
         case .failure(let error):
             let reason: AnswerFailure.Reason = isWorkCancelled ? .cancelled : .error(String(describing: error))
-            return .answerFailed(AnswerFailure(messageIds: messageIds, reason: reason))
+            return .answerFailed(AnswerFailure(mailIds: mailIds, reason: reason))
         }
     }
 }

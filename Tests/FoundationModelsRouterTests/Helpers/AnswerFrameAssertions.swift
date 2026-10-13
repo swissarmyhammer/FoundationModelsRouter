@@ -17,8 +17,9 @@ import Testing
 /// it, and the statement is in one place, not at each site.
 ///
 /// - Parameter events: The events of one answer, in order.
-/// - Returns: `events` without the submission starts, the submission ends and
-///   the end of the answer. A failed check is recorded as an issue.
+/// - Returns: `events` without the deliveries of mail, the submission starts,
+///   the submission ends and the end of the answer. A failed check is
+///   recorded as an issue.
 func eventsInsideAnswerFrame(_ events: [SessionEvent]) -> [SessionEvent] {
     let answerEnds = events.answers.count + events.answerFailures.count
     #expect(answerEnds == 1, "expected exactly one end of the answer, got \(answerEnds)")
@@ -71,11 +72,12 @@ extension SessionEvent {
         }
     }
 
-    /// Whether this event is part of the frame of an answer: a submission
-    /// start, a submission end, or the end of the answer.
+    /// Whether this event is part of the frame of an answer: the delivery of
+    /// a mail, a submission start, a submission end, or the end of the
+    /// answer.
     var isAnswerFrame: Bool {
         switch self {
-        case .submissionStarted, .submissionEnded: return true
+        case .mailDelivered, .submissionStarted, .submissionEnded: return true
         default: return isAnswerEnd
         }
     }

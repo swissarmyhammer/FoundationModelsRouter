@@ -31,10 +31,10 @@ struct SessionAnswerPublicSurfaceTests {
     func aConsumerMakesAndReadsAnAnswer() {
         let usage = TokenUsage(tokensIn: Self.tokensIn, tokensOut: Self.tokensOut, contextFill: Self.contextFill)
         let answer = SessionAnswer(
-            reply: Self.reply, messageIds: [], usage: usage, compactions: [], toolCalls: [], toolInvocations: [])
+            reply: Self.reply, mailIds: [], usage: usage, compactions: [], toolCalls: [], toolInvocations: [])
 
         #expect(answer.reply == Self.reply)
-        #expect(answer.messageIds.isEmpty)
+        #expect(answer.mailIds.isEmpty)
         #expect(answer.usage == usage)
         #expect(answer.contextFill == Self.contextFill)
         #expect(answer.compactions.isEmpty)
@@ -44,18 +44,18 @@ struct SessionAnswerPublicSurfaceTests {
 
     @Test("a consumer makes a failure for each reason and reads it")
     func aConsumerMakesAndReadsAFailure() {
-        let cancelled = AnswerFailure(messageIds: [], reason: .cancelled)
-        let failed = AnswerFailure(messageIds: [], reason: .error(Self.errorText))
+        let cancelled = AnswerFailure(mailIds: [], reason: .cancelled)
+        let failed = AnswerFailure(mailIds: [], reason: .error(Self.errorText))
 
         #expect(cancelled.reason == .cancelled)
         #expect(failed.reason == .error(Self.errorText))
-        #expect(failed.messageIds.isEmpty)
+        #expect(failed.mailIds.isEmpty)
         #expect(cancelled != failed)
     }
 
     @Test("a consumer catches a failure that respond throws as an AnswerFailure error")
     func aConsumerCatchesAFailureAsAnError() {
-        let failure = AnswerFailure(messageIds: [], reason: .error(Self.errorText))
+        let failure = AnswerFailure(mailIds: [], reason: .error(Self.errorText))
 
         #expect(throws: failure) { throw failure }
     }
@@ -65,10 +65,10 @@ struct SessionAnswerPublicSurfaceTests {
     func aProjectionReadsTheAnswerEvents() {
         let projection = SessionProjection()
         let answer = SessionAnswer(
-            reply: Self.reply, messageIds: [], usage: nil, compactions: [], toolCalls: [], toolInvocations: [])
+            reply: Self.reply, mailIds: [], usage: nil, compactions: [], toolCalls: [], toolInvocations: [])
 
         projection.apply(.answered(answer))
-        projection.apply(.answerFailed(AnswerFailure(messageIds: [], reason: .cancelled)))
+        projection.apply(.answerFailed(AnswerFailure(mailIds: [], reason: .cancelled)))
 
         #expect(projection.currentSubmission == nil)
         #expect(projection.messagesAwaitingAnswer.isEmpty)

@@ -18,10 +18,10 @@ public struct SessionAnswer: Sendable, Equatable {
     /// returns for the same message.
     public let reply: String
 
-    /// Every caller message this answer answers, in the order the chain
-    /// delivered them. A message that joined a continuation of the chain is
-    /// in it too. Empty for an answer to mail alone.
-    public let messageIds: [MessageID]
+    /// The ids of each mail this answer answers, in the order the chain
+    /// delivered them. A mail that joined a continuation of the chain is in
+    /// it too. This event is the terminal event of each of these ids.
+    public let mailIds: [MailID]
 
     /// The token usage of the chain: ``TokenUsage/tokensIn`` and
     /// ``TokenUsage/tokensOut`` are the sums over each
@@ -64,7 +64,7 @@ public struct SessionAnswer: Sendable, Equatable {
     ///
     /// - Parameters:
     ///   - reply: The final reply of the chain.
-    ///   - messageIds: The caller messages the answer answers.
+    ///   - mailIds: The ids of the mail the answer answers.
     ///   - usage: The token usage of the chain, or `nil`.
     ///   - compactions: The compactions of the chain, in order.
     ///   - toolCalls: The recorded tool calls of the chain, in order.
@@ -73,7 +73,7 @@ public struct SessionAnswer: Sendable, Equatable {
     ///   - stop: The stop that found no recovery left, or `nil`.
     public init(
         reply: String,
-        messageIds: [MessageID],
+        mailIds: [MailID],
         usage: TokenUsage?,
         compactions: [CompactionResult],
         toolCalls: [ToolCallEntry],
@@ -81,7 +81,7 @@ public struct SessionAnswer: Sendable, Equatable {
         stop: WatchStop? = nil
     ) {
         self.reply = reply
-        self.messageIds = messageIds
+        self.mailIds = mailIds
         self.usage = usage
         self.compactions = compactions
         self.toolCalls = toolCalls
@@ -110,9 +110,9 @@ public struct AnswerFailure: Error, Sendable, Equatable {
         case error(String)
     }
 
-    /// Every caller message the chain delivered, in the order it delivered
-    /// them. Empty for a chain that delivered mail alone.
-    public let messageIds: [MessageID]
+    /// The ids of each mail the chain delivered, in the order it delivered
+    /// them. This event is the terminal event of each of these ids.
+    public let mailIds: [MailID]
 
     /// Why the chain gave no answer.
     public let reason: Reason
@@ -124,10 +124,10 @@ public struct AnswerFailure: Error, Sendable, Equatable {
     /// its own tests.
     ///
     /// - Parameters:
-    ///   - messageIds: The caller messages the chain delivered.
+    ///   - mailIds: The ids of the mail the chain delivered.
     ///   - reason: Why the chain gave no answer.
-    public init(messageIds: [MessageID], reason: Reason) {
-        self.messageIds = messageIds
+    public init(mailIds: [MailID], reason: Reason) {
+        self.mailIds = mailIds
         self.reason = reason
     }
 }
@@ -180,9 +180,11 @@ struct SessionAnswerReducer {
         case .compactionStarted, .compactionFailed, .submissionQueued, .submissionStarted, .answered, .answerFailed,
             .textDelta, .textReset, .reasoningDelta, .entryRecorded, .discoveryPrimingFailed, .generationStalled,
             .runSettled, .runMessage, .runProgress, .toolCallReport, .toolDisplay, .elicitationRequested,
-            .generationCall, .mailDeliveryPaused:
+            .generationCall, .mailDeliveryPaused, .mailDelivered, .cancelled, .lost:
             // Deliberately not carried by the answer. A mail delivery pause
-            // comes when no answer runs, so no answer can carry it. The frames of a
+            // comes when no answer runs, so no answer can carry it. The
+            // delivery of a mail and the terminal events of other mail are
+            // in ``SessionAnswer/mailIds`` or belong to no answer. The frames of a
             // submission and of an answer are the structure the answer sums.
             // The reply is the final reply of the chain, not a reduction of
             // its text fragments: a continuation writes its own reply, and
@@ -205,11 +207,11 @@ struct SessionAnswerReducer {
     ///
     /// - Parameters:
     ///   - reply: The final reply of the chain.
-    ///   - messageIds: The caller messages the chain delivered.
+    ///   - mailIds: The ids of the mail the chain delivered.
     /// - Returns: The answer.
-    func answer(reply: String, messageIds: [MessageID]) -> SessionAnswer {
+    func answer(reply: String, mailIds: [MailID]) -> SessionAnswer {
         SessionAnswer(
-            reply: reply, messageIds: messageIds, usage: usage, compactions: compactions, toolCalls: toolCalls,
+            reply: reply, mailIds: mailIds, usage: usage, compactions: compactions, toolCalls: toolCalls,
             toolInvocations: toolInvocations, stop: stop)
     }
 

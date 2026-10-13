@@ -49,8 +49,9 @@ extension RoutedSessionActor {
     /// At the end, the mail stays in the outbox, held: a run terminal must
     /// not be lost, and it must not start an answer of its own. It rides the
     /// next caller message. A caller message or a caller compaction that
-    /// arrived during the drain is withdrawn, and its caller gets
-    /// `CancellationError`. The last steps have no suspension point, so no
+    /// arrived during the drain is withdrawn, its caller gets
+    /// `CancellationError`, and a withdrawn caller message gets
+    /// ``SessionEvent/cancelled(_:)``. The last steps have no suspension point, so no
     /// message arrives between them and the end of the drain. The end of the
     /// drain is a change of the work of the session (``signalWorkChange()``).
     private func runDrain() async {
@@ -67,7 +68,7 @@ extension RoutedSessionActor {
             workRuns = pumpTask != nil || !openRuns.isEmpty
         }
         await outbox.holdPendingMail()
-        _ = outbox.withdrawMessages()
+        emitCancelled(outbox.withdrawMessages().map(\.mailID))
         withdrawCallerCompactions()
         drainTask = nil
         signalWorkChange()

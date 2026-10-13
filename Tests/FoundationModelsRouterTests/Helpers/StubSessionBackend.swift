@@ -46,6 +46,10 @@ struct StubGenerationCall: Sendable, Equatable {
     /// `true` when the caller asked for the call with reasoning off
     /// (``LanguageModelSessionBackend/respondWithoutReasoning(to:maxTokens:)``).
     let reasoningOff: Bool
+
+    /// The origin of the work that made the call (``OriginContext/current``
+    /// inside the call): the mail of an answer, or the signal of a compaction.
+    let origin: Origin
 }
 
 /// A generation log shared by a ``StubSessionBackend`` and every clone it
@@ -75,7 +79,9 @@ final class StubGenerationLog: @unchecked Sendable {
     ///   - maxTokens: The ceiling on that call's own answer, or `nil`.
     ///   - reasoningOff: `true` when the caller asked for reasoning off.
     func record(prompt: String, maxTokens: Int?, reasoningOff: Bool) {
-        calls.append(StubGenerationCall(prompt: prompt, maxTokens: maxTokens, reasoningOff: reasoningOff))
+        calls.append(
+            StubGenerationCall(
+                prompt: prompt, maxTokens: maxTokens, reasoningOff: reasoningOff, origin: OriginContext.current))
     }
 }
 

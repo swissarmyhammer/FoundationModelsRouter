@@ -95,7 +95,7 @@ struct RoutedSessionPublicSurfaceTests {
                 guard case .prompt(let prompt) = entry else { return nil }
                 return Self.text(of: prompt)
             }
-            let depth = await session.messageQueueDepth()
+            let depth = await session.mailQueueDepth()
             return prompts.contains(text) && depth.total == 0
         }
     }
@@ -110,7 +110,7 @@ struct RoutedSessionPublicSurfaceTests {
         let fixture = try await Self.makeQueueFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        let id: MessageID = await fixture.session.send(Self.sentPromptText)
+        let id: MailID = await fixture.session.send(Self.sentPromptText)
 
         #expect(await Self.answered(fixture.session, prompt: Self.sentPromptText))
         #expect(await fixture.session.pendingMessages().allSatisfy { $0.id != id })
@@ -133,6 +133,6 @@ struct RoutedSessionPublicSurfaceTests {
 
         #expect(result == .alreadyAnswered)
         #expect(await fixture.session.pendingMessages().isEmpty)
-        #expect(await fixture.session.messageQueueDepth().total == 0)
+        #expect(await fixture.session.mailQueueDepth().total == 0)
     }
 }

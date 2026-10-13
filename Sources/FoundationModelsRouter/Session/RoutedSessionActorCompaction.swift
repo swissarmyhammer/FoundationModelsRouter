@@ -119,7 +119,7 @@ extension RoutedSessionActor {
     /// runs it between two submissions (``compactOwnModel(prompt:budget:)``),
     /// so it never runs beside a submission of this session. A cancel of the
     /// caller withdraws a request that waits, or stops the compaction that
-    /// runs (``cancelFromCallerTask(_:in:)``).
+    /// runs (``cancelFromCallerTask(_:mailID:in:)``).
     ///
     /// The request is posted before the cancel handler is installed, with no
     /// suspension point between the two, and the pump takes a request only on
@@ -138,13 +138,13 @@ extension RoutedSessionActor {
         let request = CompactionRequest(prompt: prompt, budget: budget, serviceContext: ServiceContext.current)
         let (id, answer) = compactionRequests.post(request)
         wakePump()
-        // `awaitMailboxAnswer(id:answer:in:)` is defined in
+        // `awaitMailboxAnswer(id:mailID:answer:in:)` is defined in
         // RoutedSessionActorCancellation.swift. A cancel of the caller
         // withdraws a waiting request, or stops the running compaction.
         // AnswerCancellationTests proves both paths:
         // `cancellingAWaitingCallerCompactWithdrawsIt` and
         // `cancellingACallerDrivenCompactStopsIt(route: .callerTask)`.
-        return try await awaitMailboxAnswer(id: id, answer: answer, in: compactionRequests)
+        return try await awaitMailboxAnswer(id: id, mailID: nil, answer: answer, in: compactionRequests)
     }
 
     /// Runs one caller compaction over this session's own model, inside the
@@ -180,7 +180,9 @@ extension RoutedSessionActor {
     /// ``SessionEvent/compactionStarted(_:)``, then
     /// ``SessionEvent/compaction(_:)`` when it completes, or
     /// ``SessionEvent/compactionFailed(_:)`` when it throws. The three events
-    /// carry the same id.
+    /// carry the same id. The compaction runs with the origin of a signal of
+    /// its own (``Origin/signal(_:)``), so each event that it sends has that
+    /// origin, also inside an answer.
     ///
     /// - Parameters:
     ///   - prompt: The compaction prompt sent to the summarizer tier that runs.
@@ -205,20 +207,22 @@ extension RoutedSessionActor {
         overflowRetryTarget: OverflowRetryTarget? = nil,
         emit: ((SessionEvent) -> Void)?
     ) async throws -> CompactionResult {
-        let compactionId = ULID.generate().description
-        emit?(.compactionStarted(CompactionStart(id: compactionId, reason: reason)))
-        do {
-            var result = try await runAutoCompaction(prompt: prompt, budget: budget).withId(compactionId)
-            if let overflowRetryTarget {
-                result = result.withOverflowRetryTarget(overflowRetryTarget)
+        try await OriginContext.$current.withValue(.signal(SignalID())) {
+            let compactionId = ULID.generate().description
+            emit?(.compactionStarted(CompactionStart(id: compactionId, reason: reason)))
+            do {
+                var result = try await runAutoCompaction(prompt: prompt, budget: budget).withId(compactionId)
+                if let overflowRetryTarget {
+                    result = result.withOverflowRetryTarget(overflowRetryTarget)
+                }
+                emit?(.compaction(result))
+                return result
+            } catch {
+                let outcome: CompactionFailure.Outcome =
+                    isWorkCancelled || error is CancellationError ? .cancelled : .failed(String(describing: error))
+                emit?(.compactionFailed(CompactionFailure(id: compactionId, reason: reason, outcome: outcome)))
+                throw error
             }
-            emit?(.compaction(result))
-            return result
-        } catch {
-            let outcome: CompactionFailure.Outcome =
-                isWorkCancelled || error is CancellationError ? .cancelled : .failed(String(describing: error))
-            emit?(.compactionFailed(CompactionFailure(id: compactionId, reason: reason, outcome: outcome)))
-            throw error
         }
     }
 

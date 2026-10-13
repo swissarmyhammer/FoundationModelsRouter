@@ -116,7 +116,7 @@ extension TelemetryContentSafetyTests {
             // The answer pump does these three steps for an attempt that
             // throws: it opens the submission, records the error of the
             // attempt, and ends the submission.
-            await session.beginSubmission(cause: .message, messageIds: [])
+            await session.beginSubmission(cause: .message, mailIds: [])
             await session.recordSubmissionError(Self.contentBearingError)
             await session.endSubmission(usage: nil, finishReason: .completed, measuredRender: nil, onEvent: nil)
 

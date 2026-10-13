@@ -137,7 +137,16 @@ wait for the worker of its model), ``SessionEvent/submissionStarted(_:)`` and
 ``SessionEvent/answered(_:)``, or with ``SessionEvent/answerFailed(_:)`` when
 it gives no answer.
 
+Each element of ``streamSessionEvents()`` is a ``SessionOutput``: the event,
+and the ``Origin`` of the work that sent it. The pump sends
+``SessionEvent/mailDelivered(_:)`` for each caller message that an answer
+delivers. Each caller message gets exactly one terminal event:
+``SessionEvent/answered(_:)`` or ``SessionEvent/answerFailed(_:)`` of the
+answer that carries it, or ``SessionEvent/cancelled(_:)`` when it left the
+queue before the pump took it.
+
 - ``streamSessionEvents()``
+- ``SessionOutput``
 - ``SessionEvent``
 - ``SubmissionStart``
 - ``SubmissionEnd``
@@ -150,7 +159,7 @@ it gives no answer.
 
 A session is a queue of messages (`generation-queue.md`, section 5.4).
 ``send(_:)-(Transcript.Prompt)`` puts one message in the queue and returns its
-``MessageID`` at once. The pump of the session starts a submission for it with
+``MailID`` at once. The pump of the session starts a submission for it with
 no other call, or puts it into the next submission when one runs.
 ``respond(to:maxTokens:)`` and the two stream methods are helpers: each sends
 one message, then waits for its answer.
@@ -159,7 +168,8 @@ one message, then waits for its answer.
 - ``send(_:)-(String)``
 - ``pendingMessages()``
 - ``replace(id:prompt:)``
-- ``messageQueueDepth()``
+- ``mailQueueDepth()``
+- ``MailQueueDepth``
 
 ### Cancellation
 

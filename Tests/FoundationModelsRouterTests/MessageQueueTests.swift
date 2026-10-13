@@ -8,7 +8,7 @@ import Testing
 /// Exercises the ``RoutedSession`` message queue (task ^cbhpdjy, restated from
 /// the prompt queue of task ndv3sc1): ``RoutedSession/send(_:)-(Transcript.Prompt)``,
 /// ``RoutedSession/pendingMessages()``, ``RoutedSession/replace(id:prompt:)``,
-/// ``RoutedSession/messageQueueDepth()`` and ``RoutedSession/cancel(message:)``,
+/// ``RoutedSession/mailQueueDepth()`` and ``RoutedSession/cancel(message:)``,
 /// race-safe against the point where the pump of the session takes a message
 /// for its submission.
 ///
@@ -264,7 +264,7 @@ struct MessageQueueTests {
         // answer could never get here.
         let id = await session.send("wake the pump")
         await backend.started.wait()
-        #expect(await session.messageQueueDepth().running == [id])
+        #expect(await session.mailQueueDepth().running == [id])
 
         backend.proceed.signal()
         #expect(await session.becomesIdle())
@@ -358,7 +358,7 @@ struct MessageQueueTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         #expect(await session.cancel() == .nothingToCancel)
-        #expect(await session.messageQueueDepth() == MessageQueueDepth(waiting: 0, running: []))
+        #expect(await session.mailQueueDepth() == MailQueueDepth(waiting: 0, depthByKind: [:], running: []))
 
         // A session that never runs a submission never writes its `session`
         // meta line either — the same "writes no file at all until it
@@ -548,7 +548,7 @@ struct MessageQueueTests {
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let stream = await session.streamSessionEvents()
+        let stream = await session.streamSessionEvents().events
         let id = await session.send("queued prompt")
         #expect(await session.becomesIdle())
         await session.close()
@@ -556,9 +556,9 @@ struct MessageQueueTests {
         let events = await collect(stream)
         _ = eventsInsideAnswerFrame(events)
         let starts = events.submissionStarts
-        #expect(starts.map(\.messageIds) == [[id]])
+        #expect(starts.map(\.mailIds) == [[id]])
         #expect(starts.map(\.cause) == [.message])
-        #expect(events.answers.map(\.messageIds) == [[id]])
+        #expect(events.answers.map(\.mailIds) == [[id]])
     }
 
     @Test("a respond opens a submission frame that names its one message, and its answer names the same message")
@@ -568,7 +568,7 @@ struct MessageQueueTests {
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let stream = await session.streamSessionEvents()
+        let stream = await session.streamSessionEvents().events
         _ = try await session.respond(to: "direct prompt")
         await session.close()
 
@@ -578,9 +578,9 @@ struct MessageQueueTests {
         _ = eventsInsideAnswerFrame(events)
         let start = try #require(events.submissionStarts.first)
         #expect(events.submissionStarts.count == 1)
-        #expect(start.messageIds.count == 1)
+        #expect(start.mailIds.count == 1)
         #expect(start.cause == .message)
-        #expect(events.answers.map(\.messageIds) == [start.messageIds])
+        #expect(events.answers.map(\.mailIds) == [start.mailIds])
     }
 
     @Test("two answers on one session take distinct submission ids, numbered from 1")
@@ -590,7 +590,7 @@ struct MessageQueueTests {
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let stream = await session.streamSessionEvents()
+        let stream = await session.streamSessionEvents().events
         _ = try await session.respond(to: "first")
         _ = try await session.respond(to: "second")
         await session.close()
@@ -620,7 +620,7 @@ struct MessageQueueTests {
         )
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let stream = await session.streamSessionEvents()
+        let stream = await session.streamSessionEvents().events
         _ = try await session.respond(to: "direct prompt")
         await session.close()
 
@@ -650,7 +650,7 @@ struct MessageQueueTests {
 
     @Test("the queue depth counts the waiting messages and names the messages of the running submission")
     @MainActor
-    func messageQueueDepthCountsWaitingAndRunningMessages() async throws {
+    func mailQueueDepthCountsWaitingAndRunningMessages() async throws {
         let recorder = InMemoryRecorder()
         let backend = GatedStubBackend(responseText: "gated response")
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
@@ -662,24 +662,24 @@ struct MessageQueueTests {
 
         // The first message runs; the second waits. The session owes both
         // an answer.
-        let midFlight = await session.messageQueueDepth()
+        let midFlight = await session.mailQueueDepth()
         #expect(midFlight.waiting == 1)
         #expect(midFlight.running == [firstId])
         #expect(midFlight.total == Self.sentMessageCount)
 
         backend.proceed.signal()
         await backend.started.wait()
-        let secondFlight = await session.messageQueueDepth()
-        #expect(secondFlight == MessageQueueDepth(waiting: 0, running: [secondId]))
+        let secondFlight = await session.mailQueueDepth()
+        #expect(secondFlight == MailQueueDepth(waiting: 0, depthByKind: [:], running: [secondId]))
 
         backend.proceed.signal()
         #expect(await session.becomesIdle())
-        let afterBoth = await session.messageQueueDepth()
-        #expect(afterBoth == MessageQueueDepth(waiting: 0, running: []))
+        let afterBoth = await session.mailQueueDepth()
+        #expect(afterBoth == MailQueueDepth(waiting: 0, depthByKind: [:], running: []))
         #expect(afterBoth.total == 0)
     }
 
-    /// How many messages ``messageQueueDepthCountsWaitingAndRunningMessages()``
+    /// How many messages ``mailQueueDepthCountsWaitingAndRunningMessages()``
     /// sends.
     private static let sentMessageCount = 2
 
@@ -748,7 +748,7 @@ struct MessageQueueTests {
 
         let answer = Task { try await session.respond(to: "racing prompt") }
         await backend.started.wait()
-        let id = try #require(await session.messageQueueDepth().running.first)
+        let id = try #require(await session.mailQueueDepth().running.first)
 
         #expect(await session.cancel(message: id) == .cancelledInSubmission)
 
@@ -768,6 +768,6 @@ struct MessageQueueTests {
         #expect(await session.becomesIdle())
 
         #expect(await session.cancel(message: id) == .alreadyAnswered)
-        #expect(await session.cancel(message: MessageID.unposted()) == .alreadyAnswered)
+        #expect(await session.cancel(message: MailID()) == .alreadyAnswered)
     }
 }

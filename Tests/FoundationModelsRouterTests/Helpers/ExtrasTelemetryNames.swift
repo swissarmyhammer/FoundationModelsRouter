@@ -15,4 +15,9 @@ enum ExtrasTelemetryNames {
     /// The dimension key of the tool name on the tool-call metrics
     /// (`ExtrasTelemetry.AttributeKey.toolName`).
     static let toolNameDimension = "tool.name"
+
+    /// The span name of one model load of the Extras model pool
+    /// (`ExtrasTelemetry.SpanName.modelLoad`). The span writes one "enter"
+    /// record when it starts.
+    static let modelLoadSpan = "FoundationModelsExtras.model.load"
 }

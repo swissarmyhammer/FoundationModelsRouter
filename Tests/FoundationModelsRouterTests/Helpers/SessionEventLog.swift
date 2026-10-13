@@ -34,7 +34,7 @@ actor SessionEventLog {
     ///   done reading it.
     static func watch(_ session: RoutedSession) async -> (log: SessionEventLog, drain: Task<Void, Never>) {
         let log = SessionEventLog()
-        let stream = await session.streamSessionEvents()
+        let stream = await session.streamSessionEvents().events
         let drain = Task {
             for await event in stream {
                 await log.append(event)

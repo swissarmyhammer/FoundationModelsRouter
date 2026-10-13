@@ -123,11 +123,12 @@ func runObservedAnswer(
             closeFragmentBlock()
             // swiftlint:disable:next no_direct_standard_out_logs  the demo narrates on standard out; that is its output
             print(
-                "[\(label)] answered replyCharacters=\(answer.reply.count) messages=\(answer.messageIds.count)")
+                "[\(label)] answered replyCharacters=\(answer.reply.count) messages=\(answer.mailIds.count)")
         case .reasoningDelta, .toolCall, .toolStatus, .toolInvocation, .toolCallReport, .toolDisplay,
             .compactionStarted, .compaction, .compactionFailed, .discoveryPrimingFailed, .generationStalled,
             .submissionQueued, .repetitionStopped, .reasoningStopped, .runSettled, .runMessage, .runProgress,
-            .elicitationRequested, .generationCall, .answerFailed, .mailDeliveryPaused:
+            .elicitationRequested, .generationCall, .answerFailed, .mailDeliveryPaused, .mailDelivered, .cancelled,
+            .lost:
             // Silent by construction — see this function's documentation.
             break
         }

@@ -213,7 +213,7 @@ struct SessionIdleWaitTests {
         let fixture = try await Self.makeFixture(
             tools: [LatchedBackgroundToolRunner(name: "pending_job", gate: gate, output: Self.runOutput)],
             container: BackgroundingLLMContainer(holdLaterAnswers: holdMailAnswer))
-        let events = await fixture.session.streamSessionEvents()
+        let events = await fixture.session.streamSessionEvents().events
         _ = try await fixture.session.respond(to: Self.jobPrompt)
         let outcome = RecordedWaitResult()
         try await Self.startIdleWait(on: fixture.session, recording: outcome)
