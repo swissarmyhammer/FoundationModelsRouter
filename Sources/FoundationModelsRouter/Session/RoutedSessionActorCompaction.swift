@@ -272,6 +272,16 @@ extension RoutedSessionActor {
     ///    ``RoutedSession/cancelAll()`` that came during the compaction thus
     ///    cancels the mail that waits, and the pump takes none of it first.
     ///
+    /// A compaction does not start after ``close()`` began
+    /// (``isClosed``): it sends no event, and returns `CancellationError`.
+    /// The task of a signal reads the close of ``signals`` before it comes
+    /// to this actor, so the work can come here after close began. Close
+    /// sets ``isClosed`` and cancels the running compaction with no
+    /// suspension point between, and this check and the registration of
+    /// ``activeCompaction`` also have no suspension point between. Thus each
+    /// compaction that starts is the one that close cancels, or it does not
+    /// start.
+    ///
     /// An automatic compaction whose answer a stop reached before the
     /// compaction started does not run: it sends no event, and the answer
     /// gets `CancellationError`. The events of an automatic compaction go
@@ -284,6 +294,9 @@ extension RoutedSessionActor {
     ///   - order: What the compaction does and why.
     /// - Returns: The result of the compaction, or its error.
     func performCompaction(_ id: SignalID, _ order: CompactionOrder) async -> Result<CompactionResult, any Error> {
+        guard !isClosed else {
+            return .failure(CancellationError())
+        }
         if order.isAutomatic, isWorkCancelled {
             return .failure(CancellationError())
         }

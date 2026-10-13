@@ -382,7 +382,8 @@ actor RoutedSessionActor: RoutedSession {
     nonisolated let idleChanges = ChangeSignal()
 
     /// Whether ``close()`` started. It stays set, so each ``awaitIdle()``
-    /// call after it returns `false` at once. See ``endIdleWaits()``.
+    /// call after it returns `false` at once, and no compaction starts after
+    /// it (``performCompaction(_:_:)``). See ``endIdleWaits()``.
     var isClosed = false
 
     /// Whether mail arrived since the pump last looked, so the pump takes

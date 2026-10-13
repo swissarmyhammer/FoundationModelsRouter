@@ -102,6 +102,77 @@ struct CompactionSignalTests {
         }
     }
 
+    /// The id of a signal that one task sends and another task reads.
+    private final class SignalSlot: Sendable {
+        /// The id, or `nil` before a task sent the signal.
+        private let state = Mutex<SignalID?>(nil)
+
+        /// Keeps the id of the signal that a task sent.
+        ///
+        /// - Parameter id: The id of the signal.
+        func keep(_ id: SignalID) {
+            state.withLock { $0 = id }
+        }
+
+        /// The id of the signal, or `nil` before a task sent it.
+        var id: SignalID? {
+            state.withLock { $0 }
+        }
+    }
+
+    /// The gates of a test where the work of a compaction reaches the session
+    /// after close began. The answer of ``heldPrompt`` holds its model call,
+    /// and each summarizer call holds, until the test opens the gate. No
+    /// cancel ends a hold, so only the test releases them.
+    private final class LateCompactionGates: Sendable {
+        /// Signalled when the answer holds its model call.
+        let answerInside = AsyncSemaphore(value: 0)
+
+        /// Lets the answer go on.
+        let answerRelease = AsyncSemaphore(value: 0)
+
+        /// Signalled when a summarizer call starts, and when the work of the
+        /// compaction ends: the first of the two tells the test which came.
+        let progress = AsyncSemaphore(value: 0)
+
+        /// Lets a summarizer call go on.
+        let summarizerRelease = AsyncSemaphore(value: 0)
+
+        /// Set when a summarizer call started: a compaction started.
+        let summarizerStarted = Flag()
+
+        /// Set when a summarizer call saw a cancel at the end of its hold.
+        let summarizerSawCancel = Flag()
+
+        /// Holds the model call that carries `prompt` when it is a summarizer
+        /// call or the call of the answer of ``heldPrompt``. Other calls go on.
+        ///
+        /// - Parameter prompt: The prompt of the model call.
+        func hold(_ prompt: String) async {
+            if Fixtures.isSummarizerCall(prompt) {
+                await holdSummarizerCall()
+            } else if prompt.hasSuffix(CompactionSignalTests.heldPrompt) {
+                answerInside.signal()
+                await answerRelease.wait()
+            }
+        }
+
+        /// Holds one summarizer call until ``summarizerRelease``, and records
+        /// whether the call saw a cancel.
+        private func holdSummarizerCall() async {
+            summarizerStarted.set()
+            progress.signal()
+            await summarizerRelease.wait()
+            if Task.isCancelled {
+                summarizerSawCancel.set()
+            }
+        }
+    }
+
+    /// The prompt of a message whose answer holds its model call while close
+    /// runs, so the drain of close waits for the pump.
+    private static let heldPrompt = "holds its model call during close"
+
     /// Makes each summarizer call of `fixture` reply with a short summary.
     ///
     /// The stub backend replies with "ok-" and the full prompt. That summary
@@ -149,6 +220,34 @@ struct CompactionSignalTests {
             if Task.isCancelled {
                 sawCancel.set()
             }
+        }
+    }
+
+    /// Holds the first summarizer call inside the hook until a cancel comes.
+    /// Only ``RoutedSession/close()`` cancels a compaction, so the cancel
+    /// comes while close runs. Then the hook sends one more compaction to
+    /// `session`, keeps its id in `sentDuringClose`, and throws the cancel.
+    ///
+    /// - Parameters:
+    ///   - fixture: The fixture whose hook to install into.
+    ///   - session: The session that gets the compaction during close.
+    ///   - inside: Signalled when the summarizer call is inside the hook.
+    ///   - sentDuringClose: Gets the id of the compaction sent during close.
+    private static func sendACompactionWhenCloseCancels(
+        _ fixture: Fixtures.Fixture, session: any RoutedSession, inside: AsyncSemaphore, sentDuringClose: SignalSlot
+    ) {
+        let isFirst = Fixtures.firstSummarizerCall()
+        fixture.hook.midAnswer = { prompt in
+            guard isFirst(prompt) else { return }
+            let cancelled = AsyncSemaphore(value: 0)
+            await withTaskCancellationHandler {
+                inside.signal()
+                await cancelled.wait()
+            } onCancel: {
+                cancelled.signal()
+            }
+            sentDuringClose.keep(Self.compact(session))
+            throw CancellationError()
         }
     }
 
@@ -409,26 +508,103 @@ struct CompactionSignalTests {
     }
 
     /// The production change that makes this test fail: a signal that runs
-    /// its work after close.
-    @Test("a signal that waits behind a compaction does not run after close")
-    func aWaitingSignalDoesNotRunAfterClose() async throws {
+    /// its work after close, or a close that cancels the running compaction
+    /// before it closes the signal executor. A compaction that waits behind
+    /// the running one, or that a caller sends while close cancels the
+    /// running one, then starts after the cancel, and close waits for it.
+    @Test("close cancels the running compaction, and a compaction sent before or during close does not start")
+    func noCompactionStartsAfterCloseCancelledTheRunningOne() async throws {
         let dir = Fixtures.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let (fixture, session) = try await Self.makeSession(dir: dir)
+        let (log, drain) = await OutputLog.watch(session)
         let inside = AsyncSemaphore(value: 0)
-        _ = Fixtures.suspendInsideCancellationAwareTool(
-            fixture, suspendingOn: Fixtures.firstSummarizerCall(), insideTool: inside)
+        let sentDuringClose = SignalSlot()
+        Self.sendACompactionWhenCloseCancels(
+            fixture, session: session, inside: inside, sentDuringClose: sentDuringClose)
 
-        _ = Self.compact(session)
+        let running = Self.compact(session)
         await inside.wait()
         let waiting = Self.compact(session)
+        // The summarizer call ends only on a cancel, so close returns only
+        // when it cancels the running compaction.
         await session.close()
+        await drain.value
+        fixture.hook.midAnswer = nil
 
-        await #expect(throws: MailRefusal.closed) {
-            try await session.awaitTerminal(of: waiting)
+        // The running compaction ended with its terminal event before the
+        // feeds finished. No other compaction started.
+        let cancelled = CompactionFailure(id: running.description, reason: .requested, outcome: .cancelled)
+        #expect(await log.events.compactionStarts.map(\.id) == [running.description])
+        #expect(await log.events.compactionFailures == [cancelled])
+        #expect(await log.events.compactionResults.isEmpty)
+        let duringClose = try #require(sentDuringClose.id)
+        for late in [waiting, duringClose] {
+            await #expect(throws: MailRefusal.closed) {
+                try await session.awaitTerminal(of: late)
+            }
         }
-        // Only the first compaction made a summarizer call.
+        // Only the running compaction made a summarizer call.
         #expect(await fixture.observer.entered.filter(Fixtures.isSummarizerCall).count == 1)
+    }
+
+    /// The production change that makes this test fail: a compaction handler
+    /// that does not check, on the session, whether close began. The task of
+    /// a compaction signal reads the close of the signal executor before it
+    /// goes to the session, so its work can reach the session after close
+    /// began. That compaction then starts: close does not cancel it, its
+    /// events come after the feeds finished, and the drain of close waits
+    /// for it. With a summarizer call that ends only on a cancel, close does
+    /// not return.
+    @Test("the work of a compaction signal that reaches the session after close began does not start")
+    func aCompactionDoesNotStartAfterCloseBegan() async throws {
+        let dir = Fixtures.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let (fixture, session) = try await Self.makeSession(dir: dir)
+        let actor = try #require(session as? RoutedSessionActor)
+        let (log, drain) = await OutputLog.watch(session)
+        let gates = LateCompactionGates()
+        fixture.hook.midAnswer = { prompt in await gates.hold(prompt) }
+
+        // The answer holds its model call, and the cancel of close does not
+        // end the hold, so the drain of close waits for the pump until the
+        // test releases the answer.
+        _ = try session.send(Self.heldPrompt)
+        await gates.answerInside.wait()
+        let closing = Task { await session.close() }
+        // Close finishes the feeds after it began and before its drain.
+        await drain.value
+
+        // The task of a compaction signal that read the executor before close
+        // closed it: its work reaches the session now, after close began.
+        let id = SignalID()
+        let order = CompactionOrder(
+            prompt: Fixtures.compactionSummarizerPrompt, budget: Fixtures.summarizingCompactionBudget,
+            reason: .requested, overflowRetryTarget: nil)
+        let work = Task {
+            let result = await actor.performCompaction(id, order)
+            gates.progress.signal()
+            return result
+        }
+        // The first of the two: a summarizer call of a compaction that
+        // started, or the end of the work.
+        await gates.progress.wait()
+        let started = gates.summarizerStarted.isSet
+        // The gates open in each case, so the test always ends.
+        gates.summarizerRelease.signal()
+        gates.answerRelease.signal()
+        let result = await work.value
+        await closing.value
+        fixture.hook.midAnswer = nil
+
+        #expect(started == false)
+        // Close cancels each compaction that starts. A compaction with no
+        // cancel makes the drain of close wait for its summarizer call.
+        #expect(started == gates.summarizerSawCancel.isSet)
+        #expect(throws: CancellationError.self) { try result.get() }
+        #expect(await log.firstIndex { Self.startsCompaction($0, id) } == nil)
+        #expect(try Self.recordedTerminal(of: id, on: session) == nil)
+        #expect(await fixture.observer.entered.filter(Fixtures.isSummarizerCall).isEmpty)
     }
 
     /// The production change that makes this test fail: a cancelAll that
