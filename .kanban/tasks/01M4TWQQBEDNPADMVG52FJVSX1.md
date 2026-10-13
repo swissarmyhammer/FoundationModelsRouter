@@ -1,8 +1,13 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8580'
+comments:
+- actor: claude-code
+  id: 01m4veyes1rzvf91a2h01k0bwn
+  text: 'Done in commit ee71f54e, which includes the fix for the retry gap from part D. The build is clean. The full suite passed 2 of 2 runs (1664 tests in 205 suites, 2 known issues). The rename of mailbox to runPlane is complete (the part F item 1 is done). The report went to the reviewer. A latent part D problem is open: the records of a failed attempt with no recovery can go on an older prompt. Fix it at the start of part F.'
+  timestamp: 2026-10-13T20:23:30.337617+00:00
+position_column: done
+position_ordinal: ffffffd980
 title: 'E1-E3: Telemetry and names'
 ---
 E1: `recordMessageQueueDepth()` becomes `recordMailQueueDepth()` with the dimension `mail.kind`.
