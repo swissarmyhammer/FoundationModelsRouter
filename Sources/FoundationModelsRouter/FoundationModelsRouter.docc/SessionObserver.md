@@ -22,13 +22,13 @@ Use ``SessionObserver`` in new code.
 ## Bind an observer to a view
 
 Give the observer the event stream of an answer with
-``SessionObserver/apply(eventsFrom:)``. The call drains the stream and
-updates the observer on the main actor as each event arrives, so the view
+``SessionObserver/apply(eventsFrom:)``. The call reads the stream to its end
+and updates the observer on the main actor as each event arrives, so the view
 redraws itself while the answer runs:
 
 ```swift
 struct ConversationView: View {
-    let session: RoutedSession
+    let session: any RoutedSession
     @State private var observer = SessionObserver()
     @State private var prompt = ""
 
@@ -56,7 +56,9 @@ struct ConversationView: View {
 ```
 
 A driver that does its own work between events calls ``SessionObserver/apply(_:)``
-with one ``SessionEvent`` instead, and reads the observer after each call.
+with one ``SessionEvent`` instead, and reads the observer after each call. A
+driver that reads ``RoutedSession/streamSessionEvents()`` gets each event in a
+``SessionOutput``, and gives ``SessionOutput/event`` to the observer.
 
 For a complete offline example that drives a scripted answer and then asserts
 what the observer holds, read `ProjectionExampleTests` in the test target.
@@ -150,4 +152,6 @@ stop.
 ### The events behind it
 
 - ``SessionEvent``
+- ``SessionOutput``
 - ``RoutedSession/streamEvents(to:maxTokens:)``
+- ``RoutedSession/streamSessionEvents()``

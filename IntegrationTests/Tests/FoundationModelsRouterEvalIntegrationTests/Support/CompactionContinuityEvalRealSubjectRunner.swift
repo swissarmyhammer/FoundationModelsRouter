@@ -217,7 +217,7 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
         // step's own compaction accounting is returned and compacted into the
         // running totals by the caller instead.
         func driveStep(
-            _ session: RoutedSession, _ text: String
+            _ session: any RoutedSession, _ text: String
         ) async throws -> (reply: String, compactionCount: Int, tokensBefore: Int, tokensAfter: Int) {
             var reply = ""
             var stepCompactionCount = 0

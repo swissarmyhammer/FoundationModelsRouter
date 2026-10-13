@@ -285,7 +285,7 @@ struct PropagationProbeIntegrationTests {
         samplingMode: .greedy, maximumResponseTokens: GatedRealModelBudget.responseTokenCeiling)
 
     /// Builds the ``ToolContext`` the test binds around `respond()` — a
-    /// real mailbox and a minted completion token, so a context that arrives
+    /// real ``RunPlane`` and a minted completion token, so a context that arrives
     /// inside the probe is checkable as this exact binding.
     private static func makeBoundContext(completionToken: String) -> ToolContext {
         ToolContext(

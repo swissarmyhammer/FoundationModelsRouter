@@ -120,7 +120,7 @@ struct RoutedSessionPublicSurfaceTests {
 
     // Restates the old `cancelPrompt(id:)` test. A cancel that removes a mail
     // needs a busy session; the internal suites prove it (see
-    // `MessageQueueTests.cancelMessageWithdrawsAWaitingMessage`). Over the
+    // `SessionMailQueueTests.cancelMessageWithdrawsAWaitingMessage`). Over the
     // public surface this test proves the result for an answered message:
     // each signal returns its id at once, ends with its own terminal event,
     // and changes nothing.

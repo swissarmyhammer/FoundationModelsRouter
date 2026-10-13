@@ -10,9 +10,9 @@ import FoundationModels
 /// generation surface.
 ///
 /// A session follows the stdin/stdout model (`mailbox.md`, section 5). All
-/// input is ``Mail``: ``mail(_:)`` puts one mail in the mail queue of the
+/// input is ``Mail``: ``MailSink/mail(_:)`` puts one mail in the mail queue of the
 /// session and returns its output at once. All output is
-/// ``SessionOutput``: each event carries the ``Origin`` of the work that
+/// ``SessionOutput``: each event carries the ``Origin-enum`` of the work that
 /// sent it, so a caller reads the events of its mail by id. Control is
 /// signals: ``cancel(_:)``, ``cancelAll()``, ``replace(_:with:)`` and
 /// ``compact(prompt:budget:)`` never wait in the mail queue. Each returns a
@@ -161,7 +161,7 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
 
     /// Generates a complete text response to a prompt, recording the call.
     ///
-    /// This call is a helper on top of ``mail(_:)``: it sends the prompt as
+    /// This call is a helper on top of ``MailSink/mail(_:)``: it sends the prompt as
     /// one user message in reply mode, and reads the output of that mail to
     /// its terminal event. The run mail that waits goes into the prompt of
     /// the submission too, in queue order. The answer is the final reply of the
@@ -253,7 +253,7 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// Streams the events of one message as they are produced, recording the
     /// call exactly like ``streamResponse(to:maxTokens:)``.
     ///
-    /// A helper on top of ``mail(_:)``: it sends one user message in stream
+    /// A helper on top of ``MailSink/mail(_:)``: it sends one user message in stream
     /// mode, and gives each event whose origin holds its id, up to and
     /// including its terminal event.
     ///
@@ -448,7 +448,7 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// does not stop a running compaction: signals run in order, so the
     /// running compaction ends first, and the work of this signal runs after
     /// it. After the signal, the session is usable:
-    /// ``mail(_:)`` and the other signals work as usual, and the pump takes
+    /// ``MailSink/mail(_:)`` and the other signals work as usual, and the pump takes
     /// new mail when the stopped work ended. Safe at any time and any number
     /// of times, from any task.
     ///
@@ -553,7 +553,7 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// signals, and sends no ``SessionEvent/signalDone(_:)``), and waits
     /// until all work ended, also when the calling task is
     /// cancelled. Each queued mail gets its terminal event
-    /// ``SessionEvent/cancelled(_:)``, and ``mail(_:)`` refuses later mail
+    /// ``SessionEvent/cancelled(_:)``, and ``MailSink/mail(_:)`` refuses later mail
     /// with ``MailRefusal/closed``. Close waits for the pump, for the sweep of
     /// the background runs, and for the body of each run. So when this call
     /// returns, no work of the session runs: no submission, no background
@@ -586,7 +586,7 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// Sends one user message to this session, and returns its id at once
     /// (`generation-queue.md`, section 5.4).
     ///
-    /// A helper on top of ``mail(_:)``: the message is a user message in
+    /// A helper on top of ``MailSink/mail(_:)``: the message is a user message in
     /// reply mode, with the text of the `.text` segments of `prompt`, joined
     /// with no separator. It waits in the mail queue of the session. When no
     /// submission of the session runs, the pump starts one for it with no

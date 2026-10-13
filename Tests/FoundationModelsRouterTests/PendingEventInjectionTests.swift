@@ -381,7 +381,7 @@ struct PendingEventInjectionTests {
 
         let delivered = Mail(sender: .run(correlationID: posted.correlationID), body: .runEvent(posted))
         let (partials, attached) = RoutedSessionActor.attachingDeliveredMailRecords(
-            [delivered], to: [entrylessPrompt])
+            [delivered], to: [entrylessPrompt], excluding: [])
 
         // Unattached AND untouched: the events are neither embedded in the
         // recorded partial nor claimed attached, so the chokepoint's

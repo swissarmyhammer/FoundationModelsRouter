@@ -252,7 +252,7 @@ struct Qwen38AnswerRecord {
     ///   - prompt: The prompt of the message.
     /// - Returns: The record of the answer.
     /// - Throws: What the answer throws.
-    static func drive(_ session: RoutedSession, prompt: String) async throws -> Qwen38AnswerRecord {
+    static func drive(_ session: any RoutedSession, prompt: String) async throws -> Qwen38AnswerRecord {
         var record = Qwen38AnswerRecord()
         for try await event in await session.streamEvents(to: prompt, maxTokens: nil) {
             switch event {

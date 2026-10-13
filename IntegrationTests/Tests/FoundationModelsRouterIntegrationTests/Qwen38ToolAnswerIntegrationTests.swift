@@ -110,7 +110,7 @@ struct Qwen38ToolAnswerIntegrationTests {
     ///   the temp directory the caller removes.
     private func makeSession(
         over container: RealModelContainer
-    ) -> (session: RoutedSession, profile: LanguageModelProfile, directory: URL) {
+    ) -> (session: any RoutedSession, profile: LanguageModelProfile, directory: URL) {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Qwen38ToolAnswer-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -136,7 +136,7 @@ struct Qwen38ToolAnswerIntegrationTests {
     ///
     /// - Parameter session: The session whose answer has already returned.
     /// - Returns: The SDK's transcript entries, in order.
-    private func transcriptEntries(of session: RoutedSession) async -> [Transcript.Entry] {
+    private func transcriptEntries(of session: any RoutedSession) async -> [Transcript.Entry] {
         guard let actor = session as? RoutedSessionActor else { return [] }
         return await actor.backend.transcriptEntries()
     }
@@ -147,7 +147,7 @@ struct Qwen38ToolAnswerIntegrationTests {
     /// - Parameter session: The session whose answer has already returned.
     /// - Returns: `in=<input> out=<output>`, or `unmetered` when the backend
     ///   cannot report usage.
-    private func usageDescription(of session: RoutedSession) async -> String {
+    private func usageDescription(of session: any RoutedSession) async -> String {
         guard let actor = session as? RoutedSessionActor,
             let usage = await actor.backend.usageTokenCounts()
         else { return "unmetered" }

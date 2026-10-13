@@ -22,8 +22,8 @@ import Testing
 /// A sent message needs no driver: the pump starts a submission for it by
 /// itself (`generation-queue.md`, section 5.4). Everything runs against stubs
 /// — no MLX, no network, no GPU.
-@Suite("Message queue: send, inspect, edit, cancel")
-struct MessageQueueTests {
+@Suite("Mail queue of a session: send, inspect, edit, cancel")
+struct SessionMailQueueTests {
     // MARK: - Stub containers
 
     private final class BasicLLMContainer: PlainTranscriptStubContainer {
@@ -186,7 +186,7 @@ struct MessageQueueTests {
 
     private static func makeTempDir() -> URL {
         let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MessageQueueTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("SessionMailQueueTests-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }

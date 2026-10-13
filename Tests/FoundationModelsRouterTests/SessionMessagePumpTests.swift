@@ -24,10 +24,12 @@ struct SessionMessagePumpTests {
     // MARK: - Backend
 
     /// The error a ``PumpProbeBackend`` call raises when the test tells it to
-    /// fail. It raises the error before the call writes an entry, so the
-    /// session finds no `.prompt` entry to attach its mail to.
+    /// fail. ``ScriptedCall/fail`` raises the error before the call writes an
+    /// entry, so the session finds no `.prompt` entry of the attempt to
+    /// attach its mail to. ``ScriptedCall/failAfterPrompt`` raises it after
+    /// the call wrote its `.prompt` entry.
     enum PumpProbeError: Error, Equatable {
-        /// The call failed before it wrote an entry.
+        /// The call failed.
         case refused
     }
 
@@ -46,14 +48,20 @@ struct SessionMessagePumpTests {
 
         /// The call throws ``PumpProbeError/refused`` at once.
         case fail
+
+        /// The call writes its `.prompt` entry, then throws
+        /// ``PumpProbeError/refused``. The call writes no `.response` entry.
+        case failAfterPrompt
     }
 
     /// A backend that records each prompt and follows a script for each call.
     ///
     /// A call that answers appends a `.prompt` and a `.response` entry, as a
-    /// real `LanguageModelSession` does. A call that throws appends nothing.
-    /// Every mutable field is behind one `Mutex`, because a test reads the
-    /// prompts while a call runs.
+    /// real `LanguageModelSession` does. A call that throws appends nothing,
+    /// except ``ScriptedCall/failAfterPrompt``, which appends its `.prompt`.
+    /// The transcript can start with seed entries that the session did not
+    /// record yet. Every mutable field is behind one `Mutex`, because a test
+    /// reads the prompts while a call runs.
     final class PumpProbeBackend: LanguageModelSessionBackend {
         /// The fields a call reads and writes.
         private struct State {
@@ -73,9 +81,11 @@ struct SessionMessagePumpTests {
 
         /// Makes a backend that follows `script`.
         ///
-        /// - Parameter script: What each call does, by its one-based ordinal.
-        init(script: [Int: ScriptedCall]) {
-            state = Mutex(State(script: script))
+        /// - Parameters:
+        ///   - script: What each call does, by its one-based ordinal.
+        ///   - seedEntries: The entries the transcript starts with.
+        init(script: [Int: ScriptedCall], seedEntries: [Transcript.Entry] = []) {
+            state = Mutex(State(entries: seedEntries, script: script))
         }
 
         /// The prompt of each call so far, in call order.
@@ -96,13 +106,25 @@ struct SessionMessagePumpTests {
                 state.prompts.append(prompt)
                 return (state.prompts.count, state.script[state.prompts.count] ?? .answer)
             }
+            if case .failAfterPrompt = scripted {
+                state.withLock { $0.entries.append(Self.promptEntry(prompt)) }
+                throw PumpProbeError.refused
+            }
             try await Self.perform(scripted)
             let answer = Self.answer(ofCall: ordinal)
             state.withLock { state in
-                state.entries.append(.prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))])))
+                state.entries.append(Self.promptEntry(prompt))
                 state.entries.append(.response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: answer))])))
             }
             return answer
+        }
+
+        /// The `.prompt` entry that a call writes for `prompt`.
+        ///
+        /// - Parameter prompt: The prompt of the call.
+        /// - Returns: The entry.
+        static func promptEntry(_ prompt: String) -> Transcript.Entry {
+            .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))]))
         }
 
         /// Does what one scripted call does before it answers.
@@ -119,7 +141,7 @@ struct SessionMessagePumpTests {
             case .holdThenReject(let latch):
                 try await waitCancellably(on: latch)
                 throw RejectedToolCallError(RejectingLanguageModel.Executor.rejection)
-            case .fail:
+            case .fail, .failAfterPrompt:
                 throw PumpProbeError.refused
             }
         }

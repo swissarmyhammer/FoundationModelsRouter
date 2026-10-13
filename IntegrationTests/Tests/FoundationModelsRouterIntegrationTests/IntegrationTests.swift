@@ -424,7 +424,7 @@ struct IntegrationTests {
         //    real prefix-compute reuse (see plan.md's "Sessions & KV cache" open
         //    question); fork lineage and independent generation are what this
         //    asserts here.
-        var child: RoutedSession? = try await session.fork(workingDirectory: nil)
+        var child: (any RoutedSession)? = try await session.fork(workingDirectory: nil)
         #expect(child?.parentId == session.id)
         #expect(child?.id != session.id)
         let childRecordingDirectory = try #require(child).recordingDirectory

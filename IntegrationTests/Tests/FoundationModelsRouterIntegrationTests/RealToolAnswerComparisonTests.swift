@@ -235,7 +235,7 @@ struct RealToolAnswerComparisonTests {
     ///   directory the caller removes.
     private func makeSession(
         over loaded: RealModelContainer
-    ) -> (session: RoutedSession, profile: LanguageModelProfile, directory: URL) {
+    ) -> (session: any RoutedSession, profile: LanguageModelProfile, directory: URL) {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("RealToolAnswerComparison-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -263,7 +263,7 @@ struct RealToolAnswerComparisonTests {
     ///
     /// - Parameter session: The session whose answer has already returned.
     /// - Returns: The SDK's transcript entries, in order.
-    private func transcriptEntries(of session: RoutedSession) async -> [Transcript.Entry] {
+    private func transcriptEntries(of session: any RoutedSession) async -> [Transcript.Entry] {
         guard let actor = session as? RoutedSessionActor else { return [] }
         return await actor.backend.transcriptEntries()
     }
@@ -278,7 +278,7 @@ struct RealToolAnswerComparisonTests {
     /// - Parameter session: The session whose answer has already returned.
     /// - Returns: `in=<input> out=<output>`, or `unmetered` when the backend
     ///   cannot report usage.
-    private func usageDescription(of session: RoutedSession) async -> String {
+    private func usageDescription(of session: any RoutedSession) async -> String {
         guard let actor = session as? RoutedSessionActor,
             let usage = await actor.backend.usageTokenCounts()
         else { return "unmetered" }
@@ -361,7 +361,7 @@ struct RealToolAnswerComparisonTests {
                 .compactionStarted, .compaction, .compactionFailed, .discoveryPrimingFailed, .generationStalled,
                 .submissionQueued, .repetitionStopped, .reasoningStopped, .runSettled, .runMessage, .runProgress,
                 .elicitationRequested, .generationCall, .submissionEnded, .answered, .answerFailed,
-                .mailDeliveryPaused, .toolDisplay, .mailDelivered, .cancelled, .lost:
+                .mailDeliveryPaused, .toolDisplay, .mailDelivered, .cancelled, .signalDone, .lost:
                 break
             }
         }

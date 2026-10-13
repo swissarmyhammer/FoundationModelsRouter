@@ -114,7 +114,7 @@ struct SummarizerPromptCacheIntegrationTests {
     /// - Throws: What the answer or the compaction throws.
     private static func fillAndCompact(_ session: RoutedSessionActor) async throws {
         _ = try await session.respond(to: fillingPrompt, maxTokens: GatedRealModelBudget.responseTokenCeiling)
-        let result = try await session.compact(budget: CompactionRoundTripFixture.compactionBudget)
+        let result = try await session.compactAndAwait(budget: CompactionRoundTripFixture.compactionBudget)
         #expect(
             result.stagesApplied == [Summarization.stageName],
             "expected the summary to apply, got \(result.stagesApplied), shortfall \(String(describing: result.shortfall))"
@@ -147,7 +147,7 @@ struct SummarizerPromptCacheIntegrationTests {
         _ = try await fixture.session.respond(to: fillingPrompt, maxTokens: GatedRealModelBudget.responseTokenCeiling)
         let before = try await Self.settledPromptCacheState()
 
-        let result = try await fixture.session.compact(budget: CompactionRoundTripFixture.compactionBudget)
+        let result = try await fixture.session.compactAndAwait(budget: CompactionRoundTripFixture.compactionBudget)
         let after = try await Self.settledPromptCacheState()
 
         #expect(result.stagesApplied == [Summarization.stageName])

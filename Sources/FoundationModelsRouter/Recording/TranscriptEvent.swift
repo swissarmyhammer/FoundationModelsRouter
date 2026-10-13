@@ -66,12 +66,12 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         /// One or more facts about mail of the session (`mailbox.md`,
         /// section 5, problem 10): a mail entered the queue, a signal
         /// changed it, or it got its terminal event. Router-only.
-        /// ``TranscriptEvent/entry`` holds one ``MailRecordSegment`` for each
-        /// fact, and ``TranscriptEvent/text`` holds the
-        /// ``MailRecord/summary`` of each, one line for each. The delivery of
+        /// ``TranscriptEvent/entry`` holds one mail record segment
+        /// (`MailRecordSegment`) for each fact, and ``TranscriptEvent/text``
+        /// holds the summary of each, one line for each. The delivery of
         /// a mail is not this kind: it is a segment of the recorded `.prompt`
         /// entry of the submission that delivered the mail.
-        /// ``ContextRenderer`` does not render this kind. A restore reads it
+        /// The context render (`ContextRenderer`) does not render this kind. A restore reads it
         /// to find the mail that a crash cut off. A journal recorded before
         /// this kind holds no such event.
         case mail
@@ -128,7 +128,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     /// event records. `nil` for v1 recordings, and for each router-only kind
     /// except ``Kind/repeatedPartRemoval``, ``Kind/watchStop`` and
     /// ``Kind/mail``, whose payload carries its ``RepeatedPartRemovalSegment``,
-    /// its ``WatchStopSegment`` or its ``MailRecordSegment``s and mirrors no
+    /// its ``WatchStopSegment`` or its mail record segments and mirrors no
     /// entry.
     public let entry: TranscriptEntryPayload?
     /// The parent session and tool call that spawned this event's session.

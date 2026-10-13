@@ -142,7 +142,7 @@ private func distinctModelRefs(of profile: LanguageModelProfile) -> Set<String> 
 ///
 /// - Parameter profile: The resolved profile.
 /// - Returns: The session.
-private func makeSession(from profile: LanguageModelProfile) -> RoutedSession {
+private func makeSession(from profile: LanguageModelProfile) -> any RoutedSession {
     profile.standard.makeSession(instructions: crossRouterInstructions)
 }
 
@@ -155,7 +155,7 @@ private func makeSession(from profile: LanguageModelProfile) -> RoutedSession {
 /// - Parameter session: The session to answer.
 /// - Returns: The answer.
 /// - Throws: Whatever the answer throws.
-private func answer(on session: RoutedSession) async throws -> String {
+private func answer(on session: any RoutedSession) async throws -> String {
     try await session.respond(
         to: crossRouterPrompt,
         maxTokens: GatedRealModelBudget.responseTokenCeiling

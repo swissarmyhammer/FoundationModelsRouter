@@ -161,8 +161,9 @@ struct CompactionRoundTripIntegrationTests {
         let fillBeforeCompaction = try #require(fills.last)
         #expect(fillBeforeCompaction >= 0.80)
 
-        // 2. Compact at the trigger: shrinks fill, preserves identity.
-        let result = try await session.compact(budget: CompactionRoundTripFixture.compactionBudget)
+        // 2. Compact at the trigger: shrinks fill, preserves identity. The
+        //    compaction is a signal, so the test waits for its terminal event.
+        let result = try await session.compactAndAwait(budget: CompactionRoundTripFixture.compactionBudget)
         // The applied summary, and not merely "something ran". A compaction
         // that stops on a shortfall reports no stage and leaves the live
         // context as it was. This test is about a real summary whose quality

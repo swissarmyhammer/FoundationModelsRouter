@@ -369,6 +369,125 @@ struct MailTranscriptTests {
         withExtendedLifetime(keep) {}
     }
 
+    // MARK: - A failed attempt with no recovery, over seed entries
+
+    /// How many seeded answers the backend transcript starts with. The
+    /// session did not record them, so the diff of the first submission
+    /// holds their `.prompt` entries too.
+    private static let seedAnswerCount = 3
+
+    /// The prompt of the seeded answer `index`.
+    ///
+    /// - Parameter index: The index of the seeded answer.
+    /// - Returns: The prompt text.
+    private static func seedPrompt(_ index: Int) -> String {
+        "seed message \(index)"
+    }
+
+    /// The response of the seeded answer `index`.
+    ///
+    /// - Parameter index: The index of the seeded answer.
+    /// - Returns: The response text.
+    private static func seedResponse(_ index: Int) -> String {
+        "seed answer \(index)"
+    }
+
+    /// The seed entries: one `.prompt` and one `.response` entry for each
+    /// seeded answer.
+    ///
+    /// - Returns: The entries, in transcript order.
+    private static func seedEntries() -> [Transcript.Entry] {
+        (0..<seedAnswerCount).flatMap { index -> [Transcript.Entry] in
+            [
+                Backend.promptEntry(seedPrompt(index)),
+                .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: seedResponse(index)))])),
+            ]
+        }
+    }
+
+    /// The texts of the seed entries, in transcript order.
+    ///
+    /// - Returns: The prompt and the response text of each seeded answer.
+    private static func seedTexts() -> [String] {
+        (0..<seedAnswerCount).flatMap { [seedPrompt($0), seedResponse($0)] }
+    }
+
+    /// The recorded `.prompt` events of `events` whose text is a seed prompt.
+    ///
+    /// - Parameter events: A recorded stream.
+    /// - Returns: The seed prompt events, in transcript order.
+    private static func seedPrompts(in events: [TranscriptEvent]) -> [TranscriptEvent] {
+        let seeds = Set((0..<seedAnswerCount).map(seedPrompt))
+        return events.filter { $0.kind == .prompt && seeds.contains($0.text ?? "") }
+    }
+
+    /// Whether `event` is the terminal event ``SessionEvent/answerFailed(_:)``.
+    ///
+    /// - Parameter event: One event of a session.
+    /// - Returns: `true` for an answer failure.
+    private static func isAnswerFailed(_ event: SessionEvent) -> Bool {
+        if case .answerFailed = event {
+            return true
+        }
+        return false
+    }
+
+    @Test(
+        "a failed attempt with no recovery over seed entries records the mail on the prompt of that submission, one time, and not on a seed prompt"
+    )
+    func aFailedAttemptRecordsTheMailOnItsOwnPrompt() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let recorder = InMemoryRecorder()
+        let backend = Backend(script: [1: .failAfterPrompt], seedEntries: Self.seedEntries())
+        let (session, keep) = try await Self.makeSession(over: backend, dir: dir, recorder: recorder)
+
+        let id = try session.send(Self.firstPrompt)
+        #expect(Self.isAnswerFailed(try await session.awaitTerminal(of: id)))
+        await session.close()
+
+        let events = await recorder.events
+        #expect(Self.records(of: id, in: events) == ["mailQueued", "mailDelivered", "answerEnded"])
+        let delivering = events.promptsDelivering(id)
+        #expect(delivering.count == 1)
+        #expect(delivering.first?.text == Self.firstPrompt)
+        let seeds = Self.seedPrompts(in: events)
+        #expect(seeds.count == Self.seedAnswerCount)
+        #expect(seeds.allSatisfy { $0.mailRecords.isEmpty })
+        // The render holds each seed entry as it is, then the mail one time.
+        // The close of the failed answer has no text.
+        let rendered = Self.texts(of: try ContextRenderer.context(of: events)).filter { !$0.isEmpty }
+        #expect(rendered == Self.seedTexts() + [Self.firstPrompt])
+        withExtendedLifetime(keep) {}
+    }
+
+    @Test(
+        "a failed attempt with no recovery that wrote no prompt, over seed entries, puts no mail record on a seed prompt, and the render holds the seed entries as they are"
+    )
+    func aFailedAttemptWithNoPromptRecordsNoMailOnASeedPrompt() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let recorder = InMemoryRecorder()
+        let backend = Backend(script: [1: .fail], seedEntries: Self.seedEntries())
+        let (session, keep) = try await Self.makeSession(over: backend, dir: dir, recorder: recorder)
+
+        let id = try session.send(Self.firstPrompt)
+        #expect(Self.isAnswerFailed(try await session.awaitTerminal(of: id)))
+        await session.close()
+
+        // The model got no prompt entry of the submission, so the live
+        // context does not hold the mail, and the transcript holds no
+        // delivered record of it.
+        let events = await recorder.events
+        #expect(Self.records(of: id, in: events) == ["mailQueued", "answerEnded"])
+        let seeds = Self.seedPrompts(in: events)
+        #expect(seeds.count == Self.seedAnswerCount)
+        #expect(seeds.allSatisfy { $0.mailRecords.isEmpty })
+        let rendered = Self.texts(of: try ContextRenderer.context(of: events)).filter { !$0.isEmpty }
+        #expect(rendered == Self.seedTexts())
+        withExtendedLifetime(keep) {}
+    }
+
     // MARK: - The render grows at its end
 
     @Test("between two answers the render only grows at its end")

@@ -18,6 +18,9 @@ extension RoutedSessionActor {
     ///   - responseTokenCeiling: The token ceiling the submission gave its backend,
     ///     or `nil` when it gave none.
     ///   - deliveredMail: The mail this submission delivered, in take order.
+    ///   - entryIdsBeforeAttempt: The ids of the backend entries from before
+    ///     the attempt. The records of `deliveredMail` go only on a `.prompt`
+    ///     entry that is not one of them.
     ///   - onEvent: A sink for derived ``SessionEvent``s, or `nil`.
     ///   - stopReason: The reason of a stop that the session made itself, or
     ///     `nil` to read the reason from the entries of the attempt.
@@ -34,6 +37,7 @@ extension RoutedSessionActor {
         usageBefore: (input: Int, output: Int)?,
         responseTokenCeiling: Int?,
         deliveredMail: [Mail],
+        entryIdsBeforeAttempt: Set<String>,
         onEvent: ((SessionEvent) -> Void)? = nil,
         stopReason: FinishReason? = nil,
         replacedBackend: ReplacedBackendMeasure? = nil
@@ -73,7 +77,8 @@ extension RoutedSessionActor {
         // restore reads the records of one mail in the order they came.
         await flushMailRecords()
         let (diffIncludedResponse, deliveredMailAttached) = await recordTranscriptDelta(
-            grammar: grammar, since: since, usage: usage, deliveredMail: deliveredMail, onEvent: onEvent)
+            grammar: grammar, since: since, usage: usage, deliveredMail: deliveredMail,
+            entryIdsBeforeAttempt: entryIdsBeforeAttempt, onEvent: onEvent)
         // The submission ended, with success or failure, and its entries are
         // recorded: a settled point (`generation-queue.md`, section 5.8).
         settleTranscript()
@@ -144,6 +149,9 @@ extension RoutedSessionActor {
     ///   - responseTokenCeiling: The token ceiling the submission gave its backend,
     ///     or `nil` when it gave none.
     ///   - deliveredMail: The mail this submission delivered, in take order.
+    ///   - entryIdsBeforeAttempt: The ids of the backend entries from before
+    ///     the attempt. The records of `deliveredMail` go only on a `.prompt`
+    ///     entry that is not one of them.
     ///   - onEvent: A sink for derived ``SessionEvent``s, or `nil`.
     ///   - stopReason: The reason of a stop that the session made itself, or
     ///     `nil` to read the reason from the entries of the attempt.
@@ -158,18 +166,20 @@ extension RoutedSessionActor {
         usageBefore: (input: Int, output: Int)?,
         responseTokenCeiling: Int?,
         deliveredMail: [Mail],
+        entryIdsBeforeAttempt: Set<String>,
         onEvent: ((SessionEvent) -> Void)? = nil,
         stopReason: FinishReason? = nil,
         replacedBackend: ReplacedBackendMeasure? = nil
     ) async -> (diffIncludedResponse: Bool, usage: (input: Int, output: Int)?, finishReason: FinishReason) {
         let (diffIncludedResponse, usage, deliveredMailAttached, finishReason) = await finishSubmission(
             grammar: grammar, since: started, usageBefore: usageBefore,
-            responseTokenCeiling: responseTokenCeiling, deliveredMail: deliveredMail, onEvent: onEvent,
+            responseTokenCeiling: responseTokenCeiling, deliveredMail: deliveredMail,
+            entryIdsBeforeAttempt: entryIdsBeforeAttempt, onEvent: onEvent,
             stopReason: stopReason, replacedBackend: replacedBackend)
         // The pump already destructively took the run mail of `deliveredMail`
         // from the mail queue of `outbox` before `body()` ran. When this
-        // submission's diff produced no
-        // `.prompt`-kind partial to attach its records to — every `.ebnf`-guided
+        // submission's diff produced no `.prompt`-kind partial of the attempt
+        // itself to attach its records to — every `.ebnf`-guided
         // submission, whose backend validates and throws before touching its
         // live session at all (see `MLXFoundationModelsSessionBackend.respond(to:
         // following:maxTokens:)`) — the
@@ -256,15 +266,18 @@ extension RoutedSessionActor {
     ///   - since: The start instant of the submission used to stamp `ms`, or `nil`.
     ///   - usage: The `(input, output)` token delta of the submission, or `nil`.
     ///   - deliveredMail: The mail this submission delivered, in take order.
+    ///   - entryIdsBeforeAttempt: The ids of the backend entries from before
+    ///     the attempt.
     ///   - onEvent: A sink for derived ``SessionEvent``s, or `nil`.
     /// - Returns: Whether the diff included a `.response` entry, and whether
     ///   the records of `deliveredMail` were attached to a `.prompt` partial
-    ///   (`true` when `deliveredMail` is empty).
+    ///   of the attempt (`true` when `deliveredMail` is empty).
     private func recordTranscriptDelta(
         grammar: Grammar?,
         since: Date?,
         usage: (input: Int, output: Int)?,
         deliveredMail: [Mail],
+        entryIdsBeforeAttempt: Set<String>,
         onEvent: ((SessionEvent) -> Void)? = nil
     ) async -> (diffIncludedResponse: Bool, deliveredMailAttached: Bool) {
         let current = Transcript(entries: backend.transcriptEntries())
@@ -283,7 +296,7 @@ extension RoutedSessionActor {
 
         let lastResponseIndex = diffPartials.lastIndex { $0.kind == .response }
         let (recordedPartials, deliveredMailAttached) = Self.attachingDeliveredMailRecords(
-            deliveredMail, to: diffPartials)
+            deliveredMail, to: diffPartials, excluding: entryIdsBeforeAttempt)
 
         // Tool-call ids this diff has announced (`.toolCalls`) versus resolved
         // (`.toolOutput`), in request order — consulted once the loop finishes
@@ -347,22 +360,35 @@ extension RoutedSessionActor {
     }
 
     /// Appends one ``MailRecord/mailDelivered(_:)`` record
-    /// (``MailRecordSegment``) per mail onto the last `.prompt` partial in
-    /// `diffPartials`, in take order: the delivery of each mail in the
+    /// (``MailRecordSegment``) per mail onto the `.prompt` partial of the
+    /// attempt itself, in take order: the delivery of each mail in the
     /// transcript, before the model output of the submission.
+    ///
+    /// The prompt of the attempt is the last `.prompt` partial whose entry
+    /// was not in the backend before the attempt. The diff can also hold
+    /// older `.prompt` entries that the session did not record yet (for
+    /// example the entries that seed a backend). The records never go on one
+    /// of those, because the model did not read the mail there.
     ///
     /// - Parameters:
     ///   - mail: The mail to attach, in take order.
     ///   - diffPartials: The diff of the submission, in transcript order.
+    ///   - entryIdsBeforeAttempt: The ids of the backend entries from before
+    ///     the attempt.
     /// - Returns: The partials to record, and whether the records were
     ///   attached. `attached` is `true` when `mail` is empty and `false`
-    ///   when no `.prompt` partial with an entry exists.
+    ///   when the diff holds no `.prompt` partial of the attempt.
     static func attachingDeliveredMailRecords(
         _ mail: [Mail],
-        to diffPartials: [TranscriptEvent.Partial]
+        to diffPartials: [TranscriptEvent.Partial],
+        excluding entryIdsBeforeAttempt: Set<String>
     ) -> (partials: [TranscriptEvent.Partial], attached: Bool) {
         guard !mail.isEmpty else { return (diffPartials, true) }
-        guard let promptIndex = diffPartials.lastIndex(where: { $0.kind == .prompt }),
+        guard
+            let promptIndex = diffPartials.lastIndex(where: { partial in
+                guard partial.kind == .prompt, let entry = partial.entry else { return false }
+                return !entryIdsBeforeAttempt.contains(entry.entryId)
+            }),
             let entry = diffPartials[promptIndex].entry
         else {
             return (diffPartials, false)

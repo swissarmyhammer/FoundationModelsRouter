@@ -203,9 +203,12 @@ extension RoutedSessionActor {
                 // abandoned compaction leaves `backend` exactly as it was, so the diff
                 // finds no `.prompt` partial to attach the records of that mail to and
                 // re-queues its run mail, and the synthetic close is the trace.
+                // No attempt ran, so no entry of the backend is a prompt of
+                // this answer: each entry counts as one from before.
                 await recordFailedSubmission(
                     grammar: grammar, since: started, usageBefore: usageBefore,
-                    responseTokenCeiling: responseTokenCeiling.resolved, deliveredMail: deliveredMail, onEvent: emit)
+                    responseTokenCeiling: responseTokenCeiling.resolved, deliveredMail: deliveredMail,
+                    entryIdsBeforeAttempt: Set(backend.transcriptEntries().map(\.id)), onEvent: emit)
                 throw error
             }
         }
@@ -474,7 +477,8 @@ extension RoutedSessionActor {
             // ``finishSubmissionAndRequeueIfUnattached(grammar:since:usageBefore:responseTokenCeiling:deliveredMail:onEvent:stopReason:replacedBackend:)``.
             finishReason = await finishSubmissionAndRequeueIfUnattached(
                 grammar: grammar, since: started, usageBefore: usageBefore,
-                responseTokenCeiling: responseTokenCeiling.resolved, deliveredMail: deliveredMail, onEvent: onEvent
+                responseTokenCeiling: responseTokenCeiling.resolved, deliveredMail: deliveredMail,
+                entryIdsBeforeAttempt: attempt.entryIdsBeforeAttempt, onEvent: onEvent
             ).finishReason
         } catch {
             if let noOpStop = takeNoOpToolCallStop() {
@@ -499,7 +503,8 @@ extension RoutedSessionActor {
             await recordFailedSubmission(
                 grammar: grammar, since: started, usageBefore: usageBefore,
                 responseTokenCeiling: responseTokenCeiling.resolved,
-                deliveredMail: recovery == nil ? deliveredMail : [], onEvent: onEvent)
+                deliveredMail: recovery == nil ? deliveredMail : [],
+                entryIdsBeforeAttempt: attempt.entryIdsBeforeAttempt, onEvent: onEvent)
             guard let recovery else { throw error }
             requeueUndeliveredRunMail(deliveredMail)
             return try await recoverFailedAttempt(
@@ -665,6 +670,9 @@ extension RoutedSessionActor {
     ///   - responseTokenCeiling: The token ceiling the submission gave its backend, or `nil`.
     ///   - deliveredMail: The mail this submission took from ``outbox``, in
     ///     take order.
+    ///   - entryIdsBeforeAttempt: The ids of the backend entries from before
+    ///     the failed attempt. The records of `deliveredMail` go only on the
+    ///     `.prompt` entry that the attempt itself wrote.
     ///   - onEvent: A sink for the ``SessionEvent``s of this answer, or `nil`.
     private func recordFailedSubmission(
         grammar: Grammar?,
@@ -672,11 +680,13 @@ extension RoutedSessionActor {
         usageBefore: (input: Int, output: Int)?,
         responseTokenCeiling: Int?,
         deliveredMail: [Mail],
+        entryIdsBeforeAttempt: Set<String>,
         onEvent: ((SessionEvent) -> Void)? = nil
     ) async {
         let (diffIncludedResponse, usage, _) = await finishSubmissionAndRequeueIfUnattached(
             grammar: grammar, since: started, usageBefore: usageBefore,
-            responseTokenCeiling: responseTokenCeiling, deliveredMail: deliveredMail, onEvent: onEvent)
+            responseTokenCeiling: responseTokenCeiling, deliveredMail: deliveredMail,
+            entryIdsBeforeAttempt: entryIdsBeforeAttempt, onEvent: onEvent)
         guard !diffIncludedResponse else { return }
         let close = TranscriptEntryMapper.event(from: .response(Transcript.Response(segments: [])))
         await append(

@@ -14,7 +14,7 @@ import FoundationModelsRouter
 /// The import is plain, with no `@testable`, so a member or a case that loses
 /// `public` stops this file from compiling before a single test runs.
 @Suite("RoutedSession mail API over a plain import")
-struct MessageQueuePublicSurfaceTests {
+struct MailPublicSurfaceTests {
     /// What a consumer's queue view keeps for one message it sent.
     struct SentMessage {
         /// The id ``RoutedSession/send(_:)-(String)`` gave the message.

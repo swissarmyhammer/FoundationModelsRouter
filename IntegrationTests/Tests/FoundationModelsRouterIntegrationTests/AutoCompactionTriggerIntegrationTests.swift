@@ -328,7 +328,7 @@ struct AutoCompactionTriggerIntegrationTests {
     ///   - prompt: The prompt text of the answer.
     /// - Returns: The answer's reply and every compaction it took.
     /// - Throws: Whatever the answer throws.
-    private static func drive(_ session: RoutedSession, prompt: String) async throws -> DriveResult {
+    private static func drive(_ session: any RoutedSession, prompt: String) async throws -> DriveResult {
         var reply = ""
         var compactions: [CompactionResult] = []
         let stream = await session.streamEvents(to: prompt, maxTokens: replyTokenCeiling)
