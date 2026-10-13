@@ -1288,12 +1288,9 @@ struct SessionOutboxToolWiringTests {
 
         let events = await recorder.events
         let promptEvent = try #require(events.last { $0.kind == .prompt })
-        let journaled = (promptEvent.entry?.segments ?? []).compactMap { segment -> OperationEvent? in
-            guard case .structure(_, let schemaName, let contentJSON) = segment,
-                schemaName == OperationEventSegment.schemaName
-            else { return nil }
-            return try? JSONDecoder().decode(OperationEvent.self, from: Data(contentJSON.utf8))
-        }
+        // The delivered run mail is a mail record on the `.prompt` entry. The
+        // public reader gives its run event.
+        let journaled = promptEvent.operationEvents
         #expect(journaled.contains { $0.kind == .completed && $0.correlationID == envelope.completionToken })
     }
 

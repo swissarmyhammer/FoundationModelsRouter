@@ -45,8 +45,9 @@ struct PumpWork {
 /// for the next cycle, or for the next continuation of the running answer.
 extension RoutedSessionActor: SessionMailObserver {
     /// The text that separates two user-type prompts in the prompt of one
-    /// submission.
-    static let messageSeparator = "\n\n"
+    /// submission: the block separator of the render
+    /// (``ContextRenderer/blockSeparator``).
+    static let messageSeparator = ContextRenderer.blockSeparator
 
     /// The prompt of a submission that only run mail started when a run
     /// terminal is in that mail: the settled runs' terminals precede it as
@@ -318,10 +319,13 @@ extension RoutedSessionActor: SessionMailObserver {
 
     /// Runs the first submission of an answer, and every continuation of it.
     ///
-    /// The prompt of the submission is the text of each user-type mail of
-    /// the batch, in queue order, joined with ``messageSeparator``. A batch
-    /// with no user-type mail gets ``mailDeliveryPrompt(for:)``. The run mail
-    /// goes into the preamble.
+    /// The prompt of the submission is the render of the mail of the batch
+    /// in take order (``ContextRenderer/promptText(delivering:followedBy:)``):
+    /// the text of each user-type mail, and one line for each run mail. A
+    /// batch with no user-type mail gets ``mailDeliveryPrompt(for:)`` after
+    /// its mail. The own prompt of the answer, which a recovery sends again,
+    /// is the text of each user-type mail joined with ``messageSeparator``,
+    /// or that delivery prompt.
     ///
     /// - Parameters:
     ///   - batch: The mail of the first submission.
@@ -342,7 +346,7 @@ extension RoutedSessionActor: SessionMailObserver {
         await recordSessionMetaIfNeeded()
         await notifySubmissionBoundaryTools()
         await runAnswerChain(
-            grammar: work.grammar, pendingEvents: runEvents, ownPrompt: ownPrompt,
+            grammar: work.grammar, deliveredMail: batch.mail, ownPrompt: ownPrompt,
             responseTokenCeiling: ceiling, work.body)
     }
 
@@ -355,17 +359,16 @@ extension RoutedSessionActor: SessionMailObserver {
     /// that ``cancelAll()`` stopped takes no more mail: its readers already
     /// have its end.
     ///
-    /// - Returns: The run events, the prompt texts of the joining user-type
-    ///   mail, and the ids of all joining mail, in queue order.
-    func takeMailJoiningTheAnswer() -> (events: [OperationEvent], texts: [String], mailIds: [MailID]) {
-        guard case .answer(let options) = pumpWork?.kind, !openAnswerMail.isSilenced else { return ([], [], []) }
+    /// - Returns: The joining mail, in take order.
+    func takeMailJoiningTheAnswer() -> [Mail] {
+        guard case .answer(let options) = pumpWork?.kind, !openAnswerMail.isSilenced else { return [] }
         let isGuided = grammar != nil
         let joining = outbox.queue.take { candidate, _ in
             Self.joinsRunningAnswer(candidate, options: options, isGuided: isGuided)
         }
         deliver(joining)
         recordMessageQueueDepth()
-        return (joining.compactMap(\.runEvent), joining.compactMap(\.promptText), joining.map(\.id))
+        return joining
     }
 
     /// Ends the running work: its id and a cancel requested for it.
@@ -390,7 +393,7 @@ extension RoutedSessionActor: SessionMailObserver {
     ///
     /// The third limit, the one overflow retry, is no stored state: the first
     /// submission of each answer gets the permission
-    /// (``runAnswerChain(grammar:pendingEvents:ownPrompt:responseTokenCeiling:_:)``),
+    /// (``runAnswerChain(grammar:deliveredMail:ownPrompt:responseTokenCeiling:_:)``),
     /// each continuation carries the permission of the submission before it
     /// (``StoppedAttempt/allowOverflowRetry``), and the retry itself gives none.
     ///

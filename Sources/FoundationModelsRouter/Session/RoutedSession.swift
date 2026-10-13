@@ -164,7 +164,7 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// This call is a helper on top of ``mail(_:)``: it sends the prompt as
     /// one user message in reply mode, and reads the output of that mail to
     /// its terminal event. The run mail that waits goes into the prompt of
-    /// the submission as a preamble. The answer is the final reply of the
+    /// the submission too, in queue order. The answer is the final reply of the
     /// submission that carried the prompt, and of each continuation of it
     /// (a compaction, a retry, a recovery). A background run that the
     /// submission started does not hold the answer: its terminal is run
@@ -592,7 +592,7 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// submission of the session runs, the pump starts one for it with no
     /// other call; when a submission runs, the message goes into the next
     /// one. Every waiting mail that can share one submission goes into it, in
-    /// queue order, after the preamble of the waiting run mail.
+    /// queue order, with the waiting run mail.
     ///
     /// The call waits for no submission and for no answer, from any task: a
     /// tool body of this session's own submission can send, and its message

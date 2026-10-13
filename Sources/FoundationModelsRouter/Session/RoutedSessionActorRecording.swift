@@ -17,7 +17,7 @@ extension RoutedSessionActor {
     ///   - usageBefore: The token-usage snapshot taken before the submission ran.
     ///   - responseTokenCeiling: The token ceiling the submission gave its backend,
     ///     or `nil` when it gave none.
-    ///   - pendingEvents: The events this submission took from the outbox.
+    ///   - deliveredMail: The mail this submission delivered, in take order.
     ///   - onEvent: A sink for derived ``SessionEvent``s, or `nil`.
     ///   - stopReason: The reason of a stop that the session made itself, or
     ///     `nil` to read the reason from the entries of the attempt.
@@ -25,20 +25,20 @@ extension RoutedSessionActor {
     ///     before it replaced ``backend``, or `nil` for any other end of an
     ///     attempt.
     /// - Returns: Whether the diff included a `.response` entry, the usage
-    ///   delta of the submission (`nil` when unknown), whether `pendingEvents`
-    ///   were attached to a persisted `.prompt` entry, and why the attempt
-    ///   stopped.
+    ///   delta of the submission (`nil` when unknown), whether the records of
+    ///   `deliveredMail` were attached to a persisted `.prompt` entry, and why
+    ///   the attempt stopped.
     private func finishSubmission(
         grammar: Grammar?,
         since: Date,
         usageBefore: (input: Int, output: Int)?,
         responseTokenCeiling: Int?,
-        pendingEvents: [OperationEvent],
+        deliveredMail: [Mail],
         onEvent: ((SessionEvent) -> Void)? = nil,
         stopReason: FinishReason? = nil,
         replacedBackend: ReplacedBackendMeasure? = nil
     ) async -> (
-        diffIncludedResponse: Bool, usage: (input: Int, output: Int)?, pendingEventsAttached: Bool,
+        diffIncludedResponse: Bool, usage: (input: Int, output: Int)?, deliveredMailAttached: Bool,
         finishReason: FinishReason
     ) {
         let usage = Self.usageDelta(before: usageBefore, after: backend.usageTokenCounts())
@@ -69,8 +69,11 @@ extension RoutedSessionActor {
         let renderedContext =
             replacedBackend?.renderTokens.map { (input: $0, output: 0) } ?? generationCallLedger?.newestCall ?? usage
         closeGenerationCallLedger()
-        let (diffIncludedResponse, pendingEventsAttached) = await recordTranscriptDelta(
-            grammar: grammar, since: since, usage: usage, pendingEvents: pendingEvents, onEvent: onEvent)
+        // Each mail record that came before this diff is on disk first, so a
+        // restore reads the records of one mail in the order they came.
+        await flushMailRecords()
+        let (diffIncludedResponse, deliveredMailAttached) = await recordTranscriptDelta(
+            grammar: grammar, since: since, usage: usage, deliveredMail: deliveredMail, onEvent: onEvent)
         // The submission ended, with success or failure, and its entries are
         // recorded: a settled point (`generation-queue.md`, section 5.8).
         settleTranscript()
@@ -116,7 +119,7 @@ extension RoutedSessionActor {
             finishReason: finishReason,
             measuredRender: measuredRender ? renderedContext : nil,
             onEvent: onEvent)
-        return (diffIncludedResponse, usage, pendingEventsAttached, finishReason)
+        return (diffIncludedResponse, usage, deliveredMailAttached, finishReason)
     }
 
     /// The entries of the backend transcript that ``persistedBaseline`` does
@@ -131,8 +134,8 @@ extension RoutedSessionActor {
         return backend.transcriptEntries().filter { !recordedIds.contains($0.id) }
     }
 
-    /// Finishes the submission and re-queues `pendingEvents` when the diff had
-    /// no `.prompt` partial to attach them to.
+    /// Finishes the submission and re-queues the run mail of `deliveredMail`
+    /// when the diff had no `.prompt` partial to attach its records to.
     ///
     /// - Parameters:
     ///   - grammar: The guided-generation grammar in force for this submission.
@@ -140,7 +143,7 @@ extension RoutedSessionActor {
     ///   - usageBefore: The token-usage snapshot taken before the submission ran.
     ///   - responseTokenCeiling: The token ceiling the submission gave its backend,
     ///     or `nil` when it gave none.
-    ///   - pendingEvents: The events taken from ``outbox`` for this submission.
+    ///   - deliveredMail: The mail this submission delivered, in take order.
     ///   - onEvent: A sink for derived ``SessionEvent``s, or `nil`.
     ///   - stopReason: The reason of a stop that the session made itself, or
     ///     `nil` to read the reason from the entries of the attempt.
@@ -154,52 +157,53 @@ extension RoutedSessionActor {
         since started: Date,
         usageBefore: (input: Int, output: Int)?,
         responseTokenCeiling: Int?,
-        pendingEvents: [OperationEvent],
+        deliveredMail: [Mail],
         onEvent: ((SessionEvent) -> Void)? = nil,
         stopReason: FinishReason? = nil,
         replacedBackend: ReplacedBackendMeasure? = nil
     ) async -> (diffIncludedResponse: Bool, usage: (input: Int, output: Int)?, finishReason: FinishReason) {
-        let (diffIncludedResponse, usage, pendingEventsAttached, finishReason) = await finishSubmission(
+        let (diffIncludedResponse, usage, deliveredMailAttached, finishReason) = await finishSubmission(
             grammar: grammar, since: started, usageBefore: usageBefore,
-            responseTokenCeiling: responseTokenCeiling, pendingEvents: pendingEvents, onEvent: onEvent,
+            responseTokenCeiling: responseTokenCeiling, deliveredMail: deliveredMail, onEvent: onEvent,
             stopReason: stopReason, replacedBackend: replacedBackend)
-        // The pump already destructively took the run mail of `pendingEvents`
+        // The pump already destructively took the run mail of `deliveredMail`
         // from the mail queue of `outbox` before `body()` ran. When this
         // submission's diff produced no
-        // `.prompt`-kind partial to attach them to — every `.ebnf`-guided
+        // `.prompt`-kind partial to attach its records to — every `.ebnf`-guided
         // submission, whose backend validates and throws before touching its
         // live session at all (see `MLXFoundationModelsSessionBackend.respond(to:
         // following:maxTokens:)`) — the
-        // composed preamble was never actually delivered to the model and the
-        // events were never persisted either. Re-queue them so a later
+        // composed prompt was never actually delivered to the model and the
+        // mail was never recorded either. Re-queue the run mail so a later
         // submission gets another chance, instead of the take silently
-        // destroying state a failed submission never got to deliver.
-        if !pendingEventsAttached {
-            requeueUnattachedPendingEvents(events: pendingEvents)
+        // destroying state a failed submission never got to deliver. Only the
+        // submission that delivers the mail at last records it, so the
+        // context holds it one time.
+        if !deliveredMailAttached {
+            requeueUndeliveredRunMail(deliveredMail)
         }
         return (diffIncludedResponse, usage, finishReason)
     }
 
-    /// Puts the run mail of `events` back in the queue with the same ids
+    /// Puts the run mail of `mail` back in the queue with the same ids
     /// (``SessionOutbox/requeue(_:)``), held. The events are not journaled a
     /// second time, and a submission that could not take them is not started
-    /// again at once.
+    /// again at once. User-type mail does not go back: the answer that
+    /// delivered it ends it.
     ///
-    /// Each event is matched to the first run mail of the open answer with
-    /// the same event (``openAnswerRunMail``). That mail leaves the open
-    /// answer, so the terminal event of the answer does not end it: a later
-    /// answer that delivers it ends it. Mail that the closed queue refuses
-    /// gets its terminal event ``SessionEvent/cancelled(_:)``. When
-    /// ``cancelAll()`` stopped the answer, nothing goes back to the queue:
-    /// the answer already sent the terminal event of that mail.
+    /// Each run mail is matched by id to the run mail of the open answer
+    /// (``openAnswerRunMail``). That mail leaves the open answer, so the
+    /// terminal event of the answer does not end it: a later answer that
+    /// delivers it ends it. Mail that the closed queue refuses gets its
+    /// terminal event ``SessionEvent/cancelled(_:)``. When ``cancelAll()``
+    /// stopped the answer, nothing goes back to the queue: the answer already
+    /// sent the terminal event of that mail.
     ///
-    /// - Parameter events: The events to put back, in queue order.
-    func requeueUnattachedPendingEvents(events: [OperationEvent]) {
-        var given: [Mail] = []
-        for event in events {
-            guard let index = openAnswerRunMail.firstIndex(where: { $0.runEvent == event }) else { continue }
-            given.append(openAnswerRunMail.remove(at: index))
-        }
+    /// - Parameter mail: The mail the submission delivered, in take order.
+    func requeueUndeliveredRunMail(_ mail: [Mail]) {
+        let runMailIds = Set(mail.filter(\.isRunMail).map(\.id))
+        let given = openAnswerRunMail.filter { runMailIds.contains($0.id) }
+        openAnswerRunMail.removeAll { runMailIds.contains($0.id) }
         guard !given.isEmpty else { return }
         // The answer that ``cancelAll()`` stopped already sent the terminal
         // event of this mail, so it does not go back to the queue.
@@ -251,18 +255,18 @@ extension RoutedSessionActor {
     ///   - grammar: The guided-generation grammar in force.
     ///   - since: The start instant of the submission used to stamp `ms`, or `nil`.
     ///   - usage: The `(input, output)` token delta of the submission, or `nil`.
-    ///   - pendingEvents: The events this submission took from the outbox.
+    ///   - deliveredMail: The mail this submission delivered, in take order.
     ///   - onEvent: A sink for derived ``SessionEvent``s, or `nil`.
     /// - Returns: Whether the diff included a `.response` entry, and whether
-    ///   `pendingEvents` were attached to a `.prompt` partial (`true` when
-    ///   `pendingEvents` is empty).
+    ///   the records of `deliveredMail` were attached to a `.prompt` partial
+    ///   (`true` when `deliveredMail` is empty).
     private func recordTranscriptDelta(
         grammar: Grammar?,
         since: Date?,
         usage: (input: Int, output: Int)?,
-        pendingEvents: [OperationEvent],
+        deliveredMail: [Mail],
         onEvent: ((SessionEvent) -> Void)? = nil
-    ) async -> (diffIncludedResponse: Bool, pendingEventsAttached: Bool) {
+    ) async -> (diffIncludedResponse: Bool, deliveredMailAttached: Bool) {
         let current = Transcript(entries: backend.transcriptEntries())
         let divergence = TranscriptDiffer.divergence(from: persistedBaseline, in: current)
         let diffPartials = TranscriptDiffer.partials(
@@ -275,11 +279,11 @@ extension RoutedSessionActor {
             slot: slot,
             model: model
         )
-        guard divergence != nil || !diffPartials.isEmpty else { return (false, pendingEvents.isEmpty) }
+        guard divergence != nil || !diffPartials.isEmpty else { return (false, deliveredMail.isEmpty) }
 
         let lastResponseIndex = diffPartials.lastIndex { $0.kind == .response }
-        let (recordedPartials, pendingEventsAttached) = Self.attachingPendingEventSegments(
-            events: pendingEvents, to: diffPartials)
+        let (recordedPartials, deliveredMailAttached) = Self.attachingDeliveredMailRecords(
+            deliveredMail, to: diffPartials)
 
         // Tool-call ids this diff has announced (`.toolCalls`) versus resolved
         // (`.toolOutput`), in request order — consulted once the loop finishes
@@ -320,7 +324,7 @@ extension RoutedSessionActor {
         }
         persistedEntryCount = current.count
         persistedBaseline = TranscriptDiffer.Baseline(transcript: current)
-        return (lastResponseIndex != nil, pendingEventsAttached)
+        return (lastResponseIndex != nil, deliveredMailAttached)
     }
 
     /// Logs `divergence` and appends its ``TranscriptEvent/Kind/divergence``
@@ -342,27 +346,29 @@ extension RoutedSessionActor {
         await append(partial: makePartialEvent(kind: .divergence, grammar: grammar, text: divergence.description))
     }
 
-    /// Appends one ``OperationEventSegment`` per event onto the last
-    /// `.prompt` partial in `diffPartials`.
+    /// Appends one ``MailRecord/mailDelivered(_:)`` record
+    /// (``MailRecordSegment``) per mail onto the last `.prompt` partial in
+    /// `diffPartials`, in take order: the delivery of each mail in the
+    /// transcript, before the model output of the submission.
     ///
     /// - Parameters:
-    ///   - events: The events to attach, in outbox order.
+    ///   - mail: The mail to attach, in take order.
     ///   - diffPartials: The diff of the submission, in transcript order.
-    /// - Returns: The partials to record, and whether the segments were
-    ///   attached. `attached` is `true` when `events` is empty and `false`
+    /// - Returns: The partials to record, and whether the records were
+    ///   attached. `attached` is `true` when `mail` is empty and `false`
     ///   when no `.prompt` partial with an entry exists.
-    static func attachingPendingEventSegments(
-        events: [OperationEvent],
+    static func attachingDeliveredMailRecords(
+        _ mail: [Mail],
         to diffPartials: [TranscriptEvent.Partial]
     ) -> (partials: [TranscriptEvent.Partial], attached: Bool) {
-        guard !events.isEmpty else { return (diffPartials, true) }
+        guard !mail.isEmpty else { return (diffPartials, true) }
         guard let promptIndex = diffPartials.lastIndex(where: { $0.kind == .prompt }),
             let entry = diffPartials[promptIndex].entry
         else {
             return (diffPartials, false)
         }
-        let segments = events.map { event in
-            TranscriptEntryMapper.segmentPayload(OperationEventSegment(content: event).transcriptSegment)
+        let segments = mail.map { delivered in
+            TranscriptEntryMapper.segmentPayload(MailRecordSegment(content: .mailDelivered(delivered)))
         }
         var partials = diffPartials
         partials[promptIndex] = partials[promptIndex].mapBody { text, _ in
@@ -415,7 +421,7 @@ extension RoutedSessionActor {
         case .response:
             onEvent(.entryRecorded(id: entry.entryId, kind: .response))
         case .session, .instructions, .prompt, .embedding, .divergence, .generationCall, .repeatedPartRemoval,
-            .watchStop, .toolCall, .unknown:
+            .watchStop, .mail, .toolCall, .unknown:
             break
         }
     }

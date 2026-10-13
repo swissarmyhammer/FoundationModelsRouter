@@ -237,7 +237,7 @@
             // stamped with the derived schema. `GenerationSchema` encodes with
             // nondeterministic key ordering, so compare the stamped grammar to the
             // derived schema *semantically* (parsed) rather than byte-for-byte.
-            let events = await recorder.events
+            let events = await recorder.events.withoutMailRecords
             #expect(events.map(\.kind) == [.session, .prompt, .response])
             let derived = try GuidedShapes.parse(GuidedShapes.derivedSchema(for: Person.self))
             for event in events {
@@ -263,7 +263,7 @@
             let value = try await profile.standard.respond(to: "hi", matching: Self.objectSchema)
             #expect(value == .object(["name": .string("ok")]))
 
-            let events = await recorder.events
+            let events = await recorder.events.withoutMailRecords
             #expect(events.map(\.kind) == [.session, .prompt, .response])
             #expect(events.allSatisfy { $0.grammar == Self.objectSchema })
         }

@@ -60,7 +60,7 @@ extension RoutedSessionActor {
         _ = await finishSubmissionAndRequeueIfUnattached(
             grammar: attempt.grammar, since: attempt.started,
             usageBefore: Self.usageDelta(before: usageOfAttempt, after: backend.usageTokenCounts()),
-            responseTokenCeiling: attempt.responseTokenCeiling.resolved, pendingEvents: attempt.pendingEvents,
+            responseTokenCeiling: attempt.responseTokenCeiling.resolved, deliveredMail: attempt.deliveredMail,
             onEvent: attempt.onEvent, stopReason: stopReason, replacedBackend: measure)
     }
 }

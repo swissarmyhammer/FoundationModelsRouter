@@ -9,7 +9,7 @@ import Testing
 /// persistence — the content events recorded for each submission are derived
 /// exclusively from `backend.transcriptEntries()` deltas, not from hand-built
 /// prompt/response strings. See plan.md's "Transcript fidelity" section and
-/// ``RoutedSessionActor/recordTranscriptDelta(grammar:since:usage:pendingEvents:onEvent:)``.
+/// ``RoutedSessionActor/recordTranscriptDelta(grammar:since:usage:deliveredMail:onEvent:)``.
 ///
 /// Everything runs against stubs — a stub ``ModelLoader``, canned/variable LLM
 /// containers, and either a ``JSONLRecorder`` writing into a temp directory or
@@ -248,7 +248,8 @@ struct TranscriptFidelityTests {
         _ = try await session.respond(to: "first")
         _ = try await session.respond(to: "second")
 
-        let events = await recorder.events
+        let allEvents = await recorder.events
+        let events = allEvents.withoutMailRecords
         // session meta, then (prompt, response) for each answer, in
         // stub-transcript order — never the old hand-built single
         // prompt/response pair.
@@ -267,7 +268,7 @@ struct TranscriptFidelityTests {
         #expect(promptEvents.allSatisfy { $0.ms == nil })
 
         // seq is contiguous across the whole session, not for each answer.
-        #expect(events.map(\.seq) == [0, 1, 2, 3, 4])
+        #expect(allEvents.map(\.seq) == Array(0..<allEvents.count))
     }
 
     // MARK: - Fork baseline: child sees only its own delta
@@ -351,8 +352,8 @@ struct TranscriptFidelityTests {
         }
         #expect(collected == Self.cannedText)
 
-        let respondEvents = await respondRecorder.events
-        let streamEvents = await streamRecorder.events
+        let respondEvents = await respondRecorder.events.withoutMailRecords
+        let streamEvents = await streamRecorder.events.withoutMailRecords
 
         // Same kind sequence and flattened text, ignoring provenance ids/seq/ts
         // that legitimately differ across the two independent sessions — and,
@@ -388,7 +389,7 @@ struct TranscriptFidelityTests {
         let session = profile.standard.makeGuidedSession(grammar: grammar)
         _ = try await session.respond(to: "hello")
 
-        let events = await recorder.events
+        let events = await recorder.events.withoutMailRecords
         #expect(events.map(\.kind) == [.session, .prompt, .response])
         #expect(events.allSatisfy { $0.grammar == grammar.source })
 
@@ -417,7 +418,7 @@ struct TranscriptFidelityTests {
         ]
         try await answer("message1")
 
-        var events = await recorder.events
+        var events = await recorder.events.withoutMailRecords
         #expect(events.map(\.kind) == [.session, .prompt, .response])
 
         // Answer 2: the backend's transcript *shrinks* to one entry the record
@@ -430,7 +431,7 @@ struct TranscriptFidelityTests {
         container.backend.entries = [postShrinkPrompt]
         try await answer("message2")
 
-        events = await recorder.events
+        events = await recorder.events.withoutMailRecords
         #expect(events.map(\.kind) == [.session, .prompt, .response, .prompt, .divergence])
         let recordedAfterShrink = events.filter { $0.text == "post-shrink prompt" }
         #expect(recordedAfterShrink.count == 1)
@@ -453,7 +454,7 @@ struct TranscriptFidelityTests {
         ]
         try await answer("message3")
 
-        events = await recorder.events
+        events = await recorder.events.withoutMailRecords
         #expect(
             events.map(\.kind) == [.session, .prompt, .response, .prompt, .divergence, .toolCalls, .response])
         #expect(events.last?.text == "answer3 response")
@@ -522,7 +523,7 @@ struct TranscriptFidelityTests {
         ]
         _ = try await session.respond(to: "message1")
 
-        var events = await recorder.events
+        var events = await recorder.events.withoutMailRecords
         #expect(events.map(\.kind) == [.session, .prompt, .response])
 
         // Answer 2: the backend rewrites the recorded `.response` in place. The
@@ -536,7 +537,7 @@ struct TranscriptFidelityTests {
         ]
         _ = try await session.respond(to: "message2")
 
-        events = await recorder.events
+        events = await recorder.events.withoutMailRecords
         #expect(events.map(\.kind) == [.session, .prompt, .response, .divergence])
         let marker = try #require(events.first { $0.kind == .divergence })
         #expect(marker.text != nil)
@@ -548,7 +549,7 @@ struct TranscriptFidelityTests {
             .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "answer3 response"))])))
         _ = try await session.respond(to: "message3")
 
-        events = await recorder.events
+        events = await recorder.events.withoutMailRecords
         #expect(events.map(\.kind) == [.session, .prompt, .response, .divergence, .response])
         #expect(events.last?.text == "answer3 response")
     }
@@ -576,7 +577,7 @@ struct TranscriptFidelityTests {
         container.backend.entries = [promptEntry, responseEntry]
         _ = try await session.respond(to: "message1")
 
-        var events = await recorder.events
+        var events = await recorder.events.withoutMailRecords
         #expect(events.map(\.kind) == [.session, .prompt, .response])
 
         // Answer 2: the backend inserts an entry MID-transcript, so the count
@@ -592,7 +593,7 @@ struct TranscriptFidelityTests {
         ]
         _ = try await session.respond(to: "message2")
 
-        events = await recorder.events
+        events = await recorder.events.withoutMailRecords
         #expect(events.map(\.kind) == [.session, .prompt, .response, .prompt, .divergence])
         #expect(events.filter { $0.text == "inserted prompt" }.count == 1)
         #expect(events.filter { $0.text == "answer1 response" }.count == 1)
@@ -603,7 +604,7 @@ struct TranscriptFidelityTests {
             .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "answer3 response"))])))
         _ = try await session.respond(to: "message3")
 
-        events = await recorder.events
+        events = await recorder.events.withoutMailRecords
         #expect(events.map(\.kind) == [.session, .prompt, .response, .prompt, .divergence, .response])
         #expect(events.last?.text == "answer3 response")
     }
@@ -648,7 +649,7 @@ struct TranscriptFidelityTests {
         ]
         _ = try await session.respond(to: "message2")
 
-        let events = await recorder.events
+        let events = await recorder.events.withoutMailRecords
         #expect(events.map(\.kind) == [.session, .prompt, .response, .prompt, .toolCalls, .response, .divergence])
         #expect(events.filter { $0.text == "answer1 response" }.count == 1)
 
@@ -729,7 +730,7 @@ struct TranscriptFidelityTests {
         )
 
         // And the record holds the same submission, with the marker beside it.
-        let events = await recorder.events
+        let events = await recorder.events.withoutMailRecords
         #expect(
             events.map(\.kind) == [
                 .session, .prompt, .response, .prompt, .toolCalls, .toolOutput, .response, .divergence,
@@ -773,7 +774,7 @@ struct TranscriptFidelityTests {
         for (index, script) in scripts.enumerated() {
             container.backend.entries = script
             _ = try await session.respond(to: "message \(index)")
-            let events = await recorder.events
+            let events = await recorder.events.withoutMailRecords
             #expect(events.count >= lastEventCount)
             let entryCount = events.count { $0.kind.isEntryKind }
             #expect(entryCount >= lastEntryCount)
@@ -786,7 +787,7 @@ struct TranscriptFidelityTests {
         await #expect(throws: (any Error).self) {
             _ = try await session.respond(to: "failing message")
         }
-        let events = await recorder.events
+        let events = await recorder.events.withoutMailRecords
         #expect(events.count > lastEventCount)
         #expect(events.count { $0.kind.isEntryKind } > lastEntryCount)
     }
@@ -821,7 +822,7 @@ struct TranscriptFidelityTests {
             _ = try await session.respond(to: "will fail")
         }
 
-        let events = await recorder.events
+        let events = await recorder.events.withoutMailRecords
         // Exactly one `.response` event — the SDK's own, not a duplicated
         // synthetic close — proving `generate(grammar:_:)` does not double up
         // when `recordTranscriptDelta` already persisted a real `.response`.
@@ -864,7 +865,7 @@ struct TranscriptFidelityTests {
             for try await _ in await session.streamResponse(to: "will fail") {}
         }
 
-        let events = await recorder.events
+        let events = await recorder.events.withoutMailRecords
         // Exactly one `.response` event — the SDK's own, not a duplicated
         // synthetic close — proving the streaming path does not double up
         // when `recordTranscriptDelta` already persisted a real `.response`.
@@ -883,6 +884,6 @@ struct TranscriptFidelityTests {
         let decoder = JSONDecoder()
         return try TextFileLines.read(from: fileURL).map {
             try decoder.decode(TranscriptEvent.self, from: Data($0.utf8))
-        }
+        }.withoutMailRecords
     }
 }

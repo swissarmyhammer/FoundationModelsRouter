@@ -13,8 +13,8 @@ import Foundation
 public struct TranscriptEvent: Sendable, Codable, Equatable {
     /// What kind of moment an event records. Six kinds mirror
     /// `FoundationModels.Transcript.Entry` cases. ``session``, ``embedding``,
-    /// ``divergence``, ``generationCall``, ``repeatedPartRemoval`` and
-    /// ``watchStop`` are router-only. ``unknown``
+    /// ``divergence``, ``generationCall``, ``repeatedPartRemoval``,
+    /// ``watchStop`` and ``mail`` are router-only. ``unknown``
     /// carries a newer SDK case.
     public enum Kind: String, Sendable, Codable, Equatable {
         /// The session was created (its first event).
@@ -63,6 +63,18 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         /// event comes after the entries of the stopped attempt. A restore
         /// skips it. A journal recorded before this kind holds no such event.
         case watchStop
+        /// One or more facts about mail of the session (`mailbox.md`,
+        /// section 5, problem 10): a mail entered the queue, a signal
+        /// changed it, or it got its terminal event. Router-only.
+        /// ``TranscriptEvent/entry`` holds one ``MailRecordSegment`` for each
+        /// fact, and ``TranscriptEvent/text`` holds the
+        /// ``MailRecord/summary`` of each, one line for each. The delivery of
+        /// a mail is not this kind: it is a segment of the recorded `.prompt`
+        /// entry of the submission that delivered the mail.
+        /// ``ContextRenderer`` does not render this kind. A restore reads it
+        /// to find the mail that a crash cut off. A journal recorded before
+        /// this kind holds no such event.
+        case mail
         /// A tool invocation was requested. Deprecated: ``toolCalls`` replaces
         /// it. Kept so pre-v2 recordings decode.
         case toolCall
@@ -78,7 +90,8 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
             switch self {
             case .instructions, .prompt, .toolCalls, .toolOutput, .response, .reasoning, .unknown:
                 return true
-            case .session, .embedding, .divergence, .generationCall, .repeatedPartRemoval, .watchStop, .toolCall:
+            case .session, .embedding, .divergence, .generationCall, .repeatedPartRemoval, .watchStop, .mail,
+                .toolCall:
                 return false
             }
         }
@@ -113,9 +126,10 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     public let ms: Int?
     /// The structural mirror of the `FoundationModels.Transcript.Entry` this
     /// event records. `nil` for v1 recordings, and for each router-only kind
-    /// except ``Kind/repeatedPartRemoval`` and ``Kind/watchStop``, whose
-    /// payload carries its ``RepeatedPartRemovalSegment`` or its
-    /// ``WatchStopSegment`` and mirrors no entry.
+    /// except ``Kind/repeatedPartRemoval``, ``Kind/watchStop`` and
+    /// ``Kind/mail``, whose payload carries its ``RepeatedPartRemovalSegment``,
+    /// its ``WatchStopSegment`` or its ``MailRecordSegment``s and mirrors no
+    /// entry.
     public let entry: TranscriptEntryPayload?
     /// The parent session and tool call that spawned this event's session.
     /// Set only on the ``Kind/session`` event of a session made with an
@@ -147,7 +161,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     /// that a reader can rebuild: an entry kind that is not the router's
     /// close of a failed submission. `false` for every router-only marker (``Kind/session``,
     /// ``Kind/embedding``, ``Kind/divergence``, ``Kind/generationCall``,
-    /// ``Kind/repeatedPartRemoval``, ``Kind/watchStop``, the legacy ``Kind/toolCall``)
+    /// ``Kind/repeatedPartRemoval``, ``Kind/watchStop``, ``Kind/mail``, the legacy ``Kind/toolCall``)
     /// and for the close, none of which mirrors an entry. A reader that
     /// rebuilds the SDK's transcript skips an event where this is `false`. An
     /// entry-kind event with no `entry` (a v1 line) still reads `true`, so that

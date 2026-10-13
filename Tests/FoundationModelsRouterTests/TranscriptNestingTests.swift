@@ -184,12 +184,15 @@ struct TranscriptNestingTests {
     }
 
     /// Decodes every event from a session directory's `transcript.jsonl`.
-    private func events(in directory: URL) throws -> [TranscriptEvent] {
+    private func events(in directory: URL, includingMailRecords: Bool = false) throws -> [TranscriptEvent] {
         let fileURL = directory.appendingPathComponent("transcript.jsonl", isDirectory: false)
         let decoder = JSONDecoder()
-        return try TextFileLines.read(from: fileURL).map {
+        let all = try TextFileLines.read(from: fileURL).map {
             try decoder.decode(TranscriptEvent.self, from: Data($0.utf8))
         }
+        // The `.mail` events hold the mail records. These tests examine the
+        // entries, so they remove the mail records unless they ask for them.
+        return includingMailRecords ? all : all.withoutMailRecords
     }
 
     // MARK: - Lineage-nested directories
@@ -318,8 +321,10 @@ struct TranscriptNestingTests {
         #expect(recorded.allSatisfy { $0.parentId == nil })
         #expect(recorded.allSatisfy { $0.slot == .standard })
         #expect(recorded.allSatisfy { $0.model == profile.standard.chosen })
-        // The recorder assigns a contiguous seq within the file.
-        #expect(recorded.map(\.seq) == [0, 1, 2])
+        // The recorder assigns a contiguous seq within the file, to the mail
+        // records too.
+        let allRecorded = try events(in: root.recordingDirectory, includingMailRecords: true)
+        #expect(allRecorded.map(\.seq) == Array(0..<allRecorded.count))
 
         // A fork's first line carries the parentId lineage.
         let fork = try await root.fork(workingDirectory: nil)
@@ -362,7 +367,8 @@ struct TranscriptNestingTests {
         #expect(recorded.allSatisfy { $0.parentId == nil })
         #expect(recorded.allSatisfy { $0.slot == .standard })
         #expect(recorded.allSatisfy { $0.model == profile.standard.chosen })
-        #expect(recorded.map(\.seq) == [0, 1, 2])
+        let allRecorded = try events(in: root.recordingDirectory, includingMailRecords: true)
+        #expect(allRecorded.map(\.seq) == Array(0..<allRecorded.count))
     }
 
     @Test(

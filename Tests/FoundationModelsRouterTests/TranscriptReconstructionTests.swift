@@ -726,7 +726,7 @@ struct TranscriptReconstructionTests {
 
         let tree = try TranscriptTree.load(
             under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
-        let rawEvents = try tree.events(forSession: root.id)
+        let rawEvents = try tree.events(forSession: root.id).withoutMailRecords
         let closeEvent = try #require(rawEvents.last)
         #expect(closeEvent.kind == .response)
         // The close holds an entry with no segment: the submission answered
@@ -786,7 +786,7 @@ struct TranscriptReconstructionTests {
 
         let tree = try TranscriptTree.load(
             under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
-        let rawEvents = try tree.events(forSession: root.id)
+        let rawEvents = try tree.events(forSession: root.id).withoutMailRecords
         // Only the session meta line and the synthetic bodyless close were
         // ever recorded — no `.prompt`/`.instructions` at all.
         #expect(rawEvents.map(\.kind) == [.session, .response])
@@ -1043,8 +1043,12 @@ struct TranscriptReconstructionTests {
         #expect(
             Array(try tree.effectiveTranscript(forSession: root.id, view: .restore))
                 == backend.transcriptEntries())
+        // The full history keeps each recorded entry whole: each `.prompt`
+        // entry also holds the record of its delivered mail. With those
+        // records removed, it is the live transcript.
         #expect(
             Array(try tree.effectiveTranscript(forSession: root.id, view: .fullHistory))
+                .map(MailRecordSegment.removingRecords(from:))
                 == backend.transcriptEntries())
     }
 

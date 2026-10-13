@@ -240,6 +240,11 @@ extension TranscriptTree {
     /// events keep each plan, so ``TranscriptEvent/operationEvents`` still
     /// reads the last plan of each plan id after a restore.
     ///
+    /// The ``TranscriptReconstructionView/restore`` view is the context
+    /// projection, ``ContextRenderer/context(of:)``: it also removes the mail
+    /// records of each `.prompt` entry, because the text of the entry is
+    /// already the render of its mail.
+    ///
     /// - Parameters:
     ///   - id: The session's span id.
     ///   - view: Which view to reconstruct. Defaults to ``TranscriptReconstructionView/restore``.
@@ -249,11 +254,10 @@ extension TranscriptTree {
         view: TranscriptReconstructionView = .restore
     ) throws -> Transcript {
         let renderEvents = try effectiveEntryEvents(forSession: id, alongWith: .repeatedPartRemoval)
-        let entries = try Self.entries(
-            of: Self.reconstructableEvents(renderEvents.filter(\.kind.isEntryKind), view: view))
-        guard view == .restore else { return Transcript(entries: entries) }
-        let render = RepeatedPartRemoval.render(of: entries, applying: try Self.renderCut(in: renderEvents))
-        return Transcript(entries: render.map(OperationEventSegment.removingPlans(from:)))
+        guard view == .restore else {
+            return Transcript(entries: try Self.entries(of: renderEvents.filter(\.kind.isEntryKind)))
+        }
+        return try ContextRenderer.context(of: renderEvents)
     }
 
     /// The changes of the render that the
@@ -265,7 +269,7 @@ extension TranscriptTree {
     /// - Returns: The changes of the render.
     /// - Throws: ``TranscriptReconstructionError`` when a cut event holds no
     ///   ``RepeatedPartRemovalSegment`` that decodes.
-    private static func renderCut(in events: [TranscriptEvent]) throws -> RenderCut {
+    static func renderCut(in events: [TranscriptEvent]) throws -> RenderCut {
         var cut = RenderCut()
         for event in events where event.kind == .repeatedPartRemoval {
             cut.add(try repeatedPartRemoval(in: event).content)
@@ -315,7 +319,7 @@ extension TranscriptTree {
     /// - Returns: The rebuilt entries.
     /// - Throws: ``TranscriptReconstructionError`` for an event that does not
     ///   rebuild.
-    private static func entries(of events: [TranscriptEvent]) throws -> [Transcript.Entry] {
+    static func entries(of events: [TranscriptEvent]) throws -> [Transcript.Entry] {
         var entries: [Transcript.Entry] = []
         entries.reserveCapacity(events.count)
         for event in events {

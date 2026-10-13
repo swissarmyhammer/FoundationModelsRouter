@@ -304,7 +304,7 @@ struct ToolInvocationLivenessTests {
         // `ScriptedToolAnswerComparisonTests` asserts on the raw transcript),
         // and the usage of the answering call. No invocation record reaches
         // the recorder.
-        let recordedKinds = await fixture.recorder.events.map(\.kind)
+        let recordedKinds = await fixture.recorder.events.withoutMailRecords.map(\.kind)
         #expect(
             recordedKinds == [
                 .session, .generationCall, .instructions, .prompt, .toolCalls, .toolOutput, .response,
@@ -702,7 +702,7 @@ struct ToolInvocationLivenessTests {
         // the per-call usage reports record, the same shape
         // `invocationRecordsAreDeliveryOnlyAndChangeNoRecording` asserts for an
         // answer with no attachments. No report reaches the recorder.
-        let recordedKinds = await fixture.recorder.events.map(\.kind)
+        let recordedKinds = await fixture.recorder.events.withoutMailRecords.map(\.kind)
         #expect(
             recordedKinds == [
                 .session, .generationCall, .instructions, .prompt, .toolCalls, .toolOutput, .response,

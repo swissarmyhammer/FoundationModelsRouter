@@ -335,7 +335,7 @@ struct TranscriptTreeTests {
         let tree = try TranscriptTree.load(
             under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
 
-        let forkAEvents = try tree.events(forSession: forkA.id)
+        let forkAEvents = try tree.events(forSession: forkA.id).withoutMailRecords
         // forkA's own file: one session-meta line, plus one prompt/response
         // pair for its single answer — never root's or grandfork's entries.
         #expect(forkAEvents.map(\.kind) == [.session, .prompt, .response])
@@ -343,7 +343,7 @@ struct TranscriptTreeTests {
         #expect(!forkAEvents.contains { $0.text == "root-message-1" })
         #expect(!forkAEvents.contains { $0.text == "grandfork-message-1" })
 
-        let rootEvents = try tree.events(forSession: root.id)
+        let rootEvents = try tree.events(forSession: root.id).withoutMailRecords
         #expect(rootEvents.map(\.kind) == [.session, .prompt, .response])
 
         _ = grandfork

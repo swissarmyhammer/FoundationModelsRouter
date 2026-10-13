@@ -224,7 +224,7 @@ struct ToolSharedProfileTests {
         // The generation ran through the recorder-bracketed chokepoint: a
         // first-line `session` meta event then one open + one close event,
         // stamped with the flash slot's provenance.
-        let events = await recorder.events
+        let events = await recorder.events.withoutMailRecords
         #expect(events.map(\.kind) == [.session, .prompt, .response])
         #expect(events.allSatisfy { $0.routerId == router.id })
         #expect(events.allSatisfy { $0.slot == .flash })

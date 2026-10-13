@@ -233,8 +233,8 @@ struct AnswerCancellationTests {
         let events = await feed.eventsToTheFirstAnswerEnd()
         #expect(events.answers.map(\.reply) == ["ok-caller-cancels"])
         #expect(events.answerFailures.isEmpty)
-        #expect(await fixture.recorder.events.map(\.kind) == [.session, .prompt, .response])
-        #expect(await fixture.recorder.events.last?.text == "ok-caller-cancels")
+        #expect(await fixture.recorder.events.withoutMailRecords.map(\.kind) == [.session, .prompt, .response])
+        #expect(await fixture.recorder.events.withoutMailRecords.last?.text == "ok-caller-cancels")
         #expect(await session.becomesIdle())
     }
 
@@ -261,7 +261,7 @@ struct AnswerCancellationTests {
         // `.prompt` entry of the submission), plus exactly one close — the
         // synthetic bodyless `.response` every failed submission gets, never two
         // and never none.
-        let cancelledSubmissionEvents = await fixture.recorder.events
+        let cancelledSubmissionEvents = await fixture.recorder.events.withoutMailRecords
         #expect(cancelledSubmissionEvents.map(\.kind) == [.session, .prompt, .response])
         let close = try #require(cancelledSubmissionEvents.last)
         #expect(close.text == nil)
@@ -273,7 +273,7 @@ struct AnswerCancellationTests {
         // that stranded the pump fails here instead of suspending the follow-up
         // answer — and the suite with it — forever.
         #expect(await Self.followUpAnswerCompletes(on: session, observer: fixture.observer))
-        let afterEvents = await fixture.recorder.events
+        let afterEvents = await fixture.recorder.events.withoutMailRecords
         #expect(afterEvents.map(\.kind) == [.session, .prompt, .response, .prompt, .response])
         #expect(afterEvents.last?.text == "ok-after")
     }

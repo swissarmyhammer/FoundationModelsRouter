@@ -514,14 +514,9 @@ struct SessionTreeRestorationLostRunTests {
     /// ``OperationEventSegment`` on `events`' entries (pattern from
     /// ``PendingEventInjectionTests``).
     private static func journaledOperationEvents(in events: [TranscriptEvent]) -> [OperationEvent] {
-        events.flatMap { event in
-            (event.entry?.segments ?? []).compactMap { segment in
-                guard case .structure(_, let schemaName, let contentJSON) = segment,
-                    schemaName == OperationEventSegment.schemaName
-                else { return nil }
-                return try? JSONDecoder().decode(OperationEvent.self, from: Data(contentJSON.utf8))
-            }
-        }
+        // The public reader gives the events of the OperationEventSegments and
+        // the run events of the delivered run mail on the `.prompt` entry.
+        events.flatMap(\.operationEvents)
     }
 
     @Test("a manufactured .lost drained by respond() is journaled and persisted for a second restore")

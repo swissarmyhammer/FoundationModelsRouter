@@ -60,7 +60,7 @@ extension RoutedSessionActor {
     /// the messages of that submission and before its model call. The pump
     /// calls it for the first submission of an answer, before the proactive
     /// compaction, so an answer that fails before the model call still made
-    /// the hook call. ``runSubmission(grammar:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetries:isContinuation:reasoningOff:_:)``
+    /// the hook call. ``runSubmission(grammar:deliveredMail:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetries:isContinuation:reasoningOff:_:)``
     /// calls it for each continuation submission. A fork's hook fires only on
     /// the fork's own tools (``ForkableTool`` composition).
     func notifySubmissionBoundaryTools() async {
@@ -103,13 +103,15 @@ extension RoutedSessionActor {
     ///
     /// - Parameters:
     ///   - grammar: The grammar in force for the answer.
-    ///   - pendingEvents: The run mail the pump took from ``outbox`` for it.
-    ///   - ownPrompt: The prompt text of its user-type mail.
+    ///   - deliveredMail: The mail the pump took from ``outbox`` for it, in
+    ///     take order: user-type mail and run mail.
+    ///   - ownPrompt: The prompt text of its user-type mail, or the prompt of
+    ///     the pump for a batch that only run mail starts.
     ///   - responseTokenCeiling: The token ceiling `body` gives the backend, and the ceiling the caller named.
     ///   - body: The model work to run.
     func runAnswerChain(
         grammar: Grammar?,
-        pendingEvents: [OperationEvent],
+        deliveredMail: [Mail],
         ownPrompt: String,
         responseTokenCeiling: ResponseTokenCeiling,
         _ body: @escaping @Sendable (String) async throws -> String
@@ -125,7 +127,7 @@ extension RoutedSessionActor {
         do {
             result = .success(
                 try await runAnswerWork(
-                    grammar: grammar, pendingEvents: pendingEvents, ownPrompt: ownPrompt,
+                    grammar: grammar, deliveredMail: deliveredMail, ownPrompt: ownPrompt,
                     responseTokenCeiling: responseTokenCeiling, emit: emit, body))
         } catch {
             result = .failure(error)
@@ -139,7 +141,7 @@ extension RoutedSessionActor {
     }
 
     /// Runs the model work and the recording of one answer. Only
-    /// ``runAnswerChain(grammar:pendingEvents:ownPrompt:responseTokenCeiling:_:)``
+    /// ``runAnswerChain(grammar:deliveredMail:ownPrompt:responseTokenCeiling:_:)``
     /// calls it.
     ///
     /// When ``autoCompactionBudget`` is set and measured usage has reached
@@ -148,7 +150,8 @@ extension RoutedSessionActor {
     ///
     /// - Parameters:
     ///   - grammar: The grammar in force for the answer.
-    ///   - pendingEvents: The mail the pump took from ``outbox`` for it.
+    ///   - deliveredMail: The mail the pump took from ``outbox`` for it, in
+    ///     take order.
     ///   - ownPrompt: The prompt text of its user-type mail.
     ///   - responseTokenCeiling: The token ceiling `body` gives the backend, and the ceiling the caller named.
     ///   - emit: The composed sink of the answer (see ``answerEventSink()``).
@@ -157,7 +160,7 @@ extension RoutedSessionActor {
     /// - Throws: Whatever `body` throws, or `CancellationError` from the compaction.
     private func runAnswerWork(
         grammar: Grammar?,
-        pendingEvents: [OperationEvent],
+        deliveredMail: [Mail],
         ownPrompt: String,
         responseTokenCeiling: ResponseTokenCeiling,
         emit: @escaping (SessionEvent) -> Void,
@@ -176,7 +179,7 @@ extension RoutedSessionActor {
         // Compared in tokens against ``TokenBudget/triggerTokens``, never as
         // `contextFill >= budget.trigger` — see the matching note on the
         // hard-ceiling pre-check in
-        // ``runSubmission(grammar:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetries:isContinuation:reasoningOff:_:)``
+        // ``runSubmission(grammar:deliveredMail:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetries:isContinuation:reasoningOff:_:)``
         // and ``TokenBudget/triggerTokens`` itself for why those two fractions
         // are not interchangeable.
         if let budget = autoCompactionBudget,
@@ -198,11 +201,11 @@ extension RoutedSessionActor {
                 // here, or the mail the pump already *destructively* took would
                 // be destroyed and the answer would leave no trace at all. Neither is a formality: an
                 // abandoned compaction leaves `backend` exactly as it was, so the diff
-                // finds no `.prompt` partial to attach those events to and
-                // re-queues them, and the synthetic close is the trace.
+                // finds no `.prompt` partial to attach the records of that mail to and
+                // re-queues its run mail, and the synthetic close is the trace.
                 await recordFailedSubmission(
                     grammar: grammar, since: started, usageBefore: usageBefore,
-                    responseTokenCeiling: responseTokenCeiling.resolved, pendingEvents: pendingEvents, onEvent: emit)
+                    responseTokenCeiling: responseTokenCeiling.resolved, deliveredMail: deliveredMail, onEvent: emit)
                 throw error
             }
         }
@@ -210,7 +213,7 @@ extension RoutedSessionActor {
         await primeDiscoveryIfConfigured(prompt: ownPrompt, emit: emit)
 
         return try await runSubmission(
-            grammar: grammar, pendingEvents: pendingEvents, ownPrompt: ownPrompt,
+            grammar: grammar, deliveredMail: deliveredMail, ownPrompt: ownPrompt,
             responseTokenCeiling: responseTokenCeiling, onEvent: emit,
             allowOverflowRetry: autoCompactionBudget != nil, body
         )
@@ -274,7 +277,7 @@ extension RoutedSessionActor {
     ///
     /// - Parameters:
     ///   - grammar: The grammar in force for this answer.
-    ///   - pendingEvents: The events this attempt carries in its preamble.
+    ///   - deliveredMail: The mail this attempt delivers, in take order.
     ///   - ownPrompt: This attempt's own prompt text.
     ///   - responseTokenCeiling: The token ceiling `body` gives the backend, and the ceiling the caller named.
     ///   - onEvent: A sink for the ``SessionEvent``s of this answer, or `nil`.
@@ -282,9 +285,12 @@ extension RoutedSessionActor {
     ///   - rejectedCallRetries: How many rejected tool calls this answer has already sent back to the model. The first attempt of an answer has sent none.
     ///   - isContinuation: Whether this attempt is a continuation submission
     ///     of the answer. A continuation first takes the messages that wait
-    ///     (``takeMailJoiningTheAnswer()``): the mail goes into its
-    ///     preamble, and each caller prompt that can share the submission
-    ///     goes after `ownPrompt`.
+    ///     (``takeMailJoiningTheAnswer()``), and they join `deliveredMail`.
+    ///     The prompt of a submission is the render of its mail in take order
+    ///     (``ContextRenderer/promptText(delivering:followedBy:)``), then
+    ///     `ownPrompt`. The first submission of an answer that delivers
+    ///     user-type mail has no `ownPrompt` after its mail: its `ownPrompt`
+    ///     is the text of that mail.
     ///   - reasoningOff: Whether the first pass of the model call of this
     ///     attempt runs with the reasoning of the model off
     ///     (``ReasoningOffRequest``, tasks ^0dcsd3t and ^bhdj5v9). Only that
@@ -295,7 +301,7 @@ extension RoutedSessionActor {
     /// - Throws: Whatever `body` throws, or the retry's own outcome when a retry ran.
     func runSubmission(
         grammar: Grammar?,
-        pendingEvents: [OperationEvent],
+        deliveredMail: [Mail],
         ownPrompt: String,
         responseTokenCeiling: ResponseTokenCeiling,
         onEvent: ((SessionEvent) -> Void)? = nil,
@@ -316,20 +322,27 @@ extension RoutedSessionActor {
         guard isContinuation else {
             let delivery = firstSubmissionDelivery()
             beginSubmission(cause: delivery.cause, mailIds: delivery.mailIds)
-            return try await runOpenedSubmission(attempt, pendingEvents: pendingEvents, ownPrompt: ownPrompt, body)
+            // With user-type mail, `ownPrompt` is the text of that mail, and
+            // the render of the mail already holds it.
+            let sessionText = deliveredMail.contains { !$0.isRunMail } ? nil : ownPrompt
+            return try await runOpenedSubmission(
+                attempt, deliveredMail: deliveredMail, ownPrompt: ownPrompt,
+                composedPrompt: ContextRenderer.promptText(delivering: deliveredMail, followedBy: sessionText), body)
         }
         let joining = takeMailJoiningTheAnswer()
         await notifySubmissionBoundaryTools()
+        let joiningIds = joining.map(\.id)
         // Mail that joins the answer adds its id to the origin of the rest of
         // the answer, and the model sees it from this submission on.
-        return try await OriginContext.$current.withValue(Self.origin(adding: joining.mailIds)) {
-            for mailID in joining.mailIds {
+        return try await OriginContext.$current.withValue(Self.origin(adding: joiningIds)) {
+            for mailID in joiningIds {
                 onEvent?(.mailDelivered(mailID))
             }
-            beginSubmission(cause: .continuation, mailIds: joining.mailIds)
+            beginSubmission(cause: .continuation, mailIds: joiningIds)
+            let attemptMail = deliveredMail + joining
             return try await runOpenedSubmission(
-                attempt, pendingEvents: pendingEvents + joining.events,
-                ownPrompt: ([ownPrompt] + joining.texts).joined(separator: Self.messageSeparator), body)
+                attempt, deliveredMail: attemptMail, ownPrompt: ownPrompt,
+                composedPrompt: ContextRenderer.promptText(delivering: attemptMail, followedBy: ownPrompt), body)
         }
     }
 
@@ -346,8 +359,8 @@ extension RoutedSessionActor {
     }
 
     /// The settings of one submission attempt that
-    /// ``runSubmission(grammar:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetries:isContinuation:reasoningOff:_:)``
-    /// gives to ``runOpenedSubmission(_:pendingEvents:ownPrompt:_:)``.
+    /// ``runSubmission(grammar:deliveredMail:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetries:isContinuation:reasoningOff:_:)``
+    /// gives to ``runOpenedSubmission(_:deliveredMail:ownPrompt:composedPrompt:_:)``.
     private struct SubmissionAttemptState {
         /// The grammar in force for this answer.
         let grammar: Grammar?
@@ -372,21 +385,25 @@ extension RoutedSessionActor {
     }
 
     /// Runs one submission attempt that
-    /// ``runSubmission(grammar:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetries:isContinuation:reasoningOff:_:)``
+    /// ``runSubmission(grammar:deliveredMail:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetries:isContinuation:reasoningOff:_:)``
     /// opened (``beginSubmission(cause:mailIds:)``): the model call, its
     /// recording, and the recovery or the continuation after it.
     ///
     /// - Parameters:
     ///   - settings: The settings of the attempt.
-    ///   - pendingEvents: The events this attempt carries in its preamble.
-    ///   - ownPrompt: This attempt's own prompt text.
+    ///   - deliveredMail: The mail this attempt delivers, in take order.
+    ///   - ownPrompt: This attempt's own prompt text. A recovery that runs
+    ///     the attempt again sends it again.
+    ///   - composedPrompt: The prompt the model reads: the render of
+    ///     `deliveredMail` (``ContextRenderer/promptText(delivering:followedBy:)``).
     ///   - body: The model work to run.
     /// - Returns: The response text `body` produced.
     /// - Throws: Whatever `body` throws, or the retry's own outcome when a retry ran.
     private func runOpenedSubmission(
         _ settings: SubmissionAttemptState,
-        pendingEvents: [OperationEvent],
+        deliveredMail: [Mail],
         ownPrompt: String,
+        composedPrompt: String,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
         let grammar = settings.grammar
@@ -395,7 +412,6 @@ extension RoutedSessionActor {
         let allowOverflowRetry = settings.allowOverflowRetry
         let rejectedCallRetries = settings.rejectedCallRetries
         let reasoningOff = settings.reasoningOff
-        let composedPrompt = Self.composedPrompt(pendingEvents: pendingEvents, prompt: ownPrompt)
 
         let started = Date()
         let usageBefore = backend.usageTokenCounts()
@@ -408,7 +424,7 @@ extension RoutedSessionActor {
             grammar: grammar, composedPrompt: composedPrompt,
             entryIdsBeforeAttempt: toolResultWatch.entryIdsBeforeAttempt, started: started,
             usageBefore: usageBefore, responseTokenCeiling: responseTokenCeiling,
-            pendingEvents: pendingEvents, onEvent: onEvent, allowOverflowRetry: allowOverflowRetry,
+            deliveredMail: deliveredMail, onEvent: onEvent, allowOverflowRetry: allowOverflowRetry,
             rejectedCallRetries: rejectedCallRetries)
         let response: String
         let finishReason: FinishReason
@@ -450,10 +466,10 @@ extension RoutedSessionActor {
             // transcript unchanged for some future conformer — attach-or-requeue
             // applies uniformly on both exits (see the catch branch's matching
             // comment), not just the throwing one; that uniform check lives in
-            // ``finishSubmissionAndRequeueIfUnattached(grammar:since:usageBefore:responseTokenCeiling:pendingEvents:onEvent:)``.
+            // ``finishSubmissionAndRequeueIfUnattached(grammar:since:usageBefore:responseTokenCeiling:deliveredMail:onEvent:stopReason:replacedBackend:)``.
             finishReason = await finishSubmissionAndRequeueIfUnattached(
                 grammar: grammar, since: started, usageBefore: usageBefore,
-                responseTokenCeiling: responseTokenCeiling.resolved, pendingEvents: pendingEvents, onEvent: onEvent
+                responseTokenCeiling: responseTokenCeiling.resolved, deliveredMail: deliveredMail, onEvent: onEvent
             ).finishReason
         } catch {
             if let noOpStop = takeNoOpToolCallStop() {
@@ -468,7 +484,7 @@ extension RoutedSessionActor {
             recordSubmissionError(error)
             await recordFailedSubmission(
                 grammar: grammar, since: started, usageBefore: usageBefore,
-                responseTokenCeiling: responseTokenCeiling.resolved, pendingEvents: pendingEvents, onEvent: onEvent)
+                responseTokenCeiling: responseTokenCeiling.resolved, deliveredMail: deliveredMail, onEvent: onEvent)
             return try await recoverFailedAttempt(
                 from: error, grammar: grammar, ownPrompt: ownPrompt,
                 responseTokenCeiling: responseTokenCeiling, onEvent: onEvent,
@@ -510,7 +526,7 @@ extension RoutedSessionActor {
         body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
         try await runSubmission(
-            grammar: attempt.grammar, pendingEvents: [], ownPrompt: continuationPrompt,
+            grammar: attempt.grammar, deliveredMail: [], ownPrompt: continuationPrompt,
             responseTokenCeiling: attempt.responseTokenCeiling, onEvent: attempt.onEvent,
             allowOverflowRetry: attempt.allowOverflowRetry, rejectedCallRetries: attempt.rejectedCallRetries,
             isContinuation: true, reasoningOff: reasoningOff, body)
@@ -564,7 +580,7 @@ extension RoutedSessionActor {
             let ordinal = rejectedCallRetries + 1
             retry.logRetry(sessionID: id, ordinal: ordinal, to: sessionLogger(.rejectedToolCall))
             return try await runSubmission(
-                grammar: grammar, pendingEvents: [], ownPrompt: retry.prompt(retrying: ownPrompt),
+                grammar: grammar, deliveredMail: [], ownPrompt: retry.prompt(retrying: ownPrompt),
                 responseTokenCeiling: responseTokenCeiling, onEvent: onEvent,
                 allowOverflowRetry: allowOverflowRetry,
                 rejectedCallRetries: ordinal, isContinuation: true, body
@@ -587,14 +603,14 @@ extension RoutedSessionActor {
             overflowRetryTarget: retryTarget)
 
         return try await runSubmission(
-            grammar: grammar, pendingEvents: [], ownPrompt: ownPrompt,
+            grammar: grammar, deliveredMail: [], ownPrompt: ownPrompt,
             responseTokenCeiling: responseTokenCeiling, onEvent: onEvent,
             allowOverflowRetry: false, rejectedCallRetries: rejectedCallRetries, isContinuation: true, body
         )
     }
 
     /// Records a submission that ended in a failure: the transcript diff, the
-    /// attach-or-requeue of pending events, and a `.response` close when the
+    /// attach-or-requeue of its delivered mail, and a `.response` close when the
     /// diff did not already include one. The close carries an entry that
     /// mirrors a `Transcript.Response` with no segment — the submission
     /// answered with nothing — so the record holds an entry for every
@@ -605,19 +621,20 @@ extension RoutedSessionActor {
     ///   - started: The start time of the submission.
     ///   - usageBefore: The token-usage snapshot taken before the failed work ran.
     ///   - responseTokenCeiling: The token ceiling the submission gave its backend, or `nil`.
-    ///   - pendingEvents: The events this submission took from ``outbox``.
+    ///   - deliveredMail: The mail this submission took from ``outbox``, in
+    ///     take order.
     ///   - onEvent: A sink for the ``SessionEvent``s of this answer, or `nil`.
     private func recordFailedSubmission(
         grammar: Grammar?,
         since started: Date,
         usageBefore: (input: Int, output: Int)?,
         responseTokenCeiling: Int?,
-        pendingEvents: [OperationEvent],
+        deliveredMail: [Mail],
         onEvent: ((SessionEvent) -> Void)? = nil
     ) async {
         let (diffIncludedResponse, usage, _) = await finishSubmissionAndRequeueIfUnattached(
             grammar: grammar, since: started, usageBefore: usageBefore,
-            responseTokenCeiling: responseTokenCeiling, pendingEvents: pendingEvents, onEvent: onEvent)
+            responseTokenCeiling: responseTokenCeiling, deliveredMail: deliveredMail, onEvent: onEvent)
         guard !diffIncludedResponse else { return }
         let close = TranscriptEntryMapper.event(from: .response(Transcript.Response(segments: [])))
         await append(
@@ -950,8 +967,8 @@ extension RoutedSessionActor {
     /// the configured target of `budget`.
     ///
     /// The retry's prompt is measured with this session's ``tokenCounter``,
-    /// the tokenizer of its model. The retry carries no pending events, so its
-    /// composed prompt is `retryPrompt` unchanged.
+    /// the tokenizer of its model. The retry delivers no mail of its own, so
+    /// its composed prompt is `retryPrompt` unchanged.
     ///
     /// - Parameters:
     ///   - retryPrompt: The prompt text the retry sends.
@@ -964,16 +981,7 @@ extension RoutedSessionActor {
         OverflowRetryTarget(
             rule: requestedResponseTokenCeiling.map(OverflowRetryTarget.Rule.callerCeiling) ?? .configuredTarget,
             contextTokens: contextTokens,
-            promptTokens: tokenCounter.count(Self.composedPrompt(pendingEvents: [], prompt: retryPrompt)),
+            promptTokens: tokenCounter.count(retryPrompt),
             configuredTargetTokens: budget.targetTokens)
-    }
-
-    /// Composes a submission's model-visible prompt: `pendingEvents` rendered as a
-    /// plain-text preamble (see ``OperationEventSegment/renderedLine(for:)``), a blank
-    /// line, then `prompt`. Returns `prompt` unchanged when `pendingEvents` is empty.
-    private static func composedPrompt(pendingEvents: [OperationEvent], prompt: String) -> String {
-        guard !pendingEvents.isEmpty else { return prompt }
-        let preamble = pendingEvents.map(OperationEventSegment.renderedLine(for:)).joined(separator: "\n")
-        return preamble + "\n\n" + prompt
     }
 }

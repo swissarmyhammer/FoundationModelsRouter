@@ -683,7 +683,7 @@ extension RoutedSessionActor {
 
         // `current.prefix(persistedEntryCount)` is exactly what this
         // session has already recorded to `transcript.jsonl` — the same
-        // baseline `recordTranscriptDelta(grammar:since:usage:pendingEvents:)`
+        // baseline `recordTranscriptDelta(grammar:since:usage:deliveredMail:onEvent:)`
         // diffs the positional growth of an ordinary submission against. A compaction is not
         // a mere extension of it (`applied` is shorter and reorders entries
         // relative to it), so the diff here is by entry id rather than

@@ -37,6 +37,9 @@ extension RoutedSessionActor {
             throw MailRefusal.duplicateID(mail.id)
         }
         outbox.noteCallerContext(ServiceContext.current, for: mail.id)
+        // The record comes before the wake of the pump, so the transcript
+        // holds the arrival of the mail before its delivery.
+        recordMail([.mailQueued(mail)])
         Task { await self.mailDidArrive() }
         return subscription
     }

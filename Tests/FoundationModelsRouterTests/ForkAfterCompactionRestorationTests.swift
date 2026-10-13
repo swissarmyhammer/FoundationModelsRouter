@@ -108,7 +108,9 @@ struct ForkAfterCompactionRestorationTests {
     /// The entry ids of `sessionId`'s own recorded entry events, in order —
     /// what the session itself appended after its fork cut.
     private static func ownRecordedEntryIds(in tree: TranscriptTree, sessionId: ULID) throws -> [String] {
-        try tree.events(forSession: sessionId).compactMap { $0.entry?.entryId }
+        // Only entry-kind events: a `.mail` event also holds an entry payload,
+        // but it is no entry of the transcript.
+        try tree.events(forSession: sessionId).filter(\.kind.isEntryKind).compactMap { $0.entry?.entryId }
     }
 
     // MARK: - Live compaction, then fork, then restore

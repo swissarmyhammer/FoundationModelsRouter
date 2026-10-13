@@ -400,6 +400,10 @@ extension RoutedSessionActor {
         // run posted progress and no terminal reached the journal, so write it
         // here: the output text of the row is not lost.
         await closeOpenProgressRow()
+        // Each terminal record of the mail (the answer end, each cancel) is on
+        // disk when close returns, so a restore finds no open mail of a
+        // session that closed (``flushMailRecords()``).
+        await flushMailRecords()
         await releasePromptCache()
     }
 }

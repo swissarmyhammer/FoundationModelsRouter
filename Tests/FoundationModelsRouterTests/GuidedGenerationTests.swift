@@ -319,7 +319,7 @@ struct GuidedGenerationTests {
         let text = try await session.respond(to: "hi")
         #expect(text == Self.canned)
 
-        let events = await recorder.events
+        let events = await recorder.events.withoutMailRecords
         #expect(events.map(\.kind) == [.session, .prompt, .response])
         #expect(events.allSatisfy { $0.grammar == Self.smallSchema })
     }
@@ -338,7 +338,7 @@ struct GuidedGenerationTests {
         let text = try await session.respond(to: "hi")
         #expect(text == Self.canned)
 
-        let events = await recorder.events
+        let events = await recorder.events.withoutMailRecords
         #expect(events.allSatisfy { $0.grammar == Self.ebnf })
     }
 
@@ -355,7 +355,7 @@ struct GuidedGenerationTests {
         let text = try await profile.standard.respond(to: "hi", following: .jsonSchema(Self.smallSchema))
         #expect(text == Self.canned)
 
-        let events = await recorder.events
+        let events = await recorder.events.withoutMailRecords
         #expect(events.map(\.kind) == [.session, .prompt, .response])
         #expect(events.allSatisfy { $0.grammar == Self.smallSchema })
     }
@@ -377,7 +377,7 @@ struct GuidedGenerationTests {
 
         // The chokepoint still brackets the failed submission: a `session` meta line,
         // then one open + one close.
-        let events = await recorder.events
+        let events = await recorder.events.withoutMailRecords
         #expect(events.map(\.kind) == [.session, .prompt, .response])
     }
 

@@ -296,7 +296,7 @@ struct SessionChokepointTests {
         let text = try await session.respond(to: "hello")
         #expect(text == Self.cannedText)
 
-        let events = await recorder.events
+        let events = await recorder.events.withoutMailRecords
         // A first-line `session` meta event precedes the open + close of the submission.
         #expect(events.count == 3)
         #expect(events.map(\.kind) == [.session, .prompt, .response])
@@ -344,7 +344,7 @@ struct SessionChokepointTests {
         }
         #expect(collected == Self.cannedText)
 
-        let events = await recorder.events
+        let events = await recorder.events.withoutMailRecords
         // A first-line `session` meta event precedes the open + close of the submission.
         #expect(events.count == 3)
         #expect(events.map(\.kind) == [.session, .prompt, .response])
@@ -387,7 +387,7 @@ struct SessionChokepointTests {
             _ = try await session.respond(to: "hello")
         }
 
-        let events = await recorder.events
+        let events = await recorder.events.withoutMailRecords
         // A first-line `session` meta event precedes the open + close of the submission,
         // which is still recorded on the throwing path.
         #expect(events.count == 3)
@@ -432,7 +432,7 @@ struct SessionChokepointTests {
             for try await _ in await session.streamResponse(to: "hello") {}
         }
 
-        let events = await recorder.events
+        let events = await recorder.events.withoutMailRecords
         // A first-line `session` meta event precedes the open + close of the submission,
         // which is still recorded on the throwing streaming path.
         #expect(events.count == 3)

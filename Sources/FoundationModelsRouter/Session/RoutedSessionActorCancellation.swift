@@ -137,14 +137,16 @@ extension RoutedSessionActor {
 
     /// The work of the signal ``replace(_:with:)``: changes the body of one
     /// queued mail. The id, the sender and the place in the queue do not
-    /// change. The pump wakes, because the new body can start an answer.
-    /// Mail that is not queued does not change.
+    /// change. The transcript records the new body
+    /// (``MailRecord/replaced(_:body:)``), and the pump wakes, because the new
+    /// body can start an answer. Mail that is not queued does not change.
     ///
     /// - Parameters:
     ///   - id: The id of the mail.
     ///   - body: The new body.
     func performReplace(_ id: MailID, with body: MailBody) {
         guard outbox.queue.replace(id, with: body) else { return }
+        recordMail([.replaced(id, body: body)])
         wakePump()
     }
 

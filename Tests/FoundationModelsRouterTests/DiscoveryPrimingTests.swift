@@ -375,7 +375,7 @@ struct DiscoveryPrimingTests {
         #expect(fixture.log.entriesAtGeneration == [[]])
         #expect(fixture.log.submittedPrompts == [Self.prompt])
 
-        let events = await fixture.recorder.events
+        let events = await fixture.recorder.events.withoutMailRecords
         #expect(events.map(\.kind) == [.session, .prompt, .response])
     }
 
@@ -394,7 +394,7 @@ struct DiscoveryPrimingTests {
         // The ordinary positional diff of the submission picked the seeded
         // entries up as the genuinely new entries they are: the seeded triple,
         // then the own prompt and response of the submission.
-        let events = await fixture.recorder.events
+        let events = await fixture.recorder.events.withoutMailRecords
         #expect(events.map(\.kind) == [.session, .prompt, .toolCalls, .toolOutput, .prompt, .response])
 
         let toolCallsEvent = try #require(events.first { $0.kind == .toolCalls })
@@ -563,25 +563,16 @@ struct DiscoveryPrimingTests {
         let expectedLine = OperationEventSegment.renderedLine(for: posted)
         #expect(realPrompt.text == expectedLine + "\n\n" + Self.prompt)
 
-        // ...and the drained event's structured segment sits on that SAME
+        // ...and the record of the delivered run mail sits on that SAME
         // entry, so the two views of one drained event never drift apart
         // (see ``OperationEventSegment/description``).
-        let segments = try #require(realPrompt.entry?.segments)
-        guard case .structure(_, let schemaName, let contentJSON) = segments.last else {
-            Issue.record("expected the real prompt entry to end with the drained event's .structure segment")
-            return
-        }
-        #expect(schemaName == OperationEventSegment.schemaName)
-        let decoded = try JSONDecoder().decode(OperationEvent.self, from: Data(contentJSON.utf8))
-        #expect(decoded == posted)
+        #expect(realPrompt.operationEvents == [posted])
+        let decoded = try #require(realPrompt.operationEvents.first)
         #expect(OperationEventSegment.renderedLine(for: decoded) == expectedLine)
 
-        // The synthetic discovery prompt carries no event segment.
-        let seedSegments = seedPrompt.entry?.segments ?? []
-        let seedCarriesEventSegment = seedSegments.contains { segment in
-            segment.persistedStructure?.schemaName == OperationEventSegment.schemaName
-        }
-        #expect(!seedCarriesEventSegment)
+        // The synthetic discovery prompt carries no event and no mail record.
+        #expect(seedPrompt.operationEvents.isEmpty)
+        #expect(seedPrompt.mailRecords.isEmpty)
     }
 
     @Test("a fork inherits its parent's priming opt-in")

@@ -3,6 +3,16 @@ import FoundationModels
 
 @testable import FoundationModelsRouter
 
+extension Array where Element == TranscriptEvent {
+    /// The recorded events with no `.mail` event. A `.mail` event holds the
+    /// mail records of the session (queued, cancelled, replaced, answer
+    /// ended, lost). A test that examines the entries of a transcript, and
+    /// not its mail, uses this list.
+    var withoutMailRecords: [TranscriptEvent] {
+        filter { $0.kind != .mail }
+    }
+}
+
 /// Shared fixture builders for constructing ``Transcript``s in tests: a
 /// leading `.instructions` entry and the entries of one or more answers. The
 /// entries of an answer are a `.prompt`, optionally a

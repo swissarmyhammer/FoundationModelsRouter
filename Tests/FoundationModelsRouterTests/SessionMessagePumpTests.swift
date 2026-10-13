@@ -467,8 +467,10 @@ struct SessionMessagePumpTests {
 
         #expect(backend.prompts.count == 2)
         let retryPrompt = try #require(backend.prompts.last)
-        #expect(retryPrompt.hasPrefix(Self.firstPrompt))
-        #expect(retryPrompt.hasSuffix(RoutedSessionActor.messageSeparator + Self.secondPrompt))
+        // The prompt renders the mail that joins the continuation first, in
+        // take order, and then the retry text (the failed prompt and the
+        // tool error).
+        #expect(retryPrompt.hasPrefix(Self.secondPrompt + RoutedSessionActor.messageSeparator + Self.firstPrompt))
         #expect(firstAnswer == PumpProbeBackend.answer(ofCall: 2))
         #expect(secondAnswer == PumpProbeBackend.answer(ofCall: 2))
         withExtendedLifetime(profile) {}
@@ -565,8 +567,12 @@ struct SessionMessagePumpTests {
         #expect(await session.becomesIdle())
         #expect(backend.prompts.count == Self.mailOnlyContinuation)
         let retryPrompt = try #require(backend.prompts.last)
-        #expect(retryPrompt.contains(RoutedSessionActor.settledRunDeliveryPrompt))
-        #expect(retryPrompt.hasSuffix(RoutedSessionActor.messageSeparator + Self.secondPrompt))
+        // The failed submission wrote no `.prompt` entry, so its run mail went
+        // back to the queue. The retry takes it again with the caller message,
+        // in take order, and the retry text comes after the mail.
+        #expect(
+            retryPrompt.contains(
+                Self.secondPrompt + RoutedSessionActor.messageSeparator + RoutedSessionActor.settledRunDeliveryPrompt))
         #expect(await session.mailQueueDepth() == MailQueueDepth(waiting: 0, depthByKind: [:], running: []))
         withExtendedLifetime(profile) {}
     }

@@ -186,17 +186,21 @@ final class SessionOutputHub: Sendable {
     ///     ``SessionEvent/answerFailed(_:)``, or `nil`.
     ///   - audience: The mail of the answer whose work sent `output`, or no
     ///     mail (the default).
-    func emit(_ output: SessionOutput, failure error: (any Error)? = nil, audience: Set<MailID> = []) {
-        let ended = Set(Self.keys(endedBy: output.event))
+    /// - Returns: The ids that `output` ended, in the order of the event, or
+    ///   none when `output` is no terminal event or when the hub dropped it.
+    @discardableResult
+    func emit(_ output: SessionOutput, failure error: (any Error)? = nil, audience: Set<MailID> = []) -> [TerminalKey] {
+        let endedKeys = Self.keys(endedBy: output.event)
+        let ended = Set(endedKeys)
         let terminal = Terminal(event: output.event, error: error)
-        let (finished, resumed) = state.withLock {
-            state -> ([AsyncStream<SessionOutput>.Continuation], [CheckedContinuation<Terminal, any Error>]) in
+        let (finished, resumed, isDelivered) = state.withLock {
+            state -> ([AsyncStream<SessionOutput>.Continuation], [CheckedContinuation<Terminal, any Error>], Bool) in
             // The answer that ``RoutedSession/cancelAll()`` stopped already
             // has its terminal event: each later output of its work is
             // dropped, also its own end and the events of a compaction
             // inside it.
             guard !state.isSilenced(output.origin), audience.isDisjoint(with: state.silenced) else {
-                return ([], [])
+                return ([], [], false)
             }
             for feed in state.feeds.values {
                 feed.yield(output)
@@ -217,7 +221,7 @@ final class SessionOutputHub: Sendable {
                 state.record(terminal, for: key)
                 resumed += state.takeWaiters(for: key)
             }
-            return (finished, resumed)
+            return (finished, resumed, true)
         }
         // A finish runs the termination handler of the stream, which takes
         // the lock. Thus each finish comes after the lock is released.
@@ -227,6 +231,7 @@ final class SessionOutputHub: Sendable {
         for waiter in resumed {
             waiter.resume(returning: terminal)
         }
+        return isDelivered ? endedKeys : []
     }
 
     /// Drops each later output whose origin holds an id of `ids`: the

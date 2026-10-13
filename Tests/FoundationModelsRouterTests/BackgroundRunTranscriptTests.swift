@@ -264,7 +264,11 @@ struct BackgroundRunTranscriptTests {
         #expect(promptEvents.count == 2)
         let expectedLine = OperationEventSegment.renderedLine(for: terminal)
         #expect(promptEvents[1].text == expectedLine + "\n\nwhat happened?")
-        #expect(promptEvents[1].entry?.segments?.count == 2)
+        // The text segment, then one mail record for each delivered mail:
+        // the run mail and the user mail.
+        #expect(promptEvents[1].entry?.segments?.count == 3)
+        #expect(promptEvents[1].mailRecords.count == 2)
+        #expect(promptEvents[1].operationEvents == [terminal])
     }
 
     // MARK: - The public read an outside package makes
@@ -320,7 +324,10 @@ struct BackgroundRunTranscriptTests {
         _ = try await session.respond(to: "what happened?")
         #expect(Self.journaledRunEvents(in: await recorder.events).isEmpty)
         let promptEvent = try #require((await recorder.events).first { $0.kind == .prompt })
-        #expect(promptEvent.entry?.segments?.count == 2)
+        // The text segment, then the records of the run mail and the user mail.
+        #expect(promptEvent.entry?.segments?.count == 3)
+        #expect(promptEvent.mailRecords.count == 2)
+        #expect(promptEvent.operationEvents.count == 1)
     }
 
     // MARK: - One run, one recorded ending

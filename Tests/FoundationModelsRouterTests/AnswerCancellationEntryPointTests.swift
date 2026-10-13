@@ -64,7 +64,7 @@ extension AnswerCancellationTests {
         // Everything the answer produced before the cancellation is still the
         // consumer's — a cancelled stream is truncated, not retracted.
         #expect(await delivered.events.contains(.textDelta(HookedSessionBackend.firstStreamedChunk)))
-        #expect(await fixture.recorder.events.map(\.kind) == [.session, .prompt, .response])
+        #expect(await fixture.recorder.events.withoutMailRecords.map(\.kind) == [.session, .prompt, .response])
 
         // The cancelled chain ends with one answerFailed with the reason
         // cancelled. The signal sends it at once, before the submission
@@ -211,8 +211,8 @@ extension AnswerCancellationTests {
         // and is recorded as the whole submission it was.
         release.signal()
         #expect(try await answerTask.value == "ok-stubborn")
-        #expect(await fixture.recorder.events.map(\.kind) == [.session, .prompt, .response])
-        #expect(await fixture.recorder.events.last?.text == "ok-stubborn")
+        #expect(await fixture.recorder.events.withoutMailRecords.map(\.kind) == [.session, .prompt, .response])
+        #expect(await fixture.recorder.events.withoutMailRecords.last?.text == "ok-stubborn")
     }
 
     @Test("a respond cancelled while its message waits behind another answer withdraws the mail with cancelled, and the mail never reaches the model")
@@ -265,7 +265,7 @@ extension AnswerCancellationTests {
 
         // No submission carried the message, so the record holds only the
         // first submission's whole prompt/response pair.
-        let events = await fixture.recorder.events
+        let events = await fixture.recorder.events.withoutMailRecords
         #expect(events.map(\.kind) == [.session, .prompt, .response])
         #expect(events.last?.text == "ok-holds-the-lock")
         #expect(await Self.followUpAnswerCompletes(on: session, observer: fixture.observer))
@@ -316,7 +316,7 @@ extension AnswerCancellationTests {
         // The model ran for the first message only, and the record holds
         // only its prompt/response pair.
         #expect(await fixture.observer.entered == ["holds-the-pump"])
-        let events = await fixture.recorder.events
+        let events = await fixture.recorder.events.withoutMailRecords
         #expect(events.map(\.kind) == [.session, .prompt, .response])
         #expect(await Self.followUpAnswerCompletes(on: session, observer: fixture.observer))
     }
@@ -362,7 +362,7 @@ extension AnswerCancellationTests {
         #expect(events.answers.map(\.reply) == ["ok-abandon-stream"])
         #expect(events.answerFailures.isEmpty)
         #expect(await fixture.observer.toolSawCancellation == false)
-        let recorded = await fixture.recorder.events
+        let recorded = await fixture.recorder.events.withoutMailRecords
         #expect(recorded.map(\.kind) == [.session, .prompt, .response])
         #expect(recorded.last?.text == "ok-abandon-stream")
         #expect(await session.becomesIdle())

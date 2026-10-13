@@ -391,7 +391,7 @@ extension AnswerCancellationTests {
         // to do.
         let session = try await Self.makeCompactionTriggeredSession(fixture, budget: Self.summarizingCompactionBudget)
         let transcriptBefore = Array(await session.transcript)
-        let recordedBefore = await fixture.recorder.events.count
+        let recordedBefore = await fixture.recorder.events.withoutMailRecords.count
 
         let insideSummarizer = AsyncSemaphore(value: 0)
         let sawCancellation = Self.suspendInsideCancellationAwareTool(
@@ -422,7 +422,7 @@ extension AnswerCancellationTests {
         // No own-model call after the cancel, and nothing applied.
         #expect(await Self.summarizerCallCount(fixture) == 1)
         #expect(Array(await session.transcript) == transcriptBefore)
-        #expect(await fixture.recorder.events.count == recordedBefore)
+        #expect(await fixture.recorder.events.withoutMailRecords.count == recordedBefore)
     }
 
     /// The production change that makes this test fail: a `cancelAll()` that
@@ -620,7 +620,7 @@ extension AnswerCancellationTests {
         let insideSummarizer = AsyncSemaphore(value: 0)
         let sawCancellation = Self.suspendInsideCancellationAwareTool(
             fixture, suspendingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
-        let recordedBefore = await fixture.recorder.events.count
+        let recordedBefore = await fixture.recorder.events.withoutMailRecords.count
         let feed = await session.streamSessionEvents()
 
         let answerTask = Task { try await session.respond(to: "compacts-first") }
@@ -642,7 +642,7 @@ extension AnswerCancellationTests {
 
         // The session records the stopped answer as each other failed answer:
         // one close with no body.
-        let recorded = await fixture.recorder.events
+        let recorded = await fixture.recorder.events.withoutMailRecords
         #expect(recorded.count == recordedBefore + 1)
         #expect(recorded.last?.kind == .response)
         #expect(recorded.last?.text == nil)
@@ -665,7 +665,7 @@ extension AnswerCancellationTests {
 
         let fillBefore = await session.contextFill
         let transcriptBefore = Array(await session.transcript)
-        let recordedBefore = await fixture.recorder.events.count
+        let recordedBefore = await fixture.recorder.events.withoutMailRecords.count
 
         let insideSummarizer = AsyncSemaphore(value: 0)
         let sawCancellation = Self.suspendInsideCancellationAwareTool(
@@ -691,7 +691,7 @@ extension AnswerCancellationTests {
         // Recorded like every other failed answer, and no differently for
         // having been cut short in a compaction: exactly one close, bodyless,
         // with no `.prompt` of its own because the model was never called.
-        let recorded = await fixture.recorder.events
+        let recorded = await fixture.recorder.events.withoutMailRecords
         #expect(recorded.count == recordedBefore + 1)
         #expect(recorded.last?.kind == .response)
         #expect(recorded.last?.text == nil)
@@ -712,7 +712,7 @@ extension AnswerCancellationTests {
         let session = try await Self.makeCompactionTriggeredSession(
             fixture, budget: Self.summarizingCompactionBudget, metersTriggeringFill: false)
 
-        let recordedBefore = await fixture.recorder.events.count
+        let recordedBefore = await fixture.recorder.events.withoutMailRecords.count
         // The summarizer call renders the whole live context, the own prompt of
         // the failed submission last, so its prompt also ends with the prompt of
         // the answer. Only a call that is not the summarizer's is the own call of
@@ -753,7 +753,7 @@ extension AnswerCancellationTests {
         // and its close. The retry opens its submission, and the check before
         // its model call refuses it, so the retry records a close with no
         // prompt: the model never saw the retry.
-        let recorded = Array(await fixture.recorder.events.dropFirst(recordedBefore))
+        let recorded = Array(await fixture.recorder.events.withoutMailRecords.dropFirst(recordedBefore))
         #expect(recorded.filter { $0.kind == .prompt }.count == 1)
         #expect(recorded.filter { $0.kind == .response && $0.text == nil }.count == 2)
     }

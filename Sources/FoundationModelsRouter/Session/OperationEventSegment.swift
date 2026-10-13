@@ -1,21 +1,20 @@
 import Foundation
 import FoundationModels
 
-/// A ``PersistableStructuredSegment`` durably recording one drained ``OperationEvent`` on the `.prompt` entry it rode into a submission.
+/// A ``PersistableStructuredSegment`` that records one ``OperationEvent``.
 ///
 /// The pump of ``RoutedSessionActor`` takes the run mail of the session
-/// from the mail queue (``SessionOutbox/queue``) at the start of
-/// every submission and renders each taken event as a plain-text preamble
-/// line the model reads
-/// (see ``renderedLine(for:)``) — but the model never sees anything beyond
-/// that flattened text, since the live `LanguageModelSession` only ever
-/// accepts a plain prompt string (``LanguageModelSessionBackend``'s
-/// `String`-only surface). This segment is the durable, structured
-/// counterpart: the chokepoint appends one of these per drained event
-/// directly onto the *recorded* `.prompt` entry of the submission — never into the SDK's
-/// own live transcript, only into what gets persisted — so a reader
-/// reconstructing the transcript later can recover the original typed
-/// ``OperationEvent`` instead of only its flattened text line.
+/// from the mail queue (``SessionOutbox/queue``) and renders each taken
+/// event as one plain-text line that the model reads
+/// (``renderedLine(for:)``). The model reads only that text, because the
+/// live `LanguageModelSession` accepts only a plain prompt string.
+///
+/// A recording of schema ``RecordingSchemaVersion/v2`` or older holds one of
+/// these segments on the recorded `.prompt` entry for each event that the
+/// submission delivered. A recording of schema ``RecordingSchemaVersion/v3``
+/// holds a ``MailRecordSegment`` (``MailRecord/mailDelivered(_:)``) there
+/// instead. The journal of the background runs (on `.toolOutput` entries)
+/// and the readers of old recordings still use this type.
 ///
 /// `content` is the event itself: `OperationEvent` is already
 /// `Codable & Sendable & Equatable`, exactly what
@@ -111,7 +110,8 @@ extension OperationEventSegment {
 
     /// `entry` with no plan in each ``OperationEventSegment`` it carries
     /// (``withoutPlan``). The journal puts these segments on `.toolOutput`
-    /// entries, and the submission chokepoint puts them on `.prompt` entries.
+    /// entries. A recording of schema ``RecordingSchemaVersion/v2`` or older
+    /// also holds them on `.prompt` entries.
     /// Every other entry, and every other segment, stays as it is.
     ///
     /// - Parameter entry: An entry of a transcript that goes to a backend.
@@ -153,11 +153,15 @@ extension TranscriptEvent {
     /// Every ``OperationEvent`` this event's entry carries, in segment order.
     ///
     /// Read this off EVERY recorded event, and not off the `.toolOutput` ones
-    /// alone, because this package writes one event's segment two ways. The run
-    /// journal appends its own `.toolOutput` entry at the moment the event is
-    /// posted, and the submission chokepoint appends the same segment again onto the
-    /// recorded `.prompt` entry of the submission, once per event that submission drained. A
-    /// reader that took a single entry kind would see one of the two writes.
+    /// alone, because this package writes one event two ways. The run journal
+    /// appends its own `.toolOutput` entry at the moment the event is posted.
+    /// The recorded `.prompt` entry of the submission that delivered the run
+    /// mail of the event carries the event again: as one delivered mail
+    /// record (`MailRecordSegment`), or, in a recording made before mail
+    /// records, as one more segment of this type. A reader that took a single
+    /// entry kind would see one of the two writes. A record of any other
+    /// kind (for example the record that the mail entered the queue) is not
+    /// read, so no event is read a third time.
     ///
     /// A run's identity travels inside the segment and never in the entry that
     /// carries it: a `.toolOutput` entry's id is a fresh ULID by design, so an
@@ -173,12 +177,10 @@ extension TranscriptEvent {
     /// already — because the segment these events are decoded from, the internal
     /// `OperationEventSegment`, is no part of this package's public surface.
     public var operationEvents: [OperationEvent] {
-        (entry?.segments ?? []).compactMap { segment in
-            guard let structure = segment.persistedStructure,
-                structure.schemaName == OperationEventSegment.schemaName
-            else { return nil }
-            return try? JSONDecoder().decode(
-                OperationEvent.self, from: Data(structure.contentJSON.utf8))
+        let delivered = mailRecords.compactMap { record -> OperationEvent? in
+            guard case .mailDelivered(let mail) = record else { return nil }
+            return mail.runEvent
         }
+        return structureContents(named: OperationEventSegment.schemaName, as: OperationEvent.self) + delivered
     }
 }

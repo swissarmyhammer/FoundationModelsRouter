@@ -11,7 +11,7 @@ import Tracing
 /// - Run mail: each ``OperationEvent`` posted through the
 ///   ``OperationEventSink`` conformance becomes one ``MailBody/runEvent(_:)``
 ///   mail, with the sender ``MailSender/run(correlationID:)``. The next
-///   submission of the pump puts it into its prompt preamble. Only
+///   submission of the pump renders it into its prompt, in take order. Only
 ///   ``OperationEventKind/progress`` coalesces: a new progress event replaces
 ///   the body of the queued progress mail with the same key, `(tool,
 ///   correlationID)` and the plan id (`nil` for a text progress), in place.

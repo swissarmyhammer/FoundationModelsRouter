@@ -15,8 +15,19 @@ enum RecordingSchemaVersion {
     /// them: absent, it decodes as `nil`.
     static let v2 = 2
 
+    /// Version 3: the context projection changes (`mailbox.md`, section 5,
+    /// problems 10 and 12). The recorded `.prompt` entry of a submission
+    /// carries one ``MailRecordSegment`` for each mail that it delivered, in
+    /// take order, in place of one ``OperationEventSegment`` for each run
+    /// event, and its text is the render of that mail in take order
+    /// (``ContextRenderer/promptText(delivering:followedBy:)``). The
+    /// ``TranscriptEvent/Kind/mail`` events record the other facts about
+    /// mail. A reader of this version still reads a v2 recording: a v2
+    /// `.prompt` entry has no mail record, and it renders as before.
+    static let v3 = 3
+
     /// The version writers stamp on every new sidecar.
-    static let current = v2
+    static let current = v3
 
     /// The version a sidecar with no `schemaVersion` key decodes as.
     /// Frozen at ``v2``: a future bump of ``current`` must not move this.

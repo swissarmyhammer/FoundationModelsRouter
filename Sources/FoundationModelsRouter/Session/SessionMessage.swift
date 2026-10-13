@@ -92,7 +92,8 @@ extension Mail {
     }
 
     /// The text of user-type mail in the prompt of a submission, or `nil`
-    /// for run mail, which goes into the preamble instead.
+    /// for run mail, which renders as one line of its event instead
+    /// (``ContextRenderer/promptText(delivering:followedBy:)``).
     ///
     /// - A user message is its prompt.
     /// - An agent message is one line that names the session id of the

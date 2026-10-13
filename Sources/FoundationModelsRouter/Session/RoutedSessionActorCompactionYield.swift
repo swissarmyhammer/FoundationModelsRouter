@@ -283,8 +283,8 @@ extension RoutedSessionActor {
     /// over the trigger, and runs one more submission of the same answer with
     /// ``ceilingStopContinuationPrompt``.
     ///
-    /// The attempt is already recorded, so the next attempt carries no
-    /// pending events.
+    /// The attempt is already recorded, so the next attempt delivers no mail
+    /// of the attempt again.
     ///
     /// - Parameters:
     ///   - attempt: The attempt that stopped at the ceiling.
@@ -337,8 +337,8 @@ struct StoppedAttempt {
     /// The token ceiling of each submission of the answer.
     let responseTokenCeiling: ResponseTokenCeiling
 
-    /// The events the attempt carried in its preamble.
-    let pendingEvents: [OperationEvent]
+    /// The mail the attempt delivered, in take order.
+    let deliveredMail: [Mail]
 
     /// The event sink of the answer, or `nil`.
     let onEvent: ((SessionEvent) -> Void)?

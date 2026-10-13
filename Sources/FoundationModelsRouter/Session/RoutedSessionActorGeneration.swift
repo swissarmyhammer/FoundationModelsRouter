@@ -322,6 +322,11 @@ extension RoutedSessionActor {
     /// Sends one event to the output of the session (``outputHub``), with the
     /// origin of the work that sends it (``OriginContext/current``).
     ///
+    /// When the event is the terminal event of a mail and the output sent it,
+    /// the transcript records the terminal event of each mail that it ends
+    /// (``recordMail(_:)``). This is the one place where the output sends a
+    /// terminal event, so each terminal event gets one record.
+    ///
     /// - Parameters:
     ///   - event: The event to send.
     ///   - error: The error that ended a failed answer, when `event` is its
@@ -331,7 +336,9 @@ extension RoutedSessionActor {
     nonisolated func emitSessionScopedEvent(
         _ event: SessionEvent, failure error: (any Error)? = nil, audience: Set<MailID> = []
     ) {
-        outputHub.emit(SessionOutput(origin: OriginContext.current, event: event), failure: error, audience: audience)
+        let ended = outputHub.emit(
+            SessionOutput(origin: OriginContext.current, event: event), failure: error, audience: audience)
+        recordMail(Self.terminalRecords(of: event, ending: ended))
     }
 
     /// Sends the terminal event ``SessionEvent/cancelled(_:)`` of each mail

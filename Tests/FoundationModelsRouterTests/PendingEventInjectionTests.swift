@@ -180,11 +180,21 @@ struct PendingEventInjectionTests {
         let events = await recorder.events
         let promptEvent = try #require(events.first { $0.kind == .prompt })
         #expect(promptEvent.text == "hello")
-        #expect(promptEvent.entry?.segments?.count == 1)
+        // The text segment, then the record of the one delivered user mail.
+        // No run event is on the entry.
+        #expect(promptEvent.entry?.segments?.count == 2)
         guard case .text = promptEvent.entry?.segments?.first else {
-            Issue.record("expected the sole segment to be the plain .text prompt, with no injected custom segment")
+            Issue.record("expected the first segment to be the plain .text prompt")
             return
         }
+        #expect(promptEvent.operationEvents.isEmpty)
+        let records = promptEvent.mailRecords
+        #expect(records.count == 1)
+        guard case .mailDelivered(let mail) = records.first else {
+            Issue.record("expected the record of the delivered user mail, got \(records)")
+            return
+        }
+        #expect(!mail.isRunMail)
     }
 
     // MARK: - A single pending event becomes a preamble + a persisted segment
@@ -206,18 +216,22 @@ struct PendingEventInjectionTests {
         let expectedLine = OperationEventSegment.renderedLine(for: posted)
         #expect(promptEvent.text == expectedLine + "\n\nwhat happened?")
 
+        // The text segment, then one mail record for each delivered mail, in
+        // take order: the run mail, then the user mail.
         let segments = try #require(promptEvent.entry?.segments)
-        #expect(segments.count == 2)
-        guard case .structure(let id, let schemaName, let contentJSON) = segments.last else {
-            Issue.record("expected a trailing .structure segment")
+        #expect(segments.count == 3)
+        let records = promptEvent.mailRecords
+        #expect(records.count == 2)
+        guard case .mailDelivered(let runMail) = records.first, case .mailDelivered(let userMail) = records.last else {
+            Issue.record("expected two mailDelivered records, got \(records)")
             return
         }
-        #expect(!id.isEmpty)
-        #expect(schemaName == OperationEventSegment.schemaName)
-        let decoded = try JSONDecoder().decode(OperationEvent.self, from: Data(contentJSON.utf8))
-        #expect(decoded == posted)
-        // The segment and the preamble line are two views of one event, so the
-        // line the segment renders is the line the preamble carried.
+        #expect(runMail.isRunMail)
+        #expect(!userMail.isRunMail)
+        let decoded = try #require(promptEvent.operationEvents.first)
+        #expect(promptEvent.operationEvents == [posted])
+        // The record and the preamble line are two views of one event, so the
+        // line the record renders is the line the preamble carried.
         #expect(OperationEventSegment.renderedLine(for: decoded) == expectedLine)
     }
 
@@ -236,7 +250,10 @@ struct PendingEventInjectionTests {
         let promptEvents = events.filter { $0.kind == .prompt }
         #expect(promptEvents.count == 2)
         #expect(promptEvents[1].text == "second message")
-        #expect(promptEvents[1].entry?.segments?.count == 1)
+        // The second prompt holds no run event: only the record of its own
+        // user mail.
+        #expect(promptEvents[1].operationEvents.isEmpty)
+        #expect(promptEvents[1].mailRecords.count == 1)
     }
 
     // MARK: - Multiple pending events preserve outbox order
@@ -267,13 +284,9 @@ struct PendingEventInjectionTests {
         let promptEvent = try #require(events.first { $0.kind == .prompt })
         #expect(promptEvent.text == expectedPreamble + "\n\nstatus?")
 
-        let segmentEvents: [OperationEvent] = (promptEvent.entry?.segments ?? []).compactMap { segment in
-            guard case .structure(_, let schemaName, let contentJSON) = segment,
-                schemaName == OperationEventSegment.schemaName
-            else { return nil }
-            return try? JSONDecoder().decode(OperationEvent.self, from: Data(contentJSON.utf8))
-        }
-        #expect(segmentEvents == expectedEvents)
+        // The delivered run mail is recorded on the prompt entry in outbox
+        // order, and the public reader gives its run events.
+        #expect(promptEvent.operationEvents == expectedEvents)
     }
 
     // MARK: - A submission whose backend throws before appending anything survives
@@ -366,8 +379,9 @@ struct PendingEventInjectionTests {
         let entrylessPrompt = TranscriptEvent.Partial(
             routerId: .generate(), sessionId: .generate(), kind: .prompt, text: "hello")
 
-        let (partials, attached) = RoutedSessionActor.attachingPendingEventSegments(
-            events: [posted], to: [entrylessPrompt])
+        let delivered = Mail(sender: .run(correlationID: posted.correlationID), body: .runEvent(posted))
+        let (partials, attached) = RoutedSessionActor.attachingDeliveredMailRecords(
+            [delivered], to: [entrylessPrompt])
 
         // Unattached AND untouched: the events are neither embedded in the
         // recorded partial nor claimed attached, so the chokepoint's

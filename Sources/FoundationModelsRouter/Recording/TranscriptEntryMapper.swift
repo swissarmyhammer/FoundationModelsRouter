@@ -161,7 +161,7 @@ enum TranscriptEntryMapper {
                     segments: try requiredSegments(payload)
                 )
             )
-        case .session, .embedding, .divergence, .generationCall, .repeatedPartRemoval, .watchStop, .toolCall:
+        case .session, .embedding, .divergence, .generationCall, .repeatedPartRemoval, .watchStop, .mail, .toolCall:
             throw TranscriptEntryReconstructionError.unsupportedKind(kind)
         }
     }

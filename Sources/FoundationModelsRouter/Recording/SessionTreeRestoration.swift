@@ -436,7 +436,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 await outbox.post(event: lostEvent)
             }
 
-            return makeRoutedSessionActor(
+            let session = makeRoutedSessionActor(
                 profile: owningProfile,
                 routerId: routedLLM.routerId,
                 id: node.id,
@@ -518,6 +518,17 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 // live router reports.
                 tracer: routedLLM.tracer
             )
+            // Crash-edge mail durability (`mailbox.md`, section 5, problem
+            // 14): each mail of this node that the transcript holds as queued
+            // or delivered, with no terminal record, was cut off with the
+            // crashed process. It gets exactly one terminal event `lost`, and
+            // the transcript records it, so a later restore sends no second
+            // one. The mail does not go back to the queue: no tool side
+            // effect runs again.
+            await session.reportLostMail(
+                TranscriptTree.lostMail(
+                    in: try tree.effectiveEntryEvents(forSession: node.id, alongWith: .mail), ofSession: node.id))
+            return session
         }
 
         /// Applies this call's `instructions` override to one node.

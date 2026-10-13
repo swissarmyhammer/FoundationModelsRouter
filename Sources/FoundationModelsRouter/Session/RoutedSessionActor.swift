@@ -423,7 +423,7 @@ actor RoutedSessionActor: RoutedSession {
 
     /// The run mail of the open answer, in delivery order. A failed
     /// submission gives its run mail back with the same ids
-    /// (``requeueUnattachedPendingEvents(events:)``).
+    /// (``requeueUndeliveredRunMail(_:)``).
     var openAnswerRunMail: [Mail] = []
 
     /// Whether the open answer delivered user-type mail, also mail that
@@ -433,6 +433,11 @@ actor RoutedSessionActor: RoutedSession {
     /// The output of this session: the feeds, the mail subscriptions and the
     /// ledger of the terminal events. See ``emitSessionScopedEvent(_:)``.
     nonisolated let outputHub = SessionOutputHub()
+
+    /// The serial chain that writes the mail records of this session in the
+    /// order of the calls (``recordMail(_:)``). See
+    /// `RoutedSessionActorMailRecords.swift`.
+    nonisolated let mailRecordChain = Mutex(SerialAsyncChain())
 
     /// The serial executor of the signals of this session. Each signal runs
     /// after the earlier one.
@@ -642,7 +647,7 @@ actor RoutedSessionActor: RoutedSession {
     /// snapshot, and the messages since that snapshot). ``contextFill`` derives
     /// its numerator from it. See ``ContextUsageState``.
     ///
-    /// ``finishSubmission(grammar:since:usageBefore:responseTokenCeiling:pendingEvents:onEvent:stopReason:)``
+    /// ``finishSubmission(grammar:since:usageBefore:responseTokenCeiling:deliveredMail:onEvent:stopReason:replacedBackend:)``
     /// sets it to the fed and generated tokens of the newest generation call of
     /// the attempt, never to the sum of the calls, and only when the diff of
     /// the submission included a `.response` entry. A compaction restarts it

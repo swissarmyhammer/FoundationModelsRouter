@@ -523,7 +523,7 @@ public final class SessionProjection {
                     TranscriptEntry(
                         id: payload.entryId, kind: .reasoning(text ?? ""), sourceEntryId: payload.entryId))
             case .session, .instructions, .embedding, .divergence, .generationCall, .repeatedPartRemoval, .watchStop,
-                .toolCall, .unknown:
+                .mail, .toolCall, .unknown:
                 break
             }
         }
@@ -714,7 +714,7 @@ public final class SessionProjection {
         case .response:
             return compactionRow(from: entry, entryId: payload.entryId) == nil ? .text(entryId: payload.entryId) : nil
         case .toolCalls, .toolOutput, .reasoning, .session, .instructions, .embedding, .divergence,
-            .generationCall, .repeatedPartRemoval, .watchStop, .toolCall, .unknown:
+            .generationCall, .repeatedPartRemoval, .watchStop, .mail, .toolCall, .unknown:
             return nil
         }
     }
