@@ -12,7 +12,7 @@ import Testing
 /// through the session's own `RunPlane` to the suspended
 /// ``ToolContext/elicit(_:)`` continuation.
 ///
-/// The route uses no task locals: session → that session's mailbox → the
+/// The route uses no task locals: session → that session's run plane → the
 /// pending entry → its continuation, references the whole way, so answering
 /// through one session can never resume another session's elicitation.
 ///
@@ -193,12 +193,12 @@ struct ElicitationRoutingTests {
         )
     }
 
-    /// Binds a ``ToolContext`` over `session`'s own mailbox — the same shape
+    /// Binds a ``ToolContext`` over `session`'s own run plane — the same shape
     /// the invoker binds around a wrapped tool call — so a test can suspend a
     /// real ``ToolContext/elicit(_:)`` continuation on the session.
     ///
     /// - Parameters:
-    ///   - session: The session whose mailbox the context binds.
+    ///   - session: The session whose run plane the context binds.
     ///   - sink: Where the context posts its events. Defaults to a sink that
     ///     drops them; pass `session.outbox` to reach the session's journal.
     private static func makeContext(
@@ -207,7 +207,7 @@ struct ElicitationRoutingTests {
     ) -> ToolContext {
         ToolContext(
             sessionID: session.id,
-            runPlane: session.mailbox,
+            runPlane: session.runPlane,
             sink: sink,
             tool: "fake",
             op: "ask user",
@@ -227,7 +227,7 @@ struct ElicitationRoutingTests {
     ///
     /// - Parameters:
     ///   - request: The request to suspend on.
-    ///   - session: The session whose mailbox holds the pending entry.
+    ///   - session: The session whose run plane holds the pending entry.
     ///   - sink: Where the request's event is posted. See ``makeContext(for:postingTo:)``.
     private static func suspendOnElicitation(
         _ request: ElicitationRequest,
@@ -240,7 +240,7 @@ struct ElicitationRoutingTests {
         }
         #expect(
             await Pending.eventually {
-                await session.mailbox.pendingElicitationIds().contains(request.elicitationId)
+                await session.runPlane.pendingElicitationIds().contains(request.elicitationId)
             }
         )
         return answering
@@ -260,7 +260,7 @@ struct ElicitationRoutingTests {
         let answer = ElicitationResponse.accept(content: ["name": .string("Ada")])
         #expect(await session.respond(elicitationId: elicitationId.description, response: answer) == .delivered)
         #expect(try await answering.deliveredAnswer() == answer)
-        #expect(await session.mailbox.pendingElicitationIds().isEmpty)
+        #expect(await session.runPlane.pendingElicitationIds().isEmpty)
 
         // A second respond addresses an already-answered id: a safe no-op.
         #expect(await session.respond(elicitationId: elicitationId.description, response: .decline) == .noPendingElicitation)
@@ -293,12 +293,12 @@ struct ElicitationRoutingTests {
         // The accept only means the user agreed to open the URL — the entry
         // stays open and the run stays running.
         #expect(await session.respond(elicitationId: elicitationId.description, response: .accept(content: nil)) == .acceptedAwaitingCompletion)
-        #expect(await session.mailbox.pendingElicitationIds() == [elicitationId])
+        #expect(await session.runPlane.pendingElicitationIds() == [elicitationId])
 
         // The out-of-band flow's completion is what resumes the run.
         #expect(await session.complete(elicitationId: elicitationId.description) == .completed)
         #expect(try await answering.deliveredAnswer() == .accept(content: nil))
-        #expect(await session.mailbox.pendingElicitationIds().isEmpty)
+        #expect(await session.runPlane.pendingElicitationIds().isEmpty)
 
         // A duplicate complete is a safe no-op.
         #expect(await session.complete(elicitationId: elicitationId.description) == .noPendingElicitation)
@@ -323,7 +323,7 @@ struct ElicitationRoutingTests {
         }
         #expect(
             await Pending.eventually {
-                await session.mailbox.pendingElicitationIds().count == 2
+                await session.runPlane.pendingElicitationIds().count == 2
             }
         )
 
@@ -332,7 +332,7 @@ struct ElicitationRoutingTests {
         #expect(try await firstAnswering.deliveredAnswer() == firstAnswer)
 
         // The other elicitation is untouched: still running, still pending.
-        #expect(await session.mailbox.pendingElicitationIds() == [secondId])
+        #expect(await session.runPlane.pendingElicitationIds() == [secondId])
 
         #expect(await session.respond(elicitationId: secondId.description, response: .decline) == .delivered)
         #expect(try await secondAnswering.deliveredAnswer() == .decline)
@@ -401,7 +401,7 @@ struct ElicitationRoutingTests {
         // no-op there, and B's run stays running.
         #expect(await sessionA.respond(elicitationId: elicitationId.description, response: .decline) == .noPendingElicitation)
         #expect(await sessionA.complete(elicitationId: elicitationId.description) == .noPendingElicitation)
-        #expect(await sessionB.mailbox.pendingElicitationIds() == [elicitationId])
+        #expect(await sessionB.runPlane.pendingElicitationIds() == [elicitationId])
 
         // The same answer through session B resumes it.
         #expect(await sessionB.respond(elicitationId: elicitationId.description, response: .decline) == .delivered)
@@ -454,7 +454,7 @@ struct ElicitationRoutingTests {
         let request = try await watch.waitForFirst()
         #expect(request.kind == .elicitation)
         let elicitationId = try #require(request.elicitation?.elicitationId)
-        #expect(await session.mailbox.pendingElicitationIds() == [elicitationId])
+        #expect(await session.runPlane.pendingElicitationIds() == [elicitationId])
 
         // The id the event carries is the id the reply surface takes, and the
         // answer resumes the tool with it.
@@ -485,7 +485,7 @@ struct ElicitationRoutingTests {
 
         let request = try await answerWatch.waitForFirst()
         let elicitationId = try #require(request.elicitation?.elicitationId)
-        #expect(await session.mailbox.pendingElicitationIds() == [elicitationId])
+        #expect(await session.runPlane.pendingElicitationIds() == [elicitationId])
 
         #expect(await session.respond(elicitationId: elicitationId.description, response: .accept(content: nil)) == .delivered)
         try await answerDraining.value

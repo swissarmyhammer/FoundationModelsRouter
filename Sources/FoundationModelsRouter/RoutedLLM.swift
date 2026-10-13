@@ -158,7 +158,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         // Per-session event wiring plus pure per-session instancing, before
         // the backend is ever built — see
         // ``makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:inlineSettleGrace:)``
-        // for the fresh outbox/mailbox scope rule and the mount → cap
+        // for the fresh outbox and run plane scope rule and the mount → cap
         // chain this site applies (task
         // ^k4nygqa; the fork and restore sites each have their own
         // deliberately distinct chain — see
@@ -170,7 +170,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         // tool's binding-only decorator of the Extras tool hosting, binding the ambient
         // `ToolContext` that posts the tool's events to this session's own
         // `outbox` — not the bare originals.
-        let (outbox, mailbox, instancedTools) = makeSessionToolWiring(
+        let (outbox, runPlane, instancedTools) = makeSessionToolWiring(
             tools,
             sessionID: sessionId,
             cappedToTokenLimit: budget?.toolOutputLimit,
@@ -208,7 +208,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // ``RoutedSessionActor/fork(workingDirectory:)``'s doc comment).
             originalTools: tools,
             outbox: outbox,
-            mailbox: mailbox,
+            runPlane: runPlane,
             // A root session starts with nothing persisted: the first submission's
             // whole transcript diff (including any leading `.instructions`
             // entry) is new.
@@ -252,15 +252,15 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         )
     }
 
-    /// Mints one session's fresh outbox and mailbox and instances `tools`
+    /// Mints one session's fresh outbox and run plane and instances `tools`
     /// against them.
     ///
     /// Each tool is composed by
-    /// ``ToolMounting/makeSessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:tokenCounter:tracer:inlineSettleGrace:)``,
+    /// ``ToolMounting/makeSessionMounted(tool:sessionID:runPlane:sink:cappedToTokenLimit:tokenCounter:tracer:inlineSettleGrace:)``,
     /// carrying this handle's own tracer, so each mounted call opens its
     /// `FoundationModelsExtras.tool` span against the backend the router was
     /// constructed with.
-    /// The outbox and mailbox are fresh per session and never shared.
+    /// The outbox and the run plane are fresh per session and never shared.
     ///
     /// - Parameters:
     ///   - tools: The caller's original tools, never mutated.
@@ -269,21 +269,21 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - tokenCounter: The counter the capping layer counts each result with.
     ///   - inlineSettleGrace: How long each background call waits for its own
     ///     run, in seconds. See ``SessionConfiguration/inlineSettleGrace``.
-    /// - Returns: The session's outbox and mailbox with the instanced tool list.
+    /// - Returns: The session's outbox and run plane with the instanced tool list.
     func makeSessionToolWiring(
         _ tools: [any Tool],
         sessionID: ULID,
         cappedToTokenLimit tokenLimit: Int?,
         tokenCounter: any TokenCounter,
         inlineSettleGrace: TimeInterval
-    ) -> (outbox: SessionOutbox, mailbox: RunPlane, tools: [any Tool]) {
+    ) -> (outbox: SessionOutbox, runPlane: RunPlane, tools: [any Tool]) {
         let outbox = SessionOutbox(model: chosen)
-        let mailbox = RunPlane()
+        let runPlane = RunPlane()
         let instancedTools = tools.map { tool in
             ToolMounting.makeSessionMounted(
                 tool: tool,
                 sessionID: sessionID,
-                mailbox: mailbox,
+                runPlane: runPlane,
                 sink: outbox,
                 cappedToTokenLimit: tokenLimit,
                 tokenCounter: tokenCounter,
@@ -291,7 +291,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 inlineSettleGrace: inlineSettleGrace
             )
         }
-        return (outbox, mailbox, instancedTools)
+        return (outbox, runPlane, instancedTools)
     }
 
     /// The recording directory a fresh session nests under.

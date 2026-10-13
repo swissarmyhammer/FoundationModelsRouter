@@ -61,7 +61,7 @@ enum FakeRun {
     static let op = "run task"
 }
 
-/// Tracks a fake run of `kind` on `mailbox`: its settling task suspends on
+/// Tracks a fake run of `kind` on `runPlane`: its settling task suspends on
 /// `latch` (opening it on cooperative cancellation), then produces a terminal
 /// `.completed` event whose outcome honestly reports whether it was cancelled.
 /// The canceler reports `cancelerOutcome`, and what it does before reporting is
@@ -79,7 +79,7 @@ enum FakeRun {
 /// cancel the settling task, as before.
 ///
 /// - Parameters:
-///   - mailbox: The run plane the run is tracked on.
+///   - runPlane: The run plane the run is tracked on.
 ///   - latch: The latch the run's body suspends on until a test opens it.
 ///   - kind: What kind of work the fake run is.
 ///   - detailOnSettle: The detail the terminal event carries.
@@ -88,7 +88,7 @@ enum FakeRun {
 ///     one.
 /// - Returns: The run's completion token.
 func trackFakeRun(
-    on mailbox: RunPlane,
+    on runPlane: RunPlane,
     latch: RunLatch,
     kind: RunKind = .swiftTask,
     detailOnSettle: String = "done",
@@ -111,7 +111,7 @@ func trackFakeRun(
             outcome: Task.isCancelled ? .cancelled : .succeeded
         )
     }
-    await mailbox.start(
+    await runPlane.start(
         tool: FakeRun.tool,
         op: FakeRun.op,
         kind: kind,

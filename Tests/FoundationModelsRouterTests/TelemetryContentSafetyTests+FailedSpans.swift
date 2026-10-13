@@ -80,7 +80,9 @@ extension TelemetryContentSafetyTests {
             let session = try #require(fixture.session as? RoutedSessionActor)
 
             await #expect(throws: ContentBearingError.self) {
-                try await session.withCompactionSpan(trigger: .caller) { throw Self.contentBearingError }
+                try await session.withCompactionSpan(reason: .requested, signal: SignalID()) {
+                    throw Self.contentBearingError
+                }
             }
 
             #expect(

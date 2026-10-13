@@ -58,7 +58,7 @@ extension RoutedSessionActor {
     /// ``tools``) so a ``ForkableTool`` conformer forks exactly once from its
     /// pristine state before being wrapped in the child's own mount
     /// layer — the chain is fork → mount → cap, so the child's background
-    /// runs are tracked in the child's own mailbox. The child's
+    /// runs are tracked in the child's own run plane. The child's
     /// ``recordingDirectory`` nests directly under this session's, and it
     /// inherits this session's ``contextTokens``/``usageState`` so its fill
     /// reporting starts from the parent's fill at fork time rather than zero.
@@ -103,10 +103,10 @@ extension RoutedSessionActor {
         // ``LanguageModelSessionBackend/makeFork(tools:seededFrom:)``).
         // Mounting and capping arrive through the shared per-tool
         // composition
-        // ``ToolMounting/makeSessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:tokenCounter:tracer:inlineSettleGrace:)``
+        // ``ToolMounting/makeSessionMounted(tool:sessionID:runPlane:sink:cappedToTokenLimit:tokenCounter:tracer:inlineSettleGrace:)``
         // (tasks ^k4nygqa, 1334fk3): the forked copy is mounted with the
-        // child's own identity, mailbox, and outbox — so the fork's background
-        // runs live in the fork's own mailbox, never the parent's — and,
+        // child's own identity, run plane, and outbox — so the fork's background
+        // runs live in the fork's own run plane, never the parent's — and,
         // when the fork inherits ``autoCompactionBudget``, capped outermost
         // to its ``TokenBudget/toolOutputLimit``, exactly as
         // ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:inlineSettleGrace:)``
@@ -114,10 +114,10 @@ extension RoutedSessionActor {
         // tracer, which the child actor is constructed with too, so a tool span
         // the fork opens reports to the same backend as the parent's.
         let childOutbox = SessionOutbox(model: model)
-        // The child's mailbox is fresh for the same reason its outbox is:
+        // The child's run plane is fresh for the same reason its outbox is:
         // background runs and pending elicitations never migrate between
-        // sessions (see ``RoutedSessionActor/mailbox``).
-        let childMailbox = RunPlane()
+        // sessions (see ``RoutedSessionActor/runPlane``).
+        let childRunPlane = RunPlane()
         // Minted before the tool composition below, deliberately: the
         // child's binding layers (the runners and the binding-only decorator
         // of the Extras tool hosting)
@@ -129,7 +129,7 @@ extension RoutedSessionActor {
             return ToolMounting.makeSessionMounted(
                 tool: forked,
                 sessionID: childId,
-                mailbox: childMailbox,
+                runPlane: childRunPlane,
                 sink: childOutbox,
                 cappedToTokenLimit: autoCompactionBudget?.toolOutputLimit,
                 tokenCounter: tokenCounter,
@@ -191,7 +191,7 @@ extension RoutedSessionActor {
             tools: childTools,
             originalTools: originalTools,
             outbox: childOutbox,
-            mailbox: childMailbox,
+            runPlane: childRunPlane,
             persistedEntryCount: entryCountAtFork,
             // The child's history starts where the parent's recorded history
             // stood at fork time — this initial ordinal is also the cut point
@@ -265,7 +265,7 @@ extension RoutedSessionActor {
     ///     `nil`.
     private func inheritTelemetry(logger: Logger?, metricsFactory: (any MetricsFactory)?) {
         explicitLogger = logger
-        explicitMetricsFactory = metricsFactory
+        explicitMetricsFactoryState.withLock { $0 = metricsFactory }
     }
 
     /// See ``RoutedSession/close()``.
@@ -274,7 +274,7 @@ extension RoutedSessionActor {
     /// (``performCancelAll()``, out of the order of the signals), and then waits for the end of
     /// all work (``startDrainIfNeeded()``) with no regard to a cancel of the
     /// caller: the end of the sweep, the pump and the body of each run. The
-    /// end of all work runs ``mailbox``'s `RunPlane.sweep()`, journals each
+    /// end of all work runs ``runPlane``'s `RunPlane.sweep()`, journals each
     /// terminal event it produced through
     /// `SessionOutbox.journalWithoutStaging(event:)` — reaching the same
     /// ``record(event:)``, and so the same ``makeRunEventPartial(toolName:events:)``, a
@@ -299,7 +299,7 @@ extension RoutedSessionActor {
     ///
     /// **A run's ending is recorded once, even though three writers can
     /// produce it.** The run's own funnel writes its terminal live through the
-    /// outbox. The mailbox forwards the same terminal at settlement, through
+    /// outbox. The run plane forwards the same terminal at settlement, through
     /// ``deliver(settledTerminal:)``; that is the write that reaches the
     /// journal for a run mounted inside another run, whose funnel copy is
     /// dropped. The sweep's write here is the third. A sweep synthesizes a

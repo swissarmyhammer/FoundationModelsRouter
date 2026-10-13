@@ -8,15 +8,16 @@ extension RoutedSessionActor {
     ///
     /// - Parameter factory: The metrics factory to use from now on.
     func useMetricsFactory(_ factory: any MetricsFactory) {
-        explicitMetricsFactory = factory
+        explicitMetricsFactoryState.withLock { $0 = factory }
     }
 
     /// The metrics recorder for one record call of this session.
     ///
     /// Read it at the record call. It holds no metric, so a backend that the
     /// host bootstraps later still gets the value. The read is synchronous and
-    /// adds no suspension point.
-    var sessionMetrics: RouterMetrics {
+    /// adds no suspension point. It is nonisolated, so the output of the
+    /// session can record a metric from any task.
+    nonisolated var sessionMetrics: RouterMetrics {
         RouterMetrics(explicit: explicitMetricsFactory)
     }
 
@@ -41,14 +42,14 @@ extension RoutedSessionActor {
         return await withMetricsFactory(explicitMetricsFactory, job)
     }
 
-    /// Records the count of all mail that waits in ``SessionOutbox/queue``
-    /// now, of all kinds.
+    /// Records the count of the mail that waits in ``SessionOutbox/queue``
+    /// now, by mail kind (`mailbox.md`, section 5, problem 18).
     ///
     /// The arrival of mail (``mail(_:)``) and each take of the pump call it
     /// on this actor. The arrival records it in a task of its own, so a
     /// record can come after a later change of the queue; each record gives
     /// the count at the time it runs.
-    func recordMessageQueueDepth() {
-        sessionMetrics.recordSessionQueueDepth(waiting: outbox.queue.pending.count)
+    func recordMailQueueDepth() {
+        sessionMetrics.recordMailQueueDepth(outbox.queue.depthByKind)
     }
 }

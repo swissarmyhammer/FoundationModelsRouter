@@ -51,6 +51,7 @@ extension RoutedSessionActor {
         describeSession(on: span)
         span.attributes[RouterTelemetry.AttributeKey.submissionId] = start.submissionId.description
         span.attributes[RouterTelemetry.AttributeKey.submissionCause] = cause.rawValue
+        span.attributes[RouterTelemetry.AttributeKey.submissionMailIds] = mailIds.map(\.description)
         RouterTelemetry.EnterRecord.write(
             for: span, named: RouterTelemetry.SpanName.submission, tracer: spanTracer, to: sessionLogger(.enter))
         runningSubmission = RunningSubmission(start: start, span: span)

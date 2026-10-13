@@ -126,9 +126,9 @@ struct SessionPromptCacheKeyTests {
 
     /// The production change that makes this test fail: a release that
     /// comes after the early return for a close with no terminal events of
-    /// the mailbox.
-    @Test("a session closed with no mailbox events still releases its key")
-    func aSessionClosedWithNoMailboxEventsReleasesItsKey() async throws {
+    /// the run plane.
+    @Test("a session closed with no run plane events still releases its key")
+    func aSessionClosedWithNoRunPlaneEventsReleasesItsKey() async throws {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let session = fixture.profile.standard.makeSession()

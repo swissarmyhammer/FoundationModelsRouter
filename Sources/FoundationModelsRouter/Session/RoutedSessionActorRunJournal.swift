@@ -133,7 +133,7 @@ extension RoutedSessionActor: OperationEventJournal {
 
     /// Installs this session as ``outbox``'s ``OperationEventJournal``,
     /// ``ToolInvocationObserver`` and ``SessionMailObserver``, and as
-    /// ``mailbox``'s settlement observer (the Extras
+    /// ``runPlane``'s settlement observer (the Extras
     /// `BackgroundRunSettlementObserver`), once. Called by each
     /// helper that sends a message and by the pump. Idempotent.
     func attachOutboxJournalIfNeeded() async {
@@ -142,13 +142,13 @@ extension RoutedSessionActor: OperationEventJournal {
         await outbox.attach(journal: self)
         await outbox.attach(invocationObserver: self)
         await outbox.attach(mailObserver: self)
-        await mailbox.attach(settlementObserver: self)
+        await runPlane.attach(settlementObserver: self)
     }
 }
 
 /// ``RoutedSessionActor``'s settlement forwarding. A background run's own
 /// terminal reaches the journal under the run's own token at the moment the
-/// mailbox settles the run, whether or not the run's funnel delivered it.
+/// run plane settles the run, whether or not the run's funnel delivered it.
 extension RoutedSessionActor: BackgroundRunSettlementObserver {
     /// Journals one naturally settled run's terminal without staging it, and
     /// wakes the pump, which delivers the terminal that the run's funnel
@@ -164,9 +164,9 @@ extension RoutedSessionActor: BackgroundRunSettlementObserver {
     /// funnel's copy already claimed the correlation. See
     /// ``claimJournalWrite(for:)``.
     ///
-    /// The funnel of a run stages the terminal before the mailbox settles the
+    /// The funnel of a run stages the terminal before the run plane settles the
     /// run: the body of the run posts the terminal, waits until the post
-    /// ends, and only then returns, and the mailbox settles the run when the
+    /// ends, and only then returns, and the run plane settles the run when the
     /// body returns. So the terminal is staged before this call, and the
     /// wake of this call finds it. The idle check (``isIdle()``) needs this
     /// order. A sweep (of ``cancelAll()`` or of the end of all work of
@@ -186,7 +186,7 @@ extension RoutedSessionActor: BackgroundRunSettlementObserver {
     /// (``signalWorkChange()``): a run that settles while the end of all
     /// work of ``close()`` runs starts no pump, so the pump does not report it.
     ///
-    /// - Parameter terminal: The terminal the mailbox forwarded.
+    /// - Parameter terminal: The terminal the run plane forwarded.
     func deliver(settledTerminal terminal: OperationEvent) async {
         await outbox.journalWithoutStaging(event: terminal)
         wakePump()

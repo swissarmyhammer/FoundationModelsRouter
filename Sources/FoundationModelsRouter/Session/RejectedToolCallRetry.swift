@@ -62,10 +62,15 @@ struct RejectedToolCallRetry {
     /// a retry is rejected again, its prompt already holds the earlier tool
     /// error, so the model sees each rejection of the answer.
     ///
-    /// - Parameter failedPrompt: The prompt text of the failed attempt.
-    /// - Returns: `failedPrompt`, a blank line, and the tool error.
-    func prompt(retrying failedPrompt: String) -> String {
-        failedPrompt + Self.noteSeparator + note
+    /// - Parameter failedPrompt: The text that the session added after the
+    ///   mail of the failed attempt, or `nil` when the prompt of the failed
+    ///   attempt was only the render of its mail. The retry renders that mail
+    ///   again before this text.
+    /// - Returns: `failedPrompt`, a blank line, and the tool error; or only
+    ///   the tool error when `failedPrompt` is `nil`.
+    func prompt(retrying failedPrompt: String?) -> String {
+        guard let failedPrompt else { return note }
+        return failedPrompt + Self.noteSeparator + note
     }
 
     /// The constant message of the log record of ``logRetry(sessionID:ordinal:to:)``.

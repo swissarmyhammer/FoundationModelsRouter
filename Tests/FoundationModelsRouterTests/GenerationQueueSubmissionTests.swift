@@ -402,14 +402,14 @@ struct GenerationQueueSubmissionTests {
         }
         let answerEndedBeforeTheRun = await BoundedWait.signalArrived(
             parentFinished, named: "the end of the answer that started the run")
-        let runs = await parent.mailbox.backgroundRuns()
+        let runs = await parent.runPlane.backgroundRuns()
 
         // Only now does the run ask the child for an answer.
         await runStart.open()
         #expect(answerEndedBeforeTheRun)
         #expect(runs.count == 1)
         let token = try #require(runs.first?.completionToken)
-        let outcome = await parent.mailbox.wait(completionToken: token, seconds: Self.runSettlementSeconds)
+        let outcome = await parent.runPlane.wait(completionToken: token, seconds: Self.runSettlementSeconds)
         try await parentAnswerTask.value
 
         var terminal: OperationEvent?

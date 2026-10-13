@@ -192,7 +192,7 @@ struct PerCallMountSessionTests {
     /// - Throws: ``SignalNeverArrived`` when the wait ended and the run did
     ///   not settle.
     private static func settledTerminal(of token: String, on session: any RoutedSession) async throws -> OperationEvent {
-        let outcome = await session.mailbox.wait(completionToken: token, seconds: nil)
+        let outcome = await session.runPlane.wait(completionToken: token, seconds: nil)
         guard case .settled(let terminal) = outcome else {
             Issue.record("expected run \(token) to settle, got \(outcome)")
             throw SignalNeverArrived()
@@ -247,7 +247,7 @@ struct PerCallMountSessionTests {
         await entered.waitUntilOpen()
         // The body is held, and the run plane has no run: a background call
         // starts its run before its body runs, so this call runs in band.
-        #expect(await harness.session.mailbox.backgroundRuns().isEmpty)
+        #expect(await harness.session.runPlane.backgroundRuns().isEmpty)
         // This sleep only makes the call longer than the grace. No assertion
         // waits on a clock.
         try await Task.sleep(for: .seconds(Self.inlineSettleGrace))
@@ -309,7 +309,7 @@ struct PerCallMountSessionTests {
         // `start agent` returned a token, and its run still waits.
         let envelope = try MountFixtures.decodeEnvelope(outputs[0])
         #expect(envelope.pending)
-        #expect(await harness.session.mailbox.backgroundRuns().map(\.completionToken) == [envelope.completionToken])
+        #expect(await harness.session.runPlane.backgroundRuns().map(\.completionToken) == [envelope.completionToken])
 
         // The three synchronous operations answered in band.
         #expect(outputs[1] == (try AgentOperationFixtures.encodedOutput("listed \(agent)")))
@@ -340,7 +340,7 @@ struct PerCallMountSessionTests {
         #expect(answer.hasPrefix(NestingSynchronousTool.outputPrefix))
         let envelope = try MountFixtures.decodeEnvelope(String(answer.dropFirst(NestingSynchronousTool.outputPrefix.count)))
         #expect(envelope.pending)
-        #expect(await harness.session.mailbox.backgroundRuns().map(\.completionToken) == [envelope.completionToken])
+        #expect(await harness.session.runPlane.backgroundRuns().map(\.completionToken) == [envelope.completionToken])
 
         await gate.open()
         let terminal = try await Self.settledTerminal(of: envelope.completionToken, on: harness.session)

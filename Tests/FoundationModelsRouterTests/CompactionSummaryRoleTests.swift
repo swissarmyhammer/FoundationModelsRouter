@@ -57,7 +57,7 @@ struct CompactionSummaryRoleTests {
 
     @Test("a cold transcript reads the summary entry as one compaction row whose summary has no header")
     func coldTranscriptReadsTheSummaryEntryAsACompactionRow() {
-        let rows = SessionProjection.transcriptRows(from: [Self.makeSummaryEntry()])
+        let rows = SessionObserver.transcriptRows(from: [Self.makeSummaryEntry()])
 
         guard case .compaction(let result)? = rows.first?.kind else {
             Issue.record("expected one compaction row")

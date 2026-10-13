@@ -184,7 +184,7 @@ struct SessionDrainTests {
         let steps = Steps()
         let token = RunPlane.makeCompletionToken()
         let bodyStarted = AsyncSemaphore(value: 0)
-        await session.mailbox.start(
+        await session.runPlane.start(
             tool: "fake", op: "run task", kind: .swiftTask, completionToken: token, canceler: nil
         ) {
             bodyStarted.signal()
@@ -200,7 +200,7 @@ struct SessionDrainTests {
         steps.append("closed")
 
         #expect(steps.values == ["run body ended", "closed"])
-        #expect(await session.mailbox.backgroundRuns().isEmpty)
+        #expect(await session.runPlane.backgroundRuns().isEmpty)
     }
 
     @Test("cancelAll() cancels each background run, and the session becomes idle when the run ended")
@@ -213,7 +213,7 @@ struct SessionDrainTests {
         let steps = Steps()
         let token = RunPlane.makeCompletionToken()
         let bodyStarted = AsyncSemaphore(value: 0)
-        await session.mailbox.start(
+        await session.runPlane.start(
             tool: "fake", op: "run task", kind: .swiftTask, completionToken: token, canceler: nil
         ) {
             bodyStarted.signal()
@@ -230,7 +230,7 @@ struct SessionDrainTests {
         try await StopRoute.cancelAll.run(on: session)
         #expect(await session.awaitIdle())
 
-        #expect(await session.mailbox.backgroundRuns().isEmpty)
+        #expect(await session.runPlane.backgroundRuns().isEmpty)
         await session.close()
         #expect(steps.values == ["run body ended"])
     }
@@ -251,7 +251,7 @@ struct SessionDrainTests {
         let terminal = OperationEvent(
             tool: "fake", op: "run task", correlationID: token, kind: .completed, detail: "late",
             outcome: .succeeded)
-        await session.mailbox.start(
+        await session.runPlane.start(
             tool: "fake", op: "run task", kind: .swiftTask, completionToken: token, canceler: nil
         ) {
             bodyStarted.signal()

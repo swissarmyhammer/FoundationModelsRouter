@@ -4,22 +4,23 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises task ^5aky6xr: seeding a ``SessionProjection`` from a cold
-/// `Transcript`, so a restored session's UI does not start blank.
+/// Exercises task ^5aky6xr: seed a ``SessionObserver`` from a cold
+/// `Transcript`, so the UI of a restored session does not start blank.
 ///
-/// The pure grouping (``SessionProjection/transcriptRows(from:)``) is driven
-/// with hand-built `Transcript.Entry` values, and the end-to-end claim — the
-/// seeded rows equal the rows a live projection produced during the original
-/// run, row for row by id — runs through a real recorded tool answer, a
-/// fresh-process
-/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:)``,
-/// and the new read-only ``RoutedSession/transcript`` accessor.
-@Suite("SessionProjection seeding from a cold Transcript (task ^5aky6xr)")
-struct SessionProjectionSeedingTests {
+/// The tests give hand-built `Transcript.Entry` values to the pure grouping
+/// (``SessionObserver/transcriptRows(from:)``). The end-to-end test shows
+/// that the seeded rows are equal to the rows that a live observer made
+/// in the original run, row for row by id. It uses a real recorded tool
+/// answer, a
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:instructions:tools:toolOutputProtection:isNoOpToolCall:)``
+/// in a fresh process, and the read-only ``RoutedSession/transcript``
+/// accessor.
+@Suite("SessionObserver seeding from a cold Transcript (task ^5aky6xr)")
+struct SessionObserverSeedingTests {
     // MARK: - Fixtures
 
     /// The temp-directory prefix, so a leaked directory is attributable.
-    private static let tempDirPrefix = "SessionProjectionSeedingTests"
+    private static let tempDirPrefix = "SessionObserverSeedingTests"
 
     /// The step name the second scripted call names, distinct from
     /// ``ScriptedToolFixture/firstStepName`` so the two calls in the round
@@ -83,7 +84,7 @@ struct SessionProjectionSeedingTests {
                     id: "resp-1", segments: [.text(Transcript.TextSegment(content: "the answer"))])),
         ]
 
-        let rows = SessionProjection.transcriptRows(from: entries)
+        let rows = SessionObserver.transcriptRows(from: entries)
 
         // The `.prompt` entry yields no row; each other entry yields its own.
         #expect(rows.map(\.id) == ["call-a", "call-b", "reasoning-1", "resp-1"])
@@ -91,12 +92,12 @@ struct SessionProjectionSeedingTests {
         #expect(
             rows.map(\.kind) == [
                 .toolCall(
-                    SessionProjection.ToolCallEntry(
+                    SessionObserver.ToolCallEntry(
                         id: "call-a", name: "search", argumentsJSON: callA.arguments.jsonString,
                         status: .completed, summary: "NYC: sunny",
                         output: [.text(id: outputSegmentA.id, content: "NYC: sunny")])),
                 .toolCall(
-                    SessionProjection.ToolCallEntry(
+                    SessionObserver.ToolCallEntry(
                         id: "call-b", name: "search", argumentsJSON: callB.arguments.jsonString,
                         status: .completed, summary: "SF: foggy",
                         output: [.text(id: outputSegmentB.id, content: "SF: foggy")])),
@@ -127,7 +128,7 @@ struct SessionProjectionSeedingTests {
             .toolOutput(Transcript.ToolOutput(id: "call-1", toolName: "search", segments: outputSegments)),
         ]
 
-        let rows = SessionProjection.transcriptRows(from: entries)
+        let rows = SessionObserver.transcriptRows(from: entries)
 
         guard case .toolCall(let call) = rows.first?.kind else {
             Issue.record("expected one .toolCall row, got \(rows)")
@@ -180,7 +181,7 @@ struct SessionProjectionSeedingTests {
                     segments: [.text(Transcript.TextSegment(content: "SF: foggy"))])),
         ]
 
-        let rows = SessionProjection.transcriptRows(from: entries)
+        let rows = SessionObserver.transcriptRows(from: entries)
 
         #expect(rows.map(\.id) == ["call-a", "call-b"])
         let statuses = rows.map { row -> (ToolCallStatus, String?)? in
@@ -203,7 +204,7 @@ struct SessionProjectionSeedingTests {
                     ]))
         ]
 
-        let rows = SessionProjection.transcriptRows(from: entries)
+        let rows = SessionObserver.transcriptRows(from: entries)
 
         guard case .toolCall(let call) = rows.first?.kind else {
             Issue.record("expected one .toolCall row, got \(rows)")
@@ -231,7 +232,7 @@ struct SessionProjectionSeedingTests {
                     segments: [.text(Transcript.TextSegment(content: "late result"))])),
         ]
 
-        let rows = SessionProjection.transcriptRows(from: entries)
+        let rows = SessionObserver.transcriptRows(from: entries)
 
         // The stray output pairs to nothing: the second submission announced
         // no call, and the call of the first submission is out of scope — so
@@ -253,7 +254,7 @@ struct SessionProjectionSeedingTests {
                 entryId: "boundary-1", segmentId: "segment-1", summaryText: "compacted summary")
         ]
 
-        let rows = SessionProjection.transcriptRows(from: entries)
+        let rows = SessionObserver.transcriptRows(from: entries)
 
         let expected = CompactionResult(
             id: "segment-1",
@@ -273,7 +274,7 @@ struct SessionProjectionSeedingTests {
             Self.makeBoundaryEntry(entryId: "boundary-1", segmentId: "segment-1", summaryText: "")
         ]
 
-        let rows = SessionProjection.transcriptRows(from: entries)
+        let rows = SessionObserver.transcriptRows(from: entries)
 
         guard case .compaction(let result) = rows.first?.kind else {
             Issue.record("expected one .compaction row, got \(rows)")
@@ -315,12 +316,12 @@ struct SessionProjectionSeedingTests {
                     segments: [.text(Transcript.TextSegment(content: "The final answer."))])),
         ]
 
-        let seeded = SessionProjection()
+        let seeded = SessionObserver()
         seeded.seed(from: Transcript(entries: entries))
 
         // The live projection observes the same answer in live order: the text
         // streams first, then the diff closes the entries in transcript order.
-        let live = SessionProjection()
+        let live = SessionObserver()
         live.apply(.textDelta("Let me check. "))
         live.apply(.textReset)
         live.apply(.textDelta("The final answer."))
@@ -352,7 +353,7 @@ struct SessionProjectionSeedingTests {
     @Test("seed installs the grouped rows, and a live answer after the seed appends a new row without duplication")
     @MainActor
     func seedInstallsRowsAndLiveEventsAppendNormally() {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         let entries: [Transcript.Entry] = [
             .response(
                 Transcript.Response(
@@ -383,7 +384,7 @@ struct SessionProjectionSeedingTests {
     @Test("seed resets the projection to mirror the cold transcript alone")
     @MainActor
     func seedReplacesEarlierObservedState() throws {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         let message = MailID()
         // One stale submission ends with usage. Its message still waits for
         // an answer, because no answer came. A second submission is still
@@ -464,7 +465,7 @@ struct SessionProjectionSeedingTests {
 
         // The original run: a live projection mirrors the whole answer stream.
         let session = profile1.standard.makeSession(tools: [MarkerEmittingTool()])
-        let liveProjection = SessionProjection()
+        let liveProjection = SessionObserver()
         try await liveProjection.apply(eventsFrom: session.streamEvents(to: ScriptedToolFixture.prompt))
 
         // A fresh process restores the session tree, and the projection is
@@ -483,7 +484,7 @@ struct SessionProjectionSeedingTests {
         let restored = try await profile2.standard.restoreSessionTree(root: session.id)
         let restoredSession = restored.root
 
-        let seeded = SessionProjection()
+        let seeded = SessionObserver()
         seeded.seed(from: await restoredSession.transcript)
 
         // The seeded rows equal the live rows row for row, ids included. Row

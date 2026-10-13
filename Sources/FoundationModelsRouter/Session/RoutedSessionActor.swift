@@ -192,7 +192,7 @@ func makeRoutedSessionActor(
     tools: [any Tool],
     originalTools: [any Tool] = [],
     outbox: SessionOutbox = SessionOutbox(),
-    mailbox: RunPlane = RunPlane(),
+    runPlane: RunPlane = RunPlane(),
     persistedEntryCount: Int,
     historyOrdinal: Int,
     sidecarOrigin: SessionSidecarOrigin,
@@ -231,7 +231,7 @@ func makeRoutedSessionActor(
             tools: tools,
             originalTools: originalTools,
             outbox: outbox,
-            mailbox: mailbox,
+            runPlane: runPlane,
             persistedEntryCount: persistedEntryCount,
             historyOrdinal: historyOrdinal,
             sidecarOrigin: sidecarOrigin,
@@ -367,7 +367,7 @@ actor RoutedSessionActor: RoutedSession {
     /// The run plane of this session: the registry of tracked background runs
     /// and pending elicitations, from FoundationModelsExtras. Fresh per
     /// session.
-    nonisolated let mailbox: RunPlane
+    nonisolated let runPlane: RunPlane
 
     /// The pump of this session while it runs, or `nil` when no pump runs.
     /// See ``wakePump()``.
@@ -598,7 +598,17 @@ actor RoutedSessionActor: RoutedSession {
     /// The pump also binds it as the task-local factory around each job
     /// (``withSessionMetricsFactory(_:)``), so the metrics of a dependency,
     /// for example the tool-call metrics of FoundationModelsExtras, go to it.
-    var explicitMetricsFactory: (any MetricsFactory)?
+    ///
+    /// It is behind a lock and not actor state, because the output of the
+    /// session (``emitSessionScopedEvent(_:failure:audience:)``) is
+    /// nonisolated and records metrics too. Write it through
+    /// ``explicitMetricsFactoryState``.
+    nonisolated var explicitMetricsFactory: (any MetricsFactory)? {
+        explicitMetricsFactoryState.withLock { $0 }
+    }
+
+    /// The lock and the value of ``explicitMetricsFactory``.
+    nonisolated let explicitMetricsFactoryState = Mutex<(any MetricsFactory)?>(nil)
 
     /// The `correlationID` of every background run whose ending this session has
     /// already journaled. A second write for one run is a no-op. See
@@ -711,7 +721,7 @@ actor RoutedSessionActor: RoutedSession {
         tools: [any Tool] = [],
         originalTools: [any Tool] = [],
         outbox: SessionOutbox = SessionOutbox(),
-        mailbox: RunPlane = RunPlane(),
+        runPlane: RunPlane = RunPlane(),
         persistedEntryCount: Int,
         historyOrdinal: Int,
         sidecarOrigin: SessionSidecarOrigin,
@@ -751,7 +761,7 @@ actor RoutedSessionActor: RoutedSession {
         self.tools = tools
         self.originalTools = originalTools
         self.outbox = outbox
-        self.mailbox = mailbox
+        self.runPlane = runPlane
         self.persistedEntryCount = persistedEntryCount
         // A new backend runs no call yet, so its transcript is the first
         // settled point of the session.

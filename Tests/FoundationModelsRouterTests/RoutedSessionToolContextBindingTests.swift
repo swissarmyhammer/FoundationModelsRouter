@@ -8,7 +8,7 @@ import Testing
 
 /// Exercises task ^k4nygqa's host-side ambient binding: `RoutedSessionActor`
 /// binds `ToolContext.$current` around every backend `respond()`/stream call,
-/// carrying the session's identity, its mailbox, and its own `SessionOutbox`
+/// carrying the session's identity, its run plane, and its own `SessionOutbox`
 /// as the upstream sink (eventplan.md § "The vocabulary and the host
 /// substrate": "Router binds the task local around native `respond()` also").
 ///
@@ -332,7 +332,7 @@ struct RoutedSessionToolContextBindingTests {
 
     // MARK: - Tests
 
-    @Test("respond binds ToolContext around the backend call: session identity, mailbox scope, live cancellation probe")
+    @Test("respond binds ToolContext around the backend call: session identity, run plane scope, live cancellation probe")
     @MainActor
     func respondBindsToolContext() async throws {
         let (session, backend, dir) = try await Self.makeSession()

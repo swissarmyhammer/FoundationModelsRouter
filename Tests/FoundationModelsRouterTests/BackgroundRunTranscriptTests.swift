@@ -336,7 +336,7 @@ struct BackgroundRunTranscriptTests {
     ///
     /// Generous, because it bounds a handshake the test itself drives to
     /// completion rather than a real cancellation: the wait resolves as soon as
-    /// the mailbox marks the run settled, and the ceiling only exists so a
+    /// the run plane marks the run settled, and the ceiling only exists so a
     /// broken handshake ends the test instead of hanging the suite.
     private static let settlementWaitSeconds: Double = 5
 
@@ -373,23 +373,23 @@ struct BackgroundRunTranscriptTests {
         // own terminal through the outbox — journaling it live — before it ends.
         let cancelRequested = AsyncSemaphore(value: 0)
         let outbox = session.outbox
-        let mailbox = session.mailbox
+        let runPlane = session.runPlane
         let settling = Task { () -> OperationEvent in
             await cancelRequested.wait()
             await outbox.post(event: natural)
             return natural
         }
-        await mailbox.start(
+        await runPlane.start(
             tool: "shell",
             op: "run command",
             kind: .swiftTask,
             completionToken: token,
             canceler: {
                 cancelRequested.signal()
-                // Returning only once the mailbox has retained the natural
+                // Returning only once the run plane has retained the natural
                 // terminal is what holds `sweep()` inside the window it
                 // suspends across, so the race is run rather than hoped for.
-                _ = await mailbox.wait(
+                _ = await runPlane.wait(
                     completionToken: token, seconds: Self.settlementWaitSeconds)
                 return .cancelled
             },
@@ -425,7 +425,7 @@ struct BackgroundRunTranscriptTests {
                 tool: "shell", op: "run command", correlationID: token, kind: .completed,
                 detail: "exit 0", outcome: .succeeded)
         }
-        await session.mailbox.start(
+        await session.runPlane.start(
             tool: "shell",
             op: "run command",
             kind: .swiftTask,

@@ -9,13 +9,13 @@ import Testing
 /// does NOT carry. It also tests which correlation the journal keeps instead.
 ///
 /// ``RoutedSession/close()`` sweeps a background run that is still tracked.
-/// The sweep is a MAILBOX operation. `RunPlane.sweep()` builds that run's
+/// The sweep is a RUN PLANE operation. `RunPlane.sweep()` builds that run's
 /// terminal event itself. `close()` then sends it to the journal. The run does
 /// not post that event, so the caller's sink never receives it. This suite
 /// tests that exception, so the doc comment is not its only record.
 ///
 /// The sweep does not always build the terminal. It first runs the run's
-/// canceler, and that call suspends the mailbox. A run that settles in that
+/// canceler, and that call suspends the run plane. A run that settles in that
 /// window keeps its own natural terminal, and that terminal did reach the sink.
 /// The two tests below hold that window shut and then open.
 ///
@@ -31,7 +31,7 @@ import Testing
 /// suite forever. That would stop the whole `swift test` run, and no test would
 /// report the defect.
 @Suite(
-    "ToolContext.mount(postingTo:): a terminal the mailbox builds reaches the journal, never the caller's sink",
+    "ToolContext.mount(postingTo:): a terminal the run plane builds reaches the journal, never the caller's sink",
     .timeLimit(.minutes(1))
 )
 struct MountedRunSweptTerminalTests {
@@ -57,8 +57,8 @@ struct MountedRunSweptTerminalTests {
     /// for this run to settle.
     ///
     /// `RunPlane.sweep()` runs this canceler, and that call suspends the
-    /// mailbox. The canceler opens the gate, so the run's body finishes inside
-    /// that window. The canceler returns only after the mailbox retained the
+    /// run plane. The canceler opens the gate, so the run's body finishes inside
+    /// that window. The canceler returns only after the run plane retained the
     /// run's own natural terminal. The sweep therefore returns that natural
     /// terminal, and builds none of its own.
     private struct SettlesInsideCancelerTool: Tool, BackgroundTool {
@@ -69,7 +69,7 @@ struct MountedRunSweptTerminalTests {
         let gate: RunLatch
 
         /// The run plane the canceler waits on for this run's settlement.
-        let mailbox: RunPlane
+        let runPlane: RunPlane
 
         func call(arguments: MountArguments) async throws -> String {
             await gate.waitUntilOpen()
@@ -79,9 +79,9 @@ struct MountedRunSweptTerminalTests {
         func canceler(
             forCompletionToken completionToken: String
         ) -> (@Sendable () async -> OperationOutcome)? {
-            { [gate, mailbox] in
+            { [gate, runPlane] in
                 await gate.open()
-                _ = await mailbox.wait(
+                _ = await runPlane.wait(
                     completionToken: completionToken,
                     seconds: MountFixtures.settlementDeadline)
                 return .cancelled
@@ -95,7 +95,7 @@ struct MountedRunSweptTerminalTests {
     /// driven, recording through `recorder`.
     ///
     /// The container is never driven because this suite runs no answer at all.
-    /// The suite needs the session only for its mailbox, its outbox, and its
+    /// The suite needs the session only for its run plane, its outbox, and its
     /// `close()`.
     ///
     /// - Parameter recorder: The recorder the vended session journals through.
@@ -118,7 +118,7 @@ struct MountedRunSweptTerminalTests {
     }
 
     /// Builds the context a binder mounts from. That context is one run's
-    /// identity over `session`'s own mailbox and outbox.
+    /// identity over `session`'s own run plane and outbox.
     ///
     /// This suite builds the context by hand, and it does so deliberately. A
     /// real mounting context comes from a running tool inside a submission, and a
@@ -126,7 +126,7 @@ struct MountedRunSweptTerminalTests {
     /// `RoutedSessionActor.respond(to:maxTokens:)` waits for every tracked
     /// background run to settle. A run held open past its answer would stall
     /// that call, rather than survive to `close()`. What `mount` reads off a
-    /// context is the session identity and the session mailbox. Both are this
+    /// context is the session identity and the session run plane. Both are this
     /// session's own here.
     ///
     /// - Parameter session: The session the mounted run is tracked on.
@@ -134,7 +134,7 @@ struct MountedRunSweptTerminalTests {
     private static func mountingContext(on session: any RoutedSession) -> ToolContext {
         ToolContext(
             sessionID: session.id,
-            runPlane: session.mailbox,
+            runPlane: session.runPlane,
             sink: session.outbox,
             tool: mountingToolStamp,
             op: mountingOpStamp,
@@ -146,9 +146,9 @@ struct MountedRunSweptTerminalTests {
         )
     }
 
-    // MARK: - The terminal the mailbox builds
+    // MARK: - The terminal the run plane builds
 
-    @Test("a background run swept by close() reaches the journal under its own token, and the terminal the mailbox built never reaches the caller's sink")
+    @Test("a background run swept by close() reaches the journal under its own token, and the terminal the run plane built never reaches the caller's sink")
     func builtTerminalReachesTheJournalAndNotTheCallerSink() async throws {
         let recorder = InMemoryRecorder()
         let (session, directory) = try await Self.makeSession(recorder: recorder)
@@ -185,7 +185,7 @@ struct MountedRunSweptTerminalTests {
         #expect(atClose.contains { $0.kind == .progress && $0.correlationID == token })
 
         // Here is the documented exception. The run never posted the terminal
-        // the mailbox built, so the caller's sink holds no terminal at all.
+        // the run plane built, so the caller's sink holds no terminal at all.
         #expect(!atClose.contains { $0.kind == .completed })
 
         // The journal is where a reader finds that terminal. It carries the
@@ -231,7 +231,7 @@ struct MountedRunSweptTerminalTests {
 
         let sink = MountFixtures.RecordingSink()
         let mounted = Self.mountingContext(on: session).mount(
-            SettlesInsideCancelerTool(gate: RunLatch(), mailbox: session.mailbox),
+            SettlesInsideCancelerTool(gate: RunLatch(), runPlane: session.runPlane),
             as: ToolMount(mode: .background, timeout: nil),
             postingTo: sink)
 
@@ -253,10 +253,10 @@ struct MountedRunSweptTerminalTests {
         #expect(posted.outcome == .succeeded)
 
         // `close()` journals the very same event. This session ran no answer, so
-        // the journal and the mailbox's settlement observer attach only after
+        // the journal and the settlement observer of the run plane attach only after
         // the sweep, and the sweep's write is the one write here. A session
         // that ran an answer would journal the natural terminal through the
-        // mailbox's forward first, and the sweep's write would be refused. The
+        // forward of the run plane first, and the sweep's write would be refused. The
         // outcome assertion below is the one line this test adds. A sweep that
         // built a terminal instead would journal `.cancelled`, the outcome the
         // canceler reported. Keep that line. The count assertion cannot catch a

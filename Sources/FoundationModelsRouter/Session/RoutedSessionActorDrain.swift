@@ -42,7 +42,7 @@ extension RoutedSessionActor {
     func performCancelAll() async {
         cancelQueuedMail()
         stopRunningAnswer()
-        let openTokens = await mailbox.backgroundRuns().map(\.completionToken)
+        let openTokens = await runPlane.backgroundRuns().map(\.completionToken)
         await ignoreRunMail(of: openTokens)
         startSweep()
     }
@@ -144,14 +144,14 @@ extension RoutedSessionActor {
             requestCancelOfRunningWork()
             await sweepTask?.value
             await sweepBackgroundRuns()
-            await mailbox.joinRunBodies()
+            await runPlane.joinRunBodies()
             if let activeCompaction {
                 _ = await activeCompaction.value
             }
             if let pumpTask {
                 await pumpTask.value
             }
-            let openRuns = await mailbox.backgroundRuns()
+            let openRuns = await runPlane.backgroundRuns()
             workRuns = pumpTask != nil || activeCompaction != nil || !openRuns.isEmpty
         }
         drainTask = nil
@@ -169,7 +169,7 @@ extension RoutedSessionActor {
     /// journals nothing, so a session that never generated and never started
     /// a background run still writes no file.
     private func sweepBackgroundRuns() async {
-        let terminalEvents = await mailbox.sweep()
+        let terminalEvents = await runPlane.sweep()
         guard !terminalEvents.isEmpty else { return }
         await ignoreRunMail(of: terminalEvents.map(\.correlationID))
         // A run can only be backgrounded from inside an answer, so by here the journal

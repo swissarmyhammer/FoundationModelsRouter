@@ -504,14 +504,14 @@ struct MessageQueueTests {
 
         // The first submission backgrounds the job; no message waits after it.
         _ = try await session.respond(to: "start the job")
-        let token = try #require(await session.mailbox.backgroundRuns().first?.completionToken)
+        let token = try #require(await session.runPlane.backgroundRuns().first?.completionToken)
         // No user-type mail waits. The queue holds only the progress mail of
         // the backgrounded run, and progress mail never starts a submission.
         #expect(session.waitingUserMailCount == 0)
         #expect(await session.pendingMessages().allSatisfy { $0.runEvent?.kind == .progress })
 
         await gate.open()
-        let terminal = try await MountFixtures.settledTerminal(of: token, in: session.mailbox)
+        let terminal = try await MountFixtures.settledTerminal(of: token, in: session.runPlane)
 
         // No caller call: the settlement is mail, and the pump of the session
         // starts the delivery submission by itself.

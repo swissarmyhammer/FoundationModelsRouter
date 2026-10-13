@@ -18,7 +18,7 @@ extension RoutedSessionActor {
     /// before the result, so a close that starts during the reads of a
     /// check also gives `false`.
     ///
-    /// The call first installs the settlement observer of ``mailbox``
+    /// The call first installs the settlement observer of ``runPlane``
     /// (``attachOutboxJournalIfNeeded()``), so the settlement of each run
     /// reports a change (``deliver(settledTerminal:)``).
     ///
@@ -63,7 +63,7 @@ extension RoutedSessionActor {
     /// starts no submission, so it counts as idle.
     ///
     /// The check reads the session state two times. The first read comes
-    /// before the reads of ``mailbox`` and ``outbox``
+    /// before the reads of ``runPlane`` and ``outbox``
     /// (``readRunsAndMail()``), and the second read comes after them
     /// (``isIdle(startedAt:reading:)``).
     ///
@@ -75,14 +75,14 @@ extension RoutedSessionActor {
         return isIdle(startedAt: workId, reading: reads)
     }
 
-    /// Reads the open runs and the settled run tokens of ``mailbox``, and
+    /// Reads the open runs and the settled run tokens of ``runPlane``, and
     /// then the mail of ``outbox``, for ``isIdle()``.
     ///
-    /// ``mailbox`` and ``outbox`` are actors of their own, so these reads
+    /// ``runPlane`` and ``outbox`` are actors of their own, so these reads
     /// suspend. The order of the reads follows the order in which a run
     /// ends. This invariant makes the order correct: the funnel of a run
-    /// stages the terminal of the run in ``outbox`` before ``mailbox``
-    /// settles the run. So a run that is not open when ``mailbox`` is read
+    /// stages the terminal of the run in ``outbox`` before ``runPlane``
+    /// settles the run. So a run that is not open when ``runPlane`` is read
     /// has its token in the settled tokens, and its terminal, when it is
     /// still staged, in the mail. That pair starts a submission
     /// (``SessionOutbox/canStartASubmission(_:runTokens:)``), so the
@@ -103,12 +103,12 @@ extension RoutedSessionActor {
         return IdleReads(openRuns: runs.open, runTokens: runs.tokens, mail: mail)
     }
 
-    /// Reads the completion tokens of the background runs of ``mailbox``:
+    /// Reads the completion tokens of the background runs of ``runPlane``:
     /// the open runs first, and then the settled runs.
     ///
-    /// ``mailbox`` is an actor of its own, so the two reads suspend, and a
+    /// ``runPlane`` is an actor of its own, so the two reads suspend, and a
     /// run can settle between them. A run leaves the open runs and joins the
-    /// settled runs in one step of ``mailbox``, so a run that settles between
+    /// settled runs in one step of ``runPlane``, so a run that settles between
     /// the two reads is in the settled runs of the second read. Each run that
     /// was open at the first read is in one of the two sets.
     ///
@@ -117,14 +117,14 @@ extension RoutedSessionActor {
         await readBackgroundRuns().tokens
     }
 
-    /// Reads the open runs of ``mailbox``, and then its settled run tokens,
+    /// Reads the open runs of ``runPlane``, and then its settled run tokens,
     /// in the order that ``readBackgroundRunTokens()`` gives.
     ///
     /// - Returns: The open runs, and the tokens of the open runs and of the
     ///   settled runs.
     private func readBackgroundRuns() async -> (open: [BackgroundRun], tokens: BackgroundRunTokens) {
-        let openRuns = await mailbox.backgroundRuns()
-        let settledRunTokens = await mailbox.settledRunTokens()
+        let openRuns = await runPlane.backgroundRuns()
+        let settledRunTokens = await runPlane.settledRunTokens()
         let tokens = BackgroundRunTokens(open: Set(openRuns.map(\.completionToken)), settled: settledRunTokens)
         return (openRuns, tokens)
     }
@@ -135,7 +135,7 @@ extension RoutedSessionActor {
     /// Only pump work starts a run, and each answer takes a new
     /// ``lastWorkId``. A compaction starts no run. So no pump work at the first
     /// read and at this read, and the same ``lastWorkId``, prove that no run
-    /// started while the reads of ``mailbox`` and ``outbox`` suspended.
+    /// started while the reads of ``runPlane`` and ``outbox`` suspended.
     ///
     /// - Parameters:
     ///   - workId: The ``lastWorkId`` of the first read.

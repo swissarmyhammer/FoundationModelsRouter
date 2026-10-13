@@ -129,10 +129,10 @@ struct ToolTracingTests {
     /// Awaits every background run the session tracked, so a suite leaves no run
     /// in flight behind it.
     ///
-    /// - Parameter session: The session whose mailbox tracked the runs.
+    /// - Parameter session: The session whose run plane tracked the runs.
     private static func settleBackgroundRuns(of session: any RoutedSession) async {
-        for run in await session.mailbox.backgroundRuns() {
-            _ = await session.mailbox.wait(
+        for run in await session.runPlane.backgroundRuns() {
+            _ = await session.runPlane.wait(
                 completionToken: run.completionToken, seconds: MountFixtures.settlementDeadline)
         }
     }

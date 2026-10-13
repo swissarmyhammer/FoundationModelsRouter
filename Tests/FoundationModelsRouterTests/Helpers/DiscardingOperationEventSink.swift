@@ -1,7 +1,7 @@
 @testable import FoundationModelsRouter
 
 /// An ``OperationEventSink`` that drops every posted event — the sink a suite
-/// binds when it observes the run plane, the mailbox, or a resumed
+/// binds when it observes the run plane or a resumed
 /// continuation rather than the outbound event chain.
 ///
 /// This is the one discarding sink the test target declares, so the suites

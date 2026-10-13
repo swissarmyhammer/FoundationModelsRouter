@@ -240,23 +240,23 @@ struct SessionMessagePumpTests {
         return (profile.standard.makeSession(), profile)
     }
 
-    /// Settles one background run on the mailbox of `session`, and gives its
+    /// Settles one background run on the run plane of `session`, and gives its
     /// terminal. A test posts that terminal to the outbox when it wants the
     /// mail to arrive, as the funnel of a background tool does.
     ///
     /// The run settles before the test sends a message, so the session has
     /// no settlement observer yet, and the settlement wakes no pump. The
-    /// mailbox keeps the token as a settled background run, so the terminal
+    /// run plane keeps the token as a settled background run, so the terminal
     /// can start a submission once it is posted.
     ///
-    /// - Parameter session: The session whose mailbox tracks the run.
+    /// - Parameter session: The session whose run plane tracks the run.
     /// - Returns: The terminal of the run.
-    /// - Throws: When the run does not settle inside the mailbox wait.
+    /// - Throws: When the run does not settle inside the run plane wait.
     private static func settledRunTerminal(on session: any RoutedSession) async throws -> OperationEvent {
         let latch = RunLatch()
         await latch.open()
-        let token = await trackFakeRun(on: session.mailbox, latch: latch, detailOnSettle: settledRunDetail)
-        return try await MountFixtures.settledTerminal(of: token, in: session.mailbox)
+        let token = await trackFakeRun(on: session.runPlane, latch: latch, detailOnSettle: settledRunDetail)
+        return try await MountFixtures.settledTerminal(of: token, in: session.runPlane)
     }
 
     /// Starts an answer that only mail starts, and waits until its first
@@ -467,10 +467,10 @@ struct SessionMessagePumpTests {
 
         #expect(backend.prompts.count == 2)
         let retryPrompt = try #require(backend.prompts.last)
-        // The prompt renders the mail that joins the continuation first, in
-        // take order, and then the retry text (the failed prompt and the
-        // tool error).
-        #expect(retryPrompt.hasPrefix(Self.secondPrompt + RoutedSessionActor.messageSeparator + Self.firstPrompt))
+        // The prompt renders the mail in take order: the mail that the retry
+        // carries from the failed attempt, then the mail that joins it. The
+        // tool error comes after the mail.
+        #expect(retryPrompt.hasPrefix(Self.firstPrompt + RoutedSessionActor.messageSeparator + Self.secondPrompt))
         #expect(firstAnswer == PumpProbeBackend.answer(ofCall: 2))
         #expect(secondAnswer == PumpProbeBackend.answer(ofCall: 2))
         withExtendedLifetime(profile) {}

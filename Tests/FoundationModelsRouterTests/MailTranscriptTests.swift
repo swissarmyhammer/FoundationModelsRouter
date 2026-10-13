@@ -303,6 +303,72 @@ struct MailTranscriptTests {
         withExtendedLifetime(keep) {}
     }
 
+    // MARK: - A retried attempt
+
+    @Test(
+        "a rejected tool call runs the attempt again; the mail has one delivered record, on the prompt entry of the retry that the model read"
+    )
+    func aRejectedCallRetryRecordsTheMailOnTheRetryPrompt() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let recorder = InMemoryRecorder()
+        let latch = RunLatch()
+        await latch.open()
+        let backend = Backend(script: [1: .holdThenReject(latch)])
+        let (session, keep) = try await Self.makeSession(over: backend, dir: dir, recorder: recorder)
+
+        let id = try session.send(Self.firstPrompt)
+        _ = try await session.awaitTerminal(of: id)
+        await session.close()
+
+        // The first call threw before it wrote an entry, and the retry
+        // answered.
+        #expect(backend.prompts.count == 2)
+        let finalPrompt = try #require(backend.prompts.last)
+        let events = await recorder.events
+        #expect(Self.records(of: id, in: events) == ["mailQueued", "mailDelivered", "answerEnded"])
+        let delivering = events.promptsDelivering(id)
+        #expect(delivering.count == 1)
+        #expect(delivering.first?.text == finalPrompt)
+        let context = try ContextRenderer.context(of: events)
+        #expect(Self.texts(of: context) == [finalPrompt, Backend.answer(ofCall: 2)])
+        withExtendedLifetime(keep) {}
+    }
+
+    @Test(
+        "a rejected retry that a waiting message joins records each mail one time, on the prompt of the retry, in take order"
+    )
+    func aRejectedRetryWithJoiningMailRecordsEachMailOneTime() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let recorder = InMemoryRecorder()
+        let latch = RunLatch()
+        let backend = Backend(script: [1: .holdThenReject(latch)])
+        let (session, keep) = try await Self.makeSession(over: backend, dir: dir, recorder: recorder)
+
+        let first = try session.send(Self.firstPrompt)
+        try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
+        let second = try session.send(Self.secondPrompt)
+        await latch.open()
+        _ = try await session.awaitTerminal(of: second)
+        await session.close()
+
+        #expect(backend.prompts.count == 2)
+        let finalPrompt = try #require(backend.prompts.last)
+        let events = await recorder.events
+        #expect(Self.deliveredIds(in: events) == [first, second])
+        for id in [first, second] {
+            let delivering = events.promptsDelivering(id)
+            #expect(delivering.count == 1)
+            #expect(delivering.first?.text == finalPrompt)
+        }
+        let rendered = Self.texts(of: try ContextRenderer.context(of: events)).joined(separator: "\n")
+        for prompt in [Self.firstPrompt, Self.secondPrompt] {
+            #expect(rendered.components(separatedBy: prompt).count - 1 == 1)
+        }
+        withExtendedLifetime(keep) {}
+    }
+
     // MARK: - The render grows at its end
 
     @Test("between two answers the render only grows at its end")

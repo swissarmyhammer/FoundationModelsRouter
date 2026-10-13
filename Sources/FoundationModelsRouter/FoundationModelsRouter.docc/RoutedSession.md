@@ -16,7 +16,8 @@ A session has three audiences, and each one gets typed capabilities:
   `ToolContext.elicit(_:)`. Its `isCancelled` property is internal to
   FoundationModelsExtras.
 - **Tool hosts** — a tool that shows the run plane to a model — read that
-  plane through the same ambient context, never through a mailbox:
+  plane through the same ambient context, never through a direct reference
+  to the run plane:
   `ToolContext.backgroundRuns()`,
   `ToolContext.wait(completionToken:seconds:)`, and
   `ToolContext.cancel(completionToken:)` (task ^k0mecjp).

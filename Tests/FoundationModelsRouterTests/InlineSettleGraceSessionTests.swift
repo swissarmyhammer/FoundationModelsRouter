@@ -147,7 +147,7 @@ struct InlineSettleGraceSessionTests {
         #expect(fixture.backend.toolOutputs == [answer])
 
         await gate.open()
-        let outcome = await fixture.session.mailbox.wait(completionToken: envelope.completionToken, seconds: nil)
+        let outcome = await fixture.session.runPlane.wait(completionToken: envelope.completionToken, seconds: nil)
         guard case .settled(let terminal) = outcome else {
             Issue.record("expected run \(envelope.completionToken) to settle, got \(outcome)")
             await Self.end(fixture)
@@ -188,7 +188,7 @@ struct InlineSettleGraceSessionTests {
         #expect(fixture.backend.toolOutputs == [Self.runOutput])
         // The run settled, and its staged events were withdrawn: no mail
         // waits, and no mail starts one more answer.
-        #expect(await fixture.session.mailbox.backgroundRuns().isEmpty)
+        #expect(await fixture.session.runPlane.backgroundRuns().isEmpty)
         #expect(await BoundedWait.pumpStops(on: fixture.session))
         #expect(fixture.backend.receivedPrompts == [Self.jobPrompt])
         #expect(await fixture.session.outbox.pending().events.isEmpty)

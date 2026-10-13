@@ -248,7 +248,7 @@ struct SessionIdleWaitTests {
 
         // The run settled inside its own tool call, and the answer is held.
         try await AwaitedCondition.wait(until: { fixture.backend.toolOutputs.count == 1 })
-        #expect(await fixture.session.mailbox.backgroundRuns().isEmpty)
+        #expect(await fixture.session.runPlane.backgroundRuns().isEmpty)
         let outcome = RecordedWaitResult()
         try await Self.startIdleWait(on: fixture.session, recording: outcome)
         #expect(outcome.value == nil)
@@ -275,7 +275,7 @@ struct SessionIdleWaitTests {
         waiting.cancel()
 
         #expect(try await Self.result(of: outcome) == false)
-        #expect(await fixture.session.mailbox.backgroundRuns().count == 1)
+        #expect(await fixture.session.runPlane.backgroundRuns().count == 1)
         await Self.end(fixture, opening: [gate])
     }
 
@@ -338,7 +338,7 @@ struct SessionIdleWaitTests {
         let fixture = try await Self.makeFixture(
             tools: [LatchedBackgroundToolRunner(name: "pending_job", gate: gate, output: Self.runOutput)])
         _ = try await fixture.session.respond(to: Self.jobPrompt)
-        #expect(await fixture.session.mailbox.backgroundRuns().count == 1)
+        #expect(await fixture.session.runPlane.backgroundRuns().count == 1)
 
         let outcome = Self.startRecorded {
             withUnsafeCurrentTask { $0?.cancel() }
@@ -373,8 +373,8 @@ struct SessionIdleWaitTests {
     private static func stageASettledTerminal(on session: any RoutedSession) async throws {
         let gate = RunLatch()
         await gate.open()
-        let token = await trackFakeRun(on: session.mailbox, latch: gate)
-        let terminal = try await MountFixtures.settledTerminal(of: token, in: session.mailbox)
+        let token = await trackFakeRun(on: session.runPlane, latch: gate)
+        let terminal = try await MountFixtures.settledTerminal(of: token, in: session.runPlane)
         await session.outbox.post(event: terminal)
     }
 
@@ -385,7 +385,7 @@ struct SessionIdleWaitTests {
         try await Self.stageASettledTerminal(on: fixture.session)
 
         #expect(await session.isPumpRunning == false)
-        #expect(await session.mailbox.backgroundRuns().isEmpty)
+        #expect(await session.runPlane.backgroundRuns().isEmpty)
         #expect(await session.isIdle() == false)
 
         await Self.end(fixture)

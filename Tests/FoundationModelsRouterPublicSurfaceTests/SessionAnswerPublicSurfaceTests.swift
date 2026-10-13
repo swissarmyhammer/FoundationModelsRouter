@@ -3,7 +3,7 @@ import Testing
 import FoundationModelsRouter
 
 /// Holds ``SessionAnswer``, ``AnswerFailure`` and the answer members of
-/// ``SessionProjection`` to the access level a consumer outside this package
+/// ``SessionObserver`` to the access level a consumer outside this package
 /// needs (task ^x7cxsg3). A consumer reads the final answer of a chain from
 /// ``SessionEvent/answered(_:)`` or ``SessionEvent/answerFailed(_:)``, and
 /// makes both records itself in a fake event stream of its own tests.
@@ -63,7 +63,7 @@ struct SessionAnswerPublicSurfaceTests {
     @Test("a projection reads the answer events and names no running submission before one starts")
     @MainActor
     func aProjectionReadsTheAnswerEvents() {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         let answer = SessionAnswer(
             reply: Self.reply, mailIds: [], usage: nil, compactions: [], toolCalls: [], toolInvocations: [])
 

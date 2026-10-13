@@ -130,7 +130,7 @@ struct CompactionOrder: Sendable {
     /// for a requested compaction, and ``RouterTelemetry/CompactionTrigger/auto``
     /// for the four automatic reasons.
     var trigger: RouterTelemetry.CompactionTrigger {
-        isAutomatic ? .auto : .caller
+        RouterTelemetry.CompactionTrigger(reason: reason)
     }
 }
 
@@ -288,6 +288,7 @@ extension RoutedSessionActor {
             return .failure(CancellationError())
         }
         outbox.queue.pause()
+        let pausedAt = ContinuousClock.now
         emitCompactionEvent(.compactionStarted(CompactionStart(id: id.description, reason: order.reason)), of: order)
         // The task inherits the origin of the signal and the tracing context
         // of the caller. It is in no model call: a mark of the model call of
@@ -307,6 +308,7 @@ extension RoutedSessionActor {
         // example a cancelAll() that must cancel the mail that waits).
         signals.whenNoSignalWaits { [self] in
             outbox.queue.resume()
+            sessionMetrics.recordMailQueuePause(ContinuousClock.now - pausedAt)
             Task { await wakePump() }
         }
         return result
@@ -320,7 +322,7 @@ extension RoutedSessionActor {
     /// - Returns: The result of the compaction, or its error.
     private func runCompaction(_ id: SignalID, _ order: CompactionOrder) async -> Result<CompactionResult, any Error> {
         do {
-            var result = try await withCompactionSpan(trigger: order.trigger) {
+            var result = try await withCompactionSpan(reason: order.reason, signal: id) {
                 try await compactTranscript(id: id, prompt: order.prompt, budget: order.budget)
             }
             if let overflowRetryTarget = order.overflowRetryTarget {
@@ -461,23 +463,35 @@ extension RoutedSessionActor {
     /// trigger (``RouterTelemetry/MetricName/compactionCount``), before the
     /// work starts, so a compaction that throws counts too.
     ///
+    /// The span also carries the reason of the compaction
+    /// (``RouterTelemetry/AttributeKey/compactionReason``) and the id of its
+    /// signal (``RouterTelemetry/AttributeKey/signalId``), `mailbox.md`,
+    /// section 5, problem 18. The trigger
+    /// (``RouterTelemetry/CompactionTrigger/init(reason:)``) stays the
+    /// bounded dimension of the metric.
+    ///
     /// - Parameters:
-    ///   - trigger: What asked for this compaction.
+    ///   - reason: Why this compaction runs.
+    ///   - signal: The id of the compaction signal.
     ///   - body: The compaction work.
     /// - Returns: What the compaction did.
     /// - Throws: Whatever `body` throws, after the span records the error
     ///   status and the type of the error, never its description
     ///   (``RouterTelemetry/withSpan(_:ofKind:tracer:isolation:_:)``).
     func withCompactionSpan(
-        trigger: RouterTelemetry.CompactionTrigger,
+        reason: CompactionReason,
+        signal: SignalID,
         _ body: () async throws -> CompactionResult
     ) async throws -> CompactionResult {
+        let trigger = RouterTelemetry.CompactionTrigger(reason: reason)
         sessionMetrics.recordCompaction(trigger: trigger)
         return try await RouterTelemetry
             .withSpan(RouterTelemetry.SpanName.compact, ofKind: .internal, tracer: tracer) { span in
                 span.attributes[RouterTelemetry.AttributeKey.sessionId] = id.description
                 span.attributes[RouterTelemetry.AttributeKey.modelRef] = model.stringValue
                 span.attributes[RouterTelemetry.AttributeKey.compactionTrigger] = trigger.rawValue
+                span.attributes[RouterTelemetry.AttributeKey.compactionReason] = reason.rawValue
+                span.attributes[RouterTelemetry.AttributeKey.signalId] = signal.description
                 let result = try await body()
                 if let tier = result.summarizerTier {
                     span.attributes[RouterTelemetry.AttributeKey.compactionTier] = tier.rawValue
@@ -566,11 +580,11 @@ extension RoutedSessionActor {
         let resolvedBudget = budget ?? TokenBudget(limit: contextTokens)
 
         // Read at the moment the compaction boundary is written: the runs
-        // still running in this session's mailbox, as run-plane summaries
+        // still running in this session's run plane, as run-plane summaries
         // (token, op, latest progress — never output content), so a
         // post-compaction model keeps the tokens of its in-flight work
         // until the session reports each run's settlement.
-        let pendingRuns = await mailbox.backgroundRuns().map { run in
+        let pendingRuns = await runPlane.backgroundRuns().map { run in
             CompactionSegment.PendingRunSummary(
                 completionToken: run.completionToken,
                 op: run.op,

@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsExtras
 
 @testable import FoundationModelsRouter
 
@@ -10,6 +11,21 @@ extension Array where Element == TranscriptEvent {
     /// not its mail, uses this list.
     var withoutMailRecords: [TranscriptEvent] {
         filter { $0.kind != .mail }
+    }
+
+    /// The `.prompt` events that hold a ``MailRecord/mailDelivered(_:)``
+    /// record of the mail `id`, one time for each such record, in transcript
+    /// order.
+    ///
+    /// - Parameter id: The id of the mail.
+    /// - Returns: One event for each delivered record of `id`.
+    func promptsDelivering(_ id: MailID) -> [TranscriptEvent] {
+        filter { $0.kind == .prompt }.flatMap { prompt in
+            prompt.mailRecords.compactMap { record -> TranscriptEvent? in
+                guard case .mailDelivered(let mail) = record, mail.id == id else { return nil }
+                return prompt
+            }
+        }
     }
 }
 

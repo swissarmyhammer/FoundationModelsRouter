@@ -640,8 +640,8 @@ struct RoutedSessionCompactTests {
         try await driveAnswers(6, on: session)
 
         let latch = RunLatch()
-        let token = await trackFakeRun(on: session.mailbox, latch: latch)
-        await session.mailbox.updateProgress(completionToken: token, detail: "halfway through")
+        let token = await trackFakeRun(on: session.runPlane, latch: latch)
+        await session.runPlane.updateProgress(completionToken: token, detail: "halfway through")
 
         let backend = try #require(container.lastBackend)
         // A target under the live context: the summarizer call runs and the
@@ -683,10 +683,10 @@ struct RoutedSessionCompactTests {
     }
 
     @Test(
-        "compact() with an empty mailbox adds nothing: pendingRuns stays nil and the boundary carries only the summary text and the CompactionSegment"
+        "compact() with an empty run plane adds nothing: pendingRuns stays nil and the boundary carries only the summary text and the CompactionSegment"
     )
     @MainActor
-    func compactWithEmptyMailboxAddsNoPendingRunCarrier() async throws {
+    func compactWithEmptyRunPlaneAddsNoPendingRunCarrier() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 

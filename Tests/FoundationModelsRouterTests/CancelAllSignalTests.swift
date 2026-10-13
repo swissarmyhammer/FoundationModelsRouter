@@ -443,7 +443,7 @@ struct CancelAllSignalTests {
                 tool: FakeRun.tool, op: FakeRun.op, correlationID: token, kind: .completed,
                 detail: "the slow run ended", outcome: Task.isCancelled ? .cancelled : .succeeded)
         }
-        await session.mailbox.start(
+        await session.runPlane.start(
             tool: FakeRun.tool,
             op: FakeRun.op,
             kind: .swiftTask,
@@ -615,7 +615,7 @@ struct CancelAllSignalTests {
 
         // The canceler starts, and waits at the shut gate. The run is open.
         try #require(await BoundedWait.conditionReached("the start of the canceler") { run.isCancelerStarted })
-        #expect(await session.mailbox.backgroundRuns().map(\.completionToken) == [run.token])
+        #expect(await session.runPlane.backgroundRuns().map(\.completionToken) == [run.token])
         #expect(Self.settledEvents(of: run.token, in: recorder.outputs).isEmpty)
 
         // The cancel ends, and the run gets its terminal.
@@ -623,8 +623,8 @@ struct CancelAllSignalTests {
         try await recorder.waitFor("the terminal of the run") { outputs in
             !Self.settledEvents(of: run.token, in: outputs).isEmpty
         }
-        await session.mailbox.joinRunBodies()
-        #expect(await session.mailbox.backgroundRuns().isEmpty)
+        await session.runPlane.joinRunBodies()
+        #expect(await session.runPlane.backgroundRuns().isEmpty)
         // The body of the run ended after the sweep: no second terminal.
         try await Task.sleep(for: Self.noOutputWindow)
         await session.close()

@@ -15,7 +15,9 @@ import FoundationModelsExtras
 ///   text of that entry is ``promptText(delivering:followedBy:)`` of that
 ///   mail. A mail that a failed submission put back in the queue gets a
 ///   record only in the `.prompt` entry of the submission that delivered it
-///   at last, so the context holds it one time.
+///   at last, so the context holds it one time. When a failed attempt runs
+///   again (a rejected tool call or a context overflow), only the `.prompt`
+///   entry of the retry records the mail of that attempt.
 /// - The other mail records (``TranscriptEvent/Kind/mail`` events) are not
 ///   rendered.
 /// - Model output, tool calls and tool results come after the `.prompt`

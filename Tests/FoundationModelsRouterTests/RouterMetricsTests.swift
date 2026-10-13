@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModelsExtras
 import MetricsTestKit
 import TelemetryTestSupport
 import Testing
@@ -50,6 +51,15 @@ struct RouterMetricsTests {
     /// The prompt of the answer that triggers an automatic compaction: the
     /// answer after the warm-up.
     private static let triggeringPrompt = "message \(AutoCompactionFixtures.answerCount)"
+
+    /// The name of the recorder of the depth of the mail queue of a session.
+    private static let queueDepthName = "FoundationModelsRouter.session.queue_depth"
+
+    /// The name of the counter of the cancelled mail.
+    private static let cancelledMailName = "FoundationModelsRouter.mail.cancelled"
+
+    /// The name of the timer of the pause of the mail queue for a compaction.
+    private static let pauseDurationName = "FoundationModelsRouter.mail_queue.pause_duration"
 
     /// The dimensions of a metric of one session: its model and its slot.
     ///
@@ -190,7 +200,9 @@ struct RouterMetricsTests {
 
     // MARK: - Queues
 
-    @Test("a caller message that waits behind the running answer is recorded in the queue depth of the session")
+    @Test(
+        "a caller message that waits behind the running answer is recorded in the queue depth of the session, by mail kind"
+    )
     func waitingMessagesAreRecordedInTheSessionQueueDepth() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -215,12 +227,73 @@ struct RouterMetricsTests {
             }
             #expect(holdingInside)
             #expect(drained)
-            return try context.metricsFactory.expectRecorder("FoundationModelsRouter.session.queue_depth").values
+            return try MailKind.allCases.map { kind in
+                (kind, try context.metricsFactory.expectRecorder(Self.queueDepthName, [("mail.kind", kind.rawValue)]).values)
+            }
         }
 
-        #expect(depths.contains(Double(Self.waitingPrompts.count)))
-        #expect(depths.allSatisfy { $0 >= 0 })
+        // Each record gives the count of each kind, so each kind has values,
+        // and only the user messages waited.
+        let userDepths = try #require(depths.first { $0.0 == .userMessage }?.1)
+        #expect(userDepths.contains(Double(Self.waitingPrompts.count)))
+        for (kind, values) in depths {
+            #expect(!values.isEmpty, "no queue depth of \(kind.rawValue)")
+            #expect(values.allSatisfy { $0 >= 0 })
+            if kind != .userMessage {
+                #expect(values.allSatisfy { $0 == 0 }, "the queue depths of \(kind.rawValue) are \(values)")
+            }
+        }
         withExtendedLifetime(resolved) {}
+    }
+
+    @Test("a cancel of a waiting message adds one to the count of cancelled mail")
+    func cancelledMailIsCounted() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fixture = PassObservingFixture()
+        let resolved = try await RouterTestFixtures.resolveStandardProfile(over: fixture.container, cacheDir: dir)
+        let session = resolved.profile.standard.makeSession()
+
+        let count = try await TelemetryCapture.run(forbidding: [Self.holdingPrompt] + Self.waitingPrompts) {
+            context in
+            await session.useCaptureMetrics(for: context.metricsFactory)
+            let holding = Task { try await session.respond(to: Self.holdingPrompt) }
+            let holdingInside = await BoundedWait.conditionReached("the pass of the holding answer") {
+                fixture.passes.recorded.count == 1
+            }
+            let waiting = try session.send(Self.waitingPrompts[0])
+            let cancel = session.cancel(waiting)
+            #expect(try await session.awaitTerminal(of: cancel) == .signalDone(cancel))
+            #expect(try await session.awaitTerminal(of: waiting) == .cancelled(waiting))
+            await fixture.latch.open()
+            _ = try await holding.value
+            #expect(holdingInside)
+            return try context.metricsFactory.expectCounter(Self.cancelledMailName).totalValue
+        }
+
+        #expect(count == 1)
+        withExtendedLifetime(resolved) {}
+    }
+
+    @Test("a compaction records the time that it paused the mail queue")
+    func compactionRecordsThePauseOfTheMailQueue() async throws {
+        let values = try await TelemetryCapture.run(forbidding: []) { context in
+            let (session, _, _) = try await AutoCompactionFixtures.makeTriggeredSession(
+                budget: nil, tempDirPrefix: Self.tempDirPrefix)
+            await session.useCaptureMetrics(for: context.metricsFactory)
+
+            _ = try await session.compactAndAwait(budget: AutoCompactionFixtures.fixedBudget)
+            // The queue resumes after the terminal event of the compaction.
+            let factory = context.metricsFactory
+            let recorded = await BoundedWait.conditionReached("the pause of the mail queue") {
+                (try? factory.expectTimer(Self.pauseDurationName))?.values.isEmpty == false
+            }
+            #expect(recorded)
+            return try factory.expectTimer(Self.pauseDurationName).values
+        }
+
+        #expect(values.count == 1)
+        #expect(values.allSatisfy { $0 >= 0 })
     }
 
     @Test("a submission that starts while others wait records the waiting count of the queue of its model")
@@ -289,7 +362,7 @@ struct RouterMetricsTests {
             // A detached task gets no capture of its own, so only the explicit
             // factory of the child can bring this metric to the capture.
             await Task.detached {
-                await child.sessionMetrics.recordCompaction(trigger: .caller)
+                child.sessionMetrics.recordCompaction(trigger: .caller)
             }.value
             return context.metricsFactory
         }

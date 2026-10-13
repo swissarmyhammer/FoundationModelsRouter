@@ -1,7 +1,7 @@
 /// The one home of the rule that pairs a `.toolOutput` transcript entry back
 /// to the tool call it answers — shared by the live diff path
 /// (`RoutedSessionActor.emitSessionEvents(for:dispatchedToolCallIds:completedToolCallIds:onEvent:)`)
-/// and the cold seeding path (``SessionProjection/transcriptRows(from:)``), so
+/// and the cold seeding path (``SessionObserver/transcriptRows(from:)``), so
 /// the two can never drift apart on how a completion finds its call.
 enum ToolCallOutputPairing {
     /// The id of the tool call a `.toolOutput` entry answers, drawn from the

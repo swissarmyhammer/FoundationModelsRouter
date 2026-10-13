@@ -256,7 +256,7 @@ extension RoutedSessionActor: SessionMailObserver {
         deliver(batch.mail)
         // The batch left the queue: the depth is synchronous, so it adds no
         // suspension point here.
-        recordMessageQueueDepth()
+        recordMailQueueDepth()
         startAnswerLimits()
         // Each event of the answer has the origin of its batch. The pump is a
         // detached task, so no origin of a caller reaches it.
@@ -367,7 +367,7 @@ extension RoutedSessionActor: SessionMailObserver {
             Self.joinsRunningAnswer(candidate, options: options, isGuided: isGuided)
         }
         deliver(joining)
-        recordMessageQueueDepth()
+        recordMailQueueDepth()
         return joining
     }
 

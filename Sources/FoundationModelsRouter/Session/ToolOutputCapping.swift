@@ -145,7 +145,7 @@ extension ToolMounting {
     /// reaches the layer beneath through `ToolFailureDelivery.throwingTool(of:)`.
     ///
     /// Every argument must be the owning session's own: `sessionID` is stamped
-    /// into each background run's ``ToolContext``, `mailbox` tracks the
+    /// into each background run's ``ToolContext``, `runPlane` tracks the
     /// background runs, `sink` is the session's outbox, which receives
     /// their events, and `tokenCounter` counts each capped result the way the
     /// session's model counts it.
@@ -158,7 +158,7 @@ extension ToolMounting {
     /// - Parameters:
     ///   - tool: The tool to mount.
     ///   - sessionID: The identity of the owning session.
-    ///   - mailbox: The run plane of the owning session.
+    ///   - runPlane: The run plane of the owning session.
     ///   - sink: The event sink of the owning session, its outbox.
     ///   - tokenLimit: The tokens each call's result may hold, or `nil` for
     ///     no cap.
@@ -175,7 +175,7 @@ extension ToolMounting {
     static func makeSessionMounted(
         tool: any Tool,
         sessionID: ULID,
-        mailbox: RunPlane,
+        runPlane: RunPlane,
         sink: any OperationEventSink,
         cappedToTokenLimit tokenLimit: Int?,
         tokenCounter: any TokenCounter,
@@ -185,7 +185,7 @@ extension ToolMounting {
         let mounted = makeWrapped(
             tool: tool,
             site: MountSite(
-                sessionID: sessionID, runPlane: mailbox, sink: sink, tracer: tracer,
+                sessionID: sessionID, runPlane: runPlane, sink: sink, tracer: tracer,
                 inlineSettleGrace: inlineSettleGrace),
             configuration: .synchronous
         )

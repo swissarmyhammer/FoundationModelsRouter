@@ -21,7 +21,7 @@ private let unboundToolOutput = "unbound"
 /// available to it.
 ///
 /// The public surface publishes no way to build a ``ToolContext`` by hand, and
-/// the mailbox behind one is not public either. So every mount below is made
+/// the run plane behind one is not public either. So every mount below is made
 /// where an outside caller makes it: inside a running tool, on the context that
 /// tool reads out of ``ToolContext/current``. A scripted session drives that
 /// tool, and the mounts happen in its body.

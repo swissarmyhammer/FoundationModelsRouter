@@ -104,15 +104,15 @@ struct RunMessageDeliveryTests {
         withExtendedLifetime(fixture.profile) {}
     }
 
-    /// Starts one background run on the mailbox of `session` that stays open
+    /// Starts one background run on the run plane of `session` that stays open
     /// until `latch` opens.
     ///
     /// - Parameters:
-    ///   - session: The session whose mailbox tracks the run.
+    ///   - session: The session whose run plane tracks the run.
     ///   - latch: The latch that settles the run when it opens.
     /// - Returns: The completion token of the run.
     private static func openRun(on session: any RoutedSession, until latch: RunLatch) async -> String {
-        await trackFakeRun(on: session.mailbox, latch: latch, detailOnSettle: terminalDetail)
+        await trackFakeRun(on: session.runPlane, latch: latch, detailOnSettle: terminalDetail)
     }
 
     /// The message that the run with `token` sends to its session.
@@ -123,14 +123,14 @@ struct RunMessageDeliveryTests {
         OperationEvent(tool: FakeRun.tool, op: FakeRun.op, correlationID: token, kind: .message, detail: messageText)
     }
 
-    /// Whether the run with `token` is open on the mailbox of `session`.
+    /// Whether the run with `token` is open on the run plane of `session`.
     ///
     /// - Parameters:
     ///   - token: The completion token of the run.
-    ///   - session: The session whose mailbox tracks the run.
+    ///   - session: The session whose run plane tracks the run.
     /// - Returns: `true` when the run is open.
     private static func isOpen(_ token: String, on session: any RoutedSession) async -> Bool {
-        await session.mailbox.backgroundRuns().contains { $0.completionToken == token }
+        await session.runPlane.backgroundRuns().contains { $0.completionToken == token }
     }
 
     // MARK: - Delivery
@@ -166,7 +166,7 @@ struct RunMessageDeliveryTests {
         #expect(await BoundedWait.pumpStops(on: fixture.session))
 
         await latch.open()
-        let terminal = try await MountFixtures.settledTerminal(of: token, in: fixture.session.mailbox)
+        let terminal = try await MountFixtures.settledTerminal(of: token, in: fixture.session.runPlane)
         await fixture.session.outbox.post(event: terminal)
 
         try await BoundedWait.awaitPrompts(Self.terminalAnswerSubmission, in: { fixture.backend.prompts })

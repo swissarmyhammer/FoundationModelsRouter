@@ -188,7 +188,7 @@ struct SessionAnswerTests {
         // The projection gets the same events that the answer came from.
         let events = observed.withLock { $0 }
         _ = eventsInsideAnswerFrame(events)
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         for event in events {
             projection.apply(event)
         }

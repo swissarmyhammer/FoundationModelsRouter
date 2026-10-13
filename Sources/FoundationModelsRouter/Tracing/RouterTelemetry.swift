@@ -177,6 +177,23 @@ enum RouterTelemetry {
         /// ``SubmissionStart/Cause``: `message`, `mail`, or `continuation`.
         static let submissionCause = "submission.cause"
 
+        /// The ids of the mail that the submission delivers, as an array of
+        /// strings (``MailID/description``). It is empty for a continuation
+        /// that no mail joins. It is a span attribute and not a metric
+        /// dimension, so its set of values has no bound problem.
+        static let submissionMailIds = "submission.mail_ids"
+
+        /// The id of the signal of the work, as ``SignalID/description``. A
+        /// compaction is a signal, so its span carries this key.
+        static let signalId = "signal.id"
+
+        /// Why the compaction runs: the raw value of ``CompactionReason``.
+        static let compactionReason = "compaction.reason"
+
+        /// The kind of mail: the raw value of `MailKind`. Only the dimension
+        /// of the depth of the mail queue uses it.
+        static let mailKind = "mail.kind"
+
         /// The ``ModelSlot`` the model fills.
         static let slot = "slot"
 
@@ -236,6 +253,17 @@ enum RouterTelemetry {
         /// ``CompactionReason/toolResultYield`` or
         /// ``CompactionReason/outputCeilingStop``.
         case auto
+
+        /// The trigger of a compaction that runs for `reason`: ``caller``
+        /// for ``CompactionReason/requested``, and ``auto`` for each of the
+        /// four automatic reasons. The set of values stays bounded and
+        /// stable; the span attribute ``AttributeKey/compactionReason``
+        /// carries the reason itself.
+        ///
+        /// - Parameter reason: Why the compaction runs.
+        init(reason: CompactionReason) {
+            self = reason == .requested ? .caller : .auto
+        }
     }
 
     /// The value ``AttributeKey/sessionOrigin`` carries: how a session came
@@ -559,8 +587,8 @@ enum RouterTelemetry {
         /// resident models and the load that runs now.
         static let residentBytes = prefix + "model_pool.resident_bytes"
 
-        /// The recorder of the count of all mail that waits in the mail queue
-        /// of a session, of all kinds, at each post and at each take.
+        /// The recorder of the count of the mail that waits in the mail queue
+        /// of a session, by mail kind, at each post and at each take.
         static let sessionQueueDepth = prefix + "session.queue_depth"
 
         /// The gauge of the count of the submissions that wait in the
@@ -570,10 +598,19 @@ enum RouterTelemetry {
         /// The counter of the compactions, by trigger.
         static let compactionCount = prefix + "compaction.count"
 
+        /// The timer of each pause of the mail queue of a session for a
+        /// compaction: from the pause to the resume.
+        static let mailQueuePauseDuration = prefix + "mail_queue.pause_duration"
+
+        /// The counter of the mail that ends with the terminal event
+        /// ``SessionEvent/cancelled(_:)``.
+        static let mailCancelled = prefix + "mail.cancelled"
+
         /// Every name above.
         static let allNames = [
             generationTokensIn, generationTokensOut, generationTokensPerSecond, timeToFirstToken, loadDuration,
-            residentBytes, sessionQueueDepth, generationQueueWaiting, compactionCount,
+            residentBytes, sessionQueueDepth, generationQueueWaiting, compactionCount, mailQueuePauseDuration,
+            mailCancelled,
         ]
     }
 
@@ -581,7 +618,8 @@ enum RouterTelemetry {
     ///
     /// A dimension value is an identifier, a name or a slot, and never a piece
     /// of the caller's content. Each value set is bounded: the models of the
-    /// profiles, the three slots, and the two triggers. No metric has a
+    /// profiles, the three slots, the two triggers, and the four mail kinds
+    /// (`MailKind`). No metric has a
     /// session dimension, because the set of sessions has no bound. A key has
     /// the same text as the span attribute of the same fact, as the tool-call
     /// metrics of FoundationModelsExtras do.
@@ -594,6 +632,9 @@ enum RouterTelemetry {
 
         /// The ``CompactionTrigger`` of a compaction.
         static let compactionTrigger = AttributeKey.compactionTrigger
+
+        /// The kind of the waiting mail, in the depth of the mail queue.
+        static let mailKind = AttributeKey.mailKind
     }
 
     /// The explicit logger of the session whose pump runs the current job, or

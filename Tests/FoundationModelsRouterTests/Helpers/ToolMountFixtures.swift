@@ -57,7 +57,7 @@ enum MountFixtures {
 
     /// One test's wiring: the run plane, the sink, and the mounted tool.
     struct Harness<Mounted: Tool> {
-        let mailbox: RunPlane
+        let runPlane: RunPlane
         let sink: RecordingSink
         let mounted: Mounted
     }
@@ -77,15 +77,15 @@ enum MountFixtures {
         timeout: TimeInterval? = nil,
         inlineSettleGrace: TimeInterval = 0
     ) -> Harness<BackgroundToolRunner<Arguments>> {
-        let mailbox = RunPlane()
+        let runPlane = RunPlane()
         let sink = RecordingSink()
         let mounted = BackgroundToolRunner(
             wrapping: tool,
             site: MountSite(
-                sessionID: ULID.generate(), runPlane: mailbox, sink: sink, inlineSettleGrace: inlineSettleGrace),
+                sessionID: ULID.generate(), runPlane: runPlane, sink: sink, inlineSettleGrace: inlineSettleGrace),
             timeout: timeout
         )
-        return Harness(mailbox: mailbox, sink: sink, mounted: mounted)
+        return Harness(runPlane: runPlane, sink: sink, mounted: mounted)
     }
 
     /// One call's internal run, the body both runners share, over a fresh
@@ -132,9 +132,9 @@ enum MountFixtures {
     /// Awaits the run's settlement through the run plane and returns its
     /// terminal event.
     static func settledTerminal(
-        of completionToken: String, in mailbox: RunPlane
+        of completionToken: String, in runPlane: RunPlane
     ) async throws -> OperationEvent {
-        let result = await mailbox.wait(completionToken: completionToken, seconds: settlementDeadline)
+        let result = await runPlane.wait(completionToken: completionToken, seconds: settlementDeadline)
         guard case .settled(let terminal) = result else {
             Issue.record("run \(completionToken) did not settle: \(result)")
             throw FixtureError()

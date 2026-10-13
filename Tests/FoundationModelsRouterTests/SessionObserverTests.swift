@@ -3,23 +3,22 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises task ekd82f4: ``SessionProjection``, the `@MainActor`/`@Observable`
-/// mirror of one ``RoutedSession``'s live state a SwiftUI view binds to.
-/// ``SessionProjection`` never mutates itself off a real session — every test
-/// here drives it directly with hand-built ``SessionEvent`` values (via
-/// ``SessionProjection/apply(_:)``) or a hand-built
-/// `AsyncThrowingStream<SessionEvent, Error>` (via
-/// ``SessionProjection/apply(eventsFrom:)``), mirroring exactly what
-/// ``RoutedSession/streamEvents(to:maxTokens:)`` would yield — no router,
-/// profile, or backend needed.
-@Suite("SessionProjection: the @Observable mirror of a session's live state")
-struct SessionProjectionTests {
+/// Exercises task ekd82f4: ``SessionObserver``, the `@MainActor`/`@Observable`
+/// mirror of the live state of one ``RoutedSession``. A SwiftUI view binds to it.
+/// No test here uses a real session. Each test gives it hand-built
+/// ``SessionEvent`` values (through ``SessionObserver/apply(_:)``) or a
+/// hand-built `AsyncThrowingStream<SessionEvent, Error>` (through
+/// ``SessionObserver/apply(eventsFrom:)``). These are the same values that
+/// ``RoutedSession/streamEvents(to:maxTokens:)`` gives. The tests need no
+/// router, no profile and no backend.
+@Suite("SessionObserver: the @Observable mirror of a session's live state")
+struct SessionObserverTests {
     // MARK: - Initial state
 
     @Test("a fresh projection starts idle, with an empty transcript and zeroed counters")
     @MainActor
     func freshProjectionStartsIdle() {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         #expect(projection.phase == .idle)
         #expect(projection.transcript.isEmpty)
         #expect(projection.tokensIn == 0)
@@ -27,12 +26,26 @@ struct SessionProjectionTests {
         #expect(projection.contextFill == 0)
     }
 
+    // MARK: - The deprecated name
+
+    /// The deprecated name must stay a name of the same type, so code that
+    /// uses the old name still compiles. This test is the only use of the
+    /// old name. The `@available` mark stops a deprecation warning here.
+    @Test("the deprecated name SessionProjection names the same type as SessionObserver")
+    @available(*, deprecated)
+    @MainActor
+    func deprecatedNameNamesTheSameType() {
+        let observer: SessionObserver = SessionProjection()
+        #expect(SessionProjection.self == SessionObserver.self)
+        #expect(observer.phase == .idle)
+    }
+
     // MARK: - textDelta: coalesced into one running entry, phase .generating
 
     @Test("consecutive textDelta fragments coalesce into a single text entry and set phase .generating")
     @MainActor
     func textDeltaFragmentsCoalesceIntoOneEntry() {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         projection.apply(.textDelta("hello "))
         projection.apply(.textDelta("world"))
 
@@ -43,7 +56,7 @@ struct SessionProjectionTests {
     @Test("a textDelta after a different entry kind starts a new text entry rather than merging")
     @MainActor
     func textDeltaAfterOtherKindStartsNewEntry() {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         projection.apply(.reasoningDelta("thinking"))
         projection.apply(.textDelta("hello"))
 
@@ -55,7 +68,7 @@ struct SessionProjectionTests {
     @Test("consecutive reasoningDelta fragments coalesce into a single reasoning entry")
     @MainActor
     func reasoningDeltaFragmentsCoalesceIntoOneEntry() {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         projection.apply(.reasoningDelta("the user wants "))
         projection.apply(.reasoningDelta("the weather"))
 
@@ -67,7 +80,7 @@ struct SessionProjectionTests {
     @Test("a toolCall followed by toolStatus(.running) yields one entry reporting .running")
     @MainActor
     func toolCallThenRunningStatusYieldsRunningEntry() {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         projection.apply(.toolCall(id: "call-1", name: "search", argumentsJSON: #"{"query":"weather"}"#))
         projection.apply(.toolStatus(id: "call-1", status: .running, summary: nil, output: nil))
 
@@ -75,7 +88,7 @@ struct SessionProjectionTests {
         #expect(
             projection.transcript.map(\.kind) == [
                 .toolCall(
-                    SessionProjection.ToolCallEntry(
+                    SessionObserver.ToolCallEntry(
                         id: "call-1", name: "search", argumentsJSON: #"{"query":"weather"}"#, status: .running, summary: nil))
             ]
         )
@@ -84,7 +97,7 @@ struct SessionProjectionTests {
     @Test("a completed toolStatus updates the matching entry's status and summary in place")
     @MainActor
     func completedStatusUpdatesMatchingEntry() {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         projection.apply(.toolCall(id: "call-1", name: "search", argumentsJSON: "{}"))
         projection.apply(.toolStatus(id: "call-1", status: .running, summary: nil, output: nil))
         projection.apply(.toolStatus(id: "call-1", status: .completed, summary: "72F and sunny", output: nil))
@@ -92,7 +105,7 @@ struct SessionProjectionTests {
         #expect(
             projection.transcript.map(\.kind) == [
                 .toolCall(
-                    SessionProjection.ToolCallEntry(
+                    SessionObserver.ToolCallEntry(
                         id: "call-1", name: "search", argumentsJSON: "{}", status: .completed, summary: "72F and sunny"))
             ]
         )
@@ -101,7 +114,7 @@ struct SessionProjectionTests {
     @Test("a completed toolStatus's full output segments land on the row — text, structure, and custom — with summary staying the flattened text")
     @MainActor
     func completedStatusCarriesFullOutputSegmentsOnTheRow() {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         projection.apply(.toolCall(id: "call-1", name: "search", argumentsJSON: "{}"))
         let output: [SegmentPayload] = [
             .text(id: "s-text", content: "72F and sunny"),
@@ -115,7 +128,7 @@ struct SessionProjectionTests {
         #expect(
             projection.transcript.map(\.kind) == [
                 .toolCall(
-                    SessionProjection.ToolCallEntry(
+                    SessionObserver.ToolCallEntry(
                         id: "call-1", name: "search", argumentsJSON: "{}", status: .completed,
                         summary: "72F and sunny", output: output))
             ]
@@ -125,7 +138,7 @@ struct SessionProjectionTests {
     @Test("two concurrent same-name tool calls are tracked as distinct entries, correlated by id")
     @MainActor
     func twoConcurrentSameNameToolCallsAreDistinctEntries() {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         projection.apply(.toolCall(id: "call-a", name: "search", argumentsJSON: #"{"city":"NYC"}"#))
         projection.apply(.toolStatus(id: "call-a", status: .running, summary: nil, output: nil))
         projection.apply(.toolCall(id: "call-b", name: "search", argumentsJSON: #"{"city":"SF"}"#))
@@ -136,10 +149,10 @@ struct SessionProjectionTests {
         #expect(
             projection.transcript.map(\.kind) == [
                 .toolCall(
-                    SessionProjection.ToolCallEntry(
+                    SessionObserver.ToolCallEntry(
                         id: "call-a", name: "search", argumentsJSON: #"{"city":"NYC"}"#, status: .completed, summary: "NYC: sunny")),
                 .toolCall(
-                    SessionProjection.ToolCallEntry(
+                    SessionObserver.ToolCallEntry(
                         id: "call-b", name: "search", argumentsJSON: #"{"city":"SF"}"#, status: .completed, summary: "SF: foggy")),
             ]
         )
@@ -148,7 +161,7 @@ struct SessionProjectionTests {
     @Test("a toolStatus with no matching prior toolCall is a true no-op, not a crash and not even a phase change")
     @MainActor
     func toolStatusWithNoMatchingToolCallIsANoOp() {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         projection.apply(.toolStatus(id: "unknown", status: .completed, summary: "ignored", output: nil))
 
         #expect(projection.transcript.isEmpty)
@@ -188,7 +201,7 @@ struct SessionProjectionTests {
     /// - Parameter event: The event under test.
     @MainActor
     private static func expectProjectionUnchanged(by event: SessionEvent) {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         projection.apply(.submissionStarted(start(1, delivering: [MailID()])))
         projection.apply(.toolCall(id: "call-1", name: "search", argumentsJSON: "{}"))
         projection.apply(.toolStatus(id: "call-1", status: .running, summary: nil, output: nil))
@@ -246,7 +259,7 @@ struct SessionProjectionTests {
     @Test("a compaction event appends its result and sets phase .compacting")
     @MainActor
     func compactionEventAppendsResultAndSetsPhase() {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         let result = CompactionResult(summary: "compacted", tokensBefore: 1000, tokensAfter: 400, stagesApplied: ["ToolOutputElision"])
         projection.apply(.compaction(result))
 
@@ -259,7 +272,7 @@ struct SessionProjectionTests {
     @Test("submissionEnded accumulates tokensIn/tokensOut across calls and sets phase .idle")
     @MainActor
     func submissionEndedAccumulatesTokensAndSetsIdle() {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         projection.apply(.textDelta("hi"))
         projection.apply(.submissionEnded(Self.end(1, usage: TokenUsage(tokensIn: 10, tokensOut: 5, contextFill: 0.1))))
 
@@ -272,7 +285,7 @@ struct SessionProjectionTests {
     @Test("a retried answer's second submissionEnded adds to the running token totals and reports the newer contextFill")
     @MainActor
     func secondSubmissionEndedAddsToRunningTotals() {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         projection.apply(.submissionEnded(Self.end(1, usage: TokenUsage(tokensIn: 100, tokensOut: 50, contextFill: 0.9))))
         projection.apply(.compaction(CompactionResult(summary: nil, tokensBefore: 500, tokensAfter: 200, stagesApplied: [])))
         projection.apply(.submissionEnded(Self.end(2, usage: TokenUsage(tokensIn: 20, tokensOut: 10, contextFill: 0.4))))
@@ -285,7 +298,7 @@ struct SessionProjectionTests {
     @Test("a submissionEnded with no usage keeps the counters and still sets phase .idle")
     @MainActor
     func submissionEndedWithNoUsageKeepsTheCounters() {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         projection.apply(.submissionEnded(Self.end(1, usage: TokenUsage(tokensIn: 10, tokensOut: 5, contextFill: 0.1))))
         projection.apply(.textDelta("hi"))
         projection.apply(.submissionEnded(Self.end(2, usage: nil)))
@@ -301,7 +314,7 @@ struct SessionProjectionTests {
     @Test("currentSubmission is the running submission from its start to its end, and nil after it")
     @MainActor
     func currentSubmissionRunsFromItsStartToItsEnd() {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         let first = Self.start(1)
         let second = Self.start(2)
 
@@ -321,7 +334,7 @@ struct SessionProjectionTests {
     @Test("messagesAwaitingAnswer holds each delivered message until an answer or a failure names it")
     @MainActor
     func messagesAwaitingAnswerHoldsTheDeliveredMessagesUntilTheirAnswer() {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         let first = MailID()
         let second = MailID()
         let third = MailID()
@@ -346,7 +359,7 @@ struct SessionProjectionTests {
     @Test("apply(eventsFrom:) applies every event from a stream in order")
     @MainActor
     func applyEventsFromAppliesEveryEventInOrder() async throws {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         let stream = AsyncThrowingStream<SessionEvent, Error> { continuation in
             continuation.yield(.textDelta("hello "))
             continuation.yield(.textDelta("world"))
@@ -366,7 +379,7 @@ struct SessionProjectionTests {
     @Test("a toolCall row uses the SDK Transcript.ToolCall.id as its row id")
     @MainActor
     func toolCallRowUsesTheCallIdAsItsRowId() {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         projection.apply(.toolCall(id: "call-1", name: "search", argumentsJSON: "{}"))
 
         #expect(projection.transcript.map(\.id) == ["call-1"])
@@ -376,7 +389,7 @@ struct SessionProjectionTests {
     @Test("an entryRecorded(.toolCalls) stamps sourceEntryId on that entry's call rows, keeping each row's own id")
     @MainActor
     func entryRecordedToolCallsStampsSourceEntryIdOnCallRows() {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         projection.apply(.toolCall(id: "call-a", name: "search", argumentsJSON: "{}"))
         projection.apply(.toolCall(id: "call-b", name: "search", argumentsJSON: "{}"))
         projection.apply(.entryRecorded(id: "calls-1", kind: .toolCalls))
@@ -388,7 +401,7 @@ struct SessionProjectionTests {
     @Test("a streaming text row adopts the SDK .response entry id when the entry is recorded")
     @MainActor
     func textRowAdoptsTheResponseEntryIdWhenRecorded() {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         projection.apply(.textDelta("hello "))
         projection.apply(.textDelta("world"))
         projection.apply(.entryRecorded(id: "resp-1", kind: .response))
@@ -401,7 +414,7 @@ struct SessionProjectionTests {
     @Test("a textDelta after adoption opens a new row instead of growing the adopted one")
     @MainActor
     func textDeltaAfterAdoptionOpensANewRow() {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         projection.apply(.textDelta("first answer"))
         projection.apply(.entryRecorded(id: "resp-1", kind: .response))
         projection.apply(.textDelta("second answer"))
@@ -415,7 +428,7 @@ struct SessionProjectionTests {
     @Test("a reasoning row adopts the SDK .reasoning entry id when the entry is recorded")
     @MainActor
     func reasoningRowAdoptsTheReasoningEntryIdWhenRecorded() {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         projection.apply(.reasoningDelta("the user wants the weather"))
         projection.apply(.entryRecorded(id: "reasoning-1", kind: .reasoning))
 
@@ -426,7 +439,7 @@ struct SessionProjectionTests {
     @Test("textReset-split rows adopt two .response entry ids oldest-first")
     @MainActor
     func textResetSplitRowsAdoptResponseIdsOldestFirst() {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         projection.apply(.textDelta("draft before the tool ran"))
         projection.apply(.textReset)
         projection.apply(.textDelta("the final answer"))
@@ -444,7 +457,7 @@ struct SessionProjectionTests {
     @Test("an entryRecorded with no open row of its kind is a no-op, not a crash and not a phase change")
     @MainActor
     func entryRecordedWithNoOpenRowIsANoOp() {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         projection.apply(.entryRecorded(id: "resp-1", kind: .response))
 
         #expect(projection.transcript.isEmpty)
@@ -467,8 +480,8 @@ struct SessionProjectionTests {
             .textDelta("still streaming, never adopted"),
         ]
 
-        let first = SessionProjection()
-        let second = SessionProjection()
+        let first = SessionObserver()
+        let second = SessionObserver()
         for event in events {
             first.apply(event)
             second.apply(event)
@@ -481,7 +494,7 @@ struct SessionProjectionTests {
     @Test("a compaction row is keyed by the result's own id and joins through summaryEntryId")
     @MainActor
     func compactionRowIsKeyedByTheResultId() {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         let compacted = CompactionResult(
             summary: "compacted", summaryEntryId: "compaction-summary-1", tokensBefore: 1000, tokensAfter: 400,
             stagesApplied: ["Summarization"])
@@ -498,7 +511,7 @@ struct SessionProjectionTests {
     func applyEventsFromAppliesPriorEventsThenRethrowsAndResetsIdle() async throws {
         enum StubError: Error, Equatable { case boom }
 
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         let stream = AsyncThrowingStream<SessionEvent, Error> { continuation in
             continuation.yield(.toolCall(id: "call-1", name: "search", argumentsJSON: "{}"))
             continuation.finish(throwing: StubError.boom)
@@ -515,7 +528,7 @@ struct SessionProjectionTests {
         #expect(projection.phase == .idle)
         #expect(
             projection.transcript.map(\.kind) == [
-                .toolCall(SessionProjection.ToolCallEntry(id: "call-1", name: "search", argumentsJSON: "{}", status: .running, summary: nil))
+                .toolCall(SessionObserver.ToolCallEntry(id: "call-1", name: "search", argumentsJSON: "{}", status: .running, summary: nil))
             ]
         )
     }
@@ -525,7 +538,7 @@ struct SessionProjectionTests {
     @Test("a tool answer groups as one call group holding the reasoning and the pre-tool text, then the final answer top-level")
     @MainActor
     func groupedRowsAttachAdjacentContextToTheCallGroup() {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         // The live event order of one tool answer: the two text rows stream
         // first, and the diff then closes the entries in transcript order —
         // reasoning, the superseded pre-tool response, the tool call and its
@@ -542,23 +555,23 @@ struct SessionProjectionTests {
         projection.apply(.toolStatus(id: "call-1", status: .completed, summary: "72F", output: nil))
         projection.apply(.entryRecorded(id: "resp-final", kind: .response))
 
-        let expectedCallRow = SessionProjection.TranscriptEntry(
+        let expectedCallRow = SessionObserver.TranscriptEntry(
             id: "call-1",
             kind: .toolCall(
-                SessionProjection.ToolCallEntry(
+                SessionObserver.ToolCallEntry(
                     id: "call-1", name: "search", argumentsJSON: "{}", status: .completed, summary: "72F")),
             sourceEntryId: "calls-1")
         let expectedContext = [
-            SessionProjection.TranscriptEntry(
+            SessionObserver.TranscriptEntry(
                 id: "reasoning-1", kind: .reasoning("thinking"), sourceEntryId: "reasoning-1"),
-            SessionProjection.TranscriptEntry(
+            SessionObserver.TranscriptEntry(
                 id: "resp-pre-tool", kind: .text("Let me check. "), sourceEntryId: "resp-pre-tool"),
         ]
-        let expectedAnswerRow = SessionProjection.TranscriptEntry(
+        let expectedAnswerRow = SessionObserver.TranscriptEntry(
             id: "resp-final", kind: .text("The final answer."), sourceEntryId: "resp-final")
         #expect(
             projection.groupedRows == [
-                .toolCallGroup(SessionProjection.ToolCallGroup(call: expectedCallRow, context: expectedContext)),
+                .toolCallGroup(SessionObserver.ToolCallGroup(call: expectedCallRow, context: expectedContext)),
                 .row(expectedAnswerRow),
             ]
         )
@@ -569,7 +582,7 @@ struct SessionProjectionTests {
     @Test("two concurrent same-name calls form two groups, keyed by their distinct call ids")
     @MainActor
     func groupedRowsKeyTwoConcurrentSameNameCallsByTheirIds() throws {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         projection.apply(.textDelta("done"))
         projection.apply(.toolCall(id: "call-a", name: "search", argumentsJSON: "{}"))
         projection.apply(.toolStatus(id: "call-a", status: .running, summary: nil, output: nil))
@@ -597,7 +610,7 @@ struct SessionProjectionTests {
     @Test("rows after the last tool result and the final answer text stay top-level")
     @MainActor
     func groupedRowsKeepTrailingReasoningAndTheAnswerTopLevel() throws {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         // Transcript order: the tool call, its output, a trailing reasoning
         // entry, then the answer — so the reasoning follows the last result.
         projection.apply(.textDelta("the answer"))
@@ -628,7 +641,7 @@ struct SessionProjectionTests {
     @Test("an answer with no tool call groups nothing: every row stays top-level")
     @MainActor
     func groupedRowsOfAPlainAnswerStayTopLevel() throws {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         projection.apply(.textDelta("plain answer"))
         projection.apply(.reasoningDelta("thinking"))
         projection.apply(.entryRecorded(id: "reasoning-1", kind: .reasoning))

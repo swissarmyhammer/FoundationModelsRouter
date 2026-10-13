@@ -7,7 +7,7 @@
 /// ``RoutedSession/respond(to:maxTokens:)`` returns for the same submission
 /// (see ``SessionEvent/textReset``).
 ///
-/// ``SessionProjection`` uses it: it asks ``append(_:)`` whether a fragment
+/// ``SessionObserver`` uses it: it asks ``append(_:)`` whether a fragment
 /// starts a new response, and so it puts the superseded text into its own
 /// transcript row. The projection does not write the rule again.
 struct ResponseTextReducer: Sendable, Equatable {

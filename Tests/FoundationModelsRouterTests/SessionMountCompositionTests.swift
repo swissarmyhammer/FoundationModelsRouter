@@ -6,7 +6,7 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises the session mount of the router,
-/// `ToolMounting.makeSessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:tokenCounter:tracer:inlineSettleGrace:)`:
+/// `ToolMounting.makeSessionMounted(tool:sessionID:runPlane:sink:cappedToTokenLimit:tokenCounter:tracer:inlineSettleGrace:)`:
 /// the Extras mount layer, the capping layer of the router
 /// (`TokenCappingTool`) over it, and the failure-delivery decorator outermost.
 /// It also exercises the capping layer over a background envelope, and the
@@ -53,15 +53,15 @@ struct SessionMountCompositionTests {
     /// - Parameters:
     ///   - tool: The tool to mount.
     ///   - sessionID: The session of each call.
-    ///   - mailbox: The run plane of the session.
+    ///   - runPlane: The run plane of the session.
     ///   - sink: The sink of the events of each call.
     /// - Returns: The mount layer beneath the failure-delivery decorator.
     private static func makeSessionMounted(
-        _ tool: any Tool, sessionID: ULID, mailbox: RunPlane, sink: Fixtures.RecordingSink
+        _ tool: any Tool, sessionID: ULID, runPlane: RunPlane, sink: Fixtures.RecordingSink
     ) -> any Tool {
         ToolFailureDelivery.throwingTool(
             of: ToolMounting.makeSessionMounted(
-                tool: tool, sessionID: sessionID, mailbox: mailbox, sink: sink, cappedToTokenLimit: nil,
+                tool: tool, sessionID: sessionID, runPlane: runPlane, sink: sink, cappedToTokenLimit: nil,
                 tokenCounter: characterTokenCounter, inlineSettleGrace: 0
             ))
     }
@@ -71,11 +71,11 @@ struct SessionMountCompositionTests {
     @Test("a tool that declares nothing mounts run-to-completion with no timeout, and its slow call stays in band")
     func undeclaredToolMountsRunToCompletion() async throws {
         let gate = RunLatch()
-        let mailbox = RunPlane()
+        let runPlane = RunPlane()
         let sink = Fixtures.RecordingSink()
         let mounted = try #require(
             Self.makeSessionMounted(
-                Fixtures.GatedTool(gate: gate), sessionID: ULID.generate(), mailbox: mailbox, sink: sink
+                Fixtures.GatedTool(gate: gate), sessionID: ULID.generate(), runPlane: runPlane, sink: sink
             ) as? RunToCompletionRunner<MountArguments>
         )
 
@@ -86,19 +86,19 @@ struct SessionMountCompositionTests {
         }
         try await Task.sleep(for: .seconds(Fixtures.shortInterval))
         // No token was handed out: the call is still in band.
-        #expect(await mailbox.backgroundRuns().isEmpty)
+        #expect(await runPlane.backgroundRuns().isEmpty)
         await gate.open()
 
         let rendered = try await calling.value
         #expect(rendered == "gated: edit")
-        #expect(await mailbox.backgroundRuns().isEmpty)
+        #expect(await runPlane.backgroundRuns().isEmpty)
     }
 
     @Test("a tool with no stated timeout that runs with no progress completes")
     func unstatedTimeoutLetsAQuietRunComplete() async throws {
         let mounted = Self.makeSessionMounted(
             Fixtures.QuietTool(duration: Self.quietRunSeconds), sessionID: ULID.generate(),
-            mailbox: RunPlane(), sink: Fixtures.RecordingSink()
+            runPlane: RunPlane(), sink: Fixtures.RecordingSink()
         )
         let quiet = try #require(mounted as? RunToCompletionRunner<MountArguments>)
 
@@ -110,12 +110,12 @@ struct SessionMountCompositionTests {
     @Test("a tool that declares background mounts in the background layer under its own declaration, and its call is handed back as a token at once")
     func declaredToolMountsBackground() async throws {
         let gate = RunLatch()
-        let mailbox = RunPlane()
+        let runPlane = RunPlane()
         let sink = Fixtures.RecordingSink()
         let mounted = try #require(
             Self.makeSessionMounted(
                 Fixtures.DeclaredBackgroundToolRunner(gate: gate), sessionID: ULID.generate(),
-                mailbox: mailbox, sink: sink
+                runPlane: runPlane, sink: sink
             ) as? BackgroundToolRunner<MountArguments>
         )
 
@@ -124,17 +124,17 @@ struct SessionMountCompositionTests {
         let rendered = try await mounted.call(arguments: MountArguments(value: "tests"))
         let envelope = try Fixtures.decodeEnvelope(rendered)
         #expect(envelope.pending)
-        #expect(await mailbox.backgroundRuns().map(\.tool) == ["declared_background_tool"])
+        #expect(await runPlane.backgroundRuns().map(\.tool) == ["declared_background_tool"])
 
         await gate.open()
-        let terminal = try await Fixtures.settledTerminal(of: envelope.completionToken, in: mailbox)
+        let terminal = try await Fixtures.settledTerminal(of: envelope.completionToken, in: runPlane)
         #expect(terminal.detail == "background: tests")
     }
 
     @Test("two tools on one session hold their own modes: one blocks in band while the other is handed back as a token")
     func oneSessionMountsBothModes() async throws {
         let sessionID = ULID.generate()
-        let mailbox = RunPlane()
+        let runPlane = RunPlane()
         let sink = Fixtures.RecordingSink()
         let blockingGate = RunLatch()
         let backgroundingGate = RunLatch()
@@ -143,13 +143,13 @@ struct SessionMountCompositionTests {
         let blocking = try #require(
             Self.makeSessionMounted(
                 Fixtures.DeclaredRunToCompletionRunner(gate: blockingGate), sessionID: sessionID,
-                mailbox: mailbox, sink: sink
+                runPlane: runPlane, sink: sink
             ) as? RunToCompletionRunner<MountArguments>
         )
         let backgrounding = try #require(
             Self.makeSessionMounted(
                 Fixtures.DeclaredBackgroundToolRunner(gate: backgroundingGate), sessionID: sessionID,
-                mailbox: mailbox, sink: sink
+                runPlane: runPlane, sink: sink
             ) as? BackgroundToolRunner<MountArguments>
         )
 
@@ -165,7 +165,7 @@ struct SessionMountCompositionTests {
         try await Task.sleep(for: .seconds(Fixtures.shortInterval))
 
         // One run is tracked, and it is the background tool's.
-        let runs = await mailbox.backgroundRuns()
+        let runs = await runPlane.backgroundRuns()
         #expect(runs.count == 1)
         #expect(runs.first?.tool == "declared_background_tool")
 
@@ -174,7 +174,7 @@ struct SessionMountCompositionTests {
         #expect(catalogue == "declared: catalogue")
 
         await backgroundingGate.open()
-        let terminal = try await Fixtures.settledTerminal(of: envelope.completionToken, in: mailbox)
+        let terminal = try await Fixtures.settledTerminal(of: envelope.completionToken, in: runPlane)
         #expect(terminal.detail == "background: snippet")
     }
 
@@ -185,7 +185,7 @@ struct SessionMountCompositionTests {
         arguments: [nil, cappedToolOutputLimit])
     func sessionMountPutsTheDecoratorOutermost(tokenLimit: Int?) throws {
         let mounted = ToolMounting.makeSessionMounted(
-            tool: ThrowingMarkerTool(), sessionID: .generate(), mailbox: RunPlane(),
+            tool: ThrowingMarkerTool(), sessionID: .generate(), runPlane: RunPlane(),
             sink: DiscardingOperationEventSink(), cappedToTokenLimit: tokenLimit,
             tokenCounter: characterTokenCounter, inlineSettleGrace: ToolMount.defaultInlineSettleGrace)
 
@@ -198,7 +198,7 @@ struct SessionMountCompositionTests {
     @Test("a failed call through the whole session mount is a tool result")
     func sessionMountedFailureIsAToolResult() async throws {
         let mounted = ToolMounting.makeSessionMounted(
-            tool: ThrowingMarkerTool(), sessionID: .generate(), mailbox: RunPlane(),
+            tool: ThrowingMarkerTool(), sessionID: .generate(), runPlane: RunPlane(),
             sink: DiscardingOperationEventSink(), cappedToTokenLimit: nil,
             tokenCounter: characterTokenCounter, inlineSettleGrace: ToolMount.defaultInlineSettleGrace)
         let tool = try #require(mounted as? FailureDeliveringTextTool<AmbientToolArguments>)
@@ -240,7 +240,7 @@ struct SessionMountCompositionTests {
 
         await gate.open()
         for (harness, completionToken) in zip(harnesses, completionTokens) {
-            _ = try await Fixtures.settledTerminal(of: completionToken, in: harness.mailbox)
+            _ = try await Fixtures.settledTerminal(of: completionToken, in: harness.runPlane)
         }
     }
 
@@ -272,12 +272,12 @@ struct SessionMountCompositionTests {
 
     @Test("an inline result leaves nothing staged for a later prompt, and a pending run still stages its progress")
     func inlineResultWithdrawsWhatTheRunStaged() async throws {
-        let mailbox = RunPlane()
+        let runPlane = RunPlane()
         let outbox = SessionOutbox()
         // The settle period of the site is `0`, so the gated run below answers
         // with its pending envelope at once. The inline tool states its own
         // grace, so it still waits for its run.
-        let site = MountSite(sessionID: ULID.generate(), runPlane: mailbox, sink: outbox, inlineSettleGrace: 0)
+        let site = MountSite(sessionID: ULID.generate(), runPlane: runPlane, sink: outbox, inlineSettleGrace: 0)
         let gate = RunLatch()
         await gate.open()
         let inline = BackgroundToolRunner(
@@ -310,7 +310,7 @@ struct SessionMountCompositionTests {
         #expect(afterPending.events.first?.event.correlationID == pendingEnvelope.completionToken)
 
         await held.open()
-        _ = try await Fixtures.settledTerminal(of: pendingEnvelope.completionToken, in: mailbox)
+        _ = try await Fixtures.settledTerminal(of: pendingEnvelope.completionToken, in: runPlane)
     }
 
     /// The sink of a run whose post of the `.completed` terminal returns only
@@ -344,11 +344,11 @@ struct SessionMountCompositionTests {
     ///
     /// - Parameters:
     ///   - token: The completion token of the run.
-    ///   - mailbox: The run plane of the run.
+    ///   - runPlane: The run plane of the run.
     /// - Returns: `true` when the run settled before the yields were spent.
-    private static func settlesWhileTheTerminalIsHeld(_ token: String, in mailbox: RunPlane) async -> Bool {
+    private static func settlesWhileTheTerminalIsHeld(_ token: String, in runPlane: RunPlane) async -> Bool {
         await BoundedWait.poll(
-            until: { await mailbox.settledRunTokens().contains(token) }, givingUpWhen: { true })
+            until: { await runPlane.settledRunTokens().contains(token) }, givingUpWhen: { true })
     }
 
     /// The idle check of a session (``RoutedSessionActor/isIdle()``) reads the
@@ -359,13 +359,13 @@ struct SessionMountCompositionTests {
     /// latch opens, the run settles.
     @Test("the funnel of a run stages its terminal before the run plane settles the run")
     func theFunnelStagesTheTerminalBeforeTheSettlement() async throws {
-        let mailbox = RunPlane()
+        let runPlane = RunPlane()
         let release = RunLatch()
         let sink = TerminalHoldingSink(release: release)
         let gate = RunLatch()
         let run = BackgroundToolRunner(
             wrapping: Fixtures.GatedTool(gate: gate),
-            site: MountSite(sessionID: ULID.generate(), runPlane: mailbox, sink: sink, inlineSettleGrace: 0),
+            site: MountSite(sessionID: ULID.generate(), runPlane: runPlane, sink: sink, inlineSettleGrace: 0),
             timeout: nil
         )
         let envelope = try Fixtures.decodeEnvelope(try await run.call(arguments: MountArguments(value: "held")))
@@ -376,15 +376,15 @@ struct SessionMountCompositionTests {
         try await AwaitedCondition.wait(until: { await sink.heldTerminal != nil })
 
         // The latch is closed: the sink holds the terminal.
-        #expect(await Self.settlesWhileTheTerminalIsHeld(token, in: mailbox) == false)
-        #expect(await mailbox.settledRunTokens().contains(token) == false)
-        #expect(await mailbox.backgroundRuns().map(\.completionToken) == [token])
+        #expect(await Self.settlesWhileTheTerminalIsHeld(token, in: runPlane) == false)
+        #expect(await runPlane.settledRunTokens().contains(token) == false)
+        #expect(await runPlane.backgroundRuns().map(\.completionToken) == [token])
 
         await release.open()
-        let terminal = try await Fixtures.settledTerminal(of: token, in: mailbox)
+        let terminal = try await Fixtures.settledTerminal(of: token, in: runPlane)
 
-        #expect(await mailbox.settledRunTokens().contains(token))
-        #expect(await mailbox.backgroundRuns().isEmpty)
+        #expect(await runPlane.settledRunTokens().contains(token))
+        #expect(await runPlane.backgroundRuns().isEmpty)
         #expect(await sink.heldTerminal?.correlationID == terminal.correlationID)
     }
 }

@@ -191,7 +191,7 @@ struct SessionAnswerReducer {
             // its text fragments: a continuation writes its own reply, and
             // only the last one answers. Reasoning is model prose the reply
             // excludes, and the recorded-entry closes exist for consumers
-            // (like ``SessionProjection``) that key rows on durable SDK entry
+            // (like ``SessionObserver``) that key rows on durable SDK entry
             // ids. The priming report, the stall report, a background run's
             // settlement, its messages and its progress, a call's
             // attachments, the display events of a tool, a pending

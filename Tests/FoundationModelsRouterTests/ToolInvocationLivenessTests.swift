@@ -317,7 +317,7 @@ struct ToolInvocationLivenessTests {
     @Test("the projection reports runningTool while an invocation is open, and generating once it closes")
     @MainActor
     func projectionReportsRunningToolWhileAnInvocationIsOpen() {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         let open = ToolInvocationRecord(
             tool: "search", op: "search", correlationID: "token-1", sessionID: .generate(),
             openedAt: Date())
@@ -336,7 +336,7 @@ struct ToolInvocationLivenessTests {
     @Test("a background run's late close does not disturb an idle projection")
     @MainActor
     func lateCloseAfterSubmissionEndDoesNotDisturbAnIdleProjection() {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         let open = ToolInvocationRecord(
             tool: "search", op: "search", correlationID: "token-1", sessionID: .generate(),
             openedAt: Date())
@@ -353,7 +353,7 @@ struct ToolInvocationLivenessTests {
     @Test("a stale open from a prior submission does not pin the next submission's phase to runningTool")
     @MainActor
     func staleOpenFromAPriorSubmissionDoesNotPinTheNextSubmission() {
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         let staleOpen = ToolInvocationRecord(
             tool: "search", op: "search", correlationID: "token-background", sessionID: .generate(),
             openedAt: Date())
@@ -652,12 +652,12 @@ struct ToolInvocationLivenessTests {
         let sessionEvents = await fixture.session.streamSessionEvents().events
 
         // The run posts its close record and its report through awaited actor
-        // hops before its work completes, and the mailbox settles the run only
+        // hops before its work completes, and the run plane settles the run only
         // after that. So once the run has settled, both events are already
         // buffered on the stream: the settlement wait is the whole wait, and
         // no wall clock stands between the settlement and the read below.
         await gate.open()
-        _ = try await MountFixtures.settledTerminal(of: open.correlationID, in: fixture.session.mailbox)
+        _ = try await MountFixtures.settledTerminal(of: open.correlationID, in: fixture.session.runPlane)
 
         // Closing the session finishes every session-event subscription, so
         // the drain ends on its own once the buffered events are read. A

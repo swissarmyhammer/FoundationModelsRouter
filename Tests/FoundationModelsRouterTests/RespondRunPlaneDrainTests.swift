@@ -36,12 +36,12 @@ struct RespondRunPlaneDrainTests {
 
     /// A backend scripted to start background work for a set number of
     /// submissions. Each of its first `backgroundingSubmissions` submissions
-    /// tracks one fresh run on the session's own mailbox. Every later
+    /// tracks one fresh run on the session's own run plane. Every later
     /// submission tracks none. This is the shape the delivery chain ends on:
     /// a delivery that starts yet more background work, until one delivery
     /// does not.
     ///
-    /// It reaches the mailbox through the submission-scope ambient
+    /// It reaches the run plane through the submission-scope ambient
     /// ``ToolContext`` the session binds around every model call, which is
     /// the same route a tool of that submission would take.
     ///
@@ -92,8 +92,8 @@ struct RespondRunPlaneDrainTests {
                 return prompts.count
             }
             _ = try await inner.respond(to: prompt, maxTokens: maxTokens)
-            if submission <= backgroundingSubmissions, let mailbox = ToolContext.current?.runPlane {
-                let token = await releaser.track(on: mailbox)
+            if submission <= backgroundingSubmissions, let runPlane = ToolContext.current?.runPlane {
+                let token = await releaser.track(on: runPlane)
                 // The run settles on its own, beside the submission that
                 // started it, as a quick background job does.
                 let releaser = releaser
@@ -123,20 +123,20 @@ struct RespondRunPlaneDrainTests {
         }
     }
 
-    /// Tracks fake runs on a mailbox and holds each one running until
+    /// Tracks fake runs on a run plane and holds each one running until
     /// ``release(token:)`` — the controllable stand-in for background work a
     /// delivery submission starts.
     ///
-    /// A released run settles on the mailbox, and its terminal then goes to
+    /// A released run settles on the run plane, and its terminal then goes to
     /// the outbox of the session as mail, as the funnel of a background tool
     /// posts it. That mail starts the next delivery submission.
     private actor BackgroundRunReleaser {
         /// One latch per background run, keyed by the run's completion token.
         private var gates: [String: RunLatch] = [:]
 
-        /// The mailbox each run is tracked on, keyed by the run's completion
+        /// The run plane each run is tracked on, keyed by the run's completion
         /// token.
-        private var mailboxes: [String: RunPlane] = [:]
+        private var runPlanes: [String: RunPlane] = [:]
 
         /// The outbox each settled terminal goes to, or `nil` before
         /// ``deliverTerminals(to:)``.
@@ -151,13 +151,13 @@ struct RespondRunPlaneDrainTests {
 
         /// Tracks one fresh run whose body waits for ``release(token:)``.
         ///
-        /// - Parameter mailbox: The mailbox the run is tracked on.
+        /// - Parameter runPlane: The run plane the run is tracked on.
         /// - Returns: The run's completion token.
-        func track(on mailbox: RunPlane) async -> String {
+        func track(on runPlane: RunPlane) async -> String {
             let gate = RunLatch()
-            let token = await trackFakeRun(on: mailbox, latch: gate)
+            let token = await trackFakeRun(on: runPlane, latch: gate)
             gates[token] = gate
-            mailboxes[token] = mailbox
+            runPlanes[token] = runPlane
             return token
         }
 
@@ -166,10 +166,10 @@ struct RespondRunPlaneDrainTests {
         ///
         /// - Parameter token: The run's completion token.
         func release(token: String) async {
-            guard let gate = gates.removeValue(forKey: token), let mailbox = mailboxes.removeValue(forKey: token)
+            guard let gate = gates.removeValue(forKey: token), let runPlane = runPlanes.removeValue(forKey: token)
             else { return }
             await gate.open()
-            if case .settled(let terminal) = await mailbox.wait(completionToken: token, seconds: nil) {
+            if case .settled(let terminal) = await runPlane.wait(completionToken: token, seconds: nil) {
                 await outbox?.post(event: terminal)
             }
         }
@@ -237,11 +237,11 @@ struct RespondRunPlaneDrainTests {
     /// How long a test waits for a run it has already released to settle —
     /// generous, because the latch is opened first and the wait only has to
     /// observe an already-finishing run.
-    private static let mailboxWaitTimeoutSeconds: Double = 30
+    private static let runPlaneWaitTimeoutSeconds: Double = 30
 
     /// The no-progress timeout the timed-out run's tool declares: short, so
     /// the run settles as ``OperationOutcome/timedOut`` well inside the
-    /// mailbox wait, and its latch never opens before then.
+    /// run plane wait, and its latch never opens before then.
     private static let fixtureTimeoutSeconds: TimeInterval = 0.05
 
     /// How many submissions start a background run in the no-round-count
@@ -277,13 +277,13 @@ struct RespondRunPlaneDrainTests {
     ///   - session: The session whose runs settle.
     ///   - gates: The latches the background runs' bodies are waiting on.
     private static func releaseBackgroundRuns(on session: any RoutedSession, opening gates: [RunLatch]) async {
-        let tokens: [String] = await session.mailbox.backgroundRuns().map(\.completionToken)
+        let tokens: [String] = await session.runPlane.backgroundRuns().map(\.completionToken)
         for gate in gates {
             await gate.open()
         }
         for token in tokens {
-            _ = await session.mailbox.wait(
-                completionToken: token, seconds: mailboxWaitTimeoutSeconds)
+            _ = await session.runPlane.wait(
+                completionToken: token, seconds: runPlaneWaitTimeoutSeconds)
         }
     }
 
@@ -297,33 +297,33 @@ struct RespondRunPlaneDrainTests {
     ///
     /// - Parameters:
     ///   - count: How many background runs to wait for.
-    ///   - session: The session whose mailbox is observed.
+    ///   - session: The session whose run plane is observed.
     /// - Returns: The background runs' completion tokens, in tracking order.
     /// - Throws: ``ConditionNeverHeld`` when the `.timeLimit` of the suite
     ///   ended the wait.
     private static func backgroundTokens(
         atLeast count: Int, on session: any RoutedSession
     ) async throws -> [String] {
-        try await AwaitedCondition.wait(until: { await session.mailbox.backgroundRuns().count >= count })
-        return await session.mailbox.backgroundRuns().map(\.completionToken)
+        try await AwaitedCondition.wait(until: { await session.runPlane.backgroundRuns().count >= count })
+        return await session.runPlane.backgroundRuns().map(\.completionToken)
     }
 
     /// Waits for the run `token` names to settle, and reports its terminal
     /// event.
     ///
     /// The wait is ``RunPlane/wait(completionToken:seconds:)`` with no
-    /// expiry: the mailbox resumes it when the run settles, and a
+    /// expiry: the run plane resumes it when the run settles, and a
     /// cancellation, which the `.timeLimit` of the suite sends, ends it
     /// early.
     ///
     /// - Parameters:
     ///   - token: The run's completion token.
-    ///   - session: The session whose mailbox tracks the run.
+    ///   - session: The session whose run plane tracks the run.
     /// - Returns: The run's terminal event.
     /// - Throws: ``SignalNeverArrived`` when the wait ended and the run did
     ///   not settle.
     private static func settledTerminal(of token: String, on session: any RoutedSession) async throws -> OperationEvent {
-        let outcome = await session.mailbox.wait(completionToken: token, seconds: nil)
+        let outcome = await session.runPlane.wait(completionToken: token, seconds: nil)
         guard case .settled(let terminal) = outcome else {
             Issue.record("expected the run to settle, got \(outcome)")
             throw SignalNeverArrived()
@@ -410,11 +410,11 @@ struct RespondRunPlaneDrainTests {
         let tokens = try await Self.backgroundTokens(atLeast: 2, on: session)
         #expect(tokens.count == 2)
         await firstGate.open()
-        _ = await session.mailbox.wait(
-            completionToken: tokens[0], seconds: Self.mailboxWaitTimeoutSeconds)
+        _ = await session.runPlane.wait(
+            completionToken: tokens[0], seconds: Self.runPlaneWaitTimeoutSeconds)
         await secondGate.open()
-        _ = await session.mailbox.wait(
-            completionToken: tokens[1], seconds: Self.mailboxWaitTimeoutSeconds)
+        _ = await session.runPlane.wait(
+            completionToken: tokens[1], seconds: Self.runPlaneWaitTimeoutSeconds)
 
         // Each run's own output reached the model, in a delivery submission
         // the pump started with no caller call — never only the pending
@@ -428,7 +428,7 @@ struct RespondRunPlaneDrainTests {
 
         // Nothing is left tracked, and the model was never asked to poll: two
         // tool calls, all in the first submission.
-        #expect(await session.mailbox.backgroundRuns().isEmpty)
+        #expect(await session.runPlane.backgroundRuns().isEmpty)
         #expect(backend.toolCallCount == 2)
     }
 
@@ -508,7 +508,7 @@ struct RespondRunPlaneDrainTests {
             })
         #expect(
             await BoundedWait.conditionReached("the pump ending with no run left") {
-                let runs = await session.mailbox.backgroundRuns()
+                let runs = await session.runPlane.backgroundRuns()
                 let pumpRunning = await session.isPumpRunning
                 return runs.isEmpty && !pumpRunning
             })
@@ -542,16 +542,16 @@ struct RespondRunPlaneDrainTests {
 
         // The stream finished while both runs were still in flight — that is
         // the feature on this surface — and no delivery submission ran.
-        #expect(await session.mailbox.backgroundRuns().count == 2)
+        #expect(await session.runPlane.backgroundRuns().count == 2)
         #expect(backend.receivedPrompts.count == 1)
 
         // Settle the background runs so no background work outlives the test.
-        let tokens: [String] = await session.mailbox.backgroundRuns().map(\.completionToken)
+        let tokens: [String] = await session.runPlane.backgroundRuns().map(\.completionToken)
         await firstGate.open()
         await secondGate.open()
         for token in tokens {
-            _ = await session.mailbox.wait(
-                completionToken: token, seconds: Self.mailboxWaitTimeoutSeconds)
+            _ = await session.runPlane.wait(
+                completionToken: token, seconds: Self.runPlaneWaitTimeoutSeconds)
         }
     }
 
@@ -616,7 +616,7 @@ struct RespondRunPlaneDrainTests {
         // nothing to stop, and the run stays running, exactly as it was.
         #expect(await BoundedWait.pumpStops(on: session))
         #expect(await session.stopRunningWork() == false)
-        #expect(await session.mailbox.backgroundRuns().count == 1)
+        #expect(await session.runPlane.backgroundRuns().count == 1)
 
         await Self.releaseBackgroundRuns(on: session, opening: [gate])
     }
@@ -664,7 +664,7 @@ struct RespondRunPlaneDrainTests {
         // The cancel of a caller does not stop the answer, and it does not
         // sweep. The run that the submission started is still running,
         // exactly as it was.
-        #expect(await session.mailbox.backgroundRuns().count == 1)
+        #expect(await session.runPlane.backgroundRuns().count == 1)
 
         await Self.releaseBackgroundRuns(on: session, opening: [gate])
     }

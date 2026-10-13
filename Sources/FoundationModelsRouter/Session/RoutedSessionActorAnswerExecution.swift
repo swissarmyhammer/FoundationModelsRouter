@@ -257,8 +257,9 @@ extension RoutedSessionActor {
     /// recording of the attempt ends the submission.
     ///
     /// A failed attempt is recorded, and then
-    /// ``recoverFailedAttempt(from:grammar:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetries:_:)``
-    /// runs the attempt again when a recovery applies: a rejected tool call
+    /// ``recoverFailedAttempt(_:carrying:sessionText:settings:_:)``
+    /// runs the attempt again when a recovery applies
+    /// (``plannedRecovery(after:retryPrompt:settings:)``): a rejected tool call
     /// goes back to the model, and a recoverable context overflow compacts to the
     /// target ``OverflowRetryTarget`` chooses and retries once when
     /// `allowOverflowRetry` is set.
@@ -277,15 +278,20 @@ extension RoutedSessionActor {
     ///
     /// - Parameters:
     ///   - grammar: The grammar in force for this answer.
-    ///   - deliveredMail: The mail this attempt delivers, in take order.
-    ///   - ownPrompt: This attempt's own prompt text.
+    ///   - deliveredMail: The mail this attempt delivers, in take order. For a
+    ///     continuation, it is the user-type mail that a retry carries from
+    ///     the failed attempt (``recoverFailedAttempt(_:carrying:sessionText:settings:_:)``),
+    ///     and it is empty for the other continuations.
+    ///   - ownPrompt: This attempt's own prompt text, or `nil` when the
+    ///     prompt of the attempt is only the render of its mail.
     ///   - responseTokenCeiling: The token ceiling `body` gives the backend, and the ceiling the caller named.
     ///   - onEvent: A sink for the ``SessionEvent``s of this answer, or `nil`.
     ///   - allowOverflowRetry: Whether a recoverable context overflow compacts and retries once.
     ///   - rejectedCallRetries: How many rejected tool calls this answer has already sent back to the model. The first attempt of an answer has sent none.
     ///   - isContinuation: Whether this attempt is a continuation submission
     ///     of the answer. A continuation first takes the messages that wait
-    ///     (``takeMailJoiningTheAnswer()``), and they join `deliveredMail`.
+    ///     (``takeMailJoiningTheAnswer()``), and they join `deliveredMail`
+    ///     after the mail that it already holds.
     ///     The prompt of a submission is the render of its mail in take order
     ///     (``ContextRenderer/promptText(delivering:followedBy:)``), then
     ///     `ownPrompt`. The first submission of an answer that delivers
@@ -302,7 +308,7 @@ extension RoutedSessionActor {
     func runSubmission(
         grammar: Grammar?,
         deliveredMail: [Mail],
-        ownPrompt: String,
+        ownPrompt: String?,
         responseTokenCeiling: ResponseTokenCeiling,
         onEvent: ((SessionEvent) -> Void)? = nil,
         allowOverflowRetry: Bool,
@@ -325,9 +331,7 @@ extension RoutedSessionActor {
             // With user-type mail, `ownPrompt` is the text of that mail, and
             // the render of the mail already holds it.
             let sessionText = deliveredMail.contains { !$0.isRunMail } ? nil : ownPrompt
-            return try await runOpenedSubmission(
-                attempt, deliveredMail: deliveredMail, ownPrompt: ownPrompt,
-                composedPrompt: ContextRenderer.promptText(delivering: deliveredMail, followedBy: sessionText), body)
+            return try await runOpenedSubmission(attempt, deliveredMail: deliveredMail, sessionText: sessionText, body)
         }
         let joining = takeMailJoiningTheAnswer()
         await notifySubmissionBoundaryTools()
@@ -339,10 +343,10 @@ extension RoutedSessionActor {
                 onEvent?(.mailDelivered(mailID))
             }
             beginSubmission(cause: .continuation, mailIds: joiningIds)
-            let attemptMail = deliveredMail + joining
+            // The mail that a retry carries was taken first, so it comes
+            // first: the records and the render keep the take order.
             return try await runOpenedSubmission(
-                attempt, deliveredMail: attemptMail, ownPrompt: ownPrompt,
-                composedPrompt: ContextRenderer.promptText(delivering: attemptMail, followedBy: ownPrompt), body)
+                attempt, deliveredMail: deliveredMail + joining, sessionText: ownPrompt, body)
         }
     }
 
@@ -360,7 +364,7 @@ extension RoutedSessionActor {
 
     /// The settings of one submission attempt that
     /// ``runSubmission(grammar:deliveredMail:ownPrompt:responseTokenCeiling:onEvent:allowOverflowRetry:rejectedCallRetries:isContinuation:reasoningOff:_:)``
-    /// gives to ``runOpenedSubmission(_:deliveredMail:ownPrompt:composedPrompt:_:)``.
+    /// gives to ``runOpenedSubmission(_:deliveredMail:sessionText:_:)``.
     private struct SubmissionAttemptState {
         /// The grammar in force for this answer.
         let grammar: Grammar?
@@ -392,18 +396,18 @@ extension RoutedSessionActor {
     /// - Parameters:
     ///   - settings: The settings of the attempt.
     ///   - deliveredMail: The mail this attempt delivers, in take order.
-    ///   - ownPrompt: This attempt's own prompt text. A recovery that runs
-    ///     the attempt again sends it again.
-    ///   - composedPrompt: The prompt the model reads: the render of
-    ///     `deliveredMail` (``ContextRenderer/promptText(delivering:followedBy:)``).
+    ///   - sessionText: The text that the session adds after the mail, or
+    ///     `nil`. The prompt the model reads is the render of
+    ///     `deliveredMail`, then this text
+    ///     (``ContextRenderer/promptText(delivering:followedBy:)``). A
+    ///     recovery that runs the attempt again sends this text again.
     ///   - body: The model work to run.
     /// - Returns: The response text `body` produced.
     /// - Throws: Whatever `body` throws, or the retry's own outcome when a retry ran.
     private func runOpenedSubmission(
         _ settings: SubmissionAttemptState,
         deliveredMail: [Mail],
-        ownPrompt: String,
-        composedPrompt: String,
+        sessionText: String?,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
         let grammar = settings.grammar
@@ -412,6 +416,7 @@ extension RoutedSessionActor {
         let allowOverflowRetry = settings.allowOverflowRetry
         let rejectedCallRetries = settings.rejectedCallRetries
         let reasoningOff = settings.reasoningOff
+        let composedPrompt = ContextRenderer.promptText(delivering: deliveredMail, followedBy: sessionText)
 
         let started = Date()
         let usageBefore = backend.usageTokenCounts()
@@ -482,14 +487,23 @@ extension RoutedSessionActor {
                 return try await continueAfterWatchStop(watchStop, attempt: attempt, body: body)
             }
             recordSubmissionError(error)
+            // The retry delivers the user-type mail of this attempt again, and
+            // its join takes the run mail again. So only the prompt of the
+            // retry records that mail, and the transcript holds each mail one
+            // time, on the prompt that the model reads at last.
+            let carriedMail = deliveredMail.filter { !$0.isRunMail }
+            let recovery = plannedRecovery(
+                after: error,
+                retryPrompt: ContextRenderer.promptText(delivering: carriedMail, followedBy: sessionText),
+                settings: settings)
             await recordFailedSubmission(
                 grammar: grammar, since: started, usageBefore: usageBefore,
-                responseTokenCeiling: responseTokenCeiling.resolved, deliveredMail: deliveredMail, onEvent: onEvent)
+                responseTokenCeiling: responseTokenCeiling.resolved,
+                deliveredMail: recovery == nil ? deliveredMail : [], onEvent: onEvent)
+            guard let recovery else { throw error }
+            requeueUndeliveredRunMail(deliveredMail)
             return try await recoverFailedAttempt(
-                from: error, grammar: grammar, ownPrompt: ownPrompt,
-                responseTokenCeiling: responseTokenCeiling, onEvent: onEvent,
-                allowOverflowRetry: allowOverflowRetry, rejectedCallRetries: rejectedCallRetries, body
-            )
+                recovery, carrying: carriedMail, sessionText: sessionText, settings: settings, body)
         }
         // Outside the `do`: the attempt is recorded, so a failure of the
         // compaction or of the next attempt must not record it a second time.
@@ -532,8 +546,19 @@ extension RoutedSessionActor {
             isContinuation: true, reasoningOff: reasoningOff, body)
     }
 
-    /// Runs the attempt again after a failed attempt that one of the two
-    /// recoveries can mend, or throws the error again.
+    /// A recovery that runs a failed attempt again
+    /// (``plannedRecovery(after:retryPrompt:settings:)``).
+    private enum AttemptRecovery {
+        /// The rejected tool call goes back to the model.
+        case rejectedCall(RejectedToolCallRetry)
+
+        /// The context overflow compacts to the target, and the attempt runs
+        /// one more time.
+        case contextOverflow(OverflowRetryTarget, budget: TokenBudget)
+    }
+
+    /// The recovery that mends a failed attempt, or `nil` when no recovery
+    /// applies and the error goes to the caller.
     ///
     /// - A rejected tool call (``RejectedToolCallRetry``) goes back to the
     ///   model: the next attempt sends the failed prompt again, with a tool
@@ -551,62 +576,79 @@ extension RoutedSessionActor {
     ///   `error` reaches the caller. When the caller named no ceiling, the
     ///   target is the configured target of the budget.
     ///
-    /// The caller has already recorded the failed attempt, so the retry
-    /// carries none of its mail. The retry is a continuation: it carries the
-    /// messages that wait when it starts.
+    /// The plan comes before the record of the failed attempt, because the
+    /// record of the mail goes on the prompt of the retry when a retry runs.
     ///
     /// - Parameters:
     ///   - error: The error the failed attempt threw.
-    ///   - grammar: The grammar in force for this answer.
-    ///   - ownPrompt: The prompt text of the failed attempt.
-    ///   - responseTokenCeiling: The token ceiling `body` gives the backend, and the ceiling the caller named.
-    ///   - onEvent: A sink for the ``SessionEvent``s of this answer, or `nil`.
-    ///   - allowOverflowRetry: Whether a recoverable context overflow compacts and retries once.
-    ///   - rejectedCallRetries: How many rejected tool calls this answer has already sent back to the model.
+    ///   - retryPrompt: The prompt of the retry with no joining mail: the
+    ///     render of the mail it carries, then the text of the session.
+    ///   - settings: The settings of the failed attempt.
+    /// - Returns: The recovery, or `nil`.
+    private func plannedRecovery(
+        after error: any Error, retryPrompt: String, settings: SubmissionAttemptState
+    ) -> AttemptRecovery? {
+        if let retry = RejectedToolCallRetry(error: error) {
+            return .rejectedCall(retry)
+        }
+        guard settings.allowOverflowRetry, let budget = autoCompactionBudget, Self.isRecoverableContextOverflow(error)
+        else {
+            return nil
+        }
+        let retryTarget = overflowRetryTarget(
+            retryPrompt: retryPrompt, requestedResponseTokenCeiling: settings.responseTokenCeiling.requested,
+            budget: budget)
+        retryTarget.log(sessionID: id, to: sessionLogger(.overflowRetry))
+        guard retryTarget.leavesRoom else { return nil }
+        return .contextOverflow(retryTarget, budget: budget)
+    }
+
+    /// Runs the attempt again after a failed attempt that `recovery` mends.
+    ///
+    /// The caller has already recorded the failed attempt with no record of
+    /// its mail, and has put its run mail back in the queue. The retry is a
+    /// continuation: it carries the user-type mail of the failed attempt
+    /// (`carriedMail`), and it takes the mail that waits when it starts, the
+    /// run mail of the failed attempt too. Its prompt renders all of that
+    /// mail, and its `.prompt` entry records it, so each mail has one
+    /// delivered record, on the prompt that the model reads at last.
+    ///
+    /// - Parameters:
+    ///   - recovery: The recovery that applies.
+    ///   - carriedMail: The user-type mail of the failed attempt, in take order.
+    ///   - sessionText: The text that the session added after the mail of
+    ///     the failed attempt, or `nil`.
+    ///   - settings: The settings of the failed attempt.
     ///   - body: The model work to run.
     /// - Returns: The response text of the retry.
-    /// - Throws: `error` when no recovery applies, or the retry's own outcome.
+    /// - Throws: What the compaction or the retry throws.
     private func recoverFailedAttempt(
-        from error: any Error,
-        grammar: Grammar?,
-        ownPrompt: String,
-        responseTokenCeiling: ResponseTokenCeiling,
-        onEvent: ((SessionEvent) -> Void)?,
-        allowOverflowRetry: Bool,
-        rejectedCallRetries: Int,
+        _ recovery: AttemptRecovery,
+        carrying carriedMail: [Mail],
+        sessionText: String?,
+        settings: SubmissionAttemptState,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
-        if let retry = RejectedToolCallRetry(error: error) {
-            let ordinal = rejectedCallRetries + 1
+        switch recovery {
+        case .rejectedCall(let retry):
+            let ordinal = settings.rejectedCallRetries + 1
             retry.logRetry(sessionID: id, ordinal: ordinal, to: sessionLogger(.rejectedToolCall))
             return try await runSubmission(
-                grammar: grammar, deliveredMail: [], ownPrompt: retry.prompt(retrying: ownPrompt),
-                responseTokenCeiling: responseTokenCeiling, onEvent: onEvent,
-                allowOverflowRetry: allowOverflowRetry,
+                grammar: settings.grammar, deliveredMail: carriedMail, ownPrompt: retry.prompt(retrying: sessionText),
+                responseTokenCeiling: settings.responseTokenCeiling, onEvent: settings.onEvent,
+                allowOverflowRetry: settings.allowOverflowRetry,
                 rejectedCallRetries: ordinal, isContinuation: true, body
             )
+        case .contextOverflow(let retryTarget, let budget):
+            try await compactInsideAnswer(
+                prompt: autoCompactionPrompt, budget: retryTarget.budget(lowering: budget), reason: .contextOverflow,
+                overflowRetryTarget: retryTarget)
+            return try await runSubmission(
+                grammar: settings.grammar, deliveredMail: carriedMail, ownPrompt: sessionText,
+                responseTokenCeiling: settings.responseTokenCeiling, onEvent: settings.onEvent,
+                allowOverflowRetry: false, rejectedCallRetries: settings.rejectedCallRetries, isContinuation: true, body
+            )
         }
-
-        guard allowOverflowRetry, let budget = autoCompactionBudget, Self.isRecoverableContextOverflow(error) else {
-            throw error
-        }
-
-        let retryTarget = overflowRetryTarget(
-            retryPrompt: ownPrompt, requestedResponseTokenCeiling: responseTokenCeiling.requested, budget: budget)
-        retryTarget.log(sessionID: id, to: sessionLogger(.overflowRetry))
-        guard retryTarget.leavesRoom else {
-            throw error
-        }
-
-        try await compactInsideAnswer(
-            prompt: autoCompactionPrompt, budget: retryTarget.budget(lowering: budget), reason: .contextOverflow,
-            overflowRetryTarget: retryTarget)
-
-        return try await runSubmission(
-            grammar: grammar, deliveredMail: [], ownPrompt: ownPrompt,
-            responseTokenCeiling: responseTokenCeiling, onEvent: onEvent,
-            allowOverflowRetry: false, rejectedCallRetries: rejectedCallRetries, isContinuation: true, body
-        )
     }
 
     /// Records a submission that ended in a failure: the transcript diff, the
@@ -714,7 +756,7 @@ extension RoutedSessionActor {
     ///
     /// Cancelling ``inFlightModelCall`` removes a submission that still waits
     /// for the worker, or unwinds `body` and every in-band tool call under it.
-    /// A background run keeps running in the session's ``mailbox``. The
+    /// A background run keeps running in the session's ``runPlane``. The
     /// recording of the submission runs after this returns or throws and is
     /// never cancelled.
     ///
@@ -744,7 +786,7 @@ extension RoutedSessionActor {
         }
         // The host-side ambient binding (task ^k4nygqa): every backend respond()/stream
         // call runs under a ``ToolContext`` carrying this session's
-        // identity, its mailbox, and its own `SessionOutbox` as the
+        // identity, its run plane, and its own `SessionOutbox` as the
         // upstream sink — so a tool Apple's runtime invokes from inside the
         // model call sees the same ambient capabilities the mounting
         // engine binds per call. Whether the runtime actually propagates
@@ -759,7 +801,7 @@ extension RoutedSessionActor {
         let cancellationProbe = ModelCallCancellationProbe()
         let ambientToolContext = ToolContext(
             sessionID: id,
-            runPlane: mailbox,
+            runPlane: runPlane,
             sink: outbox,
             tool: Self.submissionBindingToolStamp,
             op: Self.submissionBindingOpStamp,
@@ -967,8 +1009,9 @@ extension RoutedSessionActor {
     /// the configured target of `budget`.
     ///
     /// The retry's prompt is measured with this session's ``tokenCounter``,
-    /// the tokenizer of its model. The retry delivers no mail of its own, so
-    /// its composed prompt is `retryPrompt` unchanged.
+    /// the tokenizer of its model. `retryPrompt` is the render of the mail
+    /// that the retry carries, then the text of the session. Mail that
+    /// joins the retry when it starts is not in it.
     ///
     /// - Parameters:
     ///   - retryPrompt: The prompt text the retry sends.

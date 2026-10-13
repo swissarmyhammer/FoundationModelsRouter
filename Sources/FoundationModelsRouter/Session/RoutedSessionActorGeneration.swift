@@ -325,7 +325,9 @@ extension RoutedSessionActor {
     /// When the event is the terminal event of a mail and the output sent it,
     /// the transcript records the terminal event of each mail that it ends
     /// (``recordMail(_:)``). This is the one place where the output sends a
-    /// terminal event, so each terminal event gets one record.
+    /// terminal event, so each terminal event gets one record, and each mail
+    /// that ends with ``SessionEvent/cancelled(_:)`` adds one to the counter
+    /// of cancelled mail (``RouterMetrics/recordCancelledMail(_:)``).
     ///
     /// - Parameters:
     ///   - event: The event to send.
@@ -338,7 +340,9 @@ extension RoutedSessionActor {
     ) {
         let ended = outputHub.emit(
             SessionOutput(origin: OriginContext.current, event: event), failure: error, audience: audience)
-        recordMail(Self.terminalRecords(of: event, ending: ended))
+        let records = Self.terminalRecords(of: event, ending: ended)
+        recordMail(records)
+        sessionMetrics.recordCancelledMail(records.filter(\.isCancellation).count)
     }
 
     /// Sends the terminal event ``SessionEvent/cancelled(_:)`` of each mail

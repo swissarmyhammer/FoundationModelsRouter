@@ -238,6 +238,36 @@ struct CompactionTracingTests {
         #expect(span.failureType == "\(StubSessionBackend.StubError.self)")
     }
 
+    // MARK: - The reason and the signal
+
+    @Test("a requested compaction writes its reason and the id of its signal on its span")
+    func requestedCompactionSpanCarriesItsReasonAndSignal() async throws {
+        let tracer = InMemoryTracer()
+        let (session, _, _) = try await AutoCompactionFixtures.makeTriggeredSession(
+            budget: nil, tracer: tracer, tempDirPrefix: Self.tempDirPrefix)
+
+        let signal = session.compact(budget: AutoCompactionFixtures.fixedBudget)
+        _ = try await session.awaitTerminal(of: signal)
+
+        let span = try Self.singleCompactionSpan(reportedTo: tracer)
+        #expect(span.attributes.get("compaction.reason") == .string(CompactionReason.requested.rawValue))
+        #expect(span.attributes.get("signal.id") == .string(signal.description))
+    }
+
+    @Test("an automatic compaction writes its reason and the id of its signal on its span")
+    @MainActor
+    func automaticCompactionSpanCarriesItsReasonAndSignal() async throws {
+        let tracer = InMemoryTracer()
+        let (session, _, _) = try await AutoCompactionFixtures.makeTriggeredSession(
+            budget: AutoCompactionFixtures.fixedBudget, tracer: tracer, tempDirPrefix: Self.tempDirPrefix)
+
+        let result = try Self.compactionResult(in: try await Self.drive(session, prompt: Self.triggeringPrompt))
+
+        let span = try Self.singleCompactionSpan(reportedTo: tracer)
+        #expect(span.attributes.get("compaction.reason") == .string(CompactionReason.triggerReached.rawValue))
+        #expect(span.attributes.get("signal.id") == .string(result.id))
+    }
+
     @Test("a compaction with no tracer injected and no backend bootstrapped compacts normally")
     func untracedCompactionRunsNormally() async throws {
         let (session, _, _) = try await AutoCompactionFixtures.makeTriggeredSession(

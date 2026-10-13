@@ -277,8 +277,8 @@ struct SubmissionBoundaryToolTests {
         _ = try await session.respond(to: "hello")
         let latch = RunLatch()
         await latch.open()
-        let token = await trackFakeRun(on: session.mailbox, latch: latch, detailOnSettle: Self.settledRunDetail)
-        let terminal = try await MountFixtures.settledTerminal(of: token, in: session.mailbox)
+        let token = await trackFakeRun(on: session.runPlane, latch: latch, detailOnSettle: Self.settledRunDetail)
+        let terminal = try await MountFixtures.settledTerminal(of: token, in: session.runPlane)
 
         // No caller asks: the terminal of the settled run is mail, and the
         // mail itself starts the next submission.

@@ -340,7 +340,7 @@ struct NestedGenerationReentryTests {
     private static let answerTimeout = Duration.seconds(30)
 
     /// The upper bound one background run is allowed before it settles — the
-    /// same bound as ``answerTimeout``, in the unit the mailbox's wait takes.
+    /// same bound as ``answerTimeout``, in the unit the wait of the run plane takes.
     private static let runSettlementTimeoutSeconds = TimeInterval(answerTimeout.components.seconds)
 
     /// The mount a fixture declares to be a background tool: every call hands
@@ -503,13 +503,13 @@ struct NestedGenerationReentryTests {
     ///
     /// - Parameters:
     ///   - completionToken: The background run's completion token.
-    ///   - session: The session whose mailbox tracks the run.
+    ///   - session: The session whose run plane tracks the run.
     ///   - run: What the run is called in the report.
     /// - Returns: The run's terminal event, or `nil`.
     private static func settledTerminal(
         of completionToken: String, on session: any RoutedSession, describing run: String
     ) async -> OperationEvent? {
-        let outcome = await session.mailbox.wait(
+        let outcome = await session.runPlane.wait(
             completionToken: completionToken, seconds: runSettlementTimeoutSeconds)
         switch outcome {
         case .settled(let terminal):

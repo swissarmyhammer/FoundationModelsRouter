@@ -1,3 +1,4 @@
+import FoundationModelsExtras
 import Metrics
 
 /// Records the metrics of the router through swift-metrics, with the names
@@ -102,18 +103,46 @@ struct RouterMetrics: Sendable {
         Gauge(label: RouterTelemetry.MetricName.residentBytes, factory: factory).record(bytes)
     }
 
-    /// Records the count of all mail that waits in the mail queue of a
-    /// session, of all kinds.
+    /// Records the count of the mail that waits in the mail queue of a
+    /// session, one value for each mail kind.
     ///
-    /// The metric is a recorder (a distribution) with no dimension, and not a
-    /// gauge. A session dimension would make a label set with no bound, and
-    /// a gauge with no dimension would hold only the value of the session
-    /// that wrote last. The distribution of the depths of all the sessions
-    /// has neither problem.
+    /// The metric is a recorder (a distribution) with the one dimension
+    /// `mail.kind`, and not a gauge. A session dimension would make a label
+    /// set with no bound, and a gauge would hold only the value of the
+    /// session that wrote last. The distribution of the depths of all the
+    /// sessions has neither problem. Each call records each kind of
+    /// `MailKind`, also a kind with no waiting mail (value 0), so each
+    /// distribution has one value for each record call.
     ///
-    /// - Parameter waiting: The count of all queued mail, of all kinds.
-    func recordSessionQueueDepth(waiting: Int) {
-        Recorder(label: RouterTelemetry.MetricName.sessionQueueDepth, factory: factory).record(waiting)
+    /// - Parameter depthByKind: The count of the queued mail of each kind. A
+    ///   kind with no key has no waiting mail.
+    func recordMailQueueDepth(_ depthByKind: [MailKind: Int]) {
+        for kind in MailKind.allCases {
+            Recorder(
+                label: RouterTelemetry.MetricName.sessionQueueDepth,
+                dimensions: [(RouterTelemetry.MetricDimension.mailKind, kind.rawValue)], factory: factory
+            ).record(depthByKind[kind, default: 0])
+        }
+    }
+
+    /// Records the duration of one pause of the mail queue of a session for
+    /// a compaction: from the pause to the resume. The timer has no
+    /// dimension.
+    ///
+    /// - Parameter duration: How long the queue was paused.
+    func recordMailQueuePause(_ duration: Duration) {
+        Metrics.Timer(label: RouterTelemetry.MetricName.mailQueuePauseDuration, factory: factory)
+            .record(duration: duration)
+    }
+
+    /// Counts the mail that ended with the terminal event
+    /// ``SessionEvent/cancelled(_:)``. The counter has no dimension.
+    ///
+    /// - Parameter count: How many mail ended so. A call with `0` records
+    ///   nothing.
+    func recordCancelledMail(_ count: Int) {
+        guard count > 0 else { return }
+        Counter(label: RouterTelemetry.MetricName.mailCancelled, factory: factory).increment(by: count)
     }
 
     /// Sets the gauge of the submissions that wait in the generation queue of

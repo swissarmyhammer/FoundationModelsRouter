@@ -78,16 +78,16 @@ struct SessionRunPlaneTests {
         let counter = CancelCounter()
         let latchA = RunLatch()
         let latchB = RunLatch()
-        let tokenA = await trackFakeRun(on: session.mailbox, latch: latchA, counter: counter)
-        let tokenB = await trackFakeRun(on: session.mailbox, latch: latchB, counter: counter)
+        let tokenA = await trackFakeRun(on: session.runPlane, latch: latchA, counter: counter)
+        let tokenB = await trackFakeRun(on: session.runPlane, latch: latchB, counter: counter)
 
         let elicitationId = ULID.generate()
         let rejected = AnswerDrivenRun(waitingFor: "the elicitation \(elicitationId) swept by close()") {
-            await session.mailbox.awaitAnswer(to: PendingElicitationFixtures.formRequest(elicitationId: elicitationId))
+            await session.runPlane.awaitAnswer(to: PendingElicitationFixtures.formRequest(elicitationId: elicitationId))
         }
         #expect(
             await PendingElicitationFixtures.eventually {
-                await session.mailbox.pendingElicitationIds() == [elicitationId]
+                await session.runPlane.pendingElicitationIds() == [elicitationId]
             })
 
         await session.close()
@@ -95,8 +95,8 @@ struct SessionRunPlaneTests {
         // Each background run's canceler ran per its kind's semantics.
         #expect(await counter.count == 2)
         // The run plane is empty: no background runs, no pending elicitations.
-        #expect(await session.mailbox.backgroundRuns().isEmpty)
-        #expect(await session.mailbox.pendingElicitationIds().isEmpty)
+        #expect(await session.runPlane.backgroundRuns().isEmpty)
+        #expect(await session.runPlane.pendingElicitationIds().isEmpty)
         // The pending elicitation was rejected.
         #expect(try await rejected.deliveredAnswer() == .cancel)
 
@@ -129,7 +129,7 @@ struct SessionRunPlaneTests {
 
         // A swept token's wait() reports the settled terminal event rather
         // than hanging or claiming the token is unknown.
-        let sweptWait = await session.mailbox.wait(completionToken: tokenA, seconds: Self.waitDeadlineSeconds)
+        let sweptWait = await session.runPlane.wait(completionToken: tokenA, seconds: Self.waitDeadlineSeconds)
         let settledTerminal: OperationEvent? = if case .settled(let terminal) = sweptWait { terminal } else { nil }
         let terminal = try #require(settledTerminal, "expected .settled after sweep, got \(sweptWait)")
         #expect(terminal.correlationID == tokenA)
@@ -137,7 +137,7 @@ struct SessionRunPlaneTests {
 
     @Test("close() on a session with nothing tracked journals nothing at all — not even the session meta line")
     @MainActor
-    func closeWithEmptyMailboxIsNoOp() async throws {
+    func closeWithEmptyRunPlaneIsNoOp() async throws {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder)
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -160,8 +160,8 @@ struct SessionRunPlaneTests {
         let counter = CancelCounter()
         let latchA = RunLatch()
         let latchB = RunLatch()
-        _ = await trackFakeRun(on: session.mailbox, latch: latchA, counter: counter)
-        _ = await trackFakeRun(on: session.mailbox, latch: latchB, counter: counter)
+        _ = await trackFakeRun(on: session.runPlane, latch: latchA, counter: counter)
+        _ = await trackFakeRun(on: session.runPlane, latch: latchB, counter: counter)
 
         // Two concurrent closes, then a third sequential one.
         async let firstClose: Void = session.close()
@@ -193,7 +193,7 @@ struct SessionRunPlaneTests {
         let session = profile1.standard.makeSession()
 
         let latch = RunLatch()
-        let token = await trackFakeRun(on: session.mailbox, latch: latch)
+        let token = await trackFakeRun(on: session.runPlane, latch: latch)
         await session.close()
 
         // "Tear down" and restore under a fresh process with no caller setup
@@ -225,23 +225,23 @@ struct SessionRunPlaneTests {
 
     // MARK: - Fork gets a fresh run plane
 
-    @Test("a fork's mailbox is a distinct, fresh instance — never shared with its parent")
+    @Test("a fork has its own new run plane. The parent and the fork do not share a run plane")
     @MainActor
-    func forkGetsFreshMailbox() async throws {
+    func forkGetsFreshRunPlane() async throws {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder)
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let child = try await session.fork(workingDirectory: nil)
-        #expect(session.mailbox !== child.mailbox)
+        #expect(session.runPlane !== child.runPlane)
 
         // Tracking on the parent never leaks into the child's run plane.
         let latch = RunLatch()
-        let token = await trackFakeRun(on: session.mailbox, latch: latch)
-        #expect(await session.mailbox.backgroundRuns().count == 1)
-        #expect(await child.mailbox.backgroundRuns().isEmpty)
+        let token = await trackFakeRun(on: session.runPlane, latch: latch)
+        #expect(await session.runPlane.backgroundRuns().count == 1)
+        #expect(await child.runPlane.backgroundRuns().isEmpty)
 
         await latch.open()
-        _ = await session.mailbox.wait(completionToken: token, seconds: Self.waitDeadlineSeconds)
+        _ = await session.runPlane.wait(completionToken: token, seconds: Self.waitDeadlineSeconds)
     }
 }

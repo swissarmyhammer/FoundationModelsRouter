@@ -14,11 +14,11 @@ import Testing
 /// every later one. A background mount returns its envelope at once, so the
 /// mounting run settles first, and the funnel then drops the nested run's
 /// re-stamped terminal. Before this fix, only `close()` wrote that run's
-/// ending. Now the mailbox forwards the run's own terminal to the journal
+/// ending. Now the run plane forwards the run's own terminal to the journal
 /// under the run's own token at settlement, so ``SessionEvent/runSettled(_:)``
 /// fires for a nested run without `close()`.
 ///
-/// The import is `@testable` because the runner, the mailbox, and the outbox
+/// The import is `@testable` because the runner, the run plane, and the outbox
 /// the suite wires by hand are internal to the router. The journal is read
 /// through the public `TranscriptEvent.operationEvents`.
 ///
@@ -138,7 +138,7 @@ struct NestedRunTerminalForwardingTests {
     ///
     /// The answer matters. A run can only be backgrounded from inside a submission,
     /// and the journal attaches at the top of the first one. Without it the
-    /// mailbox would forward into no journal at all.
+    /// run plane would forward into no journal at all.
     ///
     /// - Returns: The observation to drive and then close.
     /// - Throws: Whatever profile resolution or the stub answer throws.
@@ -175,7 +175,7 @@ struct NestedRunTerminalForwardingTests {
         )
     }
 
-    /// Mounts `tool` as a top-level background run on `session`'s own mailbox
+    /// Mounts `tool` as a top-level background run on `session`'s own run plane
     /// and outbox, exactly as a session-registered tool is mounted.
     ///
     /// The settle period of the site is `0`, so the outer call answers with
@@ -192,7 +192,7 @@ struct NestedRunTerminalForwardingTests {
         BackgroundToolRunner(
             wrapping: tool,
             site: MountSite(
-                sessionID: session.id, runPlane: session.mailbox, sink: session.outbox, inlineSettleGrace: 0),
+                sessionID: session.id, runPlane: session.runPlane, sink: session.outbox, inlineSettleGrace: 0),
             timeout: nil
         )
     }
@@ -206,19 +206,19 @@ struct NestedRunTerminalForwardingTests {
     ///
     /// - Parameter session: The session both runs are tracked on.
     /// - Returns: The tokens and the nested run's terminal.
-    /// - Throws: When a run does not settle inside the mailbox wait.
+    /// - Throws: When a run does not settle inside the run plane wait.
     private static func settleNestedRun(on session: any RoutedSession) async throws -> SettledNesting {
         let gate = RunLatch()
         let runner = backgroundRunner(wrapping: NestingTool(gate: gate), on: session)
         let rendered = try await runner.call(arguments: MountArguments(value: callArgument))
         let outerToken = try MountFixtures.decodeEnvelope(rendered).completionToken
 
-        let outerTerminal = try await MountFixtures.settledTerminal(of: outerToken, in: session.mailbox)
+        let outerTerminal = try await MountFixtures.settledTerminal(of: outerToken, in: session.runPlane)
         let nestedToken = try MountFixtures.decodeEnvelope(outerTerminal.detail).completionToken
         #expect(nestedToken != outerToken)
 
         await gate.open()
-        let nestedTerminal = try await MountFixtures.settledTerminal(of: nestedToken, in: session.mailbox)
+        let nestedTerminal = try await MountFixtures.settledTerminal(of: nestedToken, in: session.runPlane)
         return SettledNesting(outerToken: outerToken, nestedToken: nestedToken, nestedTerminal: nestedTerminal)
     }
 
@@ -259,7 +259,7 @@ struct NestedRunTerminalForwardingTests {
 
         // The stream carries the run's real outcome, and the very event `wait`
         // returned. The outer funnel dropped the re-stamped copy, so this
-        // event can only have come through the mailbox.
+        // event can only have come through the run plane.
         let delivered = await observation.settledRuns.terminals(for: nesting.nestedToken)
         #expect(delivered == [nesting.nestedTerminal])
         #expect(delivered.first?.outcome == .succeeded)
@@ -307,10 +307,10 @@ struct NestedRunTerminalForwardingTests {
         let token = try MountFixtures.decodeEnvelope(rendered).completionToken
 
         await gate.open()
-        let terminal = try await MountFixtures.settledTerminal(of: token, in: observation.session.mailbox)
+        let terminal = try await MountFixtures.settledTerminal(of: token, in: observation.session.runPlane)
         await observation.awaitSettlement(of: token)
 
-        // The funnel journaled the terminal before the mailbox forwarded it,
+        // The funnel journaled the terminal before the run plane forwarded it,
         // and the journal refused the second write. One event on each side.
         await observation.close()
         #expect(await observation.settledRuns.terminals(for: token) == [terminal])

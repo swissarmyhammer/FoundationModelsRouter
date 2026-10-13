@@ -16,7 +16,7 @@ import Testing
 /// `.completed` event with outcome ``OperationOutcome/lost`` per orphaned
 /// run and posts it to the restored node's own fresh outbox, so the next
 /// answer's drain journals it durably and the model learns the run died. (The
-/// orderly-shutdown case is ``RoutedSessionActor/close()``'s mailbox sweep —
+/// orderly-shutdown case is ``RoutedSessionActor/close()``'s run plane sweep —
 /// see `SessionRunPlaneTests`; this suite covers only the crash edge.)
 ///
 /// Also carries the no-setup regression: restoring a transcript that contains
@@ -185,7 +185,7 @@ struct SessionTreeRestorationLostRunTests {
     /// ``OperationEventSegment`` on the recorded `.prompt` entry), then
     /// restores that root under a second router sharing the same recording
     /// root — the crashed-process simulation: the first session's
-    /// memory-only mailbox/outbox are simply gone.
+    /// run plane and outbox are only in memory, so they are gone.
     ///
     /// - Returns: The restored tree and the original root's id.
     private static func recordAndRestore(
@@ -481,7 +481,7 @@ struct SessionTreeRestorationLostRunTests {
         #expect(report.count == Self.wholeReportLength)
 
         // The run settles inside the grace, so the call answers with the
-        // report, and the mailbox keeps the same report for `wait`.
+        // report, and the run plane keeps the same report for `wait`.
         let gate = RunLatch()
         await gate.open()
         let harness = MountFixtures.backgroundHarness(
@@ -489,8 +489,8 @@ struct SessionTreeRestorationLostRunTests {
         )
         let rendered = try await harness.mounted.call(arguments: MountArguments(value: value))
         #expect(rendered == report)
-        let completionToken = try #require(await harness.mailbox.settledRunTokens().first)
-        let terminal = try await MountFixtures.settledTerminal(of: completionToken, in: harness.mailbox)
+        let completionToken = try #require(await harness.runPlane.settledRunTokens().first)
+        let terminal = try await MountFixtures.settledTerminal(of: completionToken, in: harness.runPlane)
         #expect(terminal.detail == report)
 
         // The restore path: the one recorded event of this run is a progress

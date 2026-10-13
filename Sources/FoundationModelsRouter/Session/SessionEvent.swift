@@ -250,7 +250,7 @@ public enum SessionEvent: Sendable, Equatable {
     /// A run of this session asked the user a question through
     /// `ToolContext.elicit(_:)` and is suspended until a host answers it.
     /// Carries the `.elicitation` ``OperationEvent`` the run posted, at the
-    /// moment the session journals it. The mailbox registers the pending
+    /// moment the session journals it. The run plane registers the pending
     /// entry before the run posts, so a host can answer as soon as it sees
     /// this event.
     ///

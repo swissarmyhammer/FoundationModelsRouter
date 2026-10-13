@@ -289,7 +289,7 @@ struct MailSubscriptionTests {
 
         let elicitationId = ULID.generate()
         let context = ToolContext(
-            sessionID: session.id, runPlane: session.mailbox, sink: DiscardingOperationEventSink(),
+            sessionID: session.id, runPlane: session.runPlane, sink: DiscardingOperationEventSink(),
             tool: MailQueueFixtures.runTool, op: MailQueueFixtures.runOp,
             completionToken: RunPlane.makeCompletionToken(), isCancelled: { false })
         let answering = AnswerDrivenRun(waitingFor: "the elicitation \(elicitationId)") {
@@ -297,7 +297,7 @@ struct MailSubscriptionTests {
         }
         #expect(
             await BoundedWait.conditionReached("the elicitation \(elicitationId) pending") {
-                await session.mailbox.pendingElicitationIds().contains(elicitationId)
+                await session.runPlane.pendingElicitationIds().contains(elicitationId)
             })
         #expect(backend.prompts.isEmpty)
 

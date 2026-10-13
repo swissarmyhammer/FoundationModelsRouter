@@ -364,10 +364,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
 
             // Per-node event wiring plus per-session tool instancing —
             // the shared helper mints every restored node its own fresh
-            // outbox and mailbox, so a tool's events post to *this* node's
+            // outbox and run plane, so a tool's events post to *this* node's
             // own outbox rather than a sibling or ancestor's, and background
             // runs and pending elicitations never survive a restore (see
-            // ``RoutedSessionActor/mailbox``).
+            // ``RoutedSessionActor/runPlane``).
             // This site's chain is mount only, plus capping when the
             // node's recorded budget carries a `toolOutputLimit` —
             // deliberately no fork (restoration re-instances from the
@@ -376,7 +376,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // site is fork → mount → cap (task ^k4nygqa; see
             // ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:tokenCounter:inlineSettleGrace:)``
             // and ``RoutedSessionActor/fork(workingDirectory:)``).
-            let (outbox, mailbox, instancedTools) = makeSessionToolWiring(
+            let (outbox, runPlane, instancedTools) = makeSessionToolWiring(
                 tools,
                 sessionID: node.id,
                 cappedToTokenLimit: compaction.budget?.toolOutputLimit,
@@ -422,7 +422,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // Crash-edge run-outcome durability: a journaled run with a non-terminal recorded event (`.progress`,
             // `.elicitation` or `.message`) and no `.completed` for the same
             // `(tool, correlationID)` pair anywhere in this node's effective
-            // stream died with the crashed process — its memory-only mailbox
+            // stream died with the crashed process — its memory-only run plane
             // is gone, so no teardown sweep ever journaled a terminal event
             // for it (the orderly-shutdown case is
             // ``RoutedSessionActor/close()``'s `RunPlane.sweep()`).
@@ -465,7 +465,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 tools: instancedTools,
                 originalTools: tools,
                 outbox: outbox,
-                mailbox: mailbox,
+                runPlane: runPlane,
                 // The transcript the backend really holds, which an
                 // instructions override can make one entry longer. The next
                 // submission diff must treat every entry of it as persisted, or

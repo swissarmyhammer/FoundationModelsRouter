@@ -30,7 +30,7 @@ public struct ToolCallEntry: Sendable, Equatable, Identifiable {
 /// answers. ``tokensIn`` and ``tokensOut`` accumulate for its whole lifetime.
 @MainActor
 @Observable
-public final class SessionProjection {
+public final class SessionObserver {
     /// Where a session is in one observed answer, derived from the most recent
     /// ``SessionEvent`` that updated something.
     public enum Phase: Sendable, Equatable {
@@ -498,7 +498,7 @@ public final class SessionProjection {
             switch kind {
             case .prompt:
                 // A compaction boundary is a row, not the start of a submission.
-                if let boundary = SessionProjection.compactionRow(from: entry, entryId: payload.entryId) {
+                if let boundary = SessionObserver.compactionRow(from: entry, entryId: payload.entryId) {
                     rows.append(boundary)
                 } else {
                     dispatchedToolCallIds.removeAll()
@@ -512,11 +512,11 @@ public final class SessionProjection {
                     dispatched: dispatchedToolCallIds,
                     completed: completedToolCallIds)
                 completedToolCallIds.insert(callId)
-                SessionProjection.updateToolCallRow(
+                SessionObserver.updateToolCallRow(
                     id: callId, status: .completed, summary: text, output: payload.segments, in: &rows)
             case .response:
                 rows.append(
-                    SessionProjection.compactionRow(from: entry, entryId: payload.entryId)
+                    SessionObserver.compactionRow(from: entry, entryId: payload.entryId)
                         ?? TranscriptEntry(id: payload.entryId, kind: .text(text ?? ""), sourceEntryId: payload.entryId))
             case .reasoning:
                 rows.append(
@@ -800,3 +800,10 @@ public final class SessionProjection {
         return [.toolCallGroup(ToolCallGroup(call: anchor, context: context))]
     }
 }
+
+/// The old name of ``SessionObserver``.
+///
+/// This name is deprecated. Use ``SessionObserver``. The two names refer to
+/// the same type.
+@available(*, deprecated, renamed: "SessionObserver")
+public typealias SessionProjection = SessionObserver

@@ -5,18 +5,18 @@ import Testing
 
 import FoundationModelsRouter
 
-/// # Canonical usage reference for ``SessionProjection``.
+/// # Canonical usage reference for ``SessionObserver``.
 ///
-/// ``SessionProjection`` is the `@MainActor`/`@Observable` mirror of one
-/// ``RoutedSession``. A SwiftUI view holds one projection, gives it the events
-/// of each answer, and then reads ``SessionProjection/transcript`` and
-/// ``SessionProjection/phase`` to draw the conversation. The example below is
+/// ``SessionObserver`` is the `@MainActor`/`@Observable` mirror of one
+/// ``RoutedSession``. A SwiftUI view holds one observer, gives it the events
+/// of each answer, and then reads ``SessionObserver/transcript`` and
+/// ``SessionObserver/phase`` to draw the conversation. The example below is
 /// that pattern, in the shape a reader copies into an application:
 ///
 /// ```swift
 /// struct ConversationView: View {
 ///     let session: RoutedSession
-///     @State private var projection = SessionProjection()
+///     @State private var projection = SessionObserver()
 ///     @State private var prompt = ""
 ///
 ///     var body: some View {
@@ -49,7 +49,7 @@ import FoundationModelsRouter
 /// application builds `Router(recordingsDir:)` with a configured
 /// `LiveModelLoader` instead. Every line after the
 /// `ProjectionExampleHarness.makeSession` call is real usage.
-@Suite("Examples: bind a SessionProjection to a session")
+@Suite("Examples: bind a SessionObserver to a session")
 struct ProjectionExampleTests {
     // MARK: - Unit-test seam (the ONLY non-production code in this file)
 
@@ -199,15 +199,15 @@ struct ProjectionExampleTests {
 
     // MARK: - Bind a projection to an answer
 
-    @Test("Drive a SessionProjection from the event stream of an answer and read the rows it projects")
+    @Test("Drive a SessionObserver from the event stream of an answer and read the rows it projects")
     @MainActor
     func projectOneStreamedAnswer() async throws {
         let session = try await ProjectionExampleHarness.makeSession()
 
         // One projection observes the session for its whole life. In SwiftUI
-        // this is `@State private var projection = SessionProjection()`, and
+        // this is `@State private var projection = SessionObserver()`, and
         // the view reads it directly, because it is `@Observable`.
-        let projection = SessionProjection()
+        let projection = SessionObserver()
         #expect(projection.phase == .idle)
         #expect(projection.transcript.isEmpty)
 

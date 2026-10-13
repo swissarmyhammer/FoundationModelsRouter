@@ -223,6 +223,19 @@ struct SubmissionTracingTests {
         #expect(span.errors.isEmpty)
     }
 
+    @Test("a submission span carries the ids of the mail that the submission delivers")
+    func submissionSpanCarriesTheMailIDs() async throws {
+        let tracer = InMemoryTracer()
+        let fixture = try await Self.makeFixture(tracer: tracer)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let id = try fixture.session.send(Self.prompt)
+        #expect(await fixture.session.becomesIdle())
+
+        let span = try Self.singleSpan(reportedTo: tracer)
+        #expect(span.attributes.get(RouterTelemetry.AttributeKey.submissionMailIds) == .stringArray([id.description]))
+    }
+
     @Test("a submission that throws keeps its span, with the error recorded")
     func failedSubmissionRecordsItsErrorOnTheSpan() async throws {
         let tracer = InMemoryTracer()

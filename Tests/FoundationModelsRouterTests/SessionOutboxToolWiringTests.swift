@@ -444,7 +444,7 @@ struct SessionOutboxToolWiringTests {
     /// How long a test waits for a background run to settle before giving up —
     /// generous, because the gate is opened first and the wait only has to
     /// observe an already-finishing run.
-    private static let mailboxWaitTimeoutSeconds: Double = 30
+    private static let runPlaneWaitTimeoutSeconds: Double = 30
 
     private static func makeTempDir() -> URL {
         let dir = FileManager.default.temporaryDirectory
@@ -1266,7 +1266,7 @@ struct SessionOutboxToolWiringTests {
         // Let the background run finish; its synthesized `.completed` funnels
         // into this session's own outbox.
         await gate.open()
-        _ = await session.mailbox.wait(completionToken: envelope.completionToken, seconds: Self.mailboxWaitTimeoutSeconds)
+        _ = await session.runPlane.wait(completionToken: envelope.completionToken, seconds: Self.runPlaneWaitTimeoutSeconds)
         var pendingEvents: [OperationEvent] = []
         for _ in 0..<600 {
             pendingEvents = await session.outbox.pending().events.map(\.event)
@@ -1294,9 +1294,9 @@ struct SessionOutboxToolWiringTests {
         #expect(journaled.contains { $0.kind == .completed && $0.correlationID == envelope.completionToken })
     }
 
-    @Test("a fork's tracked background run lives in the fork's own mailbox; the parent's mailbox is untouched")
+    @Test("a fork's tracked background run lives in the fork's own run plane. The run plane of the parent does not change")
     @MainActor
-    func forkBackgroundRunLivesInForkMailbox() async throws {
+    func forkBackgroundRunLivesInForkRunPlane() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -1319,14 +1319,14 @@ struct SessionOutboxToolWiringTests {
         let envelope = try JSONDecoder().decode(PendingRunEnvelope.self, from: Data(rendered.utf8))
         #expect(envelope.pending)
 
-        let childTokens = await child.mailbox.backgroundRuns().map(\.completionToken)
+        let childTokens = await child.runPlane.backgroundRuns().map(\.completionToken)
         #expect(childTokens == [envelope.completionToken])
-        let parentRuns = await session.mailbox.backgroundRuns()
+        let parentRuns = await session.runPlane.backgroundRuns()
         #expect(parentRuns.isEmpty)
 
         // Settle the background run so no background work outlives the test.
         await gate.open()
-        _ = await child.mailbox.wait(completionToken: envelope.completionToken, seconds: Self.mailboxWaitTimeoutSeconds)
+        _ = await child.runPlane.wait(completionToken: envelope.completionToken, seconds: Self.runPlaneWaitTimeoutSeconds)
     }
 
     @Test("a pending envelope survives the outer capping layer intact, even under a cap smaller than the envelope itself")
@@ -1366,11 +1366,11 @@ struct SessionOutboxToolWiringTests {
 
         // Settle the background run so no background work outlives the test.
         await gate.open()
-        _ = await session.mailbox.wait(completionToken: envelope.completionToken, seconds: Self.mailboxWaitTimeoutSeconds)
+        _ = await session.runPlane.wait(completionToken: envelope.completionToken, seconds: Self.runPlaneWaitTimeoutSeconds)
     }
 
     @Test(
-        "cancelling an answer backgrounds an in-flight tool call: it is tracked in the session's mailbox and later settles normally, never dying with the answer"
+        "cancelling an answer backgrounds an in-flight tool call: it is tracked in the session's run plane and later settles normally, never dying with the answer"
     )
     @MainActor
     func cancellingAnAnswerBackgroundsInFlightToolCall() async throws {
@@ -1406,15 +1406,15 @@ struct SessionOutboxToolWiringTests {
         // flight, so the pump runs the work of the answer now.
         #expect(await session.stopRunningWork())
 
-        // The run was tracked in this session's mailbox, and it is still running
+        // The run was tracked in this session's run plane, and it is still running
         // with the answer stopped. Read the run plane here, before the gate
         // opens: after the run settles, the run plane forgets it, and a read
         // then says nothing about what the stop did.
         #expect(
             await BoundedWait.conditionReached("the tool's run tracked on the session") {
-                await !session.mailbox.backgroundRuns().isEmpty
+                await !session.runPlane.backgroundRuns().isEmpty
             })
-        let trackedTokens = await session.mailbox.backgroundRuns().map(\.completionToken)
+        let trackedTokens = await session.runPlane.backgroundRuns().map(\.completionToken)
 
         // Release the stopped answer, so that its caller finishes. Then the
         // background run, which outlived the stopped answer with no cancel,
@@ -1431,7 +1431,7 @@ struct SessionOutboxToolWiringTests {
         #expect(envelope.pending)
         #expect(trackedTokens == [envelope.completionToken])
 
-        let settled = await session.mailbox.wait(completionToken: envelope.completionToken, seconds: Self.mailboxWaitTimeoutSeconds)
+        let settled = await session.runPlane.wait(completionToken: envelope.completionToken, seconds: Self.runPlaneWaitTimeoutSeconds)
         let settledTerminal: OperationEvent? = if case .settled(let terminal) = settled { terminal } else { nil }
         let terminal = try #require(
             settledTerminal, "expected the background run to settle after the gate opened, got \(settled)")
@@ -1465,10 +1465,10 @@ struct SessionOutboxToolWiringTests {
     ///   - session: The session whose runs are settled.
     ///   - gate: The latch the runs' bodies wait on.
     private static func settleBackgroundRuns(on session: any RoutedSession, opening gate: RunLatch) async {
-        let tokens = await session.mailbox.backgroundRuns().map(\.completionToken)
+        let tokens = await session.runPlane.backgroundRuns().map(\.completionToken)
         await gate.open()
         for token in tokens {
-            _ = await session.mailbox.wait(completionToken: token, seconds: mailboxWaitTimeoutSeconds)
+            _ = await session.runPlane.wait(completionToken: token, seconds: runPlaneWaitTimeoutSeconds)
         }
     }
 
@@ -1487,7 +1487,7 @@ struct SessionOutboxToolWiringTests {
         let rendered = try #require(backend.toolOutputs.first)
         let envelope = try JSONDecoder().decode(PendingRunEnvelope.self, from: Data(rendered.utf8))
         #expect(envelope.pending)
-        #expect(await session.mailbox.backgroundRuns().map(\.completionToken) == [envelope.completionToken])
+        #expect(await session.runPlane.backgroundRuns().map(\.completionToken) == [envelope.completionToken])
 
         await Self.settleBackgroundRuns(on: session, opening: gate)
     }
@@ -1509,7 +1509,7 @@ struct SessionOutboxToolWiringTests {
             await BoundedWait.conditionReached("the progress report staged for the next submission") {
                 await session.outbox.pending().events.contains { $0.event.kind == .progress }
             })
-        let run = try #require(await session.mailbox.backgroundRuns().first)
+        let run = try #require(await session.runPlane.backgroundRuns().first)
         #expect(run.latestProgressDetail == ProgressReportingBackgroundToolRunner.progressDetail)
 
         // The next submission carries it to the model.

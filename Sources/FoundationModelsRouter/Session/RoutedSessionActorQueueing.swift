@@ -6,7 +6,7 @@ import Tracing
 /// 5): the ``MailSink`` requirement of ``RoutedSession``, the send of a
 /// prompt, the reads of the mail queue, and the answers to an elicitation.
 /// The queue is ``SessionOutbox/queue``; the elicitation methods also
-/// delegate to ``mailbox``.
+/// delegate to ``runPlane``.
 extension RoutedSessionActor {
     /// See ``RoutedSession/mail(_:)``. Subscribes to the output of the mail
     /// first, then puts the mail in the queue, so the caller loses no event
@@ -47,7 +47,7 @@ extension RoutedSessionActor {
     /// Records the new depth of the queue and wakes the pump, after
     /// ``mail(_:)`` put a mail in the queue.
     private func mailDidArrive() {
-        recordMessageQueueDepth()
+        recordMailQueueDepth()
         wakePump()
     }
 
@@ -101,7 +101,7 @@ extension RoutedSessionActor {
     @discardableResult
     nonisolated func respond(elicitationId: String, response: ElicitationResponse) async -> ElicitationAnswerDelivery {
         await deliver(toElicitation: elicitationId, orReturn: .noPendingElicitation) { id in
-            let delivery = await mailbox.respond(elicitationId: id, response)
+            let delivery = await runPlane.respond(elicitationId: id, response)
             if delivery == .delivered {
                 postElicitationAnswer(id: id, response: response)
             }
@@ -129,7 +129,7 @@ extension RoutedSessionActor {
     @discardableResult
     nonisolated func complete(elicitationId: String) async -> ElicitationCompletionDelivery {
         await deliver(toElicitation: elicitationId, orReturn: .noPendingElicitation) {
-            await mailbox.complete(elicitationId: $0)
+            await runPlane.complete(elicitationId: $0)
         }
     }
 

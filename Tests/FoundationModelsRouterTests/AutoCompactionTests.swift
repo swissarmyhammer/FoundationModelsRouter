@@ -472,6 +472,32 @@ struct AutoCompactionTests {
         #expect(standardContainer.callLog.count == 4)
     }
 
+    @Test(
+        "an overflow retry records the mail one time, on the prompt entry of the retry that the model read, and the render holds it one time"
+    )
+    @MainActor
+    func overflowRetryRecordsTheMailOnTheRetryPrompt() async throws {
+        let prompt = "keep going"
+        let recorder = InMemoryRecorder()
+        let (session, standardContainer, profile) = try await Self.makeOverflowSession(recorder: recorder)
+
+        let id = try session.send(prompt)
+        _ = try await session.awaitTerminal(of: id)
+        await session.close()
+
+        // The overflowing call wrote no entry, and the retry answered.
+        #expect(standardContainer.callLog.count == 2)
+        let events = await recorder.events
+        let delivering = events.promptsDelivering(id)
+        #expect(delivering.count == 1)
+        let finalPrompt = try #require(events.last { $0.kind == .prompt })
+        #expect(delivering.first?.text == finalPrompt.text)
+        #expect(finalPrompt.text == prompt)
+        let rendered = try ContextRenderer.context(of: events).map(CharacterTokenCounter.content(of:))
+        #expect(rendered.filter { $0 == prompt }.count == 1)
+        withExtendedLifetime(profile) {}
+    }
+
     /// Builds a session whose first model call overflows its context, over a
     /// seeded transcript that the retry's compaction really summarizes.
     ///
@@ -486,11 +512,13 @@ struct AutoCompactionTests {
     /// - Parameters:
     ///   - overflowsRemaining: How many first calls overflow.
     ///   - overflowingCalls: The numbers of further calls that overflow.
+    ///   - recorder: The recorder of the router.
     /// - Returns: The session, the container of its backend, and the profile
     ///   that keeps its models resident.
     /// - Throws: Whatever profile resolution throws.
     private static func makeOverflowSession(
-        overflowsRemaining: Int = 1, overflowingCalls: Set<Int> = []
+        overflowsRemaining: Int = 1, overflowingCalls: Set<Int> = [],
+        recorder: InMemoryRecorder = InMemoryRecorder()
     ) async throws -> (
         session: any RoutedSession, standard: OverflowLLMContainer, profile: LanguageModelProfile
     ) {
@@ -501,7 +529,7 @@ struct AutoCompactionTests {
             overflowingCalls: overflowingCalls)
         let flashContainer = ConfiguredLLMContainer(responseText: "FLASH-SUMMARY")
         let loader = PerSlotModelLoader(standard: standardContainer, flash: flashContainer, dimension: RouterTestFixtures.stubDimension)
-        let router = RouterTestFixtures.makeRouter(cacheDir: dir, recorder: InMemoryRecorder(), loader: loader)
+        let router = RouterTestFixtures.makeRouter(cacheDir: dir, recorder: recorder, loader: loader)
         let profile = try await router.resolve(profile: RouterTestFixtures.profile(context: 100_000), reporting: ResolutionProgress())
         let session = profile.standard.makeSession(
             budget: TokenBudget(limit: characterCount(of: seedEntries), target: 0.35))

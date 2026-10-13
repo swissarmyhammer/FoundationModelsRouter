@@ -57,6 +57,14 @@ enum MailRecord: Codable, Equatable, Sendable {
         }
     }
 
+    /// Whether the record is ``cancelled(_:)``: the mail left the queue
+    /// before the pump delivered it. The counter of cancelled mail counts
+    /// these records (``RouterMetrics/recordCancelledMail(_:)``).
+    var isCancellation: Bool {
+        guard case .cancelled = self else { return false }
+        return true
+    }
+
     /// The record of the terminal event `event` for the mail `id`, or `nil`
     /// when `event` is not the terminal event of a mail.
     ///

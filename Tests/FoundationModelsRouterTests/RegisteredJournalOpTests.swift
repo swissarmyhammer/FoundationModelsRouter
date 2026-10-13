@@ -156,15 +156,15 @@ struct RegisteredJournalOpTests {
   /// run plane through — the public route, stamped as the enclosing run.
   ///
   /// - Parameters:
-  ///   - mailbox: The run plane of the session that tracks every run of the test.
+  ///   - runPlane: The run plane of the session that tracks every run of the test.
   ///   - sink: The session's own sink.
   /// - Returns: The enclosing run's context.
   private static func makeEnclosingContext(
-    mailbox: RunPlane, sink: RecordingSink
+    runPlane: RunPlane, sink: RecordingSink
   ) -> ToolContext {
     ToolContext(
       sessionID: ULID.generate(),
-      runPlane: mailbox,
+      runPlane: runPlane,
       sink: sink,
       tool: enclosingToolName,
       op: enclosingOp,
@@ -218,7 +218,7 @@ struct RegisteredJournalOpTests {
   func aRegisteredOpReachesTheRunPlane() async throws {
     let gate = RunLatch()
     let sink = RecordingSink()
-    let host = Self.makeEnclosingContext(mailbox: RunPlane(), sink: sink)
+    let host = Self.makeEnclosingContext(runPlane: RunPlane(), sink: sink)
 
     let mounted = host.mount(
       GatedVerbTool(gate: gate),
@@ -240,7 +240,7 @@ struct RegisteredJournalOpTests {
   func aRegisteredOpReachesTheInvocationRecord() async throws {
     let gate = RunLatch()
     let sink = RecordingSink()
-    let host = Self.makeEnclosingContext(mailbox: RunPlane(), sink: sink)
+    let host = Self.makeEnclosingContext(runPlane: RunPlane(), sink: sink)
 
     let mounted = host.mount(
       GatedVerbTool(gate: gate),
@@ -266,7 +266,7 @@ struct RegisteredJournalOpTests {
   func aRegisteredOpReachesTheBindingOnlyDecorator() async throws {
     let tool = AmbientNonStringOutputTool()
     let sink = RecordingSink()
-    let host = Self.makeEnclosingContext(mailbox: RunPlane(), sink: sink)
+    let host = Self.makeEnclosingContext(runPlane: RunPlane(), sink: sink)
 
     let mounted = host.mount(
       tool,
@@ -299,7 +299,7 @@ struct RegisteredJournalOpTests {
   func aMountThatNamesNoOpKeepsTheOneStringStamp() async throws {
     let gate = RunLatch()
     let sink = RecordingSink()
-    let host = Self.makeEnclosingContext(mailbox: RunPlane(), sink: sink)
+    let host = Self.makeEnclosingContext(runPlane: RunPlane(), sink: sink)
 
     // The call this suite exists to leave alone: no `op` argument at all, which
     // is every mount that stands today.
@@ -325,7 +325,7 @@ struct RegisteredJournalOpTests {
   func anInnerCallReportsTheEnclosingOpInItsEventJournal() async throws {
     let gate = RunLatch()
     let sink = RecordingSink()
-    let host = Self.makeEnclosingContext(mailbox: RunPlane(), sink: sink)
+    let host = Self.makeEnclosingContext(runPlane: RunPlane(), sink: sink)
 
     let mounted = host.mount(
       GatedVerbTool(gate: gate),
