@@ -23,14 +23,11 @@ import Testing
 /// that calls them, and an ``InMemoryRecorder`` — so the suite needs no
 /// network and no GPU.
 ///
-/// The suite declares `.timeLimit` because ``backgroundTokens(atLeast:on:)``
-/// and ``settledTerminal(of:on:)`` wait with no wall clock (task ^v4zh807).
-/// A wall clock of some seconds failed a correct test under parallel stress
-/// while the run was still on its way. The limit is a ceiling on a fault: it
-/// ends a wait for a run that is never tracked or never settles.
-@Suite(
-    "respond(to:): the answer of its own submission, and the pump that delivers each settled run as mail",
-    .timeLimit(.minutes(1)))
+/// ``backgroundTokens(atLeast:on:)`` and ``settledTerminal(of:on:)`` wait
+/// with no wall clock (task ^v4zh807). A wall clock of some seconds failed a
+/// correct test under parallel stress while the run was still on its way.
+/// Each of these waits ends when the run is tracked or settles.
+@Suite("respond(to:): the answer of its own submission, and the pump that delivers each settled run as mail")
 struct RespondRunPlaneDrainTests {
     // MARK: - Backends
 
@@ -292,15 +289,14 @@ struct RespondRunPlaneDrainTests {
     ///
     /// No event tells that a run was tracked, so the wait reads the run plane
     /// until the count holds. It has no wall clock: a loaded machine only
-    /// delays the tracking, and the `.timeLimit` of the suite ends a wait for a
-    /// run that is never tracked.
+    /// delays the tracking. The wait ends when the count holds.
     ///
     /// - Parameters:
     ///   - count: How many background runs to wait for.
     ///   - session: The session whose run plane is observed.
     /// - Returns: The background runs' completion tokens, in tracking order.
-    /// - Throws: ``ConditionNeverHeld`` when the `.timeLimit` of the suite
-    ///   ended the wait.
+    /// - Throws: ``ConditionNeverHeld`` when the waiting task was cancelled
+    ///   before the count held.
     private static func backgroundTokens(
         atLeast count: Int, on session: any RoutedSession
     ) async throws -> [String] {
@@ -312,9 +308,7 @@ struct RespondRunPlaneDrainTests {
     /// event.
     ///
     /// The wait is ``RunPlane/wait(completionToken:seconds:)`` with no
-    /// expiry: the run plane resumes it when the run settles, and a
-    /// cancellation, which the `.timeLimit` of the suite sends, ends it
-    /// early.
+    /// expiry: the run plane resumes it when the run settles.
     ///
     /// - Parameters:
     ///   - token: The run's completion token.

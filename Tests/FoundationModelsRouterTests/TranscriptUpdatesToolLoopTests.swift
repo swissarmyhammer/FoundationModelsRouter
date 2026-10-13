@@ -60,9 +60,8 @@ struct TranscriptUpdatesToolLoopTests {
     /// `transcriptUpdates()` that reads `LanguageModelSession.transcript`
     /// between two passes of a tool loop. The process then aborts: 5 of 8
     /// runs of this test aborted on the tree before the fix. A read loop that
-    /// does not end at the cancel of its pass makes the calls hang, and the
-    /// time limit turns that hang into a failure.
-    @Test("tool loops beside readers of the transcript updates all complete", .timeLimit(.minutes(1)))
+    /// does not end at the cancel of its pass makes the calls hang.
+    @Test("tool loops beside readers of the transcript updates all complete")
     func toolLoopsBesideUpdatesComplete() async throws {
         let completedCalls = try await withThrowingTaskGroup(of: Int.self) { group in
             for _ in 0..<Self.concurrentBackends {

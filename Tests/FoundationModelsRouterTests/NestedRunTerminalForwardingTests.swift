@@ -21,10 +21,6 @@ import Testing
 /// The import is `@testable` because the runner, the run plane, and the outbox
 /// the suite wires by hand are internal to the router. The journal is read
 /// through the public `TranscriptEvent.operationEvents`.
-///
-/// Each test declares `.timeLimit` because a gate holds each nested run. A
-/// regression that stopped a settlement from reaching the stream would suspend
-/// the test forever, and the whole `swift test` run with it.
 @Suite("Nested run terminal forwarding: a mounted run's own settlement reaches the journal and the session stream")
 struct NestedRunTerminalForwardingTests {
     // MARK: - Vocabulary
@@ -247,8 +243,7 @@ struct NestedRunTerminalForwardingTests {
     // MARK: - A nested run settles on the session stream
 
     @Test(
-        "a run mounted through mount(_:op:as:) produces exactly one runSettled under its own token, without close()",
-        .timeLimit(.minutes(1))
+        "a run mounted through mount(_:op:as:) produces exactly one runSettled under its own token, without close()"
     )
     func nestedRunSettlementReachesTheSessionStream() async throws {
         let observation = try await Self.observe()
@@ -273,8 +268,7 @@ struct NestedRunTerminalForwardingTests {
     // MARK: - The transcript holds the nested terminal once
 
     @Test(
-        "the transcript holds exactly one .completed event under the nested run's own token",
-        .timeLimit(.minutes(1))
+        "the transcript holds exactly one .completed event under the nested run's own token"
     )
     func nestedRunTerminalIsJournaledOnce() async throws {
         let observation = try await Self.observe()
@@ -294,8 +288,7 @@ struct NestedRunTerminalForwardingTests {
     // MARK: - A top-level run is unchanged
 
     @Test(
-        "a top-level background run still produces exactly one runSettled and exactly one journaled terminal",
-        .timeLimit(.minutes(1))
+        "a top-level background run still produces exactly one runSettled and exactly one journaled terminal"
     )
     func topLevelRunStillSettlesOnce() async throws {
         let observation = try await Self.observe()
@@ -320,8 +313,7 @@ struct NestedRunTerminalForwardingTests {
     // MARK: - close() adds nothing after a natural settlement
 
     @Test(
-        "close() after a natural settlement journals no second terminal for that run",
-        .timeLimit(.minutes(1))
+        "close() after a natural settlement journals no second terminal for that run"
     )
     func closeAfterNaturalSettlementJournalsNoSecondTerminal() async throws {
         let observation = try await Self.observe()

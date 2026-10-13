@@ -3,13 +3,6 @@ import FoundationModels
 import FoundationModelsRouter
 import Testing
 
-/// The wall-clock ceiling this suite runs under.
-///
-/// One minute, although the model-loading suites have no time limit: this
-/// suite loads no model, touches no GPU, and
-/// encodes one small value.
-private let toolCallAttachmentSurfaceTimeLimitMinutes = 1
-
 /// The schema name the probe tool attaches under.
 private let probeSchemaName = "FileChangeSet"
 
@@ -49,10 +42,7 @@ private struct AttachingProbeTool: Tool {
 ///
 /// Not gated: the suite loads no model and touches no GPU, so it needs neither
 /// the target-wide permit nor the metallib bootstrap.
-@Suite(
-    "Ask 4a surface: ToolContext.attach and ToolCallAttachment are public",
-    .timeLimit(.minutes(toolCallAttachmentSurfaceTimeLimitMinutes))
-)
+@Suite("Ask 4a surface: ToolContext.attach and ToolCallAttachment are public")
 struct ToolCallAttachmentSurfaceTests {
     @Test("a ToolCallAttachment round-trips through Codable and compares equal")
     func attachmentRoundTripsThroughCodable() throws {

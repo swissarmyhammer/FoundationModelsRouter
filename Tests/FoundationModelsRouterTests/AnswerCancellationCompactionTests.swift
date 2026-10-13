@@ -103,8 +103,8 @@ extension AnswerCancellationTests {
     /// fixed. Without the tool, the model call can end before the signal
     /// runs. With it, the signal always stops the answer.
     ///
-    /// The test reads the end of the answer from the session feed, which the
-    /// `.timeLimit` of the suite can end, before it waits for the answer.
+    /// The test reads the end of the answer from the session feed before it
+    /// waits for the answer.
     ///
     /// - Parameters:
     ///   - fixture: The fixture whose hook to install into.
@@ -112,7 +112,7 @@ extension AnswerCancellationTests {
     ///   - route: The route of the stop.
     ///   - prompt: The prompt of the answer.
     /// - Returns: The hold, the events of the feed, and the stop request.
-    /// - Throws: When a wait that the `.timeLimit` of the suite ends fails.
+    /// - Throws: When a wait of the test fails.
     static func stopAnswerDuringItsProactiveCompaction(
         _ fixture: Fixture,
         session: any RoutedSession,
@@ -155,8 +155,7 @@ extension AnswerCancellationTests {
     ///
     /// The close cancels the compaction and waits for its end, so the test
     /// lets the compaction go on (`cancelReached`) only after the cancel
-    /// reached it. The feed ends when the close finishes it, and the read of
-    /// the feed stops when the `.timeLimit` of the suite cancels the test.
+    /// reached it. The read of the feed ends when the close finishes the feed.
     ///
     /// - Parameters:
     ///   - session: The session to close.
@@ -181,12 +180,11 @@ extension AnswerCancellationTests {
     }
 
     /// Waits until the close has cancelled the running compaction of
-    /// `session`. The `.timeLimit` of the suite ends a wait for a cancel that
-    /// never comes.
+    /// `session`. The wait ends when the compaction is cancelled.
     ///
     /// - Parameter session: The session that closes.
-    /// - Throws: ``ConditionNeverHeld`` when the `.timeLimit` of the suite
-    ///   ended the wait.
+    /// - Throws: ``ConditionNeverHeld`` when the waiting task was cancelled
+    ///   before the compaction was cancelled.
     static func awaitCompactionCancelled(on session: any RoutedSession) async throws {
         let actor = try #require(session as? RoutedSessionActor)
         try await AwaitedCondition.wait(until: { await actor.activeCompaction?.isCancelled == true })

@@ -51,8 +51,7 @@ extension AnswerCancellationTests {
         // bound. Nothing on the path of the chunk waits for the tool, so the
         // chunk always arrives; a loaded machine only delays it. A bound of
         // some seconds failed under parallel stress (task ^7w145zc) while the
-        // chunk was still on its way. Only the `.timeLimit` of the suite ends
-        // this wait, when the chunk genuinely never arrives.
+        // chunk was still on its way. The wait ends when the chunk arrives.
         try await firstChunkAtConsumer.wait()
 
         let stop = await Self.requestStop(of: session, by: .cancelAll)
@@ -241,9 +240,8 @@ extension AnswerCancellationTests {
         let queuedTask = Task { try await session.respond(to: "queued-and-cancelled") }
         // No event tells that the message joined the queue, so the test reads
         // the count until it holds. The wait has no wall clock: the message
-        // always arrives, and a loaded machine only delays it. Only the
-        // `.timeLimit` of the suite ends a wait for a message that never
-        // arrives.
+        // always arrives, and a loaded machine only delays it. The wait ends
+        // when the message is in the queue.
         try await AwaitedCondition.wait(until: { session.waitingUserMailCount == 1 })
         let queuedId = try #require(session.outbox.queue.pending.first { !$0.isRunMail }?.id)
 
@@ -304,7 +302,7 @@ extension AnswerCancellationTests {
 
         // The caller gets CancellationError while the first answer still
         // holds the pump. If the message waited for the pump instead, this
-        // wait would end only at the `.timeLimit` of the suite.
+        // wait would not end.
         await #expect(throws: CancellationError.self) {
             try await cancelledCaller.value
         }

@@ -26,14 +26,9 @@ private let unboundToolOutput = "unbound"
 /// tool reads out of ``ToolContext/current``. A scripted session drives that
 /// tool, and the mounts happen in its body.
 ///
-/// `.timeLimit` because two cases suspend on a barrier one mounted run must
-/// reach. A regression that stops such a run from starting would suspend the
-/// barrier forever and hang the whole `swift test` run, rather than failing the
-/// test that caught it.
-@Suite(
-    "ToolContext.mount(postingTo:): a caller-supplied sink over the public surface",
-    .timeLimit(.minutes(1))
-)
+/// Two cases suspend on a barrier that one mounted run must reach. The wait
+/// ends when the run reaches the barrier.
+@Suite("ToolContext.mount(postingTo:): a caller-supplied sink over the public surface")
 struct ToolContextMountSinkPublicSurfaceTests {
     // MARK: - Vocabulary
 

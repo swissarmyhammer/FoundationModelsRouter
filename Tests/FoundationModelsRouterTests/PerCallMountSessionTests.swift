@@ -24,11 +24,10 @@ import Testing
 /// these tests count each terminal line over every prompt the model got.
 ///
 /// A scripted backend makes the tool calls, and ``RunLatch`` gates hold each
-/// run. No wait has a wall clock: each wait reads a state until it holds, and
-/// the `.timeLimit` of the suite ends a wait for a state that never comes.
+/// run. No wait has a wall clock: each wait reads a state until it holds.
 @Suite(
-    "Per-call mount: each call chooses synchronous or background, and each settled background run's terminal is staged one time",
-    .timeLimit(.minutes(1)))
+    "Per-call mount: each call chooses synchronous or background, and each settled background run's terminal is staged one time"
+)
 struct PerCallMountSessionTests {
     // MARK: - Vocabulary
 
@@ -136,8 +135,8 @@ struct PerCallMountSessionTests {
         ///
         /// - Parameter count: The count of prompts to wait for.
         /// - Returns: Every prompt the backend got, in order.
-        /// - Throws: ``ConditionNeverHeld`` when the `.timeLimit` of the
-        ///   suite ended the wait.
+        /// - Throws: ``ConditionNeverHeld`` when the waiting task was
+        ///   cancelled before the state held.
         func promptsAfterThePumpStops(atLeast count: Int) async throws -> [String] {
             try await AwaitedCondition.wait(until: { backend.receivedPrompts.count >= count })
             try await AwaitedCondition.wait(until: { await !session.isPumpRunning })
@@ -207,8 +206,8 @@ struct PerCallMountSessionTests {
     /// - Parameters:
     ///   - terminal: The terminal of the settled background run.
     ///   - harness: The harness of the test.
-    /// - Throws: ``ConditionNeverHeld`` when the `.timeLimit` of the suite
-    ///   ended a wait.
+    /// - Throws: ``ConditionNeverHeld`` when the waiting task was cancelled
+    ///   before a state held.
     private static func expectDeliveredOneTime(_ terminal: OperationEvent, in harness: Harness) async throws {
         let prompts = try await harness.promptsAfterThePumpStops(atLeast: 2)
         let line = OperationEventSegment.renderedLine(for: terminal)

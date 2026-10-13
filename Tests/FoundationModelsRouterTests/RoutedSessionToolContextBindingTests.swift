@@ -425,7 +425,7 @@ struct RoutedSessionToolContextBindingTests {
         // cancelAll() ends the answer at once and does not wait for the
         // model call. The probe is read after the pump ended, so the model
         // call saw the cancel before the read.
-        #expect(try await session.isIdleOnceThePumpEnds())
+        #expect(await session.isIdleOnceThePumpEnds())
 
         #expect(backend.observedCancellation)
     }

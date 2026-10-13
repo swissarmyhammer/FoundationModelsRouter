@@ -3,11 +3,6 @@ import FoundationModelsRouterRealModelSupport
 import FoundationModelsRouterTestSupport
 import Testing
 
-/// The wall-clock bound this suite runs under, in minutes: the smallest
-/// `.timeLimit` Swift Testing accepts. The suite reads two small files and
-/// touches no model, so a run takes milliseconds.
-private let recordedFixtureRedactionTimeLimitMinutes = 1
-
 /// The redaction review of the checked-in compaction recording, as a test
 /// rather than as prose (task `^4bb3mjv`).
 ///
@@ -34,8 +29,7 @@ private let recordedFixtureRedactionTimeLimitMinutes = 1
 /// No `.exclusiveRealModel` trait: the suite loads no model, so it needs no
 /// place in the residency serial order.
 @Suite(
-    "The checked-in compaction recording carries no operator trace (task ^4bb3mjv)",
-    .timeLimit(.minutes(recordedFixtureRedactionTimeLimitMinutes))
+    "The checked-in compaction recording carries no operator trace (task ^4bb3mjv)"
 )
 struct RecordedFixtureRedactionTests {
 

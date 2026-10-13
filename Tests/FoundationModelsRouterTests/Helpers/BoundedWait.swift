@@ -13,10 +13,8 @@ struct SignalNeverArrived: Error {}
 /// The bound is the whole point. ``AsyncSemaphore/wait()`` suspends on a
 /// `CheckedContinuation<Void, Never>` and ignores cancellation by design, so a
 /// signal that never comes suspends its waiter forever and no cancellation and no
-/// other task can resume it. This test target sets no `.timeLimit` trait, and
-/// SwiftPM offers no manifest-level way to set one, so such a wait hangs the
-/// whole `swift test` run rather than failing the one test that caught the
-/// fault.
+/// other task can resume it. Such a wait hangs the whole `swift test` run
+/// rather than failing the one test that caught the fault.
 ///
 /// What *is* breakable is the observation. ``AsyncSemaphore/availablePermits``
 /// answers "has it been signalled yet?" without suspending, so a bounded spin

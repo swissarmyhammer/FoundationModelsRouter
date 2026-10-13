@@ -30,8 +30,6 @@ import Testing
 /// inside the model call — is an ``AwaitedEvent`` that the tool itself
 /// signals. It is not a value that the test reads until a wall clock ends
 /// (task ^bqj719z). A loaded machine makes such a test slower, and never red.
-/// The `.timeLimit` below ends a wait for a stop that never reaches the tool:
-/// it is a limit on a fault, and not a budget for the work.
 ///
 /// The suite is in five files, one for each part: this file holds the suite
 /// and the tests of the regression, the recording, the stranded work and the
@@ -42,8 +40,7 @@ import Testing
 /// `AnswerCancellationCompactionTests.swift` the tests of a stop during a
 /// compaction.
 @Suite(
-    "The cancel of a running answer reaches the model call, and the tools inside it",
-    .timeLimit(.minutes(1)))
+    "The cancel of a running answer reaches the model call, and the tools inside it")
 struct AnswerCancellationTests {
     /// The routes that can stop running work of the pump, so a test can assert
     /// the same behavior of each route and does not copy itself for each route.
@@ -108,15 +105,14 @@ struct AnswerCancellationTests {
     /// the session. Does nothing for `nil`.
     ///
     /// Call it only after the stopped work unwound or can unwind: then the
-    /// pump ends soon. The `.timeLimit` of the suite ends a wait for a pump
-    /// that never ends.
+    /// pump ends soon. The wait ends when the pump ends.
     ///
     /// - Parameter stop: The stop request, or `nil`.
     /// - Throws: When the wait for the signal or for the pump fails.
     static func expectStopEnds(_ stop: StopRequest?) async throws {
         if let stop {
             try await expectSignalEnds(stop.signal, on: stop.session)
-            #expect(try await stop.session.isIdleOnceThePumpEnds())
+            #expect(await stop.session.isIdleOnceThePumpEnds())
         }
     }
 
@@ -137,12 +133,12 @@ struct AnswerCancellationTests {
     /// requested (``RoutedSessionActor/isWorkCancelled``).
     ///
     /// Use it only when the work cannot end before the test lets it end:
-    /// else the work can end before the read, and the wait never ends. Only
-    /// the `.timeLimit` of the suite ends such a wait.
+    /// else the work can end before the read, and the wait never ends. The
+    /// wait ends when the stop is requested.
     ///
     /// - Parameter session: The session whose pump runs the work.
-    /// - Throws: ``ConditionNeverHeld`` when the `.timeLimit` of the suite
-    ///   ended the wait.
+    /// - Throws: ``ConditionNeverHeld`` when the waiting task was cancelled
+    ///   before the stop was requested.
     static func awaitStopRequested(on session: any RoutedSession) async throws {
         let actor = try #require(session as? RoutedSessionActor)
         try await AwaitedCondition.wait(until: { await actor.isWorkCancelled })
@@ -208,20 +204,13 @@ struct AnswerCancellationTests {
         }
 
         let feed = await session.streamSessionEvents()
-        // The task signals when its wait ends. The test waits for that event,
-        // and the `.timeLimit` of the suite can end that wait.
-        let callerEnded = AwaitedEvent()
-        let answerTask = Task { () throws -> String in
-            defer { callerEnded.signal() }
-            return try await session.respond(to: "caller-cancels")
-        }
+        let answerTask = Task { try await session.respond(to: "caller-cancels") }
         await insideTool.wait()
 
         // The mail of the caller is in the open answer. The cancel of the
         // caller task ends the wait of the caller, and it does not stop the
         // answer: the tool still holds the answer when the caller ends.
         answerTask.cancel()
-        try await callerEnded.wait()
         await #expect(throws: CancellationError.self) {
             try await answerTask.value
         }

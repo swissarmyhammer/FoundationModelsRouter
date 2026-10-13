@@ -24,9 +24,9 @@ private actor RunCompletion {
 /// under a bound instead of awaiting it.
 ///
 /// The bound is the whole point. A regression anywhere on the inbound answer
-/// route leaves the run suspended forever, and this test target sets no
-/// `.timeLimit` trait, so awaiting such a run directly hangs the whole run of
-/// `swift test` rather than failing the test that caught the fault. That is
+/// route leaves the run suspended forever, so awaiting such a run directly
+/// hangs the whole run of `swift test` rather than failing the test that
+/// caught the fault. That is
 /// the escape hatch `AnswerCancellationTests` already carries for a stranded
 /// pump — a bounded wait, then a recorded issue and a give-up
 /// rather than a further await — in the shape the answer-delivery suites need.
@@ -47,9 +47,6 @@ struct AnswerDrivenRun<Value: Sendable> {
     /// The running work.
     private let task: Task<Value, Error>
 
-    /// Signalled when the run ends, whether it returned or threw.
-    private let finished: AwaitedEvent
-
     /// Starts `body` and begins tracking whether it finished.
     ///
     /// - Parameters:
@@ -58,10 +55,8 @@ struct AnswerDrivenRun<Value: Sendable> {
     ///   - body: The work that finishes only once an answer is delivered to it.
     init(waitingFor label: String, running body: @escaping @Sendable () async throws -> Value) {
         let completion = RunCompletion()
-        let finished = AwaitedEvent()
         self.label = label
         self.completion = completion
-        self.finished = finished
         self.task = Task {
             let outcome: Result<Value, Error>
             do {
@@ -70,7 +65,6 @@ struct AnswerDrivenRun<Value: Sendable> {
                 outcome = .failure(error)
             }
             await completion.noteFinished()
-            finished.signal()
             return try outcome.get()
         }
     }
@@ -93,33 +87,6 @@ struct AnswerDrivenRun<Value: Sendable> {
             // but the test must not await that run either.
             task.cancel()
             throw AnswerNeverDelivered()
-        }
-        return try await task.value
-    }
-
-    /// The value the run produced once an answer reached it, waited for with
-    /// no wall clock (task ^v4zh807).
-    ///
-    /// ``deliveredAnswer()`` gives up at the wall clock of ``BoundedWait``,
-    /// because most suites that use this type set no `.timeLimit`. A test
-    /// that sets one calls this method instead: the wait ends when the run
-    /// ends, and only the `.timeLimit` ends a wait for a run that no answer
-    /// reaches. A loaded machine then makes the test slower and never wrong.
-    /// The run is cancelled and not awaited when the wait ends early, for the
-    /// reason ``deliveredAnswer()`` gives.
-    ///
-    /// Call it one time for each run: the end of the run is an
-    /// ``AwaitedEvent``, which allows a single waiter.
-    ///
-    /// - Returns: Whatever the run returned.
-    /// - Throws: ``EventNeverArrived`` when the `.timeLimit` of the test ended
-    ///   the wait, otherwise whatever the run itself threw.
-    func answerOnceDelivered() async throws -> Value {
-        do {
-            try await finished.wait()
-        } catch {
-            task.cancel()
-            throw error
         }
         return try await task.value
     }

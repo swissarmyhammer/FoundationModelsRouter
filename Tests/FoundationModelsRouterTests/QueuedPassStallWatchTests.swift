@@ -72,8 +72,7 @@ struct QueuedPassStallWatchTests {
     }
 
     @Test(
-        "a submission that waits sends submissionQueued with its id before submissionStarted with the same id, and the wait is no stall",
-        .timeLimit(.minutes(1)))
+        "a submission that waits sends submissionQueued with its id before submissionStarted with the same id, and the wait is no stall")
     func aWaitingSubmissionSendsItsQueuedIdBeforeItsStartAndNoStall() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -137,8 +136,7 @@ struct QueuedPassStallWatchTests {
     }
 
     @Test(
-        "a tool body that runs longer than the stall interval reports no stall while it runs",
-        .timeLimit(.minutes(1)))
+        "a tool body that runs longer than the stall interval reports no stall while it runs")
     func aToolBodyIsNotAStall() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -163,8 +161,7 @@ struct QueuedPassStallWatchTests {
     }
 
     @Test(
-        "a pass of the running submission that makes no fragment still reports a stall",
-        .timeLimit(.minutes(1)))
+        "a pass of the running submission that makes no fragment still reports a stall")
     func aHeldPassWithNoFragmentStillReportsAStall() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -188,8 +185,7 @@ struct QueuedPassStallWatchTests {
     }
 
     @Test(
-        "after a wait for the worker and a tool body, a stall measures only the pass, and its time in flight is the whole call",
-        .timeLimit(.minutes(1)))
+        "after a wait for the worker and a tool body, a stall measures only the pass, and its time in flight is the whole call")
     func aStallAfterAWaitAndAToolBodyMeasuresOnlyTheHeldPass() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: dir) }

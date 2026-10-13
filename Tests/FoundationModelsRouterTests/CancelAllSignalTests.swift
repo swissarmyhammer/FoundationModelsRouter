@@ -582,7 +582,7 @@ struct CancelAllSignalTests {
         // The model call gives its late fragment and ends. Its output and
         // its own end do not arrive.
         await backend.gate.open()
-        #expect(try await session.isIdleOnceThePumpEnds())
+        #expect(await session.isIdleOnceThePumpEnds())
         #expect(backend.isLateFragmentGiven)
         try await Task.sleep(for: Self.noOutputWindow)
         #expect(Self.events(of: stopped.id, in: recorder.outputs) == atStop)
@@ -671,7 +671,7 @@ struct CancelAllSignalTests {
         await backend.gate.open()
         let end = try await session.awaitTerminal(of: replaced)
         #expect(MailQueueFixtures.answer(of: end)?.mailIds == [replaced])
-        #expect(try await session.isIdleOnceThePumpEnds())
+        #expect(await session.isIdleOnceThePumpEnds())
         await session.close()
 
         #expect(backend.prompts == [Self.streamPrompt, Self.replacedPrompt])
@@ -717,7 +717,7 @@ struct CancelAllSignalTests {
         let stopTwo = session.cancelAll()
         #expect(try await session.awaitTerminal(of: stopTwo) == .signalDone(stopTwo))
         #expect(await session.pendingMessages().isEmpty)
-        #expect(try await session.isIdleOnceThePumpEnds())
+        #expect(await session.isIdleOnceThePumpEnds())
         await session.close()
 
         let outputs = await recorder.finished()
@@ -767,7 +767,7 @@ struct CancelAllSignalTests {
         await latch.open()
         let end = try await session.awaitTerminal(of: held)
         #expect(MailQueueFixtures.answer(of: end)?.mailIds == [held])
-        #expect(try await session.isIdleOnceThePumpEnds())
+        #expect(await session.isIdleOnceThePumpEnds())
         await session.close()
 
         let outputs = await recorder.finished()

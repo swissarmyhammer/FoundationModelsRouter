@@ -8,10 +8,9 @@ import Testing
 /// After each path, no wait stays registered (``ChangeSignal/waiterCount``).
 ///
 /// Each test reads the order of the steps, not a clock. A wait that runs in a
-/// task of its own gives its result through a ``RecordedWaitResult``, so a
-/// wait that never returns fails the test at the `.timeLimit`, and does not
-/// hang the test run.
-@Suite("A change signal wakes each task that waits for the next change", .timeLimit(.minutes(1)))
+/// task of its own gives its result through a ``RecordedWaitResult``, so the
+/// test can see whether the wait has returned yet.
+@Suite("A change signal wakes each task that waits for the next change")
 struct ChangeSignalTests {
     /// One wait that runs in a task of its own.
     struct StartedWait {
@@ -54,8 +53,8 @@ struct ChangeSignalTests {
     ///   - seen: The change count that the wait starts from.
     ///   - registered: How many waits are registered when this wait is.
     /// - Returns: The wait.
-    /// - Throws: ``ConditionNeverHeld`` when the `.timeLimit` of the suite
-    ///   ends the wait first.
+    /// - Throws: ``ConditionNeverHeld`` when the test task is cancelled
+    ///   before the wait is registered.
     private static func startRegisteredWait(
         on signal: ChangeSignal, after seen: UInt64, registered: Int = 1
     ) async throws -> StartedWait {

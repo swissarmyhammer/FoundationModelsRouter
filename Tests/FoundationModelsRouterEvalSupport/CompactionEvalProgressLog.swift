@@ -32,7 +32,7 @@ enum CompactionEvalFixtureKind: String, Sendable {
 
 /// What one sample is called in every progress line it emits.
 ///
-/// A run cut short by the suite's time limit leaves its trail and nothing else,
+/// A run that the caller stops leaves its trail and nothing else,
 /// so a line has to name the sample without the table that never printed: which
 /// fixture it ran, and how far into the tier it stood when it stopped.
 struct CompactionEvalSampleLabel: Sendable, Equatable {
@@ -89,16 +89,15 @@ extension CompactionEvalSampleLabel {
 /// The live trail a gated eval tier writes while it runs.
 ///
 /// The tiers cost half an hour each and printed nothing until they ended, so a
-/// run that hit its own time limit reported one bit: "not finished". The gated
-/// run of 2026-08-18 measured 0 of 7 seeds that way (task ^h2xxsse), and no
-/// reading of its output could say whether the model load or one generation
-/// had taken the time — explanations that each cost another half-hour run to
-/// tell apart.
+/// run that did not end reported one bit: "not finished". The gated run of
+/// 2026-08-18 measured 0 of 7 seeds that way (task ^h2xxsse), and no reading of
+/// its output could say whether the model load or one generation had taken the
+/// time — explanations that each cost another half-hour run to tell apart.
 ///
 /// Every line this renders is one fact stated as it happens: the model load
 /// timed apart from the samples, and each sample naming the step it entered and
-/// the step it left. A run cut short then stops mid-trail, and the last line it
-/// wrote names exactly where.
+/// the step it left. A run that the caller stops then stops mid-trail, and the
+/// last line it wrote names exactly where.
 ///
 /// Kept as functions over plain values, so the trail a gated run is read from
 /// is itself covered by hermetic tests that need no model.

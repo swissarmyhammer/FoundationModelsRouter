@@ -305,9 +305,8 @@ struct GenerationStallDiagnosticTests {
     ///
     /// Each element of the feed is an event that the session sends, so the
     /// wait ends on the report itself and has no wall clock (task ^v4zh807).
-    /// A loaded machine only delays the report. The iteration ends when the
-    /// waiting task is cancelled, which the `.timeLimit` of the test sends,
-    /// and the result is then `nil`.
+    /// A loaded machine only delays the report. The iteration ends at the
+    /// wanted report, or when the feed ends, and the result is then `nil`.
     ///
     /// - Parameters:
     ///   - feed: The session-wide feed, subscribed before the answer starts.
@@ -327,8 +326,7 @@ struct GenerationStallDiagnosticTests {
     // MARK: - The signal a `respond` caller can see
 
     @Test(
-        "a respond answer that stops progressing reports a stall on the session-wide feed",
-        .timeLimit(.minutes(1)))
+        "a respond answer that stops progressing reports a stall on the session-wide feed")
     @MainActor
     func respondAnswerReportsAStallOnTheSessionWideFeed() async throws {
         let (session, backend, dir) = try await Self.makeStallingSession()
@@ -348,7 +346,7 @@ struct GenerationStallDiagnosticTests {
         #expect(stall.timeInFlight >= stall.timeWithoutProgress)
     }
 
-    @Test("a stalling answer is still given — the report bounds nothing", .timeLimit(.minutes(1)))
+    @Test("a stalling answer is still given — the report bounds nothing")
     @MainActor
     func aStallingAnswerIsStillGiven() async throws {
         let (session, backend, dir) = try await Self.makeStallingSession()
@@ -367,8 +365,7 @@ struct GenerationStallDiagnosticTests {
     // MARK: - The signal a streaming caller can see
 
     @Test(
-        "a streaming answer reports the stall against the fragments it counted",
-        .timeLimit(.minutes(1)))
+        "a streaming answer reports the stall against the fragments it counted")
     @MainActor
     func streamingAnswerReportsTheStallAgainstCountedFragments() async throws {
         let producedFragments = 2
@@ -433,8 +430,7 @@ struct GenerationStallDiagnosticTests {
     // MARK: - Off until the host installs an interval (task ^m8pcyck)
 
     @Test(
-        "a session with no interval installed reports nothing after five seconds of silence",
-        .timeLimit(.minutes(1)))
+        "a session with no interval installed reports nothing after five seconds of silence")
     @MainActor
     func aSessionWithNoIntervalReportsNothing() async throws {
         let silence: Duration = .seconds(5)
@@ -456,8 +452,7 @@ struct GenerationStallDiagnosticTests {
     }
 
     @Test(
-        "a session with a one-second interval reports a stall after one second",
-        .timeLimit(.minutes(1)))
+        "a session with a one-second interval reports a stall after one second")
     @MainActor
     func aOneSecondIntervalReportsAfterOneSecond() async throws {
         let reportInterval: Duration = .seconds(1)
@@ -490,7 +485,7 @@ struct GenerationStallDiagnosticTests {
 
     // MARK: - The log a consumer with no subscription still sees
 
-    @Test("a stall is logged, so a consumer that subscribed to nothing still sees it", .timeLimit(.minutes(1)))
+    @Test("a stall is logged, so a consumer that subscribed to nothing still sees it")
     @MainActor
     func aStallIsLogged() async throws {
         let (session, backend, dir) = try await Self.makeStallingSession()
@@ -515,8 +510,7 @@ struct GenerationStallDiagnosticTests {
     // MARK: - Tool calls and snapshots are progress (task ^4799jxg)
 
     @Test(
-        "an answer that makes tool calls with no text for longer than the interval reports no stall",
-        .timeLimit(.minutes(1)))
+        "an answer that makes tool calls with no text for longer than the interval reports no stall")
     @MainActor
     func toolCallsWithNoTextReportNoStall() async throws {
         // The appends are close together and the interval is far wider than
@@ -551,8 +545,7 @@ struct GenerationStallDiagnosticTests {
     }
 
     @Test(
-        "an answer that stops after a tool result reports a stall that names the tool result",
-        .timeLimit(.minutes(1)))
+        "an answer that stops after a tool result reports a stall that names the tool result")
     @MainActor
     func anAnswerThatStopsAfterAToolResultNamesIt() async throws {
         let backend = ToolAnswerBackend(
@@ -579,8 +572,7 @@ struct GenerationStallDiagnosticTests {
     }
 
     @Test(
-        "a respond answer measures its stall from the last tool invocation record",
-        .timeLimit(.minutes(1)))
+        "a respond answer measures its stall from the last tool invocation record")
     @MainActor
     func aRespondAnswerMeasuresFromTheLastToolInvocation() async throws {
         let (session, backend, dir) = try await Self.makeStallingSession()

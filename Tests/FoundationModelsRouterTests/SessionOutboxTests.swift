@@ -571,7 +571,7 @@ struct SessionOutboxTests {
         // take, with no duplication and no loss.
         //
         // The iteration cap is what keeps a broken take from hanging the whole
-        // `swift test` run — this target sets no `.timeLimit` trait. Every take
+        // `swift test` run. Every take
         // that does not end the loop takes at least one event, so `totalEvents`
         // takes empty the outbox and one further take sees nothing; a take
         // that never empties would otherwise spin here forever.

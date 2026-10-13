@@ -86,10 +86,9 @@ private let sessionBackendModel: ModelRef = RealModels.standard
 /// chokepoint fidelity pair, the usage delta, the KV-cache bounds and the
 /// timing print are exactly what they were.
 ///
-/// A test that a time limit cancels is worse than a plain red result. The
-/// cancellation lands mid-generation, and a cancellation on GPU work aborts
-/// the whole process on a Metal assertion (fork card ^3axg80k), which takes
-/// every other suite's results with it.
+/// A cancellation that lands mid-generation on GPU work can abort the whole
+/// process on a Metal assertion (fork card ^3axg80k), which takes every other
+/// suite's results with it.
 @Suite(
     "Gated real-model coverage: MLXFoundationModelsSessionBackend (milestone 7)",
     .serialized,

@@ -132,13 +132,10 @@ private let sessionTreeToolCallingModel: ModelRef = RealModels.standard
 /// byte-level assertion, the live recall, and the tool-calling round trip are
 /// exactly what they were.
 ///
-/// A test that a time limit cancels is worse than a plain red result. The
-/// cancellation lands mid-generation, and a cancellation on GPU work aborts
+/// The suite has no time limit. A run ends when it ends, or when the caller
+/// stops it. A cancellation that lands mid-generation on GPU work can abort
 /// the whole process on a Metal assertion (fork card ^3axg80k), which takes
 /// every other suite's results with it.
-///
-/// The suite has no time limit. A run ends when it ends, or when the caller
-/// stops it.
 @Suite(
     "Gated real-model end-to-end coverage: restoreSessionTree(root:) (task zcxnbst)",
     .serialized,

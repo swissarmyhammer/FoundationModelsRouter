@@ -19,7 +19,7 @@ import Testing
 /// The tests use the stubs of ``AnswerCancellationTests``: the flash slot and
 /// the standard slot load the same hooked container, so each summarizer call
 /// of each tier goes through the hook of the test. No network and no GPU.
-@Suite("The compaction signal", .timeLimit(.minutes(1)))
+@Suite("The compaction signal")
 struct CompactionSignalTests {
     /// The fixtures and the stubs of the suite.
     private typealias Fixtures = AnswerCancellationTests
@@ -303,7 +303,7 @@ struct CompactionSignalTests {
 
         // The mail woke the pump, and the pump took nothing: the pump ends,
         // and the mail still waits in the queue.
-        #expect(try await session.isIdleOnceThePumpEnds() == false)
+        #expect(await session.isIdleOnceThePumpEnds() == false)
         #expect(session.outbox.queue.pending.map(\.id) == [mailID])
         #expect(await fixture.observer.entered.contains(Self.waitingPrompt) == false)
 

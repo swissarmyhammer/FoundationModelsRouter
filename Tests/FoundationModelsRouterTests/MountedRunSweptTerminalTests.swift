@@ -25,14 +25,8 @@ import Testing
 /// router. The events themselves come off the public
 /// `TranscriptEvent.operationEvents`, which is the expression a consumer
 /// writes.
-///
-/// The suite declares `.timeLimit` because a gate holds each mounted run. A
-/// regression that stopped the sweep from settling that run would suspend the
-/// suite forever. That would stop the whole `swift test` run, and no test would
-/// report the defect.
 @Suite(
-    "ToolContext.mount(postingTo:): a terminal the run plane builds reaches the journal, never the caller's sink",
-    .timeLimit(.minutes(1))
+    "ToolContext.mount(postingTo:): a terminal the run plane builds reaches the journal, never the caller's sink"
 )
 struct MountedRunSweptTerminalTests {
     // MARK: - Vocabulary

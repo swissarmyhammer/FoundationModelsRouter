@@ -305,6 +305,57 @@ struct ToolCallArgumentsTextTests {
         #expect(WatchedText.attemptTexts(in: [entry], excluding: [entry.id]).isEmpty)
     }
 
+    @Test("a tool call whose arguments are not complete gives no text")
+    func incompleteCallGivesNoText() throws {
+        let arguments = try GeneratedContent(json: #"{"code": "first line\nsecond li"#)
+        #expect(!arguments.isComplete)
+        let calls = Transcript.ToolCalls([
+            Transcript.ToolCall(id: "call-1", toolName: Self.toolName, arguments: arguments)
+        ])
+
+        #expect(ToolCallArgumentsText.text(of: calls).isEmpty)
+    }
+
+    @Test("a detector that reads each snapshot of a streamed tool call counts one new line in a repeated snippet")
+    func streamedSnapshotsKeepTheLineOffsets() throws {
+        let line = #"print("the same line of the generated snippet")"#
+        let escapedLine = #"print(\"the same line of the generated snippet\")\n"#
+        let lineCount = 200
+        var detector = RepetitionDetector(detection: RepetitionDetection(), tokenCounter: CharacterTokenCounter())
+
+        // The snapshots in the order the model streams them: the opening of
+        // the arguments alone, then one more line each time, then the close.
+        // If the text of the opening alone is "\n", the detector reads each
+        // later line from its second character, and it counts 2 new lines.
+        var finding: RepetitionFinding?
+        for count in 0...lineCount where finding == nil {
+            let json = #"{"code": ""# + String(repeating: escapedLine, count: count)
+            finding = try detector.observe(Self.watchedText(of: json))
+        }
+        if finding == nil {
+            let json = #"{"code": ""# + String(repeating: escapedLine, count: lineCount) + #""}"#
+            finding = try detector.observe(Self.watchedText(of: json))
+        }
+
+        let stop = try #require(finding)
+        #expect(stop.newLines == 1)
+        #expect(stop.countedLines * (line.count + 1) == stop.generatedTokens)
+    }
+
+    /// The watched text of one tool call whose arguments are `json`, as the
+    /// watch reads it from the transcript.
+    ///
+    /// - Parameter json: The JSON text of the arguments so far.
+    /// - Returns: The watched texts.
+    /// - Throws: What `GeneratedContent(json:)` throws.
+    private static func watchedText(of json: String) throws -> [WatchedText] {
+        let arguments = try GeneratedContent(json: json)
+        let calls = Transcript.ToolCalls([
+            Transcript.ToolCall(id: "call-1", toolName: toolName, arguments: arguments)
+        ])
+        return [WatchedText(entryId: "tool-calls", text: ToolCallArgumentsText.text(of: calls))]
+    }
+
     @Test("the render keeps a watched tool-calls entry whole, also at a kept length of zero")
     func renderKeepsToolCallsWhole() throws {
         let arguments = try GeneratedContent(json: #"{"code": "print(1)\n"}"#)

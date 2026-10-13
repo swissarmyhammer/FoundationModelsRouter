@@ -361,8 +361,9 @@ extension RoutedSessionActor {
     /// that reaches ``RepetitionDetection/identicalToolCallLimit`` (task
     /// ^8eq31j0).
     ///
-    /// The backend shows a tool call only after the model ended it, and the
-    /// SDK then runs the tool. So the watch of the pass cannot stop a tool
+    /// The watch reads a tool call only after the model ended it
+    /// (``ToolCallArgumentsText``), and the SDK then runs the tool. So the
+    /// watch of the pass cannot stop a tool
     /// call whose arguments repeat. This check runs on the task of each tool
     /// body of this session's own open model call
     /// (``ToolCallRepetitionCheck``), where the SDK waits for the tool and

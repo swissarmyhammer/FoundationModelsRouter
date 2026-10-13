@@ -240,9 +240,13 @@ struct CrossRouterPoolIntegrationTests {
         #expect(!secondAnswer.isEmpty)
 
         // Residency follows ARC: dropping both profiles gives every model back.
+        // Each session retains its profile, and the pump task of the session
+        // retains the session after `respond` returns. So the last hold can
+        // go after this drop. The test waits for the event of the pool that
+        // the last model is evicted.
         firstProfile = nil
         secondProfile = nil
-        #expect(try await fixture.pool.admittedResidentModelCount == 0)
+        #expect(await fixture.pool.awaitNoResidentModel())
     }
 
     @Test("a release from the first router keeps the second router's session alive")
@@ -289,9 +293,12 @@ struct CrossRouterPoolIntegrationTests {
         #expect(fixture.poolLoader.loadCount == 0)
         #expect(fixture.pool.residentModelCount == residentAfterResolve)
 
+        // A task of the pooled session can keep its hold after this drop, so
+        // the test waits for the event of the pool that the last model is
+        // evicted.
         session = nil
         profile = nil
-        #expect(try await fixture.pool.admittedResidentModelCount == 0)
+        #expect(await fixture.pool.awaitNoResidentModel())
     }
 
     @Test("a resolve after a PooledModel of its flash model answers over that model, and the router loads no flash model")
@@ -303,7 +310,9 @@ struct CrossRouterPoolIntegrationTests {
             .session(instructions: crossRouterInstructions)
         var profile: LanguageModelProfile? = try await fixture.router.resolve()
         // The session of the router is a temporary value: a live session keeps
-        // the holds of its profile, and the end of the test drops them all.
+        // the holds of its profile. The pump task of the session retains the
+        // session after `respond` returns, so the end of the test waits for
+        // the event of the pool that the last model is evicted.
         let reply = try await answer(
             on: try #require(profile).flash.makeSession(instructions: crossRouterInstructions))
 
@@ -319,7 +328,7 @@ struct CrossRouterPoolIntegrationTests {
         withExtendedLifetime(session) {}
         session = nil
         profile = nil
-        #expect(try await fixture.pool.admittedResidentModelCount == 0)
+        #expect(await fixture.pool.awaitNoResidentModel())
     }
 }
 

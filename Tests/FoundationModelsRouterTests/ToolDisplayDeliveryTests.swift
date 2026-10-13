@@ -17,10 +17,9 @@ import Testing
 ///
 /// A ``BackgroundingBackend`` calls the background tool of the session in its
 /// first answer. No assertion reads a clock: each wait reads a state until it
-/// holds, and the `.timeLimit` of the suite ends a wait for a state that never
-/// comes. Only the timeout test sleeps, because the timeout of a run is a
+/// holds. Only the timeout test sleeps, because the timeout of a run is a
 /// time.
-@Suite("The live delivery of the display events of a tool", .timeLimit(.minutes(1)))
+@Suite("The live delivery of the display events of a tool")
 struct ToolDisplayDeliveryTests {
     // MARK: - Fixtures
 

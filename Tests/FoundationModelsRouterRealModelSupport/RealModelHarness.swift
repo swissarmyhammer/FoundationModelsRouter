@@ -21,8 +21,8 @@ import Testing
 ///
 /// ## What the ungated tests prove, and what they cannot
 ///
-/// The gated suites that call this each drive a real model under a time limit,
-/// so a change here cannot be proved by running them. It is proved instead by
+/// The gated suites that call this each drive a real model, and a normal test
+/// run does not run them. So a change here is not proved by them. It is proved by
 /// ``RealModelHarnessTests``, which builds a whole profile over a stub container
 /// and reads back every fact this function stamps: the definition name, each
 /// slot's resolution, the router id every handle carries, the one container the

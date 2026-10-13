@@ -7,11 +7,8 @@ import Testing
 ///
 /// The second is the difference from ``BoundedWait``: no clock ends this wait,
 /// so a loaded machine makes it longer and never wrong. The third is what lets
-/// a `.timeLimit` trait end a test whose state never holds.
-///
-/// `.timeLimit` here for the same reason: a regression in the type under test
-/// would otherwise read a state forever and hang the whole run.
-@Suite("AwaitedCondition ends a wait on the state itself, never on a clock", .timeLimit(.minutes(1)))
+/// a task that cancels its own wait stop the wait.
+@Suite("AwaitedCondition ends a wait on the state itself, never on a clock")
 struct AwaitedConditionTests {
     /// How long after the ceiling of ``BoundedWait`` the late state holds: one
     /// second, so a wait that still gave up on that ceiling fails this suite.

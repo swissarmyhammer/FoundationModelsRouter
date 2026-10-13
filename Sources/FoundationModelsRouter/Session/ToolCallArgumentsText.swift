@@ -11,13 +11,25 @@ import FoundationModels
 /// so the last line of a value is a complete line, and two values never join
 /// into one line. A string that the text does not close (a JSON text cut in
 /// the middle) gives its text so far, with no line feed added.
+///
+/// A call that the model still writes has no text. The transcript of the
+/// session shows such a call while it streams, but its arguments are not
+/// the JSON text so far: the SDK writes them again as closed JSON
+/// (`{"code": "` becomes `{"code": ""}`), and it can change the order of
+/// the keys. So a value that the model did not close gets a line feed, and
+/// the text of the call is not the start of its later text. The detector
+/// reads a growing entry from the offset where it stopped, so such a text
+/// moves its offset into the middle of a line, and it then counts a cut line
+/// as a new line. The detector reads a call only when its arguments are
+/// complete: its text then only grows.
 enum ToolCallArgumentsText {
-    /// The text of the arguments of each call of `calls`, in order.
+    /// The text of the arguments of each complete call of `calls`, in order.
+    /// A call whose arguments are not complete gives no text.
     ///
     /// - Parameter calls: The calls of a `.toolCalls` entry.
-    /// - Returns: The joined text of the string values of each call.
+    /// - Returns: The joined text of the string values of each complete call.
     static func text(of calls: Transcript.ToolCalls) -> String {
-        calls.map { text(ofArgumentsJSON: $0.arguments.jsonString) }.joined()
+        calls.filter(\.arguments.isComplete).map { text(ofArgumentsJSON: $0.arguments.jsonString) }.joined()
     }
 
     /// The string values of `json`, decoded, each closed value on lines of

@@ -22,16 +22,17 @@ private let cancelledGenerationMaxTokens = 2048
 /// How long the suite lets the doomed generation run before it cancels it.
 ///
 /// Long enough that the short prompt's prefill is over and token decode is in
-/// flight on the GPU — the state the gated eval was in when its time limit
-/// fired — and short enough to keep the suite fast.
+/// flight on the GPU — the state the gated eval was in when the cancellation
+/// reached it — and short enough to keep the suite fast.
 private let cancellationDelaySeconds = 2
 
-/// Regression coverage for task `^bkdm97c`: a gated eval cancelled by its
-/// Swift Testing time limit aborted the whole process on a Metal assertion —
+/// Regression coverage for task `^bkdm97c`: a gated eval whose test task was
+/// cancelled mid-generation aborted the whole process on a Metal assertion —
 /// signal 6 out of `_MTLCommandBuffer addCompletedHandler:`, "Completed
-/// handler provided after commit call".
+/// handler provided after commit call". A caller that stops a run cancels the
+/// test task in the same way.
 ///
-/// The gated run's timeline was: the time limit cancels the test task while a
+/// The gated run's timeline was: a cancellation reaches the test task while a
 /// generation is on the GPU, the eval unwinds and prints its report, the
 /// residency trait evicts the model, and the process dies. This suite
 /// compresses that timeline onto the cheap 1B model: start a generation,

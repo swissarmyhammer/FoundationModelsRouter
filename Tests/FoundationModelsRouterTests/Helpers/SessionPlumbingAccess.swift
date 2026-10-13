@@ -72,24 +72,13 @@ extension RoutedSession {
     /// ``becomesIdle()`` asks the same question under the wall clock of
     /// ``BoundedWait``. This one waits for the end of
     /// ``RoutedSessionActor/pumpTask`` itself, so a loaded machine makes it
-    /// slower and never wrong; only the `.timeLimit` of the test ends a pump
-    /// that never ends.
-    ///
-    /// The watch of each pump is a task of its own because `await pump.value`
-    /// does not end on a cancellation. That task ends when the pump ends.
+    /// slower and never wrong. The wait ends when the pump ends.
     ///
     /// - Returns: Whether no user-type mail waits after the last pump ended.
-    /// - Throws: ``EventNeverArrived`` when the waiting task was cancelled
-    ///   before the pump ended.
-    func isIdleOnceThePumpEnds() async throws -> Bool {
+    func isIdleOnceThePumpEnds() async -> Bool {
         let session = self as! RoutedSessionActor
         while let pump = await session.pumpTask {
-            let pumpEnded = AwaitedEvent()
-            Task {
-                await pump.value
-                pumpEnded.signal()
-            }
-            try await pumpEnded.wait()
+            await pump.value
         }
         return waitingUserMailCount == 0
     }

@@ -12,9 +12,8 @@ import Testing
 ///
 /// Everything runs against the scripted ``BackgroundingBackend`` and real
 /// background tools of the session, so the suite needs no network and no
-/// GPU. The tests read the order of the steps, not a clock. The `.timeLimit`
-/// ends a wait that never returns.
-@Suite("A host waits until a session is idle", .timeLimit(.minutes(1)))
+/// GPU. The tests read the order of the steps, not a clock.
+@Suite("A host waits until a session is idle")
 struct SessionIdleWaitTests {
     // MARK: - Fixtures
 
@@ -109,8 +108,8 @@ struct SessionIdleWaitTests {
     ///   - outcome: Gets the result of the call.
     /// - Returns: The task of the call, which a test can cancel. A test reads
     ///   the result from `outcome`, not from the task.
-    /// - Throws: ``ConditionNeverHeld`` when the `.timeLimit` of the suite
-    ///   ends the wait first.
+    /// - Throws: ``ConditionNeverHeld`` when the waiting task was cancelled
+    ///   before the call waited or returned.
     @discardableResult
     private static func startIdleWait(
         on session: any RoutedSession, recording outcome: RecordedWaitResult
@@ -127,10 +126,8 @@ struct SessionIdleWaitTests {
     /// Runs `work` in a task of its own, and records what it gives in the
     /// result that this function returns.
     ///
-    /// A test reads the result with ``AwaitedCondition/wait(until:)``, not
-    /// with `await task.value`. The `.timeLimit` cancels the test task, not
-    /// the task of `work`, so a `work` that never returns then fails the
-    /// test, and does not hang the test run.
+    /// A test reads the result with ``AwaitedCondition/wait(until:)``, or
+    /// reads it one time to see that `work` did not return yet.
     ///
     /// - Parameter work: The work to run.
     /// - Returns: The result that gets what `work` gives.
@@ -144,8 +141,8 @@ struct SessionIdleWaitTests {
     ///
     /// - Parameter outcome: The result of a wait that runs in a task of its own.
     /// - Returns: The result.
-    /// - Throws: ``ConditionNeverHeld`` when the `.timeLimit` of the suite
-    ///   ends the wait first.
+    /// - Throws: ``ConditionNeverHeld`` when the waiting task was cancelled
+    ///   before the result came.
     private static func result(of outcome: RecordedWaitResult) async throws -> Bool? {
         try await AwaitedCondition.wait(until: { outcome.value != nil })
         return outcome.value

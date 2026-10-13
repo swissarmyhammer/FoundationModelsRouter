@@ -124,8 +124,12 @@ struct PromptCacheBudgetIntegrationTests {
         #expect(Int64(usage.memoryBytes) <= promptCacheRoomBytes)
         #expect(pool.footprint.totalBytes + Int64(usage.residentBytes) <= workingSet)
 
+        // Each session of `answerOnce(on:)` retains the profile, and the pump
+        // task of the session retains the session after `respond` returns.
+        // So the last hold can go after this drop. The test waits for the
+        // event of the pool that the last model is evicted.
         profile = nil
-        #expect(try await pool.admittedResidentModelCount == 0)
+        #expect(await pool.awaitNoResidentModel())
     }
 
     /// Resolves ``twoModelProfile`` one time on the host working set, reads
@@ -162,7 +166,7 @@ struct PromptCacheBudgetIntegrationTests {
     }
 
     /// The prompt-cache usage of `loader` once no entry is being written to
-    /// disk, or the usage at the end of a bounded wait.
+    /// disk.
     ///
     /// - Parameter loader: The loader whose prompt cache to read.
     /// - Returns: The usage.

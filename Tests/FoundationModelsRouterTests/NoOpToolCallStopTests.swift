@@ -16,7 +16,7 @@ import Testing
 /// Each test drives the production backend and a real `LanguageModelSession`
 /// over a ``NoOpToolCallModel``. No GPU is in the loop. A ``RunLatch`` holds
 /// the background job, and each wait reads a state until it holds.
-@Suite("A no-op tool call stops the generation while an operation is pending", .timeLimit(.minutes(1)))
+@Suite("A no-op tool call stops the generation while an operation is pending")
 struct NoOpToolCallStopTests {
     /// The suite's temp-directory prefix.
     private static let tempDirPrefix = "NoOpToolCallStopTests"

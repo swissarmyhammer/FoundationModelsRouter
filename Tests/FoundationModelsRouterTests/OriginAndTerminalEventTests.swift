@@ -412,7 +412,7 @@ struct OriginAndTerminalEventTests {
         try await Self.awaitSignalEnd(repeated, on: session)
         // The signal does not wait for the pump. The latch never opens, so
         // the held call ends only with the cancel of the signal.
-        #expect(try await session.isIdleOnceThePumpEnds())
+        #expect(await session.isIdleOnceThePumpEnds())
         await session.close()
 
         let outputs = await Self.collectOutputs(feed)

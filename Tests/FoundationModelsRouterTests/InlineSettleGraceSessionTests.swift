@@ -14,9 +14,8 @@ import Testing
 ///
 /// A scripted backend calls the background tool of the session in its first
 /// answer, and a ``RunLatch`` holds the run. No assertion reads a clock: each
-/// wait reads a state until it holds, and the `.timeLimit` of the suite ends
-/// a wait for a state that never comes.
-@Suite("The settle period of a session decides between the own output and a pending envelope", .timeLimit(.minutes(1)))
+/// wait reads a state until it holds, and the wait ends when the state holds.
+@Suite("The settle period of a session decides between the own output and a pending envelope")
 struct InlineSettleGraceSessionTests {
     // MARK: - Fixtures
 

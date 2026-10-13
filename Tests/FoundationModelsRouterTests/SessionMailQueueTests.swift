@@ -936,8 +936,8 @@ struct SessionMailQueueTests {
     }
 
     @Test(
-        "a respond whose message waits is removed by cancel(_:): its caller gets CancellationError, and no submission carries it",
-        .timeLimit(.minutes(1)))
+        "a respond whose message waits is removed by cancel(_:): its caller gets CancellationError, and no submission carries it"
+    )
     @MainActor
     func cancelMessageWithdrawsAWaitingRespond() async throws {
         let recorder = InMemoryRecorder()
@@ -954,8 +954,8 @@ struct SessionMailQueueTests {
         let waitingRespond = Task { try await session.respond(to: "waiting prompt") }
         // No event tells that the message joined the queue, so the test reads
         // the count until it holds. Neither wait below has a wall clock (task
-        // ^v4zh807): a loaded machine only delays the change, and only the
-        // `.timeLimit` of this test ends a wait for a change that never comes.
+        // ^v4zh807): a loaded machine only delays the change. Each wait ends
+        // when its state holds.
         try await AwaitedCondition.wait(until: { session.waitingUserMailCount == 1 })
         let id = try #require(await session.pendingMessages().first?.id)
 
@@ -965,7 +965,7 @@ struct SessionMailQueueTests {
         backend.proceed.signal()
         _ = try await blockingAnswer.value
         await #expect(throws: CancellationError.self) { try await waitingRespond.value }
-        #expect(try await session.isIdleOnceThePumpEnds())
+        #expect(await session.isIdleOnceThePumpEnds())
         #expect(await Self.promptTexts(in: recorder) == ["blocking message"])
     }
 

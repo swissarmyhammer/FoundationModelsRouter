@@ -122,7 +122,7 @@ struct SummarizerPromptCacheIntegrationTests {
     }
 
     /// The key count and the byte totals of the prompt cache, once no entry
-    /// is being written to disk, or at the end of a bounded wait.
+    /// is being written to disk.
     ///
     /// - Returns: The state of the prompt cache.
     /// - Throws: `CancellationError` when the test is cancelled.

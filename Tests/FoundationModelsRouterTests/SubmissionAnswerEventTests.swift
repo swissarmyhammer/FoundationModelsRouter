@@ -145,7 +145,7 @@ struct SubmissionAnswerEventTests {
         let ended = await Self.waitForAnswersToEnd(1, in: log)
         // cancelAll() does not wait for the pump. The test waits for the end
         // of the stopped work, so a late event of that work can come first.
-        #expect(try await session.isIdleOnceThePumpEnds())
+        #expect(await session.isIdleOnceThePumpEnds())
         drain.cancel()
 
         #expect(ended)

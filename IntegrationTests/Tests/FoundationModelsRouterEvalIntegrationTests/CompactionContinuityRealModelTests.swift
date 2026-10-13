@@ -55,8 +55,8 @@ private let compactionContinuityEvalRealEvaluation = CompactionContinuityEvaluat
 ///
 /// Six of the ten hand-written tasks are not driven (task ^mx4jqrn). Ten
 /// tasks under ``CompactionContinuityRealModel`` measured 219.1 seconds on
-/// 2026-08-20 and 99.5 on 2026-08-21, which the two-minute budget does not
-/// hold with margin, so the tier drives the four
+/// 2026-08-20 and 99.5 on 2026-08-21, which the two-minute budget of that time
+/// did not hold with margin, so the tier drives the four
 /// ``compactionContinuityFastTierIDs`` names and states why each is there.
 /// The six still have fast seeds, and the hermetic sizing proofs still hold
 /// every one of them, so a later re-measurement can widen the list without

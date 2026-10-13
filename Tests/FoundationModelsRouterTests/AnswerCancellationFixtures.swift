@@ -272,9 +272,9 @@ extension AnswerCancellationTests {
     ///
     /// The wait for the model call has no wall clock (task ^v4zh807): a loaded
     /// machine only delays the answer, and a clock of some seconds failed a
-    /// correct test under parallel stress. The `.timeLimit` of the suite
-    /// cancels the wait of an answer that never reaches the model, and the
-    /// answer is then cancelled and not awaited.
+    /// correct test under parallel stress. The wait ends when the model call
+    /// of the answer ends. If a cancel of the waiting task ends the wait
+    /// first, the answer is cancelled and not awaited.
     ///
     /// - Parameters:
     ///   - session: The session to run one more answer on.
@@ -300,8 +300,8 @@ extension AnswerCancellationTests {
     /// waiting task was cancelled.
     ///
     /// The wait reads ``AnswerObserver/exited`` until it holds, with no wall
-    /// clock. Only the cancellation of the waiting task, which the
-    /// `.timeLimit` of the suite sends, ends it early.
+    /// clock. The wait ends when the model call ends, or when the waiting
+    /// task is cancelled.
     ///
     /// - Parameters:
     ///   - prompt: The prompt of the answer whose model call is watched.
@@ -520,22 +520,18 @@ extension AnswerCancellationTests {
     /// suspended by ``suspendInsideCancellationAwareTool(_:prompt:insideTool:)``,
     /// then asserts the answer unwound with `CancellationError`.
     ///
-    /// The event first, and never a bare `await answerTask.value`: that tool resumes
-    /// only when cancellation reaches it, and it resumes out of
-    /// ``AsyncSemaphore/wait()``, which ignores cancellation by design. So a
-    /// regression in propagation leaves the answer suspended where no time limit can
-    /// reach it, and awaiting the answer straight away would hang the whole run instead
-    /// of failing the test that caught the fault. The event is a wait the suite's
-    /// `.timeLimit` *can* break, so the fault ends this test instead. Past the event
-    /// the tool has already thrown and the answer is already unwinding, which is what
-    /// makes the `await` below safe.
+    /// The event first, then the answer: that tool resumes only when cancellation
+    /// reaches it, and it resumes out of ``AsyncSemaphore/wait()``, which ignores
+    /// cancellation by design. The event is the moment when the cancellation
+    /// reached the tool. Past the event the tool has already thrown and the answer
+    /// is already unwinding, so the `await` below reads an answer that ends.
     ///
     /// - Parameters:
     ///   - answerTask: The task awaiting the cancelled answer, whatever it returns.
     ///   - sawCancellation: The event ``suspendInsideCancellationAwareTool(_:prompt:insideTool:)``
     ///     returned for that tool.
-    /// - Throws: ``EventNeverArrived`` when the suite's `.timeLimit` ended the wait
-    ///   because the cancellation never reached the tool at all.
+    /// - Throws: ``EventNeverArrived`` when the waiting task was cancelled before
+    ///   the cancellation reached the tool.
     static func awaitCancelledUnwind<Value: Sendable>(
         _ answerTask: Task<Value, Error>,
         sawCancellation: AwaitedEvent
@@ -553,9 +549,8 @@ extension AsyncStream where Element == SessionOutput {
     /// ``SessionEvent/answered(_:)`` or ``SessionEvent/answerFailed(_:)``.
     ///
     /// A test uses it to see the end of an answer whose caller does not wait
-    /// any more. The read of the feed stops when the waiting task is
-    /// cancelled, so the `.timeLimit` of the suite ends a wait for an end that
-    /// never comes.
+    /// any more. The read ends at the first end of an answer, or when the
+    /// feed ends.
     ///
     /// - Returns: The events of the feed in order, up to and including the
     ///   first end of an answer, or each event read when the feed ended first.

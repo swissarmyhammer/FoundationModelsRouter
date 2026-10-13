@@ -75,10 +75,9 @@ public struct GatedRealModelSuiteTrait: SuiteTrait, TestTrait, TestScoping {
         /// Each `@Test` of the suite is measured on its own step, and the
         /// printed line names the test.
         ///
-        /// The budget is stated per test and Swift Testing charges
-        /// `.timeLimit` per test, so this is the measurement that can be read
-        /// straight against the budget. It needs ``isRecursive``, and therefore
-        /// the `TestTrait` conformance that makes recursion legal.
+        /// Each test prints its own cost, so a reader can compare one test
+        /// between two runs. It needs ``isRecursive``, and therefore the
+        /// `TestTrait` conformance that makes recursion legal.
         case eachTest
 
         /// The suite's whole run is measured as one step, and the printed line
@@ -194,8 +193,8 @@ public struct GatedRealModelSuiteTrait: SuiteTrait, TestTrait, TestScoping {
     ///
     /// A TEST's step — reached under ``Measurement/eachTest`` alone — takes no
     /// permit, because its suite already holds one. It prints the test's own
-    /// wall clock however the test ended, so a run past the target's budget
-    /// states what it cost as well as failing.
+    /// wall clock however the test ended, so a failed run also states what it
+    /// cost.
     ///
     /// - Parameters:
     ///   - test: The suite or the test this step belongs to.

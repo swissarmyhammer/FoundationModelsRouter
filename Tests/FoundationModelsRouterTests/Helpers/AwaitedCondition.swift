@@ -15,9 +15,9 @@ struct ConditionNeverHeld: Error {}
 /// when the state holds and on nothing else: a loaded machine makes the wait
 /// longer and never wrong.
 ///
-/// What ends a wait whose state never holds — the regression a test exists to
-/// catch — is the `.timeLimit` trait on the test. The trait cancels the test,
-/// and ``wait(until:)`` then stops reading and throws.
+/// The wait ends when the state holds. A cancel of the waiting task also ends
+/// it: ``wait(until:)`` then stops reading and throws. Nothing else ends the
+/// wait, and no clock or limit ends it.
 enum AwaitedCondition {
     /// Waits until `condition` holds, reading it as
     /// ``BoundedWait/poll(until:givingUpWhen:)`` does, and stopping only when

@@ -4,14 +4,6 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// The wall-clock ceiling this suite runs under.
-///
-/// Every test drives a scripted answer, and one of them reads the answer's
-/// stream until the report arrives. An answer that never produced the report
-/// would suspend on the gated second round for ever, so the suite states a
-/// bound.
-private let mountedRunAttachmentCarrierTimeLimitMinutes = 1
-
 /// The document ``MountFixtures/firstAttachment`` carries, decoded back into
 /// the shape its ``ToolCallAttachment/schemaName`` names.
 ///
@@ -58,8 +50,7 @@ private struct FileChangeSetProbe: Decodable, Equatable {
 /// on its OWN context. This suite is the join: a real session answer whose tool
 /// mounts another tool, read off `streamEvents(to:)`.
 @Suite(
-    "Mounted-run attach carrier: a nested call's records ride the mounting run's live report",
-    .timeLimit(.minutes(mountedRunAttachmentCarrierTimeLimitMinutes))
+    "Mounted-run attach carrier: a nested call's records ride the mounting run's live report"
 )
 struct MountedRunAttachmentCarrierTests {
     private typealias Fixtures = MountFixtures

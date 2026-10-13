@@ -5,13 +5,9 @@ import Testing
 /// suspended resumes it, and a cancelled wait ends rather than suspending on an
 /// event nothing will send.
 ///
-/// The third is what lets a `.timeLimit` trait end a test whose event never
-/// arrives. ``AsyncSemaphore/wait()`` cannot be ended that way by design, which
-/// is why the waits a test makes go through this type instead.
-///
-/// `.timeLimit` here for the same reason: a regression in the type under test
-/// would otherwise suspend one of these tests forever and hang the whole run.
-@Suite("AwaitedEvent ends a wait on the event itself, never on a clock", .timeLimit(.minutes(1)))
+/// The third is what lets a task that cancels its own wait stop the wait.
+/// ``AsyncSemaphore/wait()`` cannot be ended that way by design.
+@Suite("AwaitedEvent ends a wait on the event itself, never on a clock")
 struct AwaitedEventTests {
     @Test("a signal sent before the wait is still observed")
     func anEarlierSignalIsStillObserved() async {

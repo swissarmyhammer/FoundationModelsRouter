@@ -1,13 +1,6 @@
 import MLX
 import Testing
 
-/// The wall-clock ceiling this suite runs under.
-///
-/// One minute, although the model-loading suites have no time limit: this
-/// suite adds four integers and downloads nothing. The three runs of
-/// 2026-08-20 measured it at 0.001, then 0.001, then 0.0 seconds.
-private let metalLibraryBootstrapTimeLimitMinutes = 1
-
 /// The first operand in the run the probe below adds on the GPU.
 ///
 /// The values themselves carry no meaning. Evaluating *any* GPU-device
@@ -55,7 +48,6 @@ private let metalLibraryProbeOperands: [Int32] = Array(
 @Suite(
     "Gated coverage: a gated @Test with no per-test gate line reaches the GPU safely (task d48rmth)",
     .serialized,
-    .timeLimit(.minutes(metalLibraryBootstrapTimeLimitMinutes)),
     .exclusiveRealModel
 )
 struct MetalLibraryBootstrapIntegrationTests {

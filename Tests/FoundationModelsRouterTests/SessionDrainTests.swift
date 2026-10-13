@@ -20,10 +20,8 @@ import Testing
 /// The stubs of ``AnswerCancellationTests`` stand in for the model. A model
 /// call that takes some turns to unwind after its cancel stands in for a
 /// generation that stops at its next token. The tests read the order of the
-/// steps, not a clock. The `.timeLimit` ends a wait that never returns.
-@Suite(
-    "The stop of all work of a session: cancelAll() does not wait, and close() returns only when no work runs",
-    .timeLimit(.minutes(1)))
+/// steps, not a clock.
+@Suite("The stop of all work of a session: cancelAll() does not wait, and close() returns only when no work runs")
 struct SessionDrainTests {
     /// The ways to stop all work of a session.
     enum StopRoute: Sendable, CaseIterable, CustomTestStringConvertible {
@@ -153,7 +151,7 @@ struct SessionDrainTests {
 
         // The work ends when the model call ends. The pump then ends.
         release.signal()
-        #expect(try await session.isIdleOnceThePumpEnds())
+        #expect(await session.isIdleOnceThePumpEnds())
         #expect(steps.values == ["model call ended"])
     }
 

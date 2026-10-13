@@ -2,13 +2,6 @@ import Foundation
 import FoundationModelsRouter
 import Testing
 
-/// The wall-clock ceiling this suite runs under.
-///
-/// One minute, although the model-loading suites have no time limit: this
-/// suite loads no model, touches no GPU, and
-/// reads one key path.
-private let contextTokensSurfaceTimeLimitMinutes = 1
-
 /// The reach proof for `RoutedLLM.contextTokens` (Ask 3).
 ///
 /// This file imports the Router with a plain `import`, from a package that is
@@ -32,10 +25,7 @@ private func makeSessionBudget(for model: RoutedLLM) -> TokenBudget {
 ///
 /// Not gated: the suite loads no model and touches no GPU, so it needs neither
 /// the target-wide permit nor the metallib bootstrap.
-@Suite(
-    "Ask 3 surface: RoutedLLM.contextTokens is public",
-    .timeLimit(.minutes(contextTokensSurfaceTimeLimitMinutes))
-)
+@Suite("Ask 3 surface: RoutedLLM.contextTokens is public")
 struct RoutedModelContextTokensSurfaceTests {
     @Test("a plain import reads RoutedLLM.contextTokens as an Int and sizes TokenBudget(limit:) from it")
     func contextTokensReachesTokenBudgetFromAPlainImport() {

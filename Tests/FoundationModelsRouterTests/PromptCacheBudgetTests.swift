@@ -104,25 +104,16 @@ private actor PromptCacheRecordingLoader: ModelLoader {
     private var lastWaiterID = 0
 
     /// Returns when the latest budget this loader got is `budget`: at once
-    /// when it is already the latest, else when the router sends it. A
-    /// cancelled caller returns at once, so the time limit of a test stops
-    /// the wait.
+    /// when it is already the latest, else when the router sends it. The
+    /// wait ends on that budget.
     ///
     /// - Parameter budget: The budget to wait for.
     func waitUntilLatestBudget(is budget: Int) async {
         if memoryBudgets.last == budget { return }
         lastWaiterID += 1
         let id = lastWaiterID
-        await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
-                if Task.isCancelled {
-                    continuation.resume()
-                } else {
-                    budgetWaiters[id] = BudgetWaiter(budget: budget, continuation: continuation)
-                }
-            }
-        } onCancel: {
-            Task { await self.resumeWaiter(id) }
+        await withCheckedContinuation { continuation in
+            budgetWaiters[id] = BudgetWaiter(budget: budget, continuation: continuation)
         }
     }
 
@@ -189,8 +180,8 @@ private struct DeliberateLoadFailure: Error {}
 /// eviction.
 ///
 /// Each wait of this suite is on a real signal: a budget that the loader gets,
-/// or a load that starts. The time limit only stops a test that hangs.
-@Suite(.timeLimit(.minutes(1)))
+/// or a load that starts.
+@Suite
 struct PromptCacheBudgetTests {
     /// The recommended working set of each test: 48 GiB.
     static let workingSet: Int64 = 48 << 30

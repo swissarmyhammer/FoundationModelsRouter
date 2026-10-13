@@ -15,12 +15,9 @@ struct EventNeverArrived: Error {}
 /// producer resumes the waiter, so a loaded machine makes the wait longer and
 /// never wrong.
 ///
-/// Nothing bounds that wait from the inside, and nothing should — an event that
-/// never arrives is the regression a test exists to catch, and only the test
-/// author knows how long the work is allowed to take. What ends such a wait is
-/// the `.timeLimit` trait on the test, and ``wait()`` is written so that trait
-/// can do its job: the suspension is cancellation-aware, so a cancelled test
-/// unwinds here instead of hanging the whole run.
+/// Nothing bounds that wait, and nothing should: the wait ends on the event.
+/// The suspension also obeys cancellation, so a task that is cancelled while
+/// it waits (for example, a test that cancels its own task) unwinds here.
 ///
 /// ``AsyncSemaphore`` cannot serve in its place, and must not be changed to.
 /// Its ``AsyncSemaphore/wait()`` is documented as running to completion even

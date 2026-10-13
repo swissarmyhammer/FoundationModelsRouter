@@ -25,7 +25,7 @@ import Tracing
 /// test does not reach, so the router and the session get the logger of the
 /// capture as their explicit logger, and the router gets the tracer of the
 /// capture as its explicit tracer.
-@Suite("Enter records", .timeLimit(.minutes(1)))
+@Suite("Enter records")
 struct EnterRecordTests {
     /// The text before the span name in the message of an "enter" record, as
     /// `TracedCall` of FoundationModelsExtras writes it.

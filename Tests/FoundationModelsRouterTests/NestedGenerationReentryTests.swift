@@ -994,7 +994,7 @@ struct NestedGenerationReentryTests {
         #expect(
             await BoundedWait.signalArrived(
                 waiterFinished, named: "the end of the cancelled answer, while the holder still runs"))
-        #expect(try await waiter.isIdleOnceThePumpEnds())
+        #expect(await waiter.isIdleOnceThePumpEnds())
         #expect(await queue.waitingCount == 1)
 
         await fixture.latch.open()

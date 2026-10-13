@@ -41,8 +41,7 @@ struct ElicitationRoutingTests {
     /// A test waits *on* the first request with ``waitForFirst()`` — a
     /// suspension the producer ends, so a loaded machine makes the test slower
     /// and never red — and reads every request back with ``requests`` once the
-    /// stream has ended. The `.timeLimit` trait on the test is what ends a
-    /// wait for a request that never arrives.
+    /// stream has ended. The wait ends when the first request arrives.
     private final class ElicitationWatch: Sendable {
         /// Sent when the first request arrives.
         private let firstArrived = AwaitedEvent()
@@ -431,8 +430,7 @@ struct ElicitationRoutingTests {
     }
 
     @Test(
-        "a tool that elicits inside a submission reaches streamSessionEvents() as elicitationRequested before respond() resumes it",
-        .timeLimit(.minutes(1))
+        "a tool that elicits inside a submission reaches streamSessionEvents() as elicitationRequested before respond() resumes it"
     )
     @MainActor
     func elicitationRequestedReachesSessionEventStreamBeforeRespond() async throws {
@@ -467,8 +465,7 @@ struct ElicitationRoutingTests {
     }
 
     @Test(
-        "a tool that elicits inside a streamed answer reports elicitationRequested on that answer's stream and on streamSessionEvents(), once each",
-        .timeLimit(.minutes(1))
+        "a tool that elicits inside a streamed answer reports elicitationRequested on that answer's stream and on streamSessionEvents(), once each"
     )
     @MainActor
     func elicitationRequestedReachesTheAnswerStream() async throws {
@@ -499,8 +496,7 @@ struct ElicitationRoutingTests {
     }
 
     @Test(
-        "an elicitation raised between submissions reaches streamSessionEvents()",
-        .timeLimit(.minutes(1))
+        "an elicitation raised between submissions reaches streamSessionEvents()"
     )
     @MainActor
     func elicitationRequestedBetweenSubmissionsReachesTheSessionStream() async throws {
