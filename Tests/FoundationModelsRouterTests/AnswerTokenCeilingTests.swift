@@ -51,7 +51,7 @@ struct AnswerTokenCeilingTests {
         ///   - session: The session to run the answer on.
         ///   - maxTokens: The ceiling the message names, or `nil`.
         /// - Throws: Whatever the answer throws.
-        func runAnswer(on session: RoutedSession, maxTokens: Int?) async throws {
+        func runAnswer(on session: any RoutedSession, maxTokens: Int?) async throws {
             switch self {
             case .respond:
                 let _: String = try await session.respond(to: AnswerTokenCeilingTests.prompt, maxTokens: maxTokens)

@@ -72,52 +72,52 @@ extension RoutedSessionActor {
 
     /// Composes the event sink of an answer. Each event goes first to
     /// ``answerReducer``, which makes the ``SessionAnswer`` of the chain. Then
-    /// it goes to the own sink of the answer and to the session-scoped
-    /// fan-out.
+    /// it goes to the output of the session (``emitSessionScopedEvent(_:)``),
+    /// where each mail subscription of the answer reads it.
     ///
-    /// - Parameter onEvent: The own sink of the answer, or `nil`.
     /// - Returns: The composed sink.
-    private func answerEventSink(_ onEvent: ((SessionEvent) -> Void)?) -> (SessionEvent) -> Void {
+    private func answerEventSink() -> (SessionEvent) -> Void {
         { [self] event in
             answerReducer.apply(event)
-            onEvent?(event)
-            emitSessionScopedEvent(event)
+            // The audience is the mail of this answer, so the events of a
+            // compaction inside it, with the origin of their own signal,
+            // also reach the readers of that mail.
+            emitSessionScopedEvent(event, audience: Set(openAnswerMail.all))
         }
     }
 
     /// Runs the chain of submissions of one answer. Only the pump calls it,
     /// so no other submission of this session runs meanwhile.
     ///
-    /// Every event of the chain goes to the sink of the answer: the stream
-    /// of the first message when that message streams events, and
-    /// ``RoutedSession/streamSessionEvents()``. The chain ends with
-    /// ``SessionEvent/answered(_:)`` or ``SessionEvent/answerFailed(_:)``.
-    /// Each submission of the chain opens its own span (see
+    /// Every event of the chain goes to the output of the session
+    /// (``RoutedSession/streamSessionEvents()``, and each mail subscription
+    /// whose mail the answer carries). The chain starts with one
+    /// ``SessionEvent/mailDelivered(_:)`` for each mail of the batch, and it
+    /// ends with ``SessionEvent/answered(_:)`` or
+    /// ``SessionEvent/answerFailed(_:)``, the terminal event of each mail
+    /// that the answer delivered (``emitAnswerEnd(for:)``). Each submission
+    /// of the chain opens its own span (see
     /// `RoutedSessionActorSubmissionEvents.swift`). ``RoutedSession`` states
     /// the span contract, and ``RouterTelemetry`` states the rule that keeps
     /// content off the spans.
     ///
     /// - Parameters:
     ///   - grammar: The grammar in force for the answer.
-    ///   - pendingEvents: The mail the pump took from ``outbox`` for it.
-    ///   - ownPrompt: The prompt text of its caller messages.
+    ///   - pendingEvents: The run mail the pump took from ``outbox`` for it.
+    ///   - ownPrompt: The prompt text of its user-type mail.
     ///   - responseTokenCeiling: The token ceiling `body` gives the backend, and the ceiling the caller named.
-    ///   - onEvent: The own sink of the answer for its ``SessionEvent``s, or `nil`.
     ///   - body: The model work to run.
-    /// - Returns: The response text `body` produced.
-    /// - Throws: Whatever `body` throws, or `CancellationError` from the compaction.
     func runAnswerChain(
         grammar: Grammar?,
         pendingEvents: [OperationEvent],
         ownPrompt: String,
         responseTokenCeiling: ResponseTokenCeiling,
-        onEvent: ((SessionEvent) -> Void)? = nil,
         _ body: @escaping @Sendable (String) async throws -> String
-    ) async throws -> String {
-        let emit = answerEventSink(onEvent)
+    ) async {
+        let emit = answerEventSink()
         answerReducer = SessionAnswerReducer()
-        // The model sees each caller message of the answer from now on. The
-        // delivery comes before each other event of the answer.
+        // The model sees each mail of the answer from now on. The delivery
+        // comes before each other event of the answer.
         for mailID in deliveredMailIds {
             emit(.mailDelivered(mailID))
         }
@@ -130,17 +130,16 @@ extension RoutedSessionActor {
         } catch {
             result = .failure(error)
         }
-        // The end of the answer is the terminal event of each message that
-        // the answer delivered, also of a message that joined a continuation,
-        // so its origin holds each of them.
+        // The end of the answer is the terminal event of each mail that the
+        // answer delivered, also of mail that joined a continuation, so its
+        // origin holds each of them.
         OriginContext.$current.withValue(Self.origin(adding: deliveredMailIds)) {
-            emit(answerEndEvent(for: result))
+            emitAnswerEnd(for: result)
         }
-        return try result.get()
     }
 
     /// Runs the model work and the recording of one answer. Only
-    /// ``runAnswerChain(grammar:pendingEvents:ownPrompt:responseTokenCeiling:onEvent:_:)``
+    /// ``runAnswerChain(grammar:pendingEvents:ownPrompt:responseTokenCeiling:_:)``
     /// calls it.
     ///
     /// When ``autoCompactionBudget`` is set and measured usage has reached
@@ -150,9 +149,9 @@ extension RoutedSessionActor {
     /// - Parameters:
     ///   - grammar: The grammar in force for the answer.
     ///   - pendingEvents: The mail the pump took from ``outbox`` for it.
-    ///   - ownPrompt: The prompt text of its caller messages.
+    ///   - ownPrompt: The prompt text of its user-type mail.
     ///   - responseTokenCeiling: The token ceiling `body` gives the backend, and the ceiling the caller named.
-    ///   - emit: The composed sink of the answer (see ``answerEventSink(_:)``).
+    ///   - emit: The composed sink of the answer (see ``answerEventSink()``).
     ///   - body: The model work to run.
     /// - Returns: The response text `body` produced.
     /// - Throws: Whatever `body` throws, or `CancellationError` from the compaction.
@@ -233,15 +232,10 @@ extension RoutedSessionActor {
                 metadata: RouterTelemetry.errorMetadata(error).merging([
                     RouterTelemetry.LogMetadataKey.sessionId: "\(id.description)"
                 ]) { _, new in new })
-            // One call, two routes: `emit` is the composed sink of this answer,
-            // which already fans out to the own stream of the answer (when the
-            // caller sent the message through ``streamEvents(to:maxTokens:)``)
-            // *and* to every session-scoped subscription — the route that
-            // reaches a subscriber whichever entry point sent the message,
-            // including ``respond(to:maxTokens:)``, which hands its caller a
-            // response rather than a stream, and ``send(_:)-(Transcript.Prompt)``,
-            // which hands its caller nothing but an id (see
-            // ``answerEventSink(_:)`` and ``RoutedSession/streamSessionEvents()``).
+            // `emit` is the composed sink of this answer: it goes to the
+            // output of the session, so each mail subscription of the answer
+            // and each ``RoutedSession/streamSessionEvents()`` feed gets it,
+            // whichever helper sent the mail (see ``answerEventSink()``).
             emit(.discoveryPrimingFailed(error))
         }
     }
@@ -251,8 +245,8 @@ extension RoutedSessionActor {
     ///
     /// The attempt opens its submission first
     /// (``beginSubmission(cause:mailIds:)``). The first attempt of an
-    /// answer delivers the caller messages of the answer, or mail alone. A
-    /// continuation delivers the caller messages that joined it. The
+    /// answer delivers all mail of the batch: user-type mail and run mail. A
+    /// continuation delivers the mail that joined it. The
     /// recording of the attempt ends the submission.
     ///
     /// A failed attempt is recorded, and then
@@ -284,7 +278,7 @@ extension RoutedSessionActor {
     ///   - rejectedCallRetries: How many rejected tool calls this answer has already sent back to the model. The first attempt of an answer has sent none.
     ///   - isContinuation: Whether this attempt is a continuation submission
     ///     of the answer. A continuation first takes the messages that wait
-    ///     (``takeMessagesJoiningTheAnswer()``): the mail goes into its
+    ///     (``takeMailJoiningTheAnswer()``): the mail goes into its
     ///     preamble, and each caller prompt that can share the submission
     ///     goes after `ownPrompt`.
     ///   - reasoningOff: Whether the first pass of the model call of this
@@ -316,10 +310,10 @@ extension RoutedSessionActor {
             beginSubmission(cause: delivery.cause, mailIds: delivery.mailIds)
             return try await runOpenedSubmission(attempt, pendingEvents: pendingEvents, ownPrompt: ownPrompt, body)
         }
-        let joining = await takeMessagesJoiningTheAnswer()
+        let joining = takeMailJoiningTheAnswer()
         await notifySubmissionBoundaryTools()
-        // A message that joins the answer adds its id to the origin of the
-        // rest of the answer, and the model sees it from this submission on.
+        // Mail that joins the answer adds its id to the origin of the rest of
+        // the answer, and the model sees it from this submission on.
         return try await OriginContext.$current.withValue(Self.origin(adding: joining.mailIds)) {
             for mailID in joining.mailIds {
                 onEvent?(.mailDelivered(mailID))
@@ -331,11 +325,10 @@ extension RoutedSessionActor {
         }
     }
 
-    /// The origin of the work that runs now, with the caller messages
-    /// `mailIds` added: the origin of the rest of an answer that these
-    /// messages joined.
+    /// The origin of the work that runs now, with the mail `mailIds` added:
+    /// the origin of the rest of an answer that this mail joined.
     ///
-    /// - Parameter mailIds: The correlation ids of the joining messages.
+    /// - Parameter mailIds: The correlation ids of the joining mail.
     /// - Returns: ``OriginContext/current`` when `mailIds` is empty, and else
     ///   ``Origin/mail(_:)`` with the ids of the current origin and `mailIds`.
     static func origin(adding mailIds: [MailID]) -> Origin {
@@ -490,7 +483,7 @@ extension RoutedSessionActor {
     /// the retry state of `attempt`. It carries none of the mail of
     /// `attempt`, because the stopped attempt is already recorded. It takes
     /// the messages that wait when it starts
-    /// (``takeMessagesJoiningTheAnswer()``).
+    /// (``takeMailJoiningTheAnswer()``).
     ///
     /// - Parameters:
     ///   - attempt: The attempt that stopped.
@@ -913,30 +906,20 @@ extension RoutedSessionActor {
     }
 
     /// Whether a cancellation is outstanding against the work the pump runs,
-    /// by any route: `Task.isCancelled` of the task that reads it,
+    /// by any route: `Task.isCancelled` of the task that reads it, or
     /// ``cancelRequestedWorkId`` set for that work by
-    /// ``requestCancelOfRunningWork()`` (``RoutedSession/cancel()``,
-    /// or the cancel of a caller whose message the work carries), or the
-    /// cancel mark of an item the running work carries (``cancelMarks``,
-    /// ``runningWorkItems``). This is the one read site of
+    /// ``requestCancelOfRunningWork()`` (``RoutedSession/cancelAll()``,
+    /// ``RoutedSession/close()``, or the cancel of a caller compaction). This is the one read site of
     /// ``cancelRequestedWorkId``, so the routes cannot diverge. Every cancel
     /// decision keys on this predicate, never on the type of a
     /// `CancellationError`. Read after each `await`; do not cache.
     ///
-    /// The mark is necessary. A cancelled caller task sets the mark at once,
-    /// in its cancellation handler (``requestCancel(of:in:)``), but the stop
-    /// of the work (``settleCancel(of:mailID:_:)``) runs in a task of its own that
-    /// must get this actor. The pump can get the actor first, for example
-    /// after a failed attempt, and start the overflow retry before
-    /// ``cancelRequestedWorkId`` is set. The mark closes that window: an item
-    /// of the work with the mark is the case where ``settleCancel(of:mailID:_:)``
-    /// stops this work, so the result is the same, only earlier. The read
-    /// holds the lock of the marks for one look, with no suspension point.
+    /// A cancel of one mail never stops the work (``RoutedSession/cancel(_:)``):
+    /// it acts only on queued mail.
     var isWorkCancelled: Bool {
         if Task.isCancelled { return true }
         guard let workId = pumpWork?.id else { return false }
-        if cancelRequestedWorkId == workId { return true }
-        return cancelMarks.marksAny(of: runningWorkItems)
+        return cancelRequestedWorkId == workId
     }
 
     /// Whether `error` is a recoverable context-overflow failure:

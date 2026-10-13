@@ -34,7 +34,7 @@ struct SessionRunPlaneTests {
     /// - Throws: What the resolve throws.
     private static func makeSession(
         recorder: any TranscriptRecorder
-    ) async throws -> (session: RoutedSession, dir: URL) {
+    ) async throws -> (session: any RoutedSession, dir: URL) {
         let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let router = RouterTestFixtures.makeRouter(
             cacheDir: dir,

@@ -52,7 +52,7 @@ struct SubmissionTracingTests {
     /// off it.
     private struct AnswerFixture {
         /// The session the test drives its answer on.
-        let session: RoutedSession
+        let session: any RoutedSession
 
         /// The backend that session runs on, so a test can make a later
         /// submission fail.
@@ -214,7 +214,7 @@ struct SubmissionTracingTests {
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
         // `send` starts the submission, and no other call is necessary.
-        await fixture.session.send(Self.prompt)
+        try fixture.session.send(Self.prompt)
         #expect(await fixture.session.becomesIdle())
 
         let span = try Self.singleSpan(reportedTo: tracer)

@@ -131,7 +131,7 @@ struct NestedGenerationReentryTests {
 
         func call(arguments: ReentryToolArguments) async throws -> String {
             guard let session = target.value else { return Self.noTargetOutput }
-            return await session.send(arguments.value).description
+            return try session.send(arguments.value).description
         }
     }
 
@@ -942,7 +942,7 @@ struct NestedGenerationReentryTests {
     private static let nextPrompt = "summarize the ranking"
 
     @Test(
-        "cancel() on a session whose submission waits removes it at once, and the worker then runs the next item"
+        "cancelAll() on a session whose submission waits removes it at once, and the worker then runs the next item"
     )
     func cancelOnASessionWhoseSubmissionWaitsRemovesItAtOnce() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
@@ -955,6 +955,7 @@ struct NestedGenerationReentryTests {
         let holder = profile.standard.makeSession()
         let waiter = profile.standard.makeSession()
         let next = profile.standard.makeSession()
+        let waiterFeed = await waiter.streamSessionEvents()
 
         // The holder's submission runs on the worker, and its pass stays
         // inside the model until the latch opens.
@@ -982,12 +983,18 @@ struct NestedGenerationReentryTests {
                 await queue.waitingCount == 2
             })
 
-        // So the request reaches the waiting item, and the answer ends at once,
-        // while the holder still runs on the worker.
-        #expect(await waiter.cancel() == .requested)
+        // The cancelAll() signal stops the running answer of the waiter. So
+        // the request reaches the waiting item, and the answer ends at once,
+        // while the holder still runs on the worker. The signal does not wait
+        // for the pump, so the test waits for the end of the pump of the
+        // waiter. That pump ends before the holder ends, because the cancel
+        // removes the waiting item from the queue of the model.
+        let stop = waiter.cancelAll()
+        #expect(try await waiter.awaitTerminal(of: stop) == .signalDone(stop))
         #expect(
             await BoundedWait.signalArrived(
                 waiterFinished, named: "the end of the cancelled answer, while the holder still runs"))
+        #expect(try await waiter.isIdleOnceThePumpEnds())
         #expect(await queue.waitingCount == 1)
 
         await fixture.latch.open()
@@ -1006,6 +1013,18 @@ struct NestedGenerationReentryTests {
             of: { try await waiter.respond(to: Self.outerPrompt) }, within: Self.answerTimeout)
         Self.expectFinished(
             followUp, is: PassObservingModel.answer(to: Self.outerPrompt), describing: "The follow-up answer")
+
+        // The cancelled answer and the follow-up answer of the waiter each end
+        // with exactly one terminal event, and the signal ends with its own.
+        await waiter.close()
+        var outputs: [SessionOutput] = []
+        for await output in waiterFeed {
+            outputs.append(output)
+        }
+        let ledger = TerminalEventLedger(outputs: outputs)
+        ledger.expectExactlyOneTerminal(for: ledger.endedMailIds.flatMap { $0 })
+        #expect(ledger.endedMailIds.count == 2)
+        ledger.expectExactlyOneTerminal(forSignals: [stop])
         withExtendedLifetime(profile) {}
     }
 }

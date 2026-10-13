@@ -5,12 +5,19 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises the ``RoutedSession`` message queue (task ^cbhpdjy, restated from
-/// the prompt queue of task ndv3sc1): ``RoutedSession/send(_:)-(Transcript.Prompt)``,
-/// ``RoutedSession/pendingMessages()``, ``RoutedSession/replace(id:prompt:)``,
-/// ``RoutedSession/mailQueueDepth()`` and ``RoutedSession/cancel(message:)``,
-/// race-safe against the point where the pump of the session takes a message
-/// for its submission.
+/// Exercises the ``RoutedSession`` mail queue (task ^cbhpdjy, `mailbox.md`,
+/// section 5): ``RoutedSession/send(_:)-(Transcript.Prompt)``,
+/// ``RoutedSession/pendingMessages()``, ``RoutedSession/replace(_:with:)``,
+/// ``RoutedSession/mailQueueDepth()``, ``RoutedSession/cancel(_:)`` and
+/// ``RoutedSession/cancelAll()``, race-safe against the point where the pump
+/// of the session takes a mail for its submission.
+///
+/// A cancel and a replace are signals: each returns its ``SignalID`` at once,
+/// and a test waits for its terminal event ``SessionEvent/signalDone(_:)``
+/// before it checks the effect. A cancel and a replace act only on queued
+/// mail. They never stop an answer that runs: the mail that the pump took
+/// gets its answer. ``RoutedSession/cancelAll()`` also stops the running
+/// answer: its mail gets ``SessionEvent/answerFailed(_:)`` at once.
 ///
 /// A sent message needs no driver: the pump starts a submission for it by
 /// itself (`generation-queue.md`, section 5.4). Everything runs against stubs
@@ -43,7 +50,7 @@ struct MessageQueueTests {
     /// moment it is called — proof the pump already took the message for its
     /// submission — and then suspends on ``proceed`` until the test releases
     /// it. The fixture the race tests use to land a concurrent
-    /// `cancel(message:)`/`replace(id:prompt:)`/`send(_:)` squarely inside a
+    /// `cancel(_:)`/`replace(_:with:)`/`send(_:)` squarely inside a
     /// running submission.
     ///
     /// A plain mutable class rather than an actor, mirroring
@@ -191,7 +198,7 @@ struct MessageQueueTests {
         container: any LoadedLLMContainer,
         tools: [any Tool] = [],
         pool: ModelPool = ModelPool()
-    ) async throws -> (session: RoutedSession, dir: URL) {
+    ) async throws -> (session: any RoutedSession, dir: URL) {
         let dir = Self.makeTempDir()
         let router = Router(
             cacheDir: dir,
@@ -205,19 +212,37 @@ struct MessageQueueTests {
         return (profile.standard.makeSession(tools: tools), dir)
     }
 
-    // MARK: - Prompt <-> text helpers
+    // MARK: - Mail helpers
 
-    private static func prompt(_ text: String) -> Transcript.Prompt {
-        Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: text))])
+    /// The body of a user message in reply mode with the text `text`: the
+    /// body that ``RoutedSession/send(_:)-(String)`` gives a message.
+    ///
+    /// - Parameter text: The prompt text.
+    /// - Returns: The body.
+    private static func userMessage(_ text: String) -> MailBody {
+        .userMessage(prompt: text, options: UserMessageOptions())
     }
 
-    private static func text(of prompt: Transcript.Prompt) -> String {
-        for segment in prompt.segments {
-            if case .text(let textSegment) = segment {
-                return textSegment.content
-            }
+    /// The prompt text of each queued mail of `session`, in queue order.
+    ///
+    /// - Parameter session: The session.
+    /// - Returns: The texts. Run mail has no prompt text, so it is not in it.
+    private static func pendingTexts(of session: any RoutedSession) async -> [String] {
+        await session.pendingMessages().compactMap(\.promptText)
+    }
+
+    /// Whether `event` is the ``SessionEvent/answered(_:)`` of an answer
+    /// that delivered the mail `id`.
+    ///
+    /// - Parameters:
+    ///   - event: A terminal event.
+    ///   - id: The id of the mail.
+    /// - Returns: `true` when the answer names `id`.
+    private static func isAnswer(_ event: SessionEvent, of id: MailID) -> Bool {
+        if case .answered(let answer) = event {
+            return answer.mailIds.contains(id)
         }
-        return ""
+        return false
     }
 
     /// The text of each `.prompt` event `recorder` holds, in record order.
@@ -226,6 +251,34 @@ struct MessageQueueTests {
     /// - Returns: The prompt texts.
     private static func promptTexts(in recorder: InMemoryRecorder) async -> [String] {
         await recorder.events.filter { $0.kind == .prompt }.compactMap(\.text)
+    }
+
+    /// Waits for the terminal event of `signal`, and expects it to be
+    /// ``SessionEvent/signalDone(_:)``. The effect of a signal comes before
+    /// that event, so a test checks the effect after this call.
+    ///
+    /// - Parameters:
+    ///   - signal: The id that a signal call returned.
+    ///   - session: The session of the signal.
+    ///   - sourceLocation: The place of the call, for the issue.
+    /// - Throws: When the wait ends with no terminal event.
+    private static func expectSignalDone(
+        _ signal: SignalID, on session: any RoutedSession, sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        #expect(try await session.awaitTerminal(of: signal) == .signalDone(signal), sourceLocation: sourceLocation)
+    }
+
+    /// Reads `feed` to its end, with the origin of each event. Call it after
+    /// ``RoutedSession/close()``, which finishes the feed.
+    ///
+    /// - Parameter feed: The session-wide feed of one session.
+    /// - Returns: Each output the feed delivered, in order.
+    private static func outputs(of feed: AsyncStream<SessionOutput>) async -> [SessionOutput] {
+        var outputs: [SessionOutput] = []
+        for await output in feed {
+            outputs.append(output)
+        }
+        return outputs
     }
 
     // MARK: - FIFO order
@@ -238,10 +291,10 @@ struct MessageQueueTests {
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        _ = await session.send("first")
+        _ = try session.send("first")
         await backend.started.wait()
-        _ = await session.send("second")
-        _ = await session.send("third")
+        _ = try session.send("second")
+        _ = try session.send("third")
 
         backend.proceed.signal()
         await backend.started.wait()
@@ -262,7 +315,7 @@ struct MessageQueueTests {
 
         // The backend holds the submission, so a send that waited for its
         // answer could never get here.
-        let id = await session.send("wake the pump")
+        let id = try session.send("wake the pump")
         await backend.started.wait()
         #expect(await session.mailQueueDepth().running == [id])
 
@@ -278,7 +331,7 @@ struct MessageQueueTests {
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        _ = await session.send("queued")
+        _ = try session.send("queued")
         let directResponse = try await session.respond(to: "direct")
         #expect(directResponse == "stub response")
         #expect(await session.becomesIdle())
@@ -290,10 +343,30 @@ struct MessageQueueTests {
         #expect(await session.pendingMessages().isEmpty)
     }
 
+    // MARK: - send(_:) refusals
+
+    @Test(
+        "send(_:) refuses a prompt with no .text segment and every prompt after close; a refused prompt never reaches the queue"
+    )
+    @MainActor
+    func sendRefusesAPromptWithNoTextAndEveryPromptAfterClose() async throws {
+        let recorder = InMemoryRecorder()
+        let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        #expect(throws: PromptRefusal.noTextSegment) { try session.send(Transcript.Prompt(segments: [])) }
+        #expect(await session.pendingMessages().isEmpty)
+
+        await session.close()
+        #expect(throws: MailRefusal.closed) { try session.send("too late") }
+        #expect(await session.pendingMessages().isEmpty)
+        #expect(await recorder.events.isEmpty)
+    }
+
     // MARK: - pendingMessages(): send, replace, cancel
 
     @Test(
-        "pendingMessages() reflects send, replace and cancel; a withdrawn message never reaches a prompt; a replaced message delivers its new content"
+        "pendingMessages() reflects send, replace and cancel; a cancelled message gets cancelled and never reaches a prompt; a replaced message keeps its id and delivers its new content"
     )
     @MainActor
     func pendingMessagesReflectsSendReplaceCancel() async throws {
@@ -302,35 +375,42 @@ struct MessageQueueTests {
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
         defer { try? FileManager.default.removeItem(at: dir) }
 
+        let feed = await session.streamSessionEvents()
         let blocking = Task { try await session.respond(to: "blocking message") }
         await backend.started.wait()
-        let firstId = await session.send("cancel me")
-        let secondId = await session.send("original")
+        let firstId = try session.send("cancel me")
+        let secondId = try session.send("original")
 
-        var pending = await session.pendingMessages()
-        #expect(pending.map { Self.text(of: $0.prompt) } == ["cancel me", "original"])
+        #expect(await Self.pendingTexts(of: session) == ["cancel me", "original"])
 
-        #expect(await session.cancel(message: firstId) == .withdrawn)
-        pending = await session.pendingMessages()
-        #expect(pending.map(\.id) == [secondId])
+        let cancelSignal = session.cancel(firstId)
+        try await Self.expectSignalDone(cancelSignal, on: session)
+        #expect(await session.pendingMessages().map(\.id) == [secondId])
+        #expect(try await session.awaitTerminal(of: firstId) == .cancelled(firstId))
 
-        #expect(await session.replace(id: secondId, prompt: Self.prompt("edited")) == .applied)
-        pending = await session.pendingMessages()
-        #expect(pending.map { Self.text(of: $0.prompt) } == ["edited"])
+        let replaceSignal = session.replace(secondId, with: Self.userMessage("edited"))
+        try await Self.expectSignalDone(replaceSignal, on: session)
+        #expect(await Self.pendingTexts(of: session) == ["edited"])
+        #expect(await session.pendingMessages().map(\.id) == [secondId])
 
         backend.proceed.signal()
         _ = try await blocking.value
         await backend.started.wait()
         backend.proceed.signal()
+        #expect(Self.isAnswer(try await session.awaitTerminal(of: secondId), of: secondId))
         #expect(await session.becomesIdle())
 
-        // Only the edited content reached the model; the withdrawn text never
+        // Only the edited content reached the model; the cancelled text never
         // appears anywhere.
         #expect(await Self.promptTexts(in: recorder) == ["blocking message", "edited"])
         #expect(await session.pendingMessages().isEmpty)
+        await session.close()
+        let ledger = TerminalEventLedger(outputs: await Self.outputs(of: feed))
+        ledger.expectExactlyOneTerminal(for: [firstId, secondId])
+        ledger.expectExactlyOneTerminal(forSignals: [cancelSignal, replaceSignal])
     }
 
-    @Test("the recording holds no trace of a message withdrawn before its submission")
+    @Test("the recording holds no trace of a message cancelled before its submission")
     @MainActor
     func withdrawnMessageLeavesNoRecordingTrace() async throws {
         let recorder = InMemoryRecorder()
@@ -340,8 +420,9 @@ struct MessageQueueTests {
 
         let blocking = Task { try await session.respond(to: "blocking message") }
         await backend.started.wait()
-        let id = await session.send("never delivered")
-        #expect(await session.cancel(message: id) == .withdrawn)
+        let id = try session.send("never delivered")
+        try await Self.expectSignalDone(session.cancel(id), on: session)
+        #expect(try await session.awaitTerminal(of: id) == .cancelled(id))
 
         backend.proceed.signal()
         _ = try await blocking.value
@@ -350,20 +431,35 @@ struct MessageQueueTests {
         #expect(await recorder.events.allSatisfy { !($0.text?.contains("never delivered") ?? false) })
     }
 
-    @Test("a session that gets no message records nothing at all, not even the session meta line, after a cancel and a depth read")
+    @Test(
+        "a session that gets no message records nothing at all, not even the session meta line, after the cancel signals, a replace and a depth read"
+    )
     @MainActor
     func sessionWithNoMessageRecordsNothing() async throws {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        #expect(await session.cancel() == .nothingToCancel)
+        let feed = await session.streamSessionEvents()
+        let stop = session.cancelAll()
+        let cancel = session.cancel(MailID())
+        let replace = session.replace(MailID(), with: Self.userMessage("nothing to change"))
+        try await Self.expectSignalDone(stop, on: session)
+        try await Self.expectSignalDone(cancel, on: session)
+        try await Self.expectSignalDone(replace, on: session)
+        #expect(await session.stopRunningWork() == false)
         #expect(await session.mailQueueDepth() == MailQueueDepth(waiting: 0, depthByKind: [:], running: []))
 
         // A session that never runs a submission never writes its `session`
         // meta line either — the same "writes no file at all until it
         // generates" invariant a fresh session upholds.
         #expect(await recorder.events.isEmpty)
+        await session.close()
+        // The signals found no mail: no mail has a terminal event, and each
+        // signal sends only its own end.
+        let ledger = TerminalEventLedger(outputs: await Self.outputs(of: feed))
+        #expect(ledger.endedMailIds.isEmpty)
+        ledger.expectExactlyOneTerminal(forSignals: [stop, cancel, replace])
     }
 
     // MARK: - A sent message carries the waiting mail
@@ -377,7 +473,7 @@ struct MessageQueueTests {
 
         let posted = OperationEvent(tool: "shell", op: "run command", correlationID: "1", kind: .completed, detail: "exit 0")
         await session.outbox.post(event: posted)
-        _ = await session.send("what happened?")
+        _ = try session.send("what happened?")
         #expect(await session.becomesIdle())
 
         let events = await recorder.events
@@ -409,7 +505,10 @@ struct MessageQueueTests {
         // The first submission backgrounds the job; no message waits after it.
         _ = try await session.respond(to: "start the job")
         let token = try #require(await session.mailbox.backgroundRuns().first?.completionToken)
-        #expect(await session.pendingMessages().isEmpty)
+        // No user-type mail waits. The queue holds only the progress mail of
+        // the backgrounded run, and progress mail never starts a submission.
+        #expect(session.waitingUserMailCount == 0)
+        #expect(await session.pendingMessages().allSatisfy { $0.runEvent?.kind == .progress })
 
         await gate.open()
         let terminal = try await MountFixtures.settledTerminal(of: token, in: session.mailbox)
@@ -432,7 +531,9 @@ struct MessageQueueTests {
         #expect(await session.outbox.pending().events.isEmpty)
     }
 
-    @Test("mail that carries only progress starts no submission: the report stays staged for the next message")
+    @Test(
+        "mail that carries only progress starts no submission: the report stays queued as run mail for the next message"
+    )
     @MainActor
     func progressOnlyMailRunsNoSubmission() async throws {
         let recorder = InMemoryRecorder()
@@ -445,6 +546,11 @@ struct MessageQueueTests {
         #expect(await session.becomesIdle())
         #expect(await recorder.events.isEmpty)
         #expect(await session.outbox.pending().events.map(\.event) == [progress])
+
+        // pendingMessages() shows the run mail, and the depth counts it by kind.
+        #expect(await session.pendingMessages().compactMap(\.runEvent) == [progress])
+        let depth = await session.mailQueueDepth()
+        #expect(depth == MailQueueDepth(waiting: 1, depthByKind: [.runEvent: 1], running: []))
     }
 
     // MARK: - A sent Transcript.Prompt flattens to backend text
@@ -459,7 +565,7 @@ struct MessageQueueTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let event = OperationEvent(tool: "shell", op: "run command", correlationID: "1", kind: .completed, detail: "exit 0")
-        _ = await session.send(
+        _ = try session.send(
             Transcript.Prompt(segments: [
                 .text(Transcript.TextSegment(content: "alpha ")),
                 OperationEventSegment(id: "seg-1", content: event).transcriptSegment,
@@ -479,27 +585,39 @@ struct MessageQueueTests {
     // MARK: - Races against a running submission
 
     @Test(
-        "cancel(message:) of a message the pump already took reports cancelledInSubmission; a model that ignores the cancel still records its answer"
+        "cancel(_:) of a message the pump already took sends no cancelled and never stops its answer: the mail gets answered"
     )
     @MainActor
-    func cancelOfATakenMessageReportsCancelledInSubmission() async throws {
+    func cancelOfATakenMessageLeavesItsAnswerRunning() async throws {
         let recorder = InMemoryRecorder()
         let backend = GatedStubBackend(responseText: "gated response")
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let id = await session.send("racing prompt")
+        let feed = await session.streamSessionEvents()
+        let id = try session.send("racing prompt")
         // The backend has been asked to respond: the pump took the message.
         await backend.started.wait()
 
-        #expect(await session.cancel(message: id) == .cancelledInSubmission)
+        let signal = session.cancel(id)
+        try await Self.expectSignalDone(signal, on: session)
+        #expect(await session.mailQueueDepth().running == [id])
 
         backend.proceed.signal()
+        #expect(Self.isAnswer(try await session.awaitTerminal(of: id), of: id))
         #expect(await session.becomesIdle())
         #expect(await Self.promptTexts(in: recorder) == ["racing prompt"])
+        await session.close()
+        // The answer is the one terminal event of the mail: the signal sent
+        // no cancelled.
+        let ledger = TerminalEventLedger(outputs: await Self.outputs(of: feed))
+        ledger.expectExactlyOneTerminal(for: [id])
+        ledger.expectExactlyOneTerminal(forSignals: [signal])
     }
 
-    @Test("replace racing a running submission reports alreadySent; the submission delivers the original content")
+    @Test(
+        "replace(_:with:) racing a running submission changes nothing; the submission delivers the original content, and the mail gets answered"
+    )
     @MainActor
     func replaceRacingARunningSubmissionReportsAlreadySent() async throws {
         let recorder = InMemoryRecorder()
@@ -507,12 +625,14 @@ struct MessageQueueTests {
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let id = await session.send("original")
+        let id = try session.send("original")
         await backend.started.wait()
 
-        #expect(await session.replace(id: id, prompt: Self.prompt("too late")) == .alreadySent)
+        try await Self.expectSignalDone(session.replace(id, with: Self.userMessage("too late")), on: session)
+        #expect(await session.pendingMessages().isEmpty)
 
         backend.proceed.signal()
+        #expect(Self.isAnswer(try await session.awaitTerminal(of: id), of: id))
         #expect(await session.becomesIdle())
         #expect(await Self.promptTexts(in: recorder) == ["original"])
     }
@@ -525,11 +645,11 @@ struct MessageQueueTests {
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        _ = await session.send("first")
+        _ = try session.send("first")
         await backend.started.wait()
 
         // Send a second message while the first submission runs.
-        let secondId = await session.send("second")
+        let secondId = try session.send("second")
         #expect(await session.pendingMessages().map(\.id) == [secondId])
 
         backend.proceed.signal()
@@ -538,6 +658,56 @@ struct MessageQueueTests {
         #expect(await session.becomesIdle())
         #expect(await Self.promptTexts(in: recorder) == ["first", "second"])
     }
+
+    @Test(
+        "cancel(_:) from many tasks at once removes a queued message one time: exactly one signal sends cancelled, and the mail and each signal get one terminal event"
+    )
+    @MainActor
+    func concurrentCancelsOfOneMessageRemoveItOnce() async throws {
+        let recorder = InMemoryRecorder()
+        let backend = GatedStubBackend(responseText: "gated response")
+        let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let feed = await session.streamSessionEvents()
+        let blockingId = try session.send("blocking")
+        await backend.started.wait()
+        let id = try session.send("cancel me from many tasks")
+
+        let signals = await withTaskGroup(of: SignalID.self) { group in
+            for _ in 0..<Self.concurrentCancelCount {
+                group.addTask { session.cancel(id) }
+            }
+            var ids: [SignalID] = []
+            for await signal in group {
+                ids.append(signal)
+            }
+            return ids
+        }
+        #expect(Set(signals).count == Self.concurrentCancelCount)
+        for signal in signals {
+            try await Self.expectSignalDone(signal, on: session)
+        }
+        #expect(try await session.awaitTerminal(of: id) == .cancelled(id))
+
+        backend.proceed.signal()
+        #expect(await session.becomesIdle())
+        await session.close()
+
+        let outputs = await Self.outputs(of: feed)
+        // The one cancelled event comes from one of the signals.
+        let cancelledOrigins = outputs.filter { $0.event == .cancelled(id) }.map(\.origin)
+        #expect(cancelledOrigins.count == 1)
+        #expect(cancelledOrigins.allSatisfy { origin in signals.contains { origin == .signal($0) } })
+        let ledger = TerminalEventLedger(outputs: outputs)
+        ledger.expectExactlyOneTerminal(for: [blockingId, id])
+        ledger.expectExactlyOneTerminal(forSignals: signals)
+        #expect(await Self.promptTexts(in: recorder) == ["blocking"])
+    }
+
+    /// How many tasks ``concurrentCancelsOfOneMessageRemoveItOnce()`` runs
+    /// at the same time.
+    private static let concurrentCancelCount = 8
 
     // MARK: - Message to submission to event correlation
 
@@ -549,7 +719,7 @@ struct MessageQueueTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let stream = await session.streamSessionEvents().events
-        let id = await session.send("queued prompt")
+        let id = try session.send("queued prompt")
         #expect(await session.becomesIdle())
         await session.close()
 
@@ -648,7 +818,9 @@ struct MessageQueueTests {
 
     // MARK: - Queue depth
 
-    @Test("the queue depth counts the waiting messages and names the messages of the running submission")
+    @Test(
+        "the queue depth counts the waiting messages by kind and names the messages of the running submission"
+    )
     @MainActor
     func mailQueueDepthCountsWaitingAndRunningMessages() async throws {
         let recorder = InMemoryRecorder()
@@ -656,14 +828,15 @@ struct MessageQueueTests {
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let firstId = await session.send("first")
+        let firstId = try session.send("first")
         await backend.started.wait()
-        let secondId = await session.send("second")
+        let secondId = try session.send("second")
 
         // The first message runs; the second waits. The session owes both
         // an answer.
         let midFlight = await session.mailQueueDepth()
         #expect(midFlight.waiting == 1)
+        #expect(midFlight.depthByKind == [.userMessage: 1])
         #expect(midFlight.running == [firstId])
         #expect(midFlight.total == Self.sentMessageCount)
 
@@ -683,9 +856,11 @@ struct MessageQueueTests {
     /// sends.
     private static let sentMessageCount = 2
 
-    // MARK: - cancel(message:) at every point of a message
+    // MARK: - cancel(_:) and cancelAll() at every point of a message
 
-    @Test("cancel(message:) withdraws a message that waits behind a running submission")
+    @Test(
+        "cancel(_:) removes a message that waits behind a running submission, one time only, and the message gets cancelled"
+    )
     @MainActor
     func cancelMessageWithdrawsAWaitingMessage() async throws {
         let recorder = InMemoryRecorder()
@@ -693,20 +868,75 @@ struct MessageQueueTests {
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        _ = await session.send("blocking")
+        let feed = await session.streamSessionEvents()
+        let blockingId = try session.send("blocking")
         await backend.started.wait()
-        let id = await session.send("withdraw me")
+        let id = try session.send("withdraw me")
 
-        #expect(await session.cancel(message: id) == .withdrawn)
+        let first = session.cancel(id)
+        let second = session.cancel(id)
+        try await Self.expectSignalDone(second, on: session)
         #expect(await session.pendingMessages().isEmpty)
+        #expect(try await session.awaitTerminal(of: id) == .cancelled(id))
 
         backend.proceed.signal()
         #expect(await session.becomesIdle())
         #expect(await Self.promptTexts(in: recorder) == ["blocking"])
+        await session.close()
+        // Only the first signal finds the mail.
+        let outputs = await Self.outputs(of: feed)
+        #expect(outputs.filter { $0.event == .cancelled(id) }.map(\.origin) == [.signal(first)])
+        let ledger = TerminalEventLedger(outputs: outputs)
+        ledger.expectExactlyOneTerminal(for: [blockingId, id])
+        ledger.expectExactlyOneTerminal(forSignals: [first, second])
     }
 
     @Test(
-        "a respond whose message waits is withdrawn by cancel(message:): its caller gets CancellationError, and no submission carries it",
+        "cancelAll() removes each waiting message in queue order, each gets cancelled, and the running answer ends at once with answerFailed"
+    )
+    @MainActor
+    func cancelAllRemovesEachWaitingMessageInQueueOrder() async throws {
+        let recorder = InMemoryRecorder()
+        let backend = GatedStubBackend(responseText: "gated response")
+        let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let feed = await session.streamSessionEvents()
+        let runningId = try session.send("blocking")
+        await backend.started.wait()
+        let firstId = try session.send("first waiting")
+        let secondId = try session.send("second waiting")
+
+        let stop = session.cancelAll()
+        let secondStop = session.cancelAll()
+        try await Self.expectSignalDone(secondStop, on: session)
+        #expect(await session.pendingMessages().isEmpty)
+        #expect(try await session.awaitTerminal(of: firstId) == .cancelled(firstId))
+        #expect(try await session.awaitTerminal(of: secondId) == .cancelled(secondId))
+        // The backend still holds the model call, and the answer already
+        // ended.
+        let runningEnd = try await session.awaitTerminal(of: runningId)
+        #expect(runningEnd == .answerFailed(AnswerFailure(mailIds: [runningId], reason: .cancelled)))
+
+        backend.proceed.signal()
+        #expect(await session.becomesIdle())
+        #expect(await Self.promptTexts(in: recorder) == ["blocking"])
+        await session.close()
+        // Only the first signal finds queued mail, in queue order.
+        let outputs = await Self.outputs(of: feed)
+        let cancelled = outputs.filter { output in
+            if case .cancelled = output.event { return true }
+            return false
+        }
+        #expect(cancelled.map(\.event) == [.cancelled(firstId), .cancelled(secondId)])
+        #expect(cancelled.map(\.origin) == [.signal(stop), .signal(stop)])
+        let ledger = TerminalEventLedger(outputs: outputs)
+        ledger.expectExactlyOneTerminal(for: [runningId, firstId, secondId])
+        ledger.expectExactlyOneTerminal(forSignals: [stop, secondStop])
+    }
+
+    @Test(
+        "a respond whose message waits is removed by cancel(_:): its caller gets CancellationError, and no submission carries it",
         .timeLimit(.minutes(1)))
     @MainActor
     func cancelMessageWithdrawsAWaitingRespond() async throws {
@@ -719,17 +949,18 @@ struct MessageQueueTests {
         let blockingAnswer = Task { try await session.respond(to: "blocking message") }
         await backend.started.wait()
 
-        // The second respond is a message that waits in the outbox. Its
+        // The second respond is a message that waits in the queue. Its
         // caller never sees the id, so the test reads it off the queue.
         let waitingRespond = Task { try await session.respond(to: "waiting prompt") }
-        // No event tells that the message joined the outbox, so the test reads
+        // No event tells that the message joined the queue, so the test reads
         // the count until it holds. Neither wait below has a wall clock (task
         // ^v4zh807): a loaded machine only delays the change, and only the
         // `.timeLimit` of this test ends a wait for a change that never comes.
-        try await AwaitedCondition.wait(until: { session.outbox.messages.depth.waiting == 1 })
+        try await AwaitedCondition.wait(until: { session.waitingUserMailCount == 1 })
         let id = try #require(await session.pendingMessages().first?.id)
 
-        #expect(await session.cancel(message: id) == .withdrawn)
+        try await Self.expectSignalDone(session.cancel(id), on: session)
+        #expect(try await session.awaitTerminal(of: id) == .cancelled(id))
 
         backend.proceed.signal()
         _ = try await blockingAnswer.value
@@ -738,36 +969,63 @@ struct MessageQueueTests {
         #expect(await Self.promptTexts(in: recorder) == ["blocking message"])
     }
 
-    @Test("cancel(message:) of a respond message in a running submission reports cancelledInSubmission")
+    @Test(
+        "cancel(_:) of a respond message in a running submission sends no cancelled and never stops the answer: the respond gets its reply"
+    )
     @MainActor
-    func cancelMessageCancelsARunningRespond() async throws {
+    func cancelOfARunningRespondLeavesTheAnswerRunning() async throws {
         let recorder = InMemoryRecorder()
         let backend = GatedStubBackend(responseText: "gated response")
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
         defer { try? FileManager.default.removeItem(at: dir) }
 
+        let feed = await session.streamSessionEvents()
         let answer = Task { try await session.respond(to: "racing prompt") }
         await backend.started.wait()
         let id = try #require(await session.mailQueueDepth().running.first)
 
-        #expect(await session.cancel(message: id) == .cancelledInSubmission)
+        let signal = session.cancel(id)
+        try await Self.expectSignalDone(signal, on: session)
 
         backend.proceed.signal()
-        _ = try? await answer.value
+        #expect(try await answer.value == "gated response")
+        #expect(Self.isAnswer(try await session.awaitTerminal(of: id), of: id))
         #expect(await session.becomesIdle())
+        #expect(await Self.promptTexts(in: recorder) == ["racing prompt"])
+        await session.close()
+        let ledger = TerminalEventLedger(outputs: await Self.outputs(of: feed))
+        ledger.expectExactlyOneTerminal(for: [id])
+        ledger.expectExactlyOneTerminal(forSignals: [signal])
     }
 
-    @Test("cancel(message:) reports alreadyAnswered for an answered message, and for an id that names no message")
+    @Test(
+        "cancel(_:) and replace(_:with:) change nothing for an answered message and for an id that names no message; the answer stays the one terminal event"
+    )
     @MainActor
     func cancelMessageReportsAlreadyAnsweredForAFinishedMessage() async throws {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let id = await session.send("one and done")
+        let stream = await session.streamSessionEvents().events
+        let id = try session.send("one and done")
         #expect(await session.becomesIdle())
 
-        #expect(await session.cancel(message: id) == .alreadyAnswered)
-        #expect(await session.cancel(message: MailID()) == .alreadyAnswered)
+        let cancelOfAnswered = session.cancel(id)
+        let cancelOfUnknown = session.cancel(MailID())
+        let replaceOfAnswered = session.replace(id, with: Self.userMessage("too late"))
+        try await Self.expectSignalDone(cancelOfAnswered, on: session)
+        try await Self.expectSignalDone(cancelOfUnknown, on: session)
+        try await Self.expectSignalDone(replaceOfAnswered, on: session)
+        #expect(Self.isAnswer(try await session.awaitTerminal(of: id), of: id))
+        #expect(await session.pendingMessages().isEmpty)
+        await session.close()
+
+        let events = await collect(stream)
+        #expect(MailQueueFixtures.cancelledIds(in: events).isEmpty)
+        let ledger = TerminalEventLedger(events: events)
+        ledger.expectExactlyOneTerminal(for: [id])
+        ledger.expectExactlyOneTerminal(forSignals: [cancelOfAnswered, cancelOfUnknown, replaceOfAnswered])
+        #expect(await Self.promptTexts(in: recorder) == ["one and done"])
     }
 }

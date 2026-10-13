@@ -2,34 +2,33 @@ import FoundationModels
 import FoundationModelsExtras
 import Tracing
 
-/// What one submission runs, as the reader of its first message asks: the
-/// grammar in force, the model work, and the event sink of the answer.
+/// What one submission runs, as the options of its batch ask: the grammar
+/// in force and the model work.
 struct SubmissionWork {
     /// The grammar that constrains the response, or `nil`.
     let grammar: Grammar?
-
-    /// The event sink of the answer, or `nil` when no caller reads events.
-    let onEvent: (@Sendable (SessionEvent) -> Void)?
 
     /// The model work: one whole SDK call over the composed prompt.
     let body: @Sendable (String) async throws -> String
 }
 
-/// ``RoutedSessionActor``'s generation surface: the response, chunk-stream, and
-/// event-stream helpers a caller drives, plus the session-scoped event
-/// subscriptions a host watches a whole session through.
+/// ``RoutedSessionActor``'s generation surface: the thin helpers on top of
+/// ``RoutedSession/mail(_:)`` (`mailbox.md`, section 4, decision 2), the
+/// waits for a terminal event, the output of the session, and the model
+/// work of a submission.
 ///
-/// Each helper sends one message and waits for its answer
+/// Each helper sends one mail and reads the output of that mail
 /// (`generation-queue.md`, section 5.4). The pump of the session submits the
-/// message; the helper itself submits nothing.
+/// mail; the helper itself submits nothing.
 extension RoutedSessionActor {
     /// Generates a complete text response to a prompt, recording the call.
     ///
-    /// Sends one message and waits for its answer. The answer is the final
-    /// reply of the submission that carried the message, and of each
-    /// continuation of it. A background run that the submission started does
-    /// not hold the answer: its terminal comes back as mail, and the pump
-    /// delivers it in a later submission.
+    /// Sends one user message in reply mode and reads its output to its
+    /// terminal event. The answer is the final reply of the submission that
+    /// carried the message, and of each continuation of it. A background run
+    /// that the submission started does not hold the answer: its terminal
+    /// comes back as run mail, and the pump delivers it in a later
+    /// submission.
     ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
@@ -37,54 +36,172 @@ extension RoutedSessionActor {
     ///     resolved context of the model, bounded by the pass token limit of
     ///     the session (``RepetitionDetection/passTokenLimit``), as the ceiling.
     /// - Returns: The model's complete text response.
-    /// - Throws: Any error thrown by the model, `CancellationError` when the
-    ///   message was cancelled, or
-    ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)`` when this
-    ///   call comes from an in-band tool body of an open submission on this
-    ///   session or on the queue of its model.
+    /// - Throws: The error of a failed answer, `CancellationError` when the
+    ///   message was cancelled or the answer was cancelled, the refusal of
+    ///   ``mail(_:)``, or ``GenerationQueueError/waitInsideOpenSubmission(model:)``
+    ///   when this call comes from an in-band tool body of an open submission
+    ///   on this session or on the queue of its model.
     func respond(to prompt: String, maxTokens: Int?) async throws -> String {
-        try await sendAndAwaitAnswer(text: prompt, requestedMaxTokens: maxTokens, reader: .reply)
+        let events = streamEvents(of: Self.userMessage(prompt, maxTokens: maxTokens, mode: .reply))
+        return try await SessionAnswer.awaitEnd(of: events, observing: nil).reply
     }
 
-    /// Sends one caller message and waits for its answer: the helper that
-    /// ``respond(to:maxTokens:)`` and the two stream methods are.
-    ///
-    /// The refusal of a wait that could never end comes first, on the task
-    /// of the caller (``refuseWaitInsideOpenSubmission()``). The message then
-    /// waits in ``outbox`` (``enqueue(_:)``), and the pump takes it for the
-    /// next submission that can carry it.
+    /// See ``RoutedSession/streamEvents(to:maxTokens:)``. Sends one user
+    /// message in stream mode, and gives the events of that message to its
+    /// terminal event.
     ///
     /// - Parameters:
-    ///   - text: The prompt text of the message.
-    ///   - requestedMaxTokens: The token ceiling the caller named, or `nil`.
-    ///   - reader: Who reads the output of the submission.
-    /// - Returns: The final reply of the answer that carried the message.
-    /// - Throws: What the answer throws, `CancellationError` when the message
-    ///   was cancelled, or the refusal.
-    private func sendAndAwaitAnswer(
-        text: String, requestedMaxTokens: Int?, reader: MessageReader
-    ) async throws -> String {
-        try refuseWaitInsideOpenSubmission()
-        let message = SessionMessage(
-            prompt: .plainText(text), requestedMaxTokens: requestedMaxTokens, reader: reader,
-            serviceContext: ServiceContext.current)
-        return try await enqueueAndAwaitAnswer(of: message)
+    ///   - prompt: The prompt to respond to.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil` for the
+    ///     resolved context of the model, bounded by the pass token limit of
+    ///     the session (``RepetitionDetection/passTokenLimit``), as the ceiling.
+    /// - Returns: A stream of session events, finishing after the terminal
+    ///   event of the message, or throwing the error of a failed answer
+    ///   after its ``SessionEvent/answerFailed(_:)``.
+    func streamEvents(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<SessionEvent, Error> {
+        streamEvents(of: Self.userMessage(prompt, maxTokens: maxTokens, mode: .stream))
     }
 
-    /// Posts `message` to ``SessionOutbox/messages`` and waits for its
-    /// answer (``awaitMailboxAnswer(id:mailID:answer:in:)``). A cancel of the caller
-    /// cancels the message at once: the mailbox withdraws a message that
-    /// waits, and a message that the running answer carries gets a mark, and
-    /// the session stops that answer. A caller that is cancelled before this
-    /// call, or while ``enqueue(_:)`` waits, gets its message withdrawn
-    /// before the pump sees it.
+    /// Streams a text response to a prompt as it is produced, recording the
+    /// call. Sends one user message in stream mode, and gives the text of
+    /// each ``SessionEvent/textDelta(_:)`` of that message. A guided session
+    /// never streams, so its stream gives the reply of the terminal event as
+    /// one element.
     ///
-    /// - Parameter message: The message the caller sent.
-    /// - Returns: The final reply of its answer.
-    /// - Throws: What its answer throws, or `CancellationError`.
-    private func enqueueAndAwaitAnswer(of message: SessionMessage) async throws -> String {
-        let (id, answer) = await enqueue(message)
-        return try await awaitMailboxAnswer(id: id, mailID: message.mailID, answer: answer, in: outbox.messages)
+    /// - Parameters:
+    ///   - prompt: The prompt to respond to.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil` for the
+    ///     resolved context of the model, bounded by the pass token limit of
+    ///     the session (``RepetitionDetection/passTokenLimit``), as the ceiling.
+    /// - Returns: A stream of response fragments, finishing when generation
+    ///   completes or throwing if it fails.
+    func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
+        let events = streamEvents(to: prompt, maxTokens: maxTokens)
+        let isGuided = grammar != nil
+        return Self.wrapAsyncStream { continuation in
+            for try await event in events {
+                if let text = Self.responseText(of: event, isGuided: isGuided) {
+                    continuation.yield(text)
+                }
+            }
+        }
+    }
+
+    /// The text that ``streamResponse(to:maxTokens:)`` gives for `event`:
+    /// the text of a ``SessionEvent/textDelta(_:)``, or, for a guided
+    /// session, the reply of ``SessionEvent/answered(_:)``.
+    ///
+    /// - Parameters:
+    ///   - event: One event of the message.
+    ///   - isGuided: Whether the session has a grammar.
+    /// - Returns: The text, or `nil` for an event that gives no text.
+    private static func responseText(of event: SessionEvent, isGuided: Bool) -> String? {
+        switch event {
+        case .textDelta(let text):
+            return text
+        case .answered(let answer) where isGuided:
+            return answer.reply
+        default:
+            return nil
+        }
+    }
+
+    /// See ``RoutedSession/awaitTerminal(of:)-(MailID)``. Waits for the
+    /// terminal event of the mail `id`, and returns at once when it already
+    /// came (``SessionOutputHub``). A cancel of the calling task cancels the
+    /// mail while it is queued (``cancel(_:)``), and ends the wait. It never
+    /// stops an answer that runs.
+    ///
+    /// - Parameter id: The id of the mail.
+    /// - Returns: ``SessionEvent/answered(_:)``, ``SessionEvent/answerFailed(_:)``,
+    ///   ``SessionEvent/cancelled(_:)`` or ``SessionEvent/lost(_:)``.
+    /// - Throws: `CancellationError` when the calling task is cancelled first,
+    ///   ``MailRefusal/closed`` when the session closes first, or
+    ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)``.
+    func awaitTerminal(of id: MailID) async throws -> SessionEvent {
+        try refuseWaitInsideOpenSubmission()
+        return try await withTaskCancellationHandler {
+            try await outputHub.awaitTerminal(of: .mail(id)).event
+        } onCancel: {
+            cancel(id)
+        }
+    }
+
+    /// See ``RoutedSession/awaitTerminal(of:)-(SignalID)``. Waits for the
+    /// terminal event of the signal `id`: ``SessionEvent/signalDone(_:)``, or
+    /// for a compaction ``SessionEvent/compaction(_:)`` or
+    /// ``SessionEvent/compactionFailed(_:)`` whose id is the signal id.
+    /// Returns at once when it already came.
+    ///
+    /// - Parameter id: The id of the signal.
+    /// - Returns: The terminal event of the signal.
+    /// - Throws: `CancellationError` when the calling task is cancelled first,
+    ///   ``MailRefusal/closed`` when the session closes first, or
+    ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)``.
+    func awaitTerminal(of id: SignalID) async throws -> SessionEvent {
+        try refuseWaitInsideOpenSubmission()
+        return try await outputHub.awaitTerminal(of: .signal(id.description)).event
+    }
+
+    /// A user message from the user of the session.
+    ///
+    /// - Parameters:
+    ///   - prompt: The prompt text.
+    ///   - maxTokens: The token ceiling, or `nil`.
+    ///   - mode: Reply or stream.
+    /// - Returns: The mail, with a new id.
+    static func userMessage(_ prompt: String, maxTokens: Int?, mode: UserMessageOptions.Mode) -> Mail {
+        Mail(sender: .user, body: .userMessage(prompt: prompt, options: UserMessageOptions(maxTokens: maxTokens, mode: mode)))
+    }
+
+    /// Sends `mail` and gives its events to its terminal event: the helper
+    /// that ``respond(to:maxTokens:)`` and the stream methods are.
+    ///
+    /// The refusal of a wait that could never end comes first, on the task
+    /// of the stream (``refuseWaitInsideOpenSubmission()``). A cancel of the
+    /// reader cancels the mail while it is queued (``cancel(_:)``); it never
+    /// stops an answer that runs.
+    ///
+    /// - Parameter mail: The mail to send.
+    /// - Returns: The events of the mail. The stream finishes after
+    ///   ``SessionEvent/answered(_:)``. It throws the error of a failed answer
+    ///   after ``SessionEvent/answerFailed(_:)``, and `CancellationError`
+    ///   after ``SessionEvent/cancelled(_:)`` or ``SessionEvent/lost(_:)``, or
+    ///   when the reader stops before the terminal event.
+    private func streamEvents(of mail: Mail) -> AsyncThrowingStream<SessionEvent, Error> {
+        Self.wrapAsyncStream { continuation in
+            try await self.refuseWaitInsideOpenSubmission()
+            // A reader that stopped before the send sends no mail, so no
+            // pump can take the mail before the cancel below removes it.
+            try Task.checkCancellation()
+            let subscription = try self.mail(mail)
+            await withTaskCancellationHandler {
+                for await output in subscription {
+                    continuation.yield(output.event)
+                }
+            } onCancel: {
+                self.cancel(mail.id)
+            }
+            try self.throwIfFailed(mail.id)
+        }
+    }
+
+    /// Throws for the end of the mail `id` when it is no answer.
+    ///
+    /// - Parameter id: The id of the mail, whose subscription ended.
+    /// - Throws: The error of a failed answer (``SessionOutputHub/Terminal/error``,
+    ///   or its ``AnswerFailure``), or `CancellationError` for a cancelled or
+    ///   lost mail, and when the mail has no terminal event yet.
+    private nonisolated func throwIfFailed(_ id: MailID) throws {
+        guard let terminal = outputHub.terminal(for: .mail(id)) else { throw CancellationError() }
+        switch terminal.event {
+        case .answered:
+            return
+        case .answerFailed(let failure):
+            throw terminal.error ?? failure
+        default:
+            throw CancellationError()
+        }
     }
 
     /// Refuses a wait for an answer of this session that could never end
@@ -95,7 +212,7 @@ extension RoutedSessionActor {
     ///
     /// A background body has a closed mark
     /// (``ModelCallMark/withBackgroundRunMark(_:)``), so it is never refused:
-    /// its message waits for a later submission.
+    /// its mail waits for a later submission.
     ///
     /// - Throws: ``GenerationQueueError/waitInsideOpenSubmission(model:)``.
     func refuseWaitInsideOpenSubmission() throws {
@@ -105,93 +222,24 @@ extension RoutedSessionActor {
         try backend.generationQueue?.refuseWaitInsideOpenSubmission()
     }
 
-    /// What one submission runs for the reader of its first message.
+    /// What one submission runs for the options of its batch.
     ///
     /// A reply runs the respond call of ``backend``, under the grammar of the
-    /// session. A stream runs the stream call, with no grammar, and gives
-    /// each fragment to its reader.
+    /// session. A stream runs the stream call, with no grammar, and sends
+    /// each fragment to the output of the session as
+    /// ``SessionEvent/textReset`` and ``SessionEvent/textDelta(_:)``. A
+    /// guided session never streams (``SubmissionOptions/init(for:isGuided:)``).
     ///
     /// - Parameters:
-    ///   - reader: The reader of the first message of the submission.
+    ///   - isStream: Whether the submission gives its output as a stream.
     ///   - ceiling: The token ceiling of the submission.
     /// - Returns: The work of the submission.
-    func submissionWork(for reader: MessageReader, responseTokenCeiling ceiling: ResponseTokenCeiling) -> SubmissionWork {
-        switch reader {
-        case .reply:
-            return SubmissionWork(
-                grammar: grammar, onEvent: nil,
-                body: respondBody(grammar: grammar, responseTokenCeiling: ceiling.resolved))
-        case .textStream(let continuation):
-            // A `String` element cannot report a restart, so this surface
-            // delivers the text and nothing else — see
-            // ``SessionEvent/textReset``, which the event stream carries in
-            // its place.
-            return streamSubmissionWork(
-                into: continuation, responseTokenCeiling: ceiling, onEvent: nil,
-                wrapFragment: { $0.text.isEmpty ? [] : [$0.text] })
-        case .eventStream(let continuation):
-            return streamSubmissionWork(
-                into: continuation, responseTokenCeiling: ceiling, onEvent: { continuation.yield($0) },
-                wrapFragment: Self.sessionEvents(for:))
+    func submissionWork(isStream: Bool, responseTokenCeiling ceiling: ResponseTokenCeiling) -> SubmissionWork {
+        guard isStream else {
+            return SubmissionWork(grammar: grammar, body: respondBody(grammar: grammar, responseTokenCeiling: ceiling.resolved))
         }
-    }
-
-    /// What one stream submission runs: the stream call with no grammar,
-    /// which gives each fragment to `continuation`.
-    ///
-    /// - Parameters:
-    ///   - continuation: The stream of the reader of the submission.
-    ///   - ceiling: The token ceiling of the submission.
-    ///   - onEvent: The event sink of the answer, or `nil`.
-    ///   - wrapFragment: Wraps one fragment into zero or more elements.
-    /// - Returns: The work of the submission.
-    private func streamSubmissionWork<Element: Sendable>(
-        into continuation: AsyncThrowingStream<Element, Error>.Continuation,
-        responseTokenCeiling ceiling: ResponseTokenCeiling,
-        onEvent: (@Sendable (SessionEvent) -> Void)?,
-        wrapFragment: @escaping @Sendable (ResponseFragment) -> [Element]
-    ) -> SubmissionWork {
-        SubmissionWork(grammar: nil, onEvent: onEvent) { composedPrompt in
-            try await self.streamGeneratingBody(
-                composedPrompt: composedPrompt, responseTokenCeiling: ceiling.resolved, into: continuation,
-                wrapFragment: wrapFragment)
-        }
-    }
-
-    /// Streams a text response to a prompt as it is produced, recording the
-    /// call. Sends one stream message, and finishes the stream with its
-    /// answer. Cancelling the stream cancels the waiting `Task`, which
-    /// cancels the message.
-    ///
-    /// - Parameters:
-    ///   - prompt: The prompt to respond to.
-    ///   - maxTokens: The maximum number of tokens to generate, or `nil` for the
-    ///     resolved context of the model, bounded by the pass token limit of
-    ///     the session (``RepetitionDetection/passTokenLimit``), as the ceiling.
-    /// - Returns: A stream of response fragments, finishing when generation
-    ///   completes or throwing if it fails.
-    func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
-        streamMessage(prompt: prompt, maxTokens: maxTokens) { .textStream($0) }
-    }
-
-    /// Sends one stream message, and finishes the returned stream with its
-    /// answer. Cancelling the stream cancels the waiting `Task`, which
-    /// cancels the message.
-    ///
-    /// - Parameters:
-    ///   - prompt: The prompt to respond to.
-    ///   - maxTokens: The maximum number of tokens to generate, or `nil`.
-    ///   - reader: Makes the reader of the message from the continuation of
-    ///     the returned stream.
-    /// - Returns: The stream that the submission of the message fills.
-    private func streamMessage<Element: Sendable>(
-        prompt: String,
-        maxTokens: Int?,
-        reader: @escaping @Sendable (AsyncThrowingStream<Element, Error>.Continuation) -> MessageReader
-    ) -> AsyncThrowingStream<Element, Error> {
-        Self.wrapAsyncStream { continuation in
-            _ = try await self.sendAndAwaitAnswer(
-                text: prompt, requestedMaxTokens: maxTokens, reader: reader(continuation))
+        return SubmissionWork(grammar: nil) { composedPrompt in
+            try await self.streamGeneratingBody(composedPrompt: composedPrompt, responseTokenCeiling: ceiling.resolved)
         }
     }
 
@@ -217,26 +265,19 @@ extension RoutedSessionActor {
         }
     }
 
-    /// Runs `backend.streamResponseFragments(to:maxTokens:)`, forwarding each
-    /// fragment through `wrapFragment` to `continuation` and accumulating the
-    /// text. A fragment marked ``ResponseFragment/restartsResponse`` replaces
-    /// the accumulated text.
+    /// Runs `backend.streamResponseFragments(to:maxTokens:)`, sends the
+    /// events of each fragment to the output of the session
+    /// (``sessionEvents(for:)``), and accumulates the text. A fragment marked
+    /// ``ResponseFragment/restartsResponse`` replaces the accumulated text.
     ///
     /// - Parameters:
-    ///   - composedPrompt: The prompt, already composed with the outbox drain.
+    ///   - composedPrompt: The prompt, already composed with the run mail.
     ///   - maxTokens: The ceiling to give the backend, as
     ///     ``ResponseTokenCeiling/resolved`` gives it.
-    ///   - continuation: The stream continuation each element is yielded to.
-    ///   - wrapFragment: Wraps one fragment into zero or more elements.
-    /// - Returns: The accumulated, unwrapped response text.
+    /// - Returns: The accumulated response text.
     /// - Throws: Any error thrown by the model, or `CancellationError` when
     ///   the model call was cancelled during the stream.
-    func streamGeneratingBody<Element: Sendable>(
-        composedPrompt: String,
-        responseTokenCeiling maxTokens: Int?,
-        into continuation: AsyncThrowingStream<Element, Error>.Continuation,
-        wrapFragment: @Sendable (ResponseFragment) -> [Element]
-    ) async throws -> String {
+    func streamGeneratingBody(composedPrompt: String, responseTokenCeiling maxTokens: Int?) async throws -> String {
         var response = ""
         // The stall watch of this submission counts real increments (task ^z6xcmnh):
         // declared here so a streaming submission that has produced nothing yet is
@@ -249,12 +290,9 @@ extension RoutedSessionActor {
             to: composedPrompt, maxTokens: maxTokens)
         {
             noteGenerationProgress(fragment.progress)
-            for element in wrapFragment(fragment) {
-                continuation.yield(element)
-            }
-            // The text events travel on the session-scoped subscriptions too
-            // (`generation-queue.md`, section 5.6), for every reader of the
-            // stream.
+            // The text events go to the output of the session
+            // (`generation-queue.md`, section 5.6), where the subscription of
+            // the mail of the answer reads them.
             for event in Self.sessionEvents(for: fragment) {
                 emitSessionScopedEvent(event)
             }
@@ -265,95 +303,65 @@ extension RoutedSessionActor {
         // submission would otherwise fall out of that loop holding a
         // half-produced `response` and be reported as a submission that simply
         // finished, indexed recording and all. It did not finish: it was cut
-        // short (see ``RoutedSession/cancel()``). Raising it here
+        // short (see ``RoutedSession/cancelAll()``). Raising it here
         // routes a truncated stream into the same failed-submission handling
         // every other mid-generation failure takes, so the caller can tell the
         // two apart.
-        // Whatever was already yielded stays yielded — a cancelled stream is
+        // Whatever was already sent stays sent — a cancelled stream is
         // truncated, never retracted.
         try Task.checkCancellation()
         return response
     }
 
-    /// See ``RoutedSession/streamEvents(to:maxTokens:)``. Sends one stream
-    /// message, and finishes the stream with its answer. Cancelling the
-    /// stream cancels the waiting `Task`, which cancels the message.
+    /// See ``RoutedSession/streamSessionEvents()``. Makes one feed of
+    /// ``outputHub`` with an unbounded buffer.
+    func streamSessionEvents() -> AsyncStream<SessionOutput> {
+        outputHub.makeFeed()
+    }
+
+    /// Sends one event to the output of the session (``outputHub``), with the
+    /// origin of the work that sends it (``OriginContext/current``).
     ///
     /// - Parameters:
-    ///   - prompt: The prompt to respond to.
-    ///   - maxTokens: The maximum number of tokens to generate, or `nil` for the
-    ///     resolved context of the model, bounded by the pass token limit of
-    ///     the session (``RepetitionDetection/passTokenLimit``), as the ceiling.
-    /// - Returns: A stream of session events, finishing when generation
-    ///   completes or throwing if it fails.
-    func streamEvents(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<SessionEvent, Error> {
-        streamMessage(prompt: prompt, maxTokens: maxTokens) { .eventStream($0) }
+    ///   - event: The event to send.
+    ///   - error: The error that ended a failed answer, when `event` is its
+    ///     ``SessionEvent/answerFailed(_:)``, or `nil`.
+    ///   - audience: The mail of the answer whose work sends `event`, or no
+    ///     mail (the default). See ``SessionOutputHub/emit(_:failure:audience:)``.
+    nonisolated func emitSessionScopedEvent(
+        _ event: SessionEvent, failure error: (any Error)? = nil, audience: Set<MailID> = []
+    ) {
+        outputHub.emit(SessionOutput(origin: OriginContext.current, event: event), failure: error, audience: audience)
     }
 
-    /// See ``RoutedSession/streamSessionEvents()``. Registers a continuation in
-    /// ``sessionEventSubscriptions`` with unbounded buffering. The termination
-    /// handler captures `self` weakly and drops the subscription.
-    func streamSessionEvents() -> AsyncStream<SessionOutput> {
-        let subscriptionId = ULID.generate()
-        let (stream, continuation) = AsyncStream.makeStream(
-            of: SessionOutput.self, bufferingPolicy: .unbounded)
-        continuation.onTermination = { [weak self] _ in
-            guard let self else { return }
-            Task { await self.dropSessionEventSubscription(subscriptionId) }
-        }
-        sessionEventSubscriptions[subscriptionId] = continuation
-        return stream
-    }
-
-    /// Forgets one ``streamSessionEvents()`` subscription.
+    /// Sends the terminal event ``SessionEvent/cancelled(_:)`` of each mail
+    /// that left the queue before the pump took it. A signal that removed
+    /// the mail (``Origin/signal(_:)``) gives the event its own origin. For
+    /// each other removal, the origin of the event is the mail itself.
     ///
-    /// - Parameter subscriptionId: The subscription's id.
-    private func dropSessionEventSubscription(_ subscriptionId: ULID) {
-        sessionEventSubscriptions.removeValue(forKey: subscriptionId)
-    }
-
-    /// Fans one session-scoped event out to every live
-    /// ``streamSessionEvents()`` subscription, with the origin of the work
-    /// that sends it (``OriginContext/current``).
-    ///
-    /// - Parameter event: The event to deliver.
-    func emitSessionScopedEvent(_ event: SessionEvent) {
-        let output = SessionOutput(origin: OriginContext.current, event: event)
-        for continuation in sessionEventSubscriptions.values {
-            continuation.yield(output)
-        }
-    }
-
-    /// Sends the terminal event ``SessionEvent/cancelled(_:)`` of each
-    /// caller message that left the queue before the pump took it. The
-    /// origin of each event is the message itself.
-    ///
-    /// - Parameter mailIDs: The correlation ids of the messages, in queue
-    ///   order.
-    func emitCancelled(_ mailIDs: [MailID]) {
+    /// - Parameter mailIDs: The ids of the mail, in queue order.
+    nonisolated func emitCancelled(_ mailIDs: [MailID]) {
+        let signal: Origin? = if case .signal = OriginContext.current { OriginContext.current } else { nil }
         for mailID in mailIDs {
-            OriginContext.$current.withValue(.mail([mailID])) {
+            OriginContext.$current.withValue(signal ?? .mail([mailID])) {
                 emitSessionScopedEvent(.cancelled(mailID))
             }
         }
     }
 
-    /// Finishes every live ``streamSessionEvents()`` subscription, so a
-    /// consumer ends when the session does. Clears the map, so a second
-    /// ``close()`` has nothing left to finish.
+    /// Finishes every live ``streamSessionEvents()`` feed, so a consumer ends
+    /// when the session does. A second ``close()`` has nothing left to
+    /// finish.
     func finishSessionEventSubscriptions() {
-        for continuation in sessionEventSubscriptions.values {
-            continuation.finish()
-        }
-        sessionEventSubscriptions.removeAll()
+        outputHub.finishFeeds()
     }
 
     /// The events one streamed ``ResponseFragment`` implies, in yield order.
     /// A restarting fragment yields ``SessionEvent/textReset`` first. Non-empty
     /// text follows as ``SessionEvent/textDelta(_:)``.
-    /// ``streamGeneratingBody(composedPrompt:responseTokenCeiling:into:wrapFragment:)``
-    /// gives these events to ``emitSessionScopedEvent(_:)`` for each fragment,
-    /// and the event stream of a caller yields them too.
+    /// ``streamGeneratingBody(composedPrompt:responseTokenCeiling:)`` gives
+    /// these events to ``emitSessionScopedEvent(_:failure:audience:)`` for each
+    /// fragment.
     ///
     /// - Parameter fragment: The fragment just received from the backend.
     /// - Returns: The events to yield for it, in order.

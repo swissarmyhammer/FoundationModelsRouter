@@ -19,7 +19,7 @@ extension RoutedSessionActor {
     /// - Throws: Nothing now: ``performFork(workingDirectory:)`` does not
     ///   throw. The protocol requirement keeps `throws`, and the span would
     ///   record the failure of an error of a later fork step.
-    func fork(workingDirectory: URL?) async throws -> RoutedSession {
+    func fork(workingDirectory: URL?) async throws -> any RoutedSession {
         try await withForkSpan {
             await performFork(workingDirectory: workingDirectory)
         }
@@ -40,8 +40,8 @@ extension RoutedSessionActor {
     /// - Returns: The forked child session.
     /// - Throws: Whatever `body` throws, after the span records its failure.
     func withForkSpan(
-        _ body: () async throws -> RoutedSession
-    ) async throws -> RoutedSession {
+        _ body: () async throws -> any RoutedSession
+    ) async throws -> any RoutedSession {
         try await RouterTelemetry
             .withSpan(RouterTelemetry.SpanName.fork, ofKind: .internal, tracer: tracer) { span in
                 describeSession(on: span)
@@ -73,7 +73,7 @@ extension RoutedSessionActor {
     /// - Parameter workingDirectory: The child's working directory, or `nil` to
     ///   default to its recording directory.
     /// - Returns: The forked child session.
-    private func performFork(workingDirectory: URL?) async -> RoutedSession {
+    private func performFork(workingDirectory: URL?) async -> any RoutedSession {
         // Fresh-per-session outbox plus fork-then-mount tool composition
         // (see ``outbox``'s doc comment): built from ``originalTools`` — the
         // true originals, never this session's own already-instanced
@@ -113,7 +113,7 @@ extension RoutedSessionActor {
         // caps a root session's tools. The child's mounts carry this session's
         // tracer, which the child actor is constructed with too, so a tool span
         // the fork opens reports to the same backend as the parent's.
-        let childOutbox = SessionOutbox()
+        let childOutbox = SessionOutbox(model: model)
         // The child's mailbox is fresh for the same reason its outbox is:
         // background runs and pending elicitations never migrate between
         // sessions (see ``RoutedSessionActor/mailbox``).
@@ -270,17 +270,21 @@ extension RoutedSessionActor {
 
     /// See ``RoutedSession/close()``.
     ///
-    /// Runs the drain (``drain()``), and waits for it with no regard to a
-    /// cancel of the caller. The drain stops the running work, withdraws the
-    /// waiting messages, runs ``mailbox``'s `RunPlane.sweep()`, journals each
+    /// Closes the queue, runs the work of ``cancelAll()`` directly
+    /// (``performCancelAll()``, out of the order of the signals), and then waits for the end of
+    /// all work (``startDrainIfNeeded()``) with no regard to a cancel of the
+    /// caller: the end of the sweep, the pump and the body of each run. The
+    /// end of all work runs ``mailbox``'s `RunPlane.sweep()`, journals each
     /// terminal event it produced through
     /// `SessionOutbox.journalWithoutStaging(event:)` — reaching the same
     /// ``record(event:)``, and so the same ``makeRunEventPartial(toolName:events:)``, a
     /// run's own reports take when they are journaled live. The journal is
     /// complete before this method returns: exactly one terminal event per
-    /// background run, no orphans, no holes. The drain then waits until the
-    /// pump and the body of each run ended, so when this method returns, no
-    /// work of the session runs.
+    /// background run, no orphans, no holes. The end of all work then waits
+    /// until the pump and the body of each run ended, so when this method returns, no
+    /// work of the session runs. Each queued mail gets its terminal event
+    /// ``SessionEvent/cancelled(_:)``, and later mail is refused with
+    /// ``MailRefusal/closed``.
     ///
     /// **Why through the outbox rather than straight to the recorder.**
     /// Every other journal write is ordered by `SessionOutbox`'s one FIFO
@@ -339,19 +343,38 @@ extension RoutedSessionActor {
     /// so the cache stays in its limits. A pass that ends after the close
     /// can write the entry again, and the same limits remove it.
     func close() async {
+        // The queue closes first: each queued mail gets its terminal event
+        // ``SessionEvent/cancelled(_:)`` while the feeds still read, and
+        // ``mail(_:)`` refuses new mail with ``MailRefusal/closed`` from now
+        // on. The close of the queue does not suspend.
+        settleCancelledMail(outbox.queue.close().map(\.id))
+
+        // Before the drain: no ``awaitIdle()`` call waits for the drain,
+        // which waits for each run body to end.
+        endIdleWaits()
+
+        // The stop of all work: the running answer ends at once, and the
+        // sweep of the runs starts. Close runs the work of ``cancelAll()``
+        // directly: it does not wait in the order of the signals, and it
+        // sends no ``SessionEvent/signalDone(_:)``. It comes before the end
+        // of the feeds, so a feed also gets the terminal event of the
+        // stopped answer.
+        await performCancelAll()
+
         // Before anything that can return early: a consumer looping over
         // ``streamSessionEvents()`` must end when the session does, whether or
         // not this close has anything to journal.
         finishSessionEventSubscriptions()
 
-        // Also before the drain: no ``awaitIdle()`` call waits for the drain,
-        // which waits for each run body to end.
-        endIdleWaits()
-
         // The drain sweeps and journals the background runs, and waits until
         // no work of the session runs. A cancel of the caller does not end
         // this wait: when close returns, the session holds no work.
         await startDrainIfNeeded().value
+        // ``performCancelAll()`` and the end of all work ended the open answer, so each delivered mail has its
+        // terminal event. The output closes: each mail subscription that is
+        // left finishes, and each wait for a terminal event that never came
+        // ends with ``MailRefusal/closed``.
+        outputHub.close()
         // The drain journals the terminal of each run, and a terminal closes
         // the merged progress row of its run. A row can still be open when a
         // run posted progress and no terminal reached the journal, so write it

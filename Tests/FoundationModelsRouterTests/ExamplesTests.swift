@@ -439,7 +439,7 @@ struct ExamplesTests {
         let planner = profile.standard.makeSession(instructions: "You are the planner.")
 
         let subagentCount = 4
-        var subagents: [RoutedSession] = []
+        var subagents: [any RoutedSession] = []
         for _ in 0..<subagentCount {
             subagents.append(try await planner.fork(workingDirectory: nil))
         }
@@ -600,7 +600,7 @@ struct ExamplesTests {
         /// and opens a `standard`-slot session driven entirely by `backend`.
         static func makeSession(
             over backend: any LanguageModelSessionBackend, context: Int
-        ) async throws -> RoutedSession {
+        ) async throws -> any RoutedSession {
             let cacheDir = FileManager.default.temporaryDirectory
                 .appendingPathComponent("CompactionExample-\(UUID().uuidString)", isDirectory: true)
             try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
@@ -807,7 +807,7 @@ struct ExamplesTests {
     /// and retry exactly once. Copied verbatim from that doc comment's own
     /// code sample so the two cannot silently drift apart.
     private func respondWithReactiveCompaction(
-        session: RoutedSession, prompt: String, contextTokens: Int
+        session: any RoutedSession, prompt: String, contextTokens: Int
     ) async throws -> String {
         do {
             return try await session.respond(to: prompt)

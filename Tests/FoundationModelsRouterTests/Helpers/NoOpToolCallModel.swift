@@ -220,7 +220,7 @@ struct NoOpToolCallSessionFixture {
     static let jobOutput = "the job is done"
 
     /// The vended or restored session a test drives its answers on.
-    let session: RoutedSession
+    let session: any RoutedSession
 
     /// The log that the model writes.
     let log: RenderProbeLog
@@ -258,7 +258,7 @@ struct NoOpToolCallSessionFixture {
     /// - Throws: Whatever the step throws.
     private typealias SessionStep = (
         _ container: LiveBackendContainer<NoOpToolCallModel>, _ tools: [any Tool], _ directory: URL
-    ) async throws -> RoutedSession
+    ) async throws -> any RoutedSession
 
     /// Builds a router and vends a session over a ``NoOpToolCallModel``.
     ///
@@ -314,7 +314,7 @@ struct NoOpToolCallSessionFixture {
     /// - Throws: Whatever profile resolution throws.
     private static func vendSession(
         over container: LiveBackendContainer<NoOpToolCallModel>, tools: [any Tool], directory: URL
-    ) async throws -> RoutedSession {
+    ) async throws -> any RoutedSession {
         let profile = try await RouterTestFixtures.resolveStandardProfile(over: container, cacheDir: directory).profile
         return profile.standard.makeSession(
             configuration: SessionConfiguration(tools: tools, isNoOpToolCall: isNoOp(toolName:arguments:)))
@@ -379,7 +379,7 @@ struct NoOpToolCallSessionFixture {
     private static func recordAndRestoreSession(
         over container: LiveBackendContainer<NoOpToolCallModel>, tools: [any Tool], directory: URL,
         restoreCheck: NoOpToolCallCheck?
-    ) async throws -> RoutedSession {
+    ) async throws -> any RoutedSession {
         let loader = StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension)
         let routerId = ULID.generate()
         let recording = try await recordingProfile(id: routerId, under: directory, loader: loader)

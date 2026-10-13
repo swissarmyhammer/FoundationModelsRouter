@@ -166,7 +166,7 @@ struct ElicitationRoutingTests {
 
     /// Builds a fresh router + resolved profile + vended session over a plain
     /// stub backend, recording through an ``InMemoryRecorder``.
-    private static func makeSession(pool: ModelPool = ModelPool()) async throws -> (session: RoutedSession, dir: URL) {
+    private static func makeSession(pool: ModelPool = ModelPool()) async throws -> (session: any RoutedSession, dir: URL) {
         let dir = makeTempDir()
         let router = Router(
             cacheDir: dir,
@@ -202,7 +202,7 @@ struct ElicitationRoutingTests {
     ///   - sink: Where the context posts its events. Defaults to a sink that
     ///     drops them; pass `session.outbox` to reach the session's journal.
     private static func makeContext(
-        for session: RoutedSession,
+        for session: any RoutedSession,
         postingTo sink: any OperationEventSink = DiscardingOperationEventSink()
     ) -> ToolContext {
         ToolContext(
@@ -231,7 +231,7 @@ struct ElicitationRoutingTests {
     ///   - sink: Where the request's event is posted. See ``makeContext(for:postingTo:)``.
     private static func suspendOnElicitation(
         _ request: ElicitationRequest,
-        on session: RoutedSession,
+        on session: any RoutedSession,
         postingTo sink: any OperationEventSink = DiscardingOperationEventSink()
     ) async -> AnswerDrivenRun<ElicitationResponse> {
         let context = makeContext(for: session, postingTo: sink)

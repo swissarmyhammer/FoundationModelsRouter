@@ -14,7 +14,7 @@ extension AnswerCancellationTests {
 
     @Test(
         "cancelling an answer suspended inside its proactive compaction's summarizer call stops the compaction instead of waiting it out",
-        arguments: CancellationRoute.allCases)
+        arguments: CancellationRoute.answerRoutes)
     @MainActor
     func cancellingAProactiveCompactionStopsIt(route: CancellationRoute) async throws {
         let dir = Self.makeTempDir()
@@ -30,18 +30,14 @@ extension AnswerCancellationTests {
         let answerTask = Task { try await session.respond(to: "compacts-first") }
         await insideSummarizer.wait()
 
-        switch route {
-        case .routerAPI:
-            #expect(await session.cancel() == .requested)
-        case .callerTask:
-            answerTask.cancel()
-        }
+        let stop = await Self.requestStop(of: session, by: route, callerTask: answerTask)
 
-        // A compaction's summarizer call is a model call like any other, so both routes
-        // reach the work running inside it and the answer unwinds with the same
-        // `CancellationError` a cancelled generation gives.
+        // The summarizer call of a compaction is a model call as each other
+        // model call is. So each route reaches the work inside it, and the
+        // answer unwinds with the `CancellationError` of a stopped generation.
         try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
         #expect(await fixture.observer.toolSawCancellation)
+        try await Self.expectStopEnds(stop)
 
         // No further model call is *entered* while unwinding: the stop costs no more
         // model work than the call it landed in. Deliberately not read as a guard on
@@ -128,7 +124,7 @@ extension AnswerCancellationTests {
             }
         }
         await insideSummarizer.wait()
-        #expect(await session.cancel() == .requested)
+        #expect(await session.stopRunningWork())
         // Released by the test rather than by the cancellation, so this answer unwinds
         // through the fault's path and not through the suspended tool's own.
         release.signal()
@@ -156,8 +152,8 @@ extension AnswerCancellationTests {
     }
 
     @Test(
-        "cancelling a caller-driven compact() stops it too, by either route — the pump runs it as work the same way",
-        arguments: CancellationRoute.allCases)
+        "cancelling a caller-driven compact() stops it too, by the stop of the running work and by the caller task",
+        arguments: [CancellationRoute.stopRunningWork, .callerTask])
     @MainActor
     func cancellingACallerDrivenCompactStopsIt(route: CancellationRoute) async throws {
         let dir = Self.makeTempDir()
@@ -177,28 +173,55 @@ extension AnswerCancellationTests {
         }
         await insideSummarizer.wait()
 
-        // A manual compaction is not an answer a caller ever asked to generate, but the
-        // pump runs it as its work and it runs real model work, so a stop reaches it on
-        // exactly the same terms — a caller no longer has to own an enclosing `Task`
-        // to get out.
+        // A manual compaction is not an answer, but the pump runs it as its
+        // work, and it runs real model work. So a stop of the running work
+        // reaches it as it reaches an answer. ``RoutedSession/cancelAll()``
+        // does not stop a caller compaction:
+        // ``cancelAllLeavesARunningCallerCompactToItsCaller()`` proves that.
         //
-        // Both routes, because routing the summarizer through the session's own
-        // cancellable model call *changed* how the caller's route arrives here: a
-        // caller's cancellation used to propagate structurally, through the very task
-        // that called `compact()`, and now has to reach an unstructured task by
-        // `withTaskCancellationHandler` and the pre-flight check instead. That is the
-        // most-changed behavior on this path, so it is the one least safe to leave to
-        // the other route's coverage.
-        switch route {
-        case .routerAPI:
-            #expect(await session.cancel() == .requested)
-        case .callerTask:
-            compactTask.cancel()
-        }
+        // The caller route too: a cancel of the caller task of a caller
+        // compaction still stops that compaction. The summarizer runs in the
+        // cancellable model call of the session, an unstructured task, so the
+        // cancel of the caller must get there through
+        // `withTaskCancellationHandler` and the pre-flight check.
+        _ = await Self.requestStop(of: session, by: route, callerTask: compactTask)
         try await Self.awaitCancelledUnwind(compactTask, sawCancellation: sawCancellation)
         #expect(await fixture.observer.toolSawCancellation)
 
         // And it stranded nothing on the way out, so the session still generates.
+        fixture.hook.midAnswer = nil
+        #expect(await Self.followUpAnswerCompletes(on: session, observer: fixture.observer))
+    }
+
+    @Test("cancelAll() does not stop a running caller-driven compact(): only its caller or the stop of the running work does")
+    @MainActor
+    func cancelAllLeavesARunningCallerCompactToItsCaller() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let fixture = try await Self.makeFixture(cacheDir: dir)
+        let session = try await Self.makeCompactionTriggeredSession(fixture, budget: Self.summarizingCompactionBudget)
+
+        let insideSummarizer = AsyncSemaphore(value: 0)
+        let sawCancellation = Self.suspendInsideCancellationAwareTool(
+            fixture, suspendingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
+
+        let compactTask = Task {
+            try await session.compact(prompt: Self.compactionSummarizerPrompt, budget: Self.summarizingCompactionBudget)
+        }
+        await insideSummarizer.wait()
+
+        // The signal ends after all its work. The compaction is not mail and
+        // not an answer, so the signal does not stop it: the summarizer does
+        // not see a cancel.
+        try await Self.expectSignalEnds(session.cancelAll(), on: session)
+        #expect(await fixture.observer.toolSawCancellation == false)
+        #expect(await session.isPumpRunning)
+
+        // The caller still owns the compaction, and its cancel stops it.
+        compactTask.cancel()
+        try await Self.awaitCancelledUnwind(compactTask, sawCancellation: sawCancellation)
+
         fixture.hook.midAnswer = nil
         #expect(await Self.followUpAnswerCompletes(on: session, observer: fixture.observer))
     }
@@ -229,7 +252,7 @@ extension AnswerCancellationTests {
             try await session.compact(prompt: Self.compactionSummarizerPrompt, budget: Self.summarizingCompactionBudget)
         }
         await insideSummarizer.wait()
-        #expect(await session.cancel() == .requested)
+        #expect(await session.stopRunningWork())
         // Released by the test, so the summarizer ends with its own fault while
         // the stop is outstanding.
         release.signal()
@@ -281,7 +304,7 @@ extension AnswerCancellationTests {
         try await AwaitedCondition.wait(until: { await actor.pendingCompactions.isEmpty })
         #expect(await actor.isPumpRunning)
 
-        #expect(await session.cancel() == .requested)
+        #expect(await session.stopRunningWork())
         try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
         await #expect(throws: CancellationError.self) {
             try await compactTask.value
@@ -293,20 +316,21 @@ extension AnswerCancellationTests {
     }
 
     @Test(
-        "an answer cancelled inside its own proactive compaction re-queues the outbox events it had drained",
-        arguments: CancellationRoute.allCases)
+        "an answer cancelled inside its own proactive compaction loses no run mail it took: queued again, or ended with the answer by cancelAll()",
+        arguments: CancellationRoute.answerRoutes)
     @MainActor
-    func cancelledProactiveCompactionRequeuesItsDrainedEvents(route: CancellationRoute) async throws {
+    func cancelledProactiveCompactionRequeuesItsTakenEvents(route: CancellationRoute) async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = try await Self.makeCompactionTriggeredSession(fixture, budget: Self.summarizingCompactionBudget)
 
-        // Staged after the warm-up, so this answer is the one that drains it.
+        // Posted after the warm-up, so this answer is the answer that takes it.
         let posted = OperationEvent(
             tool: "shell", op: "run command", correlationID: "1", kind: .completed, detail: "exit 0")
         await session.outbox.post(event: posted)
+        let postedId = try #require(await session.outbox.pending().events.first?.id)
 
         let insideSummarizer = AsyncSemaphore(value: 0)
         let sawCancellation = Self.suspendInsideCancellationAwareTool(
@@ -314,29 +338,34 @@ extension AnswerCancellationTests {
 
         let answerTask = Task { try await session.respond(to: "compacts-first") }
         await insideSummarizer.wait()
-        // Both routes, because losing a drained outbox is a silent data-loss bug
-        // rather than a visible failure: on the caller-cancels route the re-queue
-        // itself runs inside an already-cancelled task, so nothing about it may
-        // depend on the task still being live.
-        switch route {
-        case .routerAPI:
-            #expect(await session.cancel() == .requested)
-        case .callerTask:
-            answerTask.cancel()
-        }
+        let stop = await Self.requestStop(of: session, by: route, callerTask: answerTask)
         try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
+        try await Self.expectStopEnds(stop)
 
-        // The compaction threw before the answer ever reached the model, so nothing this
-        // answer drained was delivered — and the drain must not have destroyed it.
-        // The re-queue for this window is the whole reason the compaction could not
-        // simply be made to throw.
+        // The compaction threw before the answer reached the model, so the
+        // model did not see the run mail that the answer took. The run mail
+        // must not be lost: that is the reason for the requeue in this window.
         let pending = await session.outbox.pending()
-        #expect(pending.events.map(\.event) == [posted])
+        switch route {
+        case .cancelAll:
+            // cancelAll ends the stopped answer at once, with the run mail
+            // in it: the run mail gets the `answerFailed(.cancelled)` of the
+            // answer as its terminal event. Thus the stopped answer does not
+            // put it back in the queue.
+            #expect(pending.events.isEmpty)
+            let terminal = try await session.awaitTerminal(of: postedId)
+            #expect([terminal].answerFailures.map(\.reason) == [.cancelled])
+            #expect([terminal].answerFailures.first?.mailIds.contains(postedId) == true)
+        case .stopRunningWork, .callerTask:
+            // The mail waits in the queue again, with its own id.
+            #expect(pending.events.map(\.event) == [posted])
+            #expect(pending.events.map(\.id) == [postedId])
+        }
     }
 
     @Test(
         "an answer cancelled inside its own proactive compaction reports no compaction, because none happened",
-        arguments: CancellationRoute.allCases)
+        arguments: CancellationRoute.answerRoutes)
     @MainActor
     func cancelledProactiveCompactionReportsNoCompaction(route: CancellationRoute) async throws {
         let dir = Self.makeTempDir()
@@ -351,8 +380,8 @@ extension AnswerCancellationTests {
 
         let recordedBefore = await fixture.recorder.events.count
 
-        // Streamed, because ``SessionEvent/compaction(_:)`` is only observable to a
-        // consumer that asked for the events of this answer.
+        // Streamed, because only a consumer of the events of this answer sees a
+        // ``SessionEvent/compaction(_:)``.
         let delivered = DeliveredEvents()
         let answerTask = Task {
             for try await event in await session.streamEvents(to: "compacts-first") {
@@ -360,59 +389,30 @@ extension AnswerCancellationTests {
             }
         }
         await insideSummarizer.wait()
-        // Both routes, because the rule this pins — a cancelled compaction is abandoned
-        // rather than degraded — is decided by a predicate that asks each route
-        // separately, so its holding for one says nothing about the other.
-        //
-        // What the *consumer* sees is the one thing that genuinely differs by route
-        // here, and it differs for a reason outside this package: cancelling a task
-        // suspended in `AsyncThrowingStream.next()` **finishes** that stream rather
-        // than throwing from it. So only the router-API route can be asserted with
-        // ``awaitCancelledUnwind(_:sawCancellation:)``.
-        switch route {
-        case .routerAPI:
-            #expect(await session.cancel() == .requested)
-            // The consumer is not what was cancelled, so it is told: the stream ends
-            // by throwing the own `CancellationError` of the answer.
-            try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
-        case .callerTask:
-            // Cancelling the consumer terminates the stream, which cancels the task
-            // the answer itself runs in — the abandoned-stream shape
-            // ``abandoningAStreamRecordsTheSubmissionAsCancelled()`` pins from the other
-            // side. What this route can therefore show is that the compaction let go and
-            // the consumer came back at all, not an error it could never observe.
-            //
-            // The slowest crossing this suite makes, and the one this suite's own
-            // doc takes its measurement from: the stop reaches the compaction only once
-            // the cancelled consumer runs again on the shared main actor. Waited
-            // on, never timed (task ^bqj719z).
-            answerTask.cancel()
-            try await sawCancellation.wait()
-            // Safe to await, for ``followUpAnswerEvents(on:observer:prompt:)``'s reason:
-            // a stream consumer's `next()` is cancellation-aware and always ends.
-            _ = try? await answerTask.value
-        }
+        // Each route, because a predicate that reads each route decides the
+        // rule — a cancelled compaction is abandoned, not degraded. The rule
+        // for one route tells nothing about the other route. The consumer is
+        // not what was cancelled, so it reads each event: the stream ends with
+        // the `CancellationError` of the answer. After cancelAll, the stream
+        // ends at once, and the output drops the later events of the answer.
+        let stop = await Self.requestStop(of: session, by: route, callerTask: answerTask)
+        try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
+        try await Self.expectStopEnds(stop)
 
-        // A cancelled compaction is abandoned outright, not degraded down to the
-        // next summarizer tier the way a broken summarizer is: so the consumer is
-        // never told a compaction happened, and every `.compaction` this session reports
-        // describes work it really did. Pinned by the router-API route — on the
-        // caller-cancels one it holds trivially, since a consumer that cancelled itself
-        // receives nothing further whatever the compaction went on to do.
+        // A cancelled compaction is abandoned. It does not degrade to the next
+        // summarizer tier as a broken summarizer does. So the consumer never
+        // gets a compaction, and each `.compaction` of this session is real work.
         let compactions = await delivered.events.compactMap { event -> CompactionResult? in
             guard case .compaction(let result) = event else { return nil }
             return result
         }
         #expect(compactions.isEmpty)
 
-        // What the caller-cancels route pins instead, and the reason it is worth
-        // running: a streamed answer cut short inside its compaction is recorded like every
-        // other one — a lone bodyless close — even though on that route the recording
-        // runs inside an already-cancelled task. Spun for rather than read straight,
-        // because a cancelled consumer returns before the producer behind it has
-        // finished recording (the same ordering
-        // ``abandoningAStreamRecordsTheSubmissionAsCancelled()`` waits on).
-        await BoundedWait.spin(until: { await fixture.recorder.events.count == recordedBefore + 1 })
+        // The session records the stopped answer as each other failed answer:
+        // one close with no body. The session records before the work sends
+        // its own terminal event. cancelAll sends the terminal event before
+        // the work ends, so ``expectStopEnds(_:)`` waits for the end of the
+        // pump: then the record is complete for each route.
         let recorded = await fixture.recorder.events
         #expect(recorded.count == recordedBefore + 1)
         #expect(recorded.last?.kind == .response)
@@ -421,7 +421,7 @@ extension AnswerCancellationTests {
 
     @Test(
         "an answer cancelled inside its own proactive compaction leaves the transcript exactly as it was, plus one close",
-        arguments: CancellationRoute.allCases)
+        arguments: CancellationRoute.answerRoutes)
     @MainActor
     func cancelledProactiveCompactionLeavesTheTranscriptUntouched(route: CancellationRoute) async throws {
         let dir = Self.makeTempDir()
@@ -439,17 +439,14 @@ extension AnswerCancellationTests {
 
         let answerTask = Task { try await session.respond(to: "compacts-first") }
         await insideSummarizer.wait()
-        // Both routes, because of the recording assertions below: on the
-        // caller-cancels route the own recording of the cut-short answer runs
-        // inside an already-cancelled task, which is the riskier of the two for
-        // anything that must still happen on the way out.
-        switch route {
-        case .routerAPI:
-            #expect(await session.cancel() == .requested)
-        case .callerTask:
-            answerTask.cancel()
-        }
+        // Each route, because of the record and transcript assertions below:
+        // cancelAll also cancels the queued mail and sweeps the runs, and none
+        // of that may touch the transcript. ``expectStopEnds(_:)`` waits for
+        // the end of the pump, so the record is complete before the test
+        // reads it.
+        let stop = await Self.requestStop(of: session, by: route, callerTask: answerTask)
         try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
+        try await Self.expectStopEnds(stop)
 
         // Never a half-applied compaction: a compaction records its new entries, swaps
         // `backend`, and reports its own post-compaction size as this session's fill —
@@ -517,7 +514,7 @@ extension AnswerCancellationTests {
             try await session.respond(to: Self.overflowingCompactionPrompt)
         }
         await insideSummarizer.wait()
-        #expect(await session.cancel() == .requested)
+        #expect(await session.stopRunningWork())
         try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
 
         // The retry never ran: the model saw this answer exactly once, and what the
@@ -589,8 +586,8 @@ extension AnswerCancellationTests {
         let sawCancellation = Self.suspendInsideCancellationAwareTool(
             fixture, suspendingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
 
-        // The router-API route: the consumer is not what is cancelled, so it
-        // reads each event up to the end of the answer.
+        // The stop of the running work: the consumer is not what is cancelled,
+        // so it reads each event up to the end of the answer.
         let delivered = DeliveredEvents()
         let answerTask = Task {
             for try await event in await session.streamEvents(to: "compacts-first") {
@@ -598,7 +595,7 @@ extension AnswerCancellationTests {
             }
         }
         await insideSummarizer.wait()
-        #expect(await session.cancel() == .requested)
+        #expect(await session.stopRunningWork())
         try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
 
         let events = await delivered.events
@@ -630,10 +627,9 @@ extension AnswerCancellationTests {
         #expect(collected.answers.count == 1)
         #expect(collected.answerFailures.isEmpty)
 
-        guard let result = events.leadingCompaction else {
-            Issue.record("expected the answer to open with one compaction, got \(Array(events.prefix(2)))")
-            return
-        }
+        let result = try #require(
+            events.leadingCompaction,
+            "expected the answer to open with one compaction, got \(Array(events.prefix(2)))")
         let untouchedSize = try characterTokenCounter.count(Transcript(entries: Self.warmUpEntries()))
         #expect(result.tokensBefore == untouchedSize)
         #expect(await fixture.observer.entered.filter(Self.isSummarizerCall).count == 1)

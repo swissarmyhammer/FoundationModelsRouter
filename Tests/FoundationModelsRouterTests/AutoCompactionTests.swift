@@ -89,7 +89,7 @@ struct AutoCompactionTests {
     private static func makeTriggeredSession(
         budget: TokenBudget?,
         tools: [any Tool] = []
-    ) async throws -> (session: RoutedSession, standard: ConfiguredLLMContainer, flash: ConfiguredLLMContainer) {
+    ) async throws -> (session: any RoutedSession, standard: ConfiguredLLMContainer, flash: ConfiguredLLMContainer) {
         try await AutoCompactionFixtures.makeTriggeredSession(
             budget: budget, tools: tools, tempDirPrefix: tempDirPrefix)
     }
@@ -492,7 +492,7 @@ struct AutoCompactionTests {
     private static func makeOverflowSession(
         overflowsRemaining: Int = 1, overflowingCalls: Set<Int> = []
     ) async throws -> (
-        session: RoutedSession, standard: OverflowLLMContainer, profile: LanguageModelProfile
+        session: any RoutedSession, standard: OverflowLLMContainer, profile: LanguageModelProfile
     ) {
         let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
         let seedEntries = ScriptedOverflowBackend.seedEntries(answerCount: 6, responseText: Self.cannedText)
@@ -740,7 +740,7 @@ struct AutoCompactionTests {
     /// - Throws: Whatever profile resolution throws.
     private static func makeRoomTestSession(
         target: Double, overflowsRemaining: Int
-    ) async throws -> (session: RoutedSession, container: OverflowLLMContainer) {
+    ) async throws -> (session: any RoutedSession, container: OverflowLLMContainer) {
         let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let container = OverflowLLMContainer(
             responseText: "recovered", seedEntries: [], overflowsRemaining: overflowsRemaining)

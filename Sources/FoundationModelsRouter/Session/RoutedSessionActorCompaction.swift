@@ -45,7 +45,7 @@ private struct BackendCompactionSummarizer: CompactionSummarizer {
 /// inside the cancellation boundary of the work of the owning session
 /// (``RoutedSessionActor/runCancellableModelCall(composedPrompt:submittingTo:_:)``),
 /// as one submission to the queue of the model that runs it. This lets
-/// ``RoutedSession/cancel()`` and task cancellation stop a
+/// ``RoutedSession/close()`` and task cancellation stop a
 /// compaction's summarizer call, and keeps the call from running at the same
 /// time as a submission of another session on that model.
 private struct CancellableCompactionSummarizer: CompactionSummarizer {
@@ -63,7 +63,7 @@ private struct CancellableCompactionSummarizer: CompactionSummarizer {
         // A compaction makes one call on each tier it tries, one tier after the
         // other. ``RoutedSessionActor/inFlightModelCall`` holds one call at a
         // time, and the tiers never run at the same time, so
-        // ``RoutedSession/cancel()`` reaches each call. A cancellation
+        // ``RoutedSession/close()`` reaches each call. A cancellation
         // that lands between two tiers stops the next tier at its pre-flight check.
         // A compaction runs between two submissions of its session, so the
         // own-model tier never waits for a submission of its own session.
@@ -119,7 +119,7 @@ extension RoutedSessionActor {
     /// runs it between two submissions (``compactOwnModel(prompt:budget:)``),
     /// so it never runs beside a submission of this session. A cancel of the
     /// caller withdraws a request that waits, or stops the compaction that
-    /// runs (``cancelFromCallerTask(_:mailID:in:)``).
+    /// runs (``cancelCompactionFromCallerTask(_:)``).
     ///
     /// The request is posted before the cancel handler is installed, with no
     /// suspension point between the two, and the pump takes a request only on
@@ -138,13 +138,13 @@ extension RoutedSessionActor {
         let request = CompactionRequest(prompt: prompt, budget: budget, serviceContext: ServiceContext.current)
         let (id, answer) = compactionRequests.post(request)
         wakePump()
-        // `awaitMailboxAnswer(id:mailID:answer:in:)` is defined in
+        // `awaitCompactionAnswer(id:answer:)` is defined in
         // RoutedSessionActorCancellation.swift. A cancel of the caller
         // withdraws a waiting request, or stops the running compaction.
         // AnswerCancellationTests proves both paths:
         // `cancellingAWaitingCallerCompactWithdrawsIt` and
         // `cancellingACallerDrivenCompactStopsIt(route: .callerTask)`.
-        return try await awaitMailboxAnswer(id: id, mailID: nil, answer: answer, in: compactionRequests)
+        return try await awaitCompactionAnswer(id: id, answer: answer)
     }
 
     /// Runs one caller compaction over this session's own model, inside the

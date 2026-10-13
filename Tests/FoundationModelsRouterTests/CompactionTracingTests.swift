@@ -78,7 +78,7 @@ struct CompactionTracingTests {
     ///   - prompt: The prompt of the answer.
     /// - Returns: Every event the answer produced.
     /// - Throws: Whatever the answer throws.
-    private static func drive(_ session: RoutedSession, prompt: String) async throws -> [SessionEvent] {
+    private static func drive(_ session: any RoutedSession, prompt: String) async throws -> [SessionEvent] {
         var events: [SessionEvent] = []
         for try await event in await session.streamEvents(to: prompt, maxTokens: nil) {
             events.append(event)

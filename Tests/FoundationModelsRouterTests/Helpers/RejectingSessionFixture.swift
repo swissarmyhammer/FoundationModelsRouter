@@ -11,7 +11,7 @@ import Tracing
 /// retry of the router, and no GPU is in the loop.
 struct RejectingSessionFixture {
     /// The vended session a test drives its answer on.
-    let session: RoutedSession
+    let session: any RoutedSession
 
     /// The log of the transcript of each generation call.
     let log: RejectingModelLog

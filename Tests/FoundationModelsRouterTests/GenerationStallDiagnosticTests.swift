@@ -268,7 +268,7 @@ struct GenerationStallDiagnosticTests {
     private static func makeStallingSession(
         fragmentsBeforeStall: Int = 0,
         reportInterval: Duration? = testReportInterval
-    ) async throws -> (session: RoutedSession, backend: StallingBackend, dir: URL) {
+    ) async throws -> (session: any RoutedSession, backend: StallingBackend, dir: URL) {
         let container = StallingLLMContainer(fragmentsBeforeStall: fragmentsBeforeStall)
         let (session, dir) = try await makeSession(over: container, reportInterval: reportInterval)
         let backend = try #require(container.lastBackend)
@@ -286,7 +286,7 @@ struct GenerationStallDiagnosticTests {
     private static func makeSession(
         over container: some LoadedLLMContainer,
         reportInterval: Duration?
-    ) async throws -> (session: RoutedSession, dir: URL) {
+    ) async throws -> (session: any RoutedSession, dir: URL) {
         let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let router = RouterTestFixtures.makeRouter(
             cacheDir: dir,

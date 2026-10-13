@@ -184,13 +184,15 @@ public final class SessionProjection {
             phase = .compacting
         case .compactionFailed, .discoveryPrimingFailed, .generationStalled, .submissionQueued, .repetitionStopped,
             .reasoningStopped, .runSettled, .runMessage, .runProgress, .toolCallReport, .toolDisplay,
-            .elicitationRequested, .generationCall, .mailDeliveryPaused, .mailDelivered:
-            // Handled explicitly, and deliberately changes nothing. The
+            .elicitationRequested, .generationCall, .mailDeliveryPaused, .mailDelivered, .signalDone:
+            // Handled explicitly, and deliberately changes nothing. The end
+            // of a signal changes no entry: each mail that the signal removed
+            // already has its own ``SessionEvent/cancelled(_:)``. The
             // delivery of a mail changes no entry: the
             // ``SessionEvent/submissionStarted(_:)`` of its submission names
             // it in ``messagesAwaitingAnswer``. A mail
             // delivery pause changes no entry: the held mail waits in the
-            // queue of the session, and the next caller message carries it. A settled
+            // queue of the session, and the next user-type mail carries it. A settled
             // run's terminal, a message of a run, and the progress of a run
             // reach this mirror as the recorded tool output of the submission
             // that next carries them. A submission whose
@@ -221,8 +223,8 @@ public final class SessionProjection {
     }
 
     /// Applies one ``SessionEvent/submissionStarted(_:)``: the submission
-    /// becomes ``currentSubmission``, and each caller message it delivers
-    /// joins ``messagesAwaitingAnswer`` one time.
+    /// becomes ``currentSubmission``, and each mail it delivers (user-type
+    /// mail and run mail) joins ``messagesAwaitingAnswer`` one time.
     ///
     /// - Parameter start: The start record of the submission.
     private func applySubmissionStarted(_ start: SubmissionStart) {

@@ -359,8 +359,8 @@ actor RoutedSessionActor: RoutedSession {
     /// This session's own instanced tool list, as threaded to the backend.
     nonisolated let tools: [any Tool]
 
-    /// The queue of messages of this session: the mail, and the caller
-    /// messages that wait for the pump. Fresh per session.
+    /// The mail queue of this session, of all kinds, and the held mail.
+    /// Fresh per session.
     nonisolated let outbox: SessionOutbox
 
     /// The run plane of this session: the registry of tracked background runs
@@ -372,8 +372,8 @@ actor RoutedSessionActor: RoutedSession {
     /// See ``wakePump()``.
     var pumpTask: Task<Void, Never>?
 
-    /// The drain of this session while it runs, or `nil` when no drain runs.
-    /// While it runs, no pump starts. See ``drain()``.
+    /// The end of all work of this session while it runs (``close()``), or
+    /// `nil`. While it runs, no pump starts. See ``startDrainIfNeeded()``.
     var drainTask: Task<Void, Never>?
 
     /// Wakes each ``awaitIdle()`` call that waits for the next change of the
@@ -384,8 +384,8 @@ actor RoutedSessionActor: RoutedSession {
     /// call after it returns `false` at once. See ``endIdleWaits()``.
     var isClosed = false
 
-    /// Whether a message arrived since the pump last looked, so the pump
-    /// takes one more cycle before it ends.
+    /// Whether mail arrived since the pump last looked, so the pump takes
+    /// one more cycle before it ends.
     var pumpWakeRequested = false
 
     /// The work the pump runs now, or `nil` between works.
@@ -399,16 +399,41 @@ actor RoutedSessionActor: RoutedSession {
     /// here (``RoutedSession/compact(prompt:budget:)``).
     nonisolated let compactionRequests = CompactionRequestMailbox()
 
-    /// The cancel marks of the items the running work carries. A caller
-    /// cancel of such an item writes its mark at once, and
-    /// ``isWorkCancelled`` reads it. The pump clears the marks when a work
-    /// ends.
-    nonisolated let cancelMarks = CancelMarks()
+    /// Whether the pump waits in ``compactionRequests`` for a request: set
+    /// from the start of a take until the take runs its request. See
+    /// ``releasePumpAwaitingCompaction()``.
+    var pumpAwaitsCompaction = false
 
-    /// Whether the pump waits in a mailbox for a letter: set from the start
-    /// of a take until the take runs its batch. See
-    /// ``releasePumpAwaitingLetter()``.
-    var pumpAwaitsLetter = false
+    /// The ids of the mail of the open answer, in delivery order: the mail
+    /// of its first submission and the mail that joined a continuation. A
+    /// mail that a failed submission gave back to the queue leaves it. The
+    /// pump sets it at the take and clears it after the terminal event of
+    /// the answer. ``mail(_:)`` reads it from any task to refuse a duplicate
+    /// id.
+    nonisolated let openAnswerMail = OpenAnswerMail()
+
+    /// The run mail of the open answer, in delivery order. A failed
+    /// submission gives its run mail back with the same ids
+    /// (``requeueUnattachedPendingEvents(events:)``).
+    var openAnswerRunMail: [Mail] = []
+
+    /// Whether the open answer delivered user-type mail, also mail that
+    /// joined a continuation. ``countAnswer()`` reads it.
+    var openAnswerDeliveredUserMail = false
+
+    /// The output of this session: the feeds, the mail subscriptions and the
+    /// ledger of the terminal events. See ``emitSessionScopedEvent(_:)``.
+    nonisolated let outputHub = SessionOutputHub()
+
+    /// The serial executor of the signals of this session. Each signal runs
+    /// after the earlier one.
+    nonisolated let signals = SignalExecutor()
+
+    /// The sweep of the background runs that ``cancelAll()`` started, or
+    /// `nil`. ``cancelAll()`` does not wait for it, because the canceler of a
+    /// run can be slow. ``close()`` waits for it. A later sweep waits for the
+    /// earlier one.
+    var sweepTask: Task<Void, Never>?
 
     /// The in-flight model call of the work the pump runs, the task
     /// ``requestCancelOfRunningWork()`` cancels, or `nil` when no model call
@@ -433,7 +458,7 @@ actor RoutedSessionActor: RoutedSession {
     var didAttachOutboxJournal = false
 
     /// The composed event sink of the running answer (see
-    /// ``answerEventSink(_:)``), or `nil` between answers.
+    /// ``answerEventSink()``), or `nil` between answers.
     /// ``deliver(invocation:)`` uses it to hand a live
     /// ``SessionEvent/toolInvocation(_:toolCallID:)`` to the running answer.
     var currentAnswerEventSink: ((SessionEvent) -> Void)?
@@ -453,7 +478,7 @@ actor RoutedSessionActor: RoutedSession {
     var runningSubmission: RunningSubmission?
 
     /// The reducer of the running answer: each event of the answer goes
-    /// through it (``answerEventSink(_:)``), and the pump makes the
+    /// through it (``answerEventSink()``), and the pump makes the
     /// ``SessionAnswer`` from it when the chain ends. The pump resets it for
     /// each answer.
     var answerReducer = SessionAnswerReducer()
@@ -515,10 +540,9 @@ actor RoutedSessionActor: RoutedSession {
     /// (``noteRealToolResult(_:)``).
     nonisolated let noOpRoundChanges = ChangeSignal()
 
-    /// How many answers in a row mail alone started since the last answer
-    /// that delivered a caller message. The pump counts it, and holds new
-    /// mail when it reaches ``mailOnlyAnswerLimit``
-    /// (``countAnswer(delivering:)``).
+    /// How many answers in a row run mail alone started since the last
+    /// answer that delivered user-type mail. The pump counts it, and holds
+    /// new mail when it reaches ``mailOnlyAnswerLimit`` (``countAnswer()``).
     var mailOnlyAnswersInARow = 0
 
     /// The stall watch over the one model call in flight, or `nil` between
@@ -650,11 +674,6 @@ actor RoutedSessionActor: RoutedSession {
     /// (``TranscriptEvent/agentSpawn``) and written to its sidecar
     /// (``SessionSidecar/agentSpawn``). A fork's is always `nil`.
     nonisolated let agentSpawn: SessionSidecar.AgentSpawn?
-
-    /// The live ``streamSessionEvents()`` subscriptions, keyed by subscription
-    /// id. ``emitSessionScopedEvent(_:)`` fans each session-scoped event out
-    /// to them.
-    var sessionEventSubscriptions: [ULID: AsyncStream<SessionOutput>.Continuation] = [:]
 
     /// Creates a session and writes its `session.json` when the session is new.
     /// A failed sidecar write is logged and dropped.

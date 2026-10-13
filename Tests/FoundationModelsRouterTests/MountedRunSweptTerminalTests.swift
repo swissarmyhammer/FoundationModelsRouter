@@ -103,7 +103,7 @@ struct MountedRunSweptTerminalTests {
     /// - Throws: Whatever profile resolution throws.
     private static func makeSession(
         recorder: any TranscriptRecorder
-    ) async throws -> (session: RoutedSession, directory: URL) {
+    ) async throws -> (session: any RoutedSession, directory: URL) {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let router = RouterTestFixtures.makeRouter(
             cacheDir: directory,
@@ -131,7 +131,7 @@ struct MountedRunSweptTerminalTests {
     ///
     /// - Parameter session: The session the mounted run is tracked on.
     /// - Returns: The mounting context.
-    private static func mountingContext(on session: RoutedSession) -> ToolContext {
+    private static func mountingContext(on session: any RoutedSession) -> ToolContext {
         ToolContext(
             sessionID: session.id,
             runPlane: session.mailbox,

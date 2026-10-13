@@ -101,7 +101,7 @@ struct NestedRunTerminalForwardingTests {
     /// One test's session, with a live subscription to its event stream.
     private struct Observation {
         /// The session under test.
-        let session: RoutedSession
+        let session: any RoutedSession
 
         /// The temp directory to clean up.
         let directory: URL
@@ -187,7 +187,7 @@ struct NestedRunTerminalForwardingTests {
     ///   - session: The session that tracks and journals the run.
     /// - Returns: The mounted runner.
     private static func backgroundRunner(
-        wrapping tool: any Tool<MountArguments, String>, on session: RoutedSession
+        wrapping tool: any Tool<MountArguments, String>, on session: any RoutedSession
     ) -> BackgroundToolRunner<MountArguments> {
         BackgroundToolRunner(
             wrapping: tool,
@@ -207,7 +207,7 @@ struct NestedRunTerminalForwardingTests {
     /// - Parameter session: The session both runs are tracked on.
     /// - Returns: The tokens and the nested run's terminal.
     /// - Throws: When a run does not settle inside the mailbox wait.
-    private static func settleNestedRun(on session: RoutedSession) async throws -> SettledNesting {
+    private static func settleNestedRun(on session: any RoutedSession) async throws -> SettledNesting {
         let gate = RunLatch()
         let runner = backgroundRunner(wrapping: NestingTool(gate: gate), on: session)
         let rendered = try await runner.call(arguments: MountArguments(value: callArgument))

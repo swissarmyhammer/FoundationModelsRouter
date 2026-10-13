@@ -55,7 +55,7 @@ struct RouterMetricsTests {
     ///
     /// - Parameter session: The session.
     /// - Returns: The `model.ref` and `slot` dimensions.
-    private static func sessionDimensions(of session: RoutedSession) -> [(String, String)] {
+    private static func sessionDimensions(of session: any RoutedSession) -> [(String, String)] {
         [("model.ref", session.modelRefDimension), ("slot", ModelSlot.standard.rawValue)]
     }
 
@@ -206,7 +206,7 @@ struct RouterMetricsTests {
                 fixture.passes.recorded.count == 1
             }
             for prompt in Self.waitingPrompts {
-                _ = await session.send(prompt)
+                _ = try session.send(prompt)
             }
             await fixture.latch.open()
             _ = try await holding.value

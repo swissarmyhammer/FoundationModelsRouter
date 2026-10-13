@@ -4,19 +4,21 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises ``RoutedSession/cancel()``: cancelling the answer that already
-/// **runs**, as opposed to ``RoutedSession/cancel(message:)``'s withdrawal
-/// of a message that waits for a submission.
+/// Exercises the stop of the answer that already **runs**: the public
+/// ``RoutedSession/cancelAll()``, and the test-only `stopRunningWork()`,
+/// which only stops the running work. A cancel of one mail (``RoutedSession/cancel(_:)``)
+/// acts only on queued mail, and a cancel of the caller task of
+/// ``RoutedSession/respond(to:)`` or ``RoutedSession/streamEvents(to:)``
+/// only ends the wait of that caller. Neither stops a running answer.
 ///
 /// The chain this closes is `ACP session/cancel` -> Router -> MCP
-/// `notifications/cancelled`: `FoundationModelsMCP` already turns Swift task
-/// cancellation into the protocol-level notification, and a client stop already
-/// reaches Router — so the only missing link was Router's own ability to cancel
-/// the `Task` that owns the model call a tool runs inside. These tests prove
-/// cancellation reaches *inside* the model call (the regression the work exists
-/// for), that a cancelled submission is recorded exactly like any other failed
-/// submission rather than half-written, that the pump of the session survives
-/// it, and that the documented no-op cases really are no-ops.
+/// `notifications/cancelled`: `FoundationModelsMCP` changes Swift task
+/// cancellation into the protocol-level notification. Router must cancel the
+/// `Task` that owns the model call a tool runs inside. These tests prove that
+/// the stop reaches *inside* the model call, that the session records a
+/// stopped submission as it records each other failed submission, that the
+/// pump of the session continues after the stop, that the no-op cases are
+/// no-ops, and that a cancel of a caller task does not stop the answer.
 ///
 /// Everything runs against stubs with no network and no GPU: a backend whose
 /// `respond` runs a test-supplied closure mid-generation stands in for the SDK
@@ -24,26 +26,12 @@ import Testing
 /// ``HumanWaitGateTests``. Determinism comes from ``AsyncSemaphore``
 /// observability rather than from sleeps.
 ///
-/// The moment every test here depends on — a cancellation reaching the tool call
-/// running inside the model call — is an ``AwaitedEvent`` the tool itself signals,
-/// rather than a reading polled until a wall clock runs out (task ^bqj719z).
-///
-/// A clock was the wrong measure because the crossing is not quick on every route.
-/// ``RoutedSession/cancel()`` cancels the model call directly, so the
-/// stop lands in microseconds. A caller cancelling its own stream consumer reaches
-/// the tool only once that consumer runs *again*: the consumer's next `next()`
-/// terminates the stream, the termination handler cancels the answer behind it, and
-/// only then does the stop travel on. That consumer is `@MainActor`, so it runs
-/// when the one main actor every `@MainActor` test in the run shares gives it a
-/// slot. Measured on ``cancelledProactiveCompactionReportsNoCompaction(route:)``: the
-/// wait takes tens of microseconds run alone and under `--no-parallel`, and about
-/// two seconds in half of the full parallel runs. That number reads the run, not
-/// Router, so a five-second ceiling over it is a coin toss on a busier machine.
-///
-/// Waited on instead, a slower run makes such a test slower and never red. What
-/// ends a wait the cancellation genuinely never reaches — the regression these
-/// tests exist to catch — is the `.timeLimit` below: a ceiling on a fault, thirty
-/// times the slowest crossing measured, and never a budget for the work.
+/// The moment that each test here needs — the stop reaches the tool call
+/// inside the model call — is an ``AwaitedEvent`` that the tool itself
+/// signals. It is not a value that the test reads until a wall clock ends
+/// (task ^bqj719z). A loaded machine makes such a test slower, and never red.
+/// The `.timeLimit` below ends a wait for a stop that never reaches the tool:
+/// it is a limit on a fault, and not a budget for the work.
 ///
 /// The suite is in five files, one for each part: this file holds the suite
 /// and the tests of the regression, the recording, the stranded work and the
@@ -57,22 +45,119 @@ import Testing
     "The cancel of a running answer reaches the model call, and the tools inside it",
     .timeLimit(.minutes(1)))
 struct AnswerCancellationTests {
-    /// The two routes that can cancel a running answer, so a test can assert
-    /// the same behavior of both instead of duplicating itself per route.
+    /// The routes that can stop running work of the pump, so a test can assert
+    /// the same behavior of each route and does not copy itself for each route.
     enum CancellationRoute: Sendable, CaseIterable, CustomTestStringConvertible {
-        /// ``RoutedSession/cancel()`` — Router's own primitive.
-        case routerAPI
+        /// The stop of the running work only (`stopRunningWork()`). It cancels
+        /// no queued mail, sends no early terminal event, and does not wait.
+        case stopRunningWork
 
-        /// The caller of the answer cancelling its own enclosing `Task` — the propagation
-        /// Router had before it had a primitive of its own.
+        /// ``RoutedSession/cancelAll()``: the public stop of all work. It
+        /// also cancels each queued mail and sweeps the background runs. The
+        /// stopped answer gets its terminal event at once. The signal does
+        /// not wait for the pump.
+        case cancelAll
+
+        /// The cancel of the caller task of a caller compaction
+        /// (``RoutedSession/compact(prompt:budget:)``). It stops that
+        /// compaction. A cancel of the caller task of an answer does not stop
+        /// the answer, so only a caller compaction test uses this route.
         case callerTask
 
+        /// The routes that stop a running answer.
+        static let answerRoutes: [CancellationRoute] = [.stopRunningWork, .cancelAll]
+
+        /// The name of the route in the test report.
         var testDescription: String {
             switch self {
-            case .routerAPI: "cancel()"
+            case .stopRunningWork: "stopRunningWork()"
+            case .cancelAll: "cancelAll()"
             case .callerTask: "the caller's own Task"
             }
         }
+    }
+
+    /// The stop that ``requestStop(of:by:callerTask:)`` sent with
+    /// ``RoutedSession/cancelAll()``: the session and the id of the signal.
+    struct StopRequest: Sendable {
+        /// The session that got the signal.
+        let session: any RoutedSession
+
+        /// The id of the signal.
+        let signal: SignalID
+    }
+
+    /// Stops the running work of `session` by `route`.
+    ///
+    /// ``RoutedSession/cancelAll()`` returns at once and does not wait for
+    /// the pump. ``expectStopEnds(_:)`` waits for the end of the signal and
+    /// for the end of the pump.
+    ///
+    /// - Parameters:
+    ///   - session: The session whose pump runs the work.
+    ///   - route: The route of the stop.
+    ///   - callerTask: The caller task that ``CancellationRoute/callerTask``
+    ///     cancels.
+    /// - Returns: The stop request for ``CancellationRoute/cancelAll``, and
+    ///   `nil` for the other routes.
+    static func requestStop<Value: Sendable>(
+        of session: any RoutedSession, by route: CancellationRoute, callerTask: Task<Value, Error>
+    ) async -> StopRequest? {
+        switch route {
+        case .stopRunningWork:
+            #expect(await session.stopRunningWork())
+            return nil
+        case .cancelAll:
+            return StopRequest(session: session, signal: session.cancelAll())
+        case .callerTask:
+            callerTask.cancel()
+            return nil
+        }
+    }
+
+    /// Expects that the signal of `stop` ends with its terminal event
+    /// ``SessionEvent/signalDone(_:)``, and waits for the end of the pump of
+    /// the session. Does nothing for `nil`.
+    ///
+    /// Call it only after the stopped work unwound or can unwind: then the
+    /// pump ends soon. The `.timeLimit` of the suite ends a wait for a pump
+    /// that never ends.
+    ///
+    /// - Parameter stop: The stop request, or `nil`.
+    /// - Throws: When the wait for the signal or for the pump fails.
+    static func expectStopEnds(_ stop: StopRequest?) async throws {
+        if let stop {
+            try await expectSignalEnds(stop.signal, on: stop.session)
+            #expect(try await stop.session.isIdleOnceThePumpEnds())
+        }
+    }
+
+    /// Waits for the end of the signal `signal`, and expects that its
+    /// terminal event is ``SessionEvent/signalDone(_:)``. The effect of a
+    /// signal is not synchronous, so a test calls this before it checks the
+    /// effect.
+    ///
+    /// - Parameters:
+    ///   - signal: The id of the signal.
+    ///   - session: The session that got the signal.
+    /// - Throws: When the wait for the terminal event fails.
+    static func expectSignalEnds(_ signal: SignalID, on session: any RoutedSession) async throws {
+        #expect(try await session.awaitTerminal(of: signal) == .signalDone(signal))
+    }
+
+    /// Waits until the work that the pump of `session` runs has a stop
+    /// requested (``RoutedSessionActor/isWorkCancelled``).
+    ///
+    /// Use it only when the work cannot end before the test lets it end:
+    /// else the work can end before the read, and the wait never ends. Only
+    /// the `.timeLimit` of the suite ends such a wait.
+    ///
+    /// - Parameter session: The session whose pump runs the work.
+    /// - Throws: ``ConditionNeverHeld`` when the `.timeLimit` of the suite
+    ///   ended the wait.
+    static func awaitStopRequested(on session: any RoutedSession) async throws {
+        let actor = try #require(session as? RoutedSessionActor)
+        try await AwaitedCondition.wait(until: { await actor.isWorkCancelled })
     }
 
     /// Failures a test's own stand-in tool raises — to mark a path that must never
@@ -89,9 +174,11 @@ struct AnswerCancellationTests {
 
     // MARK: - The regression: a stop must reach a running tool call
 
-    @Test("cancel() cancels the model call of the running answer, and the tool running inside it sees CancellationError")
+    @Test(
+        "a stop cancels the model call of the running answer, and the tool inside it sees CancellationError",
+        arguments: CancellationRoute.answerRoutes)
     @MainActor
-    func cancellingARunningAnswerReachesTheToolCall() async throws {
+    func cancellingARunningAnswerReachesTheToolCall(route: CancellationRoute) async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -104,43 +191,63 @@ struct AnswerCancellationTests {
         let answerTask = Task { try await session.respond(to: "cancel-me") }
         await insideTool.wait()
 
-        #expect(await session.cancel() == .requested)
+        let stop = await Self.requestStop(of: session, by: route, callerTask: answerTask)
 
-        // The whole point: the tool call *inside* the model call observes the
-        // cancellation, and the answer then unwinds with it.
+        // The important result: the tool call *inside* the model call sees the
+        // cancel, and then the answer unwinds with it.
         try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
         #expect(await fixture.observer.toolSawCancellation)
+        try await Self.expectStopEnds(stop)
     }
 
-    @Test("cancelling the caller's own Task still reaches the tool call, exactly as before")
+    @Test("a cancel of the caller task of respond ends the wait of the caller, and the answer goes on to its end")
     @MainActor
-    func cancellingTheCallersOwnTaskStillReachesTheToolCall() async throws {
+    func cancellingTheCallersOwnTaskLeavesTheAnswerToItsEnd() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = fixture.model.makeSession()
 
+        // The tool does not stop on a cancel. It waits for the test, so the
+        // answer can end only after the test releases the tool.
         let insideTool = AsyncSemaphore(value: 0)
-        let sawCancellation = Self.suspendInsideCancellationAwareTool(fixture, prompt: "caller-cancels", insideTool: insideTool)
+        let release = AsyncSemaphore(value: 0)
+        fixture.hook.midAnswer = { prompt in
+            guard prompt.hasSuffix("caller-cancels") else { return }
+            insideTool.signal()
+            await release.wait()
+        }
 
-        let answerTask = Task { try await session.respond(to: "caller-cancels") }
+        let feed = await session.streamSessionEvents()
+        // The task signals when its wait ends. The test waits for that event,
+        // and the `.timeLimit` of the suite can end that wait.
+        let callerEnded = AwaitedEvent()
+        let answerTask = Task { () throws -> String in
+            defer { callerEnded.signal() }
+            return try await session.respond(to: "caller-cancels")
+        }
         await insideTool.wait()
 
-        // Router runs the model call in a task of its own so it can cancel it
-        // from outside; that must not cost the caller the propagation plan.md
-        // always promised from cancelling its own enclosing `Task`.
+        // The mail of the caller is in the open answer. The cancel of the
+        // caller task ends the wait of the caller, and it does not stop the
+        // answer: the tool still holds the answer when the caller ends.
         answerTask.cancel()
+        try await callerEnded.wait()
+        await #expect(throws: CancellationError.self) {
+            try await answerTask.value
+        }
+        #expect(await fixture.observer.toolSawCancellation == false)
 
-        try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
-        #expect(await fixture.observer.toolSawCancellation)
-
-        // Recorded the same way as a submission cancelled through `cancel()`,
-        // even though this cancellation unwinds the task the recording itself runs
-        // in: nothing on the recording path observes cancellation, so a
-        // caller-cancelled submission is no more half-written than any other failed one.
+        // The answer goes on to its end, and the session records the full
+        // submission.
+        release.signal()
+        let events = await feed.eventsToTheFirstAnswerEnd()
+        #expect(events.answers.map(\.reply) == ["ok-caller-cancels"])
+        #expect(events.answerFailures.isEmpty)
         #expect(await fixture.recorder.events.map(\.kind) == [.session, .prompt, .response])
-        #expect(await fixture.recorder.events.last?.text == nil)
+        #expect(await fixture.recorder.events.last?.text == "ok-caller-cancels")
+        #expect(await session.becomesIdle())
     }
 
     // MARK: - Recording
@@ -159,7 +266,7 @@ struct AnswerCancellationTests {
 
         let answerTask = Task { try await session.respond(to: "cancel-me") }
         await insideTool.wait()
-        #expect(await session.cancel() == .requested)
+        #expect(await session.stopRunningWork())
         try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
 
         // Whatever the SDK durably appended before the cancellation landed (the
@@ -207,7 +314,7 @@ struct AnswerCancellationTests {
         await insideWait.wait()
         #expect(await sessionA.isPumpRunning)
 
-        #expect(await sessionA.cancel() == .requested)
+        #expect(await sessionA.stopRunningWork())
         try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
 
         // The answer ended, and nothing of it waits.
@@ -242,7 +349,7 @@ struct AnswerCancellationTests {
 
         let answerTask = Task { try await session.respond(to: "cancel-me") }
         await insideTool.wait()
-        #expect(await session.cancel() == .requested)
+        #expect(await session.stopRunningWork())
         try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
 
         // Delivered, so not re-queued: the drained event rode the recorded
@@ -273,7 +380,7 @@ struct AnswerCancellationTests {
 
         let answerTask = Task { try await session.respond(to: "cancel-me") }
         await insideTool.wait()
-        #expect(await session.cancel() == .requested)
+        #expect(await session.stopRunningWork())
         try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
 
         let pending = await session.outbox.pending()

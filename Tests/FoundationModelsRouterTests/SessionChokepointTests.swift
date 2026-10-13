@@ -469,7 +469,7 @@ struct SessionChokepointTests {
         let router = Self.makeRouter(spy: spy, recorder: InMemoryRecorder(), cacheDir: dir)
 
         var profile: LanguageModelProfile? = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-        var session: RoutedSession? = profile!.standard.makeSession()
+        var session: (any RoutedSession)? = profile!.standard.makeSession()
 
         // Dropping the external profile handle while the session is alive must
         // not evict: the session holds the profile resident. Wait past any

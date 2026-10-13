@@ -49,24 +49,25 @@ public struct SessionConfiguration: Sendable {
     /// The default of ``mailOnlyAnswerLimit``: 100 answers in a row.
     ///
     /// A normal chain is short: a model starts some background runs, and each
-    /// settled run starts one answer. 100 answers in a row with no caller
-    /// message is far past such a chain, and each of them holds the model for
+    /// settled run starts one answer. 100 answers in a row with no user-type
+    /// mail is far past such a chain, and each of them holds the model for
     /// a whole submission. So only a chain with no end reaches it.
     public static let defaultMailOnlyAnswerLimit = 100
 
-    /// The most answers in a row that mail alone starts, with no caller
-    /// message between them (`generation-queue.md`, section 5.4).
+    /// The most answers in a row that run mail alone starts, with no
+    /// user-type mail between them (`generation-queue.md`, section 5.4).
     ///
-    /// Mail causes the next submission of the session with no caller call.
+    /// Run mail causes the next submission of the session with no caller call.
     /// So a model that starts one more background run in each answer gets one
     /// more answer for each run, with no end. When this many answers in a row
-    /// had no caller message, the session holds new mail in its queue and
-    /// starts no answer for it. The next caller message carries the held mail
+    /// had no user-type mail (a user message, an agent message or an
+    /// elicitation answer), the session holds new run mail in its queue and
+    /// starts no answer for it. The next user-type mail carries the held mail
     /// into its submission, and the count starts again. The mail is never
     /// lost. The session reports each hold with
     /// ``SessionEvent/mailDeliveryPaused(_:)`` and a log line.
     ///
-    /// `0` holds all mail for the next caller message. A negative value acts
+    /// `0` holds all run mail for the next user-type mail. A negative value acts
     /// as `0`. The sidecar records the value, a restore applies it again, and
     /// a fork inherits it.
     public var mailOnlyAnswerLimit: Int

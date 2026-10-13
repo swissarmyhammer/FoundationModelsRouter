@@ -74,7 +74,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         discoveryPriming: DiscoveryPriming? = nil,
         toolOutputProtection: ToolOutputProtection? = nil,
         repetitionDetection: RepetitionDetection = RepetitionDetection()
-    ) -> RoutedSession {
+    ) -> any RoutedSession {
         makeSession(
             configuration: SessionConfiguration(
                 instructions: instructions,
@@ -98,7 +98,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///
     /// - Parameter configuration: The value that describes the session.
     /// - Returns: A new ``RoutedSession`` over this model.
-    public func makeSession(configuration: SessionConfiguration) -> RoutedSession {
+    public func makeSession(configuration: SessionConfiguration) -> any RoutedSession {
         makeSession(
             grammar: configuration.grammar,
             instructions: configuration.instructions,
@@ -149,7 +149,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         mailOnlyAnswerLimit: Int = SessionConfiguration.defaultMailOnlyAnswerLimit,
         inlineSettleGrace: TimeInterval = ToolMount.defaultInlineSettleGrace,
         isNoOpToolCall: @escaping NoOpToolCallCheck = SessionConfiguration.defaultIsNoOpToolCall
-    ) -> RoutedSession {
+    ) -> any RoutedSession {
         let owningProfile = requireOwningProfile(apiName: "makeSession")
 
         let sessionId = ULID.generate()
@@ -277,7 +277,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         tokenCounter: any TokenCounter,
         inlineSettleGrace: TimeInterval
     ) -> (outbox: SessionOutbox, mailbox: RunPlane, tools: [any Tool]) {
-        let outbox = SessionOutbox()
+        let outbox = SessionOutbox(model: chosen)
         let mailbox = RunPlane()
         let instancedTools = tools.map { tool in
             ToolMounting.makeSessionMounted(

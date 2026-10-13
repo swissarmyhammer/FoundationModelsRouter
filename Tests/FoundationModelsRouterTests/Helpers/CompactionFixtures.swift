@@ -33,7 +33,7 @@ func characterCount(of entries: [Transcript.Entry]) -> Int {
 ///   - count: How many answers to drive.
 ///   - session: The session to drive them on.
 /// - Throws: Whatever `respond(to:)` throws.
-func driveAnswers(_ count: Int, on session: RoutedSession) async throws {
+func driveAnswers(_ count: Int, on session: any RoutedSession) async throws {
     for index in 0..<count {
         _ = try await session.respond(to: "text \(index)")
     }

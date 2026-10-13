@@ -561,7 +561,7 @@ struct HumanWaitGateTests {
         // whole wait. The outbox sends no event when a message joins it, so
         // the test reads the count until it holds.
         let second = ObservedRun { try await session.respond(to: "second") }
-        try await AwaitedCondition.wait(until: { session.outbox.messages.depth.waiting == 1 })
+        try await AwaitedCondition.wait(until: { session.waitingUserMailCount == 1 })
 
         #expect(await fixture.observer.entered == ["first"])
         #expect(await fixture.observer.maxActive == 1)
@@ -657,7 +657,9 @@ struct HumanWaitGateTests {
         #expect(try await session.isIdleOnceThePumpEnds())
     }
 
-    @Test("cancelling a task while its tool body waits for a person leaves the session idle")
+    @Test(
+        "a cancel of the caller task while its tool body waits for a person ends the wait of the caller, and a cancelAll() then stops the answer and leaves the session idle"
+    )
     @MainActor
     func cancellingInsideAHumanWaitLeavesTheSessionIdle() async throws {
         let dir = Self.makeTempDir()
@@ -684,25 +686,45 @@ struct HumanWaitGateTests {
             try Task.checkCancellation()
         }
 
+        let feed = await session.streamSessionEvents()
         let answer = ObservedRun { try await session.respond(to: "cancelled") }
         try await insideWait.wait()
         #expect(await session.isPumpRunning)
 
         answer.cancel()
-        // The test waits for the end of the answer on its event: a
-        // cancellation that never arrives leaves that event unsent, and the
+        // The test waits for the end of the wait of the caller on its event:
+        // a cancellation that never arrives leaves that event unsent, and the
         // `.timeLimit` of the suite then ends this test rather than hanging
         // the run.
         await #expect(throws: CancellationError.self) {
             try await answer.value()
         }
 
-        // The cancelled answer ends, and nothing of it waits. The pump ends
-        // only once the cancellation reached the suspended body and the
-        // model call unwound.
+        // A cancel of the caller task ends only the wait of the caller. The
+        // mail is not queued, so the answer goes on, and the tool body still
+        // waits for the person.
+        #expect(await session.isPumpRunning)
+
+        // The cancelAll() signal stops the running answer. Its cancel reaches
+        // the suspended body, the model call unwinds, and the pump ends. The
+        // signal does not wait for the pump, so the test waits for the end of
+        // the pump.
+        let stop = session.cancelAll()
+        #expect(try await session.awaitTerminal(of: stop) == .signalDone(stop))
         #expect(try await session.isIdleOnceThePumpEnds())
 
         #expect(try await Self.followUpAnswer(on: session) == Self.reply(to: Self.followUpPrompt))
+        await session.close()
+        // The stopped answer and the follow-up answer each end with exactly
+        // one terminal event, and the signal ends with its own.
+        var outputs: [SessionOutput] = []
+        for await output in feed {
+            outputs.append(output)
+        }
+        let ledger = TerminalEventLedger(outputs: outputs)
+        ledger.expectExactlyOneTerminal(for: ledger.endedMailIds.flatMap { $0 })
+        #expect(ledger.endedMailIds.count == 2)
+        ledger.expectExactlyOneTerminal(forSignals: [stop])
     }
 
     // MARK: - Consecutive waits, and waits outside any submission
@@ -736,14 +758,14 @@ struct HumanWaitGateTests {
         // The first wait is open, and the answer still runs: a wait releases
         // nothing, and no message waits.
         #expect(await session.isPumpRunning)
-        #expect(session.outbox.messages.depth.waiting == 0)
+        #expect(session.waitingUserMailCount == 0)
 
         releaseFirst.signal()
         try await secondEntered.wait()
 
         // The second wait is open, and the answer still runs.
         #expect(await session.isPumpRunning)
-        #expect(session.outbox.messages.depth.waiting == 0)
+        #expect(session.waitingUserMailCount == 0)
 
         releaseSecond.signal()
         #expect(try await answer.value() == Self.reply(to: "nested"))

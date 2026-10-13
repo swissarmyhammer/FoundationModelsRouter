@@ -62,7 +62,7 @@ struct GenerationCallUsageTests {
     ///   - maxTokens: The ceiling the caller names, or `nil`.
     /// - Returns: The events of the answer, in arrival order.
     /// - Throws: Whatever the stream throws.
-    private static func collectEvents(on session: RoutedSession, maxTokens: Int?) async throws -> [SessionEvent] {
+    private static func collectEvents(on session: any RoutedSession, maxTokens: Int?) async throws -> [SessionEvent] {
         var events: [SessionEvent] = []
         for try await event in await session.streamEvents(to: prompt, maxTokens: maxTokens) {
             events.append(event)

@@ -7,7 +7,8 @@ import Testing
 /// `FoundationModelsExtras` both have is one type.
 ///
 /// The router names these types through public typealiases of the Extras
-/// types. A file that imports both modules must thus write each name with no
+/// types, or through scoped re-exports of them (the mail names of
+/// `MailVocabulary.swift`). A file that imports both modules must thus write each name with no
 /// ambiguity. This file imports each module with a plain `import`, as an
 /// application does, and uses each name without a module prefix. The file
 /// compiles only when no name is ambiguous.
@@ -43,21 +44,12 @@ struct ExtrasNameClashTests {
                 == (any FoundationModelsExtras.PooledEmbedding).self)
     }
 
-    /// The generation queue and message queue names are the same types in
-    /// both modules.
+    /// The generation queue names are the same types in both modules.
     @Test("the queue names of the router and Extras are one type each")
     func queueNamesAreOneType() {
         #expect(FoundationModelsRouter.GenerationQueue.self == FoundationModelsExtras.GenerationQueue.self)
         #expect(
             FoundationModelsRouter.GenerationQueueError.self == FoundationModelsExtras.GenerationQueueError.self)
-        #expect(FoundationModelsRouter.MessageID.self == FoundationModelsExtras.MessageID.self)
-        #expect(
-            FoundationModelsRouter.MessageQueueMutationResult.self
-                == FoundationModelsExtras.MessageQueueMutationResult.self)
-        #expect(
-            FoundationModelsRouter.MessageCancellationResult.self
-                == FoundationModelsExtras.MessageCancellationResult.self)
-        #expect(FoundationModelsRouter.MessageQueueDepth.self == FoundationModelsExtras.MessageQueueDepth.self)
     }
 
     /// A file that imports both modules uses the unqualified model pool names
@@ -67,9 +59,38 @@ struct ExtrasNameClashTests {
         let model: ModelRef = "mlx-community/name-clash-model"
         let key = ModelPoolKey(ref: model, role: ModelRole.llm)
         #expect(key.ref == model)
-        // `MessageID` has no public initializer, so the test names the type.
-        let idType: MessageID.Type = MessageID.self
-        #expect(idType == FoundationModelsExtras.MessageID.self)
+    }
+
+    // MARK: - Mail names
+
+    /// The mail names that the router re-exports from Extras are the same
+    /// types in both modules.
+    @Test("the mail names of the router and Extras are one type each")
+    func mailNamesAreOneType() {
+        #expect(FoundationModelsRouter.MailID.self == FoundationModelsExtras.MailID.self)
+        #expect(FoundationModelsRouter.SignalID.self == FoundationModelsExtras.SignalID.self)
+        #expect(FoundationModelsRouter.Origin.self == FoundationModelsExtras.Origin.self)
+        #expect(FoundationModelsRouter.Mail.self == FoundationModelsExtras.Mail.self)
+        #expect(FoundationModelsRouter.MailBody.self == FoundationModelsExtras.MailBody.self)
+        #expect(FoundationModelsRouter.MailKind.self == FoundationModelsExtras.MailKind.self)
+        #expect(FoundationModelsRouter.MailSender.self == FoundationModelsExtras.MailSender.self)
+        #expect(FoundationModelsRouter.UserMessageOptions.self == FoundationModelsExtras.UserMessageOptions.self)
+        #expect(FoundationModelsRouter.MailRefusal.self == FoundationModelsExtras.MailRefusal.self)
+        #expect(
+            FoundationModelsRouter.MailSubscription<SessionOutput>.self
+                == FoundationModelsExtras.MailSubscription<SessionOutput>.self)
+    }
+
+    /// A file that imports both modules uses the unqualified mail names with
+    /// no ambiguity, also a nested type of a mail name.
+    @Test("a file that imports both modules uses the unqualified mail names")
+    func unqualifiedMailNamesCompile() {
+        let options = UserMessageOptions(mode: UserMessageOptions.Mode.stream)
+        let mail = Mail(sender: MailSender.user, body: MailBody.userMessage(prompt: "name clash", options: options))
+        let id: MailID = mail.id
+        #expect(mail.body.kind == MailKind.userMessage)
+        #expect(id == mail.id)
+        #expect(MailRefusal.duplicateID(id) != MailRefusal.closed)
     }
 
     // MARK: - Tool hosting names

@@ -275,7 +275,7 @@ struct RenderProbeLanguageModel: LanguageModel {
 /// that holds the run journal of the session.
 struct RenderProbeSessionFixture {
     /// The vended session a test drives its answers on.
-    let session: RoutedSession
+    let session: any RoutedSession
 
     /// The log that the model writes.
     let log: RenderProbeLog

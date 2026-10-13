@@ -214,7 +214,7 @@ struct RepeatingToolCallModel: LanguageModel {
 /// with one ``CountingRunCodeTool`` mounted.
 struct RepeatingToolCallSessionFixture {
     /// The vended session a test drives its answers on.
-    let session: RoutedSession
+    let session: any RoutedSession
 
     /// The log that the model writes.
     let log: RenderProbeLog

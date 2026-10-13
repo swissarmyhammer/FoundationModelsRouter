@@ -226,7 +226,7 @@ struct SessionEventStreamTests {
     /// ``ScriptedLLMContainer``, returning the container and recorder so a
     /// test can drive the backend directly and inspect what was persisted.
     private static func makeSession(cacheDir: URL, pool: ModelPool = ModelPool()) async throws -> (
-        session: RoutedSession, container: ScriptedLLMContainer, recorder: InMemoryRecorder
+        session: any RoutedSession, container: ScriptedLLMContainer, recorder: InMemoryRecorder
     ) {
         let container = ScriptedLLMContainer()
         let recorder = InMemoryRecorder()

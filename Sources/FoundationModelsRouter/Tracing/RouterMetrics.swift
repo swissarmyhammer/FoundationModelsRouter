@@ -102,8 +102,8 @@ struct RouterMetrics: Sendable {
         Gauge(label: RouterTelemetry.MetricName.residentBytes, factory: factory).record(bytes)
     }
 
-    /// Records the count of the caller messages that wait in the queue of a
-    /// session.
+    /// Records the count of all mail that waits in the mail queue of a
+    /// session, of all kinds.
     ///
     /// The metric is a recorder (a distribution) with no dimension, and not a
     /// gauge. A session dimension would make a label set with no bound, and
@@ -111,7 +111,7 @@ struct RouterMetrics: Sendable {
     /// that wrote last. The distribution of the depths of all the sessions
     /// has neither problem.
     ///
-    /// - Parameter waiting: The count of the waiting caller messages.
+    /// - Parameter waiting: The count of all queued mail, of all kinds.
     func recordSessionQueueDepth(waiting: Int) {
         Recorder(label: RouterTelemetry.MetricName.sessionQueueDepth, factory: factory).record(waiting)
     }

@@ -116,7 +116,7 @@ struct PendingEventInjectionTests {
         recorder: any TranscriptRecorder,
         responseText: String = "stub response",
         pool: ModelPool = ModelPool()
-    ) async throws -> (session: RoutedSession, dir: URL) {
+    ) async throws -> (session: any RoutedSession, dir: URL) {
         let dir = Self.makeTempDir()
         let container = BasicLLMContainer(responseText: responseText)
         let router = Router(

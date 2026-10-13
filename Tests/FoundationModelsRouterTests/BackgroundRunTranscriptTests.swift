@@ -32,7 +32,7 @@ struct BackgroundRunTranscriptTests {
     /// - Returns: The vended session and the temp directory to clean up.
     private static func makeSession(
         recorder: any TranscriptRecorder
-    ) async throws -> (session: RoutedSession, dir: URL) {
+    ) async throws -> (session: any RoutedSession, dir: URL) {
         let dir = RouterTestFixtures.makeTempDir(prefix: "BackgroundRunTranscriptTests")
         let router = RouterTestFixtures.makeRouter(
             cacheDir: dir,

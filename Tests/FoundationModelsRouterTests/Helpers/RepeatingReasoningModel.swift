@@ -270,7 +270,7 @@ extension RepeatingReasoningModel: ReasoningSwitchable {
 /// that holds the recorded transcript of the session.
 struct RepeatingReasoningSessionFixture {
     /// The vended session a test drives its answers on.
-    let session: RoutedSession
+    let session: any RoutedSession
 
     /// The log that the model writes.
     let log: RenderProbeLog

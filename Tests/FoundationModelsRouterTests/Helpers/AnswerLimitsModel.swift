@@ -274,7 +274,7 @@ struct AnswerLimitsSessionFixture {
     static let detection = RepetitionDetection(windowTokens: window, recoveriesPerAnswer: recoveriesPerAnswer)
 
     /// The vended session a test drives its answers on.
-    let session: RoutedSession
+    let session: any RoutedSession
 
     /// The script that the model of the session plays.
     let script: AnswerLimitsScript

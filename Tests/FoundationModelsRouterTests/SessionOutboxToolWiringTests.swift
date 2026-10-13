@@ -190,6 +190,9 @@ struct SessionOutboxToolWiringTests {
             /// See ``ToolInvokingBackend/toolCallStarted``.
             var toolCallStarted = false
 
+            /// See ``ToolInvokingBackend/toolCallReturned``.
+            var toolCallReturned = false
+
             /// See ``ToolInvokingBackend/renderedToolOutputs``.
             var renderedToolOutputs: [String] = []
 
@@ -205,9 +208,19 @@ struct SessionOutboxToolWiringTests {
         /// The one lock the captures are behind.
         private let captures = Mutex(Captures())
 
+        /// The latch that the first `respond` waits on after the first
+        /// composed tool returns, or `nil` for no wait. While the latch is
+        /// closed, the answer is in flight, so a test can stop the answer at
+        /// that point.
+        private let answerHold: RunLatch?
+
         /// Flips just before the first composed tool is invoked, so a test
         /// can wait for the call to be in flight before cancelling.
         var toolCallStarted: Bool { captures.withLock { $0.toolCallStarted } }
+
+        /// Flips after the first composed tool returns, before the first
+        /// `respond` waits on ``answerHold``.
+        var toolCallReturned: Bool { captures.withLock { $0.toolCallReturned } }
 
         /// Every rendered output the invoked tool returned, in call order.
         var renderedToolOutputs: [String] { captures.withLock { $0.renderedToolOutputs } }
@@ -217,8 +230,15 @@ struct SessionOutboxToolWiringTests {
         /// `correlationID` must differ from.
         var observedSubmissionTokens: [String?] { captures.withLock { $0.observedSubmissionTokens } }
 
-        init(tools: [any Tool]) {
+        /// Makes a backend that invokes the first tool of `tools`.
+        ///
+        /// - Parameters:
+        ///   - tools: The composed tool list of the session.
+        ///   - answerHold: The latch that the first `respond` waits on after
+        ///     the tool returns, or `nil` for no wait.
+        init(tools: [any Tool], answerHold: RunLatch? = nil) {
             self.tools = tools
+            self.answerHold = answerHold
         }
 
         func respond(to prompt: String, maxTokens: Int?) async throws -> String {
@@ -228,6 +248,8 @@ struct SessionOutboxToolWiringTests {
             }
             if isFirstCall {
                 try await invokeFirstTool(prompt: prompt)
+                captures.withLock { $0.toolCallReturned = true }
+                await answerHold?.waitUntilOpen()
             }
             return try await inner.respond(to: prompt, maxTokens: maxTokens)
         }
@@ -306,12 +328,26 @@ struct SessionOutboxToolWiringTests {
 
         private(set) var lastBackend: ToolInvokingBackend?
 
+        /// The latch that each vended backend gives to
+        /// ``ToolInvokingBackend/init(tools:answerHold:)``, or `nil` for no
+        /// wait.
+        private let answerHold: RunLatch?
+
+        /// Makes a container.
+        ///
+        /// - Parameter answerHold: The latch that the first `respond` of each
+        ///   vended backend waits on after its tool returns, or `nil` for no
+        ///   wait.
+        init(answerHold: RunLatch? = nil) {
+            self.answerHold = answerHold
+        }
+
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
             makeSession(instructions: instructions, tools: [])
         }
 
         func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
-            let backend = ToolInvokingBackend(tools: tools)
+            let backend = ToolInvokingBackend(tools: tools, answerHold: answerHold)
             lastBackend = backend
             return backend
         }
@@ -631,7 +667,7 @@ struct SessionOutboxToolWiringTests {
         let session = profile.standard.makeSession()
         let pending = await session.outbox.pending()
         #expect(pending.events.isEmpty)
-        #expect(pending.messages.isEmpty)
+        #expect(session.outbox.queue.pending.isEmpty)
     }
 
     // MARK: - Fork behavior: fresh-per-session outbox, fork-then-mount tool composition
@@ -1344,7 +1380,11 @@ struct SessionOutboxToolWiringTests {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let container = ToolInvokingLLMContainer()
+        // The answer hold keeps the answer in flight after the tool returns.
+        // The background tool hands its call back at once, so with no hold
+        // the answer ends before the test can stop it.
+        let answerHold = RunLatch()
+        let container = ToolInvokingLLMContainer(answerHold: answerHold)
         let router = Self.makeRouter(container: container, cacheDir: dir)
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
@@ -1353,34 +1393,38 @@ struct SessionOutboxToolWiringTests {
         let backend = try #require(container.lastBackend)
 
         // Drive an answer whose backend invokes the composed background tool,
-        // then cancel the answer while that tool call is in flight. (The
+        // then stop the answer while the run of that tool is in flight. The
         // tool declared background, so the call is handed back as a token
-        // with or without the cancel — what this pins is what cancellation
-        // does NOT do: kill the background run.)
+        // with or without the stop. This test proves what the stop does NOT
+        // do: it does not kill the background run.
         let answer = Task { try await session.respond(to: "cancel me") }
-        for _ in 0..<600 {
-            if backend.toolCallStarted { break }
-            try await Task.sleep(nanoseconds: 10_000_000)
-        }
+        #expect(
+            await BoundedWait.conditionReached("the tool call handing back its envelope") {
+                backend.toolCallReturned
+            })
         #expect(backend.toolCallStarted)
-        await session.cancel()
+        // Only the stop of the running answer: a cancelAll would also sweep
+        // the background runs, and this test proves that the stop of the
+        // answer leaves the run alive. The answer hold keeps the answer in
+        // flight, so the pump runs the work of the answer now.
+        #expect(await session.stopRunningWork())
 
         // The run was tracked in this session's mailbox, and it is still running
-        // with the answer cancelled. Read the run plane here, while the work is
-        // still in flight: `respond(to:)` drains the run plane before it
-        // returns (task ^nmpejc5), so a read after the call would say nothing
-        // about what the cancellation did.
+        // with the answer stopped. Read the run plane here, before the gate
+        // opens: after the run settles, the run plane forgets it, and a read
+        // then says nothing about what the stop did.
         #expect(
             await BoundedWait.conditionReached("the tool's run tracked on the session") {
                 await !session.mailbox.backgroundRuns().isEmpty
             })
         let trackedTokens = await session.mailbox.backgroundRuns().map(\.completionToken)
 
-        // The background run outlived the cancelled answer un-cancelled: opening
-        // the gate lets it settle as a normal success — and lets the answer's
-        // own caller finish.
-        await gate.open()
+        // Release the stopped answer, so that its caller finishes. Then the
+        // background run, which outlived the stopped answer with no cancel,
+        // settles as a normal success when the gate opens.
+        await answerHold.open()
         _ = try? await answer.value
+        await gate.open()
 
         // The tool call answered with the pending envelope, not a
         // CancellationError, and that envelope's token is the run that was
@@ -1391,10 +1435,9 @@ struct SessionOutboxToolWiringTests {
         #expect(trackedTokens == [envelope.completionToken])
 
         let settled = await session.mailbox.wait(completionToken: envelope.completionToken, seconds: Self.mailboxWaitTimeoutSeconds)
-        guard case .settled(let terminal) = settled else {
-            Issue.record("expected the background run to settle after the gate opened, got \(settled)")
-            return
-        }
+        let settledTerminal: OperationEvent? = if case .settled(let terminal) = settled { terminal } else { nil }
+        let terminal = try #require(
+            settledTerminal, "expected the background run to settle after the gate opened, got \(settled)")
         #expect(terminal.outcome == .succeeded)
         #expect(terminal.detail == "gated: cancel me")
     }
@@ -1410,7 +1453,7 @@ struct SessionOutboxToolWiringTests {
     /// - Returns: The session and its backend.
     private static func makeBackgroundingSession(
         tools: [any Tool], dir: URL
-    ) async throws -> (session: RoutedSession, backend: BackgroundingBackend) {
+    ) async throws -> (session: any RoutedSession, backend: BackgroundingBackend) {
         let container = BackgroundingLLMContainer()
         let router = makeRouter(container: container, cacheDir: dir)
         let profile = try await router.resolve(profile: profile, reporting: ResolutionProgress())
@@ -1424,7 +1467,7 @@ struct SessionOutboxToolWiringTests {
     /// - Parameters:
     ///   - session: The session whose runs are settled.
     ///   - gate: The latch the runs' bodies wait on.
-    private static func settleBackgroundRuns(on session: RoutedSession, opening gate: RunLatch) async {
+    private static func settleBackgroundRuns(on session: any RoutedSession, opening gate: RunLatch) async {
         let tokens = await session.mailbox.backgroundRuns().map(\.completionToken)
         await gate.open()
         for token in tokens {
@@ -1513,12 +1556,19 @@ struct SessionOutboxToolWiringTests {
 
         // The answer resumes the run, which settles with what the user chose.
         // Its terminal is mail: the pump delivers it to the model in a
-        // submission of its own (task ^3qx0mpt).
+        // submission (task ^3qx0mpt).
         #expect(await session.respond(elicitationId: elicitationId.description, response: .accept(content: nil)) == .delivered)
         _ = try await responding.value
         #expect(
             await BoundedWait.conditionReached("the terminal of the resumed run reaching the model") {
-                backend.receivedPrompts.last?.contains("answered: accept") == true
+                backend.receivedPrompts.contains { $0.contains("answered: accept") }
+            })
+        // A delivered answer is also elicitation-answer mail, so the model
+        // reads the answer of the user in a prompt too.
+        let answerLine = "[answer to elicitation \(elicitationId.ulidString)] accept"
+        #expect(
+            await BoundedWait.conditionReached("the elicitation answer reaching the model") {
+                backend.receivedPrompts.contains { $0.contains(answerLine) }
             })
     }
 }

@@ -162,8 +162,9 @@ extension RoutedSessionActor {
             grammar: grammar, since: started, usageBefore: usageBefore,
             responseTokenCeiling: responseTokenCeiling, pendingEvents: pendingEvents, onEvent: onEvent,
             stopReason: stopReason, replacedBackend: replacedBackend)
-        // The pump already destructively took `pendingEvents` from `outbox`
-        // before `body()` ran. When this submission's diff produced no
+        // The pump already destructively took the run mail of `pendingEvents`
+        // from the mail queue of `outbox` before `body()` ran. When this
+        // submission's diff produced no
         // `.prompt`-kind partial to attach them to — every `.ebnf`-guided
         // submission, whose backend validates and throws before touching its
         // live session at all (see `MLXFoundationModelsSessionBackend.respond(to:
@@ -173,21 +174,40 @@ extension RoutedSessionActor {
         // submission gets another chance, instead of the take silently
         // destroying state a failed submission never got to deliver.
         if !pendingEventsAttached {
-            await requeueUnattachedPendingEvents(events: pendingEvents)
+            requeueUnattachedPendingEvents(events: pendingEvents)
         }
         return (diffIncludedResponse, usage, finishReason)
     }
 
-    /// Re-posts `events` onto ``outbox`` through `SessionOutbox.requeue(event:)`.
-    /// The events are not journaled a second time, and they are held
-    /// (``SessionOutbox/PendingEvent/isHeld``), so a submission that could
-    /// not take them is not started again at once.
+    /// Puts the run mail of `events` back in the queue with the same ids
+    /// (``SessionOutbox/requeue(_:)``), held. The events are not journaled a
+    /// second time, and a submission that could not take them is not started
+    /// again at once.
     ///
-    /// - Parameter events: The events to re-queue, in outbox order.
-    func requeueUnattachedPendingEvents(events: [OperationEvent]) async {
+    /// Each event is matched to the first run mail of the open answer with
+    /// the same event (``openAnswerRunMail``). That mail leaves the open
+    /// answer, so the terminal event of the answer does not end it: a later
+    /// answer that delivers it ends it. Mail that the closed queue refuses
+    /// gets its terminal event ``SessionEvent/cancelled(_:)``. When
+    /// ``cancelAll()`` stopped the answer, nothing goes back to the queue:
+    /// the answer already sent the terminal event of that mail.
+    ///
+    /// - Parameter events: The events to put back, in queue order.
+    func requeueUnattachedPendingEvents(events: [OperationEvent]) {
+        var given: [Mail] = []
         for event in events {
-            await outbox.requeue(event: event)
+            guard let index = openAnswerRunMail.firstIndex(where: { $0.runEvent == event }) else { continue }
+            given.append(openAnswerRunMail.remove(at: index))
         }
+        guard !given.isEmpty else { return }
+        // The answer that ``cancelAll()`` stopped already sent the terminal
+        // event of this mail, so it does not go back to the queue.
+        guard !openAnswerMail.isSilenced else {
+            outbox.forget(given.map(\.id))
+            return
+        }
+        openAnswerMail.remove(given.map(\.id))
+        settleCancelledMail(outbox.requeue(given).map(\.id))
     }
 
     /// The token usage delta between two ``LanguageModelSessionBackend/usageTokenCounts()``

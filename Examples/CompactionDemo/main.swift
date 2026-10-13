@@ -118,7 +118,7 @@ let demoCompactionPrompt = CompactionPrompt(
 /// - Returns: The reply text of the answer and every applied compaction, in compaction order.
 /// - Throws: Whatever the answer throws.
 func runAnswer(
-    on session: RoutedSession, prompt: String
+    on session: any RoutedSession, prompt: String
 ) async throws -> (reply: String, compactions: [CompactionResult]) {
     let outcome = try await session.respond(to: prompt, maxTokens: demoReplyTokenCeiling) { event in
         guard case .compaction(let result) = event, !result.stagesApplied.isEmpty else { return }
@@ -149,7 +149,7 @@ func runAnswer(
 ///   - session: The session whose usage to read.
 ///   - budget: The budget whose limit is the session's own window.
 /// - Returns: The measured usage, in tokens.
-func measuredTokens(of session: RoutedSession, against budget: TokenBudget) async -> Int {
+func measuredTokens(of session: any RoutedSession, against budget: TokenBudget) async -> Int {
     let fill = await session.contextFill
     return Int((fill * Double(budget.limit)).rounded())
 }

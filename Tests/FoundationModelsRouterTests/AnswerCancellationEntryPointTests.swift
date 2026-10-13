@@ -5,12 +5,14 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// The tests of ``AnswerCancellationTests`` for the streaming and
-/// queue-dispatch entry points, the no-op cases, a cancellation between the
+/// queue-dispatch entry points, the no-op cases, a stop between the
 /// submissions of one answer, and the queue-side cancel.
 extension AnswerCancellationTests {
     // MARK: - The streaming and queue-dispatch entry points
 
-    @Test("cancel() finishes a streamEvents answer with CancellationError, leaving the consumer what it already received")
+    @Test(
+        "cancelAll() finishes a streamEvents answer with CancellationError, and the consumer keeps what it already received"
+    )
     @MainActor
     func cancellingAStreamingAnswerFinishesTheStreamWithCancellationError() async throws {
         let dir = Self.makeTempDir()
@@ -43,7 +45,7 @@ extension AnswerCancellationTests {
         // The session reads the backend stream through an unfolding stream,
         // which ends at once when its task is cancelled, so a chunk that is
         // still in the buffer of the backend stream is not delivered. The
-        // test must cancel only after the consumer received the chunk.
+        // test must stop the answer only after the consumer received the chunk.
         //
         // The wait is on the event of the consumer, not on a wall-clock
         // bound. Nothing on the path of the chunk waits for the tool, so the
@@ -53,8 +55,11 @@ extension AnswerCancellationTests {
         // this wait, when the chunk genuinely never arrives.
         try await firstChunkAtConsumer.wait()
 
-        #expect(await session.cancel() == .requested)
+        let stop = await Self.requestStop(of: session, by: .cancelAll, callerTask: answerTask)
         try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
+        // The signal does not wait for the pump. The check of the recording
+        // needs the end of the stopped work, so the test waits for the pump.
+        try await Self.expectStopEnds(stop)
 
         // Everything the answer produced before the cancellation is still the
         // consumer's — a cancelled stream is truncated, not retracted.
@@ -62,10 +67,13 @@ extension AnswerCancellationTests {
         #expect(await fixture.recorder.events.map(\.kind) == [.session, .prompt, .response])
 
         // The cancelled chain ends with one answerFailed with the reason
-        // cancelled. It is the last event before the stream throws, and it
-        // names the one message of the stream.
+        // cancelled. The signal sends it at once, before the submission
+        // ends, so the stream has no end of the submission. It is the last
+        // event before the stream throws, and it names the one message of
+        // the stream.
         let deliveredEvents = await delivered.events
-        _ = eventsInsideAnswerFrame(deliveredEvents)
+        #expect(deliveredEvents.submissionStarts.count == 1)
+        #expect(deliveredEvents.submissionEnds.isEmpty)
         let failure = try #require(deliveredEvents.answerFailures.first)
         #expect(deliveredEvents.answerFailures.count == 1)
         #expect(deliveredEvents.answers.isEmpty)
@@ -74,37 +82,50 @@ extension AnswerCancellationTests {
         #expect(deliveredEvents.last == .answerFailed(failure))
     }
 
-    @Test("cancelling the submission of a sent message unwinds it, and the message is then answered")
+    @Test("cancel(_:) of a sent message that the running answer carries changes nothing, and the answer goes on to its end")
     @MainActor
-    func cancellingTheSubmissionOfASentMessageAnswersIt() async throws {
+    func cancellingASentMessageInTheRunningAnswerLeavesTheAnswerToItsEnd() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = fixture.model.makeSession()
 
+        // The tool does not stop on a cancel. It waits for the test, so the
+        // answer can end only after the test releases the tool.
         let insideTool = AsyncSemaphore(value: 0)
-        let sawCancellation = Self.suspendInsideCancellationAwareTool(fixture, prompt: "send-cancel", insideTool: insideTool)
+        let release = AsyncSemaphore(value: 0)
+        fixture.hook.midAnswer = { prompt in
+            guard prompt.hasSuffix("send-cancel") else { return }
+            insideTool.signal()
+            await release.wait()
+        }
 
-        // Restates the old dispatchNextPrompt() test: `send` starts the
-        // submission, and no other call is necessary.
-        let sent = await session.send("send-cancel")
+        // `send` starts the submission, and no other call is necessary.
+        let sent = try session.send("send-cancel")
         await insideTool.wait()
 
-        #expect(await session.cancel() == .requested)
-        try await sawCancellation.wait()
-        #expect(await session.becomesIdle())
-
-        // The pump took the message into the submission, and the cancel does
-        // not put it back: the message is spent, and its id reports that its
-        // answer came.
+        // The pump took the mail into the open answer, so the mail is not in
+        // the queue. A cancel of one mail acts only on queued mail: its
+        // signal ends with no cancelled event, and it does not stop the
+        // answer.
         #expect(await session.pendingMessages().isEmpty)
-        #expect(await session.cancel(message: sent) == .alreadyAnswered)
+        try await Self.expectSignalEnds(session.cancel(sent), on: session)
+
+        release.signal()
+        let end = try await session.awaitTerminal(of: sent)
+        #expect([end].answers.map(\.reply) == ["ok-send-cancel"])
+        #expect(await fixture.observer.toolSawCancellation == false)
+        // A cancel after the answer also finds nothing: the terminal event of
+        // the mail is still its answer.
+        try await Self.expectSignalEnds(session.cancel(sent), on: session)
+        #expect(try await session.awaitTerminal(of: sent) == end)
+        #expect(await session.becomesIdle())
     }
 
     // MARK: - No-ops and best-effort honesty
 
-    @Test("cancelling twice, and cancelling after the answer has finished, are safe no-ops")
+    @Test("a stop of the running work twice, and a stop after the answer has finished, are safe no-ops")
     @MainActor
     func cancellingTwiceAndAfterCompletionIsASafeNoOp() async throws {
         let dir = Self.makeTempDir()
@@ -113,8 +134,8 @@ extension AnswerCancellationTests {
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = fixture.model.makeSession()
 
-        // Before any answer: nothing to cancel.
-        #expect(await session.cancel() == .nothingToCancel)
+        // Before any answer: no work to stop.
+        #expect(await session.stopRunningWork() == false)
 
         // This tool unwinds only when the test says so, rather than out of its own
         // cancellation handler: a tool that unwinds the moment cancellation lands
@@ -141,8 +162,8 @@ extension AnswerCancellationTests {
 
         // Twice while the same answer provably still runs: the second call
         // requests what was already requested and changes nothing.
-        #expect(await session.cancel() == .requested)
-        #expect(await session.cancel() == .requested)
+        #expect(await session.stopRunningWork())
+        #expect(await session.stopRunningWork())
 
         release.signal()
         await #expect(throws: CancellationError.self) {
@@ -150,13 +171,16 @@ extension AnswerCancellationTests {
         }
         #expect(await fixture.observer.toolSawCancellation)
 
-        // After it has finished: no answer to cancel, and the request left
-        // behind cannot bleed into the next answer — which is a claim about the
-        // pump too, so the follow-up answer goes through
-        // `followUpAnswerCompletes` rather than being awaited directly.
-        #expect(await session.cancel() == .nothingToCancel)
+        // After the end of the answer and of the pump: no work to stop, and
+        // the request that stays cannot go into the next answer. That is a
+        // statement about the pump too, so the next answer goes through
+        // `followUpAnswerCompletes`, and the test does not wait for it
+        // directly.
+        #expect(await session.becomesIdle())
+        #expect(await session.stopRunningWork() == false)
         #expect(await Self.followUpAnswerCompletes(on: session, observer: fixture.observer))
-        #expect(await session.cancel() == .nothingToCancel)
+        #expect(await session.becomesIdle())
+        #expect(await session.stopRunningWork() == false)
     }
 
     @Test("an answer whose model work ignores cancellation still completes — Router stopped listening, the work did not stop")
@@ -181,7 +205,7 @@ extension AnswerCancellationTests {
 
         let answerTask = Task { try await session.respond(to: "stubborn") }
         await insideTool.wait()
-        #expect(await session.cancel() == .requested)
+        #expect(await session.stopRunningWork())
 
         // Nothing Router can do makes it stop, so the answer runs to completion
         // and is recorded as the whole submission it was.
@@ -191,7 +215,7 @@ extension AnswerCancellationTests {
         #expect(await fixture.recorder.events.last?.text == "ok-stubborn")
     }
 
-    @Test("a respond cancelled while its message waits behind another submission never reaches the model, and records nothing")
+    @Test("a respond cancelled while its message waits behind another answer withdraws the mail with cancelled, and the mail never reaches the model")
     @MainActor
     func cancellingAQueuedMessageNeverReachesTheModel() async throws {
         let dir = Self.makeTempDir()
@@ -201,7 +225,7 @@ extension AnswerCancellationTests {
         let session = fixture.model.makeSession()
 
         // The first submission suspends inside the model without checking
-        // cancellation, so the second message provably waits in the outbox
+        // cancellation, so the second message provably waits in the queue
         // rather than racing to start.
         let insideFirstAnswer = AsyncSemaphore(value: 0)
         let releaseFirstAnswer = AsyncSemaphore(value: 0)
@@ -215,24 +239,25 @@ extension AnswerCancellationTests {
         await insideFirstAnswer.wait()
 
         let queuedTask = Task { try await session.respond(to: "queued-and-cancelled") }
-        // No event tells that the message joined the outbox, so the test reads
+        // No event tells that the message joined the queue, so the test reads
         // the count until it holds. The wait has no wall clock: the message
         // always arrives, and a loaded machine only delays it. Only the
         // `.timeLimit` of the suite ends a wait for a message that never
         // arrives.
-        try await AwaitedCondition.wait(until: { session.outbox.messages.depth.waiting == 1 })
+        try await AwaitedCondition.wait(until: { session.waitingUserMailCount == 1 })
+        let queuedId = try #require(session.outbox.queue.pending.first { !$0.isRunMail }?.id)
 
-        // Cancelled while its message waits. The message leaves the outbox,
-        // or the pump drops it when it takes it: it never goes into a
+        // Cancelled while its mail waits. The mail leaves the queue, and it
+        // gets its terminal event `cancelled`: it never goes into a
         // submission.
         queuedTask.cancel()
+        #expect(try await session.awaitTerminal(of: queuedId) == .cancelled(queuedId))
+        #expect(session.waitingUserMailCount == 0)
         releaseFirstAnswer.signal()
         #expect(try await firstTask.value == "ok-holds-the-lock")
 
         // It throws rather than generating: the model is never called for this
-        // message at all — which is the one case where a cancel of work that
-        // ignores it still gives no response (see
-        // ``RoutedSession/cancel()``).
+        // message at all.
         await #expect(throws: CancellationError.self) {
             try await queuedTask.value
         }
@@ -283,7 +308,7 @@ extension AnswerCancellationTests {
         await #expect(throws: CancellationError.self) {
             try await cancelledCaller.value
         }
-        #expect(session.outbox.messages.depth.waiting == 0)
+        #expect(session.waitingUserMailCount == 0)
 
         releaseFirstAnswer.signal()
         #expect(try await firstTask.value == "ok-holds-the-pump")
@@ -296,17 +321,17 @@ extension AnswerCancellationTests {
         #expect(await Self.followUpAnswerCompletes(on: session, observer: fixture.observer))
     }
 
-    @Test("abandoning a stream while its answer runs cancels the submission behind it, which is then recorded as cancelled rather than completed")
+    @Test("abandoning a stream while its answer runs does not stop the answer: it goes on to its end, and the session records it as complete")
     @MainActor
-    func abandoningAStreamRecordsTheSubmissionAsCancelled() async throws {
+    func abandoningAStreamLeavesTheAnswerToItsEnd() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fixture = try await Self.makeFixture(cacheDir: dir)
         let session = fixture.model.makeSession()
 
-        // A tool that never checks cancellation, so what is asserted below is the
-        // own outcome of the *submission* rather than the tool's cooperation.
+        // A tool that never checks cancellation. It waits for the test, so the
+        // answer can end only after the test releases the tool.
         let insideTool = AsyncSemaphore(value: 0)
         let release = AsyncSemaphore(value: 0)
         fixture.hook.midAnswer = { prompt in
@@ -314,6 +339,8 @@ extension AnswerCancellationTests {
             insideTool.signal()
             await release.wait()
         }
+
+        let feed = await session.streamSessionEvents()
 
         // Take one fragment and walk away — a consumer that stops listening.
         var delivered: [String] = []
@@ -323,32 +350,29 @@ extension AnswerCancellationTests {
         }
         #expect(delivered == [HookedSessionBackend.firstStreamedChunk])
 
-        // Waiting for the tool to suspend first keeps the assertion below deterministic:
-        // the diff of the submission must run while the backend still has no
-        // `.response` entry for it, which is exactly the state a cut-short
-        // submission is in.
+        // The mail of the stream is in the open answer. The end of the
+        // consumer cancels only queued mail, so the answer still runs.
         await insideTool.wait()
-        await BoundedWait.spin(until: { await fixture.recorder.events.count == 3 })
+        #expect(await session.isPumpRunning)
 
-        // Not "a submission that finished with a short response": a cancelled
-        // submission, with the same lone bodyless close every other failed
-        // submission gets.
-        let events = await fixture.recorder.events
-        #expect(events.map(\.kind) == [.session, .prompt, .response])
-        #expect(events.last?.text == nil)
-
-        // Let the abandoned producer drain rather than leaving it suspended for the
-        // rest of the suite.
+        // The answer goes on to its end. The session records the full
+        // submission, with its response, and not a cut-short close.
         release.signal()
-        await BoundedWait.spin(until: { await fixture.observer.exited.contains("abandon-stream") })
-        #expect(await fixture.observer.exited.contains("abandon-stream"))
+        let events = await feed.eventsToTheFirstAnswerEnd()
+        #expect(events.answers.map(\.reply) == ["ok-abandon-stream"])
+        #expect(events.answerFailures.isEmpty)
+        #expect(await fixture.observer.toolSawCancellation == false)
+        let recorded = await fixture.recorder.events
+        #expect(recorded.map(\.kind) == [.session, .prompt, .response])
+        #expect(recorded.last?.text == "ok-abandon-stream")
+        #expect(await session.becomesIdle())
     }
 
-    // MARK: - A cancellation is not forgotten between the submissions of an answer
+    // MARK: - A stop is not forgotten between the submissions of an answer
 
     @Test(
-        "a cancellation landing during a failed attempt stops the overflow retry from re-running the model",
-        arguments: CancellationRoute.allCases)
+        "a stop that lands during a failed attempt stops the overflow retry from re-running the model",
+        arguments: CancellationRoute.answerRoutes)
     @MainActor
     func cancellationSurvivesIntoTheOverflowRetry(route: CancellationRoute) async throws {
         let dir = Self.makeTempDir()
@@ -363,8 +387,8 @@ extension AnswerCancellationTests {
 
         let insideTool = AsyncSemaphore(value: 0)
         let release = AsyncSemaphore(value: 0)
-        // The overflow comes with a cancellation already outstanding against
-        // this answer. A second model call is the regression this test is for.
+        // The overflow comes with a stop already requested for this answer. A
+        // second model call is the regression this test is for.
         Self.overflowAfterRelease(
             fixture, prompt: "overflow-then-cancel", insideTool: insideTool, release: release)
 
@@ -372,14 +396,12 @@ extension AnswerCancellationTests {
             try await session.respond(to: "overflow-then-cancel")
         }
         await insideTool.wait()
-        // Both routes must behave identically here: neither may let the retry
-        // re-enter the model on behalf of an answer already cancelled.
-        switch route {
-        case .routerAPI:
-            #expect(await session.cancel() == .requested)
-        case .callerTask:
-            answerTask.cancel()
-        }
+        // Each route must behave identically here: no route may let the retry
+        // re-enter the model for an answer that has a stop. The tool ignores
+        // the stop, so the work cannot end before the release: the wait for
+        // the stop request is safe.
+        let stop = await Self.requestStop(of: session, by: route, callerTask: answerTask)
+        try await Self.awaitStopRequested(on: session)
         release.signal()
 
         // The retry's model call never starts: the answer ends cancelled rather
@@ -387,52 +409,16 @@ extension AnswerCancellationTests {
         await #expect(throws: CancellationError.self) {
             try await answerTask.value
         }
+        // cancelAll() ends the answer at once, before the work unwinds. The
+        // check of the model calls needs the end of the work, so the test
+        // waits for the pump first.
+        try await Self.expectStopEnds(stop)
         #expect(await fixture.observer.entered == ["overflow-then-cancel"])
     }
 
-    @Test("a caller cancel whose mark is set but whose withdraw has not come stops the overflow retry")
-    @MainActor
-    func theCancelMarkAloneStopsTheOverflowRetry() async throws {
-        let dir = Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
+    // MARK: - Queue-side cancellation
 
-        let fixture = try await Self.makeFixture(cacheDir: dir)
-        let session = fixture.model.makeSession(budget: Self.unreachableTriggerBudget)
-        let actor = try #require(session as? RoutedSessionActor)
-
-        let insideTool = AsyncSemaphore(value: 0)
-        let release = AsyncSemaphore(value: 0)
-        Self.overflowAfterRelease(
-            fixture, prompt: "mark-then-overflow", insideTool: insideTool, release: release)
-
-        let answerTask = Task {
-            try await session.respond(to: "mark-then-overflow")
-        }
-        await insideTool.wait()
-
-        // The first half of a cancel of the caller task, and only that half:
-        // `requestCancel(of:in:)`, which marks the running message. This half
-        // occurs at once in the handler of the caller task. The second half,
-        // `settleCancel(of:_:)`, stops the work. It comes in a task of its own
-        // that must get the session actor, so under load it can come after
-        // the pump decides on the retry. The test never sends it, so the
-        // retry sees the mark and nothing else.
-        let running = try #require(await actor.deliveredMessages)
-        #expect(running.count == 1)
-        for letter in running {
-            _ = actor.requestCancel(of: letter.id, in: actor.outbox.messages)
-        }
-        release.signal()
-
-        await #expect(throws: CancellationError.self) {
-            try await answerTask.value
-        }
-        #expect(await fixture.observer.entered == ["mark-then-overflow"])
-    }
-
-    // MARK: - Queue-side cancellation is unchanged
-
-    @Test("cancel(message:) of a waiting message still produces no submission for it")
+    @Test("cancel(_:) of a waiting message withdraws it with cancelled, produces no submission for it, and does not stop the running answer")
     @MainActor
     func withdrawingAWaitingMessageStillProducesNoSubmission() async throws {
         let dir = Self.makeTempDir()
@@ -442,21 +428,24 @@ extension AnswerCancellationTests {
         let session = fixture.model.makeSession()
 
         // A running submission keeps the session busy, so the next message
-        // waits in the outbox.
+        // waits in the queue.
         let insideTool = AsyncSemaphore(value: 0)
         let sawCancellation = Self.suspendInsideCancellationAwareTool(fixture, prompt: "busy", insideTool: insideTool)
         let answerTask = Task { try await session.respond(to: "busy") }
         await insideTool.wait()
 
-        let id = await session.send("queued")
-        #expect(await session.cancel(message: id) == .withdrawn)
+        let id = try session.send("queued")
+        try await Self.expectSignalEnds(session.cancel(id), on: session)
+        #expect(try await session.awaitTerminal(of: id) == .cancelled(id))
 
-        #expect(await session.cancel() == .requested)
+        // The cancel of the queued mail left the running answer as it was.
+        #expect(await fixture.observer.toolSawCancellation == false)
+
+        try await Self.expectSignalEnds(session.cancelAll(), on: session)
         try await Self.awaitCancelledUnwind(answerTask, sawCancellation: sawCancellation)
         #expect(await session.becomesIdle())
 
-        // The withdrawn message never reached the model: the cancel of the
-        // running answer left the queue-side one as it was.
+        // The withdrawn message never reached the model.
         #expect(await fixture.observer.entered == ["busy"])
         #expect(await session.pendingMessages().isEmpty)
     }

@@ -125,7 +125,7 @@ struct ScriptedToolAnswerComparisonTests {
                 .compactionStarted, .compaction, .compactionFailed, .discoveryPrimingFailed, .generationStalled,
                 .submissionQueued, .submissionStarted, .submissionEnded, .answered, .answerFailed,
                 .repetitionStopped, .reasoningStopped, .runSettled, .runMessage, .runProgress, .elicitationRequested,
-                .generationCall, .mailDeliveryPaused, .mailDelivered, .cancelled, .lost:
+                .generationCall, .mailDeliveryPaused, .mailDelivered, .cancelled, .lost, .signalDone:
                 break
             }
         }

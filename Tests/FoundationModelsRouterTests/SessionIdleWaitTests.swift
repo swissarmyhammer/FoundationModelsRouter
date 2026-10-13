@@ -396,9 +396,13 @@ struct SessionIdleWaitTests {
         let fixture = try await Self.makeFixture(tools: [])
         let session = try Self.actor(of: fixture)
         try await Self.stageASettledTerminal(on: fixture.session)
-        await fixture.session.outbox.holdPendingMail()
+        // The pump holds run mail that it takes and puts back, for example
+        // at the bound on answers that mail alone starts.
+        let outbox = fixture.session.outbox
+        let taken = outbox.queue.take { candidate, _ in candidate.isRunMail }
+        #expect(outbox.putBack(holding: taken).isEmpty)
 
-        #expect(await fixture.session.outbox.pending().events.count == 1)
+        #expect(await outbox.pending().events.map(\.isHeld) == [true])
         #expect(await session.isIdle())
 
         await Self.end(fixture)

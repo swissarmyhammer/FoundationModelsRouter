@@ -27,7 +27,7 @@ public struct RestoredSession: Sendable {
     }
 
     /// The restored session, named by the id the caller resumed.
-    public let session: RoutedSession
+    public let session: any RoutedSession
 
     /// What the restore could not re-apply from the recorded configuration
     /// envelopes.

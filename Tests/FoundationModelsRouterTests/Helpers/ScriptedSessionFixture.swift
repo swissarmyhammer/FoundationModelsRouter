@@ -13,7 +13,7 @@ import Tracing
 /// with the scripted model standing in only for the weights.
 struct ScriptedSessionFixture {
     /// The vended session a test drives its answer on.
-    let session: RoutedSession
+    let session: any RoutedSession
 
     /// The log the scripted model writes its observations into.
     let log: ScriptedAnswerLog

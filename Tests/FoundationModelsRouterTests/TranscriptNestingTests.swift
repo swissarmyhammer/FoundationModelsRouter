@@ -503,7 +503,7 @@ struct TranscriptNestingTests {
         let fork1 = try await root.fork(workingDirectory: nil)
         let fork2 = try await root.fork(workingDirectory: nil)
         let fork3 = try await root.fork(workingDirectory: nil)
-        let sessions: [RoutedSession] = [root, fork1, fork2, fork3]
+        let sessions: [any RoutedSession] = [root, fork1, fork2, fork3]
 
         // Each session concurrently appends many events to the shared recorder,
         // each routed to its own lineage-nested directory.
@@ -570,7 +570,7 @@ struct TranscriptNestingTests {
     }
 
     /// The recording directory of a root session vended under `recordingsDir`.
-    private static func sessionDirectory(of session: RoutedSession, under recordingsDir: URL) -> URL {
+    private static func sessionDirectory(of session: any RoutedSession, under recordingsDir: URL) -> URL {
         recordingsDir
             .appendingPathComponent(session.routerId.description, isDirectory: true)
             .appendingPathComponent(session.id.description, isDirectory: true)

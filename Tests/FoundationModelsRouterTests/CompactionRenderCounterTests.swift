@@ -104,7 +104,7 @@ struct CompactionRenderCounterTests {
     /// - Returns: What the compaction did.
     /// - Throws: What the compaction throws.
     @discardableResult
-    private static func compact(_ session: RoutedSession) async throws -> CompactionResult {
+    private static func compact(_ session: any RoutedSession) async throws -> CompactionResult {
         try await session.compact(budget: summarizingCompactionBudget(for: Array(await session.transcript)))
     }
 
@@ -114,7 +114,7 @@ struct CompactionRenderCounterTests {
     ///   - session: The session to read.
     ///   - contextTokens: The working context the session resolved at.
     /// - Returns: The counter, in tokens.
-    private static func counterTokens(of session: RoutedSession, contextTokens: Int) async -> Int {
+    private static func counterTokens(of session: any RoutedSession, contextTokens: Int) async -> Int {
         Int((await session.contextFill * Double(contextTokens)).rounded())
     }
 

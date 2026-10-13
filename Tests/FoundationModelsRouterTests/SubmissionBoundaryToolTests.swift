@@ -193,7 +193,7 @@ struct SubmissionBoundaryToolTests {
     /// - Throws: Whatever profile resolution throws.
     private static func makeSession(
         log: CallOrderLog, tools: [any Tool], rejectedCallCount: Int = 0
-    ) async throws -> (session: RoutedSession, dir: URL) {
+    ) async throws -> (session: any RoutedSession, dir: URL) {
         let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let container = OrderRecordingLLMContainer(log: log, rejectedCallCount: rejectedCallCount)
         let router = RouterTestFixtures.makeRouter(

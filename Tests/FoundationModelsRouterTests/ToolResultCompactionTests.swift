@@ -43,7 +43,7 @@ struct ToolResultCompactionTests {
     /// its recorder, and the directory the router cached into.
     private struct Fixture {
         /// The session a test drives its answer on.
-        let session: RoutedSession
+        let session: any RoutedSession
 
         /// The one mounted tool.
         let tool: LargeResultTool
@@ -92,7 +92,7 @@ struct ToolResultCompactionTests {
     }
 
     /// Runs one streamed answer and collects its events.
-    private static func streamedAnswer(on session: RoutedSession) async throws -> [SessionEvent] {
+    private static func streamedAnswer(on session: any RoutedSession) async throws -> [SessionEvent] {
         try await collect(session.streamEvents(to: prompt, maxTokens: nil))
     }
 
@@ -144,9 +144,10 @@ struct ToolResultCompactionTests {
             await !log.events.answers.isEmpty
         }
         if !answered {
-            // A self-deadlock never ends. The cancel takes the waiting item
-            // out, so the test fails and does not hang the run.
-            _ = await fixture.session.cancel()
+            // A self-deadlock never ends. The stop of the running work takes
+            // the waiting item out, so the test fails and does not hang the
+            // run.
+            await fixture.session.stopRunningWork()
         }
         try await answer.value
 

@@ -46,7 +46,7 @@ struct SummarizerSubmissionTests {
         let flashQueue: GenerationQueue
 
         /// The session over the trigger, on the standard slot.
-        let session: RoutedSession
+        let session: any RoutedSession
 
         /// The standard container. Its log holds each call of the own-model
         /// tier.
@@ -139,7 +139,9 @@ struct SummarizerSubmissionTests {
         let flash = waiting.flash
         let standardCallsBeforeTheCancel = waiting.standard.generationLog.calls.count
 
-        let cancellation = await waiting.session.cancel()
+        // The test is about the stop of the running answer only, so it stops
+        // the running work and does not wait for the end of the pump.
+        let stopped = await waiting.session.stopRunningWork()
         // The answer ends while the flash submission still holds the worker:
         // the waiting summarizer item left the queue and never ran.
         let answerEnded = await BoundedWait.conditionReached("the end of the cancelled answer") {
@@ -153,7 +155,7 @@ struct SummarizerSubmissionTests {
 
         #expect(waiting.flashInside)
         #expect(waiting.summarizerWaits)
-        #expect(cancellation == .requested)
+        #expect(stopped)
         #expect(answerEnded)
         #expect(waitingAfterTheCancel == 0)
         #expect(passesAfterTheCancel == 1)

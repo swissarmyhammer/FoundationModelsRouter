@@ -292,7 +292,7 @@ struct RoutedSessionToolContextBindingTests {
     /// Builds a fresh router + resolved profile + vended session over a
     /// ``ContextProbingBackend`` — guided by `grammar` when supplied.
     private static func makeSession(grammar: Grammar? = nil) async throws -> (
-        session: RoutedSession, backend: ContextProbingBackend, dir: URL
+        session: any RoutedSession, backend: ContextProbingBackend, dir: URL
     ) {
         let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let container = ProbingLLMContainer()
@@ -315,7 +315,7 @@ struct RoutedSessionToolContextBindingTests {
     /// Builds a fresh router + resolved profile + vended session over a
     /// ``CancellationObservingBackend``.
     private static func makeCancellationObservingSession() async throws -> (
-        session: RoutedSession, backend: CancellationObservingBackend, dir: URL
+        session: any RoutedSession, backend: CancellationObservingBackend, dir: URL
     ) {
         let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let container = CancellationObservingLLMContainer()
@@ -419,8 +419,13 @@ struct RoutedSessionToolContextBindingTests {
             try await Task.sleep(nanoseconds: 10_000_000)
         }
         #expect(backend.respondStarted)
-        await session.cancel()
+        let signal = session.cancelAll()
+        #expect(try await session.awaitTerminal(of: signal) == .signalDone(signal))
         _ = try? await answerTask.value
+        // cancelAll() ends the answer at once and does not wait for the
+        // model call. The probe is read after the pump ended, so the model
+        // call saw the cancel before the read.
+        #expect(try await session.isIdleOnceThePumpEnds())
 
         #expect(backend.observedCancellation)
     }
@@ -439,7 +444,8 @@ struct RoutedSessionToolContextBindingTests {
             try await Task.sleep(nanoseconds: 10_000_000)
         }
         #expect(backend.streamStarted)
-        await session.cancel()
+        let signal = session.cancelAll()
+        #expect(try await session.awaitTerminal(of: signal) == .signalDone(signal))
         _ = try? await answerTask.value
 
         // The polling loop runs in the stream's own production task, which

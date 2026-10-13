@@ -546,3 +546,26 @@ extension AnswerCancellationTests {
         }
     }
 }
+
+extension AsyncStream where Element == SessionOutput {
+    /// Reads this feed of a session (``RoutedSession/streamSessionEvents()``)
+    /// up to and including the first end of an answer:
+    /// ``SessionEvent/answered(_:)`` or ``SessionEvent/answerFailed(_:)``.
+    ///
+    /// A test uses it to see the end of an answer whose caller does not wait
+    /// any more. The read of the feed stops when the waiting task is
+    /// cancelled, so the `.timeLimit` of the suite ends a wait for an end that
+    /// never comes.
+    ///
+    /// - Returns: The events of the feed in order, up to and including the
+    ///   first end of an answer, or each event read when the feed ended first.
+    func eventsToTheFirstAnswerEnd() async -> [SessionEvent] {
+        var events: [SessionEvent] = []
+        for await output in self {
+            events.append(output.event)
+            if case .answered = output.event { break }
+            if case .answerFailed = output.event { break }
+        }
+        return events
+    }
+}

@@ -33,21 +33,40 @@ extension RoutedSession {
     /// change of the session — see ``RoutedSessionActor/idleChanges``.
     nonisolated var idleWaitCount: Int { (self as! RoutedSessionActor).idleChanges.waiterCount }
 
+    /// Asks the session to stop the work its pump runs now, and does not
+    /// wait (``RoutedSessionActor/requestCancelOfRunningWork()``). This is
+    /// the first step of the stop of the running answer in
+    /// ``RoutedSession/cancelAll()``. It sends no early terminal event, does
+    /// not silence the output, does not cancel the queued mail, does not
+    /// sweep the runs and does not wait. A tool body of the running answer
+    /// can call it.
+    ///
+    /// - Returns: `true` when the pump ran work.
+    @discardableResult
+    func stopRunningWork() async -> Bool {
+        await (self as! RoutedSessionActor).requestCancelOfRunningWork()
+    }
+
+    /// The count of the user-type mail (a user message, an agent message or
+    /// an elicitation answer) that waits in the mail queue of this session.
+    nonisolated var waitingUserMailCount: Int {
+        outbox.queue.pending.filter { !$0.isRunMail }.count
+    }
+
     /// Whether this session becomes idle inside ``BoundedWait``'s bound: its
-    /// pump ends, and no caller message waits in its outbox. The session then
+    /// pump ends, and no user-type mail waits in its queue. The session then
     /// holds no answer, and nothing of it is stranded.
     ///
     /// - Returns: Whether the session became idle inside the bound.
     func becomesIdle() async -> Bool {
         await BoundedWait.conditionReached("the session becoming idle") {
             let pumpRunning = await self.isPumpRunning
-            let waitingMessages = self.outbox.messages.depth.waiting
-            return !pumpRunning && waitingMessages == 0
+            return !pumpRunning && self.waitingUserMailCount == 0
         }
     }
 
-    /// Whether this session is idle once its pump has ended: no caller message
-    /// waits in its outbox. The session then holds no answer, and nothing of
+    /// Whether this session is idle once its pump has ended: no user-type mail
+    /// waits in its queue. The session then holds no answer, and nothing of
     /// it is stranded.
     ///
     /// ``becomesIdle()`` asks the same question under the wall clock of
@@ -59,7 +78,7 @@ extension RoutedSession {
     /// The watch of each pump is a task of its own because `await pump.value`
     /// does not end on a cancellation. That task ends when the pump ends.
     ///
-    /// - Returns: Whether no caller message waits after the last pump ended.
+    /// - Returns: Whether no user-type mail waits after the last pump ended.
     /// - Throws: ``EventNeverArrived`` when the waiting task was cancelled
     ///   before the pump ended.
     func isIdleOnceThePumpEnds() async throws -> Bool {
@@ -72,7 +91,7 @@ extension RoutedSession {
             }
             try await pumpEnded.wait()
         }
-        return outbox.messages.depth.waiting == 0
+        return waitingUserMailCount == 0
     }
 
     /// The stall report interval the session holds now — see

@@ -79,7 +79,7 @@ let demoReplyTokenCeiling = 160
 /// - Returns: The accumulated reply text of the answer.
 /// - Throws: Whatever the answer throws.
 func runObservedAnswer(
-    on session: RoutedSession, label: String, prompt: String
+    on session: any RoutedSession, label: String, prompt: String
 ) async throws -> String {
     var reply = ""
     var midFragmentBlock = false
@@ -128,7 +128,7 @@ func runObservedAnswer(
             .compactionStarted, .compaction, .compactionFailed, .discoveryPrimingFailed, .generationStalled,
             .submissionQueued, .repetitionStopped, .reasoningStopped, .runSettled, .runMessage, .runProgress,
             .elicitationRequested, .generationCall, .answerFailed, .mailDeliveryPaused, .mailDelivered, .cancelled,
-            .lost:
+            .signalDone, .lost:
             // Silent by construction — see this function's documentation.
             break
         }

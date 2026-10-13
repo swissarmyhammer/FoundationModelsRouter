@@ -330,7 +330,7 @@ struct SurfaceParityTests {
     ///   throws can be compared against one that does not.
     private static func runAnswer(
         _ row: SurfaceParityRow,
-        answering: (RoutedSession) async throws -> String
+        answering: (any RoutedSession) async throws -> String
     ) async throws -> SurfaceAnswerOutcome {
         let tools = row.makeTools()
         let fixture = try await ScriptedSessionFixture.make(
@@ -362,7 +362,7 @@ struct SurfaceParityTests {
     /// - Parameter session: The session to stream an answer on.
     /// - Returns: The answer text.
     /// - Throws: Whatever the stream throws.
-    private static func streamedAnswer(from session: RoutedSession) async throws -> String {
+    private static func streamedAnswer(from session: any RoutedSession) async throws -> String {
         var answer = ""
         for try await event in await session.streamEvents(to: ScriptedToolFixture.prompt) {
             guard case .textDelta(let delta) = event else { continue }

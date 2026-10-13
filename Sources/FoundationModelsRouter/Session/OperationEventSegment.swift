@@ -3,8 +3,8 @@ import FoundationModels
 
 /// A ``PersistableStructuredSegment`` durably recording one drained ``OperationEvent`` on the `.prompt` entry it rode into a submission.
 ///
-/// The pump of ``RoutedSessionActor`` takes the mail of the session
-/// (`SessionOutbox.takeEvents()`) at the start of
+/// The pump of ``RoutedSessionActor`` takes the run mail of the session
+/// from the mail queue (``SessionOutbox/queue``) at the start of
 /// every submission and renders each taken event as a plain-text preamble
 /// line the model reads
 /// (see ``renderedLine(for:)``) — but the model never sees anything beyond

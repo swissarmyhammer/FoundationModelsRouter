@@ -289,7 +289,7 @@ enum AutoCompactionFixtures {
         tracer: (any Tracer)? = nil,
         samplingMode: GenerationOptions.SamplingMode? = nil,
         tempDirPrefix: String
-    ) async throws -> (session: RoutedSession, standard: ConfiguredLLMContainer, flash: ConfiguredLLMContainer) {
+    ) async throws -> (session: any RoutedSession, standard: ConfiguredLLMContainer, flash: ConfiguredLLMContainer) {
         let flashContainer = ConfiguredLLMContainer(responseText: "FLASH-SUMMARY")
         let (session, standardContainer) = try await makeTriggeredSession(
             budget: budget, tools: tools, tracer: tracer,
@@ -322,7 +322,7 @@ enum AutoCompactionFixtures {
         samplingMode: GenerationOptions.SamplingMode? = nil,
         flash flashContainer: any LoadedLLMContainer,
         tempDirPrefix: String
-    ) async throws -> (session: RoutedSession, standard: ConfiguredLLMContainer) {
+    ) async throws -> (session: any RoutedSession, standard: ConfiguredLLMContainer) {
         let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let recorder = InMemoryRecorder()
         let standardContainer = ConfiguredLLMContainer(responseText: cannedText)

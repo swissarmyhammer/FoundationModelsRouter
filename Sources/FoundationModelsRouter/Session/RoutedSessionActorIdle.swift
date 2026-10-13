@@ -41,14 +41,15 @@ extension RoutedSessionActor {
 
     /// Reports one change of the work of this session to each
     /// ``awaitIdle()`` call that waits: the pump ended, a background run
-    /// settled, or the drain ended.
+    /// settled, or the end of all work of ``close()`` ended.
     func signalWorkChange() {
         idleChanges.signal()
     }
 
     /// Ends each ``awaitIdle()`` call that waits with `false`, and makes each
-    /// later call return `false` at once. ``close()`` calls it before its
-    /// drain, so no wait waits for the drain.
+    /// later call return `false` at once. ``close()`` calls it before it
+    /// waits for the end of all work, so no wait waits for the end of all
+    /// work.
     func endIdleWaits() {
         isClosed = true
         signalWorkChange()
@@ -86,11 +87,13 @@ extension RoutedSessionActor {
     /// (``SessionOutbox/canStartASubmission(_:runTokens:)``), so the
     /// check says not idle until the pump takes the mail.
     ///
-    /// The sweep of a drain is the one case where a terminal is staged after
-    /// the settlement: the sweep settles the run, and the body of the run
-    /// stages its own terminal when it ends later. The drain waits for that
-    /// body, and holds that mail at its end (``drain()``). While the drain
-    /// runs, ``drainTask`` is set, so the check says not idle.
+    /// A sweep (of ``cancelAll()`` or of the end of all work of ``close()``)
+    /// is the one case where a terminal comes after the settlement: the sweep
+    /// settles the run, and the body of the run posts its own terminal when
+    /// it ends later. A stopped run makes no mail
+    /// (``SessionOutbox/ignoreRunMail(of:)``), so that terminal is not staged.
+    /// The end of all work of ``close()`` waits for that body. While it runs,
+    /// ``drainTask`` is set, so the check says not idle.
     ///
     /// - Returns: The reads, in the order above.
     func readRunsAndMail() async -> IdleReads {
@@ -144,9 +147,12 @@ extension RoutedSessionActor {
     }
 
     /// Whether no pump work runs or waits: no pump and no drain runs, and no
-    /// caller message and no caller compaction waits for the pump.
+    /// user-type mail and no caller compaction waits for the pump. Queued
+    /// run mail is no pump work by itself: ``isIdle(startedAt:reading:)``
+    /// checks whether it can start an answer.
     private var hasNoPumpWork: Bool {
-        pumpTask == nil && drainTask == nil && outbox.messages.pending.isEmpty && pendingCompactions.isEmpty
+        pumpTask == nil && drainTask == nil && !outbox.queue.pending.contains { !$0.isRunMail }
+            && pendingCompactions.isEmpty
     }
 }
 

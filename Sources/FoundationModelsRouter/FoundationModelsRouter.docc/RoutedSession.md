@@ -99,9 +99,10 @@ The session pushes settlement to the model — the model never polls:
 A model can start one more background run in each answer, for example to ask
 a status tool again after each result. Each settled run then starts one more
 answer, with no end. ``SessionConfiguration/mailOnlyAnswerLimit`` bounds that
-chain: when that many answers in a row had no caller message, the session
-holds new mail in its queue and starts no answer for it. The next caller
-message carries the held mail, so no mail is lost. The session reports each
+chain: when that many answers in a row had no user-type mail (a user message,
+an agent message or an elicitation answer), the session holds new run mail in
+its queue and starts no answer for it. The next user-type mail carries the
+held mail, so no mail is lost. The session reports each
 hold with ``SessionEvent/mailDeliveryPaused(_:)`` and a log line. The default,
 ``SessionConfiguration/defaultMailOnlyAnswerLimit``, is far past a normal
 chain.
@@ -139,11 +140,12 @@ it gives no answer.
 
 Each element of ``streamSessionEvents()`` is a ``SessionOutput``: the event,
 and the ``Origin`` of the work that sent it. The pump sends
-``SessionEvent/mailDelivered(_:)`` for each caller message that an answer
-delivers. Each caller message gets exactly one terminal event:
+``SessionEvent/mailDelivered(_:)`` for each mail that an answer delivers:
+user-type mail and run mail. Each mail gets exactly one terminal event:
 ``SessionEvent/answered(_:)`` or ``SessionEvent/answerFailed(_:)`` of the
 answer that carries it, or ``SessionEvent/cancelled(_:)`` when it left the
-queue before the pump took it.
+queue before the pump took it (``cancel(_:)``, ``cancelAll()`` or
+``close()``).
 
 - ``streamSessionEvents()``
 - ``SessionOutput``
@@ -157,24 +159,40 @@ queue before the pump took it.
 
 ### Messages
 
-A session is a queue of messages (`generation-queue.md`, section 5.4).
-``send(_:)-(Transcript.Prompt)`` puts one message in the queue and returns its
-``MailID`` at once. The pump of the session starts a submission for it with
-no other call, or puts it into the next submission when one runs.
-``respond(to:maxTokens:)`` and the two stream methods are helpers: each sends
-one message, then waits for its answer.
+All input to a session is mail in one mail queue: user-type mail (a user
+message, an agent message or an elicitation answer) and run mail.
+``mail(_:)`` puts one mail in the queue and returns its subscription at once.
+``send(_:)-(Transcript.Prompt)`` and ``send(_:)-(String)`` put one user
+message in the queue and return its ``MailID``. The pump of the session starts
+a submission for the mail with no other call, or puts it into the next
+submission when one runs. ``respond(to:maxTokens:)`` and the two stream
+methods are helpers: each sends one message, then reads its output to its
+terminal event.
 
+- ``mail(_:)``
 - ``send(_:)-(Transcript.Prompt)``
 - ``send(_:)-(String)``
 - ``pendingMessages()``
-- ``replace(id:prompt:)``
 - ``mailQueueDepth()``
 - ``MailQueueDepth``
+- ``awaitTerminal(of:)-(MailID)``
+- ``awaitTerminal(of:)-(SignalID)``
+- ``PromptRefusal``
 
-### Cancellation
+### Signals
 
-- ``cancel()``
-- ``cancel(message:)``
+Each signal returns a ``SignalID`` at once. The session runs the work of its
+signals one at a time, in arrival order: the work of a signal starts when the
+work of the earlier signal ended. Each signal ends with
+``SessionEvent/signalDone(_:)`` after all its other events, and
+``awaitTerminal(of:)-(SignalID)`` waits for that end. ``cancel(_:)`` and
+``replace(_:with:)`` act only on queued mail. ``cancelAll()`` stops all work:
+it cancels each queued mail, stops the running answer and the background runs,
+and does not wait for the end of the cancels of the runs.
+
+- ``cancel(_:)``
+- ``cancelAll()``
+- ``replace(_:with:)``
 
 ### Elicitation answers
 
@@ -191,6 +209,5 @@ one message, then waits for its answer.
 ### Lifecycle and forking
 
 - ``fork(workingDirectory:)``
-- ``drain()``
 - ``awaitIdle()``
 - ``close()``

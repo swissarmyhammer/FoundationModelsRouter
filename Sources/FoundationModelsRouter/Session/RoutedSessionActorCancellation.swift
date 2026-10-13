@@ -1,233 +1,258 @@
 import FoundationModelsExtras
 import Synchronization
 
-/// The cancel marks of the messages and the caller compactions that the
-/// running work of a session carries (``RoutedSessionActor/cancelMarks``).
+/// The ids of the mail of the open answer of a session
+/// (``RoutedSessionActor/openAnswerMail``), in delivery order.
 ///
-/// A cancel of such an item does not take it out of its mailbox: the work
-/// stops cooperatively, and the item gets the result of its work, as each
-/// other item of the work does. The mark tells the work of the cancel at
-/// once. The stop of the work needs the session actor, and the pump can get
-/// the actor first (``RoutedSessionActor/isWorkCancelled``). The set is
-/// behind a lock, so the cancellation handler of a caller task, which does
-/// not run on the actor, writes it with no suspension point.
-final class CancelMarks: Sendable {
-    /// The ids of the marked items.
-    private let ids = Mutex<Set<MessageID>>([])
+/// The pump writes it on the session actor. ``RoutedSessionActor/mail(_:)``
+/// reads it from any task, with no suspension point, to refuse a mail whose
+/// id the open answer already carries. The ids are behind a lock for that
+/// reason.
+final class OpenAnswerMail: Sendable {
+    /// The ids, in delivery order.
+    private let ids = Mutex<[MailID]>([])
 
-    /// Marks the item `id`.
-    ///
-    /// - Parameter id: The id of the message or of the compaction request.
-    func mark(_ id: MessageID) {
-        _ = ids.withLock { $0.insert(id) }
+    /// The ids, in delivery order.
+    var all: [MailID] {
+        ids.withLock { $0 }
     }
 
-    /// Whether the item `id` is marked.
+    /// Whether the open answer carries the mail `id`.
     ///
-    /// - Parameter id: The id of the message or of the compaction request.
-    /// - Returns: `true` when a mark names it.
-    func isMarked(_ id: MessageID) -> Bool {
+    /// - Parameter id: The id of a mail.
+    /// - Returns: `true` when the id is in the open answer.
+    func contains(_ id: MailID) -> Bool {
         ids.withLock { $0.contains(id) }
     }
 
-    /// Whether one of `items` is marked.
+    /// Adds `delivered` at the end, in order.
     ///
-    /// - Parameter items: The ids to look for.
-    /// - Returns: `true` when a mark names one of them.
-    func marksAny(of items: [MessageID]) -> Bool {
-        ids.withLock { marked in items.contains { marked.contains($0) } }
+    /// - Parameter delivered: The ids of the mail that the answer delivers.
+    func append(_ delivered: [MailID]) {
+        ids.withLock { $0 += delivered }
     }
 
-    /// Removes every mark. The pump calls this when a work ends: a mark
-    /// names an item of the work that ran, so no later work reads it.
-    func clear() {
+    /// Removes each id of `given` back to the queue.
+    ///
+    /// - Parameter given: The ids of the mail that a failed submission gave
+    ///   back.
+    func remove(_ given: [MailID]) {
+        let given = Set(given)
+        ids.withLock { $0.removeAll { given.contains($0) } }
+    }
+
+    /// Removes every id. The pump calls it after the terminal event of the
+    /// answer. The next answer starts not silenced.
+    func removeAll() {
         ids.withLock { $0.removeAll() }
+        silenced.withLock { $0 = false }
+    }
+
+    /// Whether ``RoutedSession/cancelAll()`` stopped the open answer.
+    private let silenced = Mutex(false)
+
+    /// Whether the open answer is the answer that
+    /// ``RoutedSession/cancelAll()`` stopped. Its output is dropped. A
+    /// requeue and a join of that answer do nothing.
+    var isSilenced: Bool {
+        silenced.withLock { $0 }
+    }
+
+    /// Marks the open answer as the answer that ``RoutedSession/cancelAll()``
+    /// stopped. Its output is dropped. A requeue and a join of that answer do
+    /// nothing.
+    func silence() {
+        silenced.withLock { $0 = true }
     }
 }
 
-/// ``RoutedSessionActor``'s cancellation: the cancel of the work the pump
-/// runs, and the withdrawal of the caller messages that wait
-/// (`generation-queue.md`, section 5.6).
+/// ``RoutedSessionActor``'s signals (`mailbox.md`, section 5): the cancel of
+/// one queued mail, the stop of all work, and the replace of one queued
+/// mail. Each signal call makes a ``SignalID``, gives the work of the signal
+/// to ``signals``, and returns the id at once. The work of each signal is one
+/// internal function (``performCancel(_:)``, ``performCancelAll()``,
+/// ``performReplace(_:with:)``), and each signal ends with its terminal event
+/// ``SessionEvent/signalDone(_:)``, after all its other events.
 extension RoutedSessionActor {
-    /// See ``RoutedSession/cancel()``. Stops the work the pump runs
-    /// (``requestCancelOfRunningWork()``), and withdraws every caller
-    /// message that waits in ``SessionOutbox/messages``: each of their
-    /// callers gets `CancellationError`, and each of them gets its terminal
-    /// event ``SessionEvent/cancelled(_:)``. The mail stays in ``outbox`` for a
-    /// later submission, because a run terminal must not be lost. It is held
-    /// (``SessionOutbox/holdPendingMail()``): a cancel stops the session, so
-    /// mail that waited does not start a submission of its own at once. It
-    /// rides the next submission that new mail or a new message starts.
+    /// See ``RoutedSession/cancel(_:)``.
     ///
-    /// - Returns: ``CancellationResult/requested`` when work ran or a caller
-    ///   message waited, and ``CancellationResult/nothingToCancel`` otherwise.
+    /// - Parameter id: The id of the mail.
+    /// - Returns: The id of the signal.
     @discardableResult
-    func cancel() async -> CancellationResult {
-        // The mail is held first, so the pump cannot deliver it between the
-        // stop of the work and the hold.
-        await outbox.holdPendingMail()
-        let stoppedWork = requestCancelOfRunningWork()
-        let withdrawn = outbox.withdrawMessages()
-        releasePumpAwaitingLetter()
-        emitCancelled(withdrawn.map(\.mailID))
-        return stoppedWork || !withdrawn.isEmpty ? .requested : .nothingToCancel
+    nonisolated func cancel(_ id: MailID) -> SignalID {
+        runSignal { session in session.performCancel(id) }
+    }
+
+    /// See ``RoutedSession/cancelAll()``.
+    ///
+    /// - Returns: The id of the signal.
+    @discardableResult
+    nonisolated func cancelAll() -> SignalID {
+        runSignal { session in await session.performCancelAll() }
+    }
+
+    /// See ``RoutedSession/replace(_:with:)``.
+    ///
+    /// - Parameters:
+    ///   - id: The id of the mail.
+    ///   - body: The new body.
+    /// - Returns: The id of the signal.
+    @discardableResult
+    nonisolated func replace(_ id: MailID, with body: MailBody) -> SignalID {
+        runSignal { session in await session.performReplace(id, with: body) }
+    }
+
+    /// Makes a new signal id, gives `work` and then the terminal event
+    /// ``SessionEvent/signalDone(_:)`` to ``signals``, and returns the id at
+    /// once.
+    ///
+    /// - Parameter work: The work of the signal.
+    /// - Returns: The id of the signal.
+    private nonisolated func runSignal(
+        _ work: @escaping @Sendable (RoutedSessionActor) async -> Void
+    ) -> SignalID {
+        let id = SignalID()
+        signals.run(id) { [self] in
+            await work(self)
+            emitSessionScopedEvent(.signalDone(id))
+        }
+        return id
+    }
+
+    /// The work of the signal ``cancel(_:)``: removes the queued mail `id`
+    /// and sends its terminal event ``SessionEvent/cancelled(_:)``, with the
+    /// origin of the signal. Mail that is not queued (delivered or unknown)
+    /// does not change: then the signal sends only its own end.
+    ///
+    /// - Parameter id: The id of the mail.
+    nonisolated func performCancel(_ id: MailID) {
+        guard outbox.queue.cancel(id) != nil else { return }
+        settleCancelledMail([id])
+    }
+
+    /// The work of the signal ``replace(_:with:)``: changes the body of one
+    /// queued mail. The id, the sender and the place in the queue do not
+    /// change. The pump wakes, because the new body can start an answer.
+    /// Mail that is not queued does not change.
+    ///
+    /// - Parameters:
+    ///   - id: The id of the mail.
+    ///   - body: The new body.
+    func performReplace(_ id: MailID, with body: MailBody) {
+        guard outbox.queue.replace(id, with: body) else { return }
+        wakePump()
+    }
+
+    /// Sends the terminal event ``SessionEvent/cancelled(_:)`` of each mail
+    /// of `ids`, which left the queue for good with no delivery, and forgets
+    /// its hold and its caller context.
+    ///
+    /// - Parameter ids: The ids of the mail, in queue order.
+    nonisolated func settleCancelledMail(_ ids: [MailID]) {
+        guard !ids.isEmpty else { return }
+        outbox.forget(ids)
+        emitCancelled(ids)
+    }
+
+    /// Cancels each queued mail of all kinds, also run mail. Each mail gets
+    /// its terminal event ``SessionEvent/cancelled(_:)``.
+    ///
+    /// This is the one place where queued mail of all kinds, also run mail,
+    /// leaves the queue for a stop of all work. ``cancelAll()`` calls it. It
+    /// uses ``MailQueue/drain()``, which does not change the pause of the
+    /// queue. It also cancels run mail, not only user-type mail, because
+    /// ``cancelAll()`` stops all work and sweeps the runs that sent the run
+    /// mail, so a later answer must not act on their results (`mailbox.md`,
+    /// section 5). To change that rule, change only this function.
+    ///
+    /// - Returns: The ids of the cancelled mail, in queue order.
+    @discardableResult
+    nonisolated func cancelQueuedMail() -> [MailID] {
+        let ids = outbox.queue.drain().map(\.id)
+        settleCancelledMail(ids)
+        return ids
     }
 
     /// Records a cancel of the work the pump runs, and cancels its model
     /// call. A model call that waits for the worker of the model leaves the
     /// queue at once; a running one gets the cancel on the task that runs it.
     /// A cancel that lands between two model calls of the work stops the
-    /// next one before it starts (``isWorkCancelled``).
+    /// next one before it starts (``isWorkCancelled``). Only ``cancelAll()``
+    /// and ``close()`` call it: a cancel of one mail never stops the work.
     ///
-    /// A pump that waits in a mailbox for a letter (``pumpAwaitsLetter``)
-    /// runs no work: the answer that its next letter starts is not cancelled.
+    /// A pump that waits in ``compactionRequests`` for a request
+    /// (``pumpAwaitsCompaction``) runs no work: the compaction that its next
+    /// request starts is not cancelled.
     ///
     /// - Returns: `true` when the pump ran work.
     @discardableResult
     func requestCancelOfRunningWork() -> Bool {
-        guard !pumpAwaitsLetter, let workId = pumpWork?.id else { return false }
+        guard !pumpAwaitsCompaction, let workId = pumpWork?.id else { return false }
         cancelRequestedWorkId = workId
         inFlightModelCall?.cancel()
         return true
     }
 
-    /// See ``RoutedSession/cancel(message:)``. A message that waits leaves
-    /// the mailbox ``SessionOutbox/messages``, its caller gets
-    /// `CancellationError`, and it gets ``SessionEvent/cancelled(_:)``. A
-    /// message that the running answer carries stops that answer, and its
-    /// caller gets the result of the answer (``requestCancel(of:in:)``,
-    /// ``settleCancel(of:mailID:_:)``).
-    ///
-    /// The message is found by its correlation id
-    /// (``letterID(ofMessage:)``), and cancelled in the mailbox by the id that
-    /// the mailbox gave it.
-    ///
-    /// - Parameter id: The correlation id of the message.
-    /// - Returns: What happened to the message.
-    @discardableResult
-    func cancel(message id: MailID) async -> MessageCancellationResult {
-        guard let letterID = letterID(ofMessage: id) else { return .alreadyAnswered }
-        let result = requestCancel(of: letterID, in: outbox.messages)
-        settleCancel(of: letterID, mailID: id, result)
-        return result
-    }
+    // MARK: - Caller compactions
 
-    /// The id that the mailbox ``SessionOutbox/messages`` gave the caller
-    /// message with the correlation id `mailID`. The message waits, or the
-    /// running answer carries it (``deliveredMessages``), or the pump took it
-    /// for the next answer and the answer does not hold it yet
-    /// (``PumpWork/takenLetters``).
+    /// Waits for `answer`, the answer of the caller compaction `id` that the
+    /// caller just posted to ``compactionRequests``. A cancel of the caller
+    /// cancels the compaction at once (``cancelCompactionFromCallerTask(_:)``).
     ///
-    /// - Parameter mailID: The correlation id of the message.
-    /// - Returns: The id of its letter, or `nil` when no letter has the id.
-    func letterID(ofMessage mailID: MailID) -> MessageID? {
-        let letters = outbox.messages.pending + (deliveredMessages ?? []) + (pumpWork?.takenLetters ?? [])
-        return letters.first { $0.message.mailID == mailID }?.id
-    }
-
-    /// Waits for `answer`, the answer of the message or the caller compaction
-    /// `id` that the caller just posted to `mailbox`. A cancel of the caller
-    /// cancels the item at once (``cancelFromCallerTask(_:mailID:in:)``).
-    ///
-    /// The caller posts the item and calls this with no suspension point
-    /// between the two, and this installs the cancel handler before its first
-    /// suspension point. The pump takes a batch only on this actor, so the
-    /// pump cannot take the item before the handler is in place. A caller
-    /// that is cancelled before the post gets the handler at once when it is
-    /// installed, and the handler withdraws the item before the pump sees it.
+    /// The caller posts the request and calls this with no suspension point
+    /// between the two, and this installs the cancel handler before its
+    /// first suspension point. The pump takes a request only on this actor,
+    /// so the pump cannot take it before the handler is in place.
     ///
     /// - Parameters:
-    ///   - id: The id that `mailbox` gave the item.
-    ///   - mailID: The correlation id of the caller message, or `nil` for a
-    ///     caller compaction.
-    ///   - answer: The answer that `mailbox` gave the item.
-    ///   - mailbox: ``SessionOutbox/messages`` or ``compactionRequests``.
-    /// - Returns: The answer of the work that carried the item.
-    /// - Throws: What that work throws, or `CancellationError`.
-    func awaitMailboxAnswer<Message: Sendable, Answer: Sendable>(
-        id: MessageID, mailID: MailID?, answer: MailboxAnswer<Answer>,
-        in mailbox: FoundationModelsExtras.Mailbox<Message, Answer>
-    ) async throws -> Answer {
+    ///   - id: The id that ``compactionRequests`` gave the request.
+    ///   - answer: The answer that ``compactionRequests`` gave the request.
+    /// - Returns: The result of the compaction.
+    /// - Throws: What the compaction throws, or `CancellationError`.
+    func awaitCompactionAnswer(
+        id: FoundationModelsExtras.MessageID, answer: MailboxAnswer<CompactionResult>
+    ) async throws -> CompactionResult {
         try await withTaskCancellationHandler {
             try await answer.value
         } onCancel: {
-            cancelFromCallerTask(id, mailID: mailID, in: mailbox)
+            cancelCompactionFromCallerTask(id)
         }
     }
 
-    /// Cancels the message or the caller compaction `id` from the
-    /// cancellation handler of a caller task, which does not run on this
-    /// actor. The first half occurs at once (``requestCancel(of:in:)``). The
-    /// second half (``settleCancel(of:mailID:_:)``) needs this actor, so it
-    /// runs in a task of its own.
+    /// Cancels the caller compaction `id` from the cancellation handler of a
+    /// caller task, which does not run on this actor. A waiting request is
+    /// withdrawn at once. The rest needs this actor, so it runs in a task of
+    /// its own: a pump that waits for the withdrawn request is released, and
+    /// a running compaction is stopped.
     ///
-    /// - Parameters:
-    ///   - id: The id that `mailbox` gave the message.
-    ///   - mailID: The correlation id of the caller message, or `nil` for a
-    ///     caller compaction.
-    ///   - mailbox: ``SessionOutbox/messages`` or ``compactionRequests``.
-    nonisolated func cancelFromCallerTask<Message: Sendable, Answer: Sendable>(
-        _ id: MessageID, mailID: MailID?, in mailbox: FoundationModelsExtras.Mailbox<Message, Answer>
-    ) {
-        let result = requestCancel(of: id, in: mailbox)
+    /// - Parameter id: The id that ``compactionRequests`` gave the request.
+    nonisolated func cancelCompactionFromCallerTask(_ id: FoundationModelsExtras.MessageID) {
+        let result: MessageCancellationResult =
+            compactionRequests.depth.running.contains(id) ? .cancelledInSubmission : compactionRequests.cancel(id)
         guard result != .alreadyAnswered else { return }
-        Task { await self.settleCancel(of: id, mailID: mailID, result) }
+        Task { await self.settleCompactionCancel(of: id, result) }
     }
 
-    /// The first half of a cancel of the message or the caller compaction
-    /// `id`, with no suspension point. It needs no actor.
-    ///
-    /// An item that the running batch of `mailbox` carries keeps its place in
-    /// the batch: it gets the result of its work, which stops cooperatively.
-    /// The item gets a mark (``cancelMarks``), so ``isWorkCancelled`` sees the
-    /// cancel before the stop reaches the actor. Any other item is cancelled
-    /// in `mailbox` in one lock step: it is withdrawn when it waits. When the
-    /// pump took it between the two reads, the mailbox takes it out of the
-    /// batch, and the item gets a mark too.
-    ///
-    /// - Parameters:
-    ///   - id: The id that `mailbox` gave the item.
-    ///   - mailbox: ``SessionOutbox/messages`` or ``compactionRequests``.
-    /// - Returns: What happened to the item.
-    nonisolated func requestCancel<Message: Sendable, Answer: Sendable>(
-        of id: MessageID, in mailbox: FoundationModelsExtras.Mailbox<Message, Answer>
-    ) -> MessageCancellationResult {
-        let result = mailbox.depth.running.contains(id) ? .cancelledInSubmission : mailbox.cancel(id)
-        if result == .cancelledInSubmission {
-            cancelMarks.mark(id)
-        }
-        return result
-    }
-
-    /// The second half of a cancel of the message or the caller compaction
-    /// `id`, after ``requestCancel(of:in:)`` gave `result`.
+    /// The second half of a cancel of the caller compaction `id`, after the
+    /// first half gave `result`.
     ///
     /// - ``MessageCancellationResult/withdrawn``: the pump can wait for that
-    ///   letter, so it is released (``releasePumpAwaitingLetter()``). A
-    ///   caller message gets its terminal event
-    ///   ``SessionEvent/cancelled(_:)``: the pump never took it.
-    /// - ``MessageCancellationResult/cancelledInSubmission``: the work that
-    ///   carries `id` is stopped (``requestCancelOfRunningWork()``). The
-    ///   mailbox does not stop the work itself. The work can have ended
-    ///   before this call; then no work carries `id`, and nothing stops.
-    ///   The message gets no event here: the answer that carries it sends
-    ///   its terminal event, or the pump sends ``SessionEvent/cancelled(_:)``
-    ///   when it drops the message before the answer holds it
-    ///   (``liveLetters(_:of:)``).
+    ///   request, so it is released (``releasePumpAwaitingCompaction()``).
+    /// - ``MessageCancellationResult/cancelledInSubmission``: the compaction
+    ///   is stopped (``requestCancelOfRunningWork()``) when it still runs.
     /// - ``MessageCancellationResult/alreadyAnswered``: nothing to do.
     ///
     /// - Parameters:
-    ///   - id: The id of the message or of the compaction request.
-    ///   - mailID: The correlation id of the caller message, or `nil` for a
-    ///     caller compaction.
+    ///   - id: The id of the compaction request.
     ///   - result: What the first half did.
-    func settleCancel(of id: MessageID, mailID: MailID?, _ result: MessageCancellationResult) {
+    private func settleCompactionCancel(
+        of id: FoundationModelsExtras.MessageID, _ result: MessageCancellationResult
+    ) {
         switch result {
         case .withdrawn:
-            releasePumpAwaitingLetter()
-            emitCancelled(mailID.map { [$0] } ?? [])
+            releasePumpAwaitingCompaction()
         case .cancelledInSubmission:
-            guard runningWorkCarries(id) else { return }
+            guard case .compaction(id) = pumpWork?.kind else { return }
             requestCancelOfRunningWork()
         case .alreadyAnswered:
             return

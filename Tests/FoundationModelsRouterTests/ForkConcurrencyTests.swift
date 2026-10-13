@@ -442,7 +442,7 @@ struct ForkConcurrencyTests {
         let fork1 = try await root.fork(workingDirectory: nil)
         let fork2 = try await root.fork(workingDirectory: nil)
         let fork3 = try await root.fork(workingDirectory: nil)
-        let callers: [RoutedSession] = [root, fork1, fork2, fork3]
+        let callers: [any RoutedSession] = [root, fork1, fork2, fork3]
 
         let queue = container.generationQueue
 
@@ -500,7 +500,7 @@ struct ForkConcurrencyTests {
         // Each fork is held in `forks` while the next one is made, so every
         // earlier fork is still alive when the last one returns. A gate that
         // counted forks would suspend one of these calls; none of them can.
-        var forks: [RoutedSession] = []
+        var forks: [any RoutedSession] = []
         for _ in 0..<Self.uncountedForkCount {
             forks.append(try await root.fork(workingDirectory: nil))
         }

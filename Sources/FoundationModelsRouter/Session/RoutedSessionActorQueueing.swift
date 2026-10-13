@@ -2,97 +2,123 @@ import FoundationModels
 import FoundationModelsExtras
 import Tracing
 
-/// The message-queue and elicitation-answer surface of ``RoutedSessionActor``
-/// (`generation-queue.md`, section 5.4). The queue methods post to, read and
-/// change the caller messages in the mailbox ``SessionOutbox/messages``; the
-/// elicitation methods delegate to ``mailbox``.
+/// The mail surface of ``RoutedSessionActor`` (`mailbox.md`, sections 4 and
+/// 5): the ``MailSink`` requirement of ``RoutedSession``, the send of a
+/// prompt, the reads of the mail queue, and the answers to an elicitation.
+/// The queue is ``SessionOutbox/queue``; the elicitation methods also
+/// delegate to ``mailbox``.
 extension RoutedSessionActor {
-    /// See ``RoutedSession/send(_:)-(Transcript.Prompt)``. Posts one caller
-    /// message and wakes the pump. It waits for no submission and no answer.
+    /// See ``RoutedSession/mail(_:)``. Subscribes to the output of the mail
+    /// first, then puts the mail in the queue, so the caller loses no event
+    /// of it. Then it wakes the pump.
     ///
-    /// - Parameter prompt: The prompt of the message.
-    /// - Returns: The correlation id of the message.
-    @discardableResult
-    func send(_ prompt: Transcript.Prompt) async -> MailID {
-        let message = SessionMessage(
-            prompt: prompt, requestedMaxTokens: nil, reader: .reply, serviceContext: ServiceContext.current)
-        await enqueue(message)
-        return message.mailID
+    /// The id must be new to the session: not in the queue, and not in the
+    /// open answer. The open answer is read before the put and again after
+    /// it, because the pump can take a mail with the same id between the
+    /// two. A hit after the put, while this mail is still queued, cancels
+    /// this mail again.
+    ///
+    /// - Parameter mail: The mail to put in the queue.
+    /// - Returns: The output of the mail, up to and including its terminal
+    ///   event.
+    /// - Throws: ``MailRefusal/duplicateID(_:)`` when the queue or the open
+    ///   answer has the id, or ``MailRefusal/closed`` after ``close()``.
+    nonisolated func mail(_ mail: Mail) throws -> MailSubscription<SessionOutput> {
+        guard !openAnswerMail.contains(mail.id) else { throw MailRefusal.duplicateID(mail.id) }
+        let (subscription, key) = outputHub.subscribe(to: mail.id)
+        do {
+            try outbox.queue.put(mail)
+        } catch {
+            outputHub.unsubscribe(key)
+            throw error
+        }
+        if openAnswerMail.contains(mail.id), outbox.queue.cancel(mail.id) != nil {
+            outputHub.unsubscribe(key)
+            throw MailRefusal.duplicateID(mail.id)
+        }
+        outbox.noteCallerContext(ServiceContext.current, for: mail.id)
+        Task { await self.mailDidArrive() }
+        return subscription
     }
 
-    /// Posts `message` behind every caller message that waits, records the
-    /// new depth of the queue, and wakes the pump.
-    ///
-    /// The post, the record and the wake have no suspension point between
-    /// them, and the pump takes a batch only on this actor. So a caller that
-    /// installs its cancellation handler with no suspension point after this
-    /// call finds its message still waiting when the handler runs.
-    ///
-    /// - Parameter message: The message to post.
-    /// - Returns: The id that the mailbox gave the message, and its answer.
-    @discardableResult
-    func enqueue(_ message: SessionMessage) async -> (id: MessageID, answer: MailboxAnswer<String>) {
-        await attachOutboxJournalIfNeeded()
-        let posted = outbox.messages.post(message)
+    /// Records the new depth of the queue and wakes the pump, after
+    /// ``mail(_:)`` put a mail in the queue.
+    private func mailDidArrive() {
         recordMessageQueueDepth()
         wakePump()
-        return posted
     }
 
-    /// A snapshot of every caller message that waits, in the order the
-    /// messages arrived.
+    /// See ``RoutedSession/send(_:)-(Transcript.Prompt)``. Sends one user
+    /// message in reply mode, with the text of the `.text` segments of
+    /// `prompt`, joined with no separator. It waits for no submission and no
+    /// answer.
     ///
-    /// The read runs on this actor. The delivery letter of an answer that
-    /// only mail starts (``PumpWork/mailDeliveryLetter``) waits only between
-    /// its post and its take, with no suspension point between the two on
-    /// this actor, so the snapshot never shows it.
-    func pendingMessages() async -> [(id: MailID, prompt: Transcript.Prompt)] {
-        outbox.messages.pending.map { (id: $0.message.mailID, prompt: $0.message.prompt) }
-    }
-
-    /// Replaces the prompt of a caller message that waits. The message is
-    /// found by its correlation id, and replaced in the mailbox by the id
-    /// that the mailbox gave it.
-    ///
-    /// - Parameters:
-    ///   - id: The correlation id of the message.
-    ///   - prompt: The new prompt.
-    /// - Returns: Whether the message waited and was changed.
+    /// - Parameter prompt: The prompt of the message.
+    /// - Returns: The id of the mail.
+    /// - Throws: ``PromptRefusal/noTextSegment`` when `prompt` has no `.text`
+    ///   segment, because the session sends only the text of a prompt to the
+    ///   model; ``MailRefusal/closed`` when the call comes after ``close()``.
     @discardableResult
-    nonisolated func replace(id: MailID, prompt: Transcript.Prompt) async -> MessageQueueMutationResult {
-        guard let letter = outbox.messages.pending.first(where: { $0.message.mailID == id }) else {
-            return .alreadySent
+    nonisolated func send(_ prompt: Transcript.Prompt) throws -> MailID {
+        let hasText = prompt.segments.contains { segment in
+            guard case .text = segment else { return false }
+            return true
         }
-        return outbox.replace(id: letter.id, prompt: prompt)
+        guard hasText else { throw PromptRefusal.noTextSegment }
+        let text = TranscriptEntryMapper.flattenedText(prompt)
+        let message = Mail(sender: .user, body: .userMessage(prompt: text, options: UserMessageOptions()))
+        _ = try mail(message)
+        return message.id
     }
 
-    /// The mail that waits, by kind, and the correlation ids of the caller
-    /// messages of the running answer (``deliveredMailIds``). The waiting
-    /// caller messages are ``MailKind/userMessage``, and the run events that
-    /// wait in ``outbox`` are ``MailKind/runEvent``.
-    ///
-    /// The delivery letter of an answer that only mail starts
-    /// (``PumpWork/mailDeliveryLetter``) is no caller message. It never waits
-    /// when this actor reads the mailbox (``pendingMessages()``), and the
-    /// running answer carries no letter for it, so the depth never counts
-    /// it. The read of the mailbox comes after the one suspension point, so
-    /// both of its counts come from one moment on this actor.
-    func mailQueueDepth() async -> MailQueueDepth {
-        let runEvents = await outbox.pending().events.count
-        let userMessages = outbox.messages.depth.waiting
-        let counts: [MailKind: Int] = [.userMessage: userMessages, .runEvent: runEvents]
+    /// See ``RoutedSession/pendingMessages()``. The queued mail of all
+    /// kinds, in queue order.
+    func pendingMessages() -> [Mail] {
+        outbox.queue.pending
+    }
+
+    /// See ``RoutedSession/mailQueueDepth()``. The queued mail by kind
+    /// (``MailQueue/depthByKind``), and the ids of the mail of the open
+    /// answer (``openAnswerMail``). The count of the queued mail is the sum
+    /// of the counts of each kind, so both come from one read of the queue.
+    func mailQueueDepth() -> MailQueueDepth {
+        let depthByKind = outbox.queue.depthByKind
         return MailQueueDepth(
-            waiting: userMessages + runEvents, depthByKind: counts.filter { $0.value > 0 },
-            running: deliveredMailIds)
+            waiting: depthByKind.values.reduce(0, +), depthByKind: depthByKind, running: openAnswerMail.all)
     }
 
     /// Delivers the user's answer to a pending elicitation on this session.
+    ///
+    /// When the run plane delivered the answer to the waiting run, the
+    /// answer also goes to the session as ``MailBody/elicitationAnswer(id:response:)``
+    /// mail, as if the user made one more post (`mailbox.md`, section 5). It
+    /// is user-type mail, so it starts an answer.
+    ///
     /// - Returns: The ``ElicitationAnswerDelivery``.
     @discardableResult
     nonisolated func respond(elicitationId: String, response: ElicitationResponse) async -> ElicitationAnswerDelivery {
-        await deliver(toElicitation: elicitationId, orReturn: .noPendingElicitation) {
-            await mailbox.respond(elicitationId: $0, response)
+        await deliver(toElicitation: elicitationId, orReturn: .noPendingElicitation) { id in
+            let delivery = await mailbox.respond(elicitationId: id, response)
+            if delivery == .delivered {
+                postElicitationAnswer(id: id, response: response)
+            }
+            return delivery
         }
+    }
+
+    /// Puts the answer to the elicitation `id` in the queue as
+    /// ``MailBody/elicitationAnswer(id:response:)`` mail, with the sender
+    /// ``MailSender/elicitation(_:)``.
+    ///
+    /// - Parameters:
+    ///   - id: The id of the elicitation.
+    ///   - response: The answer of the user.
+    private nonisolated func postElicitationAnswer(id: ULID, response: ElicitationResponse) {
+        let answer = Mail(sender: .elicitation(id), body: .elicitationAnswer(id: id, response: response))
+        // The mail has a new id, so the session refuses it only after
+        // ``close()``. Then no answer reads it anymore, and the run already
+        // has the answer.
+        _ = try? mail(answer)
     }
 
     /// Signals that the out-of-band flow of an accepted URL-mode elicitation finished.

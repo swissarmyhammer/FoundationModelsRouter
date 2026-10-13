@@ -276,7 +276,7 @@ struct RespondRunPlaneDrainTests {
     /// - Parameters:
     ///   - session: The session whose runs settle.
     ///   - gates: The latches the background runs' bodies are waiting on.
-    private static func releaseBackgroundRuns(on session: RoutedSession, opening gates: [RunLatch]) async {
+    private static func releaseBackgroundRuns(on session: any RoutedSession, opening gates: [RunLatch]) async {
         let tokens: [String] = await session.mailbox.backgroundRuns().map(\.completionToken)
         for gate in gates {
             await gate.open()
@@ -302,7 +302,7 @@ struct RespondRunPlaneDrainTests {
     /// - Throws: ``ConditionNeverHeld`` when the `.timeLimit` of the suite
     ///   ended the wait.
     private static func backgroundTokens(
-        atLeast count: Int, on session: RoutedSession
+        atLeast count: Int, on session: any RoutedSession
     ) async throws -> [String] {
         try await AwaitedCondition.wait(until: { await session.mailbox.backgroundRuns().count >= count })
         return await session.mailbox.backgroundRuns().map(\.completionToken)
@@ -322,7 +322,7 @@ struct RespondRunPlaneDrainTests {
     /// - Returns: The run's terminal event.
     /// - Throws: ``SignalNeverArrived`` when the wait ended and the run did
     ///   not settle.
-    private static func settledTerminal(of token: String, on session: RoutedSession) async throws -> OperationEvent {
+    private static func settledTerminal(of token: String, on session: any RoutedSession) async throws -> OperationEvent {
         let outcome = await session.mailbox.wait(completionToken: token, seconds: nil)
         guard case .settled(let terminal) = outcome else {
             Issue.record("expected the run to settle, got \(outcome)")
@@ -591,7 +591,7 @@ struct RespondRunPlaneDrainTests {
     // MARK: - No caller waits on a run
 
     @Test(
-        "a respond whose submission backgrounded work returns at once: the run keeps running, and a cancel then finds no work to stop"
+        "a respond whose submission backgrounded work returns at once: the run keeps running, and a stop then finds no work to stop"
     )
     @MainActor
     func aRespondDoesNotWaitForTheRunItStarted() async throws {
@@ -612,17 +612,17 @@ struct RespondRunPlaneDrainTests {
         #expect(!answer.hasPrefix(BackgroundingBackend.answerPrefix))
         #expect(backend.receivedPrompts.count == 1)
 
-        // A run is not work of the pump, so a cancel finds nothing to stop,
-        // and the run stays running, exactly as it was.
+        // A run is not work of the pump, so a stop of the running work finds
+        // nothing to stop, and the run stays running, exactly as it was.
         #expect(await BoundedWait.pumpStops(on: session))
-        #expect(await session.cancel() == .nothingToCancel)
+        #expect(await session.stopRunningWork() == false)
         #expect(await session.mailbox.backgroundRuns().count == 1)
 
         await Self.releaseBackgroundRuns(on: session, opening: [gate])
     }
 
     @Test(
-        "cancelling the caller's own task reaches its running submission, and the run that submission already started keeps running"
+        "cancelling the caller's own task ends its wait, the running submission goes on to its answer, and the run it started keeps running"
     )
     @MainActor
     func cancellingTheCallersTaskLeavesTheStartedRunRunning() async throws {
@@ -640,20 +640,30 @@ struct RespondRunPlaneDrainTests {
         ])
         let backend = try #require(container.lastBackend)
 
+        let feed = await session.streamSessionEvents()
         let responding = Task { try await session.respond(to: "run the job") }
         _ = try #require(try await Self.backgroundTokens(atLeast: 1, on: session).first)
 
-        // The caller's own task is cancelled. The model work of this stub
-        // ignores the cancel, so the submission still answers when its hold
-        // opens, with the pending envelope.
+        // The caller's own task is cancelled. Its mail is in the open answer,
+        // so the cancel ends only the wait of the caller: the caller gets
+        // CancellationError, and the submission still answers when its hold
+        // opens, with the pending envelope. The hold opens before the test
+        // waits for the caller, so a fault that makes the caller wait for the
+        // answer fails the test and does not hang it.
         responding.cancel()
         await holdFirstSubmission.open()
-        let answer = try await responding.value
-        #expect(!answer.hasPrefix(BackgroundingBackend.answerPrefix))
+        await #expect(throws: CancellationError.self) {
+            try await responding.value
+        }
+        let events = await feed.eventsToTheFirstAnswerEnd()
+        let answer = try #require(events.answers.first)
+        #expect(events.answerFailures.isEmpty)
+        #expect(!answer.reply.hasPrefix(BackgroundingBackend.answerPrefix))
         #expect(backend.receivedPrompts.count == 1)
 
-        // A cancelled submission stops; it does not sweep. The run it started
-        // is still running, exactly as it was.
+        // The cancel of a caller does not stop the answer, and it does not
+        // sweep. The run that the submission started is still running,
+        // exactly as it was.
         #expect(await session.mailbox.backgroundRuns().count == 1)
 
         await Self.releaseBackgroundRuns(on: session, opening: [gate])

@@ -581,20 +581,24 @@ struct GuidedGenerationTests {
         // gives for the unguided path, now for a session vended through
         // `makeGuidedSession`.
         let triggeringPrompt = Self.warmUpPrompt(Self.autoCompactionAnswerCount)
-        let events = eventsInsideAnswerFrame(try await collect(session.streamEvents(to: triggeringPrompt, maxTokens: nil)))
+        // Keep all the collected events. The `answered` event is the frame
+        // end, and `eventsInsideAnswerFrame` removes it.
+        let collected = try await collect(session.streamEvents(to: triggeringPrompt, maxTokens: nil))
+        let events = eventsInsideAnswerFrame(collected)
 
-        guard let result = events.leadingCompaction else {
-            Issue.record("expected .compactionStarted then .compaction with one id, got \(Array(events.prefix(2)))")
-            return
-        }
+        let result = try #require(
+            events.leadingCompaction,
+            "expected .compactionStarted then .compaction with one id, got \(Array(events.prefix(2)))")
         #expect(result.stagesApplied.contains("Summarization"))
-        // The summary text is flash's own canned response — proof flash,
-        // not the session's own model, actually produced it, mirroring the
-        // unguided proof.
+        // The summary text is the canned response of flash. This proves that
+        // flash made the summary, not the model of the session, as the
+        // unguided proof does.
         #expect(result.summary == "FLASH-SUMMARY")
 
-        // The triggering answer's own work still ran normally afterward.
-        #expect(events.contains(.textDelta(Self.autoCompactionCannedText)))
+        // The work of the triggering answer ran after the compaction. A guided
+        // session sends no `textDelta`: the stream message runs as a reply
+        // under the grammar. The reply text is in the `answered` event.
+        #expect(collected.answers.map(\.reply) == [Self.autoCompactionCannedText])
     }
 
     @Test("the grammar travels with the session so a milestone-9 fork inherits it")

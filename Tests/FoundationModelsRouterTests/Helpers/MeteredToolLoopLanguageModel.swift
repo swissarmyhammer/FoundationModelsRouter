@@ -150,7 +150,7 @@ struct MeteredToolLoopLanguageModel: LanguageModel {
 /// that holds its run journal, and the directory the router cached into.
 struct MeteredToolLoopSessionFixture {
     /// The vended session a test drives its answer on.
-    let session: RoutedSession
+    let session: any RoutedSession
 
     /// The tool every call but the last asks for.
     let tool: MarkerEmittingTool

@@ -3,20 +3,21 @@ import Foundation
 /// A report that the session held new mail and started no answer for it,
 /// carried by ``SessionEvent/mailDeliveryPaused(_:)`` (task ^9bxas0w).
 ///
-/// Mail causes the next submission of a session with no caller call
+/// Run mail causes the next submission of a session with no caller call
 /// (`generation-queue.md`, section 5.4). A model that starts one more
 /// background run in each answer thus gets one more answer for each run, with
 /// no end. When ``SessionConfiguration/mailOnlyAnswerLimit`` answers in a row
-/// had no caller message, the session holds the new mail in its queue. The
-/// next caller message carries the held mail into its submission, and the
-/// count starts again. The mail is never lost.
+/// had no user-type mail (a user message, an agent message or an elicitation
+/// answer), the session holds the new run mail in its queue. The next
+/// user-type mail carries the held mail into its submission, and the count
+/// starts again. The mail is never lost.
 public struct MailDeliveryPause: Sendable, Equatable, CustomStringConvertible {
     /// The limit in force: the most answers in a row that mail alone starts.
     /// The session reached it when it held the mail.
     public let limit: Int
 
-    /// The mail the session held, in queue order. The next caller message
-    /// carries it, with the mail that arrives before that message.
+    /// The mail the session held, in queue order. The next user-type mail
+    /// carries it, with the mail that arrives before that user-type mail.
     public let heldMail: [OperationEvent]
 
     /// Creates a report.

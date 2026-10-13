@@ -86,7 +86,7 @@ public struct SessionConfigurationRestorationReport: Sendable, Equatable {
 /// published surface.
 struct RestoredSessionTree: Sendable {
     /// The restored root session.
-    let root: RoutedSession
+    let root: any RoutedSession
 
     /// What the restore could not re-apply from the recorded configuration
     /// envelopes.
@@ -97,15 +97,15 @@ struct RestoredSessionTree: Sendable {
     let contextMismatches: [RestoredSession.ContextMismatch]
 
     /// Every restored session, keyed by id.
-    private let sessionsById: [ULID: RoutedSession]
+    private let sessionsById: [ULID: any RoutedSession]
 
     /// The loaded tree, used for its parent/child linkage.
     private let tree: TranscriptTree
 
     /// Creates a restored session tree.
     init(
-        root: RoutedSession,
-        sessionsById: [ULID: RoutedSession],
+        root: any RoutedSession,
+        sessionsById: [ULID: any RoutedSession],
         tree: TranscriptTree,
         configurationReport: SessionConfigurationRestorationReport,
         contextMismatches: [RestoredSession.ContextMismatch]
@@ -121,7 +121,7 @@ struct RestoredSessionTree: Sendable {
     ///
     /// - Parameter id: The session's span id.
     /// - Returns: The restored session, or `nil` if `id` is not in the tree.
-    func session(_ id: ULID) -> RoutedSession? {
+    func session(_ id: ULID) -> (any RoutedSession)? {
         sessionsById[id]
     }
 
@@ -129,7 +129,7 @@ struct RestoredSessionTree: Sendable {
     ///
     /// - Parameter id: The parent session's span id.
     /// - Returns: Its restored children, or empty if `id` is unknown or a leaf.
-    func children(of id: ULID) -> [RoutedSession] {
+    func children(of id: ULID) -> [any RoutedSession] {
         tree.children(of: id).compactMap { sessionsById[$0.id] }
     }
 }
@@ -238,7 +238,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             throw SessionTreeRestorationError.notARootSession(rootId)
         }
 
-        var sessionsById: [ULID: RoutedSession] = [:]
+        var sessionsById: [ULID: any RoutedSession] = [:]
         // The rehydration match (task ^ne5g9jn): each node's recorded tool
         // names are checked against the supplied instances' names, and every
         // recorded name with no supplied instance is collected here — one
@@ -253,7 +253,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         // ``RestoredSession/ContextMismatch`` for why this is a typed
         // warning rather than a `modelMismatch`-style error.
         var contextMismatches: [RestoredSession.ContextMismatch] = []
-        func restore(_ node: SessionNode) async throws -> RoutedSession {
+        func restore(_ node: SessionNode) async throws -> any RoutedSession {
             let slot = node.sidecar.slot
             let model = node.sidecar.model
             let routedLLM: RoutedLLM
@@ -307,7 +307,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         /// - Returns: The restored session.
         /// - Throws: ``TranscriptTreeError`` or ``TranscriptReconstructionError``
         ///   for what the transcript read throws.
-        func rebuild(_ node: SessionNode, on routedLLM: RoutedLLM) async throws -> RoutedSession {
+        func rebuild(_ node: SessionNode, on routedLLM: RoutedLLM) async throws -> any RoutedSession {
             // Read again from the node's own sidecar rather than handed down:
             // `restore(_:)` already checked both against `routedLLM`, so these
             // two are the recorded facts this node is rebuilt with.

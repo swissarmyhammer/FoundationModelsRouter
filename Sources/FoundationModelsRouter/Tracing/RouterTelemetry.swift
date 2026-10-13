@@ -555,8 +555,8 @@ enum RouterTelemetry {
         /// resident models and the load that runs now.
         static let residentBytes = prefix + "model_pool.resident_bytes"
 
-        /// The recorder of the count of the caller messages that wait in the
-        /// queue of a session, at each post and at each take.
+        /// The recorder of the count of all mail that waits in the mail queue
+        /// of a session, of all kinds, at each post and at each take.
         static let sessionQueueDepth = prefix + "session.queue_depth"
 
         /// The gauge of the count of the submissions that wait in the

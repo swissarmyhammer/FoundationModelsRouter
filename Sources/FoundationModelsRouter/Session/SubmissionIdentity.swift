@@ -39,8 +39,9 @@ public struct SubmissionStart: Sendable, Equatable {
     /// The raw value is the `submission.cause` attribute of the span of the
     /// submission, so it is stable API.
     public enum Cause: String, Sendable, Equatable {
-        /// The submission carries at least one caller message: a message that
-        /// ``RoutedSession/send(_:)-(Transcript.Prompt)``,
+        /// The submission carries at least one user-type mail: a user message,
+        /// an agent message or an elicitation answer. For example, a message
+        /// that ``RoutedSession/send(_:)-(Transcript.Prompt)``,
         /// ``RoutedSession/respond(to:maxTokens:)`` or a stream method sent.
         case message
 
@@ -51,8 +52,8 @@ public struct SubmissionStart: Sendable, Equatable {
         /// The submission continues the chain of an earlier submission: after
         /// a compaction at a tool result, a stop at the output ceiling, a
         /// retry after a context overflow, a rejected tool call, or a stop for
-        /// repeated lines. It carries the caller messages that joined the
-        /// chain when it started.
+        /// repeated lines. It carries the mail that joined the chain when it
+        /// started: user-type mail and run mail.
         case continuation
     }
 

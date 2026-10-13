@@ -169,11 +169,13 @@ extension RoutedSessionActor: BackgroundRunSettlementObserver {
     /// ends, and only then returns, and the mailbox settles the run when the
     /// body returns. So the terminal is staged before this call, and the
     /// wake of this call finds it. The idle check (``isIdle()``) needs this
-    /// order. The sweep of a drain is the one case where the terminal is
-    /// staged after the settlement: the sweep settles the run with no call
-    /// here, and the body of the run stages its own terminal when it ends.
-    /// The drain waits for that body, and holds that mail at its end
-    /// (``drain()``). The pump delivers a terminal only when it is both
+    /// order. A sweep (of ``cancelAll()`` or of the end of all work of
+    /// ``close()``) is the one case where the terminal comes after the
+    /// settlement: the sweep settles the run with no call here, and the body
+    /// of the run posts its own terminal when it ends. A stopped run makes no
+    /// mail (``SessionOutbox/ignoreRunMail(of:)``), so that terminal is
+    /// journaled and not staged. The end of all work of ``close()`` waits
+    /// for that body. The pump delivers a terminal only when it is both
     /// staged and settled.
     ///
     /// A held terminal (``SessionOutbox/PendingEvent/isHeld``) stays held: a
@@ -181,8 +183,8 @@ extension RoutedSessionActor: BackgroundRunSettlementObserver {
     /// submission already took the terminal and gave it back.
     ///
     /// The settlement is a change of the work of the session
-    /// (``signalWorkChange()``): a run that settles while a drain runs
-    /// starts no pump, so the pump does not report it.
+    /// (``signalWorkChange()``): a run that settles while the end of all
+    /// work of ``close()`` runs starts no pump, so the pump does not report it.
     ///
     /// - Parameter terminal: The terminal the mailbox forwarded.
     func deliver(settledTerminal terminal: OperationEvent) async {

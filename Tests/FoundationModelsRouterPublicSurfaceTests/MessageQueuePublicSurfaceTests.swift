@@ -3,14 +3,17 @@ import Testing
 
 import FoundationModelsRouter
 
-/// Holds the message API of ``RoutedSession`` to the access level a consumer
-/// outside this package needs (task ^cbhpdjy): ``RoutedSession/send(_:)-(Transcript.Prompt)``,
-/// ``MailID``, ``RoutedSession/cancel()`` and
-/// ``RoutedSession/cancel(message:)``, with their result types.
+/// Holds the mail API of ``RoutedSession`` to the access level a consumer
+/// outside this package needs (task ^cbhpdjy, `mailbox.md`, section 5):
+/// ``RoutedSession/mail(_:)``, ``RoutedSession/send(_:)-(Transcript.Prompt)``,
+/// ``MailID``, the signals ``RoutedSession/cancel(_:)``,
+/// ``RoutedSession/cancelAll()`` and ``RoutedSession/replace(_:with:)``, which
+/// each return a ``SignalID``, the waits ``RoutedSession/awaitTerminal(of:)-(MailID)``
+/// and ``RoutedSession/awaitTerminal(of:)-(SignalID)``, and the refusal types.
 ///
 /// The import is plain, with no `@testable`, so a member or a case that loses
 /// `public` stops this file from compiling before a single test runs.
-@Suite("RoutedSession message API over a plain import")
+@Suite("RoutedSession mail API over a plain import")
 struct MessageQueuePublicSurfaceTests {
     /// What a consumer's queue view keeps for one message it sent.
     struct SentMessage {
@@ -25,81 +28,114 @@ struct MessageQueuePublicSurfaceTests {
     ///   - text: The prompt text to send.
     ///   - session: The session to send it to.
     /// - Returns: The sent message.
-    static func send(_ text: String, to session: any RoutedSession) async -> SentMessage {
-        SentMessage(id: await session.send(text))
+    /// - Throws: The refusal of the session.
+    static func send(_ text: String, to session: any RoutedSession) throws -> SentMessage {
+        SentMessage(id: try session.send(text))
     }
 
-    /// Takes back a sent message, as a consumer's "remove" button does, and
-    /// labels the outcome.
+    /// Mails one user message to `session`, as a consumer that reads the
+    /// output of its own mail does, and keeps the subscription.
+    ///
+    /// - Parameters:
+    ///   - text: The prompt text to send.
+    ///   - session: The session to mail.
+    /// - Returns: The output of the mail.
+    /// - Throws: The refusal of the session.
+    static func mail(_ text: String, to session: any RoutedSession) throws -> MailSubscription<SessionOutput> {
+        try session.mail(
+            Mail(sender: .user, body: .userMessage(prompt: text, options: UserMessageOptions(mode: .stream))))
+    }
+
+    /// Takes back a sent message while it waits, as a consumer's "remove"
+    /// button does, and waits for the end of the signal.
     ///
     /// - Parameters:
     ///   - message: The message to cancel.
     ///   - session: The session the message was sent to.
-    /// - Returns: The label of the outcome.
-    static func takeBack(_ message: SentMessage, from session: any RoutedSession) async -> String {
-        label(for: await session.cancel(message: message.id))
+    /// - Returns: The terminal event of the signal.
+    /// - Throws: `CancellationError`, or the refusal of a closed session.
+    static func takeBack(_ message: SentMessage, from session: any RoutedSession) async throws -> SessionEvent {
+        try await session.awaitTerminal(of: session.cancel(message.id))
     }
 
-    /// Stops a session, as a consumer's "stop" button does, and labels the
-    /// outcome.
+    /// Changes the text of a sent message while it waits, as a consumer's
+    /// "edit" button does, and gives the id of the signal.
+    ///
+    /// - Parameters:
+    ///   - message: The message to change.
+    ///   - text: The new prompt text.
+    ///   - session: The session the message was sent to.
+    /// - Returns: The id of the signal.
+    static func edit(_ message: SentMessage, to text: String, in session: any RoutedSession) -> SignalID {
+        session.replace(message.id, with: MailBody.userMessage(prompt: text, options: UserMessageOptions()))
+    }
+
+    /// Stops all work of a session, as a consumer's "stop" button does, and
+    /// gives the id of the signal at once.
     ///
     /// - Parameter session: The session to stop.
-    /// - Returns: The label of the outcome.
-    static func stop(_ session: any RoutedSession) async -> String {
-        label(for: await session.cancel())
+    /// - Returns: The id of the signal.
+    static func stop(_ session: any RoutedSession) -> SignalID {
+        session.cancelAll()
     }
 
-    /// The label a consumer shows for the outcome of a message cancel.
+    /// Waits for the end of a sent message, as a consumer's progress view
+    /// does.
     ///
-    /// - Parameter result: The outcome.
+    /// - Parameters:
+    ///   - message: The message to wait for.
+    ///   - session: The session the message was sent to.
+    /// - Returns: The terminal event of the message.
+    /// - Throws: `CancellationError`, or the refusal of a closed session.
+    static func end(of message: SentMessage, in session: any RoutedSession) async throws -> SessionEvent {
+        try await session.awaitTerminal(of: message.id)
+    }
+
+    /// The label a consumer shows for a refused mail.
+    ///
+    /// - Parameter refusal: The refusal.
     /// - Returns: The label.
-    static func label(for result: MessageCancellationResult) -> String {
-        switch result {
-        case .withdrawn:
-            "removed from the queue"
-        case .cancelledInSubmission:
-            "stopping"
-        case .alreadyAnswered:
-            "already answered"
+    static func label(for refusal: MailRefusal) -> String {
+        switch refusal {
+        case .duplicateID:
+            "already sent"
+        case .closed:
+            "session closed"
         }
     }
 
-    /// The label a consumer shows for the outcome of a session cancel.
+    /// The label a consumer shows for a refused prompt.
     ///
-    /// - Parameter result: The outcome.
+    /// - Parameter refusal: The refusal.
     /// - Returns: The label.
-    static func label(for result: CancellationResult) -> String {
-        switch result {
-        case .requested:
-            "stopping"
-        case .nothingToCancel:
-            "idle"
+    static func label(for refusal: PromptRefusal) -> String {
+        switch refusal {
+        case .noTextSegment:
+            "no text"
         }
     }
 
-    @Test("a consumer names each outcome of cancel(message:)")
-    func aConsumerNamesEachMessageCancellationOutcome() {
-        #expect(Self.label(for: MessageCancellationResult.withdrawn) == "removed from the queue")
-        #expect(Self.label(for: MessageCancellationResult.cancelledInSubmission) == "stopping")
-        #expect(Self.label(for: MessageCancellationResult.alreadyAnswered) == "already answered")
-    }
-
-    @Test("a consumer names each outcome of cancel()")
-    func aConsumerNamesEachCancellationOutcome() {
-        #expect(Self.label(for: CancellationResult.requested) == "stopping")
-        #expect(Self.label(for: CancellationResult.nothingToCancel) == "idle")
+    @Test("a consumer names each refusal of a mail and of a prompt")
+    func aConsumerNamesEachRefusal() {
+        #expect(Self.label(for: MailRefusal.duplicateID(MailID())) == "already sent")
+        #expect(Self.label(for: MailRefusal.closed) == "session closed")
+        #expect(Self.label(for: PromptRefusal.noTextSegment) == "no text")
     }
 
     @Test(
-        "a consumer keys its queue view by MailID, and drives send, take-back and stop through the public protocol"
+        "a consumer keys its queue view by MailID, and drives mail, signals and waits through the public protocol"
     )
-    func aConsumerDrivesTheMessageAPIThroughTheProtocol() {
-        // The four calls a queue view makes type-check over the plain import.
-        let send: (String, any RoutedSession) async -> SentMessage = Self.send(_:to:)
-        let takeBack: (SentMessage, any RoutedSession) async -> String = Self.takeBack(_:from:)
-        let stop: (any RoutedSession) async -> String = Self.stop(_:)
-        let sendPrompt: (any RoutedSession) async -> MailID = { await $0.send(Transcript.Prompt(segments: [])) }
-        withExtendedLifetime((send, takeBack, stop, sendPrompt)) {}
+    func aConsumerDrivesTheMailAPIThroughTheProtocol() {
+        // The calls a queue view makes type-check over the plain import.
+        let send: (String, any RoutedSession) throws -> SentMessage = Self.send(_:to:)
+        let mail: (String, any RoutedSession) throws -> MailSubscription<SessionOutput> = Self.mail(_:to:)
+        let takeBack: (SentMessage, any RoutedSession) async throws -> SessionEvent = Self.takeBack(_:from:)
+        let edit: (SentMessage, String, any RoutedSession) -> SignalID = Self.edit(_:to:in:)
+        let stop: (any RoutedSession) -> SignalID = Self.stop(_:)
+        let endOfSignal: (SignalID, any RoutedSession) async throws -> SessionEvent = { try await $1.awaitTerminal(of: $0) }
+        let end: (SentMessage, any RoutedSession) async throws -> SessionEvent = Self.end(of:in:)
+        let sendPrompt: (any RoutedSession) throws -> MailID = { try $0.send(Transcript.Prompt(segments: [])) }
+        withExtendedLifetime((send, mail, takeBack, edit, stop, endOfSignal, end, sendPrompt)) {}
 
         // A view keeps a message in a dictionary keyed by its id, and shows it.
         let identifier: Any.Type = MailID.self

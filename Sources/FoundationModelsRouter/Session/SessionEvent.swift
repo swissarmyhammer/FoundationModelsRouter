@@ -272,8 +272,8 @@ public enum SessionEvent: Sendable, Equatable {
 
     /// The session held new mail and started no answer for it, because
     /// ``SessionConfiguration/mailOnlyAnswerLimit`` answers in a row had no
-    /// caller message (`generation-queue.md`, section 5.4). The held mail
-    /// waits in the queue of the session, and the next caller message
+    /// user-type mail (`generation-queue.md`, section 5.4). The held mail
+    /// waits in the queue of the session, and the next user-type mail
     /// carries it into its submission. Only
     /// ``RoutedSession/streamSessionEvents()`` carries this event, because no
     /// answer runs when the session holds the mail. The session sends one for
@@ -287,11 +287,18 @@ public enum SessionEvent: Sendable, Equatable {
     /// ``answerFailed(_:)`` of the same answer follows.
     case mailDelivered(MailID)
 
-    /// The mail with this id left the queue before the pump took it: a
-    /// cancel removed it, or a drain or a close removed the queued mail. The
-    /// model never sees it. This is the terminal event of the mail: no other
-    /// event of the mail follows.
+    /// The mail with this id left the queue before the pump took it:
+    /// ``RoutedSession/cancel(_:)``, ``RoutedSession/cancelAll()`` or
+    /// ``RoutedSession/close()`` removed it. The model never sees it. This is
+    /// the terminal event of the mail: no other event of the mail follows.
     case cancelled(MailID)
+
+    /// The work of the signal with this id ended. This is the terminal event
+    /// of the signal. It comes after each other event of the signal, for
+    /// example after the ``cancelled(_:)`` events of
+    /// ``RoutedSession/cancelAll()``. A compaction ends with
+    /// ``compaction(_:)`` or ``compactionFailed(_:)`` instead.
+    case signalDone(SignalID)
 
     /// The mail with this id was queued or delivered when the process
     /// stopped, and its answer never ended. The session sends it at restore.

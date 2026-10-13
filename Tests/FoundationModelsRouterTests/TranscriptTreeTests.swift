@@ -186,7 +186,7 @@ struct TranscriptTreeTests {
         forkBAnswers: Int = 1,
         grandforkAnswers: Int = 1
     ) async throws -> (
-        root: RoutedSession, forkA: RoutedSession, forkB: RoutedSession, grandfork: RoutedSession
+        root: any RoutedSession, forkA: any RoutedSession, forkB: any RoutedSession, grandfork: any RoutedSession
     ) {
         let root = profile.standard.makeSession()
         if rootAnswersBeforeForks > 0 {

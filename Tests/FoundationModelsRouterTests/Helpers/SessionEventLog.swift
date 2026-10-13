@@ -32,7 +32,7 @@ actor SessionEventLog {
     /// - Parameter session: The session to watch.
     /// - Returns: The log, and the draining task to cancel once the test is
     ///   done reading it.
-    static func watch(_ session: RoutedSession) async -> (log: SessionEventLog, drain: Task<Void, Never>) {
+    static func watch(_ session: any RoutedSession) async -> (log: SessionEventLog, drain: Task<Void, Never>) {
         let log = SessionEventLog()
         let stream = await session.streamSessionEvents().events
         let drain = Task {

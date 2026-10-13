@@ -120,7 +120,7 @@ struct PerCallMountSessionTests {
     /// temporary directory.
     private struct Harness {
         /// The session under test.
-        let session: RoutedSession
+        let session: any RoutedSession
 
         /// The backend that makes the scripted calls.
         let backend: MountCallingBackend
@@ -191,7 +191,7 @@ struct PerCallMountSessionTests {
     /// - Returns: The terminal event of the run.
     /// - Throws: ``SignalNeverArrived`` when the wait ended and the run did
     ///   not settle.
-    private static func settledTerminal(of token: String, on session: RoutedSession) async throws -> OperationEvent {
+    private static func settledTerminal(of token: String, on session: any RoutedSession) async throws -> OperationEvent {
         let outcome = await session.mailbox.wait(completionToken: token, seconds: nil)
         guard case .settled(let terminal) = outcome else {
             Issue.record("expected run \(token) to settle, got \(outcome)")

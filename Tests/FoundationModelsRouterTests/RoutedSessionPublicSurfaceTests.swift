@@ -110,29 +110,51 @@ struct RoutedSessionPublicSurfaceTests {
         let fixture = try await Self.makeQueueFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        let id: MailID = await fixture.session.send(Self.sentPromptText)
+        let id: MailID = try fixture.session.send(Self.sentPromptText)
 
         #expect(await Self.answered(fixture.session, prompt: Self.sentPromptText))
         #expect(await fixture.session.pendingMessages().allSatisfy { $0.id != id })
     }
 
-    // MARK: - cancel(message:)
+    // MARK: - cancel(_:)
 
-    // Restates the old `cancelPrompt(id:)` test. A withdrawal needs a busy
-    // session; the internal suites prove it (see
-    // `SessionMessagePumpTests.cancelOfAWaitingMessageWithdrawsIt`). Over the
-    // public surface this test proves the result for an answered message.
-    @Test("cancel(message:) of an answered message reports alreadyAnswered and changes nothing")
+    // Restates the old `cancelPrompt(id:)` test. A cancel that removes a mail
+    // needs a busy session; the internal suites prove it (see
+    // `MessageQueueTests.cancelMessageWithdrawsAWaitingMessage`). Over the
+    // public surface this test proves the result for an answered message:
+    // each signal returns its id at once, ends with its own terminal event,
+    // and changes nothing.
+    @Test(
+        "cancel(_:), replace(_:with:) and cancelAll() after an answered message each return a SignalID, end with signalDone, and change nothing"
+    )
     func cancelOfAnAnsweredMessageReportsAlreadyAnswered() async throws {
         let fixture = try await Self.makeQueueFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        let id = await fixture.session.send(Self.sentPromptText)
+        let feed = await fixture.session.streamSessionEvents()
+        let id = try fixture.session.send(Self.sentPromptText)
         #expect(await Self.answered(fixture.session, prompt: Self.sentPromptText))
 
-        let result: MessageCancellationResult = await fixture.session.cancel(message: id)
+        let cancelSignal: SignalID = fixture.session.cancel(id)
+        let replaceSignal: SignalID = fixture.session.replace(
+            id, with: .userMessage(prompt: "edited", options: UserMessageOptions()))
+        let stopSignal: SignalID = fixture.session.cancelAll()
 
-        #expect(result == .alreadyAnswered)
+        for signal in [cancelSignal, replaceSignal, stopSignal] {
+            #expect(try await fixture.session.awaitTerminal(of: signal) == .signalDone(signal))
+        }
         #expect(await fixture.session.pendingMessages().isEmpty)
         #expect(await fixture.session.mailQueueDepth().total == 0)
+        await fixture.session.close()
+
+        // The answer stays the one terminal event of the mail: no signal
+        // sent a cancelled.
+        var outputs: [SessionOutput] = []
+        for await output in feed {
+            outputs.append(output)
+        }
+        let ledger = TerminalEventLedger(outputs: outputs)
+        ledger.expectExactlyOneTerminal(for: [id])
+        #expect(ledger.endedMailIds.count == 1)
+        ledger.expectExactlyOneTerminal(forSignals: [cancelSignal, replaceSignal, stopSignal])
     }
 }

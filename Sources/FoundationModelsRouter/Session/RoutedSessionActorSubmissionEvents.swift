@@ -71,18 +71,20 @@ extension RoutedSessionActor {
     }
 
     /// What the first submission of an answer delivers, and why the session
-    /// makes it: the caller messages of the answer, or mail alone.
+    /// makes it: ``SubmissionStart/Cause/message`` when the batch holds
+    /// user-type mail, and ``SubmissionStart/Cause/mail`` when only run mail
+    /// starts it.
     ///
-    /// - Returns: The cause and the ids of the caller messages.
+    /// - Returns: The cause and the ids of all mail of the batch.
     func firstSubmissionDelivery() -> (cause: SubmissionStart.Cause, mailIds: [MailID]) {
-        let mailIds = deliveredMailIds
-        return (mailIds.isEmpty ? .mail : .message, mailIds)
+        (openAnswerDeliveredUserMail ? .message : .mail, deliveredMailIds)
     }
 
-    /// The ids of the caller messages the running answer delivered so far,
-    /// in delivery order. Empty when no answer runs.
+    /// The ids of the mail the running answer delivered so far, in delivery
+    /// order, user-type mail and run mail. Run mail that a failed submission
+    /// gave back to the queue is not in it. Empty when no answer runs.
     var deliveredMailIds: [MailID] {
-        (deliveredMessages ?? []).map(\.message.mailID)
+        openAnswerMail.all
     }
 
     /// The tracing context of the running submission, or the context of the
@@ -173,5 +175,37 @@ extension RoutedSessionActor {
             let reason: AnswerFailure.Reason = isWorkCancelled ? .cancelled : .error(String(describing: error))
             return .answerFailed(AnswerFailure(mailIds: mailIds, reason: reason))
         }
+    }
+
+    /// The error that the helpers on top of the core throw for the end of
+    /// the running answer: `nil` for an answer, `CancellationError` when a
+    /// cancel is outstanding against the work (``isWorkCancelled``), and the
+    /// error of `result` otherwise. The decision keys on the same predicate
+    /// as ``answerEndEvent(for:)``.
+    ///
+    /// - Parameter result: The final reply of the chain, or its error.
+    /// - Returns: The error of a failed answer, or `nil`.
+    func answerEndError(for result: Result<String, any Error>) -> (any Error)? {
+        guard case .failure(let error) = result else { return nil }
+        return isWorkCancelled ? CancellationError() : error
+    }
+
+    /// Sends the end of the running answer to the output of the session:
+    /// ``SessionEvent/answered(_:)`` or ``SessionEvent/answerFailed(_:)``,
+    /// the terminal event of each mail that the answer delivered. The ledger
+    /// of the output keeps the error of a failed answer next to its event
+    /// (``answerEndError(for:)``).
+    ///
+    /// The ids leave ``openAnswerMail`` directly after the event, so a caller
+    /// that got the terminal event can use the same id again. They leave
+    /// after the event and not before it: a mail subscription of a new mail
+    /// with the same id must not get the end of this answer.
+    ///
+    /// - Parameter result: The final reply of the chain, or its error.
+    func emitAnswerEnd(for result: Result<String, any Error>) {
+        let end = answerEndEvent(for: result)
+        answerReducer.apply(end)
+        emitSessionScopedEvent(end, failure: answerEndError(for: result))
+        openAnswerMail.removeAll()
     }
 }

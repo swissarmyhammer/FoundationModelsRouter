@@ -37,7 +37,7 @@ func collect(_ stream: AsyncStream<SessionEvent>) async -> [SessionEvent] {
 ///   - prompt: The prompt the answer replies to.
 /// - Returns: The events of the answer, in order.
 /// - Throws: Whatever the answer throws.
-func collectEvents(_ session: RoutedSession, prompt: String) async throws -> [SessionEvent] {
+func collectEvents(_ session: any RoutedSession, prompt: String) async throws -> [SessionEvent] {
     try await collect(session.streamEvents(to: prompt))
 }
 

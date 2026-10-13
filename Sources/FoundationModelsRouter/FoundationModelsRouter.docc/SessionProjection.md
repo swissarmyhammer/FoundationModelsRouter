@@ -98,7 +98,7 @@ and also when the stream finishes or throws.
 
 ``SessionProjection/currentSubmission`` is the submission that runs now, or
 `nil` between submissions. ``SessionProjection/messagesAwaitingAnswer`` holds
-the caller messages that a started submission delivered and that no answer
+the mail that a started submission delivered and that no answer
 named yet, in delivery order. Show them as the messages in flight.
 
 ``SessionProjection/tokensIn``, ``SessionProjection/tokensOut``, and

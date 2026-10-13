@@ -41,15 +41,14 @@ extension RoutedSessionActor {
         return await withMetricsFactory(explicitMetricsFactory, job)
     }
 
-    /// Records the count of the caller messages that wait in
-    /// ``SessionOutbox/messages`` now.
+    /// Records the count of all mail that waits in ``SessionOutbox/queue``
+    /// now, of all kinds.
     ///
-    /// The post of a caller message and the take of a batch call it on this
-    /// actor, each with no suspension point after its change of the queue. The
-    /// delivery letter of an answer that only mail starts never waits when
-    /// this actor reads the queue (``pendingMessages()``), so the count never
-    /// holds it.
+    /// The arrival of mail (``mail(_:)``) and each take of the pump call it
+    /// on this actor. The arrival records it in a task of its own, so a
+    /// record can come after a later change of the queue; each record gives
+    /// the count at the time it runs.
     func recordMessageQueueDepth() {
-        sessionMetrics.recordSessionQueueDepth(waiting: outbox.messages.depth.waiting)
+        sessionMetrics.recordSessionQueueDepth(waiting: outbox.queue.pending.count)
     }
 }

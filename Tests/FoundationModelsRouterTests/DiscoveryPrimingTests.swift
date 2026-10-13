@@ -258,7 +258,7 @@ struct DiscoveryPrimingTests {
     /// One vended session plus everything a test needs to inspect it.
     private struct Fixture {
         /// The vended session under test.
-        let session: RoutedSession
+        let session: any RoutedSession
 
         /// The shared observation log its backends write into.
         let log: PrimingLog
@@ -299,7 +299,7 @@ struct DiscoveryPrimingTests {
         )
         let profile = try await router.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        let session: RoutedSession
+        let session: any RoutedSession
         if let grammar {
             session = profile.standard.makeGuidedSession(
                 grammar: grammar, instructions: instructions, tools: tools, discoveryPriming: priming)
@@ -666,7 +666,7 @@ struct DiscoveryPrimingTests {
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
 
         let sessionEvents = await fixture.session.streamSessionEvents().events
-        await fixture.session.send(Self.prompt)
+        try fixture.session.send(Self.prompt)
 
         // The submission ran anyway, unseeded.
         #expect(await fixture.session.becomesIdle())

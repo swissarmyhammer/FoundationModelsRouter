@@ -343,7 +343,7 @@ struct SubmissionFinishReasonTests {
     /// - Returns: The usage of the last submission, or `nil` when no
     ///   `submissionEnded` event came or the last one had no usage.
     /// - Throws: Whatever the stream throws.
-    private static func closingUsage(ofStreamedAnswerOn session: RoutedSession) async throws -> TokenUsage? {
+    private static func closingUsage(ofStreamedAnswerOn session: any RoutedSession) async throws -> TokenUsage? {
         var closingUsage: TokenUsage?
         for try await event in await session.streamEvents(to: "fix the bug", maxTokens: requestedCeiling) {
             if case .submissionEnded(let end) = event { closingUsage = end.usage }

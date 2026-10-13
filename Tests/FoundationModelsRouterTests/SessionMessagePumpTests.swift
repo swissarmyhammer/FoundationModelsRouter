@@ -291,8 +291,43 @@ struct SessionMessagePumpTests {
         guard
             await BoundedWait.conditionReached(
                 "\(count) caller messages waiting in the outbox",
-                when: { session.outbox.messages.depth.waiting == count })
+                when: { session.waitingUserMailCount == count })
         else { throw SignalNeverArrived() }
+    }
+
+    /// Whether `event` is the terminal event ``SessionEvent/answered(_:)``.
+    ///
+    /// - Parameter event: One event of a session.
+    /// - Returns: `true` for an answered event.
+    private static func isAnswered(_ event: SessionEvent) -> Bool {
+        if case .answered = event {
+            return true
+        }
+        return false
+    }
+
+    /// Whether `event` is the terminal event ``SessionEvent/answerFailed(_:)``.
+    ///
+    /// - Parameter event: One event of a session.
+    /// - Returns: `true` for an answer failure.
+    private static func isAnswerFailed(_ event: SessionEvent) -> Bool {
+        if case .answerFailed = event {
+            return true
+        }
+        return false
+    }
+
+    /// Waits for the end of the signal `signal`, and expects that its
+    /// terminal event is ``SessionEvent/signalDone(_:)``. The effect of a
+    /// signal is not synchronous, so a test calls this before it checks the
+    /// effect.
+    ///
+    /// - Parameters:
+    ///   - signal: The id of the signal.
+    ///   - session: The session that got the signal.
+    /// - Throws: When the wait for the terminal event fails.
+    private static func expectSignalEnds(_ signal: SignalID, on session: any RoutedSession) async throws {
+        #expect(try await session.awaitTerminal(of: signal) == .signalDone(signal))
     }
 
     // MARK: - Caller messages
@@ -304,18 +339,22 @@ struct SessionMessagePumpTests {
         let backend = PumpProbeBackend(script: [:])
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
 
-        let id = await session.send(Self.firstPrompt)
+        let id = try session.send(Self.firstPrompt)
 
         // No driver call and no wait: the pump takes the message by itself.
         try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
+        #expect(Self.isAnswered(try await session.awaitTerminal(of: id)))
         #expect(await session.becomesIdle())
         #expect(backend.prompts == [Self.firstPrompt])
         #expect(await session.pendingMessages().isEmpty)
-        #expect(await session.cancel(message: id) == .alreadyAnswered)
+        // The mail left the queue, so the signal of a cancel finds nothing to
+        // remove: the terminal event of the mail is still its answer.
+        try await Self.expectSignalEnds(session.cancel(id), on: session)
+        #expect(Self.isAnswered(try await session.awaitTerminal(of: id)))
         withExtendedLifetime(profile) {}
     }
 
-    @Test("cancel(message:) withdraws a message that waits: it never reaches a prompt")
+    @Test("cancel withdraws a message that waits: it never reaches a prompt, and its terminal event is cancelled")
     func cancelOfAWaitingMessageWithdrawsIt() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "SessionMessagePumpTests")
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -325,11 +364,12 @@ struct SessionMessagePumpTests {
 
         let first = Task { try await session.respond(to: Self.firstPrompt) }
         try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
-        let waiting = await session.send(Self.secondPrompt)
+        let waiting = try session.send(Self.secondPrompt)
         #expect(await session.pendingMessages().map(\.id) == [waiting])
 
-        #expect(await session.cancel(message: waiting) == .withdrawn)
+        try await Self.expectSignalEnds(session.cancel(waiting), on: session)
 
+        #expect(try await session.awaitTerminal(of: waiting) == .cancelled(waiting))
         #expect(await session.pendingMessages().isEmpty)
         await latch.open()
         #expect(try await first.value == PumpProbeBackend.answer(ofCall: 1))
@@ -338,24 +378,32 @@ struct SessionMessagePumpTests {
         withExtendedLifetime(profile) {}
     }
 
-    @Test("cancel(message:) stops the submission that carries a message, and the pump then ends")
-    func cancelOfAMessageInARunningSubmissionStopsIt() async throws {
+    @Test("cancel never stops the submission that carries a message; cancelAll() stops it, and the pump then ends")
+    func cancelOfAMessageInARunningSubmissionDoesNotStopIt() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "SessionMessagePumpTests")
         defer { try? FileManager.default.removeItem(at: dir) }
         let latch = RunLatch()
         let backend = PumpProbeBackend(script: [1: .hold(latch)])
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
 
-        let id = await session.send(Self.firstPrompt)
+        let id = try session.send(Self.firstPrompt)
         try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
         #expect(await session.mailQueueDepth().running == [id])
 
-        #expect(await session.cancel(message: id) == .cancelledInSubmission)
+        // The mail left the queue, so the signal of the cancel finds
+        // nothing, and the answer goes on.
+        try await Self.expectSignalEnds(session.cancel(id), on: session)
+        #expect(await session.mailQueueDepth().running == [id])
 
-        // The latch never opens, so only the cancel can end the held call.
+        // The latch never opens, so only cancelAll() can end the held call.
+        // The answer ends at once; the pump ends when the call unwinds.
+        try await Self.expectSignalEnds(session.cancelAll(), on: session)
+        #expect(Self.isAnswerFailed(try await session.awaitTerminal(of: id)))
         #expect(await BoundedWait.pumpStops(on: session))
         #expect(backend.prompts == [Self.firstPrompt])
-        #expect(await session.cancel(message: id) == .alreadyAnswered)
+        // A cancel after the end finds nothing: the terminal event stays.
+        try await Self.expectSignalEnds(session.cancel(id), on: session)
+        #expect(Self.isAnswerFailed(try await session.awaitTerminal(of: id)))
         withExtendedLifetime(profile) {}
     }
 
@@ -394,7 +442,7 @@ struct SessionMessagePumpTests {
         #expect(firstAnswer == PumpProbeBackend.answer(ofCall: 1))
         #expect(secondAnswer == PumpProbeBackend.answer(ofCall: 2))
         #expect(thirdAnswer == PumpProbeBackend.answer(ofCall: 2))
-        #expect(session.outbox.messages.depth.waiting == 0)
+        #expect(session.waitingUserMailCount == 0)
         withExtendedLifetime(profile) {}
     }
 
@@ -583,12 +631,12 @@ struct SessionMessagePumpTests {
         withExtendedLifetime(profile) {}
     }
 
-    // MARK: - Cancel
+    // MARK: - Stop of all work
 
     @Test(
-        "a cancel withdraws the waiting caller messages, stops the running submission, and keeps the waiting mail in the outbox"
+        "cancelAll() cancels the waiting caller messages, stops the running submission, and cancels the waiting run mail"
     )
-    func aCancelWithdrawsCallerMessagesStopsTheSubmissionAndKeepsTheMail() async throws {
+    func cancelAllCancelsCallerMessagesStopsTheSubmissionAndCancelsTheMail() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "SessionMessagePumpTests")
         defer { try? FileManager.default.removeItem(at: dir) }
         let latch = RunLatch()
@@ -601,13 +649,16 @@ struct SessionMessagePumpTests {
         let second = Task { try await session.respond(to: Self.secondPrompt) }
         try await Self.awaitWaitingMessages(1, on: session)
         await session.outbox.post(event: settledRun)
+        let runMailID = try #require(session.outbox.pendingRunMail.first?.id)
 
-        #expect(await session.cancel() == .requested)
+        try await Self.expectSignalEnds(session.cancelAll(), on: session)
 
         await #expect(throws: CancellationError.self) { try await second.value }
         await #expect(throws: CancellationError.self) { try await first.value }
-        #expect(session.outbox.messages.depth.waiting == 0)
-        #expect(await session.outbox.pending().events.map(\.event) == [settledRun])
+        #expect(session.waitingUserMailCount == 0)
+        // The stop of all work cancels the run mail too.
+        #expect(await session.outbox.pending().events.isEmpty)
+        #expect(try await session.awaitTerminal(of: runMailID) == .cancelled(runMailID))
         #expect(await BoundedWait.pumpStops(on: session))
         #expect(backend.prompts == [Self.firstPrompt])
         withExtendedLifetime(profile) {}

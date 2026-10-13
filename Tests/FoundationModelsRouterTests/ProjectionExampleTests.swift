@@ -186,7 +186,7 @@ struct ProjectionExampleTests {
         ///
         /// - Returns: A session that answers each message with ``answer``.
         /// - Throws: Whatever profile resolution throws.
-        static func makeSession() async throws -> RoutedSession {
+        static func makeSession() async throws -> any RoutedSession {
             let router = RouterTestFixtures.makeRouter(
                 cacheDir: RouterTestFixtures.makeTempDir(prefix: "ProjectionExampleTests"),
                 loader: StubModelLoader(

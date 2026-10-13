@@ -89,7 +89,7 @@ struct ToolOutputProtectionSessionTests {
     /// - Returns: What the compaction did.
     /// - Throws: What the compaction throws.
     @discardableResult
-    private static func compact(session: RoutedSession) async throws -> CompactionResult {
+    private static func compact(session: any RoutedSession) async throws -> CompactionResult {
         try await session.compact(budget: budgetJustUnder(await session.transcript))
     }
 

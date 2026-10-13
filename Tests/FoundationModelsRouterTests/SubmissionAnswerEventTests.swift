@@ -78,10 +78,10 @@ struct SubmissionAnswerEventTests {
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
         let (log, drain) = await SessionEventLog.watch(session)
 
-        let first = await session.send(Self.firstPrompt)
+        let first = try session.send(Self.firstPrompt)
         try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
-        let second = await session.send(Self.secondPrompt)
-        let third = await session.send(Self.thirdPrompt)
+        let second = try session.send(Self.secondPrompt)
+        let third = try session.send(Self.thirdPrompt)
         await latch.open()
         let ended = await Self.waitForAnswersToEnd(Self.twoAnswers, in: log)
         drain.cancel()
@@ -106,9 +106,9 @@ struct SubmissionAnswerEventTests {
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
         let (log, drain) = await SessionEventLog.watch(session)
 
-        let first = await session.send(Self.firstPrompt)
+        let first = try session.send(Self.firstPrompt)
         try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
-        let second = await session.send(Self.secondPrompt)
+        let second = try session.send(Self.secondPrompt)
         // The first submission ends with a rejected tool call. The retry is a
         // continuation of the same chain, and the waiting message joins it.
         await latch.open()
@@ -126,7 +126,9 @@ struct SubmissionAnswerEventTests {
         withExtendedLifetime(profile) {}
     }
 
-    @Test("a cancelled chain sends answerFailed with the reason cancelled, and no answered")
+    @Test(
+        "a chain that cancelAll() stops sends answerFailed with the reason cancelled at once, no answered, and no later end of its submission"
+    )
     func aCancelledChainSendsAnswerFailed() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -135,19 +137,25 @@ struct SubmissionAnswerEventTests {
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
         let (log, drain) = await SessionEventLog.watch(session)
 
-        let id = await session.send(Self.firstPrompt)
+        let id = try session.send(Self.firstPrompt)
         try await BoundedWait.awaitPrompts(1, in: { backend.prompts })
-        #expect(await session.cancel() == .requested)
-        // The latch never opens, so only the cancel can end the held call.
+        // The latch never opens, so only cancelAll() can end the held call.
+        let signal = session.cancelAll()
+        #expect(try await session.awaitTerminal(of: signal) == .signalDone(signal))
         let ended = await Self.waitForAnswersToEnd(1, in: log)
+        // cancelAll() does not wait for the pump. The test waits for the end
+        // of the stopped work, so a late event of that work can come first.
+        #expect(try await session.isIdleOnceThePumpEnds())
         drain.cancel()
 
         #expect(ended)
         let events = await log.events
-        _ = eventsInsideAnswerFrame(events)
         #expect(events.answerFailures == [AnswerFailure(mailIds: [id], reason: .cancelled)])
         #expect(events.answers.isEmpty)
-        #expect(events.submissionEnds.count == 1)
+        // The submission started. The output drops each later event of the
+        // stopped answer, also the end of its submission.
+        #expect(events.submissionStarts.map(\.mailIds) == [[id]])
+        #expect(events.submissionEnds.isEmpty)
         withExtendedLifetime(profile) {}
     }
 
@@ -159,7 +167,7 @@ struct SubmissionAnswerEventTests {
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
         let (log, drain) = await SessionEventLog.watch(session)
 
-        let id = await session.send(Self.firstPrompt)
+        let id = try session.send(Self.firstPrompt)
         let ended = await Self.waitForAnswersToEnd(1, in: log)
         drain.cancel()
 
@@ -172,13 +180,14 @@ struct SubmissionAnswerEventTests {
         withExtendedLifetime(profile) {}
     }
 
-    @Test("a respond whose caller cancels its task throws CancellationError, and does not stop the process")
+    @Test("a respond whose caller cancels its task throws CancellationError, does not stop the process, and does not stop the running answer")
     func aRespondWhoseCallerCancelsThrowsCancellationError() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: dir) }
         let latch = RunLatch()
         let backend = Backend(script: [1: .hold(latch)])
         let (session, profile) = try await Self.makeSession(over: backend, dir: dir)
+        let (log, drain) = await SessionEventLog.watch(session)
 
         let run = AnswerDrivenRun(waitingFor: "the respond of the first prompt") {
             try await session.respond(to: Self.firstPrompt, observing: nil)
@@ -189,6 +198,17 @@ struct SubmissionAnswerEventTests {
         run.cancel()
 
         await #expect(throws: CancellationError.self) { try await run.deliveredAnswer() }
+
+        // The mail left the queue before the cancel, so the cancel of the
+        // caller does not stop its answer: the answer goes on to its end.
+        await latch.open()
+        let ended = await Self.waitForAnswersToEnd(1, in: log)
+        drain.cancel()
+
+        #expect(ended)
+        let events = await log.events
+        #expect(events.answers.map(\.reply) == [Backend.answer(ofCall: 1)])
+        #expect(events.answerFailures.isEmpty)
         withExtendedLifetime(profile) {}
     }
 

@@ -436,7 +436,7 @@ struct CeilingProbeLanguageModel: LanguageModel {
 /// directory the router cached into.
 struct CeilingProbeSessionFixture {
     /// The vended session a test drives its answer on.
-    let session: RoutedSession
+    let session: any RoutedSession
 
     /// The log of the ceiling of each generation call.
     let log: CeilingProbeLog

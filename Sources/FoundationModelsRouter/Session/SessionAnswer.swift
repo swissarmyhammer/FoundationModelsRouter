@@ -100,9 +100,9 @@ public struct SessionAnswer: Sendable, Equatable {
 public struct AnswerFailure: Error, Sendable, Equatable {
     /// Why a chain gave no answer.
     public enum Reason: Sendable, Equatable {
-        /// A cancel stopped the chain: ``RoutedSession/cancel()``,
-        /// ``RoutedSession/cancel(message:)``, or the cancel of a caller that
-        /// waited for the answer.
+        /// A stop of the running work stopped the chain:
+        /// ``RoutedSession/cancelAll()`` or ``RoutedSession/close()``. A cancel of
+        /// one mail never stops a chain.
         case cancelled
 
         /// The chain failed with an error. The text is the description of the
@@ -180,11 +180,12 @@ struct SessionAnswerReducer {
         case .compactionStarted, .compactionFailed, .submissionQueued, .submissionStarted, .answered, .answerFailed,
             .textDelta, .textReset, .reasoningDelta, .entryRecorded, .discoveryPrimingFailed, .generationStalled,
             .runSettled, .runMessage, .runProgress, .toolCallReport, .toolDisplay, .elicitationRequested,
-            .generationCall, .mailDeliveryPaused, .mailDelivered, .cancelled, .lost:
+            .generationCall, .mailDeliveryPaused, .mailDelivered, .cancelled, .lost, .signalDone:
             // Deliberately not carried by the answer. A mail delivery pause
             // comes when no answer runs, so no answer can carry it. The
             // delivery of a mail and the terminal events of other mail are
-            // in ``SessionAnswer/mailIds`` or belong to no answer. The frames of a
+            // in ``SessionAnswer/mailIds`` or belong to no answer. The end of
+            // a signal belongs to the signal, not to an answer. The frames of a
             // submission and of an answer are the structure the answer sums.
             // The reply is the final reply of the chain, not a reduction of
             // its text fragments: a continuation writes its own reply, and
@@ -265,7 +266,8 @@ struct SessionAnswerReducer {
 extension RoutedSession {
     /// Sends one prompt through ``streamEvents(to:maxTokens:)`` and returns
     /// the ``SessionAnswer`` that its ``SessionEvent/answered(_:)`` event
-    /// carries. Cancelling the awaiting task cancels the message.
+    /// carries. Cancelling the awaiting task cancels the message while it is
+    /// queued; it never stops an answer that runs.
     ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.

@@ -48,9 +48,9 @@ public struct CompactionStart: Sendable, Equatable {
 public struct CompactionFailure: Sendable, Equatable {
     /// How the compaction ended.
     public enum Outcome: Sendable, Equatable {
-        /// A cancel stopped the compaction: ``RoutedSession/cancel()``,
-        /// ``RoutedSession/cancel(message:)``, or the cancel of a caller that
-        /// waited for the answer.
+        /// A cancel stopped the compaction: ``RoutedSession/close()``, or
+        /// the cancel of the caller task of
+        /// ``RoutedSession/compact(prompt:budget:)``.
         case cancelled
 
         /// The compaction failed with an error. The text is the description
