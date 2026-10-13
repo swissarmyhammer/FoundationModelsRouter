@@ -88,6 +88,63 @@ extension RoutedSessionActor {
         runSignal { session in session.performCancel(id) }
     }
 
+    /// The work of one signal on this actor: `work` with the session that
+    /// runs it, isolated to that session.
+    typealias SignalWork = @Sendable (isolated RoutedSessionActor) async -> Void
+
+    /// Gives the work of the signal `id` to ``signals``. Each signal call
+    /// (``cancel(_:)``, ``cancelAll()``, ``replace(_:with:)``,
+    /// ``compact(prompt:budget:)``, and the automatic compaction of an
+    /// answer) comes here, so its work comes to this actor only through
+    /// ``runSignalWork(_:skipped:)``.
+    ///
+    /// - Parameters:
+    ///   - id: The id of the signal.
+    ///   - work: The work of the signal.
+    ///   - skipped: What runs in place of `work` when the session closed
+    ///     before the work started. The default does nothing.
+    nonisolated func submitSignal(
+        _ id: SignalID, _ work: @escaping SignalWork, skipped: @escaping @Sendable () -> Void = {}
+    ) {
+        signals.run(id, { [self] in await runSignalWork(work, skipped: skipped) }, skipped: skipped)
+    }
+
+    /// The one entry of the work of each signal into this actor.
+    ///
+    /// The task of a signal reads the close of ``signals`` before it comes
+    /// to this actor, so the work can come here after ``close()`` began.
+    /// This function checks ``isClosed`` on the actor, and starts `work`
+    /// with no suspension point after the check. ``close()`` sets
+    /// ``isClosed`` before its first suspension point. Thus the work of a
+    /// signal starts before close began, or it does not start: then it
+    /// sends no event, `skipped` runs, and a wait for the terminal event of
+    /// the signal ends with ``MailRefusal/closed``.
+    ///
+    /// - Parameters:
+    ///   - work: The work of the signal.
+    ///   - skipped: What runs in place of `work` when the session is closed.
+    func runSignalWork(_ work: SignalWork, skipped: @Sendable () -> Void) async {
+        guard !isClosed else {
+            skipped()
+            return
+        }
+        await work(self)
+    }
+
+    /// The work of a signal whose terminal event is
+    /// ``SessionEvent/signalDone(_:)``: `work`, and then that event.
+    ///
+    /// - Parameters:
+    ///   - id: The id of the signal.
+    ///   - work: What the signal does before its terminal event.
+    /// - Returns: The work of the signal.
+    static func endingWithSignalDone(_ id: SignalID, _ work: @escaping SignalWork) -> SignalWork {
+        { session in
+            await work(session)
+            session.emitSessionScopedEvent(.signalDone(id))
+        }
+    }
+
     /// See ``RoutedSession/cancelAll()``.
     ///
     /// - Returns: The id of the signal.
@@ -104,23 +161,18 @@ extension RoutedSessionActor {
     /// - Returns: The id of the signal.
     @discardableResult
     nonisolated func replace(_ id: MailID, with body: MailBody) -> SignalID {
-        runSignal { session in await session.performReplace(id, with: body) }
+        runSignal { session in session.performReplace(id, with: body) }
     }
 
     /// Makes a new signal id, gives `work` and then the terminal event
-    /// ``SessionEvent/signalDone(_:)`` to ``signals``, and returns the id at
-    /// once.
+    /// ``SessionEvent/signalDone(_:)`` to ``signals``
+    /// (``submitSignal(_:_:skipped:)``), and returns the id at once.
     ///
     /// - Parameter work: The work of the signal.
     /// - Returns: The id of the signal.
-    private nonisolated func runSignal(
-        _ work: @escaping @Sendable (RoutedSessionActor) async -> Void
-    ) -> SignalID {
+    private nonisolated func runSignal(_ work: @escaping SignalWork) -> SignalID {
         let id = SignalID()
-        signals.run(id) { [self] in
-            await work(self)
-            emitSessionScopedEvent(.signalDone(id))
-        }
+        submitSignal(id, Self.endingWithSignalDone(id, work))
         return id
     }
 

@@ -362,11 +362,11 @@ extension RoutedSessionActor {
         settleCancelledMail(outbox.queue.close().map(\.id))
 
         // Before the drain: no ``awaitIdle()`` call waits for the drain,
-        // which waits for each run body to end. From here on, no compaction
-        // starts (``isClosed``): the work of a compaction signal that read
-        // ``signals`` before its close does not start when it comes to this
-        // actor. No suspension point comes between this call and the cancel
-        // of the running compaction below.
+        // which waits for each run body to end. From here on, the work of no
+        // signal starts (``isClosed``, ``runSignalWork(_:skipped:)``): the
+        // work of a signal that read ``signals`` before its close does not
+        // start when it comes to this actor. No suspension point comes
+        // between this call and the cancel of the running compaction below.
         endIdleWaits()
 
         // Close is the one exception to the rule that no signal affects a

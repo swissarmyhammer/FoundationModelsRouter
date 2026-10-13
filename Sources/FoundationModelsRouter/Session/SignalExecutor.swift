@@ -113,9 +113,9 @@ final class SignalExecutor: Sendable {
     ///
     /// The task of a signal reads the close before its work goes to the
     /// actor of the work. Thus work whose task read the executor before this
-    /// call can come to its actor after this call. Work that must not start
-    /// after the close of its session checks the close again on its actor
-    /// (``RoutedSessionActor/performCompaction(_:_:)``).
+    /// call can come to its actor after this call. The session checks its
+    /// close again on its actor, at the one entry of all signal work
+    /// (``RoutedSessionActor/runSignalWork(_:skipped:)``).
     func close() {
         state.withLock { $0.isClosed = true }
     }

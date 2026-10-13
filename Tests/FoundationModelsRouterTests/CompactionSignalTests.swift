@@ -548,14 +548,14 @@ struct CompactionSignalTests {
         #expect(await fixture.observer.entered.filter(Fixtures.isSummarizerCall).count == 1)
     }
 
-    /// The production change that makes this test fail: a compaction handler
-    /// that does not check, on the session, whether close began. The task of
-    /// a compaction signal reads the close of the signal executor before it
-    /// goes to the session, so its work can reach the session after close
-    /// began. That compaction then starts: close does not cancel it, its
-    /// events come after the feeds finished, and the drain of close waits
-    /// for it. With a summarizer call that ends only on a cancel, close does
-    /// not return.
+    /// The production change that makes this test fail: a signal entry
+    /// (``RoutedSessionActor/runSignalWork(_:skipped:)``) that does not
+    /// check, on the session, whether close began. The task of a compaction
+    /// signal reads the close of the signal executor before it goes to the
+    /// session, so its work can reach the session after close began. That
+    /// compaction then starts: close does not cancel it, its events come
+    /// after the feeds finished, and the drain of close waits for it. With a
+    /// summarizer call that ends only on a cancel, close does not return.
     @Test("the work of a compaction signal that reaches the session after close began does not start")
     func aCompactionDoesNotStartAfterCloseBegan() async throws {
         let dir = Fixtures.makeTempDir()
@@ -581,10 +581,12 @@ struct CompactionSignalTests {
         let order = CompactionOrder(
             prompt: Fixtures.compactionSummarizerPrompt, budget: Fixtures.summarizingCompactionBudget,
             reason: .requested, overflowRetryTarget: nil)
+        let skipped = Flag()
         let work = Task {
-            let result = await actor.performCompaction(id, order)
+            await actor.runSignalWork(
+                { session in _ = await session.performCompaction(id, order) },
+                skipped: { skipped.set() })
             gates.progress.signal()
-            return result
         }
         // The first of the two: a summarizer call of a compaction that
         // started, or the end of the work.
@@ -593,7 +595,7 @@ struct CompactionSignalTests {
         // The gates open in each case, so the test always ends.
         gates.summarizerRelease.signal()
         gates.answerRelease.signal()
-        let result = await work.value
+        await work.value
         await closing.value
         fixture.hook.midAnswer = nil
 
@@ -601,7 +603,7 @@ struct CompactionSignalTests {
         // Close cancels each compaction that starts. A compaction with no
         // cancel makes the drain of close wait for its summarizer call.
         #expect(started == gates.summarizerSawCancel.isSet)
-        #expect(throws: CancellationError.self) { try result.get() }
+        #expect(skipped.isSet)
         #expect(await log.firstIndex { Self.startsCompaction($0, id) } == nil)
         #expect(try Self.recordedTerminal(of: id, on: session) == nil)
         #expect(await fixture.observer.entered.filter(Fixtures.isSummarizerCall).isEmpty)

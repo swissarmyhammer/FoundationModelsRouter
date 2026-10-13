@@ -781,4 +781,41 @@ struct CancelAllSignalTests {
         ledger.expectExactlyOneTerminal(forSignals: [delivered, unknown])
         withExtendedLifetime(profile) {}
     }
+
+    // MARK: - A signal after close
+
+    /// The production change that makes this test fail: a signal entry
+    /// (``RoutedSessionActor/runSignalWork(_:skipped:)``) that does not check,
+    /// on the session, whether close began. The task of a signal reads the
+    /// close of the signal executor before it goes to the session, so its
+    /// work can come to the session after close. The work of that cancelAll
+    /// then starts one more sweep after close, and its signalDone goes to the
+    /// ledger after the output closed.
+    @Test("the work of a cancelAll signal that comes to the session after close starts no sweep and sends no event")
+    func aCancelAllAfterCloseStartsNoSweep() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let backend = ProbeBackend(script: [:])
+        let (session, profile) = try await MailQueueFixtures.makeSession(over: backend, dir: dir)
+        let actor = try #require(session as? RoutedSessionActor)
+        await session.close()
+        let sweepOfClose = await actor.sweepTask
+
+        // The state of the task of a cancelAll signal that read the executor
+        // before close closed it: its work comes to the session now, after
+        // close returned. The same work as cancelAll() gives to the executor.
+        let id = SignalID()
+        let skipped = Mutex(false)
+        await actor.runSignalWork(
+            RoutedSessionActor.endingWithSignalDone(id) { session in await session.performCancelAll() },
+            skipped: { skipped.withLock { $0 = true } })
+
+        #expect(skipped.withLock { $0 })
+        #expect(await actor.sweepTask == sweepOfClose)
+        #expect(actor.outputHub.terminal(for: .signal(id.description)) == nil)
+        await #expect(throws: MailRefusal.closed) {
+            try await session.awaitTerminal(of: id)
+        }
+        withExtendedLifetime(profile) {}
+    }
 }
