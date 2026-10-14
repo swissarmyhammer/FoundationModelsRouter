@@ -1,8 +1,8 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffffffe280
 title: Use the Extras clock input for the run timeout, the settle grace and the stall report
 ---
 Blocked: start only when FoundationModelsExtras has an injectable clock for the run timeout, the inline settle grace and the stall report interval (mailbox.md step 8, Extras). Do not start before that.
