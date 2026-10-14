@@ -1,8 +1,8 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8280'
+position_column: done
+position_ordinal: ffffffdd80
 title: 'H: awaitAnswer(of:) gives the typed error of a failed answer (mail step 2, part H)'
 ---
 Agents found that a caller who puts a user message with mail(_:) cannot get the typed error of a failed answer (for example LanguageModelError.contextSizeExceeded). Only respond and streamEvents throw it, through the private throwIfFailed.

@@ -1,6 +1,11 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m4x47xxyr2gj21jy7152jteg
+  text: 'Add from part H: the existing in-band refusal test of awaitTerminal(of:) uses a clock. Change it to an event wait, and add the same in-band refusal check for awaitAnswer(of:) when a tool calls it.'
+  timestamp: 2026-10-14T11:54:55.294760+00:00
 depends_on:
 - 01M4X2JQH4PY1MWZEPHDFQ2YG8
 position_column: todo
