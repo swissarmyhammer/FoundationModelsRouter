@@ -114,8 +114,31 @@ comments:
     - evidence: swift build --build-tests: 0 warnings (only the harmless Cmlx.bundle "missing creator" note). swift test --skip-build (one run): "Test run with 1704 tests in 206 suites passed after 7.311 seconds with 1 known issue." The known issue is the expected-issue test "the embedding slot every harness profile carries records an issue when anything embeds through it". Extra runs: 25 tests in 13 suites passed; 19 tests in 3 suites passed; XCTest 0 tests, 0 failures. IntegrationTests: swift build --build-tests: Build complete, 0 warnings, 0 errors (tests not run).
     - next: review
   timestamp: 2026-10-14T19:35:06.735612+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m4xyk5skhqdtdnzfagjrq79x
+  text: |-
+    ### commit — changed
+    - evidence: 2c3c7fc7 fix(session): remove stopped readers from the hub and make the work-event tests deterministic
+    - next: none
+  timestamp: 2026-10-14T19:35:26.771764+00:00
+- actor: claude-code
+  id: 01m4xz0mc0knx7px1xh0hp7sjr
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 2c3c7fc7). Engine counts: 0 findings, 0 confirmed, 4 refuted, 14 files reviewed. All 13 items of the 2026-10-14 13:53 section are checked, and each fix is in the commit. Hand checks found no defect: (1) SessionOutputHub: stoppedReaders is always the last lock (hub lock -> stoppedReaders in withLiveReaders; stream lock -> stoppedReaders in the termination handler; no lock is taken under stoppedReaders). finish() of feeds and subscriptions occurs outside the hub lock. A reader that stops while emit iterates is removed by emit (yield gives terminated) or by the next withLiveReaders call; a second remove of the same key does nothing. Waiters and pending ids do not use the reader keys. MailSubscriptionTests.stoppedReadersLeaveTheHub is synchronous and fails on the old hub. (2) SessionWorkEventTests: the order is fixed by event waits only (ChangeSignal wait on the pump end, then reportWorkEndIfIdle, then the gate opens). No sleep, retry, poll or time limit. Each documented wrong implementation sends workEnded before the run settlement or before elicitationRequested in each run. (3) The NoOpToolCallSessionFixture edit is in follow-up card 01M4XYBABNAF5EYBGFR9JBBZJ7, as the finding told.
+    - next: the task moves to done.
+  timestamp: 2026-10-14T19:42:47.680744+00:00
+- actor: claude-code
+  id: 01m4xz1e2g81f6e99ev2w96x1b
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 13 findings fixed; hub stoppedReaders cleanup; deterministic work-event tests; shared helpers
+    - test: green — swift test, 1704 tests in 206 suites passed; IntegrationTests build clean
+    - commit: 2c3c7fc7
+    - review: clean — 0 new findings, 13/13 prior items checked; card in done
+  timestamp: 2026-10-14T19:43:14.000574+00:00
+position_column: done
+position_ordinal: ffffffe380
 title: Session work events and user-wait idle (elicitation Router tasks 9 and 10)
 ---
 Source: elicitation-plan.md, Router tasks 9 and 10. Do not start this task. It is not in the mail plan.

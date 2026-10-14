@@ -10,6 +10,8 @@ import FoundationModelsRouterTestSupport
 ///
 /// Each step is in this one place, so the fixtures cannot drift apart.
 /// ``BackgroundingSessionFixture`` uses both steps.
+/// ``NoOpToolCallSessionFixture`` uses both steps for a vended session, and
+/// only the end step for a restored session.
 enum SessionFixtureLifecycle {
     /// One session that a fixture started, with what its end needs.
     struct Started: Sendable {
