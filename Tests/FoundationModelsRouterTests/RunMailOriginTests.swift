@@ -126,17 +126,6 @@ struct RunMailOriginTests {
         return ids.first
     }
 
-    /// The index of the first output of `outputs` whose event is `event`.
-    ///
-    /// - Parameters:
-    ///   - event: The event.
-    ///   - outputs: The output of a session, in order.
-    /// - Returns: The index.
-    /// - Throws: When `outputs` does not have the event.
-    private static func index(of event: SessionEvent, in outputs: [SessionOutput]) throws -> Int {
-        try #require(outputs.firstIndex { $0.event == event }, "the output has no \(event)")
-    }
-
     /// Checks that the one output of `event` has the origin of one run mail,
     /// and that the answer delivered that mail and ended it.
     ///
@@ -184,7 +173,7 @@ struct RunMailOriginTests {
         let outputs = try await Self.outputs(posting: [message])
 
         let id = try Self.expectRunMailOrigin(of: .runMessage(message), in: outputs)
-        #expect(try Self.index(of: .runMessage(message), in: outputs) < Self.index(of: .mailDelivered(id), in: outputs))
+        #expect(try position(of: .runMessage(message), in: outputs) < position(of: .mailDelivered(id), in: outputs))
     }
 
     /// The production change that makes this test fail: the output event of
@@ -197,7 +186,7 @@ struct RunMailOriginTests {
         let outputs = try await Self.outputs(posting: [terminal])
 
         let id = try Self.expectRunMailOrigin(of: .runSettled(terminal), in: outputs)
-        #expect(try Self.index(of: .runSettled(terminal), in: outputs) < Self.index(of: .mailDelivered(id), in: outputs))
+        #expect(try position(of: .runSettled(terminal), in: outputs) < position(of: .mailDelivered(id), in: outputs))
     }
 
     /// The production change that makes this test fail: the output event of
@@ -211,8 +200,8 @@ struct RunMailOriginTests {
 
         let id = try Self.expectRunMailOrigin(of: .elicitationRequested(elicitation), in: outputs)
         #expect(
-            try Self.index(of: .elicitationRequested(elicitation), in: outputs)
-                < Self.index(of: .mailDelivered(id), in: outputs))
+            try position(of: .elicitationRequested(elicitation), in: outputs)
+                < position(of: .mailDelivered(id), in: outputs))
     }
 
     /// The production change that makes this test fail: a progress event
@@ -324,7 +313,7 @@ struct RunMailOriginTests {
 
         let outputs = await Self.collectOutputs(feed)
         let id = try Self.expectRunMailOrigin(of: .runMessage(message), in: outputs)
-        #expect(try Self.index(of: .mailDelivered(id), in: outputs) < Self.index(of: .runMessage(message), in: outputs))
+        #expect(try position(of: .mailDelivered(id), in: outputs) < position(of: .runMessage(message), in: outputs))
         withExtendedLifetime(keep) {}
     }
 }

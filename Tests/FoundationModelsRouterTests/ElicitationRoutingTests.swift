@@ -192,29 +192,6 @@ struct ElicitationRoutingTests {
         )
     }
 
-    /// Binds a ``ToolContext`` over `session`'s own run plane — the same shape
-    /// the invoker binds around a wrapped tool call — so a test can suspend a
-    /// real ``ToolContext/elicit(_:)`` continuation on the session.
-    ///
-    /// - Parameters:
-    ///   - session: The session whose run plane the context binds.
-    ///   - sink: Where the context posts its events. Defaults to a sink that
-    ///     drops them; pass `session.outbox` to reach the session's journal.
-    private static func makeContext(
-        for session: any RoutedSession,
-        postingTo sink: any OperationEventSink = DiscardingOperationEventSink()
-    ) -> ToolContext {
-        ToolContext(
-            sessionID: session.id,
-            runPlane: session.runPlane,
-            sink: sink,
-            tool: "fake",
-            op: "ask user",
-            completionToken: RunPlane.makeCompletionToken(),
-            isCancelled: { false }
-        )
-    }
-
     /// Suspends a real `elicit(_:)` on `session` and waits until its pending
     /// entry is registered, returning the task that resumes with the answer.
     ///
@@ -240,7 +217,7 @@ struct ElicitationRoutingTests {
         forwardingTo downstream: (any OperationEventSink)? = nil
     ) async throws -> Task<ElicitationResponse, Error> {
         let postings = ElicitationPostings(forwardingTo: downstream)
-        let context = makeContext(for: session, postingTo: postings)
+        let context = Pending.makeContext(for: session, postingTo: postings)
         let answering = Task { try await context.elicit(request) }
         try await postings.waitForPosts(1)
         #expect(await session.runPlane.pendingElicitationIds().contains(request.elicitationId))
@@ -316,7 +293,7 @@ struct ElicitationRoutingTests {
         let firstId = ULID.generate()
         let secondId = ULID.generate()
         let postings = ElicitationPostings()
-        let context = Self.makeContext(for: session, postingTo: postings)
+        let context = Pending.makeContext(for: session, postingTo: postings)
         let firstAnswering = Task { try await context.elicit(Pending.formRequest(elicitationId: firstId)) }
         let secondAnswering = Task { try await context.elicit(Pending.formRequest(elicitationId: secondId)) }
         // The run plane posts each request after it made the request pending.

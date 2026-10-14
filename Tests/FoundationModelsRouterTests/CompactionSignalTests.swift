@@ -56,7 +56,7 @@ struct CompactionSignalTests {
         /// - Parameter matches: The test of one event.
         /// - Returns: The index of the event in ``outputs``.
         func firstIndex(where matches: @Sendable (SessionEvent) -> Bool) -> Int? {
-            outputs.firstIndex { matches($0.event) }
+            firstPosition(in: outputs, where: matches)
         }
 
         /// The output of the first event that `matches` accepts, or `nil`.

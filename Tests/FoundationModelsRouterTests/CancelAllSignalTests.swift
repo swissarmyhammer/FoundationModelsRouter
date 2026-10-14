@@ -565,17 +565,6 @@ struct CancelAllSignalTests {
         }
     }
 
-    /// The index of the first output of `outputs` whose event is `event`.
-    ///
-    /// - Parameters:
-    ///   - event: The event.
-    ///   - outputs: The output of a session, in order.
-    /// - Returns: The index.
-    /// - Throws: When `outputs` does not have the event.
-    private static func index(of event: SessionEvent, in outputs: [SessionOutput]) throws -> Int {
-        try #require(outputs.firstIndex { $0.event == event }, "the output has no \(event)")
-    }
-
     // MARK: - The stop of the running answer
 
     @Test(
@@ -774,12 +763,12 @@ struct CancelAllSignalTests {
 
         // Each event of a signal comes after the end of the signal before
         // it, and before its own end.
-        let replaceThreeDone = try Self.index(of: .signalDone(replaceThree), in: outputs)
-        let cancelDone = try Self.index(of: .signalDone(cancel), in: outputs)
-        let stopOneDone = try Self.index(of: .signalDone(stopOne), in: outputs)
-        let secondCancelled = try Self.index(of: .cancelled(second.id), in: outputs)
-        let firstCancelled = try Self.index(of: .cancelled(first), in: outputs)
-        let heldFailed = try Self.index(
+        let replaceThreeDone = try position(of: .signalDone(replaceThree), in: outputs)
+        let cancelDone = try position(of: .signalDone(cancel), in: outputs)
+        let stopOneDone = try position(of: .signalDone(stopOne), in: outputs)
+        let secondCancelled = try position(of: .cancelled(second.id), in: outputs)
+        let firstCancelled = try position(of: .cancelled(first), in: outputs)
+        let heldFailed = try position(
             of: .answerFailed(AnswerFailure(mailIds: [held], reason: .cancelled)), in: outputs)
         #expect(replaceThreeDone < secondCancelled && secondCancelled < cancelDone)
         #expect(cancelDone < firstCancelled && firstCancelled < stopOneDone)

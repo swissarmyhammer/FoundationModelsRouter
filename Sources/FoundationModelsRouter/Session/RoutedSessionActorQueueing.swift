@@ -159,13 +159,14 @@ extension RoutedSessionActor {
     /// - Returns: The ``ElicitationAnswerDelivery``.
     @discardableResult
     nonisolated func respond(elicitationId: String, response: ElicitationResponse) async -> ElicitationAnswerDelivery {
-        await deliver(toElicitation: elicitationId, orReturn: .noPendingElicitation) { id in
-            let startedWork = await noteWorkStart(answering: id, with: .response(response))
+        await deliverAnswer(
+            toElicitation: elicitationId, .response(response), orReturn: .noPendingElicitation,
+            outcome: QuestionAnswerOutcome.init
+        ) { id in
             let delivery = await runPlane.respond(elicitationId: id, response)
             if delivery == .delivered {
                 postElicitationAnswer(id: id, response: response)
             }
-            await noteAnswer(to: id, outcome: QuestionAnswerOutcome(delivery), startedWork: startedWork)
             return delivery
         }
     }
@@ -194,24 +195,42 @@ extension RoutedSessionActor {
     /// - Returns: The ``ElicitationCompletionDelivery``.
     @discardableResult
     nonisolated func complete(elicitationId: String) async -> ElicitationCompletionDelivery {
-        await deliver(toElicitation: elicitationId, orReturn: .noPendingElicitation) { id in
-            let startedWork = await noteWorkStart(answering: id, with: .completion)
-            let delivery = await runPlane.complete(elicitationId: id)
-            await noteAnswer(to: id, outcome: QuestionAnswerOutcome(delivery), startedWork: startedWork)
-            return delivery
+        await deliverAnswer(
+            toElicitation: elicitationId, .completion, orReturn: .noPendingElicitation,
+            outcome: QuestionAnswerOutcome.init
+        ) { id in
+            await runPlane.complete(elicitationId: id)
         }
     }
 
-    /// Parses an inbound elicitation id and hands the parsed id to `delivery`.
-    /// - Returns: The result of `delivery`, or `unparseableResult` when the id is not a ``ULID``.
-    private nonisolated func deliver<Delivery>(
+    /// The steps that ``respond(elicitationId:response:)`` and
+    /// ``complete(elicitationId:)`` share. It parses the inbound id, notes the
+    /// start of work when `answer` resumes the run that asks the question
+    /// (``noteWorkStart(answering:with:)``), gives the parsed id to
+    /// `runPlaneCall`, and then records what the run plane did
+    /// (``noteAnswer(to:outcome:startedWork:)``).
+    ///
+    /// - Parameters:
+    ///   - elicitationId: The inbound id of the question.
+    ///   - answer: The answer of the user.
+    ///   - unparseableResult: The result when the id is not a ``ULID``.
+    ///   - outcome: What the result of `runPlaneCall` did with the run.
+    ///   - runPlaneCall: The call to the run plane, and each step that comes
+    ///     directly after it.
+    /// - Returns: The result of `runPlaneCall`, or `unparseableResult`.
+    private nonisolated func deliverAnswer<Delivery>(
         toElicitation elicitationId: String,
+        _ answer: QuestionAnswer,
         orReturn unparseableResult: Delivery,
-        using delivery: (ULID) async -> Delivery
+        outcome: (Delivery) -> QuestionAnswerOutcome,
+        through runPlaneCall: (ULID) async -> Delivery
     ) async -> Delivery {
         guard let id = ULID(elicitationId) else {
             return unparseableResult
         }
-        return await delivery(id)
+        let startedWork = await noteWorkStart(answering: id, with: answer)
+        let delivery = await runPlaneCall(id)
+        await noteAnswer(to: id, outcome: outcome(delivery), startedWork: startedWork)
+        return delivery
     }
 }

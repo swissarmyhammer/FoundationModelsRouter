@@ -9,6 +9,10 @@ import Testing
 /// One session over a ``BackgroundingBackend``, with what a test reads. The
 /// suites that examine the work of a session (`SessionIdleWaitTests` and
 /// `SessionWorkEventTests`) make their sessions here.
+///
+/// The start and the end of the session are the shared steps of
+/// ``SessionFixtureLifecycle``. This fixture adds only the backend that the
+/// container vends.
 struct BackgroundingSessionFixture: Sendable {
     /// The session under test.
     let session: any RoutedSession
@@ -38,25 +42,29 @@ struct BackgroundingSessionFixture: Sendable {
         container: BackgroundingLLMContainer = BackgroundingLLMContainer(),
         mailOnlyAnswerLimit: Int = SessionConfiguration.defaultMailOnlyAnswerLimit
     ) async throws -> Self {
-        let directory = RouterTestFixtures.makeTempDir(prefix: prefix)
-        let (router, profile) = try await RouterTestFixtures.resolveStandardProfile(
-            over: container, cacheDir: directory)
-        let session = profile.standard.makeSession(
-            configuration: SessionConfiguration(tools: tools, mailOnlyAnswerLimit: mailOnlyAnswerLimit))
+        let started = try await SessionFixtureLifecycle.start(
+            over: container,
+            configuration: SessionConfiguration(tools: tools, mailOnlyAnswerLimit: mailOnlyAnswerLimit),
+            prefix: prefix)
         let backend = try #require(container.lastBackend)
-        return Self(session: session, backend: backend, router: router, directory: directory)
+        return Self(session: started.session, backend: backend, router: started.router, directory: started.directory)
     }
 
-    /// Ends the fixture: opens `gates`, so no run body stays held, closes the
-    /// session, and removes the directory.
+    /// The session as its one concrete type, whose internal state a test
+    /// reads.
+    ///
+    /// - Returns: The session actor.
+    /// - Throws: When the session is not a ``RoutedSessionActor``.
+    func sessionActor() throws -> RoutedSessionActor {
+        try #require(session as? RoutedSessionActor)
+    }
+
+    /// Ends the fixture with ``SessionFixtureLifecycle/end(_:opening:)``:
+    /// opens `gates`, closes the session, and removes the directory.
     ///
     /// - Parameter gates: The gates of the runs of the session.
     func end(opening gates: [RunLatch] = []) async {
-        for gate in gates {
-            await gate.open()
-        }
-        await session.close()
-        try? FileManager.default.removeItem(at: directory)
-        withExtendedLifetime(router) {}
+        await SessionFixtureLifecycle.end(
+            SessionFixtureLifecycle.Started(session: session, router: router, directory: directory), opening: gates)
     }
 }

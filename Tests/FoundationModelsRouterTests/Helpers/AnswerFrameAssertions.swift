@@ -2,7 +2,7 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Checks the frame of one answer in `events`, and gives back the events
+/// Checks the frame of one answer in `allEvents`, and gives back the events
 /// inside the frame.
 ///
 /// The frame of an answer is:
@@ -20,8 +20,8 @@ import Testing
 /// are no part of an answer: the session sends them around the work, and
 /// ``SessionWorkEventTests`` checks them. Thus this check ignores them.
 ///
-/// - Parameter events: The events of one answer, in order.
-/// - Returns: `events` without the work events, the deliveries of mail, the
+/// - Parameter allEvents: The events of one answer, in order.
+/// - Returns: `allEvents` without the work events, the deliveries of mail, the
 ///   submission starts, the submission ends and the end of the answer. A
 ///   failed check is recorded as an issue.
 func eventsInsideAnswerFrame(_ allEvents: [SessionEvent]) -> [SessionEvent] {
