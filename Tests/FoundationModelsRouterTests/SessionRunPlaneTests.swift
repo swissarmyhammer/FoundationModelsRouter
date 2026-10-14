@@ -97,8 +97,9 @@ struct SessionRunPlaneTests {
         // The run plane is empty: no background runs, no pending elicitations.
         #expect(await session.runPlane.backgroundRuns().isEmpty)
         #expect(await session.runPlane.pendingElicitationIds().isEmpty)
-        // The pending elicitation was rejected.
-        #expect(await rejected.value == .cancel)
+        // The sweep cancelled the pending elicitation, with the reason that
+        // tells the host that the run stopped and the user did not cancel.
+        #expect(await rejected.value == .cancel(reason: RunPlane.runCancelledReason))
 
         // The journal opens with the session's meta line — a close that
         // journals anything records the `.session` meta event first, exactly
