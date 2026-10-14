@@ -13,8 +13,10 @@ import Testing
 /// arrives later as mail, one time.
 ///
 /// A scripted backend calls the background tool of the session in its first
-/// answer, and a ``RunLatch`` holds the run. No assertion reads a clock: each
-/// wait reads a state until it holds, and the wait ends when the state holds.
+/// answer, and a ``RunLatch`` holds the run. The run plane of each session runs
+/// on a `ManualRunClock`, so the settle period ends only when the test
+/// advances that clock. No assertion reads a real clock: each wait reads a
+/// state until it holds, and the wait ends when the state holds.
 @Suite("The settle period of a session decides between the own output and a pending envelope")
 struct InlineSettleGraceSessionTests {
     // MARK: - Fixtures
@@ -50,6 +52,10 @@ struct InlineSettleGraceSessionTests {
         /// The router that keeps the models of the session resident.
         let router: Router
 
+        /// The clock of the run plane of the session. The settle period ends
+        /// only when the test advances it.
+        let clock: ManualRunClock
+
         /// The temporary directory the router caches under.
         let directory: URL
     }
@@ -62,14 +68,14 @@ struct InlineSettleGraceSessionTests {
     /// The prompt of the caller message that starts the run.
     private static let jobPrompt = "run the job"
 
-    /// A settle period much shorter than a run that waits for its gate until
-    /// the call answered.
+    /// The settle period of the test of a long run. The test advances the
+    /// clock by this period while the run waits for its gate.
     private static let shortGrace: TimeInterval = 0.05
 
     // MARK: - Helpers
 
     /// Makes a session with one ``HostGraceBackgroundTool`` and the settle
-    /// period `grace`.
+    /// period `grace`, over a run plane on a new `ManualRunClock`.
     ///
     /// - Parameters:
     ///   - gate: The gate of the run of the tool.
@@ -80,12 +86,13 @@ struct InlineSettleGraceSessionTests {
     private static func makeFixture(gate: RunLatch, grace: TimeInterval) async throws -> Fixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: "InlineSettleGraceSessionTests")
         let container = BackgroundingLLMContainer()
+        let clock = ManualRunClock()
         let (router, profile) = try await RouterTestFixtures.resolveStandardProfile(
-            over: container, cacheDir: directory)
+            over: container, cacheDir: directory, runClock: clock)
         let session = profile.standard.makeSession(
             configuration: SessionConfiguration(tools: [HostGraceBackgroundTool(gate: gate)], inlineSettleGrace: grace))
         let backend = try #require(container.lastBackend)
-        return Fixture(session: session, backend: backend, router: router, directory: directory)
+        return Fixture(session: session, backend: backend, router: router, clock: clock, directory: directory)
     }
 
     /// Ends the fixture: closes the session and removes the directory.
@@ -138,9 +145,13 @@ struct InlineSettleGraceSessionTests {
         let gate = RunLatch()
         let fixture = try await Self.makeFixture(gate: gate, grace: Self.shortGrace)
 
-        // The gate stays closed until the call answered, so the run continues
-        // past the settle period.
-        let answer = try await fixture.session.respond(to: Self.jobPrompt)
+        // The gate stays closed until the call answered. The call waits for
+        // its run up to the settle period, and the test then moves the clock
+        // past that period, so the run continues past it.
+        let answering = Task { try await fixture.session.respond(to: Self.jobPrompt) }
+        await fixture.clock.waitForSleepers(atLeast: 1)
+        fixture.clock.advance(by: .seconds(Self.shortGrace))
+        let answer = try await answering.value
         let envelope = try #require(PendingRunEnvelope.makeDecoded(fromRendered: answer))
         #expect(envelope.pending)
         #expect(fixture.backend.toolOutputs == [answer])
@@ -170,11 +181,11 @@ struct InlineSettleGraceSessionTests {
     @MainActor
     func aShortRunGivesItsOwnOutputAndNoMail() async throws {
         let gate = RunLatch()
-        // The gate is open before the call, so the run ends at once, far
-        // inside the settle period. The wait ends when the run settles, not
-        // at the settle period.
+        // The gate is open before the call, so the run ends at once. The test
+        // never advances the clock, so the settle period never ends: the wait
+        // ends when the run settles.
         await gate.open()
-        let fixture = try await Self.makeFixture(gate: gate, grace: MountFixtures.generousInterval)
+        let fixture = try await Self.makeFixture(gate: gate, grace: MountFixtures.manualClockGrace)
 
         let answer = try await fixture.session.respond(to: Self.jobPrompt)
 

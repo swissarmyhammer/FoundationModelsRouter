@@ -117,7 +117,9 @@ extension RoutedSessionActor {
         // The child's run plane is fresh for the same reason its outbox is:
         // background runs and pending elicitations never migrate between
         // sessions (see ``RoutedSessionActor/runPlane``).
-        let childRunPlane = RunPlane()
+        // The child runs its timers on the clock of this session, so one
+        // clock drives the whole family.
+        let childRunPlane = RunPlane(clock: runPlane.clock)
         // Minted before the tool composition below, deliberately: the
         // child's binding layers (the runners and the binding-only decorator
         // of the Extras tool hosting)

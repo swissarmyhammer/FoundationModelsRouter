@@ -264,8 +264,10 @@ struct SessionMountCompositionTests {
     func tokenCappingCapsTheOwnOutputOfARunThatEndsInsideItsGrace() async throws {
         let gate = RunLatch()
         await gate.open()
+        // The clock of the run plane never moves, so the grace never ends.
         let harness = Fixtures.backgroundHarness(
-            wrapping: Fixtures.InlineGraceTool(gate: gate, grace: Fixtures.generousInterval)
+            wrapping: Fixtures.InlineGraceTool(gate: gate, grace: Fixtures.manualClockGrace),
+            runClock: ManualRunClock()
         )
         let capping = TokenCappingTool(wrapped: harness.mounted, limit: Self.tinyTokenLimit, counter: characterTokenCounter)
 
@@ -288,7 +290,9 @@ struct SessionMountCompositionTests {
 
     @Test("an inline result leaves nothing staged for a later prompt, and a pending run still stages its progress")
     func inlineResultWithdrawsWhatTheRunStaged() async throws {
-        let runPlane = RunPlane()
+        // The clock of the run plane never moves, so the grace of the inline
+        // tool never ends.
+        let runPlane = RunPlane(clock: ManualRunClock())
         let outbox = SessionOutbox()
         // The settle period of the site is `0`, so the gated run below answers
         // with its pending envelope at once. The inline tool states its own
@@ -297,7 +301,7 @@ struct SessionMountCompositionTests {
         let gate = RunLatch()
         await gate.open()
         let inline = BackgroundToolRunner(
-            wrapping: Fixtures.InlineGraceTool(gate: gate, grace: Fixtures.generousInterval),
+            wrapping: Fixtures.InlineGraceTool(gate: gate, grace: Fixtures.manualClockGrace),
             site: site,
             timeout: nil
         )

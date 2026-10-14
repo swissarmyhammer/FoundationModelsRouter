@@ -18,8 +18,11 @@ struct MountArguments {
 enum MountFixtures {
     // MARK: - Intervals
 
-    /// A deadline a test treats as "never elapses within this test".
-    static let generousInterval: TimeInterval = 30
+    /// A settle period on a `ManualRunClock` that the test never advances.
+    /// That clock moves only when a test advances it, so the period never
+    /// ends, and a run that ends answers with its own output. The value is
+    /// not a time bound: no real time passes on that clock.
+    static let manualClockGrace: TimeInterval = 1
 
     // MARK: - Sink
 
@@ -63,13 +66,16 @@ enum MountFixtures {
     ///   - inlineSettleGrace: The settle period of the site, in seconds. The
     ///     default `0` gives the pending envelope at once, also for a fast
     ///     tool, so a test can examine the background path.
+    ///   - runClock: The clock of the run plane: the timeout and the settle
+    ///     period wait on it. The default is the real time.
     /// - Returns: The wiring of the test.
     static func backgroundHarness<Arguments: ConvertibleFromGeneratedContent & Sendable>(
         wrapping tool: any Tool<Arguments, String>,
         timeout: TimeInterval? = nil,
-        inlineSettleGrace: TimeInterval = 0
+        inlineSettleGrace: TimeInterval = 0,
+        runClock: any RunClock = ContinuousRunClock()
     ) -> Harness<BackgroundToolRunner<Arguments>> {
-        let runPlane = RunPlane()
+        let runPlane = RunPlane(clock: runClock)
         let sink = RecordingSink()
         let mounted = BackgroundToolRunner(
             wrapping: tool,

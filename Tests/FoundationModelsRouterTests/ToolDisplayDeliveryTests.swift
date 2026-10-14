@@ -13,10 +13,13 @@ import Testing
 ///   in post order with the progress events of the same run.
 /// - The event never goes into the input of a later submission.
 /// - A run that settles inside its settle period keeps its display events.
+/// - A display event starts the timeout of its run again.
 ///
 /// A ``BackgroundingBackend`` calls the background tool of the session in its
-/// first answer. No assertion reads a clock: each wait waits for the event
-/// on the feed of the session.
+/// first answer. The run plane of each session runs on a `ManualRunClock`, so
+/// the settle period and the timeout end only when the test advances that
+/// clock. No assertion reads a real clock: each wait waits for the event on
+/// the feed of the session, or for a timer of the clock.
 @Suite("The live delivery of the display events of a tool")
 struct ToolDisplayDeliveryTests {
     // MARK: - Fixtures
@@ -50,13 +53,21 @@ struct ToolDisplayDeliveryTests {
         /// once.
         var gate: RunLatch?
 
+        /// The semaphore the body waits on before each post, or `nil` to post
+        /// at once. The test gives one permit for each post.
+        var beat: AsyncSemaphore?
+
+        /// The timeout of the run with no sign of life, or `nil` for none.
+        var timeout: TimeInterval?
+
         var mount: ToolMount? {
-            ToolMount(mode: .background)
+            ToolMount(mode: .background, timeout: timeout)
         }
 
         func call(arguments: BackgroundFixtureArguments) async throws -> String {
             guard let context = ToolContext.current else { throw ToolContextMissing() }
             for step in steps {
+                await beat?.wait()
                 await Self.post(step, through: context)
             }
             await gate?.waitUntilOpen()
@@ -95,6 +106,10 @@ struct ToolDisplayDeliveryTests {
         /// The router that keeps the models of the session resident.
         let router: Router
 
+        /// The clock of the run plane of the session. Its timers end only
+        /// when the test advances it.
+        let clock: ManualRunClock
+
         /// The temporary directory the router caches under.
         let directory: URL
     }
@@ -110,10 +125,18 @@ struct ToolDisplayDeliveryTests {
     /// The prompt of the caller message after the run started.
     private static let nextPrompt = "how is the job"
 
+    /// The number of display events of the timeout test. The run lives for
+    /// this many full timeouts.
+    private static let beatCount = 8
+
+    /// The timeout that the display events of the timeout test start again.
+    private static let beatTimeout: TimeInterval = 1
+
     // MARK: - Helpers
 
-    /// Makes a session with `tool` and the settle period `grace`, and watches
-    /// the events of the session.
+    /// Makes a session with `tool` and the settle period `grace` over a run
+    /// plane on a new `ManualRunClock`, and watches the events of the
+    /// session.
     ///
     /// - Parameters:
     ///   - tool: The background tool of the session.
@@ -125,14 +148,15 @@ struct ToolDisplayDeliveryTests {
     private static func makeFixture(tool: DisplayingBackgroundTool, grace: TimeInterval) async throws -> Fixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: "ToolDisplayDeliveryTests")
         let container = BackgroundingLLMContainer()
+        let clock = ManualRunClock()
         let (router, profile) = try await RouterTestFixtures.resolveStandardProfile(
-            over: container, cacheDir: directory)
+            over: container, cacheDir: directory, runClock: clock)
         let session = profile.standard.makeSession(
             configuration: SessionConfiguration(tools: [tool], inlineSettleGrace: grace))
         let backend = try #require(container.lastBackend)
         let (events, drain) = await SessionEventLog.watch(session)
         return Fixture(
-            session: session, backend: backend, events: events, drain: drain, router: router,
+            session: session, backend: backend, events: events, drain: drain, router: router, clock: clock,
             directory: directory)
     }
 
@@ -184,8 +208,9 @@ struct ToolDisplayDeliveryTests {
             .progress("reading the files"), .display("first output line"),
             .progress("writing the files"), .display("second output line"),
         ]
+        // The test never advances the clock, so the settle period never ends.
         let fixture = try await Self.makeFixture(
-            tool: DisplayingBackgroundTool(steps: steps), grace: MountFixtures.generousInterval)
+            tool: DisplayingBackgroundTool(steps: steps), grace: MountFixtures.manualClockGrace)
 
         let events = try await Self.streamedEvents(answering: Self.jobPrompt, on: fixture.session)
 
@@ -226,8 +251,9 @@ struct ToolDisplayDeliveryTests {
     @MainActor
     func aRunThatSettlesInsideTheGraceKeepsItsDisplayEvents() async throws {
         let display = "output inside the settle period"
+        // The test never advances the clock, so the settle period never ends.
         let fixture = try await Self.makeFixture(
-            tool: DisplayingBackgroundTool(steps: [.display(display)]), grace: MountFixtures.generousInterval)
+            tool: DisplayingBackgroundTool(steps: [.display(display)]), grace: MountFixtures.manualClockGrace)
 
         let answer = try await fixture.session.respond(to: Self.jobPrompt)
 
@@ -238,6 +264,40 @@ struct ToolDisplayDeliveryTests {
         #expect(await fixture.session.outbox.pending().events.isEmpty)
         try await Self.waitForDisplayTexts(1, on: fixture)
         #expect(await fixture.events.events.displayTexts == [display])
+        await Self.end(fixture)
+    }
+
+    // MARK: - The timeout of the run
+
+    @Test("a tool that sends display events faster than its timeout runs past the timeout, and each event arrives")
+    @MainActor
+    func displayEventsResetTheTimeout() async throws {
+        let texts = (0..<Self.beatCount).map { "beat \($0)" }
+        let beat = AsyncSemaphore(value: 0)
+        let tool = DisplayingBackgroundTool(
+            steps: texts.map(DisplayingBackgroundTool.Step.display), beat: beat, timeout: Self.beatTimeout)
+        // The settle period is zero, so the call answers with a pending
+        // envelope, and the run goes on in the background.
+        let fixture = try await Self.makeFixture(tool: tool, grace: 0)
+        let answer = try await fixture.session.respond(to: Self.jobPrompt)
+        let envelope = try #require(PendingRunEnvelope.makeDecoded(fromRendered: answer))
+
+        for count in 1...texts.count {
+            // A window of the timeout waits before the tool posts, so the
+            // post comes inside that window.
+            await fixture.clock.waitForSleepers(atLeast: 1)
+            beat.signal()
+            try await Self.waitForDisplayTexts(count, on: fixture)
+            // A full timeout passes. The window held a display event, so the
+            // run goes on.
+            fixture.clock.advance(by: .seconds(Self.beatTimeout))
+        }
+
+        let terminal = try await MountFixtures.settledTerminal(
+            of: envelope.completionToken, in: fixture.session.runPlane)
+        #expect(terminal.outcome == .succeeded)
+        #expect(terminal.detail == Self.runOutput)
+        #expect(await fixture.events.events.displayTexts == texts)
         await Self.end(fixture)
     }
 }

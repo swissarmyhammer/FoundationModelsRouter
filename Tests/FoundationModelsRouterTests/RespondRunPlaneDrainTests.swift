@@ -238,9 +238,10 @@ struct RespondRunPlaneDrainTests {
 
     /// The no-progress timeout the timed-out run's tool declares. It is
     /// product input: the run settles as ``OperationOutcome/timedOut`` when
-    /// it fires, and its latch never opens before then. The test does not
-    /// sleep: it waits for the ``SessionEvent/runSettled(_:)`` that the
-    /// session sends when the timeout fires.
+    /// it fires, and its latch never opens before then. The run plane runs on
+    /// a `ManualRunClock`, so the timeout fires only when the test advances
+    /// that clock by this value. The test does not sleep: it then waits for
+    /// the ``SessionEvent/runSettled(_:)`` that the session sends.
     private static let fixtureTimeoutSeconds: TimeInterval = 0.05
 
     /// How many submissions start a background run in the no-round-count
@@ -257,16 +258,13 @@ struct RespondRunPlaneDrainTests {
     ///   - container: The stub container every vended session's backend comes
     ///     from.
     ///   - dir: The temporary directory the router caches and records under.
+    ///   - runClock: The clock of the run plane of each session, or `nil`
+    ///     (the default) for the real time.
     /// - Returns: The resolved profile sessions are vended from.
     private static func makeProfile(
-        container: any LoadedLLMContainer, dir: URL
+        container: any LoadedLLMContainer, dir: URL, runClock: (any RunClock)? = nil
     ) async throws -> LanguageModelProfile {
-        let router = RouterTestFixtures.makeRouter(
-            cacheDir: dir,
-            loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension)
-        )
-        return try await router.resolve(
-            profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        try await RouterTestFixtures.resolveStandardProfile(over: container, cacheDir: dir, runClock: runClock).profile
     }
 
     /// Opens `gates` and waits for every run tracked on `session` to settle, so
@@ -377,7 +375,8 @@ struct RespondRunPlaneDrainTests {
     ///   - gate: The tool's latch, opened after the first answer when
     ///     `opening` is set, and always opened before returning.
     ///   - opening: Whether the run settles because the latch opens, or on
-    ///     its own — by its timeout.
+    ///     its own — by its timeout, when the test advances the clock of the
+    ///     run plane.
     ///   - dir: The temporary directory the router caches and records under.
     /// - Returns: The prompt of the delivery submission and the run's
     ///   terminal event.
@@ -385,7 +384,8 @@ struct RespondRunPlaneDrainTests {
         over tool: LatchedBackgroundToolRunner, gate: RunLatch, opening: Bool, dir: URL
     ) async throws -> (prompt: String, terminal: OperationEvent) {
         let container = BackgroundingLLMContainer()
-        let profile = try await makeProfile(container: container, dir: dir)
+        let clock = ManualRunClock()
+        let profile = try await makeProfile(container: container, dir: dir, runClock: clock)
         let session = profile.standard.makeSession(tools: [tool])
         let backend = try #require(container.lastBackend)
         let events = await session.streamSessionEvents().events
@@ -393,6 +393,11 @@ struct RespondRunPlaneDrainTests {
         _ = try await session.respond(to: "run the job")
         if opening {
             await gate.open()
+        } else {
+            // The timeout window of the run waits, and the run posts nothing
+            // in it. One full window ends the run.
+            await clock.waitForSleepers(atLeast: 1)
+            clock.advance(by: .seconds(fixtureTimeoutSeconds))
         }
         let terminal = try #require(await firstSettledTerminal(in: events))
         let delivery = try #require(try await prompts(atLeast: 2, reaching: backend).last)

@@ -61,6 +61,12 @@ public actor Router {
     /// session reaches its detached pump. Set it with ``useLogger(_:)``.
     private(set) var explicitLogger: Logger?
 
+    /// The clock of the run plane of each session that a later resolve
+    /// vends: the timeout of each run, the settle period of each background
+    /// call, and the stall watch. It is the real time until a test installs
+    /// another clock with ``useRunClock(_:)``.
+    private(set) var runClock: any RunClock = ContinuousRunClock()
+
     /// The machine probe behind the budget.
     private let probe: any MachineProbe
 
@@ -212,6 +218,16 @@ public actor Router {
     /// - Parameter logger: The logger of the records.
     public func useLogger(_ logger: Logger) {
         explicitLogger = logger
+    }
+
+    /// Gives this router a clock for the run plane of each session that a
+    /// later resolve vends. Only the tests call it, before the resolve: a
+    /// test gives a `ManualRunClock`, and then ends each timer of its
+    /// sessions with an advance of that clock, in a fixed order.
+    ///
+    /// - Parameter clock: The clock of the runs and of the stall watch.
+    func useRunClock(_ clock: any RunClock) {
+        runClock = clock
     }
 
     /// Opens one client span that can suspend for a long time, writes its
@@ -949,7 +965,8 @@ public actor Router {
             ),
             tracer: tracer,
             samplingMode: samplingMode,
-            residencyHolds: admitted.holds
+            residencyHolds: admitted.holds,
+            runClock: runClock
         )
     }
 

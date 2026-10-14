@@ -261,6 +261,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// `FoundationModelsExtras.tool` span against the backend the router was
     /// constructed with.
     /// The outbox and the run plane are fresh per session and never shared.
+    /// The run plane runs its timers on ``RoutedModel/runClock``.
     ///
     /// - Parameters:
     ///   - tools: The caller's original tools, never mutated.
@@ -278,7 +279,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         inlineSettleGrace: TimeInterval
     ) -> (outbox: SessionOutbox, runPlane: RunPlane, tools: [any Tool]) {
         let outbox = SessionOutbox(model: chosen)
-        let runPlane = RunPlane()
+        let runPlane = RunPlane(clock: runClock)
         let instancedTools = tools.map { tool in
             ToolMounting.makeSessionMounted(
                 tool: tool,

@@ -272,7 +272,7 @@ extension RoutedSessionActor {
     /// - Returns: The new watch's id.
     func beginGenerationStallWatch(submitsToQueue: Bool) -> UInt64 {
         lastGenerationStallWatchId += 1
-        let now = ContinuousClock.now
+        let now = generationPassObserver.clock.now
         generationStallWatch = GenerationStallWatch(
             id: lastGenerationStallWatchId, startedAt: now, lastProgressAt: now,
             submissionStartedAt: submitsToQueue ? nil : now)
@@ -305,7 +305,8 @@ extension RoutedSessionActor {
     /// - Parameter kind: The kind of the append.
     func noteGenerationProgress(_ kind: GenerationProgressKind) {
         guard var watch = generationStallWatch else { return }
-        let now = ContinuousClock.now
+        defer { generationProgressChanges.signal() }
+        let now = generationPassObserver.clock.now
         if kind == .fragment {
             watch.fragmentsObserved += 1
         }
@@ -333,7 +334,7 @@ extension RoutedSessionActor {
         drainGenerationPassPhases()
         guard let watch = generationStallWatch, watch.id == id else { return false }
         guard let measuredFrom = watch.measuredFrom else { return true }
-        let now = ContinuousClock.now
+        let now = generationPassObserver.clock.now
         let withoutProgress = measuredFrom.duration(to: now)
         guard withoutProgress >= generationStallReportInterval else { return true }
         let stall = GenerationStall(
@@ -354,7 +355,8 @@ extension RoutedSessionActor {
 
     /// Watches the model call named by `id`, reporting a ``GenerationStall``
     /// on each interval it goes without observable progress. Ends when the
-    /// task is cancelled or the watch is gone. Reads the interval once.
+    /// task is cancelled or the watch is gone. Reads the interval and the
+    /// clock (``GenerationPassObserver/clock``) once.
     ///
     /// The watch runs over the whole model call, but it counts nothing while
     /// the submission waits for the worker, and for a backend that reports
@@ -367,9 +369,10 @@ extension RoutedSessionActor {
     func watchGenerationForStalls(id: UInt64) async {
         let interval = generationStallReportInterval
         guard interval > .zero else { return }
+        let clock = generationPassObserver.clock
         while true {
             do {
-                try await Task.sleep(for: interval)
+                try await clock.sleep(until: clock.now.advanced(by: interval))
             } catch {
                 return
             }

@@ -70,6 +70,11 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// each hand their own mode to every `makeSession` call.
     let samplingMode: GenerationOptions.SamplingMode?
 
+    /// The clock of the run plane of each session vended from this handle:
+    /// the timers of its runs and its stall watch. It is the clock of the
+    /// resolving router (``Router/runClock``), and the real time by default.
+    let runClock: any RunClock
+
     /// The router's durable transcripts root, or `nil` when recording to
     /// memory or none.
     var recordingsRoot: URL? { durableRecording?.root }
@@ -140,6 +145,8 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     ///   - residencyHolds: The Extras holds that keep the models of the
     ///     resolve resident, or none (the default) for a hand-built handle
     ///     that resolved nothing and therefore holds no residency.
+    ///   - runClock: The clock of the run plane of each vended session. The
+    ///     default is the real time.
     package init(
         slot: ModelSlot,
         chosen: ModelRef,
@@ -151,8 +158,10 @@ public final class RoutedModel<Container: Sendable>: Sendable {
         durableRecording: DurableRecording? = nil,
         tracer: (any Tracer)? = nil,
         samplingMode: GenerationOptions.SamplingMode? = nil,
-        residencyHolds: [ModelHold] = []
+        residencyHolds: [ModelHold] = [],
+        runClock: any RunClock = ContinuousRunClock()
     ) {
+        self.runClock = runClock
         self.slot = slot
         self.chosen = chosen
         self.footprintBytes = footprintBytes

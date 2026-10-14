@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsExtras
 import Testing
 
 @testable import FoundationModelsRouter
@@ -481,11 +482,13 @@ struct SessionTreeRestorationLostRunTests {
         #expect(report.count == Self.wholeReportLength)
 
         // The run settles inside the grace, so the call answers with the
-        // report, and the run plane keeps the same report for `wait`.
+        // report, and the run plane keeps the same report for `wait`. The
+        // clock of the run plane never moves, so the grace never ends.
         let gate = RunLatch()
         await gate.open()
         let harness = MountFixtures.backgroundHarness(
-            wrapping: MountFixtures.InlineGraceTool(gate: gate, grace: MountFixtures.generousInterval)
+            wrapping: MountFixtures.InlineGraceTool(gate: gate, grace: MountFixtures.manualClockGrace),
+            runClock: ManualRunClock()
         )
         let rendered = try await harness.mounted.call(arguments: MountArguments(value: value))
         #expect(rendered == report)

@@ -300,7 +300,10 @@ actor RoutedSessionActor: RoutedSession {
     /// The observer every backend of this session reports its passes to, and
     /// each submission of this session reports its wait and its start to
     /// (tasks ^ake8sax and ^1psqdm9). See ``drainGenerationPassPhases()``.
-    nonisolated let generationPassObserver = GenerationPassObserver()
+    ///
+    /// It reads the clock of ``runPlane``, so one clock drives the stall
+    /// watch of this session and the timers of its runs.
+    nonisolated let generationPassObserver: GenerationPassObserver
 
     /// See ``RoutedSession/transcript``. Gives ``settledTranscript`` at once,
     /// from any task: it waits for nothing and reads nothing of ``backend``.
@@ -592,6 +595,14 @@ actor RoutedSessionActor: RoutedSession {
     /// calls. See ``beginGenerationStallWatch()`` and ``GenerationStall``.
     var generationStallWatch: GenerationStallWatch?
 
+    /// Reports each append that the stall watch of the model call in flight
+    /// noted (``noteGenerationProgress(_:)``).
+    ///
+    /// Only the tests read it. An append with no text sends no event, so a
+    /// test reads the watch, and waits on this signal for the next append
+    /// when the watch does not yet name the append it wants.
+    nonisolated let generationProgressChanges = ChangeSignal()
+
     /// The last id ``beginGenerationStallWatch()`` handed out. Monotonic.
     var lastGenerationStallWatchId: UInt64 = 0
 
@@ -791,6 +802,7 @@ actor RoutedSessionActor: RoutedSession {
         self.originalTools = originalTools
         self.outbox = outbox
         self.runPlane = runPlane
+        self.generationPassObserver = GenerationPassObserver(clock: runPlane.clock)
         self.persistedEntryCount = persistedEntryCount
         // A new backend runs no call yet, so its transcript is the first
         // settled point of the session.

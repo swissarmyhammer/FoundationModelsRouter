@@ -1,3 +1,4 @@
+import FoundationModelsExtras
 import Synchronization
 
 /// One point in the life of a model call, as a ``GenerationPassObserver``
@@ -73,6 +74,24 @@ final class GenerationPassObserver: Sendable {
     /// The state, under one lock.
     private let state = Mutex(State())
 
+    /// The clock of the stall watch of the session: the instants of the
+    /// phases that this observer records, the instants that the session reads
+    /// for its watch, and the sleep of the timer of the watch.
+    ///
+    /// The session gives the clock of its run plane (`RunPlane.clock`), so one
+    /// clock drives the stall watch and the timers of the runs. The observer
+    /// holds the clock because it records instants from tasks outside the
+    /// session actor. One clock for both gives instants that agree.
+    let clock: any RunClock
+
+    /// Makes an observer with no phase and no wake.
+    ///
+    /// - Parameter clock: The clock of the instants and of the timer of the
+    ///   stall watch. The default is the real time.
+    init(clock: any RunClock = ContinuousRunClock()) {
+        self.clock = clock
+    }
+
     /// Reports each phase that a call records.
     ///
     /// ``record(_:)`` signals it after the phase is in the pending list and
@@ -102,7 +121,7 @@ final class GenerationPassObserver: Sendable {
     /// ``GenerationQueue/submit(isolation:onQueued:_:)``, so the call runs on
     /// the task of the worker when the submission starts.
     func submissionStarted() {
-        record(.submissionStarted(at: ContinuousClock.now))
+        record(.submissionStarted(at: clock.now))
     }
 
     /// Records that a pass of the running submission started now.
@@ -110,7 +129,7 @@ final class GenerationPassObserver: Sendable {
     /// The caller is ``SessionLanguageModel/Executor/respond(to:model:streamingInto:)``,
     /// before the wrapped executor runs the pass.
     func passStarted() {
-        record(.passStarted(at: ContinuousClock.now))
+        record(.passStarted(at: clock.now))
     }
 
     /// Records that the pass ended.

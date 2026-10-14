@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModelsExtras
 import FoundationModelsRouterTestSupport
 import Testing
 
@@ -17,9 +18,14 @@ import Testing
 /// submission goes through the production backend and its per-session
 /// ``SessionLanguageModel``, which reports each pass to the session.
 ///
-/// Each wait here waits for an event of the session, of the model or of the
-/// tool. A test does not wait for a time: it reads the state of the watch at a
-/// point of a fixed order, or it waits for the stall report itself.
+/// Each wait here waits for an event of the session, of the model, of the
+/// tool or of the clock. A test does not wait for a time. The router of each
+/// test gives a `ManualRunClock` to the run plane of each session, and the
+/// stall watch runs on that clock, so the clock moves only when the test
+/// advances it. A test that checks that no report comes does not advance the
+/// clock, and reads the state of the watch at a point of a fixed order. A test
+/// that checks a report advances the clock past the interval, and waits for
+/// the report itself.
 @Suite("A wait for the worker is not a stalled generation (tasks ^ake8sax, ^1psqdm9)")
 struct QueuedPassStallWatchTests {
     /// The suite's temp-directory prefix, handed to
@@ -29,10 +35,18 @@ struct QueuedPassStallWatchTests {
     /// The stall report interval each watched session installs.
     private static let reportInterval: Duration = .milliseconds(50)
 
-    /// A stall report interval that no test reaches. A test that proves that
-    /// no time counts installs it, so the ticker of the watch never reports,
-    /// and the test reads the state of the watch, which a tick reads.
-    private static let unreachableReportInterval: Duration = .seconds(600)
+    /// How far the test advances the clock while the submission waits for
+    /// the worker. With ``toolBodyTime`` it is shorter than
+    /// ``reportInterval``, so no tick comes before the second pass.
+    private static let workerWaitTime: Duration = .milliseconds(20)
+
+    /// How far the test advances the clock while the tool body runs.
+    private static let toolBodyTime: Duration = .milliseconds(10)
+
+    /// How many passes the test of a wait and a tool body waits for before
+    /// the second pass of the waiting session holds: the pass of the holding
+    /// session, and the two passes of the waiting session.
+    private static let passesBeforeTheHeldPass = 3
 
     /// The prompt of the session whose submission holds the worker.
     private static let holdingPrompt = "a"
@@ -40,16 +54,19 @@ struct QueuedPassStallWatchTests {
     /// The prompt of the session whose submission waits for the worker.
     private static let waitingPrompt = "b"
 
-    /// Resolves the standard profile over the container of `fixture`.
+    /// Resolves the standard profile over the container of `fixture`, with
+    /// `clock` as the clock of the run plane of each session.
     ///
     /// - Parameters:
     ///   - fixture: The fixture whose container the router loads.
     ///   - dir: The cache directory of the router.
+    ///   - clock: The clock of the runs and of the stall watch of each
+    ///     session.
     /// - Returns: The router and the resolved profile.
     private static func resolve(
-        _ fixture: PassObservingFixture, in dir: URL
+        _ fixture: PassObservingFixture, in dir: URL, clock: ManualRunClock
     ) async throws -> (router: Router, profile: LanguageModelProfile) {
-        try await RouterTestFixtures.resolveStandardProfile(over: fixture.container, cacheDir: dir)
+        try await RouterTestFixtures.resolveStandardProfile(over: fixture.container, cacheDir: dir, runClock: clock)
     }
 
     /// The ids that the `submissionQueued` events among `events` carry, in
@@ -100,14 +117,14 @@ struct QueuedPassStallWatchTests {
         let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: dir) }
         let fixture = PassObservingFixture()
-        let resolved = try await Self.resolve(fixture, in: dir)
+        // The test never advances the clock, so the watch never ticks. The
+        // test reads the state of the watch, which each tick reads.
+        let resolved = try await Self.resolve(fixture, in: dir, clock: ManualRunClock())
         let queue = try #require(resolved.profile.standard.backendQueue)
         let holding = resolved.profile.standard.makeSession()
         let waiting = resolved.profile.standard.makeSession()
         let waitingActor = try #require(waiting as? RoutedSessionActor)
-        // The ticker never reports, so its timing cannot change the result.
-        // The test reads the state of the watch, which each tick reads.
-        await waiting.setGenerationStallReportInterval(Self.unreachableReportInterval)
+        await waiting.setGenerationStallReportInterval(Self.reportInterval)
         let (holdingLog, holdingDrain) = await SessionEventLog.watch(holding)
 
         let holdingAnswer = Task { try await holding.respond(to: Self.holdingPrompt) }
@@ -160,15 +177,15 @@ struct QueuedPassStallWatchTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let fixture = PassObservingFixture(toolRounds: 1)
         await fixture.latch.open()
-        let resolved = try await Self.resolve(fixture, in: dir)
+        // The test never advances the clock, so the watch never ticks. The
+        // test reads the state of the watch, which each tick reads.
+        let resolved = try await Self.resolve(fixture, in: dir, clock: ManualRunClock())
         let toolLog = PassBoundaryLog()
         let toolGate = AsyncSemaphore(value: 0)
         let tool = PassBoundaryProbeTool(log: toolLog, hold: { await toolGate.wait() })
         let session = resolved.profile.standard.makeSession(tools: [tool])
         let actor = try #require(session as? RoutedSessionActor)
-        // The ticker never reports, so its timing cannot change the result.
-        // The test reads the state of the watch, which each tick reads.
-        await session.setGenerationStallReportInterval(Self.unreachableReportInterval)
+        await session.setGenerationStallReportInterval(Self.reportInterval)
 
         let (_, answer) = SessionEventLog.collect(await session.streamEvents(to: Self.holdingPrompt))
         await toolLog.waitUntil { $0.contains(.toolBodyStarted) }
@@ -184,22 +201,27 @@ struct QueuedPassStallWatchTests {
         let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
         defer { try? FileManager.default.removeItem(at: dir) }
         let fixture = PassObservingFixture()
-        let resolved = try await Self.resolve(fixture, in: dir)
+        let clock = ManualRunClock()
+        let resolved = try await Self.resolve(fixture, in: dir, clock: clock)
         let session = resolved.profile.standard.makeSession()
         await session.setGenerationStallReportInterval(Self.reportInterval)
 
         let (log, answer) = SessionEventLog.collect(await session.streamEvents(to: Self.holdingPrompt))
-        // The pass holds until the test opens the latch, so the watch sends
-        // its report when its interval ends.
+        // The pass started, and holds until the test opens the latch. The
+        // watch sleeps for its first interval.
+        try await fixture.passes.waitForPasses(1)
+        await clock.waitForSleepers(atLeast: 1)
+        clock.advance(by: Self.reportInterval)
         try await log.wait(until: { !Self.stalls(in: $0).isEmpty })
         await fixture.latch.open()
         try await answer.value
 
         let stall = try #require(await log.stalls.first)
         #expect(stall.visibility == .fragments(observed: 0))
-        // The watch reports only when the time without progress reached
-        // its interval.
-        #expect(stall.timeWithoutProgress >= Self.reportInterval)
+        // The pass started at the start of the call, and the clock moved one
+        // interval after it.
+        #expect(stall.timeWithoutProgress == Self.reportInterval)
+        #expect(stall.timeInFlight == Self.reportInterval)
         withExtendedLifetime(resolved) {}
     }
 
@@ -211,7 +233,8 @@ struct QueuedPassStallWatchTests {
         let step = AsyncSemaphore(value: 0)
         let fixture = PassObservingFixture(toolRounds: 1, step: step)
         await fixture.latch.open()
-        let resolved = try await Self.resolve(fixture, in: dir)
+        let clock = ManualRunClock()
+        let resolved = try await Self.resolve(fixture, in: dir, clock: clock)
         let holding = resolved.profile.standard.makeSession()
         let toolLog = PassBoundaryLog()
         let toolGate = AsyncSemaphore(value: 0)
@@ -225,10 +248,11 @@ struct QueuedPassStallWatchTests {
         let (log, waitingAnswer) = SessionEventLog.collect(await waiting.streamEvents(to: Self.waitingPrompt))
         try await log.wait(until: { !Self.queuedIds(in: $0).isEmpty })
         // The call of the waiting session started before it reported its
-        // wait, so it started before this instant.
-        let callStartedBefore = ContinuousClock.now
-        // The holding pass waits for its step, so the submission still waits,
-        // and the watch counts no time.
+        // wait, and its watch sleeps for its first interval. The holding pass
+        // waits for its step, so the submission still waits while the clock
+        // moves, and the watch counts no time.
+        await clock.waitForSleepers(atLeast: 1)
+        clock.advance(by: Self.workerWaitTime)
         let watchDuringTheWait = try #require(await waitingActor.appliedStallWatch())
         #expect(watchDuringTheWait.measuredFrom == nil)
 
@@ -238,31 +262,31 @@ struct QueuedPassStallWatchTests {
         step.signal()
         step.signal()
         await toolLog.waitUntil { $0.contains(.toolBodyStarted) }
-        // The tool body counts no time: the test reads the state of the
-        // watch, and not the reports of the ticker, whose timing can put a
-        // report of the first pass beside the start of the body.
+        // The tool body counts no time while the clock moves.
         try await Self.waitUntilNoTimeCounts(on: waitingActor)
-        // The tool result and the second pass come after the test opens the
-        // gate, so both come after this instant.
-        let secondPassStartedAfter = ContinuousClock.now
+        clock.advance(by: Self.toolBodyTime)
         toolGate.signal()
-        try await log.wait(until: { events in
-            Self.stalls(in: events).contains { $0.lastProgress == .toolResult }
+        // The second pass started and holds for its step, and the watch noted
+        // the tool result. Only then does the clock move past the interval.
+        try await fixture.passes.waitForPasses(Self.passesBeforeTheHeldPass)
+        try await waitingActor.generationProgressChanges.wait(until: {
+            await waitingActor.appliedStallWatch()?.lastProgressKind == .toolResult
         })
+        clock.advance(by: Self.reportInterval)
+        try await log.wait(until: { !Self.stalls(in: $0).isEmpty })
         let stalls = await log.stalls
         step.signal()
         _ = try await holdingAnswer.value
         try await waitingAnswer.value
 
-        let stall = try #require(stalls.first { $0.lastProgress == .toolResult })
+        let stall = try #require(stalls.first)
+        #expect(stall.lastProgress == .toolResult)
         #expect(stall.visibility == .fragments(observed: 0))
-        #expect(stall.timeWithoutProgress >= Self.reportInterval)
-        // Both times of the report end at the same instant. The time in
-        // flight starts at the start of the call, and the time without
-        // progress starts in the second pass. So the time in flight is
-        // longer by the wait, the first pass and the tool body at least.
-        #expect(
-            stall.timeInFlight - stall.timeWithoutProgress >= callStartedBefore.duration(to: secondPassStartedAfter))
+        // The time without progress starts at the tool result and the start
+        // of the second pass. The time in flight starts at the start of the
+        // call, so it is longer by the wait and the tool body.
+        #expect(stall.timeWithoutProgress == Self.reportInterval)
+        #expect(stall.timeInFlight == Self.workerWaitTime + Self.toolBodyTime + Self.reportInterval)
         withExtendedLifetime(resolved) {}
     }
 

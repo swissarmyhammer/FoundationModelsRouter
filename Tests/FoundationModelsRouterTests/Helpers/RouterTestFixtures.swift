@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsExtras
 import FoundationModelsRouterTestSupport
 import Tracing
 
@@ -186,14 +187,21 @@ enum RouterTestFixtures {
     /// - Parameters:
     ///   - container: The container every generation slot resolves to.
     ///   - cacheDir: The router's cache directory (a per-test temp dir).
+    ///   - runClock: The clock of the run plane of each session of the
+    ///     profile (``Router/useRunClock(_:)``), or `nil` (the default) for
+    ///     the real time. A test gives a `ManualRunClock`, so each timer of
+    ///     its sessions ends only when the test advances that clock.
     /// - Returns: The router and the profile it resolved. A caller that has
     ///   to keep the router alive for the whole test keeps both.
     /// - Throws: What the resolve throws.
     static func resolveStandardProfile(
-        over container: any LoadedLLMContainer, cacheDir: URL
+        over container: any LoadedLLMContainer, cacheDir: URL, runClock: (any RunClock)? = nil
     ) async throws -> (router: Router, profile: LanguageModelProfile) {
         let router = makeRouter(
             cacheDir: cacheDir, loader: StubModelLoader(container: container, dimension: stubDimension))
+        if let runClock {
+            await router.useRunClock(runClock)
+        }
         let resolved = try await router.resolve(profile: profile(), reporting: ResolutionProgress())
         return (router, resolved)
     }

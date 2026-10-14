@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsExtras
 import Synchronization
 import TelemetryTestSupport
 import Testing
@@ -19,6 +20,12 @@ import Testing
 /// report says honestly what the session could see: a streaming answer counts
 /// real fragments, and a `respond` answer counts none, because the backend
 /// hands it one whole string.
+///
+/// The router of each test gives a `ManualRunClock` to the run plane of each
+/// session, and the stall watch runs on that clock. A test that checks a
+/// report waits until the call holds and the watch sleeps, advances the clock
+/// past the interval, and then reads the report. A test that checks that no
+/// report comes does not advance the clock. No test waits for a time.
 @Suite("Generation stall diagnostic")
 struct GenerationStallDiagnosticTests {
     // MARK: - Stalling backend
@@ -290,17 +297,15 @@ struct GenerationStallDiagnosticTests {
     /// ``RouterTestFixtures/makeTempDir(prefix:)``.
     private static let tempDirPrefix = "GenerationStallDiagnosticTests"
 
-    /// The reporting interval every stalling test installs.
-    ///
-    /// Short, so a test that waits for a report does not wait long. The wait
-    /// itself has no wall clock (task ^v4zh807): it reads the reports the
-    /// session sends, so a loaded machine only delays a report.
+    /// The reporting interval every stalling test installs. The clock of the
+    /// session moves only when the test advances it, so the value is only the
+    /// distance that the test advances.
     private static let testReportInterval: Duration = .milliseconds(50)
 
-    /// A reporting interval no test answer can reach — installed by the
-    /// negative tests, so an answer that finishes normally is proved to report
-    /// nothing rather than merely to have outrun a short clock.
-    private static let unreachableReportInterval: Duration = .seconds(600)
+    /// How far the test of a tool invocation advances the clock before the
+    /// invocation. It is shorter than ``testReportInterval``, so no tick
+    /// comes before the invocation.
+    private static let timeBeforeToolInvocation: Duration = .milliseconds(25)
 
     /// The prompt every test answer sends.
     private static let prompt = "generate something"
@@ -313,60 +318,79 @@ struct GenerationStallDiagnosticTests {
     ///     before suspending.
     ///   - reportInterval: The stall reporting interval to install on the
     ///     vended session, or `nil` to install none.
-    /// - Returns: The session, its backend, and the temp directory to remove.
+    /// - Returns: The session, its backend, the clock of its run plane, and
+    ///   the temp directory to remove.
     private static func makeStallingSession(
         fragmentsBeforeStall: Int = 0,
         reportInterval: Duration? = testReportInterval
-    ) async throws -> (session: any RoutedSession, backend: StallingBackend, dir: URL) {
+    ) async throws -> (session: any RoutedSession, backend: StallingBackend, clock: ManualRunClock, dir: URL) {
         let container = StallingLLMContainer(fragmentsBeforeStall: fragmentsBeforeStall)
-        let (session, dir) = try await makeSession(over: container, reportInterval: reportInterval)
+        let (session, clock, dir) = try await makeSession(over: container, reportInterval: reportInterval)
         let backend = try #require(container.lastBackend)
-        return (session, backend, dir)
+        return (session, backend, clock, dir)
     }
 
     /// Builds a fresh router, resolved profile, and vended session over
-    /// `container`, with `reportInterval` installed when it is not `nil`.
+    /// `container`, with `reportInterval` installed when it is not `nil`. The
+    /// router gives a new `ManualRunClock` to the run plane of the session.
     ///
     /// - Parameters:
     ///   - container: The container the router loads.
     ///   - reportInterval: The stall reporting interval to install on the
     ///     vended session, or `nil` to install none.
-    /// - Returns: The session, and the temp directory to remove.
+    /// - Returns: The session, the clock of its run plane, and the temp
+    ///   directory to remove.
     private static func makeSession(
         over container: some LoadedLLMContainer,
         reportInterval: Duration?
-    ) async throws -> (session: any RoutedSession, dir: URL) {
+    ) async throws -> (session: any RoutedSession, clock: ManualRunClock, dir: URL) {
         let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let router = RouterTestFixtures.makeRouter(
             cacheDir: dir,
             loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension)
         )
+        let clock = ManualRunClock()
+        await router.useRunClock(clock)
         let profile = try await router.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let session = profile.standard.makeSession()
         if let reportInterval {
             await session.setGenerationStallReportInterval(reportInterval)
         }
-        return (session, dir)
+        return (session, clock, dir)
     }
 
-    /// The first stall report on `feed` that `isWanted` accepts.
+    /// Moves `clock` by `interval` once the model call holds and its watch
+    /// sleeps, so the next tick of the watch comes at a point of a fixed
+    /// order.
+    ///
+    /// - Parameters:
+    ///   - clock: The clock of the session.
+    ///   - held: The event the backend signals when the model call holds.
+    ///   - interval: How far to move the clock. The default is
+    ///     ``testReportInterval``.
+    /// - Throws: ``EventNeverArrived`` when the test task was cancelled first.
+    private static func advance(
+        _ clock: ManualRunClock, onceHeld held: AwaitedEvent, by interval: Duration = testReportInterval
+    ) async throws {
+        try await held.wait()
+        await clock.waitForSleepers(atLeast: 1)
+        clock.advance(by: interval)
+    }
+
+    /// The first stall report on `feed`.
     ///
     /// Each element of the feed is an event that the session sends, so the
     /// wait ends on the report itself and has no wall clock (task ^v4zh807).
-    /// A loaded machine only delays the report. The iteration ends at the
-    /// wanted report, or when the feed ends, and the result is then `nil`.
+    /// The iteration ends at the first report, or when the feed ends, and the
+    /// result is then `nil`.
     ///
-    /// - Parameters:
-    ///   - feed: The session-wide feed, subscribed before the answer starts.
-    ///   - isWanted: Whether a report is the one the test waits for.
-    /// - Returns: The first wanted report, or `nil` when the feed ended first.
-    private static func firstStall(
-        on feed: AsyncStream<SessionEvent>,
-        where isWanted: @Sendable (GenerationStall) -> Bool = { _ in true }
-    ) async -> GenerationStall? {
+    /// - Parameter feed: The session-wide feed, subscribed before the answer
+    ///   starts.
+    /// - Returns: The first report, or `nil` when the feed ended first.
+    private static func firstStall(on feed: AsyncStream<SessionEvent>) async -> GenerationStall? {
         for await event in feed {
-            guard case .generationStalled(let stall) = event, isWanted(stall) else { continue }
+            guard case .generationStalled(let stall) = event else { continue }
             return stall
         }
         return nil
@@ -378,11 +402,12 @@ struct GenerationStallDiagnosticTests {
         "a respond answer that stops progressing reports a stall on the session-wide feed")
     @MainActor
     func respondAnswerReportsAStallOnTheSessionWideFeed() async throws {
-        let (session, backend, dir) = try await Self.makeStallingSession()
+        let (session, backend, clock, dir) = try await Self.makeStallingSession()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let feed = await session.streamSessionEvents().events
         let answerTask = Task { try await session.respond(to: Self.prompt) }
+        try await Self.advance(clock, onceHeld: backend.suspended)
         let reported = await Self.firstStall(on: feed)
         backend.release.signal()
         _ = try await answerTask.value
@@ -391,18 +416,21 @@ struct GenerationStallDiagnosticTests {
         // The honest half: a `respond` answer's backend hands back one whole
         // string, so there is no increment to time and the report says so.
         #expect(stall.visibility == .wholeAnswer)
-        #expect(stall.timeWithoutProgress > .zero)
-        #expect(stall.timeInFlight >= stall.timeWithoutProgress)
+        // The call made no progress from its start, and the clock moved one
+        // interval after the start.
+        #expect(stall.timeWithoutProgress == Self.testReportInterval)
+        #expect(stall.timeInFlight == Self.testReportInterval)
     }
 
     @Test("a stalling answer is still given — the report bounds nothing")
     @MainActor
     func aStallingAnswerIsStillGiven() async throws {
-        let (session, backend, dir) = try await Self.makeStallingSession()
+        let (session, backend, clock, dir) = try await Self.makeStallingSession()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let feed = await session.streamSessionEvents().events
         let answerTask = Task { try await session.respond(to: Self.prompt) }
+        try await Self.advance(clock, onceHeld: backend.suspended)
         #expect(await Self.firstStall(on: feed) != nil)
 
         backend.release.signal()
@@ -418,7 +446,7 @@ struct GenerationStallDiagnosticTests {
     @MainActor
     func streamingAnswerReportsTheStallAgainstCountedFragments() async throws {
         let producedFragments = 2
-        let (session, backend, dir) = try await Self.makeStallingSession(
+        let (session, backend, clock, dir) = try await Self.makeStallingSession(
             fragmentsBeforeStall: producedFragments)
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -426,14 +454,11 @@ struct GenerationStallDiagnosticTests {
         // this test then polls: each element is a suspension the answer itself
         // resumes, so a loaded machine makes this test slower and never red.
         //
-        // Which report the test takes is the whole claim. The session counts a
-        // fragment before it publishes the matching ``SessionEvent/textDelta(_:)``
-        // — see ``RoutedSessionActor``'s streaming body — so a
-        // ``SessionEvent/generationStalled(_:)`` seen *after* every `.textDelta`
-        // was measured against every fragment the answer produced. A report the
-        // session made while a chunk was still unread counts fewer, honestly, and
-        // is a different report; a stalled generation reports again on each
-        // further interval, so the one this test is about always follows.
+        // The session counts a fragment before it publishes the matching
+        // ``SessionEvent/textDelta(_:)`` — see ``RoutedSessionActor``'s
+        // streaming body. So after the last `.textDelta` the watch counted
+        // every fragment the answer produced, and only then does the test move
+        // the clock. The one report of the watch comes after that point.
         var countedFragments = 0
         var stall: GenerationStall?
         let stream = await session.streamEvents(to: Self.prompt)
@@ -441,8 +466,11 @@ struct GenerationStallDiagnosticTests {
             switch event {
             case .textDelta:
                 countedFragments += 1
-            case .generationStalled(let reported)
-            where stall == nil && countedFragments == producedFragments:
+                if countedFragments == producedFragments {
+                    await clock.waitForSleepers(atLeast: 1)
+                    clock.advance(by: Self.testReportInterval)
+                }
+            case .generationStalled(let reported) where stall == nil:
                 stall = reported
                 // Only now may the model call end: the report this test is about
                 // has been made, and it is a report about a call still in flight.
@@ -462,8 +490,10 @@ struct GenerationStallDiagnosticTests {
     @Test("an answer that finishes reports no stall")
     @MainActor
     func anAnswerThatFinishesReportsNoStall() async throws {
-        let (session, backend, dir) = try await Self.makeStallingSession(
-            reportInterval: Self.unreachableReportInterval)
+        // The test never advances the clock, so the watch never ticks: an
+        // answer that finishes is proved to report nothing, and not to have
+        // outrun a short clock.
+        let (session, backend, _, dir) = try await Self.makeStallingSession()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let (log, drain) = await SessionEventLog.watch(session)
@@ -482,7 +512,7 @@ struct GenerationStallDiagnosticTests {
         "a session with no interval installed reports nothing after five seconds of silence")
     @MainActor
     func aSessionWithNoIntervalReportsNothing() async throws {
-        let (session, backend, dir) = try await Self.makeStallingSession(reportInterval: nil)
+        let (session, backend, _, dir) = try await Self.makeStallingSession(reportInterval: nil)
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let (log, drain) = await SessionEventLog.watch(session)
@@ -509,25 +539,26 @@ struct GenerationStallDiagnosticTests {
     @MainActor
     func aOneSecondIntervalReportsAfterOneSecond() async throws {
         let reportInterval: Duration = .seconds(1)
-        let (session, backend, dir) = try await Self.makeStallingSession(reportInterval: reportInterval)
+        let (session, backend, clock, dir) = try await Self.makeStallingSession(reportInterval: reportInterval)
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let feed = await session.streamSessionEvents().events
         let answerTask = Task { try await session.respond(to: Self.prompt) }
+        try await Self.advance(clock, onceHeld: backend.suspended, by: reportInterval)
         let reported = await Self.firstStall(on: feed)
 
         backend.release.signal()
         _ = try await answerTask.value
 
         let stall = try #require(reported)
-        #expect(stall.timeWithoutProgress >= reportInterval)
+        #expect(stall.timeWithoutProgress == reportInterval)
     }
 
     @Test("a fork starts with the stall report interval of its parent")
     @MainActor
     func aForkStartsWithTheIntervalOfItsParent() async throws {
         let reportInterval: Duration = .seconds(1)
-        let (session, dir) = try await Self.makeSession(
+        let (session, _, dir) = try await Self.makeSession(
             over: StallingLLMContainer(fragmentsBeforeStall: 0), reportInterval: reportInterval)
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -541,13 +572,14 @@ struct GenerationStallDiagnosticTests {
     @Test("a stall is logged, so a consumer that subscribed to nothing still sees it")
     @MainActor
     func aStallIsLogged() async throws {
-        let (session, backend, dir) = try await Self.makeStallingSession()
+        let (session, backend, clock, dir) = try await Self.makeStallingSession()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let logs = try await TelemetryCapture.run(forbidding: []) { context in
             await session.useCaptureLogger(for: context.logger)
             let feed = await session.streamSessionEvents().events
             let answerTask = Task { try await session.respond(to: Self.prompt) }
+            try await Self.advance(clock, onceHeld: backend.suspended)
             #expect(await Self.firstStall(on: feed) != nil)
 
             backend.release.signal()
@@ -570,13 +602,14 @@ struct GenerationStallDiagnosticTests {
         // appends from the start of the call. The watch of the session must
         // measure from the last append. The test reads the watch after each
         // append, so it needs no clock: a report measures from the instant
-        // that the watch reads here.
+        // that the watch reads here. The test never advances the clock, so
+        // the watch never ticks.
         let appendCount = 40
         let appends = (0..<appendCount).map { $0.isMultiple(of: 2) ? GenerationProgressKind.toolCall : .toolResult }
         let handshake = AppendHandshake()
         let backend = ToolAnswerBackend(appends: appends, holdsAfterLastAppend: false, handshake: handshake)
-        let (session, dir) = try await Self.makeSession(
-            over: ToolAnswerLLMContainer(backend: backend), reportInterval: Self.unreachableReportInterval)
+        let (session, _, dir) = try await Self.makeSession(
+            over: ToolAnswerLLMContainer(backend: backend), reportInterval: Self.testReportInterval)
         defer { try? FileManager.default.removeItem(at: dir) }
         let actor = try #require(session as? RoutedSessionActor)
 
@@ -609,24 +642,35 @@ struct GenerationStallDiagnosticTests {
         "an answer that stops after a tool result reports a stall that names the tool result")
     @MainActor
     func anAnswerThatStopsAfterAToolResultNamesIt() async throws {
-        let backend = ToolAnswerBackend(appends: [.toolCall, .toolResult], holdsAfterLastAppend: true)
-        let (session, dir) = try await Self.makeSession(
+        let appends: [GenerationProgressKind] = [.toolCall, .toolResult]
+        let handshake = AppendHandshake()
+        let backend = ToolAnswerBackend(appends: appends, holdsAfterLastAppend: true, handshake: handshake)
+        let (session, clock, dir) = try await Self.makeSession(
             over: ToolAnswerLLMContainer(backend: backend), reportInterval: Self.testReportInterval)
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        // A report made before the tool result reached the watch names an
-        // earlier append. The report this test is about names the tool result,
-        // and a stalled generation reports again on each interval, so it follows.
-        var stall: GenerationStall?
-        for try await event in await session.streamEvents(to: Self.prompt) {
-            guard case .generationStalled(let reported) = event,
-                stall == nil, reported.lastProgress == .toolResult
-            else { continue }
-            stall = reported
-            backend.release.signal()
+        let (log, drain) = SessionEventLog.collect(await session.streamEvents(to: Self.prompt))
+        for _ in appends {
+            await handshake.asked.wait()
+            handshake.proceed.signal()
         }
+        // The session asks for the element after the last append only after
+        // it noted the tool result. Only then does the clock move.
+        await handshake.asked.wait()
+        await clock.waitForSleepers(atLeast: 1)
+        clock.advance(by: Self.testReportInterval)
+        try await log.wait(until: { events in
+            events.contains { event in
+                guard case .generationStalled = event else { return false }
+                return true
+            }
+        })
+        handshake.proceed.signal()
+        backend.release.signal()
+        try await drain.value
 
-        let reported = try #require(stall)
+        let reported = try #require(await log.stalls.first)
+        #expect(reported.lastProgress == .toolResult)
         #expect(reported.visibility == .fragments(observed: 0))
         #expect(reported.description.contains("since the last tool result"))
     }
@@ -635,26 +679,34 @@ struct GenerationStallDiagnosticTests {
         "a respond answer measures its stall from the last tool invocation record")
     @MainActor
     func aRespondAnswerMeasuresFromTheLastToolInvocation() async throws {
-        let (session, backend, dir) = try await Self.makeStallingSession()
+        let (session, backend, clock, dir) = try await Self.makeStallingSession()
         defer { try? FileManager.default.removeItem(at: dir) }
         let actor = try #require(session as? RoutedSessionActor)
 
         let feed = await session.streamSessionEvents().events
         let answerTask = Task { try await session.respond(to: Self.prompt) }
-        try await backend.suspended.wait()
+        // The call holds for a while before its tool invocation. The clock
+        // stays short of the interval, so no tick comes before the invocation.
+        try await Self.advance(clock, onceHeld: backend.suspended, by: Self.timeBeforeToolInvocation)
 
         let open = ToolInvocationRecord(
             tool: "search", op: "search", correlationID: "tool-run", sessionID: session.id, openedAt: Date())
         await actor.deliver(invocation: open)
         await actor.deliver(invocation: open.closed(at: Date()))
+        clock.advance(by: Self.testReportInterval)
 
-        let reported = await Self.firstStall(on: feed, where: { $0.lastProgress == .toolResult })
+        let reported = await Self.firstStall(on: feed)
         backend.release.signal()
         _ = try await answerTask.value
 
         let stall = try #require(reported)
+        #expect(stall.lastProgress == .toolResult)
         #expect(stall.visibility == .wholeAnswer)
-        #expect(stall.timeInFlight > stall.timeWithoutProgress)
+        // The time without progress starts at the tool result. The time in
+        // flight starts at the start of the call, so it is longer by the time
+        // before the invocation.
+        #expect(stall.timeWithoutProgress == Self.testReportInterval)
+        #expect(stall.timeInFlight == Self.timeBeforeToolInvocation + Self.testReportInterval)
     }
 
     @Test("a stall report names the kind of its last append")
