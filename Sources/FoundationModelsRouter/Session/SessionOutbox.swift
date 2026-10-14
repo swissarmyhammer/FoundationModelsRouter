@@ -17,8 +17,10 @@ import Tracing
 ///   correlationID)` and the plan id (`nil` for a text progress), in place.
 ///   The new event makes no new mail. Every posted event is also recorded in
 ///   the transcript through the attached ``OperationEventJournal``,
-///   uncoalesced. A posted run terminal (``OperationEventKind/completed``) or
-///   run message (``OperationEventKind/message``) tells the attached
+///   uncoalesced. The output event of each posted event has the origin
+///   ``Origin/mail(_:)`` with the id of its run mail (``RunEventOrigin``). A
+///   posted run terminal (``OperationEventKind/completed``) or run message
+///   (``OperationEventKind/message``) tells the attached
 ///   ``SessionMailObserver``, so the pump can deliver it.
 /// - User-type mail: the mail of ``RoutedSession/mail(_:)``, and of each
 ///   helper on top of it. The session puts it into the queue itself.
@@ -162,12 +164,25 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
     /// ``SessionMailObserver``, after its journal write, so the pump delivers
     /// an event that the journal already holds.
     ///
+    /// The ``MailID`` of the run mail is made before the journal write, and
+    /// the journal write gets the id of the mail that holds the event
+    /// (``RunEventOrigin``). Thus the output event of the run event has the
+    /// origin ``Origin/mail(_:)`` with that id. A progress event that
+    /// replaces queued progress mail gets the id of that mail. An event that
+    /// makes no mail keeps the origin of the poster.
+    ///
+    /// The journal write and its output event can come after the pump took
+    /// the mail: the stage puts the mail into the queue at once, and the
+    /// write runs later on ``journalChain``. Thus
+    /// ``SessionEvent/mailDelivered(_:)`` of the mail can come before the
+    /// output event of the run event.
+    ///
     /// - Parameter event: The event to post.
     func post(event: OperationEvent) async {
-        // Enqueued before the staging decision and before any suspension, so
-        // the journal's order is exactly this outbox's post order.
-        let journalWrite = enqueueJournalWrite(event: event)
-        stage(event: event)
+        // Staged and enqueued before any suspension, so the journal's order
+        // is exactly this outbox's post order.
+        let origin = RunEventOrigin(mailID: stage(event: event, as: MailID()), poster: OriginContext.current)
+        let journalWrite = enqueueJournalWrite(event: event, origin: origin)
         await journalWrite?.value
         if event.kind == .completed || event.kind == .message {
             await mailObserver?.mailArrived()
@@ -195,11 +210,13 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
     }
 
     /// Records one event in the journal without staging it for a future
-    /// prompt. The write joins the same ordered ``journalChain``.
+    /// prompt. The write joins the same ordered ``journalChain``. The event
+    /// makes no mail, so its output event has the origin of the caller.
     ///
     /// - Parameter event: The event to record.
     internal func journalWithoutStaging(event: OperationEvent) async {
-        await enqueueJournalWrite(event: event)?.value
+        let origin = RunEventOrigin(mailID: nil, poster: OriginContext.current)
+        await enqueueJournalWrite(event: event, origin: origin)?.value
     }
 
     /// Puts run mail that a submission took but did not deliver back at the
@@ -292,7 +309,7 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
 
     /// The completion tokens of the runs that make no more mail, and the
     /// order in which they came, oldest first. ``ignoreRunMail(of:)`` writes
-    /// it, and ``stage(event:)`` reads it.
+    /// it, and ``stage(event:as:)`` reads it.
     private nonisolated let ignoredRuns = Mutex<(tokens: Set<String>, order: [String])>((tokens: [], order: []))
 
     /// Makes the runs of `tokens` make no more mail: a later event of these
@@ -331,20 +348,30 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
 
     /// Stages one event as run mail under the coalescing policy.
     ///
-    /// - Parameter event: The event to stage.
-    private func stage(event: OperationEvent) {
-        // A stopped run makes no mail; the journal already has the event.
-        guard !ignoredRuns.withLock({ $0.tokens.contains(event.correlationID) }) else { return }
+    /// - Parameters:
+    ///   - event: The event to stage.
+    ///   - id: The id of the new run mail, made before the journal write.
+    /// - Returns: The id of the run mail that holds `event`: `id` for new
+    ///   mail, the id of the queued progress mail that `event` replaced, or
+    ///   `nil` when `event` made no mail.
+    private func stage(event: OperationEvent, as id: MailID) -> MailID? {
+        // A stopped run makes no mail; the journal still records the event.
+        guard !ignoredRuns.withLock({ $0.tokens.contains(event.correlationID) }) else { return nil }
         if event.kind == .progress,
             let older = queue.pending.first(where: { $0.runEvent.map { Self.progress(event, replaces: $0) } ?? false }),
             queue.replace(older.id, with: .runEvent(event))
         {
-            return
+            return older.id
         }
-        // The queue refuses mail only after the session closed. Then no
-        // submission reads the mail anymore, and the journal already holds
-        // the event, so the refusal needs no other action.
-        try? queue.put(Mail(sender: .run(correlationID: event.correlationID), body: .runEvent(event)))
+        do {
+            try queue.put(Mail(id: id, sender: .run(correlationID: event.correlationID), body: .runEvent(event)))
+            return id
+        } catch {
+            // The queue refuses mail only after the session closed. Then no
+            // submission reads the mail anymore, and the journal still
+            // records the event, so the refusal needs no other action.
+            return nil
+        }
     }
 
     /// Whether the progress event `newer` replaces the queued event `older`.
@@ -430,11 +457,13 @@ actor SessionOutbox: OperationEventSink, ToolCallReportSink, StagedEventWithdraw
 
     /// Chains one journal write onto ``journalChain``.
     ///
-    /// - Parameter event: The event to record.
+    /// - Parameters:
+    ///   - event: The event to record.
+    ///   - origin: The run mail of `event` and the work that posted it.
     /// - Returns: The chained write, or `nil` when no journal is attached.
-    private func enqueueJournalWrite(event: OperationEvent) -> Task<Void, Never>? {
+    private func enqueueJournalWrite(event: OperationEvent, origin: RunEventOrigin) -> Task<Void, Never>? {
         guard let journal else { return nil }
-        return journalChain.enqueue { await journal.record(event: event) }
+        return journalChain.enqueue { await journal.record(event: event, origin: origin) }
     }
 
     /// A snapshot of the queued run mail.

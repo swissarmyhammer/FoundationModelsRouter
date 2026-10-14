@@ -218,6 +218,19 @@ public enum SessionEvent: Sendable, Equatable {
 
     /// A background run of this session settled: its one terminal ``OperationEvent``.
     /// Always on ``RoutedSession/streamSessionEvents()``; on the stream of the answer when it settles inside an answer.
+    ///
+    /// The origin of the event (``SessionOutput/origin``) is ``Origin/mail(_:)``
+    /// with the ``MailID`` of the run mail that holds the terminal. The
+    /// ``mailDelivered(_:)`` of the same id tells when the model sees the
+    /// terminal, and the ``SessionAnswer/mailIds`` of the answer that
+    /// delivered it hold that id. ``mailDelivered(_:)`` can come before this
+    /// event: the session queues the run mail at once, and sends this event
+    /// when the transcript holds the terminal. A terminal that makes no run
+    /// mail has the origin of the work that sent it. These terminals make no
+    /// run mail: the terminal of a run that ``RoutedSession/cancelAll()`` or
+    /// ``RoutedSession/close()`` stopped (the sweep of that stop sends it,
+    /// with the origin of the stop), and a terminal that arrives after the
+    /// session closed.
     case runSettled(OperationEvent)
 
     /// A background run of this session sent a message to the session through
@@ -229,6 +242,17 @@ public enum SessionEvent: Sendable, Equatable {
     ///
     /// Always on ``RoutedSession/streamSessionEvents()``; on the stream of the
     /// answer when the message arrives inside an answer.
+    ///
+    /// The origin of the event (``SessionOutput/origin``) is ``Origin/mail(_:)``
+    /// with the ``MailID`` of the run mail that holds the message. Thus a
+    /// reader waits for the ``mailDelivered(_:)`` of that id to know that the
+    /// model sees the message, and the ``SessionAnswer/mailIds`` of the answer
+    /// that delivered it hold that id. ``mailDelivered(_:)`` can come before
+    /// this event: the session queues the run mail at once, and sends this
+    /// event when the transcript holds the message. A message of a run that
+    /// ``RoutedSession/cancelAll()`` stopped, or a message that arrives after
+    /// the session closed, makes no run mail: its origin is the origin of the
+    /// work that posted it.
     case runMessage(OperationEvent)
 
     /// A run of this session reported its progress through
@@ -245,6 +269,15 @@ public enum SessionEvent: Sendable, Equatable {
     ///
     /// Always on ``RoutedSession/streamSessionEvents()``; on the stream of the
     /// answer when the progress arrives inside an answer.
+    ///
+    /// The origin of the event (``SessionOutput/origin``) is ``Origin/mail(_:)``
+    /// with the ``MailID`` of the run mail that holds the progress. A progress
+    /// event that replaces the queued progress mail of the same run has the id
+    /// of that queued mail, so each progress event of one queued mail has the
+    /// same id. ``mailDelivered(_:)`` of that id can come before this event. A
+    /// progress event of a run that ``RoutedSession/cancelAll()`` stopped, or
+    /// a progress event that arrives after the session closed, makes no run
+    /// mail: its origin is the origin of the work that posted it.
     case runProgress(OperationEvent)
 
     /// A run of this session asked the user a question through
@@ -263,6 +296,14 @@ public enum SessionEvent: Sendable, Equatable {
     ///
     /// Always on ``RoutedSession/streamSessionEvents()``; on the stream of the
     /// answer when the elicitation is raised inside an answer.
+    ///
+    /// The origin of the event (``SessionOutput/origin``) is ``Origin/mail(_:)``
+    /// with the ``MailID`` of the run mail that holds the elicitation. The
+    /// ``mailDelivered(_:)`` of that id tells when the model sees the
+    /// question, and ``mailDelivered(_:)`` can come before this event. An
+    /// elicitation of a run that ``RoutedSession/cancelAll()`` stopped, or an
+    /// elicitation that arrives after the session closed, makes no run mail:
+    /// its origin is the origin of the work that posted it.
     ///
     /// Known limit: an elicitation posted through
     /// `ToolContext.mount(_:op:as:postingTo:)` with a sink that does not

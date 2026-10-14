@@ -31,8 +31,14 @@ extension RoutedSessionActor: OperationEventJournal {
     /// and is written at once, so a restore finds the last plan of each plan
     /// id on disk (task ^mq1js23).
     ///
-    /// - Parameter event: The event the outbox has just accepted.
-    func record(event: OperationEvent) async {
+    /// The live event has the origin that `origin` gives
+    /// (``deliverLive(_:origin:)``): the id of the run mail of `event`, or
+    /// the origin of the poster when `event` made no mail.
+    ///
+    /// - Parameters:
+    ///   - event: The event the outbox has just accepted.
+    ///   - origin: The run mail of `event` and the work that posted it.
+    func record(event: OperationEvent, origin: RunEventOrigin) async {
         guard claimJournalWrite(for: event) else { return }
         if openProgressRow?.accepts(event) == true {
             openProgressRow?.append(event)
@@ -43,7 +49,31 @@ extension RoutedSessionActor: OperationEventJournal {
                 openProgressRow = OpenProgressRow(after: event)
             }
         }
-        deliverLive(Self.liveEvent(for: event))
+        deliverLive(Self.liveEvent(for: event), origin: origin)
+    }
+
+    /// Hands the live event of one journaled run event to
+    /// ``deliverLive(_:)``, with the origin ``RunEventOrigin/output``.
+    ///
+    /// The journal write runs on the journal chain of the outbox, so this
+    /// call binds the origin itself and does not read the task-local origin
+    /// of that chain.
+    ///
+    /// The answer that ``RoutedSession/cancelAll()`` stopped sends no more
+    /// output (``SessionOutputHub/silence(_:)``). A run event that the work of
+    /// that answer posts can have the origin of its new run mail, which the
+    /// output does not drop. Thus the poster of the event decides here: when
+    /// the output drops the origin of the poster, the live event is not sent.
+    /// The transcript and the run mail keep the event.
+    ///
+    /// - Parameters:
+    ///   - event: The live event.
+    ///   - origin: The run mail of the event and the work that posted it.
+    func deliverLive(_ event: SessionEvent, origin: RunEventOrigin) {
+        guard !outputHub.drops(origin.poster) else { return }
+        OriginContext.$current.withValue(origin.output) {
+            deliverLive(event)
+        }
     }
 
     /// The live ``SessionEvent`` that carries a recorded event to the host.

@@ -732,7 +732,7 @@ struct SessionOutboxTests {
         /// Every recorded event, in record order.
         private(set) var recorded: [OperationEvent] = []
 
-        func record(event: OperationEvent) {
+        func record(event: OperationEvent, origin: RunEventOrigin) {
             recorded.append(event)
         }
     }

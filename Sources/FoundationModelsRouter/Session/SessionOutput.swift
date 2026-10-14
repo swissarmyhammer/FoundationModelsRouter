@@ -9,7 +9,9 @@ import FoundationModelsExtras
 /// value, thus a tool body and a background run that an answer starts keep
 /// the origin of that answer. A task that inherits no task-local, for
 /// example the worker of a ``GenerationQueue``, gets the value bound again
-/// by the code that starts it.
+/// by the code that starts it. The run journal binds ``Origin/mail(_:)``
+/// with the id of the run mail for the output event of each run event that
+/// makes run mail (``RunEventOrigin``).
 ///
 /// No call site gives the origin to an event by hand.
 /// ``RoutedSessionActor/emitSessionScopedEvent(_:)`` reads it.

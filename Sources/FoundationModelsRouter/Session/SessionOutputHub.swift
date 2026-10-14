@@ -255,6 +255,16 @@ final class SessionOutputHub: Sendable {
         }
     }
 
+    /// Whether the hub drops each output whose origin is `origin`: the
+    /// origin holds the mail of an answer that ``RoutedSession/cancelAll()``
+    /// stopped (``silence(_:)``).
+    ///
+    /// - Parameter origin: The origin of one output.
+    /// - Returns: `true` when the origin holds a silenced id.
+    func drops(_ origin: Origin) -> Bool {
+        state.withLock { $0.isSilenced(origin) }
+    }
+
     /// The terminal event of `key` from the ledger, or `nil` when the ledger
     /// does not have it.
     ///

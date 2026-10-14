@@ -26,8 +26,43 @@ protocol OperationEventJournal: AnyObject, Sendable {
     /// ``RoutedSessionActor/claimJournalWrite(for:)`` for the two independent
     /// writers this exists to reconcile.
     ///
-    /// - Parameter event: The event the outbox has just accepted.
-    func record(event: OperationEvent) async
+    /// The journal also sends the output event of `event` with the origin
+    /// that `origin` gives (``RunEventOrigin/output``). It binds that origin
+    /// itself: the write runs on the journal chain of the outbox, and does
+    /// not use the task-local origin of that chain.
+    ///
+    /// - Parameters:
+    ///   - event: The event the outbox has just accepted.
+    ///   - origin: The run mail of `event` and the work that posted it.
+    func record(event: OperationEvent, origin: RunEventOrigin) async
+}
+
+/// The origin of the output event of one run event that a session's
+/// `SessionOutbox` journals (`mailbox.md`, section 5, problem 15).
+///
+/// The outbox makes it when the event is posted, before the journal write,
+/// and gives it to the write. The output event
+/// (``SessionEvent/runMessage(_:)``, ``SessionEvent/runSettled(_:)``,
+/// ``SessionEvent/runProgress(_:)`` or ``SessionEvent/elicitationRequested(_:)``)
+/// then has the id of the run mail that holds the event, so a reader can wait
+/// for the ``SessionEvent/mailDelivered(_:)`` of the same id.
+struct RunEventOrigin: Sendable, Equatable {
+    /// The id of the run mail that holds the event: a new mail, or the queued
+    /// progress mail that the event replaced. `nil` when the event made no
+    /// mail: the run was stopped (`SessionOutbox.ignoreRunMail(of:)`), the
+    /// queue refused the mail because the session closed, or the event was
+    /// journaled without staging (`SessionOutbox.journalWithoutStaging(event:)`).
+    let mailID: MailID?
+
+    /// The origin of the work that posted the event: the value of
+    /// `OriginContext.current` on the task of the poster.
+    let poster: Origin
+
+    /// The origin of the output event: ``Origin/mail(_:)`` with ``mailID``,
+    /// or ``poster`` when the event made no mail.
+    var output: Origin {
+        mailID.map { .mail([$0]) } ?? poster
+    }
 }
 
 /// A live destination a session's `SessionOutbox` forwards every posted

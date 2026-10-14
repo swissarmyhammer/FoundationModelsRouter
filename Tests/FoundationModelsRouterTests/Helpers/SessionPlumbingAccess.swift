@@ -47,6 +47,14 @@ extension RoutedSession {
         await (self as! RoutedSessionActor).requestCancelOfRunningWork()
     }
 
+    /// Attaches the session as the journal and the observers of its outbox
+    /// (``RoutedSessionActor/attachOutboxJournalIfNeeded()``), as the first
+    /// answer of the session does. A run event that the outbox gets after
+    /// this call goes to the transcript and to the output of the session.
+    func attachOutboxJournal() async {
+        await (self as! RoutedSessionActor).attachOutboxJournalIfNeeded()
+    }
+
     /// The count of the user-type mail (a user message, an agent message or
     /// an elicitation answer) that waits in the mail queue of this session.
     nonisolated var waitingUserMailCount: Int {

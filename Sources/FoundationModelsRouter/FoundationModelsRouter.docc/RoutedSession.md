@@ -37,7 +37,15 @@ mail. All output is events. Control is signals.
   ``SessionOutput``: an event and the ``Origin-enum`` of the work that sent
   it. The origin is ``Origin-enum/mail(_:)`` with the ids of the mail of an
   answer, ``Origin-enum/signal(_:)`` with the id of a signal, or
-  ``Origin-enum/system``.
+  ``Origin-enum/system``. The output event of a run event
+  (``SessionEvent/runMessage(_:)``, ``SessionEvent/runSettled(_:)``,
+  ``SessionEvent/runProgress(_:)`` and
+  ``SessionEvent/elicitationRequested(_:)``) has the origin
+  ``Origin-enum/mail(_:)`` with the id of its run mail. Thus a reader waits
+  for the ``SessionEvent/mailDelivered(_:)`` of that id to know that the model
+  sees the run event. A run event that makes no run mail (a run that
+  ``cancelAll()`` stopped, or a run event after ``close()``) keeps the origin
+  of the work that posted it.
 - **Signals.** ``cancel(_:)``, ``cancelAll()``, ``replace(_:with:)`` and
   ``compact(prompt:budget:)`` do not wait in the mail queue. Each returns a
   ``SignalID`` at once. ``close()`` ends the session.

@@ -32,10 +32,13 @@ extension RoutedSessionActor {
     ///   pause counter: step 1 uses ``MailQueue/drain()``, which removes the
     ///   mail and leaves the pause as it is.
     /// - The drop of late output covers only the stopped answer (its
-    ///   ``Origin/mail(_:)`` origin) and the runs of that answer, which carry
-    ///   the same origin. An output with the origin ``Origin/signal(_:)`` is
-    ///   never dropped. A running compaction does not stop: ``cancelAll()``
-    ///   runs after it ends, in the order of the signals.
+    ///   ``Origin/mail(_:)`` origin) and the run events that the work of that
+    ///   answer posts. Such a run event has the origin of the answer when it
+    ///   makes no run mail, and else the origin of its run mail; the journal
+    ///   drops it by the origin of its poster (``deliverLive(_:origin:)``).
+    ///   An output with the origin ``Origin/signal(_:)`` is never dropped. A
+    ///   running compaction does not stop: ``cancelAll()`` runs after it
+    ///   ends, in the order of the signals.
     /// - After the call, the other signals and ``mail(_:)`` work as usual:
     ///   mail that arrives later waits in the queue, and the pump takes it
     ///   when the stopped work ended.
