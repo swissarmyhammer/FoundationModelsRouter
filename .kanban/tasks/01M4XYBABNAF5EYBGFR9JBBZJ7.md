@@ -22,8 +22,32 @@ comments:
     - evidence: swift build --build-tests - Build complete, zero warnings (only the harmless "missing creator for mutated node" line). swift test --skip-build - "Test run with 1704 tests in 206 suites passed after 6.457 seconds with 1 known issue". The one known issue is the existing test "the embedding slot every harness profile carries records an issue when anything embeds through it", which expects an issue by design. cd IntegrationTests && swift build --build-tests - Build complete, zero warnings and errors (tests not run).
     - next: review
   timestamp: 2026-10-14T19:49:19.372401+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m4xzd347fr8f92rbzg7yx2a6
+  text: |-
+    step: commit
+    outcome: changed
+    evidence: 6420fd61 test: use SessionFixtureLifecycle in NoOpToolCallSessionFixture
+    task: ^9jbbzj7
+  timestamp: 2026-10-14T19:49:36.007238+00:00
+- actor: claude-code
+  id: 01m4xzhdrq1cds8v8m3qk4d2ry
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 6420fd61). 0 findings, 0 confirmed, 1 refuted. 2 files reviewed. 4 .kanban files not reviewed (ignore rule).
+    - next: none. The task is in done.
+  timestamp: 2026-10-14T19:51:57.975719+00:00
+- actor: claude-code
+  id: 01m4xzhqvmdxj774kt9jg6ersm
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — NoOpToolCallSessionFixture uses SessionFixtureLifecycle
+    - test: green — swift test, 1704 tests in 206 suites passed; IntegrationTests build clean
+    - commit: 6420fd61
+    - review: clean — no findings; card in done
+  timestamp: 2026-10-14T19:52:08.308068+00:00
+position_column: done
+position_ordinal: ffffffe480
 title: Use SessionFixtureLifecycle in NoOpToolCallSessionFixture
 ---
 Found by the review of ^5kbfsyv (finding BackgroundingSessionFixture.swift:12 and :54). The finding said: do not edit NoOpToolCallModel.swift in that change, and report the edit as a separate task.
