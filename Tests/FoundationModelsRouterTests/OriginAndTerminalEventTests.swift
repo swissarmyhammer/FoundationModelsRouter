@@ -66,10 +66,12 @@ struct OriginAndTerminalEventTests {
     /// which finishes the feed.
     ///
     /// - Parameter feed: The session-wide feed of one session.
-    /// - Returns: Each output the feed delivered, in order.
+    /// - Returns: Each output the feed delivered, in order, without the work
+    ///   events. They have the origin ``Origin/system`` and are no part of an
+    ///   answer. ``SessionWorkEventTests`` checks them.
     private static func collectOutputs(_ feed: AsyncStream<SessionOutput>) async -> [SessionOutput] {
         var outputs: [SessionOutput] = []
-        for await output in feed {
+        for await output in feed where !output.event.isWorkEvent {
             outputs.append(output)
         }
         return outputs

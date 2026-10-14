@@ -170,6 +170,10 @@ extension RoutedSessionActor {
 
     /// See ``RoutedSession/compact(prompt:budget:)``.
     ///
+    /// A requested compaction is work of the session from the call on, so
+    /// its start is noted (``noteWorkStarted()``) before the call returns,
+    /// and thus before each event of the compaction.
+    ///
     /// - Parameters:
     ///   - prompt: The compaction prompt sent to the summarizer.
     ///   - budget: The token budget to compact against, or `nil` for this
@@ -180,11 +184,12 @@ extension RoutedSessionActor {
         let id = SignalID()
         let order = CompactionOrder(prompt: prompt, budget: budget, reason: .requested, overflowRetryTarget: nil)
         openRequestedCompactions.withLock { $0 += 1 }
+        noteWorkStarted()
         submitSignal(
             id,
             { session in
                 _ = await session.performCompaction(id, order)
-                session.endRequestedCompaction()
+                await session.endRequestedCompaction()
             },
             skipped: { [self] in
                 openRequestedCompactions.withLock { $0 -= 1 }
@@ -192,11 +197,12 @@ extension RoutedSessionActor {
         return id
     }
 
-    /// Ends the count of one requested compaction, and tells each
-    /// ``awaitIdle()`` call that the work of the session changed.
-    private func endRequestedCompaction() {
+    /// Ends the count of one requested compaction, and reports the change of
+    /// the work of the session (``workDidChange()``) after the terminal event
+    /// of the compaction.
+    private func endRequestedCompaction() async {
         openRequestedCompactions.withLock { $0 -= 1 }
-        signalWorkChange()
+        await workDidChange()
     }
 
     /// Compacts inside the running answer and waits for the result. Only the

@@ -103,11 +103,16 @@ extension RoutedSessionActor {
     /// (``sweepTask``), after the sweep that runs now, if any. Two calls give
     /// two sweeps in order, and the second sweep finds only the runs that
     /// started since. ``close()`` waits for the last sweep.
+    ///
+    /// The sweep settles the runs with no settlement forward
+    /// (``deliver(settledTerminal:)``), so its end is a change of the work of
+    /// the session of its own (``workDidChange()``).
     private func startSweep() {
         let earlier = sweepTask
         sweepTask = Task {
             await earlier?.value
             await self.sweepBackgroundRuns()
+            await self.workDidChange()
         }
     }
 

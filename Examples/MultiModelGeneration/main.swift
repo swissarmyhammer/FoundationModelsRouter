@@ -128,7 +128,7 @@ func runObservedAnswer(
             .compactionStarted, .compaction, .compactionFailed, .discoveryPrimingFailed, .generationStalled,
             .submissionQueued, .repetitionStopped, .reasoningStopped, .runSettled, .runMessage, .runProgress,
             .elicitationRequested, .generationCall, .answerFailed, .mailDeliveryPaused, .mailDelivered, .cancelled,
-            .signalDone, .lost:
+            .signalDone, .lost, .workStarted, .workEnded:
             // Silent by construction — see this function's documentation.
             break
         }

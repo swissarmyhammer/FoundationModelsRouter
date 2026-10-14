@@ -23,6 +23,9 @@ extension RoutedSessionActor {
     /// this mail again.
     ///
     /// A mail that stays in the queue is a change of ``stateChanges``.
+    /// User-type mail that stays in the queue is work of the session, so
+    /// its start is noted (``noteWorkStarted()``) before any output of the
+    /// mail.
     ///
     /// The wake of the pump is a helper task (``helperTasks``), and the
     /// session reserves it before the put (``HelperTaskTracker/reserve()``).
@@ -51,6 +54,9 @@ extension RoutedSessionActor {
             throw withdrawRefusedMail(
                 mail.id, refusal: MailRefusal.duplicateID(mail.id), arrival: arrival, subscription: key,
                 madePending: madePending)
+        }
+        if !mail.isRunMail {
+            noteWorkStarted()
         }
         outbox.noteCallerContext(ServiceContext.current, for: mail.id)
         // The record comes before the wake of the pump, so the transcript
@@ -145,14 +151,21 @@ extension RoutedSessionActor {
     /// mail, as if the user made one more post (`mailbox.md`, section 5). It
     /// is user-type mail, so it starts an answer.
     ///
+    /// An answer that resumes a run that waits only for the user starts work
+    /// of the session. The start is noted before the run plane gets the
+    /// answer (``noteWorkStart(answering:with:)``), so it comes before each
+    /// output of the resumed run.
+    ///
     /// - Returns: The ``ElicitationAnswerDelivery``.
     @discardableResult
     nonisolated func respond(elicitationId: String, response: ElicitationResponse) async -> ElicitationAnswerDelivery {
         await deliver(toElicitation: elicitationId, orReturn: .noPendingElicitation) { id in
+            let startedWork = await noteWorkStart(answering: id, with: .response(response))
             let delivery = await runPlane.respond(elicitationId: id, response)
             if delivery == .delivered {
                 postElicitationAnswer(id: id, response: response)
             }
+            await noteAnswer(to: id, outcome: QuestionAnswerOutcome(delivery), startedWork: startedWork)
             return delivery
         }
     }
@@ -173,11 +186,19 @@ extension RoutedSessionActor {
     }
 
     /// Signals that the out-of-band flow of an accepted URL-mode elicitation finished.
+    ///
+    /// The completion resumes the run that asked the question, so it starts
+    /// work of the session. The start is noted before the run plane gets
+    /// the completion (``noteWorkStart(answering:with:)``).
+    ///
     /// - Returns: The ``ElicitationCompletionDelivery``.
     @discardableResult
     nonisolated func complete(elicitationId: String) async -> ElicitationCompletionDelivery {
-        await deliver(toElicitation: elicitationId, orReturn: .noPendingElicitation) {
-            await runPlane.complete(elicitationId: $0)
+        await deliver(toElicitation: elicitationId, orReturn: .noPendingElicitation) { id in
+            let startedWork = await noteWorkStart(answering: id, with: .completion)
+            let delivery = await runPlane.complete(elicitationId: id)
+            await noteAnswer(to: id, outcome: QuestionAnswerOutcome(delivery), startedWork: startedWork)
+            return delivery
         }
     }
 

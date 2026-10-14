@@ -182,8 +182,12 @@ extension RoutedSessionActor {
     /// Held mail starts no submission, so it is not pending. A stop of a
     /// no-op call that is already set counts as pending.
     ///
+    /// A run that waits only for the user is pending here, but it is no work
+    /// for ``isIdle()``: the result of the run comes to the model later, so a
+    /// no-op call stops while a question of the run is open.
+    ///
     /// - Returns: `true` when the pump delivers a result to the model later.
-    private func hasPendingOperation() async -> Bool {
+    func hasPendingOperation() async -> Bool {
         guard noOpToolCallStop == nil else { return true }
         let reads = await readRunsAndMail()
         return !reads.openRuns.isEmpty || SessionOutbox.canStartASubmission(reads.mail, runTokens: reads.runTokens)

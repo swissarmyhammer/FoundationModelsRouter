@@ -440,6 +440,21 @@ actor RoutedSessionActor: RoutedSession {
     /// or run. The idle check reads it (``awaitIdle()``).
     nonisolated let openRequestedCompactions = Mutex(0)
 
+    /// The work state that the work events of this session reported last
+    /// (``SessionEvent/workStarted`` and ``SessionEvent/workEnded``), and the
+    /// count of the work starts. See ``noteWorkStarted()``.
+    ///
+    /// A lock keeps it, because ``mail(_:)`` and ``compact(prompt:budget:)``
+    /// start work from any task. Each work event goes out while the lock is
+    /// held, so the order of the events on the output is the order of the
+    /// changes of this state.
+    nonisolated let workEvents = Mutex(WorkEventState())
+
+    /// The questions of the runs of this session that the journal recorded
+    /// and that are possibly open, with the state of each one. See
+    /// ``AskedQuestions``.
+    var askedQuestions = AskedQuestions()
+
     /// The task of the compaction that runs now, or `nil`. Only the
     /// compaction handler (``performCompaction(_:_:)``) sets it, and only
     /// ``close()`` cancels it (``cancelActiveCompaction()``).

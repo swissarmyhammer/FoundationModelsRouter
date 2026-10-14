@@ -355,6 +355,37 @@ public enum SessionEvent: Sendable, Equatable {
     /// stopped, and its answer never ended. The session sends it at restore.
     /// This is the terminal event of the mail.
     case lost(MailID)
+
+    /// The session had no work, and now it has work. The rules of the work
+    /// are the rules of ``RoutedSession/awaitIdle()``: an open background
+    /// run, pump work that runs or waits, or queued run mail that can start
+    /// an answer by itself. A background run that waits only for the user
+    /// (an open question of ``elicitationRequested(_:)``) is no work.
+    ///
+    /// The event comes before each output of the new work. Its origin
+    /// (``SessionOutput/origin``) is ``Origin/system``, and only
+    /// ``RoutedSession/streamSessionEvents()`` carries it. The session sends
+    /// one for each change from no work to work, so ``workStarted`` and
+    /// ``workEnded`` come in turns, and ``workStarted`` comes first. A
+    /// session that has no work when a feed starts sends nothing until work
+    /// starts. A consumer needs no clock and no poll to know the work state.
+    ///
+    /// After ``RoutedSession/close()`` starts, the session sends no work
+    /// event. The feed ends when the close finishes it.
+    case workStarted
+
+    /// The session had work, and now it has no work. The rules of the work
+    /// are the rules of ``workStarted``. When this event comes,
+    /// ``RoutedSession/awaitIdle()`` returns `true`.
+    ///
+    /// The event comes after each output of the work that ended: for
+    /// example after the ``answered(_:)`` of the last answer, after the
+    /// ``runSettled(_:)`` of the last run, and after the
+    /// ``elicitationRequested(_:)`` of a run that now waits only for the
+    /// user. Its origin is ``Origin/system``, and only
+    /// ``RoutedSession/streamSessionEvents()`` carries it. The session sends
+    /// one for each change from work to no work.
+    case workEnded
 }
 
 /// The kind of SDK transcript entry a ``SessionEvent/entryRecorded(id:kind:)`` names.

@@ -35,6 +35,10 @@ extension RoutedSessionActor: OperationEventJournal {
     /// (``deliverLive(_:origin:)``): the id of the run mail of `event`, or
     /// the origin of the poster when `event` made no mail.
     ///
+    /// A question of a run (`.elicitation`) is a change of the work of the
+    /// session after its live event (``noteQuestionAsked(_:)``): the run can
+    /// now wait only for the user.
+    ///
     /// - Parameters:
     ///   - event: The event the outbox has just accepted.
     ///   - origin: The run mail of `event` and the work that posted it.
@@ -50,6 +54,9 @@ extension RoutedSessionActor: OperationEventJournal {
             }
         }
         deliverLive(Self.liveEvent(for: event), origin: origin)
+        if event.kind == .elicitation {
+            await noteQuestionAsked(event)
+        }
     }
 
     /// Hands the live event of one journaled run event to
@@ -213,14 +220,14 @@ extension RoutedSessionActor: BackgroundRunSettlementObserver {
     /// submission already took the terminal and gave it back.
     ///
     /// The settlement is a change of the work of the session
-    /// (``signalWorkChange()``): a run that settles while the end of all
-    /// work of ``close()`` runs starts no pump, so the pump does not report it.
+    /// (``workDidChange()``): a run that settles while the end of all work
+    /// of ``close()`` runs starts no pump, so the pump does not report it.
     ///
     /// - Parameter terminal: The terminal the run plane forwarded.
     func deliver(settledTerminal terminal: OperationEvent) async {
         await outbox.journalWithoutStaging(event: terminal)
         wakePump()
-        signalWorkChange()
+        await workDidChange()
     }
 }
 

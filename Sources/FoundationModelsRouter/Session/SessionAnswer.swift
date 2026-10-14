@@ -180,12 +180,14 @@ struct SessionAnswerReducer {
         case .compactionStarted, .compactionFailed, .submissionQueued, .submissionStarted, .answered, .answerFailed,
             .textDelta, .textReset, .reasoningDelta, .entryRecorded, .discoveryPrimingFailed, .generationStalled,
             .runSettled, .runMessage, .runProgress, .toolCallReport, .toolDisplay, .elicitationRequested,
-            .generationCall, .mailDeliveryPaused, .mailDelivered, .cancelled, .lost, .signalDone:
+            .generationCall, .mailDeliveryPaused, .mailDelivered, .cancelled, .lost, .signalDone, .workStarted,
+            .workEnded:
             // Deliberately not carried by the answer. A mail delivery pause
             // comes when no answer runs, so no answer can carry it. The
             // delivery of a mail and the terminal events of other mail are
             // in ``SessionAnswer/mailIds`` or belong to no answer. The end of
-            // a signal belongs to the signal, not to an answer. The frames of a
+            // a signal belongs to the signal, not to an answer. A work event
+            // belongs to the whole session, not to an answer. The frames of a
             // submission and of an answer are the structure the answer sums.
             // The reply is the final reply of the chain, not a reduction of
             // its text fragments: a continuation writes its own reply, and

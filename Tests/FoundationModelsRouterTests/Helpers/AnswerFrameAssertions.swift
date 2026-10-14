@@ -16,11 +16,16 @@ import Testing
 /// states that expectation. Thus the test asserts the frame and does not skip
 /// it, and the statement is in one place, not at each site.
 ///
+/// The work events (``SessionEvent/workStarted``, ``SessionEvent/workEnded``)
+/// are no part of an answer: the session sends them around the work, and
+/// ``SessionWorkEventTests`` checks them. Thus this check ignores them.
+///
 /// - Parameter events: The events of one answer, in order.
-/// - Returns: `events` without the deliveries of mail, the submission starts,
-///   the submission ends and the end of the answer. A failed check is
-///   recorded as an issue.
-func eventsInsideAnswerFrame(_ events: [SessionEvent]) -> [SessionEvent] {
+/// - Returns: `events` without the work events, the deliveries of mail, the
+///   submission starts, the submission ends and the end of the answer. A
+///   failed check is recorded as an issue.
+func eventsInsideAnswerFrame(_ allEvents: [SessionEvent]) -> [SessionEvent] {
+    let events = allEvents.filter { !$0.isWorkEvent }
     let answerEnds = events.answers.count + events.answerFailures.count
     #expect(answerEnds == 1, "expected exactly one end of the answer, got \(answerEnds)")
     #expect(
@@ -48,21 +53,33 @@ extension [SessionEvent] {
     /// of an answer, and checks the frame of each part with
     /// ``eventsInsideAnswerFrame(_:)``.
     ///
-    /// The events after the last end of an answer are a part too, so their
-    /// check fails: each event must be in the frame of an answer.
+    /// The work events are no part of an answer, so this method drops them
+    /// before it splits. The events after the last end of an answer are a
+    /// part too, so their check fails: each event must be in the frame of an
+    /// answer.
     ///
     /// - Returns: The events inside each frame, one array for each answer, in
     ///   order. A failed check is recorded as an issue.
     func eventsInsideEachAnswerFrame() -> [[SessionEvent]] {
-        let partEnds = indices.filter { self[$0].isAnswerEnd }.map { $0 + 1 }
-        let partStarts = [startIndex] + partEnds
-        return zip(partStarts, partEnds + [endIndex])
+        let answerEvents = filter { !$0.isWorkEvent }
+        let partEnds = answerEvents.indices.filter { answerEvents[$0].isAnswerEnd }.map { $0 + 1 }
+        let partStarts = [answerEvents.startIndex] + partEnds
+        return zip(partStarts, partEnds + [answerEvents.endIndex])
             .filter { start, end in start < end }
-            .map { start, end in eventsInsideAnswerFrame(Array(self[start..<end])) }
+            .map { start, end in eventsInsideAnswerFrame(Array(answerEvents[start..<end])) }
     }
 }
 
 extension SessionEvent {
+    /// Whether this event is a work event: ``SessionEvent/workStarted`` or
+    /// ``SessionEvent/workEnded``.
+    var isWorkEvent: Bool {
+        switch self {
+        case .workStarted, .workEnded: return true
+        default: return false
+        }
+    }
+
     /// Whether this event ends an answer: ``SessionEvent/answered(_:)`` or
     /// ``SessionEvent/answerFailed(_:)``.
     var isAnswerEnd: Bool {

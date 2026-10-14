@@ -43,19 +43,7 @@ struct SessionIdleWaitTests {
     }
 
     /// One session over a ``BackgroundingBackend``, with what a test reads.
-    struct Fixture: Sendable {
-        /// The session under test.
-        let session: any RoutedSession
-
-        /// The backend the session runs on.
-        let backend: BackgroundingBackend
-
-        /// The router that keeps the models of the session resident.
-        let router: Router
-
-        /// The temporary directory the router caches under.
-        let directory: URL
-    }
+    typealias Fixture = BackgroundingSessionFixture
 
     // MARK: - Constants
 
@@ -90,13 +78,9 @@ struct SessionIdleWaitTests {
         container: BackgroundingLLMContainer = BackgroundingLLMContainer(),
         mailOnlyAnswerLimit: Int = SessionConfiguration.defaultMailOnlyAnswerLimit
     ) async throws -> Fixture {
-        let directory = RouterTestFixtures.makeTempDir(prefix: "SessionIdleWaitTests")
-        let (router, profile) = try await RouterTestFixtures.resolveStandardProfile(
-            over: container, cacheDir: directory)
-        let session = profile.standard.makeSession(
-            configuration: SessionConfiguration(tools: tools, mailOnlyAnswerLimit: mailOnlyAnswerLimit))
-        let backend = try #require(container.lastBackend)
-        return Fixture(session: session, backend: backend, router: router, directory: directory)
+        try await Fixture.make(
+            prefix: "SessionIdleWaitTests", tools: tools, container: container,
+            mailOnlyAnswerLimit: mailOnlyAnswerLimit)
     }
 
     /// One ``RoutedSession/awaitIdle()`` call that runs in a task of its own.
@@ -195,12 +179,7 @@ struct SessionIdleWaitTests {
     ///   - fixture: The fixture to end.
     ///   - gates: The gates of the runs of the session.
     private static func end(_ fixture: Fixture, opening gates: [RunLatch] = []) async {
-        for gate in gates {
-            await gate.open()
-        }
-        await fixture.session.close()
-        try? FileManager.default.removeItem(at: fixture.directory)
-        withExtendedLifetime(fixture.router) {}
+        await fixture.end(opening: gates)
     }
 
     // MARK: - Tests

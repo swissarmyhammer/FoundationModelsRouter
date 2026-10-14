@@ -442,7 +442,9 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// Each signal ends with ``SessionEvent/signalDone(_:)``, with the origin
     /// of the signal. Other events, for example the events of a run that
     /// settles between answers, have the origin of the work that started
-    /// them, or ``Origin/system``.
+    /// them, or ``Origin/system``. The work events
+    /// ``SessionEvent/workStarted`` and ``SessionEvent/workEnded`` have the
+    /// origin ``Origin/system``, and only this stream carries them.
     ///
     /// An answer that ``cancelAll()`` stopped sends nothing after its
     /// ``SessionEvent/answerFailed(_:)``.
@@ -585,7 +587,10 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     /// The session is idle when these three are all true, read together on
     /// the session:
     ///
-    /// 1. No background run is open.
+    /// 1. No background run is open, except a run that waits only for the
+    ///    user: a run whose question (``SessionEvent/elicitationRequested(_:)``)
+    ///    is open. Only the user can move that run, so it is no work. Its
+    ///    result still comes to the model later.
     /// 2. No pump work runs or waits: no answer, no requested compaction
     ///    that waits or runs, no end of all work of ``close()``, and no
     ///    user-type mail in the queue.
@@ -602,6 +607,10 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     ///
     /// The call returns at once when the session is idle. Else it waits for
     /// each change of the work of the session, with no poll and no timer.
+    /// A consumer of ``streamSessionEvents()`` can follow the same rules
+    /// with no call: ``SessionEvent/workStarted`` and
+    /// ``SessionEvent/workEnded`` report each change, in order with the
+    /// other outputs.
     /// A cancel of the calling task ends the wait at once. ``close()`` ends
     /// each wait with `false`. A call after
     /// ``close()`` started, also a call after ``close()`` returned, returns

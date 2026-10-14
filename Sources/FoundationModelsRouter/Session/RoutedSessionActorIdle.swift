@@ -41,7 +41,10 @@ extension RoutedSessionActor {
 
     /// Reports one change of the work of this session to each
     /// ``awaitIdle()`` call that waits: the pump ended, a background run
-    /// settled, or the end of all work of ``close()`` ended.
+    /// settled, a requested compaction ended, a sweep ended, a run asked a
+    /// question, an answer of the user did not resume a run, or the end of
+    /// all work of ``close()`` ended. Each change but the close also goes to
+    /// the work events (``workDidChange()``).
     func signalWorkChange() {
         idleChanges.signal()
     }
@@ -49,33 +52,52 @@ extension RoutedSessionActor {
     /// Ends each ``awaitIdle()`` call that waits with `false`, and makes each
     /// later call return `false` at once. ``close()`` calls it before it
     /// waits for the end of all work, so no wait waits for the end of all
-    /// work.
+    /// work. The work events of the session stop too (``endWorkEvents()``).
     func endIdleWaits() {
         isClosed = true
+        endWorkEvents()
         signalWorkChange()
     }
 
-    /// Whether the session has no work now: no background run is open, no
-    /// pump work runs or waits, and no waiting mail can start a submission
-    /// by itself. Held mail (``SessionOutbox/PendingEvent/isHeld``), for
-    /// example mail that ``SessionConfiguration/mailOnlyAnswerLimit`` holds,
-    /// starts no submission, so it counts as idle.
+    /// Whether the session has no work now: no background run is open that
+    /// does not wait only for the user, no pump work runs or waits, and no
+    /// waiting mail can start a submission by itself. Held mail
+    /// (``SessionOutbox/PendingEvent/isHeld``), for example mail that
+    /// ``SessionConfiguration/mailOnlyAnswerLimit`` holds, starts no
+    /// submission, so it counts as idle.
+    ///
+    /// A run that waits only for the user (an open question of
+    /// `ToolContext.elicit(_:)`, see `RunPlane.runsWaitingOnlyForUser()`) is
+    /// no work: only the user can move it. ``hasPendingOperation()`` still
+    /// counts that run, because its result comes to the model later.
     ///
     /// The check reads the session state two times. The first read comes
     /// before the reads of ``runPlane`` and ``outbox``
-    /// (``readRunsAndMail()``), and the second read comes after them
+    /// (``readIdleState()``), and the second read comes after them
     /// (``isIdle(startedAt:reading:)``).
     ///
     /// - Returns: `true` when the session has no work now.
     func isIdle() async -> Bool {
-        guard hasNoPumpWork else { return false }
-        let workId = lastWorkId
-        let reads = await readRunsAndMail()
-        return isIdle(startedAt: workId, reading: reads)
+        guard let snapshot = await readIdleState() else { return false }
+        return isIdle(startedAt: snapshot.workId, reading: snapshot.reads)
     }
 
-    /// Reads the open runs and the settled run tokens of ``runPlane``, and
-    /// then the mail of ``outbox``, for ``isIdle()``.
+    /// The reads of ``isIdle()`` before its last check: the first read of the
+    /// session state, and then the reads of ``runPlane`` and ``outbox``
+    /// (``readRunsAndMail()``).
+    ///
+    /// - Returns: The ``lastWorkId`` of the first read and the reads, or
+    ///   `nil` when pump work runs or waits at the first read. Then the
+    ///   session is not idle.
+    func readIdleState() async -> (workId: UInt64, reads: IdleReads)? {
+        guard hasNoPumpWork else { return nil }
+        let workId = lastWorkId
+        let reads = await readRunsAndMail()
+        return (workId, reads)
+    }
+
+    /// Reads the open runs, the settled run tokens and the open questions of
+    /// ``runPlane``, and then the mail of ``outbox``, for ``isIdle()``.
     ///
     /// ``runPlane`` and ``outbox`` are actors of their own, so these reads
     /// suspend. The order of the reads follows the order in which a run
@@ -95,11 +117,23 @@ extension RoutedSessionActor {
     /// The end of all work of ``close()`` waits for that body. While it runs,
     /// ``drainTask`` is set, so the check says not idle.
     ///
+    /// The open questions (`RunPlane.openElicitations()`) are read after the
+    /// open runs. A run waits only for the user when one or more of its
+    /// questions are open (`RunPlane.runsWaitingOnlyForUser()`), so one read
+    /// of the questions gives those runs with no second read that can
+    /// disagree. A run that asks its question after this read counts as
+    /// work, and the journal of its question then reports a change of the
+    /// work (``noteQuestionAsked(_:)``), so a check that missed it runs
+    /// again. A run whose question gets its answer after this read counts
+    /// as no work, so an answer counts a start of work before it goes to the
+    /// run plane (``noteWorkStart(answering:with:)``).
+    ///
     /// - Returns: The reads, in the order above.
     func readRunsAndMail() async -> IdleReads {
         let runs = await readBackgroundRuns()
+        let openQuestions = await runPlane.openElicitations()
         let mail = await outbox.pending().events
-        return IdleReads(openRuns: runs.open, runTokens: runs.tokens, mail: mail)
+        return IdleReads(openRuns: runs.open, runTokens: runs.tokens, openQuestions: openQuestions, mail: mail)
     }
 
     /// Reads the completion tokens of the background runs of ``runPlane``:
@@ -136,13 +170,20 @@ extension RoutedSessionActor {
     /// read and at this read, and the same ``lastWorkId``, prove that no run
     /// started while the reads of ``runPlane`` and ``outbox`` suspended.
     ///
+    /// An open run is no work only when it waits only for the user and the
+    /// journal recorded one of its open questions (``askedQuestions``): the
+    /// question is then on the output, so a work-end event never comes
+    /// before the question that ends the work.
+    ///
     /// - Parameters:
     ///   - workId: The ``lastWorkId`` of the first read.
     ///   - reads: What ``readRunsAndMail()`` read after the first read.
     /// - Returns: `true` when the session has no work now.
     func isIdle(startedAt workId: UInt64, reading reads: IdleReads) -> Bool {
         guard hasNoPumpWork, lastWorkId == workId else { return false }
-        return reads.openRuns.isEmpty
+        let userWaitRunTokens = Set(
+            reads.openQuestions.filter { askedQuestions.wasAsked($0.elicitationId) }.map(\.runToken))
+        return reads.openRuns.allSatisfy { userWaitRunTokens.contains($0.completionToken) }
             && !SessionOutbox.canStartASubmission(reads.mail, runTokens: reads.runTokens)
     }
 
@@ -167,6 +208,10 @@ struct IdleReads: Sendable {
     /// The completion tokens of the background runs that are open and of the
     /// background runs that settled.
     let runTokens: BackgroundRunTokens
+
+    /// The open questions of the runs, each with the token of the run that
+    /// asks it (`RunPlane.openElicitations()`), read after ``openRuns``.
+    let openQuestions: [OpenElicitation]
 
     /// The mail that waits in the outbox.
     let mail: [SessionOutbox.PendingEvent]

@@ -291,6 +291,13 @@ resumes. Use ``awaitTerminal(of:)-(SignalID)`` to wait for the result. Only
 
 ### Lifecycle and forking
 
+``awaitIdle()`` returns when the session has no work. A background run that
+waits only for the user is no work. ``streamSessionEvents()`` reports the same
+state with no call: ``SessionEvent/workStarted`` comes when the session gets
+work while it had none, and ``SessionEvent/workEnded`` comes when it has no
+work any more. Both have the origin ``Origin-enum/system``, and they come in turns,
+in order with the other outputs.
+
 - ``fork(workingDirectory:)``
 - ``awaitIdle()``
 - ``close()``

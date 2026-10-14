@@ -184,7 +184,8 @@ public final class SessionObserver {
             phase = .compacting
         case .compactionFailed, .discoveryPrimingFailed, .generationStalled, .submissionQueued, .repetitionStopped,
             .reasoningStopped, .runSettled, .runMessage, .runProgress, .toolCallReport, .toolDisplay,
-            .elicitationRequested, .generationCall, .mailDeliveryPaused, .mailDelivered, .signalDone:
+            .elicitationRequested, .generationCall, .mailDeliveryPaused, .mailDelivered, .signalDone, .workStarted,
+            .workEnded:
             // Handled explicitly, and deliberately changes nothing. The end
             // of a signal changes no entry: each mail that the signal removed
             // already has its own ``SessionEvent/cancelled(_:)``. The
@@ -214,7 +215,9 @@ public final class SessionObserver {
             // request names a question that only a host can answer, and the
             // call that asks still runs. The usage of one generation call is
             // a part of the usage of the submission, and
-            // ``SessionEvent/submissionEnded(_:)`` carries the sum. So the
+            // ``SessionEvent/submissionEnded(_:)`` carries the sum. A work
+            // event tells the work state of the whole session, and the phase
+            // of this projection tells the state of one submission. So the
             // phase, the transcript and the counters of this projection
             // already mirror what occurred. These events are for a driver
             // that watches the event stream, not session state.
