@@ -49,6 +49,40 @@ final class SessionOutputHub: Sendable {
         /// The error that ended a failed answer, or `nil`. `CancellationError`
         /// for a cancelled answer.
         let error: (any Error)?
+
+        /// The answer of the mail that this terminal event ends, or the error
+        /// that the caller of that mail gets.
+        ///
+        /// This is the one place that changes the terminal event of a mail
+        /// into a thrown error. ``RoutedSession/awaitAnswer(of:)``,
+        /// ``RoutedSession/respond(to:maxTokens:)`` and the stream helpers
+        /// all use it.
+        ///
+        /// - Returns: The ``SessionAnswer`` of ``SessionEvent/answered(_:)``.
+        ///   Each mail that one answer delivered gets that same answer.
+        /// - Throws: For ``SessionEvent/answerFailed(_:)``, ``error``, or the
+        ///   ``AnswerFailure`` of the event when the hub kept no error. For
+        ///   ``SessionEvent/cancelled(_:)`` and ``SessionEvent/lost(_:)``,
+        ///   `CancellationError`.
+        func answer() throws -> SessionAnswer {
+            switch event {
+            case .answered(let answer):
+                return answer
+            case .answerFailed(let failure):
+                throw error ?? failure
+            case .cancelled, .lost:
+                throw CancellationError()
+            case .signalDone, .compaction, .compactionFailed, .compactionStarted, .submissionQueued,
+                .submissionStarted, .submissionEnded, .textDelta, .textReset, .reasoningDelta, .entryRecorded,
+                .discoveryPrimingFailed, .generationStalled, .runSettled, .runMessage, .runProgress, .toolCall,
+                .toolStatus, .toolInvocation, .toolCallReport, .toolDisplay, .elicitationRequested, .generationCall,
+                .repetitionStopped, .reasoningStopped, .mailDeliveryPaused, .mailDelivered:
+                // The ledger keeps only a terminal event under the key of a
+                // mail (``SessionOutputHub/keys(endedBy:)``), so a call with
+                // another event is a defect of the caller.
+                preconditionFailure("\(event) is no terminal event of a mail")
+            }
+        }
     }
 
     /// The most ids that the ledger of the terminal events keeps.

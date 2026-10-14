@@ -56,7 +56,9 @@ mail. All output is events. Control is signals.
   ``SessionEvent/signalDone(_:)``, or ``SessionEvent/compaction(_:)`` or
   ``SessionEvent/compactionFailed(_:)`` for a compaction.
   ``awaitTerminal(of:)-(MailID)`` and ``awaitTerminal(of:)-(SignalID)`` wait
-  for it.
+  for it. ``awaitAnswer(of:)`` waits for the terminal event of a mail and
+  gives its ``SessionAnswer``, or throws the original error of its failed
+  answer, the same error that ``respond(to:)`` throws.
 
 ### The context is a render of the transcript
 
@@ -215,7 +217,11 @@ message in the queue and return its ``MailID``. The pump of the session starts
 a submission for the mail with no other call, or puts it into the next
 submission when one runs. ``respond(to:maxTokens:)`` and the two stream
 methods are helpers: each sends one message, then reads its output to its
-terminal event.
+terminal event. A caller that sends its own mail uses ``awaitAnswer(of:)`` to
+get the answer, or the typed error of a failed answer, for example
+`LanguageModelError.contextSizeExceeded`. The session keeps that error for the
+4096 most recent terminal ids; a later call waits until ``close()`` and then
+throws ``MailRefusal/closed``.
 
 - ``MailSink/mail(_:)``
 - ``send(_:)-(Transcript.Prompt)``
@@ -224,6 +230,7 @@ terminal event.
 - ``mailQueueDepth()``
 - ``MailQueueDepth``
 - ``awaitTerminal(of:)-(MailID)``
+- ``awaitAnswer(of:)``
 - ``awaitTerminal(of:)-(SignalID)``
 - ``PromptRefusal``
 

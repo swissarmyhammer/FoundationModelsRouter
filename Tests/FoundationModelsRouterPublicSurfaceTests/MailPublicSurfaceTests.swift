@@ -8,8 +8,9 @@ import FoundationModelsRouter
 /// ``RoutedSession/mail(_:)``, ``RoutedSession/send(_:)-(Transcript.Prompt)``,
 /// ``MailID``, the signals ``RoutedSession/cancel(_:)``,
 /// ``RoutedSession/cancelAll()`` and ``RoutedSession/replace(_:with:)``, which
-/// each return a ``SignalID``, the waits ``RoutedSession/awaitTerminal(of:)-(MailID)``
-/// and ``RoutedSession/awaitTerminal(of:)-(SignalID)``, and the refusal types.
+/// each return a ``SignalID``, the waits ``RoutedSession/awaitTerminal(of:)-(MailID)``,
+/// ``RoutedSession/awaitAnswer(of:)`` and
+/// ``RoutedSession/awaitTerminal(of:)-(SignalID)``, and the refusal types.
 ///
 /// The import is plain, with no `@testable`, so a member or a case that loses
 /// `public` stops this file from compiling before a single test runs.
@@ -91,6 +92,19 @@ struct MailPublicSurfaceTests {
         try await session.awaitTerminal(of: message.id)
     }
 
+    /// Waits for the answer of a sent message, as a consumer that shows the
+    /// reply, or the typed error of a failed answer, does.
+    ///
+    /// - Parameters:
+    ///   - message: The message to wait for.
+    ///   - session: The session the message was sent to.
+    /// - Returns: The answer that delivered the message.
+    /// - Throws: The error of a failed answer, `CancellationError`, or the
+    ///   refusal of a closed session.
+    static func answer(of message: SentMessage, in session: any RoutedSession) async throws -> SessionAnswer {
+        try await session.awaitAnswer(of: message.id)
+    }
+
     /// The label a consumer shows for a refused mail.
     ///
     /// - Parameter refusal: The refusal.
@@ -134,8 +148,9 @@ struct MailPublicSurfaceTests {
         let stop: (any RoutedSession) -> SignalID = Self.stop(_:)
         let endOfSignal: (SignalID, any RoutedSession) async throws -> SessionEvent = { try await $1.awaitTerminal(of: $0) }
         let end: (SentMessage, any RoutedSession) async throws -> SessionEvent = Self.end(of:in:)
+        let answer: (SentMessage, any RoutedSession) async throws -> SessionAnswer = Self.answer(of:in:)
         let sendPrompt: (any RoutedSession) throws -> MailID = { try $0.send(Transcript.Prompt(segments: [])) }
-        withExtendedLifetime((send, mail, takeBack, edit, stop, endOfSignal, end, sendPrompt)) {}
+        withExtendedLifetime((send, mail, takeBack, edit, stop, endOfSignal, end, answer, sendPrompt)) {}
 
         // A view keeps a message in a dictionary keyed by its id, and shows it.
         let identifier: Any.Type = MailID.self

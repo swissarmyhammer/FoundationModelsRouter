@@ -328,6 +328,54 @@ public protocol RoutedSession: Actor, MailSink where Event == SessionOutput {
     ///   submission on the same model.
     func awaitTerminal(of id: MailID) async throws -> SessionEvent
 
+    /// Waits for the terminal event of the mail `id`, and gives the answer of
+    /// the mail, or throws the error of its failed answer.
+    ///
+    /// Use this call after ``MailSink/mail(_:)`` or
+    /// ``send(_:)-(Transcript.Prompt)`` to get the same result that
+    /// ``respond(to:maxTokens:)`` gives, with the typed error, for example
+    /// `LanguageModelError.contextSizeExceeded`. The public event
+    /// ``SessionEvent/answerFailed(_:)`` does not carry that error.
+    ///
+    /// Each terminal event of the mail gives this result:
+    ///
+    /// | Terminal event | Result |
+    /// |---|---|
+    /// | ``SessionEvent/answered(_:)`` | The ``SessionAnswer``. |
+    /// | ``SessionEvent/answerFailed(_:)`` | Throws the original error of the answer, the same error that ``respond(to:maxTokens:)`` throws. When the session kept no error, it throws the ``AnswerFailure``. An answer that ``cancelAll()`` or ``close()`` stopped throws `CancellationError`. |
+    /// | ``SessionEvent/cancelled(_:)`` | Throws `CancellationError`. |
+    /// | ``SessionEvent/lost(_:)`` | Throws `CancellationError`. ``awaitTerminal(of:)-(MailID)`` returns this event and throws nothing for it; this call throws what the helpers throw for it. |
+    ///
+    /// Mail has no answer of its own: one answer can deliver more than one
+    /// mail (``SessionAnswer/mailIds``), and run mail can go into the answer
+    /// of a user message. Each mail that one answer delivered gets the same
+    /// ``SessionAnswer``, or the same error. Thus ``SessionAnswer/reply`` is
+    /// the reply to all the mail of the answer, not to this mail alone. A mail
+    /// that a continuation of an answer takes gets the end of that answer.
+    ///
+    /// The call returns at once when the terminal event already came, also
+    /// after ``close()``. The session keeps the terminal events, and the
+    /// error of each failed answer, of the 4096 most recent ids. Mail ids and
+    /// signal ids count together, and the oldest id leaves first. A call for
+    /// an id that left that record does not get the answer or the error: it
+    /// waits until ``close()`` and then throws ``MailRefusal/closed``. After
+    /// ``close()``, it throws ``MailRefusal/closed`` at once.
+    ///
+    /// A cancel of the calling task cancels the mail while it is queued
+    /// (``cancel(_:)``), does not wait for the end of that signal, and ends
+    /// the wait with `CancellationError`; it never stops an answer that runs.
+    ///
+    /// - Parameter id: The id of the mail.
+    /// - Returns: The ``SessionAnswer`` of the answer that delivered the mail.
+    /// - Throws: The original error of a failed answer (see the table),
+    ///   `CancellationError` for a cancelled or lost mail and when the calling
+    ///   task is cancelled first, ``MailRefusal/closed`` when the session
+    ///   closes first, or
+    ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)`` when
+    ///   called in band from a tool of a submission of this session, or of a
+    ///   submission on the same model.
+    func awaitAnswer(of id: MailID) async throws -> SessionAnswer
+
     /// Waits for the terminal event of the signal `id`:
     /// ``SessionEvent/signalDone(_:)``, or for a compaction
     /// ``SessionEvent/compaction(_:)`` or ``SessionEvent/compactionFailed(_:)``

@@ -119,9 +119,38 @@ extension RoutedSessionActor {
     ///   ``MailRefusal/closed`` when the session closes first, or
     ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)``.
     func awaitTerminal(of id: MailID) async throws -> SessionEvent {
+        try await awaitMailTerminal(of: id).event
+    }
+
+    /// See ``RoutedSession/awaitAnswer(of:)``. Waits for the terminal event
+    /// of the mail `id`, as ``awaitTerminal(of:)-(MailID)`` does, and gives
+    /// its answer or throws its error (``SessionOutputHub/Terminal/answer()``).
+    ///
+    /// - Parameter id: The id of the mail.
+    /// - Returns: The ``SessionAnswer`` of the answer that delivered the mail.
+    /// - Throws: The original error of a failed answer, `CancellationError`
+    ///   for a cancelled or lost mail or a cancelled calling task,
+    ///   ``MailRefusal/closed`` when the session closes first, or
+    ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)``.
+    func awaitAnswer(of id: MailID) async throws -> SessionAnswer {
+        try await awaitMailTerminal(of: id).answer()
+    }
+
+    /// The wait of ``awaitTerminal(of:)-(MailID)`` and ``awaitAnswer(of:)``:
+    /// the terminal event of the mail `id` and the error of a failed answer.
+    /// A cancel of the calling task cancels the mail while it is queued
+    /// (``cancel(_:)``), and ends the wait.
+    ///
+    /// - Parameter id: The id of the mail.
+    /// - Returns: The terminal event and its error, from the ledger of
+    ///   ``outputHub``.
+    /// - Throws: `CancellationError` when the calling task is cancelled first,
+    ///   ``MailRefusal/closed`` when the session closes first, or
+    ///   ``GenerationQueueError/waitInsideOpenSubmission(model:)``.
+    private func awaitMailTerminal(of id: MailID) async throws -> SessionOutputHub.Terminal {
         try refuseWaitInsideOpenSubmission()
         return try await withTaskCancellationHandler {
-            try await outputHub.awaitTerminal(of: .mail(id)).event
+            try await outputHub.awaitTerminal(of: .mail(id))
         } onCancel: {
             cancel(id)
         }
@@ -182,25 +211,10 @@ extension RoutedSessionActor {
             } onCancel: {
                 self.cancel(mail.id)
             }
-            try self.throwIfFailed(mail.id)
-        }
-    }
-
-    /// Throws for the end of the mail `id` when it is no answer.
-    ///
-    /// - Parameter id: The id of the mail, whose subscription ended.
-    /// - Throws: The error of a failed answer (``SessionOutputHub/Terminal/error``,
-    ///   or its ``AnswerFailure``), or `CancellationError` for a cancelled or
-    ///   lost mail, and when the mail has no terminal event yet.
-    private nonisolated func throwIfFailed(_ id: MailID) throws {
-        guard let terminal = outputHub.terminal(for: .mail(id)) else { throw CancellationError() }
-        switch terminal.event {
-        case .answered:
-            return
-        case .answerFailed(let failure):
-            throw terminal.error ?? failure
-        default:
-            throw CancellationError()
+            // A reader that stopped before the terminal event finds no
+            // terminal event in the ledger.
+            guard let terminal = self.outputHub.terminal(for: .mail(mail.id)) else { throw CancellationError() }
+            _ = try terminal.answer()
         }
     }
 
