@@ -37,9 +37,9 @@ import Synchronization
 /// pending set holds only the ids of the work that waits or runs, so it is
 /// bounded by that work.
 ///
-/// Each operation holds one lock and does not suspend, so a call from any
-/// task, also a synchronous call that is not on the session actor, reaches
-/// the hub at once.
+/// Each operation holds the lock of the hub and does not suspend, so a call
+/// from any task, also a synchronous call that is not on the session actor,
+/// reaches the hub at once.
 final class SessionOutputHub: Sendable {
     /// The id that one terminal event ends.
     enum TerminalKey: Hashable, Sendable {
@@ -215,8 +215,54 @@ final class SessionOutputHub: Sendable {
         let continuation: CheckedContinuation<Terminal, any Error>
     }
 
+    /// The lock of the hub state, which counts each take of the lock.
+    ///
+    /// The state is reachable only through ``withLock(_:)``, so the count
+    /// holds each take. Only the tests read the count: a test checks that
+    /// a code path, for example the stop of a reader, does not take the
+    /// lock.
+    private struct StateLock: ~Copyable, Sendable {
+        /// The lock and the state.
+        private let mutex = Mutex(State())
+
+        /// How many times the lock was taken.
+        private let takes = Atomic(0)
+
+        /// How many times the lock was taken.
+        var takeCount: Int {
+            takes.load(ordering: .relaxed)
+        }
+
+        /// Runs `body` on the state under the lock, and counts the take.
+        ///
+        /// - Parameter body: The work on the state.
+        /// - Returns: What `body` returns.
+        /// - Throws: What `body` throws.
+        borrowing func withLock<Result: ~Copyable, Failure: Error>(
+            _ body: (inout sending State) throws(Failure) -> sending Result
+        ) throws(Failure) -> sending Result {
+            takes.add(1, ordering: .relaxed)
+            return try mutex.withLock(body)
+        }
+    }
+
     /// The state of the hub.
-    private let state = Mutex(State())
+    private let state = StateLock()
+
+    /// The keys of the feeds and the mail subscriptions whose readers
+    /// stopped, which the hub did not remove yet.
+    ///
+    /// The termination handler of a feed or a subscription writes here, and
+    /// only here. A stream runs that handler while it holds its own lock, and
+    /// ``emit(_:failure:audience:)`` yields to a stream while it holds the
+    /// lock of the hub. A handler that took the lock of the hub would take
+    /// the two locks in the other order, and the two orders together cause a
+    /// deadlock. This lock is always the last lock: no code takes another
+    /// lock while it holds this one. Each operation of the hub on its readers
+    /// removes these keys under the lock of the hub before it does its work
+    /// (``withLiveReaders(_:)``). Thus a reader that stopped leaves the hub at
+    /// the next operation of the hub, with no wait for the next output.
+    private let stoppedReaders = Mutex<Set<ULID>>([])
 
     /// Reports each change of ``waiterCount``.
     ///
@@ -233,8 +279,59 @@ final class SessionOutputHub: Sendable {
         state.withLock { $0.waiters.count }
     }
 
+    /// How many feeds and mail subscriptions the hub holds now. Only the tests
+    /// read it: a test checks that a reader that stopped left the hub.
+    var readerCount: Int {
+        withLiveReaders { $0.feeds.count + $0.subscriptions.count }
+    }
+
+    /// How many times the lock of the hub state was taken. Only the tests read
+    /// it: a test checks that a reader that stops does not take the lock.
+    var stateLockTakes: Int {
+        state.takeCount
+    }
+
     /// Makes a hub with no reader.
     init() {}
+
+    /// Runs `body` on the state of the hub under its lock, after it removes
+    /// each feed and each mail subscription whose reader stopped
+    /// (``stoppedReaders``).
+    ///
+    /// - Parameter body: The work on the state.
+    /// - Returns: What `body` returns.
+    private func withLiveReaders<Value: Sendable>(_ body: (inout State) -> Value) -> Value {
+        state.withLock { state in
+            let stopped = stoppedReaders.withLock { keys in
+                defer { keys = [] }
+                return keys
+            }
+            for key in stopped {
+                state.feeds[key] = nil
+                state.subscriptions[key] = nil
+            }
+            return body(&state)
+        }
+    }
+
+    /// Makes a stream for one reader, whose termination handler records `key`
+    /// in ``stoppedReaders`` when the reader stops or the stream finishes.
+    ///
+    /// The handler is set before the hub records the reader, and the stream
+    /// is not given to the reader before that record. Thus a key of a stopped
+    /// reader is never removed before the hub records it.
+    ///
+    /// - Parameter key: The key of the reader.
+    /// - Returns: The stream and its continuation.
+    private func makeReaderStream(
+        key: ULID
+    ) -> (stream: AsyncStream<SessionOutput>, continuation: AsyncStream<SessionOutput>.Continuation) {
+        let (stream, continuation) = AsyncStream.makeStream(of: SessionOutput.self, bufferingPolicy: .unbounded)
+        continuation.onTermination = { [weak self] _ in
+            self?.stoppedReaders.withLock { _ = $0.insert(key) }
+        }
+        return (stream, continuation)
+    }
 
     /// Makes a feed that gets each output from now on, until ``finishFeeds()``
     /// or until its reader stops.
@@ -242,17 +339,14 @@ final class SessionOutputHub: Sendable {
     /// - Returns: The output of the session.
     func makeFeed() -> AsyncStream<SessionOutput> {
         let key = ULID()
-        let (stream, continuation) = AsyncStream.makeStream(of: SessionOutput.self, bufferingPolicy: .unbounded)
-        continuation.onTermination = { [weak self] _ in
-            self?.state.withLock { _ = $0.feeds.removeValue(forKey: key) }
-        }
-        state.withLock { $0.feeds[key] = continuation }
+        let (stream, continuation) = makeReaderStream(key: key)
+        withLiveReaders { $0.feeds[key] = continuation }
         return stream
     }
 
     /// Finishes each feed. A feed made later works as usual.
     func finishFeeds() {
-        let feeds = state.withLock { state in
+        let feeds = withLiveReaders { state in
             defer { state.feeds = [:] }
             return Array(state.feeds.values)
         }
@@ -268,11 +362,8 @@ final class SessionOutputHub: Sendable {
     ///   takes.
     func subscribe(to id: MailID) -> (subscription: MailSubscription<SessionOutput>, key: ULID) {
         let key = ULID()
-        let (stream, continuation) = AsyncStream.makeStream(of: SessionOutput.self, bufferingPolicy: .unbounded)
-        continuation.onTermination = { [weak self] _ in
-            self?.state.withLock { _ = $0.subscriptions.removeValue(forKey: key) }
-        }
-        state.withLock { $0.subscriptions[key] = (id, continuation) }
+        let (stream, continuation) = makeReaderStream(key: key)
+        withLiveReaders { $0.subscriptions[key] = (id, continuation) }
         return (MailSubscription(id: id, events: stream), key)
     }
 
@@ -281,7 +372,7 @@ final class SessionOutputHub: Sendable {
     ///
     /// - Parameter key: The key that ``subscribe(to:)`` gave.
     func unsubscribe(_ key: ULID) {
-        state.withLock { $0.subscriptions.removeValue(forKey: key) }?.continuation.finish()
+        withLiveReaders { $0.subscriptions.removeValue(forKey: key) }?.continuation.finish()
     }
 
     /// Gives `output` to each feed, and to each mail subscription whose mail
@@ -308,7 +399,7 @@ final class SessionOutputHub: Sendable {
         let endedKeys = Self.keys(endedBy: output.event)
         let ended = Set(endedKeys)
         let terminal = Terminal(event: output.event, error: error)
-        let (finished, resumed, isDelivered) = state.withLock {
+        let (finished, resumed, isDelivered) = withLiveReaders {
             state -> ([AsyncStream<SessionOutput>.Continuation], [CheckedContinuation<Terminal, any Error>], Bool) in
             // The answer that ``RoutedSession/cancelAll()`` stopped already
             // has its terminal event: each later output of its work is
@@ -317,15 +408,20 @@ final class SessionOutputHub: Sendable {
             guard !state.isSilenced(output.origin), audience.isDisjoint(with: state.silenced) else {
                 return ([], [], false)
             }
-            for feed in state.feeds.values {
-                feed.yield(output)
+            for (key, feed) in state.feeds {
+                if case .terminated = feed.yield(output) {
+                    state.feeds.removeValue(forKey: key)
+                }
             }
             var finished: [AsyncStream<SessionOutput>.Continuation] = []
             for (key, subscription) in state.subscriptions {
                 let endsMail = ended.contains(.mail(subscription.id))
                 let belongs = output.origin.contains(subscription.id) || audience.contains(subscription.id)
                 guard endsMail || belongs else { continue }
-                subscription.continuation.yield(output)
+                if case .terminated = subscription.continuation.yield(output) {
+                    state.subscriptions.removeValue(forKey: key)
+                    continue
+                }
                 if endsMail {
                     finished.append(subscription.continuation)
                     state.subscriptions.removeValue(forKey: key)
@@ -338,8 +434,9 @@ final class SessionOutputHub: Sendable {
             }
             return (finished, resumed, true)
         }
-        // A finish runs the termination handler of the stream, which takes
-        // the lock. Thus each finish comes after the lock is released.
+        // A finish takes the lock of the stream, and a reader that stops can
+        // hold that lock. Thus each finish comes after the lock of the hub is
+        // released.
         for continuation in finished {
             continuation.finish()
         }
@@ -477,7 +574,7 @@ final class SessionOutputHub: Sendable {
     /// not have throws ``MailRefusal/closed`` at once, so the hub also
     /// forgets the pending ids.
     func close() {
-        let (subscriptions, waiters) = state.withLock { state in
+        let (subscriptions, waiters) = withLiveReaders { state in
             state.isClosed = true
             defer {
                 state.subscriptions = [:]

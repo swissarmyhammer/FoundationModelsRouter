@@ -104,8 +104,7 @@ enum MountFixtures {
             wrapped: tool,
             arguments: arguments,
             site: MountSite(sessionID: ULID.generate(), runPlane: RunPlane(), sink: sink),
-            mountTimeout: nil,
-            inlineSettleDeadline: nil
+            mountTimeout: nil
         )
     }
 

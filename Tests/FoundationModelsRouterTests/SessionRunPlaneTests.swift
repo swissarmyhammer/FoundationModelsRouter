@@ -83,6 +83,7 @@ struct SessionRunPlaneTests {
         let rejected = Task {
             await session.runPlane.awaitAnswer(
                 to: PendingElicitationFixtures.formRequest(elicitationId: elicitationId),
+                runToken: tokenA,
                 posting: { postings.record() })
         }
         // The run plane makes the elicitation pending before it posts it.

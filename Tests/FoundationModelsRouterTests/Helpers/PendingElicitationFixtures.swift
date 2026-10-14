@@ -5,14 +5,14 @@ import Synchronization
 
 /// Counts the elicitation requests that the run plane of a session posted.
 ///
-/// `RunPlane.awaitAnswer(to:posting:)` makes the elicitation pending before it
-/// runs `posting`. Thus each post that this type counts comes after the
+/// `RunPlane.awaitAnswer(to:runToken:posting:)` makes the elicitation pending
+/// before it runs `posting`. Thus each post that this type counts comes after the
 /// registration of one pending elicitation. A test waits for the post with
 /// ``waitForPosts(_:)`` and then answers the elicitation, with no race.
 ///
 /// Bind it as the sink of a ``ToolContext`` (each `elicit(_:)` posts one
 /// event), or call ``record()`` from the `posting` closure of
-/// `awaitAnswer(to:posting:)`.
+/// `awaitAnswer(to:runToken:posting:)`.
 final class ElicitationPostings: OperationEventSink {
     /// The number of posts so far.
     private let count = Mutex(0)

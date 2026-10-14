@@ -377,6 +377,43 @@ struct MailSubscriptionTests {
         #expect(outputs.map(\.event) == [.mailDelivered(watched), .cancelled(watched)])
     }
 
+    /// The production change that makes this test fail: a hub that removes a
+    /// reader that stopped only at the next output of the session. This hub
+    /// sends no output, so each dropped reader then stays in the hub.
+    @Test("a feed and a mail subscription whose readers stop leave the hub, with no output of the session")
+    func stoppedReadersLeaveTheHub() {
+        let hub = SessionOutputHub()
+        do {
+            let feed = hub.makeFeed()
+            let (subscription, _) = hub.subscribe(to: MailID())
+            #expect(hub.readerCount == 2)
+            withExtendedLifetime((feed, subscription)) {}
+        }
+
+        #expect(hub.readerCount == 0)
+    }
+
+    /// The production change that makes this test fail: a termination handler
+    /// that takes the lock of the hub state. A stream runs that handler while
+    /// it holds its own lock, and ``SessionOutputHub/emit(_:failure:audience:)``
+    /// yields to the stream while it holds the lock of the hub, so a reader
+    /// that stops during an emit then causes a deadlock. The hub counts each
+    /// take of its state lock, and no other lock is held here. Thus that
+    /// handler makes this test fail, and the test does not hang.
+    @Test("a feed and a mail subscription whose readers stop do not take the lock of the hub")
+    func stoppedReadersDoNotTakeTheHubLock() {
+        let hub = SessionOutputHub()
+        let takesBeforeTheStop: Int
+        do {
+            let feed = hub.makeFeed()
+            let (subscription, _) = hub.subscribe(to: MailID())
+            takesBeforeTheStop = hub.stateLockTakes
+            withExtendedLifetime((feed, subscription)) {}
+        }
+
+        #expect(hub.stateLockTakes == takesBeforeTheStop)
+    }
+
     @Test("a hub wait for a signal ends with the compaction end of that signal, and a close ends each other wait with closed")
     func hubWaitsForASignalAndEndsOnClose() async throws {
         let hub = SessionOutputHub()
